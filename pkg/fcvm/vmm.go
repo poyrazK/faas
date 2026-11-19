@@ -191,7 +191,8 @@ type JailerVMM struct {
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
 	// under mu; nil = first probe. 2s per-probe timeout bounds
-	// the probe within the readyTimeout deadline.
+	// the probe within the readyTimeout deadline. Its transport never
+	// keeps a connection open into a guest (newHealthcheckClient).
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
 	// consoleOpens are console files Restore and boot start creating before
@@ -7899,14 +7900,13 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 		// away mid-probe — both must be retried).
 		return 0, err, nil
 	}
-	// Drain the body (capped) before close so the cached
-	// transport's keep-alive can reuse the connection. Without
-	// this, every probe opens a fresh TCP socket and TIME_WAIT
-	// accumulates under sustained probing. The 64 KiB cap is a
-	// safety net — production customers' healthcheck responses
-	// are status-only — but bounded drain is required so a
-	// misbehaving runner that streams a 1 GB body can't OOM
-	// the host.
+	// Drain the body (capped) before close so the app finishes its
+	// response and closes the connection itself (the readiness
+	// client sends Connection: close), rather than seeing vmmd
+	// reset it mid-write. The 64 KiB cap is a safety net —
+	// production customers' healthcheck responses are status-only
+	// — but bounded drain is required so a misbehaving runner that
+	// streams a 1 GB body can't OOM the host.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	return resp.StatusCode, nil, nil
@@ -7919,14 +7919,39 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 // returns a fresh client when the receiver or the cache is nil.
 func (v *JailerVMM) healthcheckClient() *http.Client {
 	if v == nil {
-		return &http.Client{Timeout: 2 * time.Second}
+		return newHealthcheckClient()
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.hcClient == nil {
-		v.hcClient = &http.Client{Timeout: 2 * time.Second}
+		v.hcClient = newHealthcheckClient()
 	}
 	return v.hcClient
+}
+
+// newHealthcheckClient builds the readiness probe client. Keep-alive is off:
+// each probe asks the app to close its connection after the response, so
+// readiness never leaves a connection of vmmd's open in the guest.
+//
+// With http.DefaultTransport the last successful probe stayed idle in the
+// pool for up to 90 s against any app that honours keep-alive (gunicorn
+// gthread, uvicorn, Node, Go). Restore runs readiness inside bringUp, and
+// releaseInheritedConnections right after it took that fresh probe socket for
+// one inherited from the snapshot and destroyed it; the release before a
+// capture or destroy did the same to the cold-boot probe's socket.
+// SOCK_DESTROY fails the app's socket with ECONNABORTED, which gunicorn logs
+// as "Socket error processing request" with a traceback on every deploy and
+// wake (agent eval rc.357, Django task; vmmd "released inherited guest
+// connections after restore" reset=1 on gregale-compute-2).
+func newHealthcheckClient() *http.Client {
+	return &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             nil, // probes dial the guest's host IP directly
+			DialContext:       (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+			DisableKeepAlives: true,
+		},
+	}
 }
 
 // VsockCharacterizationHostPort is the AF_VSOCK port the host's
