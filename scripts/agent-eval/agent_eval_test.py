@@ -200,6 +200,33 @@ class CommandTests(unittest.TestCase):
         self.assertIn("--ignore-user-config", command)
         self.assertEqual(command[-1], "deploy it")
         self.assertNotIn("mcp_servers", " ".join(ev.codex_command("x", Path("/tmp/p"), "/bin/gregale", "none", None, True)))
+        self.assertIn("--ephemeral", command)
+
+    def test_codex_repo_task_keeps_its_session_and_resumes_it(self):
+        kept = ev.codex_command("deploy it", Path("/tmp/p"), "/bin/gregale", "none", None, False, keep_session=True)
+        self.assertNotIn("--ephemeral", kept)
+        self.assertEqual(kept[:3], ["codex", "exec", "--json"])
+        resumed = ev.codex_command("Yes, go ahead.", Path("/tmp/p"), "/bin/gregale", "core", "gpt-6", False, resume="t1")
+        self.assertEqual(resumed[:4], ["codex", "exec", "resume", "--json"])
+        self.assertEqual(resumed[-2:], ["t1", "Yes, go ahead."])
+        # `codex exec resume` has no -C/-s; the sandbox comes from config.
+        self.assertNotIn("-s", resumed)
+        self.assertNotIn("-C", resumed)
+        joined = " ".join(resumed)
+        for part in ('sandbox_mode="workspace-write"', "sandbox_workspace_write.network_access=true", "mcp_servers.gregale.command", "-m gpt-6"):
+            self.assertIn(part, joined)
+        self.assertEqual(ev.parse_codex(CODEX_SUCCESS)["session_id"], "t1")
+
+    def test_follow_up_command_resumes_the_agents_own_session(self):
+        options = mock.Mock(mcp_writes=False, codex_model=None, claude_model=None)
+        task = {"follow_up": "Yes, go ahead.", "budget_usd": 4.0}
+        g = ev.CliGregale("/bin/gregale")
+        codex = ev.follow_up_command("codex", task, Path("/tmp/r"), Path("/tmp/r/project"), g, "none", options, "t1")
+        self.assertEqual(codex[:3], ["codex", "exec", "resume"])
+        claude = ev.follow_up_command("claude", task, Path("/tmp/r"), Path("/tmp/r/project"), g, "none", options, "s1")
+        self.assertEqual(claude[0], "claude")
+        self.assertEqual(claude[claude.index("--resume") + 1], "s1")
+        self.assertIn("codex", ev.FOLLOW_UP_AGENTS)
 
 
 class FakeGregale:
