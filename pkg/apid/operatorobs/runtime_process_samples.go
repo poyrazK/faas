@@ -35,6 +35,7 @@ func readRuntimeBuildJob(ctx context.Context, client *promql.Client, spec runtim
 }
 
 func readRuntimeProcessUptime(ctx context.Context, client *promql.Client, spec runtimeBuildJobSpec, result *runtimeBuildJobResult, selected RuntimeBuildSelection, now time.Time) {
+	ctx = runtimeQueryContext(ctx, "process")
 	if result.samples == nil {
 		setRuntimeProcessUnavailable(result, "source_unavailable")
 		return
