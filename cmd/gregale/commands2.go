@@ -8414,6 +8414,9 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	}
 	code := renderDeployFailure(d)
 	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	if c != nil {
+		printReleaseTaskOutput(ctx, c, os.Stderr, appSlug, d)
+	}
 	return code
 }
 
