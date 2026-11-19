@@ -8942,6 +8942,7 @@ type ManagedPostgresCustomRole struct {
 	RetryAt      pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	DefaultFor   []string
 }
 
 type ManagedPostgresCutover struct {
