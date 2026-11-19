@@ -478,6 +478,28 @@ type AgentRunAiSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.
+type AgentRunApproval struct {
+	ID               pgtype.UUID
+	RunID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 2: the seller's decision on an agent run approval, written once by apid; outboundd reads it.
+type AgentRunApprovalDecision struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	Decision   string
+	Note       string
+	DecidedBy  string
+	DecidedAt  pgtype.Timestamptz
+}
+
 // ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.
 type AgentRunCallback struct {
 	RunID          pgtype.UUID

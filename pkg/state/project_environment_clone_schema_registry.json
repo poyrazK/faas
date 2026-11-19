@@ -21470,6 +21470,32 @@
     "kind": "operational"
   },
   {
+    "table": "agent_run_approvals",
+    "columns": [
+      "account_id",
+      "arguments_sha256",
+      "arguments_summary",
+      "created_at",
+      "expires_at",
+      "id",
+      "run_id",
+      "tool"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_approval_decisions",
+    "columns": [
+      "account_id",
+      "approval_id",
+      "decided_at",
+      "decided_by",
+      "decision",
+      "note"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_deliveries",
     "columns": [
       "account_id",

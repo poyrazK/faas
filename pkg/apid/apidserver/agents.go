@@ -353,6 +353,18 @@ func (s *server) closeAgentToolThread(w http.ResponseWriter, r *http.Request) {
 	s.agentAPI.CloseThread(w, r)
 }
 
+func (s *server) listAgentRunApprovals(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if h, ok := s.agentHandlers(w); ok {
+		h.ListRunApprovals(w, r, acct)
+	}
+}
+
+func (s *server) decideAgentRunApproval(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	if h, ok := s.agentHandlers(w); ok {
+		h.DecideRunApproval(w, r, acct)
+	}
+}
+
 func (s *server) cancelAgentRun(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if h, ok := s.agentHandlers(w); ok {
 		h.CancelRun(w, r, acct)
