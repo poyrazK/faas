@@ -29,6 +29,12 @@ In the manager: Public Cloud, Users & Roles, the user's `...` menu,
 "Import JSON policy" and upload the file. The manager has no paste field.
 Read it back with `GET /cloud/project/{serviceName}/user/{userId}/policy`.
 
+The backup user owns `gregale-prod-pg-backups`, so prove OVH enforces the
+policy rather than owner rights. Run `check-backup-key-append-only.sh` with
+the backup key (from the user's "View the secret key"): it writes a probe
+under `faas-cp-state/` and must be refused deleting it or rewriting the
+lifecycle. Run it again after any key rotation.
+
 Add `no_check_bucket = true` to the S3 remote in each `rclone.conf`: the
 keys have no bucket-create right, and rclone otherwise tries to create
 the bucket before its first upload.
