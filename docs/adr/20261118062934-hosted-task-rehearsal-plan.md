@@ -31,3 +31,24 @@ spend the approval.
 
 The archive handoff is private to the control plane. Contained workload
 provisioning and execution evidence are separate from this handoff.
+
+## Contained resource preparation
+
+The private provisioner takes the winning claim and derives workload IDs,
+scenario membership and the queue namespace from the reserved target. It
+creates four internal-only preview workloads for migration, web, worker and
+observation. The workloads enter the existing contained-network and webhook
+capture policy before the PostgreSQL fixture is created. Only the migration
+workload receives a credential during initial preparation. The native fixture
+starts with a platform-owned capture marker. The release runner must install
+the Task schema in containment before it can request separate restricted
+web, worker and observer logins.
+
+Preparation must complete within the original approval window. The existing
+preview and PostgreSQL cleanup services expire these resources fifteen minutes
+from reservation. The PostgreSQL fixture journal records the backend, database,
+migration owner and membership needed to remove the database and logins.
+Failure cleanup also removes the app-local credentials and tombstones the
+workloads. A restarted executor can clean the same account and run without
+recovering archives or credentials. Claim replay never allocates resources
+or takes ownership of an existing run.

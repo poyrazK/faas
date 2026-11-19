@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -304,6 +305,19 @@ func exerciseHostedTaskRehearsalCandidate(t *testing.T, store state.Store, pool 
 	replay, err := unavailable.ClaimHostedTaskRehearsalCandidate(ctx, f.account.ID, id, owner, plan.PlanSHA256)
 	if err != nil || replay.Run.ID != plan.TargetID || len(replay.WebArchive) != 0 || len(replay.WorkerArchive) != 0 {
 		t.Fatalf("replay attempted to reopen retained source: %v", err)
+	}
+
+	// A provisioner with no store would fail if called. Even a fresh
+	// executor can replay only the original reservation.
+	opts.TaskRehearsalProvisioner = &taskrehearsal.Provisioner{AdmissionEnabled: true}
+	restarted := toolregistry.NewPrivateExecutor(f.store, opts)
+	t.Cleanup(restarted.Close)
+	reserved := replay.Run
+	replayed, target, err := restarted.ProvisionHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256)
+	if err != nil || target != nil || replayed.Run.ID != reserved.ID || replayed.Run.PlanSHA256 != reserved.PlanSHA256 ||
+		!replayed.Run.ReservedAt.Equal(reserved.ReservedAt) || !replayed.Run.ApprovalExpiresAt.Equal(reserved.ApprovalExpiresAt) ||
+		len(replayed.WebArchive) != 0 || len(replayed.WorkerArchive) != 0 {
+		t.Fatalf("provisioning replay did more than return its reservation: %v", err)
 	}
 }
 
