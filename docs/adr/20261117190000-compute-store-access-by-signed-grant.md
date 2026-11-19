@@ -82,8 +82,13 @@ Owner decisions (2026-11-17):
      unchanged.
    - `List` reports nothing in that mode: a node cannot list the bucket.
      The compute-side sweeps that list (imaged's superseded job artifacts,
-     builderd's expired sources) stop on granted nodes; until the control
-     plane sweeps those prefixes, the objects stay (storage cost only).
+     builderd's expired sources) stop on granted nodes, so the control
+     plane's object GC worker lists `jobs/` and `sources/` every 6 hours
+     with the same rules and files deletion requests. The worker re-checks
+     each one: a `jobs/` attempt is live while its job is materializing or
+     publishes it; a `sources/` archive (class `source`) is live while its
+     build is queued or running, or while its UUIDv7 name is under 24 hours
+     old.
    - `Put` probes the key's generation and writes create-only or
      replace-that-generation, so a node never overwrites blindly.
    - Read grants are cached per key until 30 s before expiry; a store
@@ -123,6 +128,6 @@ Owner decisions (2026-11-17):
 |---|---|
 | 1 | `pkg/storagegrant`: keyspace resolver, signer interface, GCS V4 and S3 presign signers (implemented) |
 | 2 | secretd `GrantStorageObjects`: placement checks, `storage_grant_audit`, `faas_secretd_storage_grants_total`, budget; `FAAS_SECRETD_STORAGE_GRANTS=off\|gcs\|s3` (implemented, off by default) |
-| 3 | Compute: signed-grant `gcsArtifactStore` (`storage.UseGrants`), `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd (builderd also defers deletes now), `build` key class for `sources/`, `placed_node_id` recorded by agentd, template and job-image reads for session nodes, `faas_storage_grants` drop-in (implemented, off by default). Left: a control-plane sweep of `jobs/` and `sources/` |
+| 3 | Compute: signed-grant `gcsArtifactStore` (`storage.UseGrants`), `FAAS_STORAGE_ACCESS=secretd` in imaged, vmmd and builderd (builderd also defers deletes now), `build` key class for `sources/`, `placed_node_id` recorded by agentd, template and job-image reads for session nodes, `faas_storage_grants` drop-in (implemented, off by default). The control-plane sweep of `jobs/` and `sources/` (`objectgc.Sweep`, on with `FAAS_SCHEDD_OBJECT_GC`) followed with slice 4 |
 | 4 | S3 artifact backend on grants: `head`, ETag-conditioned `create`/`replace`, and multipart uploads where `create_multipart`, every `upload_part`, `complete_multipart` (create-only or replace-that-ETag) and `abort_multipart` are each a grant; the multipart create/complete/abort are SigV4-presigned directly (the SDK presigns only object and part requests). Server-side copies report unsupported, so callers stream. Tested against a fake S3 in CI and against MinIO (`FAAS_S3_LIVE_*`) (implemented) |
 | 5 | Operations: remove compute's bucket role; runbook check that a direct read is refused |

@@ -24,7 +24,7 @@ the node. Everything is off by default.
    - Check: the journal shows `storage_grants=gcs`, and
      `faas_secretd_storage_grants_total` is exported, all zero.
    - S3 stores must honor conditional writes (`If-None-Match: *`,
-     `If-Match`): AWS S3, MinIO and R2 do. Before turning grants on for a
+     `If-Match`): AWS S3 and MinIO do. Before turning grants on for a
      new S3 provider, run the live tests against a disposable bucket:
      `FAAS_S3_LIVE_BUCKET=… FAAS_S3_LIVE_ENDPOINT=… FAAS_S3_LIVE_REGION=…
      FAAS_S3_LIVE_ACCESS_KEY_ID=… FAAS_S3_LIVE_SECRET_ACCESS_KEY=…
@@ -54,8 +54,10 @@ the node. Everything is off by default.
   `instances`, `deployment_image_preparations`, `builds.builder_node_name`
   and `sandbox_sessions.placed_node_id`.
 - On granted nodes, imaged's superseded job artifacts and builderd's
-  expired sources are no longer swept. Until a control-plane sweep exists
-  they cost storage, not correctness.
+  expired sources are no longer swept there. schedd's object GC worker
+  sweeps them instead every 6 hours; schedd's journal shows
+  `objectgc: sweep` with the number of requests, and the rows carry
+  `objectgc sweep:` reasons.
 
 ## Turn it off
 

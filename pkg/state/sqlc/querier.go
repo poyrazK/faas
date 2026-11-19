@@ -375,6 +375,8 @@ type Querier interface {
 	// no builder of its own. The payer is an organization only when it owns its
 	// resources, as bind_app_usage_owner decides.
 	BuildSecondsThisMonthForApp(ctx context.Context, db DBTX, arg BuildSecondsThisMonthForAppParams) (BuildSecondsThisMonthForAppRow, error)
+	// A build's source archive is live while the build is queued or running.
+	BuildSourceReferenced(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	// issue #667 / ADR-078 — atomically apply delta to the instance's
 	// `tail_count` column and return the post-update value. The
 	// GREATEST(…, 0) floor mirrors DecrementInstanceTailCount's safety
@@ -3632,6 +3634,10 @@ type Querier interface {
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
 	IssueUpdateTrackerLink(ctx context.Context, db DBTX, arg IssueUpdateTrackerLinkParams) (IssueTrackerLink, error)
 	IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error
+	// ADR-20261117190000: a jobs/ key is live while its job is not deleted and
+	// either still materializing (a worker may be writing an unpublished
+	// attempt) or publishes exactly this key.
+	JobArtifactReferenced(ctx context.Context, db DBTX, arg JobArtifactReferencedParams) (bool, error)
 	JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error)
 	// ADR-1330: an interactive image run's session, read by schedd at dispatch.
 	JobRunAttachSession(ctx context.Context, db DBTX, runID pgtype.UUID) (JobRunAttachSessionRow, error)

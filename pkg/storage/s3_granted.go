@@ -57,7 +57,7 @@ func s3MetadataFrom(h http.Header) map[string]string {
 }
 
 func (s *grantedS3Store) Get(ctx context.Context, _, key string) (s3Artifact, error) {
-	resp, err := s.grants.read(ctx, storagegrant.Request{Key: key, Op: storagegrant.OpGet}, nil)
+	resp, err := s.grants.read(ctx, storagegrant.Request{Key: key, Op: storagegrant.OpGet}, nil) //nolint:bodyclose // the body is the artifact the caller closes
 	if err != nil {
 		return s3Artifact{}, err
 	}
@@ -158,8 +158,11 @@ func (s *grantedS3Store) putMultipart(ctx context.Context, key, etag string, met
 	var created initiateMultipartResult
 	err = xml.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&created)
 	drain(resp)
-	if err != nil || created.UploadID == "" {
-		return fmt.Errorf("storage: s3 multipart upload of %q: no upload id: %v", key, err)
+	if err != nil {
+		return fmt.Errorf("storage: s3 multipart upload of %q: decode upload id: %w", key, err)
+	}
+	if created.UploadID == "" {
+		return fmt.Errorf("storage: s3 multipart upload of %q: no upload id", key)
 	}
 	upload := created.UploadID
 	abort := func(cause error) error {
