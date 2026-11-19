@@ -4344,12 +4344,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
+			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
+				_, getErr := client.GetApp(ctx, slug)
+				creating = isNotFound(getErr)
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if err == nil && creating {
+				rememberCreatedApp(contextDir, slug)
+			}
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
