@@ -3777,13 +3777,7 @@ type BuildSpec struct {
 	// pulls the registry_credentials' hosts through secretd by this id and
 	// gives the builder no password. Empty from an older builderd: vmmd then
 	// opens the passwords as before.
-	BuildId string `protobuf:"bytes,5,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
-	// borrowed runs the builder in faas-borrowed.slice on a borrowed builder
-	// slot (ADR-20261118154632): it uses memory the tenant slice is not using,
-	// its Firecracker process gets oom_score_adj 1000, and vmmd destroys it
-	// itself when tenants need the memory. builderd sets it only when Ping
-	// reports supports_borrowed_builders, so an older vmmd never sees it.
-	Borrowed      bool `protobuf:"varint,6,opt,name=borrowed,proto3" json:"borrowed,omitempty"`
+	BuildId       string `protobuf:"bytes,5,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3851,13 +3845,6 @@ func (x *BuildSpec) GetBuildId() string {
 		return x.BuildId
 	}
 	return ""
-}
-
-func (x *BuildSpec) GetBorrowed() bool {
-	if x != nil {
-		return x.Borrowed
-	}
-	return false
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry
@@ -5123,12 +5110,8 @@ type DestroyResponse struct {
 	ExitCode                   int32  `protobuf:"varint,2,opt,name=exit_code,json=exitCode,proto3" json:"exit_code,omitempty"`
 	RehearsalWorkerFaultId     string `protobuf:"bytes,3,opt,name=rehearsal_worker_fault_id,json=rehearsalWorkerFaultId,proto3" json:"rehearsal_worker_fault_id,omitempty"`
 	RehearsalColdPreparationId string `protobuf:"bytes,4,opt,name=rehearsal_cold_preparation_id,json=rehearsalColdPreparationId,proto3" json:"rehearsal_cold_preparation_id,omitempty"`
-	// preempted_for_tenants is true when vmmd destroyed this borrowed builder
-	// because tenants needed its memory (ADR-20261118154632). builderd returns
-	// the build to the queue instead of failing it.
-	PreemptedForTenants bool `protobuf:"varint,5,opt,name=preempted_for_tenants,json=preemptedForTenants,proto3" json:"preempted_for_tenants,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *DestroyResponse) Reset() {
@@ -5187,13 +5170,6 @@ func (x *DestroyResponse) GetRehearsalColdPreparationId() string {
 		return x.RehearsalColdPreparationId
 	}
 	return ""
-}
-
-func (x *DestroyResponse) GetPreemptedForTenants() bool {
-	if x != nil {
-		return x.PreemptedForTenants
-	}
-	return false
 }
 
 // StopInstanceRequest is the M-2 / ADR-138 graceful-stop input.
@@ -6082,12 +6058,8 @@ type PingResponse struct {
 	// (ADR-20261022184531). schedd marks a node degraded while one cannot.
 	// An older vmmd sends none, which schedd reads as no evidence.
 	BaseGenerations []*BaseGenerationReadiness `protobuf:"bytes,6,rep,name=base_generations,json=baseGenerations,proto3" json:"base_generations,omitempty"`
-	// supports_borrowed_builders: builder_elastic_slots is on and
-	// faas-borrowed.slice exists, so this vmmd runs BuildSpec.borrowed
-	// builders (ADR-20261118154632).
-	SupportsBorrowedBuilders bool `protobuf:"varint,7,opt,name=supports_borrowed_builders,json=supportsBorrowedBuilders,proto3" json:"supports_borrowed_builders,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *PingResponse) Reset() {
@@ -6160,13 +6132,6 @@ func (x *PingResponse) GetBaseGenerations() []*BaseGenerationReadiness {
 		return x.BaseGenerations
 	}
 	return nil
-}
-
-func (x *PingResponse) GetSupportsBorrowedBuilders() bool {
-	if x != nil {
-		return x.SupportsBorrowedBuilders
-	}
-	return false
 }
 
 // Header is one (name, value) HTTP header line. Both fields are
@@ -22981,7 +22946,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x15finished_at_unix_nano\x18\x04 \x01(\x03R\x12finishedAtUnixNano\x12\x1f\n" +
 	"\vlease_token\x18\x05 \x01(\tR\n" +
 	"leaseToken\x120\n" +
-	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\x93\x02\n" +
+	"\x14output_manifest_json\x18\x06 \x01(\tR\x12outputManifestJson\"\xf7\x01\n" +
 	"\tBuildSpec\x12\x1d\n" +
 	"\n" +
 	"export_dir\x18\x01 \x01(\tR\texportDir\x12\x1f\n" +
@@ -22989,8 +22954,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"timeoutSec\x12_\n" +
 	"\x14registry_credentials\x18\x03 \x03(\v2,.onebox.faas.vmmd.v1.BuildRegistryCredentialR\x13registryCredentials\x12.\n" +
 	"\x13buildkit_seed_drive\x18\x04 \x01(\tR\x11buildkitSeedDrive\x12\x19\n" +
-	"\bbuild_id\x18\x05 \x01(\tR\abuildId\x12\x1a\n" +
-	"\bborrowed\x18\x06 \x01(\bR\bborrowed\"z\n" +
+	"\bbuild_id\x18\x05 \x01(\tR\abuildId\"z\n" +
 	"\x17BuildRegistryCredential\x12\x1a\n" +
 	"\bregistry\x18\x01 \x01(\tR\bregistry\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12'\n" +
@@ -23082,13 +23046,12 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"claimToken\"W\n" +
 	"\x1bExecuteOperatorParkResponse\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x12\"\n" +
-	"\facknowledged\x18\x02 \x01(\bR\facknowledged\"\xfc\x01\n" +
+	"\facknowledged\x18\x02 \x01(\bR\facknowledged\"\xc8\x01\n" +
 	"\x0fDestroyResponse\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x129\n" +
 	"\x19rehearsal_worker_fault_id\x18\x03 \x01(\tR\x16rehearsalWorkerFaultId\x12A\n" +
-	"\x1drehearsal_cold_preparation_id\x18\x04 \x01(\tR\x1arehearsalColdPreparationId\x122\n" +
-	"\x15preempted_for_tenants\x18\x05 \x01(\bR\x13preemptedForTenants\"o\n" +
+	"\x1drehearsal_cold_preparation_id\x18\x04 \x01(\tR\x1arehearsalColdPreparationId\"o\n" +
 	"\x13StopInstanceRequest\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x16\n" +
 	"\x06signal\x18\x02 \x01(\x05R\x06signal\x12$\n" +
@@ -23159,7 +23122,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x10desired_revision\x18\x03 \x01(\x03R\x0fdesiredRevision\x12)\n" +
 	"\x10applied_revision\x18\x04 \x01(\x03R\x0fappliedRevision\x12!\n" +
 	"\ftarget_count\x18\x05 \x01(\x05R\vtargetCount\"\r\n" +
-	"\vPingRequest\"\xca\x03\n" +
+	"\vPingRequest\"\x8c\x03\n" +
 	"\fPingResponse\x12\x1d\n" +
 	"\n" +
 	"fc_version\x18\x01 \x01(\tR\tfcVersion\x12;\n" +
@@ -23168,8 +23131,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x17supports_secret_aliases\x18\x03 \x01(\bR\x15supportsSecretAliases\x12<\n" +
 	"\x1asupports_image_healthcheck\x18\x04 \x01(\bR\x18supportsImageHealthcheck\x12Q\n" +
 	"%supports_image_healthcheck_monitoring\x18\x05 \x01(\bR\"supportsImageHealthcheckMonitoring\x12W\n" +
-	"\x10base_generations\x18\x06 \x03(\v2,.onebox.faas.vmmd.v1.BaseGenerationReadinessR\x0fbaseGenerations\x12<\n" +
-	"\x1asupports_borrowed_builders\x18\a \x01(\bR\x18supportsBorrowedBuilders\"2\n" +
+	"\x10base_generations\x18\x06 \x03(\v2,.onebox.faas.vmmd.v1.BaseGenerationReadinessR\x0fbaseGenerations\"2\n" +
 	"\x06Header\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"\x12\n" +

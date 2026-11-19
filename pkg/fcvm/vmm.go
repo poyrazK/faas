@@ -1887,7 +1887,7 @@ func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
 // bypass.
 func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) error {
 	if l.IsBuilder {
-		if err := writeBuildCgroup(builderCgroupParent(l), l.Instance, l.MemoryMaxMiB); err != nil {
+		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
 			return err
 		}
 		return v.trackCgroupFence(l)
@@ -5797,15 +5797,6 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 			_ = consoleFile.Close()
 		}
 		return fmt.Errorf("vmm: start jailer: %w", startErr)
-	}
-	if l.BorrowedBuilder() {
-		// ADR-20261118154632: if the host still runs out of memory, the
-		// kernel kills a borrowed build before any tenant VM or daemon. The
-		// jailer keeps the value across its exec of Firecracker. builderd's
-		// and vmmd's give-backs still protect tenants if the write fails.
-		if err := writeOOMScoreAdj("/proc", cmd.Process.Pid, api.BorrowedBuilderOOMScoreAdj); err != nil {
-			slog.Default().Warn("vmm: borrowed builder keeps the default OOM priority", "instance", l.Instance, "err", err)
-		}
 	}
 	// Capture before starting Wait: even an immediately exiting child retains
 	// its PID until reaped, so a reused PID cannot enter this checkpoint.

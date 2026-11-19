@@ -316,7 +316,6 @@ type SandboxSession struct {
 	LeaseToken          pgtype.Text
 	LeaseExpiresAt      pgtype.Timestamptz
 	NodeID              pgtype.Text
-	PlacedNodeID        pgtype.Text
 	InstanceID          pgtype.Text
 	CloseRequestedAt    pgtype.Timestamptz
 	LastActivityAt      pgtype.Timestamptz

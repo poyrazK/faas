@@ -103,13 +103,6 @@
           - faas_node_name is defined
           - faas_node_name | length > 0
 
-    # The control plane's transport SAN is its private address.
-    - name: pki renewal — resolve the private transport address
-      ansible.builtin.include_tasks: tasks/resolve_private_address.yml
-      when:
-        - faas_box_role == 'control-plane'
-        - faas_private_dns_address is not defined
-
   roles:
     - role: internal_pki_renewal
 

@@ -31,7 +31,6 @@ import (
 // *agentstore.Store implements it.
 type SandboxStore interface {
 	ClaimSandbox(ctx context.Context, owner, token string, ttl time.Duration, maxLive func(plan string) int) (agentstore.SandboxClaim, bool, error)
-	MarkSandboxPlaced(ctx context.Context, id, token, nodeID string) error
 	MarkSandboxReady(ctx context.Context, id, token, nodeID, instanceID string) error
 	RenewSandbox(ctx context.Context, id, token string, ttl time.Duration, lastActivity time.Time) (agentstore.SandboxLease, error)
 	SetSandboxFrozen(ctx context.Context, id, token string, frozen bool) error
@@ -351,11 +350,6 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 		switch {
 		case ev.GetPlaced() != nil:
 			placed = ev.GetPlaced()
-			// ADR-20261117190000: the node reads the session's image and
-			// snapshot through secretd grants before it boots the VM.
-			if err := s.store.MarkSandboxPlaced(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId()); err != nil {
-				return err
-			}
 			if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}); err != nil {
 				return err
 			}

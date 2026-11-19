@@ -138,9 +138,7 @@ func TestPipelineMetricsFailedRequeueAfterSlotDenial(t *testing.T) {
 		t.Fatal("stale claim counted as database failure")
 	}
 	families, err := reg.Gather()
-	// slots in use / limit / reserved / active, claims, admission,
-	// requeues and preemptions (ADR-20261118154632).
-	if err != nil || len(families) != 8 {
+	if err != nil || len(families) != 5 {
 		t.Fatalf("metric family inventory: %d %v", len(families), err)
 	}
 }

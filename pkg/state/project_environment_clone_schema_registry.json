@@ -10645,6 +10645,7 @@
       "bypass_rls",
       "created_at",
       "database_id",
+      "default_for",
       "granted_to",
       "last_error",
       "member_of",
@@ -18227,7 +18228,6 @@
       "node_id",
       "outcome_code",
       "outcome_message",
-      "placed_node_id",
       "preset",
       "ram_mb",
       "state",
@@ -20413,20 +20413,6 @@
       "revision",
       "status",
       "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "storage_grant_audit",
-    "columns": [
-      "access",
-      "app_id",
-      "granted_at",
-      "id",
-      "node_id",
-      "objects",
-      "subject_class",
-      "subject_id"
     ],
     "kind": "operational"
   },

@@ -21,13 +21,9 @@
 #
 # builderd_buildkit_seed (ADR-20261030122204): builderd keeps a per-node
 # BuildKit seed of the platform images and gives each Railpack build a reflink
-# copy, so the builder image step (p50 34 s) becomes a cache hit. On after
-# the fsn-2 canary (2026-11-18 19:59Z to 2026-11-19 07:15Z, hand drop-in):
-# all 8 builds seeded, vm_build p50 41 s / p90 72 s against 74 s / 108 s on
-# fsn-3 without the seed in the same window (85 s / 120 s on fsn-2 the three
-# days before); no seedless build, no builderd error. A release in the window
-# changed the platform images and builderd replaced the seed (87 s). The seed
-# holds ~2.4 GiB of /srv/fc per node.
+# copy, so the builder image step (p50 34 s) becomes a cache hit. Off until a
+# one-node canary; a hand drop-in that sets FAAS_BUILD_BUILDKIT_SEED=1 sorts
+# after this file and runs the canary.
 #
 # builderd_defer_cache_export (ADR-20261029171525): a build with a dependency
 # cache hands its image to imaged before exporting the cache, from a second
@@ -41,5 +37,5 @@
 schedd_async_wake_finalize: true
 imaged_app_layer_reuse: true
 builderd_shared_platform_blobs: true
-builderd_buildkit_seed: true
+builderd_buildkit_seed: false
 builderd_defer_cache_export: false

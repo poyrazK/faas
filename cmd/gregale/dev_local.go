@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -119,10 +120,7 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
-	// A closed terminal (SIGHUP) stops like Ctrl-C. The app runs in its own
-	// process group, so the hangup never reaches it; without this the CLI
-	// died with no cleanup and left the app holding its port.
-	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := devLocalPreflight(ctx, projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
 		return printErr("Local preflight failed", err)

@@ -35,13 +35,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
 	"github.com/onebox-faas/faas/pkg/events"
-	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/sourcespool"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
-	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -281,21 +279,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 
 	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
-	if sourceStorage != nil {
-		// ADR-20261115180000 / ADR-20261117190000: builderd's source deletes
-		// defer to the control plane like imaged's and vmmd's, and with
-		// FAAS_STORAGE_ACCESS=secretd its reads go through secretd grants.
-		if deferred, err := objectgc.DeferFromEnv(os.Getenv, sourceStorage, store, "builderd"); err != nil {
-			return fmt.Errorf("builderd: %w", err)
-		} else if deferred {
-			log.Info("builderd: shared-store deletes deferred to the control plane")
-		}
-		if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, sourceStorage, "builderd", log); err != nil {
-			return err
-		} else {
-			defer closeGrants()
-		}
-	}
 	notif := dbNotifier{pool: pool}
 	resid := deps.newResidentProbe(ctx, cfg.ScheddMetricsURL)
 	// Single OpsMetrics for the daemon: builderd both records build
@@ -422,9 +405,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Debug("builderd: build deferred behind an identical build", "build", buildID)
 				return
 			}
-			if errors.Is(err, builderdpkg.ErrPreempted) {
-				return
-			}
 			log.Warn("builderd: process", "build", buildID, "err", err)
 		}
 	})
@@ -462,7 +442,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	workerMetrics := newBuildWorkerMetrics(ops.Registry(), pollInterval, reapThreshold)
 	go workerLoopWithMetrics(runCtx, b, pollInterval, log, workerMetrics)
-	startElasticSlots(ctx, runCtx, cfg, store, pool, b, pollInterval, log)
 	go b.RunBuildKitSeedLoop(runCtx)
 
 	reaperMetrics := builderdpkg.NewReaperMetrics(ops.Registry(), reapInterval, reapThreshold)
@@ -810,11 +789,6 @@ func workerLoopWithMetrics(ctx context.Context, b buildWorkerProcessor, interval
 		}
 		if errors.Is(err, builderdpkg.ErrCoalesced) {
 			log.Debug("builderd: worker tick — deferred behind an identical build")
-			continue
-		}
-		// A borrowed slot gave its build back to tenants; the build is back
-		// in the queue at its place (ADR-20261118154632).
-		if errors.Is(err, builderdpkg.ErrPreempted) {
 			continue
 		}
 		log.Warn("builderd: worker tick — process next", "err", err)

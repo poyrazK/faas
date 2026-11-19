@@ -4207,9 +4207,6 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
-	// BorrowedBuilder runs a builder VM in faas-borrowed.slice on a
-	// borrowed builder slot (ADR-20261118154632). Ignored for app VMs.
-	BorrowedBuilder bool
 	// BuildRegistryCredentials are the sealed registry credentials of the
 	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
@@ -5239,9 +5236,6 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.IsBuilder = req.ExportDir != ""
 	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
-	if lease.IsBuilder && req.BorrowedBuilder {
-		lease.cgroupParent = BorrowedBuilderCgroupParent
-	}
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
@@ -5773,7 +5767,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// teardown kills it and releases the lease.
 	if !m.preparesWakeStateBeforeBoot() {
 		if lease.IsBuilder {
-			err = writeBuildCgroup(builderCgroupParent(lease), req.Instance, req.MemSizeMiB)
+			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
 		} else {
 			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}

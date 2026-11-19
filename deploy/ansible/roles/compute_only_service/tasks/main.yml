@@ -233,43 +233,6 @@
     state: absent
   when: not (faas_imaged_secretd_registry_pulls | default(false) | bool)
 
-# ADR-20261117190000: per node, after the control plane's secretd signs
-# grants (faas_secretd_storage_grants) and the object GC worker runs. The
-# drop-in takes effect at each daemon's next restart: restart imaged,
-# builderd and vmmd node by node (docs/runbooks/object-gc.md).
-- name: compute_only_service — create the storage-grant drop-in directories (ADR-20261117190000)
-  ansible.builtin.file:
-    path: "/etc/systemd/system/faas-{{ item }}.service.d"
-    state: directory
-    owner: root
-    group: root
-    mode: "0755"
-  loop: [imaged, builderd, vmmd]
-  when:
-    - (faas_box_role | default('single-box')) == 'compute-only'
-    - faas_storage_grants | default(false) | bool
-
-- name: compute_only_service — install the storage-grant drop-ins (ADR-20261117190000)
-  ansible.builtin.template:
-    src: 98-faas-storage-grants.conf.j2
-    dest: "/etc/systemd/system/faas-{{ item }}.service.d/98-faas-storage-grants.conf"
-    owner: root
-    group: root
-    mode: "0644"
-  loop: [imaged, builderd, vmmd]
-  notify: reload systemd for storage grants
-  when:
-    - (faas_box_role | default('single-box')) == 'compute-only'
-    - faas_storage_grants | default(false) | bool
-
-- name: compute_only_service — remove the storage-grant drop-ins while off (ADR-20261117190000)
-  ansible.builtin.file:
-    path: "/etc/systemd/system/faas-{{ item }}.service.d/98-faas-storage-grants.conf"
-    state: absent
-  loop: [imaged, builderd, vmmd]
-  notify: reload systemd for storage grants
-  when: not (faas_storage_grants | default(false) | bool)
-
 - name: compute_only_service — install schedd node identity (M9)
   notify: restart faas-schedd
   ansible.builtin.template:

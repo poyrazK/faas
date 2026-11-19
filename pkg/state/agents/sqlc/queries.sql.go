@@ -3355,28 +3355,6 @@ func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id st
 	return err
 }
 
-const markSandboxSessionPlaced = `-- name: MarkSandboxSessionPlaced :execrows
-UPDATE sandbox_sessions SET placed_node_id=$1::text, updated_at=now()
- WHERE id=$2::text::uuid AND lease_token=$3::text AND state='starting'
-`
-
-type MarkSandboxSessionPlacedParams struct {
-	NodeID     string
-	SessionID  string
-	LeaseToken string
-}
-
-// schedd placed the session (ADR-20261117190000): record the node before it
-// boots the VM, so secretd grants that node the session's image and
-// snapshot. node_id stays unset until the VM is up.
-func (q *Queries) MarkSandboxSessionPlaced(ctx context.Context, db DBTX, arg MarkSandboxSessionPlacedParams) (int64, error) {
-	result, err := db.Exec(ctx, markSandboxSessionPlaced, arg.NodeID, arg.SessionID, arg.LeaseToken)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const markSandboxSessionReady = `-- name: MarkSandboxSessionReady :execrows
 UPDATE sandbox_sessions SET state='ready', node_id=$1::text, instance_id=$2::text,
   last_activity_at=now(), updated_at=now()

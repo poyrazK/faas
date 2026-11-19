@@ -61,7 +61,6 @@ const (
 	rpcMintInternalServiceToken = "MintInternalServiceToken"
 	// rpcMintWorkflowIdentity is slice 3k-2.
 	rpcMintWorkflowIdentity = "MintWorkflowIdentity"
-	rpcGrantStorageObjects  = "GrantStorageObjects"
 )
 
 var (
@@ -74,7 +73,6 @@ type Metrics struct {
 	opens      *prometheus.CounterVec
 	refusals   *prometheus.CounterVec
 	buildScope *prometheus.CounterVec
-	storage    *prometheus.CounterVec
 }
 
 // NewMetrics registers secretd's counters on reg.
@@ -95,29 +93,18 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "faas_secretd_build_registry_scope_total",
 			Help: "Build manifest pulls checked against the deployment's recorded registry scope (slice 3j-4), by result (in_scope, out_of_scope, unrecorded), in observe and enforce mode.",
 		}, []string{"result"}),
-		storage: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "faas_secretd_storage_grants_total",
-			Help: "Shared-store object grants secretd decided (ADR-20261117190000), by subject class (platform, deployment, sandbox_account, job, build), access (read, write) and outcome (granted, refused).",
-		}, []string{"class", "access", "outcome"}),
 	}
-	for _, c := range []prometheus.Collector{m.opens, m.refusals, m.buildScope, m.storage} {
+	for _, c := range []prometheus.Collector{m.opens, m.refusals, m.buildScope} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
 	}
 	// Pre-create the series alerts read, so increase() sees the first
 	// refusal instead of a series appearing at 1.
-	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover, rpcMintInternalServiceToken, rpcMintWorkflowIdentity, rpcGrantStorageObjects} {
+	for _, rpc := range []string{rpcOpenAppSecrets, rpcGrantPeer, rpcOpenCaptureKey, rpcOpenSidecarEnv, rpcOpenLogDrainHeader, rpcOpenTriggerConfig, rpcOpenEdgeHeaderSecret, rpcRegistryFetch, rpcVerifyPostgresCutover, rpcMintInternalServiceToken, rpcMintWorkflowIdentity} {
 		for _, reason := range []string{ReasonUnauthenticated, ReasonUnknownNode, ReasonNotAuthorized,
 			ReasonBudgetExhausted, ReasonUnreferenced, ReasonWrongAccount, ReasonOtherApp, ReasonEnvelope, ReasonOutOfScope} {
 			m.refusals.WithLabelValues(rpc, reason)
-		}
-	}
-	for _, class := range []string{"platform", "deployment", "sandbox_account", "job", "build"} {
-		for _, access := range []string{accessRead, accessWrite} {
-			for _, outcome := range []string{"granted", "refused"} {
-				m.storage.WithLabelValues(class, access, outcome)
-			}
 		}
 	}
 	for _, result := range []string{scopeInScope, scopeOutOfScope, scopeUnrecorded} {
@@ -129,12 +116,6 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 func (m *Metrics) scope(result string) {
 	if m != nil {
 		m.buildScope.WithLabelValues(result).Inc()
-	}
-}
-
-func (m *Metrics) storageGrant(class, access, outcome string, n int) {
-	if m != nil {
-		m.storage.WithLabelValues(class, access, outcome).Add(float64(n))
 	}
 }
 

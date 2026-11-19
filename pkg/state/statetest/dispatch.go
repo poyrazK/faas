@@ -29,8 +29,6 @@ import (
 var memDispatched = map[string]bool{
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
-	"LookupEventSchemaForPublish":            true,
-	"LookupPublishedEventAcceptance":         true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
 	"EvaluateStoredWorkflowFailurePolicies":  true,
@@ -5087,22 +5085,4 @@ func (s *Store) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, 
 		return override.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
 	}
 	return s.Store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
-}
-
-func (s *Mem) LookupEventSchemaForPublish(ctx context.Context, accountID, source, typ, version string) (bool, json.RawMessage, error) {
-	if over, ok := s.over.(interface {
-		LookupEventSchemaForPublish(context.Context, string, string, string, string) (bool, json.RawMessage, error)
-	}); ok {
-		return over.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
-	}
-	return s.MemStore.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
-}
-
-func (s *Mem) LookupPublishedEventAcceptance(ctx context.Context, account string, payload []byte) (state.PublishedEventAcceptance, error) {
-	if over, ok := s.over.(interface {
-		LookupPublishedEventAcceptance(context.Context, string, []byte) (state.PublishedEventAcceptance, error)
-	}); ok {
-		return over.LookupPublishedEventAcceptance(ctx, account, payload)
-	}
-	return s.MemStore.LookupPublishedEventAcceptance(ctx, account, payload)
 }

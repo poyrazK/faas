@@ -26,9 +26,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -215,16 +212,6 @@ type Builderd struct {
 	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
-	// activeReserved counts the slots in faas-cp-build.slice (the fixed
-	// allocator's slots and the BuildKit seed run count here too) and
-	// activeBorrowed those in faas-borrowed.slice; borrowedBuilds tracks the
-	// borrowed ones for the give-back (ADR-20261118154632). All under slotMu.
-	activeReserved int
-	activeBorrowed int
-	borrowedBuilds map[string]*borrowedBuild
-	// elastic is elastic builder slots; nil or off keeps the fixed
-	// allocator.
-	elastic *ElasticSlots
 	// sliceFreeMB overrides the builder-slice memory read in tests.
 	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
@@ -1158,7 +1145,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
-	slot, releaseSlot, acquired := b.acquireBuildSlot(ctx, build)
+	slot, releaseSlot, acquired := b.acquireSlot()
 	if !acquired {
 		// Requeue the row (NOT markFailed) so a later tick / notify
 		// can re-attempt it. RequeueBuild clears started_at but
@@ -1202,7 +1189,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		dependencyCacheSeedKey = dependencyCacheFamilyKey(app, fw, runtimeBaseRef)
 	}
 	vmReq := VMRequest{
-		Borrowed:               slot.Label == slotLabelBorrowed,
 		BuildDependencyDigest:  buildDependencyDigest,
 		PublicBuildURLs:        publicURLs,
 		DockerfileBuild:        dockerfileBuild,
@@ -1322,19 +1308,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.markFailed(ctx, build, state.FailureInfra, "vm spawn: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
-		// vmmd stopped running borrowed builders since it last said it did
-		// (ADR-20261118154632): the build waits in the queue, it did not fail.
-		if vmReq.Borrowed && status.Code(err) == codes.FailedPrecondition {
-			cancel()
-			if vm, ok := b.vm.(borrowedVM); ok {
-				vm.ForgetBorrowedCapability()
-			}
-			if rqErr := b.requeueClaim(ctx, build, requeueNoSlot); rqErr != nil {
-				b.log.Warn("builderd: requeue after vmmd refused a borrowed builder", "build", build.ID, "err", rqErr)
-			}
-			b.emitBuildLog(ctx, build.ID, "borrowed builder slot unavailable on this node — requeued\n")
-			return BuildResult{}, ErrNoSlot
-		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -1398,16 +1371,6 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	stopWatch()
 	<-watchDone
-	// A borrowed slot that gave its memory back to tenants returns the build
-	// to the queue at its place (ADR-20261118154632). A build that finished
-	// before its VM stopped keeps its result.
-	if actor, preempted := b.preemptionActor(build.ID, out); preempted && (err != nil || out.ExitCode != 0) {
-		if rqErr := b.requeuePreempted(ctx, build, actor); rqErr != nil && !errors.Is(rqErr, state.ErrNotFound) {
-			b.markFailed(ctx, build, state.FailureInfra, "borrowed build given back to tenants; requeue failed: "+rqErr.Error(), buildStart)
-			return BuildResult{}, rqErr
-		}
-		return BuildResult{}, ErrPreempted
-	}
 	if err != nil {
 		if ctx.Err() != nil {
 			// Cancelling the wait context does not necessarily terminate the

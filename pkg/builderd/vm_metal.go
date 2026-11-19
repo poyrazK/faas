@@ -53,10 +53,6 @@ type VMMDriver struct {
 	cli  vmmdpb.VmmdClient
 	conn *grpc.ClientConn
 
-	// borrowed caches vmmd's supports_borrowed_builders
-	// (ADR-20261118154632).
-	borrowed borrowedCapability
-
 	// builderBase is drive0: the read-only shared base that holds
 	// buildkit/Railpack/etc. Default is the canonical per-architecture
 	// runner-builder path.
@@ -395,8 +391,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		DependencyCacheRestored:     cacheRestored,
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
-		BuilderSliceOOMCounterValid: oomCounterErr == nil && !req.Borrowed,
-		Borrowed:                    req.Borrowed,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil,
 		HostSeedDrive:               seedDrive,
 		SeedOnly:                    req.BuildKitSeedOnly,
 	}
@@ -433,9 +428,6 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// seed run's empty drive. An older vmmd ignores it and the guest
 			// keeps BuildKit on drive1.
 			BuildkitSeedDrive: seedDrive,
-			// ADR-20261118154632: only sent after Ping reported
-			// supports_borrowed_builders.
-			Borrowed: req.Borrowed,
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -792,12 +784,11 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	exitCode := int(resp.GetExitCode())
 	ociImage := filepath.Join(h.ExportDir, "build", "out", "image.tar")
 	res := BuildOutcome{
-		BuildID:             h.BuildID,
-		ExitCode:            exitCode,
-		OCIImage:            ociImage,
-		ExportDir:           h.ExportDir,
-		InstanceID:          h.Instance,
-		PreemptedForTenants: resp.GetPreemptedForTenants(),
+		BuildID:    h.BuildID,
+		ExitCode:   exitCode,
+		OCIImage:   ociImage,
+		ExportDir:  h.ExportDir,
+		InstanceID: h.Instance,
 	}
 	// The guest's build-done manifest is authoritative for builder results.
 	// Firecracker may be SIGKILLed after the guest has reached "System

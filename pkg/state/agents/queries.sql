@@ -562,13 +562,6 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
    ORDER BY d.created_at DESC, d.id DESC LIMIT 1) tpl ON true
  WHERE sb.id=sqlc.arg(session_id)::text::uuid;
 
--- name: MarkSandboxSessionPlaced :execrows
--- schedd placed the session (ADR-20261117190000): record the node before it
--- boots the VM, so secretd grants that node the session's image and
--- snapshot. node_id stays unset until the VM is up.
-UPDATE sandbox_sessions SET placed_node_id=sqlc.arg(node_id)::text, updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
-
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.
 UPDATE sandbox_sessions SET state='ready', node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,

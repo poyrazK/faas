@@ -237,7 +237,6 @@ CREATE TABLE sandbox_sessions (
  lease_token text,
  lease_expires_at timestamptz,
  node_id text,
- placed_node_id text CHECK (placed_node_id IS NULL OR (char_length(placed_node_id) >= 1 AND char_length(placed_node_id) <= 128)),
  instance_id text,
  close_requested_at timestamptz,
  last_activity_at timestamptz NOT NULL DEFAULT now(),

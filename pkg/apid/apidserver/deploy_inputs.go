@@ -480,6 +480,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 		sourceBytes = preparedBytes
 		deltaOutcome = "completed"
+		devPatch = s.planDevPatch(r.Context(), app, sourcePath, sourceRoot, limits)
 	}
 	if sourceRoot != "" {
 		resolved, present, rootErr := resolveArchiveSourceRoot(sourcePath, sourceRoot, explicitSourceRoot)
@@ -492,21 +493,6 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		sourceRoot = resolved
-	}
-	// A live patch is planned against the root the build copies into the
-	// image: the selected root below the CLI's single wrapper directory
-	// (tarball.ResolveSourceRoot). Planned against the raw archive, patch
-	// entries kept the wrapper ("<dir>/version.txt"), so they landed in
-	// /app/<dir>/ where the app never reads them, and no rebuild path
-	// (package.json, lockfiles) ever matched (prod 2026-11-18).
-	devPatchRoot := sourceRoot
-	if developerSource {
-		if logical, rootErr := archiveLogicalRoot(sourcePath, sourceRoot); rootErr != nil {
-			s.log.Warn("developer live patch: source root not resolved; the build delivers this sync", "app_id", app.ID, "error", rootErr)
-		} else {
-			devPatchRoot = logical
-			devPatch = s.planDevPatch(r.Context(), app, sourcePath, devPatchRoot, limits)
-		}
 	}
 
 	// Wave 0 / year-one stateless-only: detect persistence-shaped
@@ -687,7 +673,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		}
 		if developerSource {
 			s.cancelSupersededDevBuilds(r.Context(), acct, app, d.ID)
-			published := s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, devPatchRoot, devPatch)
+			published := s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
 			s.settleDeferredDevBuild(r.Context(), app, d.ID, buildNotBefore, published, devPatch.preview)
 		}
 		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {

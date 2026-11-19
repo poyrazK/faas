@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"net"
 	"net/url"
 	"strconv"
@@ -192,11 +191,14 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 	}
 	w := s.stop(r.ID)
 	result := rehearsalpg.Evidence{Receipt: receipt(r), Status: "incomplete", Provenance: rehearsalpg.Provenance, DeploymentID: deployment, Spec: r.Spec, Before: r.Initial}
-	if e = s.captureSealedFixture(ctx, r, &result); e != nil {
+	if schemas, ok := s.Backend.(SchemaBackend); ok {
+		result.After, result.Schema, e = schemas.FenceAndCaptureSchema(ctx, r)
+		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
+	} else {
+		result.After, e = s.Backend.FenceAndCapture(ctx, r)
+	}
+	if e != nil {
 		result.Reason = "database collection failed or SQL was unfinished"
-		if errors.Is(e, errTaskParticipantPrivileges) {
-			result.Reason = "restricted Task database privileges could not be verified"
-		}
 	}
 	if w == nil {
 		result.Reason = "database collector owner was lost"
@@ -239,28 +241,6 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 		return result, ErrFixture
 	}
 	return result, nil
-}
-
-func (s *Service) captureSealedFixture(ctx context.Context, r rehearsalpg.Resource, result *rehearsalpg.Evidence) error {
-	participants, err := s.Catalog.ScenarioPostgresTaskParticipants(ctx, r)
-	if err != nil {
-		return errTaskParticipantPrivileges
-	}
-	r.TaskParticipants = participants
-	if len(participants) > 0 {
-		// Only the native PostgreSQL backend verifies these privileges
-		// in the frozen database before collecting the final evidence.
-		if _, ok := s.Backend.(*Postgres); !ok {
-			return errTaskParticipantPrivileges
-		}
-	}
-	if schemas, ok := s.Backend.(SchemaBackend); ok {
-		result.After, result.Schema, err = schemas.FenceAndCaptureSchema(ctx, r)
-		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
-	} else {
-		result.After, err = s.Backend.FenceAndCapture(ctx, r)
-	}
-	return err
 }
 
 func (s *Service) failedCleanup(ctx context.Context, r rehearsalpg.Resource) {

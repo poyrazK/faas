@@ -97,10 +97,7 @@ func Owner(ctx context.Context, store any, app state.App) (state.ReleaseFreezeOw
 
 // For reads the unlifted freezes, not yet ended, that cover app: its
 // owner's freezes on all apps and on app. A store without freezes holds
-// none. An owner-wide freeze does not cover a preview app (a developer
-// environment or a pull-request preview): a preview is not a production
-// release (ADR-20261019071733), although it deploys into its own app's
-// default scope. A freeze set on the preview app itself still applies.
+// none.
 func For(ctx context.Context, store any, app state.App, now time.Time) ([]state.ReleaseFreeze, error) {
 	freezes, ok := store.(state.ReleaseFreezeStore)
 	if !ok {
@@ -116,9 +113,6 @@ func For(ctx context.Context, store any, app state.App, now time.Time) ([]state.
 	}
 	covering := all[:0]
 	for _, f := range all {
-		if f.AppID == "" && app.PreviewOfSlug != "" {
-			continue
-		}
 		if Covers(f, app.ID) {
 			covering = append(covering, f)
 		}

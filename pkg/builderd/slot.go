@@ -2,6 +2,7 @@ package builderd
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -95,16 +96,19 @@ func (b *Builderd) acquireSlot() (SlotDecision, func(), bool) {
 		decision.Reason = "guaranteed slot available"
 	}
 	b.activeSlots++
-	// Both of this allocator's slots run in faas-cp-build.slice; counting
-	// them as reserved keeps elastic slots right if builder_elastic_slots
-	// turns on while they run (ADR-20261118154632).
-	b.activeReserved++
 	b.pipeline.observeAdmission("granted")
-	return decision, b.releaseOnce(func() {
-		if b.activeReserved > 0 {
-			b.activeReserved--
-		}
-	}), true
+
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			b.slotMu.Lock()
+			if b.activeSlots > 0 {
+				b.activeSlots--
+			}
+			b.slotMu.Unlock()
+		})
+	}
+	return decision, release, true
 }
 
 // acquireIdleSlot takes the builder slot only when no build holds it, for
@@ -118,13 +122,16 @@ func (b *Builderd) acquireIdleSlot() (func(), bool) {
 		return nil, false
 	}
 	b.activeSlots++
-	// The seed run holds the reserved slot (faas-cp-build.slice).
-	b.activeReserved++
-	return b.releaseOnce(func() {
-		if b.activeReserved > 0 {
-			b.activeReserved--
-		}
-	}), true
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			b.slotMu.Lock()
+			if b.activeSlots > 0 {
+				b.activeSlots--
+			}
+			b.slotMu.Unlock()
+		})
+	}, true
 }
 
 // DecideSlot computes whether a builder spawn is allowed, given the current

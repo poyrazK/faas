@@ -15,8 +15,7 @@ import (
 // every live VM. faas-tenant itself parents VMs launched with flat tenant
 // cgroups (ADR-20261109172421 step 6.5).
 func TestSystemdSlicesPinsEveryVMParent(t *testing.T) {
-	// faas-borrowed holds builders on borrowed slots (ADR-20261118154632).
-	want := []string{"faas-borrowed", "faas-cp-build", "faas-tenant"}
+	want := []string{"faas-cp-build", "faas-tenant"}
 	for _, plan := range api.Plans {
 		want = append(want, "faas-"+plan.SliceName())
 	}

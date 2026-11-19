@@ -39,7 +39,6 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
-	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -67,7 +66,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
-	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -934,13 +932,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	} else if deferred {
 		log.Info("vmmd: shared-store deletes deferred to the control plane")
-	}
-	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
-	// store credential; each object is reached through a secretd grant.
-	if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "vmmd", log); err != nil {
-		return err
-	} else {
-		defer closeGrants()
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical
@@ -2211,17 +2202,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
 		WithSandboxWorkspaces(storageBackend)
-	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
-	// give-back of their memory to tenants.
-	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)
-	impl.WithBorrowedBuilders(borrowedBuilders)
-	go borrowedBuilders.Run(ctx, func(killCtx context.Context, instance string) error {
-		_, _, err := signalAdapter{mgr}.SignalAndKill(killCtx, instance, 9, 0)
-		return err
-	})
-	if store != nil && pool != nil {
-		startBorrowedBuilderWatcher(ctx, store, pool, borrowedBuilders, log)
-	}
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
