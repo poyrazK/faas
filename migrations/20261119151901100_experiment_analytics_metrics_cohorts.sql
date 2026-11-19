@@ -1,4 +1,4 @@
--- filename: 20261119104500100_experiment_analytics_metrics_cohorts.sql
+-- filename: 20261119151901100_experiment_analytics_metrics_cohorts.sql
 -- migration-compat: expand
 -- ADR 20261119102741: funnel and retention experiment metrics, CUPED and
 -- analytics cohorts. Experiments gain their funnel or retention definition,
