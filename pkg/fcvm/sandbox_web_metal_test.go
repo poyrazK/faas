@@ -151,8 +151,8 @@ func TestMetalSandboxBrowserReadsAGrantedPage(t *testing.T) {
 		t.Fatalf("fetch after the grant: exit %d timed out %v: %s", res.ExitCode, res.TimedOut, res.Output)
 	}
 	var read struct {
-		URL   string `json:"url"`
-		Text  string `json:"text"`
+		URL  string `json:"url"`
+		Text string `json:"text"`
 	}
 	if err := json.Unmarshal(res.Output, &read); err != nil || !strings.Contains(read.Text, "fl=") {
 		t.Fatalf("fetch output %q: %v", res.Output, err)
