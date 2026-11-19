@@ -98,6 +98,15 @@ type HostedTaskRehearsalPlan struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type HostedTaskRehearsalRun struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string

@@ -22117,6 +22117,18 @@
     "kind": "operational"
   },
   {
+    "table": "hosted_task_rehearsal_runs",
+    "columns": [
+      "account_id",
+      "approval_expires_at",
+      "id",
+      "plan_sha256",
+      "reserved_at",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
