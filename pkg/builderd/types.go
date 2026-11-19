@@ -63,6 +63,9 @@ type DeferredCacheSpec struct {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
+	// Borrowed runs the builder on a borrowed builder slot, in
+	// faas-borrowed.slice (ADR-20261118154632).
+	Borrowed              bool
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
@@ -160,6 +163,10 @@ type BuildHandle struct {
 	// build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// Borrowed is a builder on a borrowed slot (ADR-20261118154632). It runs
+	// outside faas-cp-build.slice, so that slice's oom_kill counter says
+	// nothing about it.
+	Borrowed bool
 	// DeferredCache is set when the build's manifest asked the guest to defer
 	// its dependency-cache export.
 	DeferredCache *DeferredCacheSpec
@@ -176,6 +183,9 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
+	// PreemptedForTenants: vmmd destroyed this borrowed builder because
+	// tenants needed its memory (ADR-20261118154632).
+	PreemptedForTenants   bool
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
 	DockerfileBuildSHA256 string
