@@ -75,17 +75,17 @@ func TestStorageObjectReferenced_JobAttemptsAndSources(t *testing.T) {
 	src := func(id string) string { return "sources/" + id + ".tar.gz" }
 
 	for key, want := range map[string]bool{
-		attempt(pending):                     true,
-		attempt(failed):                      false,
-		published:                            true,
-		attempt(ready):                       false,
-		attempt(uuid.NewString()):            false, // job gone
-		build("queued"):                      true,
-		build("running"):                     true,
-		build("succeeded"):                   false,
-		src(oldUUIDv7(t, old)):               false, // build gone
-		src(oldUUIDv7(t, time.Now())):        true,  // inside the orphan grace
-		src(uuid.NewString()):                true,  // v4: no creation time
+		attempt(pending):                    true,
+		attempt(failed):                     false,
+		published:                           true,
+		attempt(ready):                      false,
+		attempt(uuid.NewString()):           false, // job gone
+		build("queued"):                     true,
+		build("running"):                    true,
+		build("succeeded"):                  false,
+		src(oldUUIDv7(t, old)):              false, // build gone
+		src(oldUUIDv7(t, time.Now())):       true,  // inside the orphan grace
+		src(uuid.NewString()):               true,  // v4: no creation time
 		"sources/" + strings.Repeat("x", 8): true,
 	} {
 		ref, class, err := store.StorageObjectReferenced(ctx, key)

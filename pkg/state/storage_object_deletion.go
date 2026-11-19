@@ -61,12 +61,12 @@ type StorageObjectDeletionStore interface {
 
 // Classes of shared-store keys the object GC knows how to check.
 const (
-	StorageObjectClassSnapshot     = "snapshot"
-	StorageObjectClassLayer        = "layer"
-	StorageObjectClassPlatform     = "platform"
+	StorageObjectClassSnapshot = "snapshot"
+	StorageObjectClassLayer    = "layer"
+	StorageObjectClassPlatform = "platform"
 	// StorageObjectClassSource is a build's uploaded source archive
 	// (sources/<build>.tar.gz, ADR-20261117190000).
-	StorageObjectClassSource = "source"
+	StorageObjectClassSource       = "source"
 	StorageObjectClassUnclassified = "unclassified"
 )
 
