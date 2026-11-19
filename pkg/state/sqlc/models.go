@@ -566,6 +566,8 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	// ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.
+	CapabilityPolicy []byte
 }
 
 type AlertChannelResolveRetry struct {

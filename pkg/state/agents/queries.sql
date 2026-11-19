@@ -30,18 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
   sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
-  sqlc.arg(pause_during_model_calls)::boolean)
+  sqlc.arg(pause_during_model_calls)::boolean,sqlc.narg(capability_policy)::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many

@@ -11623,6 +11623,10 @@ var (
 	// reservations plus the call's reservation.
 	AgentRunAIBudgetDefaultMillicents = [4]int64{0, 50_000, 200_000, 500_000}
 
+	// AgentToolCallsPerRunMax is one run's tool-call ceiling over the
+	// capability gateway (ADR-20261027090016 Limits), by plan.
+	AgentToolCallsPerRunMax = [4]int{0, 1_000, 5_000, 20_000}
+
 	// AgentCheckoutArchiveMaxBytes caps a checkout's compressed archive
 	// (ADR-20261027090010 §3), matching the plans' SourceTarballMaxMB.
 	AgentCheckoutArchiveMaxBytes = [4]int64{0, 100 << 20, 250 << 20, 250 << 20}
@@ -11723,6 +11727,15 @@ const (
 	// AgentModelIntegrationsMax bounds a version's model integrations: one
 	// per model provider a harness may point at the relay.
 	AgentModelIntegrationsMax = 2
+	// Capability gateway (ADR-20261027090016 amendment 1). A run makes at
+	// most AgentToolCallsPerRunMax tool calls; a policy names at most
+	// AgentCapabilityPolicyToolsMax tools. web_fetch reads at most
+	// AgentWebFetchMaxBytes of one response within AgentWebFetchTimeoutSec,
+	// following at most AgentWebFetchRedirectsMax redirects.
+	AgentCapabilityPolicyToolsMax = 64
+	AgentWebFetchMaxBytes         = 1 << 20
+	AgentWebFetchTimeoutSec       = 20
+	AgentWebFetchRedirectsMax     = 5
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most
