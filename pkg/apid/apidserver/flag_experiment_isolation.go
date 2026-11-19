@@ -272,8 +272,8 @@ func (s *server) getFlagExperimentHoldout(w http.ResponseWriter, r *http.Request
 		return
 	}
 	out := api.FlagExperimentHoldout{}
-	if v.Config.Holdout != nil {
-		out.BasisPoints = v.Config.Holdout.BasisPoints
+	if v.Holdout != nil {
+		out.BasisPoints = v.Holdout.BasisPoints
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -353,7 +353,7 @@ func (s *server) getFlagExperimentHoldoutReport(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrInternal("feature flags unavailable"))
 		return
 	}
-	report, err := holdoutReport(r.Context(), analytics, v.Config.Holdout, sc.env.ID, event, from, until)
+	report, err := holdoutReport(r.Context(), analytics, v.Holdout, sc.env.ID, event, from, until)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("product analytics unavailable"))
 		return
