@@ -24,6 +24,7 @@ func (s *MemoryStore) customRolesOf(databaseID string) map[string]CustomRole {
 func cloneCustomRole(role CustomRole) CustomRole {
 	role.GrantedTo = slices.Clone(role.GrantedTo)
 	role.MemberOf = slices.Clone(role.MemberOf)
+	role.DefaultFor = slices.Clone(role.DefaultFor)
 	return role
 }
 
@@ -104,6 +105,9 @@ func (s *MemoryStore) SaveCustomRole(_ context.Context, role CustomRole, limit i
 	}
 	if customRoleCycle(current, role.Name, role.MemberOf) {
 		return CustomRole{}, ErrInvalid
+	}
+	if customRoleDefaultTaken(current, role) != "" {
+		return CustomRole{}, ErrCustomRoleDefaultTaken
 	}
 	role.State = CustomRolePending
 	role.Revision = existing.Revision + 1

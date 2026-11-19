@@ -329,7 +329,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// UseGrants makes every GCS backend under b reach its bucket only through
+// UseGrants makes every GCS and S3 backend under b reach its bucket only through
 // granter (ADR-20261117190000), walking composites as DeferDeletes does. It
 // returns how many backends it switched. Each one must already defer its
 // deletes: a node with grants has no delete right.
@@ -343,6 +343,12 @@ func UseGrants(b StorageBackend, granter ObjectGranter, client *http.Client) (in
 			return 0, errors.New("storage: a granted GCS backend must defer its deletes first (FAAS_STORAGE_DELETE_MODE=defer)")
 		}
 		be.store = newGrantedGCSStore(granter, client)
+		return 1, nil
+	case *S3StorageBackend:
+		if be.deferDelete == nil {
+			return 0, errors.New("storage: a granted S3 backend must defer its deletes first (FAAS_STORAGE_DELETE_MODE=defer)")
+		}
+		be.store = newGrantedS3Store(granter, client)
 		return 1, nil
 	case *LocalCacheBackend:
 		return UseGrants(be.parent, granter, client)
