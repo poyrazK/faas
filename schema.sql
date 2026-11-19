@@ -47149,6 +47149,7 @@ CREATE TABLE public.managed_postgres_custom_roles (
     retry_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    default_for text[] DEFAULT '{}'::text[] NOT NULL,
     CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
     CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
     CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
@@ -70729,6 +70730,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
     ADD CONSTRAINT managed_postgres_creation_receipts_pkey PRIMARY KEY (kind, backend_id, resource_id);
+
+
+--
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_default_for_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_default_for_check CHECK (((default_for <@ ARRAY['read_only'::text, 'read_write'::text]) AND (default_for <@ granted_to))) NOT VALID;
 
 
 --

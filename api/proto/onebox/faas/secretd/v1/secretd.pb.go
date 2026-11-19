@@ -27,13 +27,20 @@ const (
 type StorageObjectRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Key   string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	// op is get, get_generation, create or replace.
+	// op is get, head, get_generation, create, replace, or (S3) one of
+	// create_multipart, upload_part, complete_multipart, abort_multipart.
 	Op string `protobuf:"bytes,2,opt,name=op,proto3" json:"op,omitempty"`
-	// generation conditions get_generation and replace.
+	// generation conditions get_generation and a GCS replace.
 	Generation int64 `protobuf:"varint,3,opt,name=generation,proto3" json:"generation,omitempty"`
 	// content_type and metadata are signed into a write.
-	ContentType   string            `protobuf:"bytes,4,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
-	Metadata      map[string]string `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	ContentType string            `protobuf:"bytes,4,opt,name=content_type,json=contentType,proto3" json:"content_type,omitempty"`
+	Metadata    map[string]string `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// etag conditions an S3 replace or complete_multipart (ADR-20261117190000
+	// slice 4).
+	Etag string `protobuf:"bytes,6,opt,name=etag,proto3" json:"etag,omitempty"`
+	// upload_id and part_number name an S3 multipart upload and its part.
+	UploadId      string `protobuf:"bytes,7,opt,name=upload_id,json=uploadId,proto3" json:"upload_id,omitempty"`
+	PartNumber    int32  `protobuf:"varint,8,opt,name=part_number,json=partNumber,proto3" json:"part_number,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -101,6 +108,27 @@ func (x *StorageObjectRequest) GetMetadata() map[string]string {
 		return x.Metadata
 	}
 	return nil
+}
+
+func (x *StorageObjectRequest) GetEtag() string {
+	if x != nil {
+		return x.Etag
+	}
+	return ""
+}
+
+func (x *StorageObjectRequest) GetUploadId() string {
+	if x != nil {
+		return x.UploadId
+	}
+	return ""
+}
+
+func (x *StorageObjectRequest) GetPartNumber() int32 {
+	if x != nil {
+		return x.PartNumber
+	}
+	return 0
 }
 
 type GrantStorageObjectsRequest struct {
@@ -1752,7 +1780,7 @@ var File_onebox_faas_secretd_v1_secretd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"\n" +
-	"$onebox/faas/secretd/v1/secretd.proto\x12\x16onebox.faas.secretd.v1\"\x90\x02\n" +
+	"$onebox/faas/secretd/v1/secretd.proto\x12\x16onebox.faas.secretd.v1\"\xe2\x02\n" +
 	"\x14StorageObjectRequest\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x0e\n" +
 	"\x02op\x18\x02 \x01(\tR\x02op\x12\x1e\n" +
@@ -1760,7 +1788,11 @@ const file_onebox_faas_secretd_v1_secretd_proto_rawDesc = "" +
 	"generation\x18\x03 \x01(\x03R\n" +
 	"generation\x12!\n" +
 	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12V\n" +
-	"\bmetadata\x18\x05 \x03(\v2:.onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\bmetadata\x18\x05 \x03(\v2:.onebox.faas.secretd.v1.StorageObjectRequest.MetadataEntryR\bmetadata\x12\x12\n" +
+	"\x04etag\x18\x06 \x01(\tR\x04etag\x12\x1b\n" +
+	"\tupload_id\x18\a \x01(\tR\buploadId\x12\x1f\n" +
+	"\vpart_number\x18\b \x01(\x05R\n" +
+	"partNumber\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"d\n" +

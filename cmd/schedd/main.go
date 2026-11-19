@@ -1771,7 +1771,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.Role == role.RoleComputeOnly {
 			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
 		}
-		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		// ADR-20261117190000: granted compute nodes cannot list the store,
+		// so the jobs/ and sources/ sweeps run here too.
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).WithSweep(store).Run(ctx)
 		log.Info("schedd: object GC enabled")
 	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
