@@ -58,6 +58,9 @@ type Runner struct {
 	// retention is what rows still reference (ADR-20261114182830); nil
 	// leaves the node cache to plain oldest-first eviction.
 	retention state.NodeCacheRetentionReader
+	// owned lists and re-queues the live snapshots of the apps this node
+	// owns (ADR-20261118160000); nil when the store has no such reads.
+	owned state.NodeOwnedSnapshotStore
 
 	// refetched is when each snapshot's evicted replica was last fetched
 	// back (ADR-20261115140000).

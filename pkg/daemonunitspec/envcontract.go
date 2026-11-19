@@ -751,6 +751,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_MANIFEST_PATH", Owners: []string{"imaged"}, Source: EnvSourceDropin},
 	{Name: "FAAS_MCP_BRIDGE_LOOPBACK", Owners: []string{"gatewayd-public"}, Source: EnvSourceDropin, Note: "ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane"},
 	{Name: "FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261117135916; opt-in owner-selected native managed PostgreSQL Task binding qualification; bounded read-only probes, metadata receipts only, no execution authority"},
+	{Name: "FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261118062934; opt-in hosted Task rehearsal plans and separate owner approval for a disposable target"},
 	{Name: "FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261116183545; opt-in encrypted authored Task source retention; only 1 enables writes, using independent Account-domain sealing; no approval or execution authority"},
 
 	{Name: "FAAS_MCP_PRIVATE_TOOL_INVOCATION", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required"},
@@ -816,6 +817,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH", Owners: []string{"outboundd"}, Source: EnvSourceDropin, Note: "workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml"},
 	{Name: "FAAS_OVERLAY_INTERFACE", Owners: []string{"vmmd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OVERLAY_IP", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled"},
+	{Name: "FAAS_OWNER_BALANCE", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-20261118160000: the control plane's schedd moves parked, long-idle apps toward the least owned node; on by default, `off` turns the balance off"},
 	{Name: "FAAS_OWNER_CACHE", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off"},
 	{Name: "FAAS_PADDLE_API_KEY", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_PADDLE_SANDBOX", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},

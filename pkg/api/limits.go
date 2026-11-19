@@ -336,6 +336,9 @@ const (
 	// request's reason, in characters.
 	SupportReasonMinChars = 3
 	SupportReasonMaxChars = 400
+	// SupportGrantSummaryPollInterval is how often apid looks for ended
+	// grants to mail their end-of-access summary.
+	SupportGrantSummaryPollInterval = time.Minute
 )
 
 // EmailChangeRevertWindow is how long after a confirmed sign-in email
@@ -2830,6 +2833,45 @@ const (
 	FlagsMaxOwnerBytes = 128
 )
 
+// Product analytics bounds (ADR 20261117084505). Retention is per plan:
+// Limits.AnalyticsRetentionDays; events share Limits.FlagEventsPerMonth.
+const (
+	// AnalyticsEventMaxProperties bounds an event's string properties.
+	AnalyticsEventMaxProperties = 10
+	// AnalyticsPropertyValueMaxBytes bounds one property value.
+	AnalyticsPropertyValueMaxBytes = 256
+	// AnalyticsPropertyKeysMaxPerEnvironment bounds distinct property keys
+	// per environment; a new key over the bound is dropped from the event.
+	AnalyticsPropertyKeysMaxPerEnvironment = 50
+	// AnalyticsEventMaxFlags bounds the flag decisions an event carries,
+	// the same bound as a propagated decision set.
+	AnalyticsEventMaxFlags = 32
+	// AnalyticsSubjectMaxBytes bounds an opaque end-user subject.
+	AnalyticsSubjectMaxBytes = 128
+	// AnalyticsQueryMaxDays bounds a query's range, inside the plan's
+	// retention.
+	AnalyticsQueryMaxDays = 90
+	// AnalyticsQueryMaxUnits bounds the units a funnel or retention query
+	// reads; results say when they were truncated.
+	AnalyticsQueryMaxUnits = 200_000
+	// AnalyticsMaxBreakdownValues bounds breakdown values; the rest are
+	// reported as (other).
+	AnalyticsMaxBreakdownValues = 20
+	// AnalyticsFunnelMinSteps and AnalyticsFunnelMaxSteps bound a funnel.
+	AnalyticsFunnelMinSteps = 2
+	AnalyticsFunnelMaxSteps = 6
+	// AnalyticsFunnelMinWindow and AnalyticsFunnelMaxWindow bound a
+	// funnel's conversion window.
+	AnalyticsFunnelMinWindow = time.Hour
+	AnalyticsFunnelMaxWindow = 30 * 24 * time.Hour
+	// AnalyticsRetentionMaxPeriods bounds a retention query's periods.
+	AnalyticsRetentionMaxPeriods = 12
+	// AnalyticsQueryTimeout bounds one analytics query.
+	AnalyticsQueryTimeout = 15 * time.Second
+	// AnalyticsSweepBatch bounds the events one sweep statement deletes.
+	AnalyticsSweepBatch = 10_000
+)
+
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
 // quota is per plan: Limits.FlagEventsPerMonth.
 const (
@@ -3916,6 +3958,30 @@ const (
 	// NodeCacheSweepInterval is how often a compute node removes cached
 	// snapshot captures and runtime release bases nothing needs any more.
 	NodeCacheSweepInterval = 10 * time.Minute
+	// OwnedSnapshotRefetchAfter is how long a node waits before it fetches
+	// again a live snapshot of an app it owns that its cache evicted
+	// (ADR-20261118160000). The wait bounds the churn when the apps a node
+	// owns outgrow its cache budget; a missing replica is fetched at the
+	// next sweep.
+	OwnedSnapshotRefetchAfter = time.Hour
+	// Ownership balance (ADR-20261118160000). A new app goes to the node that
+	// owns the least app RAM for its ceiling, but nothing moved apps back
+	// after a drain or a dead node moved them off, so one drain skewed
+	// ownership for good (production-us 2026-11-17/18: 77 apps and 50 GB on
+	// one node, 1 GB on the other, three hand rebalances). The control plane
+	// moves parked apps from the node owning the largest share of its
+	// admission ceiling to the smallest once the gap exceeds
+	// OwnerBalanceTriggerSpreadPct points, until it is within
+	// OwnerBalanceTargetSpreadPct, at most OwnerBalanceMovesPerTick apps
+	// every OwnerBalanceInterval. Only apps idle (not woken and not moved)
+	// for OwnerBalanceMinIdle move, coldest first, so a busy app keeps its
+	// warm cache; the new owner fetches the moved app's snapshot before its
+	// next wake.
+	OwnerBalanceTriggerSpreadPct = 20
+	OwnerBalanceTargetSpreadPct  = 10
+	OwnerBalanceMovesPerTick     = 5
+	OwnerBalanceInterval         = time.Minute
+	OwnerBalanceMinIdle          = 24 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -6645,6 +6711,11 @@ type Limits struct {
 	// and counted, never billed. Provisional until the financial model
 	// carries it.
 	FlagEventsPerMonth int64
+	// AnalyticsRetentionDays is how long raw product analytics events are
+	// kept (ADR 20261117084505 §2): Free 0 (off), Hobby 30, Pro 90, Scale
+	// 365. Analytics events share FlagEventsPerMonth. Provisional until the
+	// financial model carries analytics storage.
+	AnalyticsRetentionDays int
 	// DebugTelemetryRequestsPerMinute (ADR-127) is the per-account
 	// rate cap on the IncrementRequestTelemetry ingest RPC. The
 	// recorder publisher reads this at startup; per-record
@@ -7247,6 +7318,7 @@ var planLimits = map[Plan]Limits{
 		Profiling:                       ProfilingLimits{},
 		DebugTelemetryRetentionDays:     0,
 		FlagEventsPerMonth:              0,
+		AnalyticsRetentionDays:          0,
 		DebugTelemetryRequestsPerMinute: 0,
 		APIRequestsPerMinute:            600,
 		DebugGuestLogExportsPerMinute:   0,
@@ -7696,6 +7768,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     3,
 		FlagEventsPerMonth:              100_000,
+		AnalyticsRetentionDays:          30,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60, CaptureStorageBytes: 256 << 20},
 		DebugTelemetryRequestsPerMinute: 1000,
 		APIRequestsPerMinute:            1200,
@@ -8113,6 +8186,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     7,
 		FlagEventsPerMonth:              1_000_000,
+		AnalyticsRetentionDays:          90,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180, CaptureStorageBytes: 1 << 30},
 		DebugTelemetryRequestsPerMinute: 10000,
 		APIRequestsPerMinute:            3000,
@@ -8559,6 +8633,7 @@ var planLimits = map[Plan]Limits{
 		DebugTelemetryEnabled:           true,
 		DebugTelemetryRetentionDays:     14,
 		FlagEventsPerMonth:              10_000_000,
+		AnalyticsRetentionDays:          365,
 		Profiling:                       ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600, CaptureStorageBytes: 4 << 30},
 		DebugTelemetryRequestsPerMinute: 50000,
 		APIRequestsPerMinute:            6000,
@@ -12802,6 +12877,16 @@ func (p Plan) DebugTelemetryRetentionDays() int {
 		return 0
 	}
 	return l.DebugTelemetryRetentionDays
+}
+
+// AnalyticsRetentionDays returns how long the plan keeps raw product
+// analytics events (ADR 20261117084505 §2); 0 on unknown plans and Free.
+func (p Plan) AnalyticsRetentionDays() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.AnalyticsRetentionDays
 }
 
 // FlagEventsPerMonth returns the plan's monthly flag conversion event quota

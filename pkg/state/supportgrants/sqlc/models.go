@@ -8,19 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type SupportGrant struct {
-	ID                 pgtype.UUID
-	OrgID              pgtype.UUID
-	AppIds             []pgtype.UUID
-	CreatedByAccountID pgtype.UUID
-	RequestID          pgtype.UUID
-	Reason             string
-	CreatedAt          pgtype.Timestamptz
-	ExpiresAt          pgtype.Timestamptz
-	RevokedAt          pgtype.Timestamptz
-	RevokedByAccountID pgtype.UUID
-}
-
 type SupportGrantRequest struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
@@ -31,4 +18,7 @@ type SupportGrantRequest struct {
 	ExpiresAt          pgtype.Timestamptz
 	DecidedAt          pgtype.Timestamptz
 	DecidedByAccountID pgtype.UUID
+	AppIds             []pgtype.UUID
+	TtlSeconds         pgtype.Int4
+	ExtendsGrantID     pgtype.UUID
 }

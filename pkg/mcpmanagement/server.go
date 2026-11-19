@@ -247,6 +247,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerUploadDeploys(s, m)
 	registerEnvironments(s, m)
 	registerFlagExperiments(s, m)
+	registerInsights(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
 	registerAuthorizationLease(s)

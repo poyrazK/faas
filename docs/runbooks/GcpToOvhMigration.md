@@ -181,7 +181,11 @@ manifest.
    before the promotion is present.
 8. **Backups**: run the immediate push (`PostgresBackup.md`) and confirm it
    lands in the OVH backup bucket.
-9. **Resume CD.**
+9. **Point releases at OVH**: merge the PR that changes
+   `deploy/manifest/production/release-template` to `ovh-live.template.yaml`
+   before the first release after the window. Until it merges, a release
+   still materializes the GCP topology.
+10. **Resume CD.**
 
 ### Rollback
 

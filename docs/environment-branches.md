@@ -107,15 +107,28 @@ versioning when the branch is made:
   objects, so a parent write made after branching shows through until the
   branch writes or deletes that key.
 
-`--status` shows which applies to each bucket. Turn versioning on for the
+`--status` shows which applies to each bucket. The object-storage commands
+list the branch's bucket the same way, marking each object read from the
+parent (`from_parent`). Turn versioning on for the
 parent bucket before branching to get point-in-time reads.
 
 A server-side copy (CopyObject or UploadPartCopy) inside the branch bucket
 whose source exists only in the parent copies from the parent, as the
 branch would read it. This works with the credential the branch's binding
 was given; a credential you make yourself on the branch bucket copies only
-the branch's own objects. The object-storage commands list only the
-objects the branch wrote itself.
+the branch's own objects.
+
+### Crons and event subscriptions
+
+A branch copies its parent's crons and event subscriptions paused, so the
+branch runs no schedule and receives no event until you turn them on:
+
+```sh
+gregale env resume-automation pr-42 --project shop
+```
+
+This turns on the ones the parent ran, for the branch alone. Copied crons
+count against your plan's cron limit.
 
 ## Outbound traffic
 

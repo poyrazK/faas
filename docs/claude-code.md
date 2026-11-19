@@ -21,12 +21,22 @@ container or CI, put a scoped key in Claude Code's environment as
 ## Tell Claude Code how the project deploys
 
 Projects made with `gregale init` include an `AGENTS.md` with Gregale's
-deploy, check and rollback steps. For an existing project, add the section in
+deploy, check and rollback steps.
+
+For an existing project, run this in its root:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a Gregale section to `AGENTS.md`; see
 [Project instructions for agents](agents.md#project-instructions-for-agents).
+It also adds `@AGENTS.md` to an existing `CLAUDE.md`.
 
 Claude Code reads `CLAUDE.md`; recent versions also read `AGENTS.md` when a
-project has no `CLAUDE.md`. If the project has a `CLAUDE.md`, or to be sure on
-any version, add this line at the top of `CLAUDE.md`:
+project has no `CLAUDE.md`. If the project has a `CLAUDE.md`,
+`gregale init --agents` adds this line at the top of it; on a project without
+one, add it yourself to be sure on any version:
 
 ```text
 @AGENTS.md

@@ -21,6 +21,7 @@ import (
 )
 
 type PrivateExecutionOptions struct {
+	RehearsalPlanEnabled       bool
 	BindingVerificationEnabled bool
 	// BindingProbeConnect is a trusted driver seam for isolated native tests.
 	// Production leaves it nil and uses the public-destination TLS probe.

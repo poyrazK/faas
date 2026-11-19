@@ -83,6 +83,7 @@
         "/v1/agent-runs",
         "/v1/agent-tools",
         "/v1/agents",
+        "/v1/sandbox-egress-policy",
         "/v1/sandbox-snapshots",
         "/v1/sandbox-templates",
         "/v1/sandboxes"
@@ -1267,7 +1268,9 @@
       "routes": [
         "/dashboard/orgs/{}/support",
         "/dashboard/support",
+        "/dashboard/support-access",
         "/v1/orgs/{}/support",
+        "/v1/orgs/{}/support-access",
         "/v1/support"
       ]
     },
@@ -2611,10 +2614,12 @@
       "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
       "routes": [
         "/v1/projects/{}/environments/{}/flags",
+        "/v1/projects/{}/environments/{}/insights",
         "/v1/runtime/flags"
       ],
       "cli": [
-        "flags"
+        "flags",
+        "insights"
       ]
     },
     {
@@ -4651,6 +4656,9 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems",
       "routes": [
         "/v1/apps/{}/protection"
+      ],
+      "settings": [
+        "manifest.protection"
       ],
       "cli": [
         "app protection"

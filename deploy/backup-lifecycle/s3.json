@@ -1,0 +1,31 @@
+{
+  "Rules": [
+    {
+      "ID": "faas-pg-basebackup-expire",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "faas-pg-basebackup/"},
+      "Expiration": {"Days": 14},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 7}
+    },
+    {
+      "ID": "faas-cp-state-expire",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "faas-cp-state/"},
+      "Expiration": {"Days": 14},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 7}
+    },
+    {
+      "ID": "faas-pg-wal-expire",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "faas-pg-wal/"},
+      "Expiration": {"Days": 16},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 7}
+    },
+    {
+      "ID": "faas-backup-abort-incomplete-uploads",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 2}
+    }
+  ]
+}

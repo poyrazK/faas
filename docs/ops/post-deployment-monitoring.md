@@ -641,7 +641,7 @@ retains first/last increases and a fixed-order bounded union of observed
 source/outcome categories, plus sticky baselines and incomplete evidence. It
 never sums overlapping poll deltas. Commands, cron/task identities, raw targets,
 output and provider errors stay outside the artifacts. See the
-[cron-outcome decision](../adr/20261116120000-observed-command-cron-outcomes.md).
+[cron-outcome decision](../adr/20261116120001-observed-command-cron-outcomes.md).
 
 Loop-health reads retain priority within the shared three-second API budget;
 these advisory counters use the remaining deadline. Missing counter evidence

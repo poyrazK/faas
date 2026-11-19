@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -87,5 +88,33 @@ func TestStartPrivateNodeReceiptRetainsAppAndPriorVerification(t *testing.T) {
 	if err != nil || saved.ProjectSessionID != "" || saved.AppID != "app" ||
 		saved.DeploymentID != "new-release" || saved.VerifiedDeploymentID != "earlier-release" {
 		t.Fatalf("receipt lost identity or prior response proof: %+v, %v", saved, err)
+	}
+}
+
+func TestStartPrivateNodeOwnsTheCheckoutLink(t *testing.T) {
+	startTestEnvironment(t)
+	source := resolvedTempDir(t)
+	r := startTestRunner(t, source, "")
+	r.selectPrivateNodeSource(source, "named-node")
+	called := false
+	r.deploy = func(_ context.Context, _ []string, _ bool, executions ...deployExecution) int {
+		called = true
+		if len(executions) != 1 || !executions[0].skipProjectLink {
+			t.Fatal("project deploy could change the checkout link before Start verifies and edits the app")
+		}
+		return 0
+	}
+	_, _ = r.deployPrivateNode()
+	if !called {
+		t.Fatal("guided project deploy did not run")
+	}
+	r.session.ProjectID, r.session.AppID = "project", "app"
+	r.session.DeploymentID, r.session.VerifiedDeploymentID = "release", "release"
+	if err := r.rememberApp(); err != nil {
+		t.Fatal(err)
+	}
+	link, key, err := startSourceContext(source)
+	if err != nil || link.Project != "named-node" || link.App != "named-node" || key == "" || key != r.session.SourceContext {
+		t.Fatalf("verified session did not retain its checkout link: %+v, %v", link, err)
 	}
 }

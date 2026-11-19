@@ -1,4 +1,4 @@
-# ADR-20261116120000 · Observed command-cron outcomes
+# ADR-20261116120001 · Observed command-cron outcomes
 
 - **Status:** accepted for implementation; operational activation separate.
 - **Date:** 2026-11-16
