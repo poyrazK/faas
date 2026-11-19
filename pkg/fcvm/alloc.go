@@ -181,6 +181,11 @@ type Lease struct {
 	// template sandbox session's private drive1 before boot
 	// (ADR-20261027090013); nil for every other VM.
 	SandboxManifest string
+	// cacheExportManifest is a deferred cache export run's build.json
+	// (WakeRequest.CacheExportManifest), staged before boot. Only boot reads
+	// it, so the native launch journal does not carry it. A string keeps
+	// Lease comparable.
+	cacheExportManifest string
 	// Quarantine marks a production fork (ADR-732). A restore scrubs the
 	// captured secrets files from the fork's private drive1 copy before the
 	// guest resumes.

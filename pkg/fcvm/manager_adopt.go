@@ -480,7 +480,7 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	inst := &Instance{
 		Lease: l, Net: nc, Method: method, Plan: l.Plan,
 		AppID: in.AppID, AccountID: in.AccountID, DeploymentID: in.DeploymentID, WakeID: in.WakeID, NodeID: in.NodeID,
-		Port: in.Port, HealthcheckPath: in.HealthcheckPath, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
+		Port: in.Port, HealthcheckPath: in.HealthcheckPath, ProbeHost: in.ProbeHost, HealthcheckGRPC: in.HealthcheckGRPC, ImageHealthcheckRequired: in.ImageHealthcheckRequired,
 		HealthcheckGRPCService: in.HealthcheckGRPCService, RoutedPortRawTCP: in.RoutedPortRawTCP,
 		StartupDeadlineS: in.StartupDeadlineS, RequestConcurrency: in.RequestConcurrency, ExecutionMode: in.ExecutionMode, Runtime: in.Runtime,
 		WorkloadNames:          append([]string(nil), in.WorkloadNames...),
