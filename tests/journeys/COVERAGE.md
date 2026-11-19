@@ -19,6 +19,15 @@ expiry, rotation, catalog drift and revocation. See the
 It does not certify external OAuth provider login/refresh or API/bridge restart
 recovery; local preparation checks do not establish deployed acceptance.
 
+Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
+`TestApplicationAuth` runs when the account's `gregale feature list` does not
+report `application-auth` hidden (the `application_auth` platform flag), and
+skips otherwise. It creates a managed database and an Auth app, then checks
+the ES256-only JWKS, the 8-character and leaked-password defaults, sign-up,
+the hold after 10 wrong passwords, and a `users:read` admin key that reads
+users but cannot sign one out. Parking and wake, row-level security through
+the Data API, bans and import stay with `make auth-staging-canary`.
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |

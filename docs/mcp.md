@@ -54,6 +54,14 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
+| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, `gregale_read_object`, message and workflow payloads in queue and workflow tools, and client IPs and user agents in edge events (`data:read`), including on a read-only connection |
+
+Write access also covers running a command in the app
+(`gregale_plan_run_command`) and changing feature flags
+(`gregale_plan_flag_change`, `gregale_kill_flag`); see
+[Run a command in the app](#run-a-command-in-the-app),
+[Change feature flags](#change-feature-flags) and
+[Query PostgreSQL](#query-postgresql).
 
 A cloud agent deploys code it wrote in one of three ways:
 - **Upload:** `gregale_create_source_upload` returns a one-time URL and a
@@ -204,8 +212,9 @@ gregale org agent policy set --org acme --agents allow --capabilities deploy:wri
 gregale org agent policy set --org acme --agents deny
 ```
 
-The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and
-`postgres:manage`; `--capabilities ""` makes agents read-only. An organization
+The capabilities are `deploy:write`, `secrets:request`, `storage:manage`,
+`postgres:manage`, `env:write`, `usage:read` and `data:read`;
+`--capabilities ""` makes agents read-only. An organization
 that never set a policy allows agents with every capability. The policy
 applies to hosted MCP connections and to organization keys with the `agent`
 scope. Setting a stricter policy revokes, at once, every agent connection it
@@ -258,7 +267,7 @@ of the agent's key: the hosted MCP server, the CLI and direct API calls.
 | Kind | What needs approval |
 |---|---|
 | `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
-| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app, and running a command in it (previews and `gregale dev` environments are free); publishing, rolling back or promoting feature flags in any project environment (killing a flag never asks) |
 | `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
 | `billing` | Plan, subscription, payment and budget changes |
 
@@ -7152,6 +7161,160 @@ environment.
 Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
+
+## Change feature flags
+
+Five tools in the `release` toolset change Gregale Flags (ADR-20261117215858).
+All take `project` and `environment`; writes need write consent for that
+environment.
+
+- `gregale_list_flags` returns the configuration, its version and the
+  lifecycle report.
+- `gregale_plan_flag_change` takes `changes`, an ordered list of 1–20 edits:
+  `create` (`variants`, `default`, `description`, `owner`, `expires`), `set`,
+  `enable`, `disable`, `kill`, `revive`, `set_percent` (`percent`, 0–100),
+  `add_rule` (`rule_id`, `customers`, `group`, `attributes`, `percent`,
+  `value`), `remove_rule` and `delete`. The edits follow the same rules as the
+  `gregale flag` commands. The plan shows each edit's summary and every changed
+  flag before and after, and pins the configuration version for 15 minutes.
+- `gregale_plan_flag_rollback` reviews restoring an earlier `version`.
+- `gregale_apply_flag_change` publishes a plan. A configuration that changed
+  since the plan is refused as `plan_stale`; review a new plan. Retry the same
+  `plan_id` after an uncertain response.
+- `gregale_kill_flag` kills one flag on the latest configuration at once:
+  every evaluation serves the fallback in the application's code. It needs no
+  plan and no approval, and is idempotent. Revive the flag with a reviewed
+  `revive` change.
+
+Flag publishes, rollbacks and rollout promotions by an agent connection ask a
+person first ([approvals](#approve-an-agents-risky-actions)); the kill switch
+does not.
+
+## Run a command in the app
+
+`gregale_plan_run_command` (toolset `operate`) reviews one non-interactive
+command for `app`: `command` as an argv array, or `shell` as one line run by
+`/bin/sh -c`, with `timeout_seconds` (1–900, default 120) and
+`max_output_bytes` (1024–262144, default 65536). The command runs once in a
+fresh task VM from the app's live default deployment, with its variables and
+secrets, never in a serving instance. Apply the plan with
+`gregale_apply_operation`; a retried apply never starts a second command. On a
+production app an agent connection asks a person first.
+
+`gregale_get_command_run` returns the status, exit code and the stdout and
+stderr tails, waiting up to `wait_seconds` (0–45) for the command to finish.
+Lines that look like credentials, such as an `env` dump, are replaced with
+`[redacted: <kind>]`. `gregale_cancel_command_run` asks a running command to
+stop; work it already did stays done.
+
+## Query PostgreSQL
+
+With the "Read my app data" consent, or an agent key with the
+`data:read` scope, two tools in the `diagnose` toolset read a managed
+database bound to an app (ADR-20261117215858):
+
+- `gregale_get_postgres_schema` lists the tables and views of one schema
+  (default `public`) with their columns, types, NOT NULL, primary keys and
+  indexes.
+- `gregale_query_postgres` runs one statement and returns up to `max_rows`
+  rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
+  cap stopped reading.
+
+Both take `app`, `database` (an ID or name from `gregale_list_databases`) and
+optional `project` and `environment`; the database must be bound to the app in
+that scope. The statement runs as the database's read-only agent login, which
+reads the public schema, in a READ ONLY transaction with a 5-second timeout.
+Writes, DDL and several statements are refused with PostgreSQL's error. One
+query per database runs at a time. A query wakes a suspended database and its
+compute is billed as usage. The audit log records a hash of each statement,
+never the SQL or rows. The same API is `POST /v1/postgres/databases/{id}/query`.
+
+## Queues, workflows and monitoring
+
+ADR-20261117232109. Reads (toolset `diagnose`): `gregale_get_queue_state`,
+`gregale_list_dead_letters`, `gregale_list_workflow_runs`,
+`gregale_get_workflow_run`, `gregale_list_workflow_attention`,
+`gregale_list_alerts`, `gregale_get_slo_status`, `gregale_list_synthetics`,
+`gregale_list_incidents` and `gregale_get_incident`. Message bodies and
+workflow inputs and outputs are replaced with their size unless the
+connection has "Read my app data" (`data:read`).
+
+Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
+
+- `gregale_plan_dead_letter_replay`: up to 50 named dead letters, or the
+  oldest up to 200. A replay runs the app's code again on old input.
+- `gregale_plan_workflow_recovery`: `retry_step`, `resume` (fails if the run
+  was resumed since the plan), `cancel` or `cancel_queued`.
+- `gregale_plan_monitoring_change`: create an SLO; create, enable or disable a
+  synthetic check; create or update an alert rule that notifies existing
+  channels. Agents cannot add webhooks or alert actions, and cannot delete.
+
+`gregale_acknowledge_incident` and `gregale_add_incident_note` act at once.
+Replays and workflow recovery by an agent connection ask a person first
+(workflow run actions in every environment).
+
+## Edge rules, previews, objects and workflow tests
+
+ADR-20261118140000.
+
+- Edge rules: `gregale_list_edge_rules` and `gregale_get_edge_activity`
+  (toolset `diagnose`) read rules, attack mode, rule-set versions, hits and
+  recent rule events. Client IPs and user agents need `data:read`.
+  `gregale_plan_edge_rule_change` (toolset `operate`) reviews creating,
+  updating or deleting a rule, rolling back to a version, or switching attack
+  mode on or off. The plan is pinned to the current rules: apply fails with
+  `plan_stale` if they changed. On a production app the apply asks a person
+  first.
+- Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
+  and `gregale_plan_preview_change` (`create` for a pull request, or
+  `destroy`, which asks a person first). Previews are reached only through
+  their parent app.
+- Objects (toolset `diagnose`): `gregale_list_objects` lists keys and sizes;
+  `gregale_read_object` reads up to 256 KiB from the start of an object and
+  needs `data:read`. No writes or deletes.
+- Workflow tests (toolset `release`): `gregale_list_workflow_tests` and
+  `gregale_run_workflow_tests`, which runs a saved workflow's test cases (mocked
+  simulations) against its current draft.
+
+## Events, audit trail, budgets and API consumers
+
+ADR-20261118160000.
+
+- Events (toolset `diagnose`): `gregale_list_event_subscriptions`,
+  `gregale_get_event_subscription_health`, `gregale_list_event_deliveries`
+  and `gregale_list_event_recoveries`. `gregale_plan_event_change` (toolset
+  `operate`) reviews pausing or resuming a subscription, recovering matched
+  events (the plan shows how many) or cancelling a recovery. On a production
+  app, pauses and recoveries ask a person first.
+- Audit (toolset `diagnose`): `gregale_list_audit_events` reads the account
+  audit log, or one app's events. A connection limited to some apps must name
+  an app.
+- Spend (toolset `operate`, needs "Read usage and billing"):
+  `gregale_get_spend_forecast`, `gregale_list_budgets`,
+  `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
+  and update only budgets that notify; enforcing budgets stay with people.
+  Every budget write asks a person first.
+- API consumers (toolset `operate`): `gregale_list_api_consumers`,
+  `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
+  revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
+  and spend caps ask a person first.
+
+## Log search, drains, channels and organization members
+
+ADR-20261119110000.
+
+- Logs (toolset `diagnose`): `gregale_search_logs` filters by source, level,
+  route, status, deployment, request, trace and text over a window (default
+  the last hour); `gregale_get_log_facets` counts matches to narrow a search.
+  `gregale_list_log_drains` and `gregale_get_log_drain_health` show drains
+  and their delivery.
+- Channels (toolset `operate`): `gregale_list_notification_channels` and
+  `gregale_test_notification_channel` (one test message, at most once a
+  minute per channel).
+- Drain and channel destinations show only their host (`https://hooks.slack.com`,
+  `…@example.com`); the rest of a webhook URL is often its credential.
+- `gregale_list_org_members` (toolset `operate`) lists an organization's
+  members, roles and pending invitations.
 
 ## Read product analytics
 
