@@ -44,6 +44,33 @@ test('track sends the verified customer, name, value and time', async () => {
   assert.equal(flags.droppedEvents(), 0);
 });
 
+// ADR 20261117084505 §1: events carry properties, the request's subject and
+// every flag decision the request made before track().
+test('track sends properties, the subject and the request flag decisions', async () => {
+  const sent: Sent[] = [];
+  const flags = client(sent);
+  await flags.start();
+  flags.close();
+  await flags.runRequest({ [GREGALE_FLAG_CONTEXT_HEADER]: tenant }, () => flags.withSubject('user-1', () => {
+    flags.boolean('new-checkout', false);
+    flags.variant('pricing', 'control');
+    assert.equal(flags.track('order_completed', { properties: { plan: 'pro' } }), true);
+    assert.equal(flags.track('signup', { subject: 'user-2' }), true);
+  }));
+  await flags.flush();
+  assert.match(sent[0]!.capabilities, /track-v2/);
+  assert.deepEqual(sent[0]!.body?.events, [
+    { name: 'order_completed', customer_id: tenant, at: '2026-11-15T12:00:00.000Z', subject: 'user-1', properties: { plan: 'pro' }, flags: { 'new-checkout': 'false', pricing: 'control' } },
+    { name: 'signup', customer_id: tenant, at: '2026-11-15T12:00:00.000Z', subject: 'user-2', flags: { 'new-checkout': 'false', pricing: 'control' } },
+  ]);
+  const invalid = await flags.runRequest({ [GREGALE_FLAG_CONTEXT_HEADER]: tenant }, () => [
+    flags.track('signup', { properties: { 'Bad Key': 'x' } }),
+    flags.track('signup', { properties: Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`k${i}`, 'v'])) }),
+    flags.track('signup', { properties: { plan: 'x'.repeat(257) } }),
+  ]);
+  assert.deepEqual(invalid, [false, false, false]);
+});
+
 test('track drops events without a verified customer or with invalid input', async () => {
   const sent: Sent[] = [];
   const flags = client(sent);

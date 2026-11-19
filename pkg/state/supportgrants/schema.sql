@@ -27,7 +27,10 @@ CREATE TABLE support_grant_requests (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  decided_at timestamptz,
- decided_by_account_id uuid
+ decided_by_account_id uuid,
+ app_ids uuid[],
+ ttl_seconds integer,
+ extends_grant_id uuid
 );
 CREATE TABLE support_grants (
  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,5 +42,6 @@ CREATE TABLE support_grants (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  expires_at timestamptz NOT NULL,
  revoked_at timestamptz,
- revoked_by_account_id uuid
+ revoked_by_account_id uuid,
+ summary_sent_at timestamptz
 );

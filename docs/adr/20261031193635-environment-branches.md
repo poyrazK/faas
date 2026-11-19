@@ -327,9 +327,20 @@ it finds nothing.
   parent version that was current at T. The gateway serves no other consistency, so a
   row it does not know reads as an empty branch.
 
-**Known limits.** apid's object API (console and CLI object commands) shows the branch
-bucket's own objects only. Overlay data with the parent's objects is served by the
-gateway alone.
+**Amendment 2026-11-17: crons, event subscriptions and the object API.**
+- A branch copies its parent's crons and event subscriptions paused, as a full clone does
+  (ADR-20261104120000 amendments 2026-11-12 and 2026-11-14): disabled, `clone_paused` when
+  the parent ran them. `gregale env resume-automation <branch>` turns those on for the
+  branch alone. Copied crons count against the plan's cron limits when copied, as every
+  cron does, so a branch whose copies would pass a limit is refused with the cron limit
+  error. Deleting or resetting the branch deletes its crons and subscriptions with the
+  environment.
+- apid's object listing (`GET /v1/apps/{slug}/buckets/{bucket}/objects`, console and CLI
+  object commands) lists a branch bucket as the gateway serves it: the merge (tombstones,
+  `as_of`, emptied prefixes) moved to `pkg/objectoverlay`, which both use. Each object read
+  from the parent carries `from_parent: true`. Every provider request counts against the
+  branch bucket, as a gateway read-through does. Reading or downloading a parent object
+  still goes through the gateway: apid presigns only the branch bucket's own objects.
 
 **Amendment 2026-11-17: emptied prefixes.** A delimited listing showed a parent common
 prefix whose keys the branch had all deleted and, under `as_of`, one holding only keys

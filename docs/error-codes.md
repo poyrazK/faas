@@ -1228,6 +1228,10 @@ HTTP 413 · Webhook body too large
 
 The response's `title` and `detail` describe the failure.
 
+### `insights_query_timeout`
+
+HTTP 503 · Analytics query timed out
+
 ### `instance_busy`
 
 HTTP 409 or 503 · Function still running; Instance busy

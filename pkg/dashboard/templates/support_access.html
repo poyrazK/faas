@@ -11,7 +11,7 @@
     table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .65rem; border-bottom: 1px solid #8884; vertical-align: top; }
     .scroll { overflow-x: auto; } .muted { color: var(--muted); } .card { border: 1px solid #8886; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
     button { font: inherit; cursor: pointer; } .flash { padding: .75rem; background: #15803d22; } .error { padding: .75rem; background: #b91c1c22; }
-    form.inline { display: inline; } label { display: block; margin: .5rem 0; } input[type=text] { width: 100%; max-width: 32rem; }
+    .focus { border-color: #2563eb; border-width: 2px; } form.inline { display: inline; } label { display: block; margin: .5rem 0; } input[type=text] { width: 100%; max-width: 32rem; }
   </style>
 </head>
 <body>
@@ -30,21 +30,21 @@ owners and admins get an email. You can revoke access at any time.</p>
 <section class="card">
   <h2>{{if $org.Personal}}Your personal account{{else}}{{$org.Name}}{{end}} <span class="muted">({{$org.Slug}})</span></h2>
   {{if not $org.Enabled}}<p class="muted">Support access is not available for this organization yet.</p>{{end}}
-  {{range $org.Access.Requests}}{{if eq .Status "open"}}
-  <div class="card">
-    <p><strong>{{.Operator}}</strong> asks for access: {{.Reason}}</p>
-    <p class="muted">Requested {{.CreatedAt}} · expires {{.ExpiresAt}}</p>
+  {{range $org.Open}}
+  <div class="card{{if .Focus}} focus{{end}}" id="request-{{.Request.ID}}">
+    <p><strong>{{.Request.Operator}}</strong> asks for {{.Asked}}: {{.Request.Reason}}</p>
+    <p class="muted">Requested {{.Request.CreatedAt}} · expires {{.Request.ExpiresAt}}</p>
     {{if $org.Enabled}}
-    <form method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.ID}}/approve">
+    <form method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.Request.ID}}/approve">
       <input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}">
-      <label>Apps (comma-separated slugs, empty for all apps) <input type="text" name="apps"></label>
-      <label>Duration <select name="ttl_hours"><option value="4">4 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></label>
+      <label>Apps (comma-separated slugs, empty for all apps) <input type="text" name="apps" value="{{.AppsValue}}"></label>
+      <label>Duration <select name="ttl_hours">{{range .Durations}}<option value="{{.Hours}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
       <button type="submit">Approve</button>
     </form>
     {{end}}
-    <form class="inline" method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.ID}}/decline"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><button type="submit">Decline</button></form>
+    <form class="inline" method="POST" action="/dashboard/support-access/{{$org.Slug}}/requests/{{.Request.ID}}/decline"><input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}"><button type="submit">Decline</button></form>
   </div>
-  {{end}}{{end}}
+  {{end}}
   {{if $org.Access.Grants}}
   <div class="scroll"><table><thead><tr><th>Apps</th><th>Status</th><th>Until</th><th>Granted by</th><th>Reason</th><th></th></tr></thead><tbody>
   {{range $org.Access.Grants}}<tr>
@@ -59,7 +59,7 @@ owners and admins get an email. You can revoke access at any time.</p>
     <form method="POST" action="/dashboard/support-access/{{$org.Slug}}/grants">
       <input type="hidden" name="csrf_token" value="{{$.Data.CSRFToken}}">
       <label>Apps (comma-separated slugs, empty for all apps) <input type="text" name="apps" placeholder="{{range $i, $a := $org.Apps}}{{if $i}}, {{end}}{{$a}}{{end}}"></label>
-      <label>Duration <select name="ttl_hours"><option value="4">4 hours</option><option value="24" selected>24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select></label>
+      <label>Duration <select name="ttl_hours">{{range $org.Durations}}<option value="{{.Hours}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select></label>
       <label>Reason <input type="text" name="reason" placeholder="What support should help with"></label>
       <button type="submit">Grant access</button>
     </form>

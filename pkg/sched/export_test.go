@@ -1140,12 +1140,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
-// expose an app instance's CPU, which follows its size (ADR-20261109172421).
-func AppVCPUs(app state.App) int                { return appVCPUs(app) }
-func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
-func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
-func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
+// AppVCPUs, AppCPUMillicores and AppCPUWeight expose an app instance's CPU,
+// which follows its size (ADR-20261109172421). AppCPUBookingMillicores is
+// exported by guest_vcpus.go itself, for pkg/fcvm's metal tests.
+func AppVCPUs(app state.App) int         { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int { return appCPUMillicores(app) }
+func AppCPUWeight(app state.App) int32   { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).

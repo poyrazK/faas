@@ -72,11 +72,24 @@ const EVENT_QUEUE_MAX = 1000;
 const EVENT_FLUSH_MS = 5000;
 const EVENT_MAX_ABS_VALUE = 1_000_000_000_000;
 /** Capabilities this SDK advertises to the runtime endpoint. */
-export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1';
-/** One conversion event as sent to the runtime events endpoint. */
-interface QueuedFlagEvent { name: string; customer_id: string; value?: number; at: string }
-/** Options for track(). value is an integer, such as cents. */
-export interface FlagTrackOptions { value?: number }
+export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2';
+/** Product analytics event bounds (ADR 20261117084505). */
+const EVENT_PROPERTY_KEY = /^[a-z][a-z0-9_]{0,63}$/;
+const EVENT_MAX_PROPERTIES = 10;
+const EVENT_PROPERTY_MAX_BYTES = 256;
+const EVENT_MAX_FLAGS = 32;
+/** One event as sent to the runtime events endpoint. */
+interface QueuedFlagEvent { name: string; customer_id: string; value?: number; at: string; subject?: string; properties?: Record<string, string>; flags?: Record<string, string> }
+/** Options for track(). value is an integer, such as cents. properties are up to 10
+ * string values for product analytics breakdowns and filters. subject overrides the
+ * request's subject (withSubject) as the end user; Gregale stores only its hash. */
+export interface FlagTrackOptions { value?: number; properties?: Record<string, string>; subject?: string }
+
+function validEventProperties(props: Record<string, string> | undefined): boolean {
+  if (props === undefined) return true;
+  const entries = Object.entries(props);
+  return entries.length <= EVENT_MAX_PROPERTIES && entries.every(([k, v]) => EVENT_PROPERTY_KEY.test(k) && typeof v === 'string' && Buffer.byteLength(v) <= EVENT_PROPERTY_MAX_BYTES);
+}
 
 export function flagBucket(seed: string, key: string, customer: string): number {
   return createHash('sha256').update(`${seed}\0${key}\0${customer}`).digest().readUInt32BE(0) % 10000;
@@ -253,19 +266,31 @@ export class GregaleFlags {
     if (typeof token.access_token !== 'string' || !token.access_token || token.access_token.length > 8192) throw new Error('Invalid workload identity');
     return token.access_token;
   }
-  /** Records a conversion event for this request's verified customer, for experiments
-   * (ADR 20261115163113). Call within runRequest. Returns false, and counts the event in
-   * droppedEvents(), when there is no verified customer, the name or value is invalid, or the
-   * local queue is full. Events are sent in batches every 5 s; await flush() before exit. */
+  /** Records an event for this request's verified customer, for experiments (ADR
+   * 20261115163113) and product analytics (ADR 20261117084505). The event carries the
+   * request's subject and every flag decision the request has made so far. Call within
+   * runRequest. Returns false, and counts the event in droppedEvents(), when there is no
+   * verified customer, the name, value, properties or subject are invalid, or the local
+   * queue is full. Events are sent in batches every 5 s; await flush() before exit. */
   track(name: string, options: FlagTrackOptions = {}): boolean {
     const request = this.requests.getStore();
     const value = options.value ?? 0;
-    if (!request?.customer || !EVENT_NAME.test(name) || !Number.isSafeInteger(value) || Math.abs(value) > EVENT_MAX_ABS_VALUE || this.events.length >= EVENT_QUEUE_MAX) {
+    const subject = options.subject ?? request?.subject;
+    if (!request?.customer || !EVENT_NAME.test(name) || !Number.isSafeInteger(value) || Math.abs(value) > EVENT_MAX_ABS_VALUE ||
+      !validEventProperties(options.properties) || (subject !== undefined && !validFlagSubjectID(subject)) || this.events.length >= EVENT_QUEUE_MAX) {
       this.eventsDropped += 1;
       return false;
     }
     const event: QueuedFlagEvent = { name, customer_id: request.customer, at: new Date(this.now()).toISOString() };
     if (value !== 0) event.value = value;
+    if (subject !== undefined) event.subject = subject;
+    if (options.properties && Object.keys(options.properties).length > 0) event.properties = { ...options.properties };
+    const flags: Record<string, string> = {};
+    for (const [key, decision] of request.evidence) {
+      if (Object.keys(flags).length >= EVENT_MAX_FLAGS) break;
+      flags[key] = String(decision.value);
+    }
+    if (Object.keys(flags).length > 0) event.flags = flags;
     this.events.push(event);
     if (this.events.length >= EVENT_BATCH) void this.flush().catch(() => {});
     return true;
