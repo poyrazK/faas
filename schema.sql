@@ -31633,6 +31633,7 @@ CREATE TABLE public.agent_versions (
     ai_budget_millicents bigint,
     deliveries jsonb DEFAULT '[]'::jsonb NOT NULL,
     pause_during_model_calls boolean DEFAULT true NOT NULL,
+    capability_policy jsonb,
     CONSTRAINT agent_versions_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_versions_deliveries_check CHECK (((jsonb_typeof(deliveries) = 'array'::text) AND (jsonb_array_length(deliveries) <= 4))),
     CONSTRAINT agent_versions_harness_check CHECK (((harness_preset IS NULL) <> (harness_image IS NULL))),
@@ -31654,6 +31655,13 @@ CREATE TABLE public.agent_versions (
 --
 
 COMMENT ON TABLE public.agent_versions IS 'ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.';
+
+
+--
+-- Name: COLUMN agent_versions.capability_policy; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_versions.capability_policy IS 'ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.';
 
 
 --
@@ -63571,6 +63579,14 @@ ALTER TABLE ONLY public.agent_sandbox_task_calls
 
 ALTER TABLE ONLY public.agent_undo_records
     ADD CONSTRAINT agent_undo_records_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_versions agent_versions_capability_policy_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_versions
+    ADD CONSTRAINT agent_versions_capability_policy_check CHECK (((capability_policy IS NULL) OR (jsonb_typeof(capability_policy) = 'object'::text))) NOT VALID;
 
 
 --

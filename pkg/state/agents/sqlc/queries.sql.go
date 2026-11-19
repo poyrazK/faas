@@ -1234,7 +1234,7 @@ func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRun
 
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid AND version=$3::integer
 `
 
@@ -1258,6 +1258,7 @@ type GetAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVersionParams) (GetAgentVersionRow, error) {
@@ -1277,6 +1278,7 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1943,14 +1945,14 @@ func (q *Queries) InsertAgentRunOutputs(ctx context.Context, db DBTX, arg Insert
 
 const insertAgentVersion = `-- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES ($1::text::uuid,$2::integer,$3::text::uuid,
   $4::text,$5::text,$6::text[],$7::jsonb,
   $8::text,$9::integer,$10::integer,
   $11::jsonb,$12::bigint,$13::jsonb,
-  $14::boolean)
+  $14::boolean,$15::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy
 `
 
 type InsertAgentVersionParams struct {
@@ -1968,6 +1970,7 @@ type InsertAgentVersionParams struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type InsertAgentVersionRow struct {
@@ -1984,6 +1987,7 @@ type InsertAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAgentVersionParams) (InsertAgentVersionRow, error) {
@@ -2002,6 +2006,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		arg.AiBudgetMillicents,
 		arg.Deliveries,
 		arg.PauseDuringModelCalls,
+		arg.CapabilityPolicy,
 	)
 	var i InsertAgentVersionRow
 	err := row.Scan(
@@ -2018,6 +2023,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }

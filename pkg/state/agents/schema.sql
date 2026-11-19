@@ -67,6 +67,7 @@ CREATE TABLE agent_versions (
  ai_budget_millicents bigint,
  deliveries jsonb NOT NULL DEFAULT '[]',
  pause_during_model_calls boolean NOT NULL DEFAULT true,
+ capability_policy jsonb,
  PRIMARY KEY (agent_id, version)
 );
 CREATE TABLE agent_runs (

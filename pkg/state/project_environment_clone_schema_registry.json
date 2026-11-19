@@ -21249,6 +21249,7 @@
       "account_id",
       "agent_id",
       "ai_budget_millicents",
+      "capability_policy",
       "created_at",
       "deliveries",
       "harness_image",
