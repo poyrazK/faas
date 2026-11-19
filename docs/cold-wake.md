@@ -212,6 +212,12 @@ and Python. These requests reach your app directly, not through the public
 edge, so they are not billed or counted in request analytics. A failed burst
 never fails the deploy: Gregale takes the snapshot unprimed.
 
+The requests run your code, so whatever that path does happens up to 20 times
+per deploy, and what it leaves in memory is in every restore. If `/` (or your
+health check) writes data, sends mail or calls a paid API, declare a harmless
+warm-up path below. Functions are not primed unless they declare one: every
+path of a function is its handler.
+
 A health check that only returns `200` warms the runtime and server but not
 your handlers. To warm the code a real request runs, name a path that does,
 in `gregale.yaml`:
