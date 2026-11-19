@@ -105,6 +105,14 @@ func (c *Client) PromoteProjectFlagRollout(ctx context.Context, project, environ
 	return out, err
 }
 
+// KillProjectFlag sets one flag's kill on the latest configuration
+// (ADR-20261117215858). It needs no expected version and is idempotent.
+func (c *Client) KillProjectFlag(ctx context.Context, project, environment, key string) (FeatureFlagKillResponse, error) {
+	var out FeatureFlagKillResponse
+	err := c.do(ctx, http.MethodPost, flagsPath(project, environment)+"/"+url.PathEscape(key)+"/kill", struct{}{}, &out)
+	return out, err
+}
+
 // RuntimeFlags requires a Client constructed with a workload JWT for gregale:flags.
 // Account API keys cannot read this endpoint.
 func (c *Client) RuntimeFlags(ctx context.Context) (json.RawMessage, error) {

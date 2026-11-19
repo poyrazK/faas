@@ -1161,6 +1161,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":         "ProjectFlagRequests",
 	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         "ProjectFlagOutcomes",
 	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": "PromoteProjectFlagRollout",
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill":            "KillProjectFlag",
 	"GET /v1/runtime/flags":                 "RuntimeFlags",
 	"POST /v1/runtime/flags/events":         "RuntimeFlagEvents",
 	"GET /v1/previews":                      "ListPreviews",
@@ -1743,6 +1744,7 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases":                                                     "CreateManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}":                                                 "GetManagedPostgresDatabase",
 	"GET /v1/postgres/databases/{id}/status":                                          "GetManagedPostgresDatabaseStatus", // ADR-20261030151810
+	"POST /v1/postgres/databases/{id}/query":                                          "QueryManagedPostgresDatabase",     // ADR-20261117215858
 	"DELETE /v1/postgres/databases/{id}":                                              "DeleteManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/restore":                                        "RestoreManagedPostgresDatabase",
 	"POST /v1/postgres/databases/{id}/undelete":                                       "UndeleteManagedPostgresDatabase",

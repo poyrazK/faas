@@ -129,6 +129,7 @@ export function errorMessage(body, status) {
   const code = (body?.error_code === 'unknown' ? undefined : body?.error_code) ?? hookCode ?? body?.code ?? body?.error
   const known = {
     invalid_credentials: 'Wrong email or password.',
+    too_many_attempts: 'Too many wrong attempts. Wait a few minutes, or sign in another way.',
     email_not_confirmed: 'Confirm your email address first; check your inbox.',
     user_already_exists: 'An account with this email already exists. Sign in instead.',
     weak_password: 'Choose a longer, less common password.',

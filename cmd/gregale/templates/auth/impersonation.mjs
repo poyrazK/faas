@@ -18,7 +18,12 @@ export function impersonated(claims) {
 // impersonationBlocked lists what an impersonated session may not do: change
 // the person's sign-in methods, password, email, second factors or
 // passkeys; link identities; approve third-party apps; end their other
-// sessions or delete their account. It may sign itself out.
+// sessions or delete their account. Nor may it leave access behind that
+// outlives its cap: in the person's organizations it may not issue
+// service-account secrets or invitations, change roles, or change the
+// organization's second-factor rule, identity providers or domains. The
+// operator does those with the admin key, where they are recorded as the
+// operator's. It may sign itself out.
 export function impersonationBlocked(method, url) {
   // GoTrue's router serves /user/ as /user, so trailing slashes go first.
   const path = url.split('?')[0].replace(/\/+$/, '')
@@ -27,6 +32,16 @@ export function impersonationBlocked(method, url) {
   if (/^\/auth\/v1\/(factors|passkeys|user\/identities|reauthenticate)(\/|$)/.test(path)) return true
   if (/^\/auth\/v1\/oauth\/authorizations\/[^/]+\/consent$/.test(path)) return true
   if (method === 'DELETE' && (path === '/authz/v1/account' || path.startsWith('/authz/v1/sessions/'))) return true
+  if (method !== 'GET' && method !== 'HEAD') {
+    const org = /^\/authz\/v1\/orgs\/[^/]+(\/.*)?$/.exec(path)
+    if (org) {
+      const rest = org[1] ?? ''
+      if (rest === '' && method === 'PATCH') return true
+      if (/^\/(service-accounts|sso|domains)(\/|$)/.test(rest)) return true
+      if (rest === '/invitations' && method === 'POST') return true
+      if (/^\/members\/[^/]+$/.test(rest) && method === 'PATCH') return true
+    }
+  }
   return false
 }
 

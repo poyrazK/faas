@@ -5689,7 +5689,7 @@ var cliCommands = []cliCommand{
 				{Name: "redirect-urls", Value: "URLS", Short: "comma-separated additional allowed redirect URLs; replaces the list (none clears it)"},
 				{Name: "signup", Value: "on|off", Short: "whether anyone may sign up", ClosedSet: []string{"on", "off"}},
 				{Name: "autoconfirm", Value: "on|off", Short: "sign users in without email confirmation (development only)", ClosedSet: []string{"on", "off"}},
-				{Name: "password-min-length", Value: "N", Short: "minimum password length (6-72)"},
+				{Name: "password-min-length", Value: "N", Short: "minimum password length (8-72)"},
 				{Name: "password-require", Value: "CLASSES", Short: "character classes every password needs: lower,upper,digit,symbol, or none"},
 				{Name: "leaked-password-check", Value: "on|off", Short: "refuse passwords found in known breaches (Have I Been Pwned)", ClosedSet: []string{"on", "off"}},
 				{Name: "mfa", Value: "on|off", Short: "let users enrol an authenticator app (TOTP); enrolled users keep verifying when off", ClosedSet: []string{"on", "off"}},
@@ -5754,8 +5754,11 @@ var cliCommands = []cliCommand{
 				{Name: "revoke", Short: "Remove a key that no longer signs; its tokens stop verifying", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
 			{Name: "admin-key", Short: "Manage owner keys for user and organization administration and imports", Subcommands: []cliSub{
-				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
-				{Name: "list", Short: "List admin key IDs", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
+				{Name: "create", Short: "Create a key; it is shown once and only its hash is stored", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"},
+					{Name: "scopes", Value: "SCOPES", Short: "what the key may do: all, or a comma-separated list of users:read, users:write, impersonate, sso, oauth-clients, service-accounts, emails"},
+					{Name: "expires-in", Value: "DAYS", Short: "days until the key expires (default 365)"},
+					{Name: "no-expiry", Short: "the key lasts until revoked"}}},
+				{Name: "list", Short: "List admin keys with their scopes and expiry", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 				{Name: "revoke", Short: "Revoke an admin key", Positionals: []string{"<name>", "<id>"}, Flags: []cliFlag{{Name: "scope", Value: "SCOPE", Short: "environment scope"}}},
 			}},
 			{Name: "users", Short: "Find, sign out, ban and delete the application's users", Subcommands: []cliSub{
