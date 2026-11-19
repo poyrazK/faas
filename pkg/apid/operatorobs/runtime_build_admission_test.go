@@ -222,6 +222,27 @@ func TestRuntimeBuildAdmissionReturnsCapacityAfterSuccessAndFailure(t *testing.T
 	}
 }
 
+func TestRuntimeDiagnosticsMetricsReuseRegistry(t *testing.T) {
+	reg := prometheus.NewPedanticRegistry()
+	var first, second RuntimeBuildAdmission
+	metrics := NewRuntimeDiagnosticsMetrics(reg, &first)
+	if _, admitted := first.tryAcquire(); !admitted {
+		t.Fatal("first gate refused an available slot")
+	}
+	defer first.active.Add(-1)
+	metrics.refused.Inc()
+	assertRuntimeAdmissionGauge(t, metrics, 1)
+
+	reused := NewRuntimeDiagnosticsMetrics(reg, &second)
+	if reused != metrics || testutil.ToFloat64(reused.refused) != 1 {
+		t.Fatal("reusing the registry lost the existing observations")
+	}
+	assertRuntimeAdmissionGauge(t, reused, 0)
+	reused.BindAdmission(&first)
+	assertRuntimeAdmissionGauge(t, reused, 1)
+	assertRuntimeMetricsPrivate(t, reg)
+}
+
 func awaitRuntimeAdmission[T any](t *testing.T, ch <-chan T) T {
 	t.Helper()
 	select {

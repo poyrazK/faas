@@ -6,6 +6,7 @@ import (
 	"errors"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/promql"
@@ -34,6 +35,8 @@ var errRuntimeCollectionBudget = errors.New("runtime collection budget exhausted
 // Collection completeness is independent of daemon health or release matching.
 type RuntimeDiagnosticsMetrics struct {
 	registry       prometheus.Registerer
+	collectors     []prometheus.Collector
+	admission      atomic.Pointer[RuntimeBuildAdmission]
 	reports        *prometheus.CounterVec
 	incomplete     *prometheus.CounterVec
 	evaluations    *prometheus.CounterVec
@@ -56,7 +59,6 @@ type RuntimeDiagnosticsMetrics struct {
 func NewRuntimeDiagnosticsMetrics(reg prometheus.Registerer, admission *RuntimeBuildAdmission) *RuntimeDiagnosticsMetrics {
 	m := &RuntimeDiagnosticsMetrics{
 		registry:     reg,
-		active:       prometheus.NewGaugeFunc(prometheus.GaugeOpts{Name: "apid_operator_runtime_active_collections", Help: "Current admitted runtime source collections in this apid, including unwinding canceled work."}, func() float64 { return float64(admission.Active()) }),
 		refused:      prometheus.NewCounter(prometheus.CounterOpts{Name: "apid_operator_runtime_refused_collections_total", Help: "Runtime collections refused at capacity before inventory or Prometheus reads. Excludes authentication, validation and preflight cancellation."}),
 		reports:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "apid_operator_runtime_reports_total", Help: "Completed process-local runtime report collections by collection outcome, independent of daemon health."}, []string{"outcome"}),
 		incomplete:   prometheus.NewCounterVec(prometheus.CounterOpts{Name: "apid_operator_runtime_incomplete_reports_total", Help: "Reports with the incomplete outcome, counted once for each evidence group with incomplete coverage."}, []string{"group"}),
@@ -81,7 +83,15 @@ func NewRuntimeDiagnosticsMetrics(reg prometheus.Registerer, admission *RuntimeB
 		responseBytes: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "apid_operator_runtime_response_bytes", Help: "Encoded runtime report payload size including the JSON newline, before writing to the client; not delivery acknowledgement.", Buckets: []float64{1024, 4096, 8192, 16384, 32768, 49152, 65536}}),
 		omitted:       prometheus.NewCounterVec(prometheus.CounterOpts{Name: "apid_operator_runtime_preview_omitted_items_total", Help: "Preview items omitted in completed reports, including inventory preview and response envelope limits. Repeated reads count again; summaries retain full coverage."}, []string{"group"}),
 	}
-	reg.MustRegister(m.reports, m.incomplete, m.evaluations, m.coreGaps, m.lastComplete, &m.lastCollection, m.deadlines, m.duration, m.phaseDuration, m.inventory, m.queries, m.queryFailures, m.queryDuration, m.responseBytes, m.omitted, m.active, m.refused)
+	m.active = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Name: "apid_operator_runtime_active_collections",
+		Help: "Current admitted runtime source collections in this apid, including unwinding canceled work.",
+	}, func() float64 { return float64(m.admission.Load().Active()) })
+	m.collectors = []prometheus.Collector{
+		m.reports, m.incomplete, m.evaluations, m.coreGaps, m.lastComplete, &m.lastCollection,
+		m.deadlines, m.duration, m.phaseDuration, m.inventory, m.queries, m.queryFailures,
+		m.queryDuration, m.responseBytes, m.omitted, m.active, m.refused,
+	}
 	for _, phase := range []string{runtimePhaseInventory, runtimePhaseCoreEvidence, runtimePhaseAdvisoryReads, runtimePhaseAssembly, runtimePhasePreview, runtimePhaseBefore, runtimePhaseOutside} {
 		if phase != runtimePhaseBefore && phase != runtimePhaseOutside {
 			m.phaseDuration.WithLabelValues(phase)
@@ -115,7 +125,37 @@ func NewRuntimeDiagnosticsMetrics(reg prometheus.Registerer, admission *RuntimeB
 			m.omitted.WithLabelValues(group)
 		}
 	}
-	return m
+	m.BindAdmission(admission)
+	err := reg.Register(m)
+	if err == nil {
+		return m
+	}
+	var alreadyRegistered prometheus.AlreadyRegisteredError
+	if errors.As(err, &alreadyRegistered) {
+		if existing, ok := alreadyRegistered.ExistingCollector.(*RuntimeDiagnosticsMetrics); ok {
+			existing.BindAdmission(admission)
+			return existing
+		}
+	}
+	panic(err)
+}
+
+// BindAdmission keeps the gauge attached to the server using this registry.
+// The registry may outlive the server, so reusing it preserves observations.
+func (m *RuntimeDiagnosticsMetrics) BindAdmission(admission *RuntimeBuildAdmission) {
+	m.admission.Store(admission)
+}
+
+func (m *RuntimeDiagnosticsMetrics) Describe(ch chan<- *prometheus.Desc) {
+	for _, collector := range m.collectors {
+		collector.Describe(ch)
+	}
+}
+
+func (m *RuntimeDiagnosticsMetrics) Collect(ch chan<- prometheus.Metric) {
+	for _, collector := range m.collectors {
+		collector.Collect(ch)
+	}
 }
 
 // Emit one timestamp and outcome from the same snapshot, including when a

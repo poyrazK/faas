@@ -892,6 +892,8 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 		s.runtimeDiagnosticsMetrics = nil
 	} else if s.runtimeDiagnosticsMetrics.Registry() != ops.Registry() {
 		s.runtimeDiagnosticsMetrics = operatorobs.NewRuntimeDiagnosticsMetrics(ops.Registry(), &s.runtimeBuildAdmission)
+	} else {
+		s.runtimeDiagnosticsMetrics.BindAdmission(&s.runtimeBuildAdmission)
 	}
 	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
