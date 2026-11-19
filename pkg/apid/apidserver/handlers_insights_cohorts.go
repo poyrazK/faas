@@ -59,8 +59,7 @@ func writeCohortError(w http.ResponseWriter, err error) {
 	case errors.Is(err, state.ErrAnalyticsCohortLimit):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "analytics_cohort_limit", "Cohort limit reached",
 			"the environment already holds the maximum number of cohorts; delete one first").
-			WithLimit(api.AnalyticsCohortsMaxPerEnvironment, api.AnalyticsCohortsMaxPerEnvironment).
-			WithDocs("https://gregale.dev/docs/flags#target-a-cohort"))
+			WithLimit(api.AnalyticsCohortsMaxPerEnvironment, api.AnalyticsCohortsMaxPerEnvironment))
 	case errors.Is(err, insights.ErrInvalid):
 		writeInsightsError(w, err)
 	default:
