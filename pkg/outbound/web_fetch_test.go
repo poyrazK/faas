@@ -61,7 +61,9 @@ func TestWebFetch(t *testing.T) {
 	mux.HandleFunc("/to-port", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://example.test:8080/data", http.StatusFound)
 	})
-	mux.HandleFunc("/hop", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/data", http.StatusMovedPermanently) })
+	mux.HandleFunc("/hop", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/data", http.StatusMovedPermanently)
+	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	w := webFetchTo(srv)
