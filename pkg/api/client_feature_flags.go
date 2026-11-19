@@ -105,15 +105,6 @@ func (c *Client) PromoteProjectFlagRollout(ctx context.Context, project, environ
 	return out, err
 }
 
-// FeatureFlagKillResponse is the result of KillProjectFlag. Changed is false
-// when the flag was already killed.
-type FeatureFlagKillResponse struct {
-	Key     string `json:"key"`
-	Killed  bool   `json:"killed"`
-	Changed bool   `json:"changed"`
-	Version int64  `json:"version"`
-}
-
 // KillProjectFlag sets one flag's kill on the latest configuration
 // (ADR-20261117215858). It needs no expected version and is idempotent.
 func (c *Client) KillProjectFlag(ctx context.Context, project, environment, key string) (FeatureFlagKillResponse, error) {
