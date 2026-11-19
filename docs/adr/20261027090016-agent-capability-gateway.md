@@ -1,6 +1,6 @@
 # ADR-20261027090016 · The agent capability gateway: one policy, budget and audit for models, tools, web and data
 
-- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored. Amendment 1 (2026-11-19): what is already built, and the first slice.
+- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored. Amendment 1 (2026-11-19): what is already built, and the first slice. Amendment 2 (2026-11-19): run approvals without a freeze state.
 - **Date:** 2026-10-19
 - **Amends (when accepted):**
   - ADR-20261027090010 §7: model calls join one per-run capability policy and budget;
@@ -300,4 +300,120 @@ above.
 - `agent_budget_exhausted_total{kind}`
 
 These are the §12 names above, so later steps add labels, not new names.
+
+## Amendment 2 (2026-11-19) · Run approvals, waiting in the model-wait pause
+
+The owner chose approvals as the next gap to close (2026-11-19). This amends
+§5: a tool in `approve` mode waits for the seller's decision inside the
+call, and the run waits in ADR-20261027090012's model-wait pause instead of
+ADR-1151's frozen state. Taint (§4) stays a later step; `approve` is set per
+tool for now.
+
+### Why not the frozen state
+
+§5 froze the run through agentd and schedd. ADR-20261027090012 rejected that
+state for waits inside a call:
+- it costs a database write and a schedd round trip per wait;
+- thawing re-admits the reservation, and destroys the VM if it no longer fits;
+- its TTL and parking have no meaning for a run.
+
+An approval is a wait inside a call, so the same reasoning applies.
+
+The model-wait pause already gives what §5 asked for. While outboundd holds
+the call, the relay connection is open and silent and the guest CPU is idle,
+so vmmd quiet-pauses the VM:
+- **Unbilled:** the paused seconds are excluded from billing.
+- **Timers stop:** the guest's in-process timers stop while it is paused, so
+  a harness's MCP request timeout does not run down while a person decides.
+
+Where the pause is off (the version opts out, or vmmd's switch is off), the
+wait is billed like any other call, and the harness's own tool timeout bounds
+it.
+
+### The flow
+
+1. **Request.** The run calls a tool whose policy mode is `approve`. outboundd
+   writes an `agent_run_approvals` row in one transaction:
+   - the tool;
+   - a SHA-256 of the arguments;
+   - a bounded summary of the arguments, untrusted agent text, at most
+     `AgentRunApprovalSummaryMaxBytes`;
+   - an expiry.
+
+   In the same transaction it queues an `agent_run.approval_requested`
+   webhook to the account's receivers that subscribe to it.
+2. **Wait.** outboundd holds the MCP call open and reads the decision every
+   `AgentRunApprovalPollMillis`. It lifts the relay connection's write
+   deadline for that request only, up to the approval's expiry plus the
+   tool's timeout.
+3. **Decision.** The seller calls
+   `POST /v1/agent-runs/{id}/approvals/{approval_id}` with
+   `{"decision": "approve"|"deny", "note"}`. apid writes an
+   `agent_run_approval_decisions` row. Each approval has one decision, which
+   cannot be changed, and an expired approval refuses one with 409.
+   `GET /v1/agent-runs/{id}/approvals` lists a run's approvals.
+4. **Outcome:**
+   - **Approved:** the call counts against the tool-call budget and runs as
+     any allowed call.
+   - **Denied or expired:** the call returns an error result naming the
+     outcome and the seller's note. The tool never runs, and the budget is
+     not charged.
+   - **The harness goes away first:** the approval stays as it is until it
+     expires, and a late decision changes nothing.
+
+### Bounds
+
+- **Expiry.** `min(now + AgentRunApprovalTimeoutSec, the run's deadline −
+  AgentRunApprovalDeadlineMarginSec)`. A run's deadline keeps running while
+  it waits, as in ADR-20261027090012 §3. Pausing the deadline while a person
+  decides is a later change to vmmd's run timer.
+- **Pending approvals.** At most `AgentRunApprovalsPendingMax` per run. Past
+  that, the call is refused at once, as `denied` in the decision rows.
+- **Matching.** The arguments digest is shown to the seller and kept with the
+  decision. A decision approves exactly the call that asked for it, never a
+  later call with other arguments.
+
+### Ownership
+
+- outboundd is the only writer of `agent_run_approvals` and of the webhook
+  delivery it queues with it.
+- apid is the only writer of `agent_run_approval_decisions`. The decision is
+  customer intent.
+- outboundd only reads decisions.
+
+### Limits (`pkg/api/limits.go`)
+
+| Name | Value |
+|---|---|
+| `AgentRunApprovalTimeoutSec` | 3,600 (bounded by the run's deadline) |
+| `AgentRunApprovalDeadlineMarginSec` | 30 |
+| `AgentRunApprovalsPendingMax` | 8 |
+| `AgentRunApprovalSummaryMaxBytes` | 2,048 |
+| `AgentRunApprovalPollMillis` | 1,000 |
+| `AgentRunApprovalNoteMaxBytes` | 1,024 |
+
+`AgentApprovalTimeoutSec` (86,400) in §5 is replaced by
+`AgentRunApprovalTimeoutSec`. No run lasts a day yet. The value grows when
+run deadlines pause during a wait.
+
+### Metrics
+
+`agent_approvals_total{outcome}`, the §12 name, where outcome is `approved`,
+`denied`, `expired` or `abandoned`.
+
+### Rollout
+
+1. This amendment.
+2. Data and API:
+   - `approve` mode in policies;
+   - the two tables;
+   - apid's list and decide routes, with an audit event;
+   - the webhook event.
+3. outboundd: the request, the held call, the outcome, the metric and the
+   ops docs.
+4. **Not in this step:**
+   - taint (§4);
+   - pausing the run deadline while waiting;
+   - Slack as an approval channel (open question 2);
+   - showing approvals in the dashboard.
 
