@@ -628,6 +628,87 @@ func (q *Queries) TaskGrantTablesReady(ctx context.Context, db DBTX, arg TaskGra
 	return column_1, err
 }
 
+const taskParticipantPrivileges = `-- name: TaskParticipantPrivileges :one
+WITH relations AS (
+  SELECT c.oid,c.relname,c.relkind,c.relpersistence,c.relowner,n.nspname
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+), public_schema AS (
+  SELECT oid,nspowner FROM pg_catalog.pg_namespace WHERE nspname='public'
+)
+SELECT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_roles r, public_schema s, pg_catalog.pg_roles owner
+  WHERE r.rolname=$1::text AND owner.rolname=$2::text
+    AND owner.rolname=current_user AND s.nspowner=owner.oid AND r.oid<>owner.oid
+    AND r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
+    AND pg_catalog.has_database_privilege(r.oid,current_database(),'CONNECT')
+    AND NOT pg_catalog.has_database_privilege(r.oid,current_database(),'CREATE,TEMPORARY')
+    AND pg_catalog.has_schema_privilege(r.oid,s.oid,'USAGE')
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_schema_privilege(r.oid,n.oid,'CREATE')
+    )
+    AND cardinality($3::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relkind='r' AND c.relpersistence='p' AND c.relowner=owner.oid
+        AND c.relname::text=ANY($3::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT')
+    )
+    AND cardinality($4::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relname::text=ANY($4::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'UPDATE')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'DELETE')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM relations c
+      WHERE CASE WHEN c.relkind='S' THEN
+        pg_catalog.has_sequence_privilege(r.oid,c.oid,'SELECT,USAGE,UPDATE')
+      WHEN c.relkind IN ('r','p','v','m','f') THEN
+        c.relowner=r.oid
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE,REFERENCES,TRIGGER')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'REFERENCES')
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION,DELETE WITH GRANT OPTION')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL($3::text[]))
+          AND pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT'))
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL($4::text[]))
+          AND (pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE')
+            OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE')))
+      ELSE false END
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE p.prosecdef AND n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
+    )
+)::boolean AS valid
+`
+
+type TaskParticipantPrivilegesParams struct {
+	RoleName    string
+	OwnerRole   string
+	ReadTables  []string
+	WriteTables []string
+}
+
+// Inspect effective ACLs after the fixture is frozen. Never assume the
+// provisioned grants survived a candidate's migrations.
+func (q *Queries) TaskParticipantPrivileges(ctx context.Context, db DBTX, arg TaskParticipantPrivilegesParams) (bool, error) {
+	row := db.QueryRow(ctx, taskParticipantPrivileges,
+		arg.RoleName,
+		arg.OwnerRole,
+		arg.ReadTables,
+		arg.WriteTables,
+	)
+	var valid bool
+	err := row.Scan(&valid)
+	return valid, err
+}
+
 const terminateSessions = `-- name: TerminateSessions :many
 SELECT pg_catalog.pg_terminate_backend(pid)::boolean FROM pg_catalog.pg_stat_activity WHERE datname=$1::text AND pid<>$2::integer
 `
