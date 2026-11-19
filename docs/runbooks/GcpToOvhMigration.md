@@ -202,7 +202,10 @@ manifest.
    `gregale-prod-pg-backups/faas-pg-basebackup/`. The restore reads from it,
    and after the window the backups push to it.
 9. **Rehearse the restore on the OVH control node.** Copy the newest
-   backups to the OVH bucket as in phase 2 step 4 (GCP keeps running). On
+   backups to the OVH bucket as in phase 2 step 4 (GCP keeps running). The
+   newest base backup is the nightly one (03:00 UTC), and WAL since then
+   grows about 1.1 GB an hour, so rehearse early in the UTC day and set the
+   WAL `--max-age` just above the backup's age. On
    the OVH control node, restore them into a throwaway cluster ("Restoring
    PostgreSQL", rehearsal): a scratch data directory, another port, no
    archiving and no faas daemon. Then:
@@ -269,13 +272,17 @@ manifest.
    dst=ovh:gregale-prod-pg-backups
    b=$(rclone --config "$conf" lsf --dirs-only offhostbox:faas-pg-basebackup/ | sort | tail -1)
    rclone --config "$conf" copy --checksum "offhostbox:faas-pg-basebackup/$b" "$dst/faas-pg-basebackup/$b"
-   rclone --config "$conf" copy --checksum --max-age 24h offhostbox:faas-pg-wal "$dst/faas-pg-wal"
-   rclone --config "$conf" copy --checksum --max-age 24h offhostbox:faas-cp-state "$dst/faas-cp-state"
+   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-pg-wal "$dst/faas-pg-wal"
+   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-cp-state "$dst/faas-cp-state"
    exit
    ```
 
-   `$b` must be the backup step 3 made. The backup key can write but not
-   delete, so a repeated copy is safe.
+   `$b` must be the backup step 3 made. Recovery needs WAL only from that
+   backup's start, so copy no older WAL than the backup: production writes
+   about 1.1 GB of WAL an hour (27 GB a day, 2026-11-19), against a base
+   backup of about 0.8 GB. Widen `--max-age` if step 3 started more than an
+   hour before this copy. The backup key can write but not delete, so a
+   repeated copy is safe.
 5. **Rebuild the control plane on OVH** with the OVH manifest, following
    `ControlPlaneStateBackup.md`, "Rebuild a control plane from backups",
    steps 1–6. For this move:
