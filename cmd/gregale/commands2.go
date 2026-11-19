@@ -6401,8 +6401,14 @@ func cmdKeys(args []string) int {
 		PrintOK(osStdout, "New API key (shown ONCE):\n  %s", k.Plaintext)
 		return 0
 	case subRm:
+		// Every other delete takes --yes; scripts that passed it here got
+		// only the usage line and left the key active (prod 2026-11-19).
+		// key delete does not prompt, so the confirmation flags are no-ops.
+		args = slices.DeleteFunc(slices.Clone(args), func(arg string) bool {
+			return arg == "--yes" || arg == "-y" || arg == "--quiet" || arg == "-q"
+		})
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale key delete <id>", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key delete <id> [--yes]", "keys")
 			return 1
 		}
 		client, err := authedClient()
