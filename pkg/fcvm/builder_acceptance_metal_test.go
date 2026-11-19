@@ -108,7 +108,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			if tc.goFunction && os.Getenv("FAAS_METAL_GO_ACCEPTANCE") != "1" {
 				t.Skip("set FAAS_METAL_GO_ACCEPTANCE=1 for the full cold Go toolchain gate")
 			}
-			m := fcvm.NewAcceptanceManager(t)
+			m := newBuilderAcceptanceManager(t)
 			tmp := t.TempDir()
 			sock := filepath.Join(tmp, "v.sock")
 			listener, err := net.Listen("unix", sock)
@@ -266,7 +266,7 @@ func (n *acceptanceNotifier) Notify(_ context.Context, channel, payload string) 
 // continues to cover the PostgreSQL scheduler wiring.
 func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 	t.Helper()
-	m := fcvm.NewAcceptanceManager(t)
+	m := newBuilderAcceptanceManager(t)
 	tmp := t.TempDir()
 	sock := filepath.Join(tmp, "v.sock")
 	listener, err := net.Listen("unix", sock)
@@ -355,7 +355,7 @@ func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 // ten seconds of the guest's halt marker.
 func runBuilderdFailureOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 	t.Helper()
-	m := fcvm.NewAcceptanceManager(t)
+	m := newBuilderAcceptanceManager(t)
 	tmp := t.TempDir()
 	sock := filepath.Join(tmp, "v.sock")
 	listener, err := net.Listen("unix", sock)
