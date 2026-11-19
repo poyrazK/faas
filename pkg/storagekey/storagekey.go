@@ -100,6 +100,17 @@ func IsJobLayer(key string) bool {
 	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
 }
 
+// JobLayerJobID returns the job a JobLayer or JobLayerAttempt key belongs
+// to.
+func JobLayerJobID(key string) (string, bool) {
+	if !IsJobLayer(key) {
+		return "", false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(key, "jobs/"), ".ext4")
+	job, _, _ := strings.Cut(name, "__")
+	return job, true
+}
+
 // IsSandboxTemplateLayer reports whether key is a sandbox template build's
 // full-rootfs artifact, AppLayer of a template build app
 // (api.IsSandboxTemplateAppSlug) and a UUID deployment

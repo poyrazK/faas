@@ -156,6 +156,11 @@ type App struct {
 	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
 	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
 	PerInstanceConcurrency int
+	// FunctionRunnerSlots is how many requests a function instance's
+	// generated runner executes at once (interpreter workers × the app's
+	// function_concurrency); zero for apps without one. It sizes burst
+	// scale-out only, never admission (burstScaleOutConcurrency).
+	FunctionRunnerSlots int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -7883,6 +7888,7 @@ haveApp:
 	// Reconcile pressure accumulated by the app-level burst. Public snapshots
 	// use deployment-scoped admissions; explicit pin URLs skip expansion.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
+	burstPerVM := burstScaleOutConcurrency(app, perVMConcurrency)
 	waitedForBurst := false
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
@@ -7891,9 +7897,9 @@ haveApp:
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
-			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency, routing)
+			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM, routing)
 		} else {
-			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM)
 		}
 		if burstErr != nil {
 			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
