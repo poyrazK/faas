@@ -71,6 +71,14 @@ apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
 
+Start an upload deploy plan within 15 minutes. If its resumable upload commit
+returns `approval_required`, the bridge keeps the original plan, staged source
+and upload checkpoint through the deadline in `approval.expires_at`. The review
+page shows that same deadline. After approval, retry the same plan ID. The
+bridge rechecks the app and its release state and commits the original upload.
+A changed app or release requires a new plan. The temporary staged files live
+on the current bridge process's host and are cleared on bridge restart.
+
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
 

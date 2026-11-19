@@ -62,6 +62,7 @@ type releasePlan struct {
 	failure            *planFailure
 	configReceipt      *api.EnvBatchResponse
 	localInFlight      bool
+	uploadApproval     *pendingUploadApproval
 	appHash            [32]byte
 	latestID           string
 	attempted          bool
