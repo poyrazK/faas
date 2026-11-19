@@ -922,6 +922,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_QUIET_PAUSE_UNBILLED", Owners: []string{"meterd"}, Source: EnvSourceDefault, Note: "optional off, shadow or on: whether billed residency subtracts the quiet-paused seconds the pause ledger proves (ADR-20261023171905); production default is off"},
 	{Name: "FAAS_QUOTA_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 
+	{Name: "FAAS_READINESS_PROBE_APP_HOST", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional boolean switch for ADR-20261119140000: readiness and prime probes of production deployments send the app's public host and X-Forwarded-Proto https; default off; overrides readiness_probe_app_host in schedd.toml"},
 	{Name: "FAAS_REALTIME_ACCESS_PREVIEW_ENABLED", Owners: []string{"apid", "realtimed", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only durable principal channel/session revocation preview; enable on apid and every realtime node before use; on apid, the boot fallback for the realtime_access platform flag (ADR 20261021080640), which then decides per account and is sent to realtime nodes with each endpoint registration; this switch stays a node capability, and apid keeps the preview off while any realtime node reports it lacks it (ADR 20261021080640 amendment of 2026-11-09)"},
 	{Name: "FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", Owners: []string{"realtimed"}, Source: EnvSourceDefault},
 	{Name: "FAAS_REALTIME_CALLBACK_OUTBOX", Owners: []string{"realtimed"}, Source: EnvSourceDefault},

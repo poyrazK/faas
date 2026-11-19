@@ -118,6 +118,7 @@ func (e *Engine) prepareDeploymentPrimeBoot(ctx context.Context, app state.App, 
 		// inferred profile starts Node/Python apps on their framework port.
 		Port:                     deploymentRuntimePort(dep),
 		HealthcheckPath:          healthcheckPath,
+		ProbeHost:                e.probeHostFor(app, dep),
 		HealthcheckGRPC:          healthcheckGRPC,
 		HealthcheckGRPCService:   healthcheckGRPCService,
 		RoutedPortRawTCP:         routedPortRawTCPForApp(dep, app, healthcheckPath, healthcheckGRPC),

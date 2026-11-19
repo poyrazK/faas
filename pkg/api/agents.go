@@ -164,6 +164,83 @@ type AgentVersionSpec struct {
 	AIBudgetMillicents    int64             `json:"ai_budget_millicents,omitempty"`
 	Deliveries            []AgentDelivery   `json:"deliveries,omitempty"`
 	PauseDuringModelCalls *bool             `json:"pause_during_model_calls,omitempty"`
+	// CapabilityPolicy is what a run may do over the capability gateway
+	// beyond its models (ADR-20261027090016 amendment 1). Without one, a run
+	// reaches nothing but its models.
+	CapabilityPolicy *AgentCapabilityPolicy `json:"capability_policy,omitempty"`
+}
+
+// Capability tool modes (ADR-20261027090016 §3). approve is refused until
+// run approvals ship.
+const (
+	AgentCapabilityAllow   = "allow"
+	AgentCapabilityDeny    = "deny"
+	AgentCapabilityApprove = "approve"
+)
+
+// AgentCapabilityWebFetch is the capability gateway's web_fetch tool
+// (ADR-20261027090018 tier 1).
+const AgentCapabilityWebFetch = "web_fetch"
+
+// AgentCapabilityMCPPath is the capability gateway's MCP endpoint under
+// GREGALE_OUTBOUND_URL, and AgentCapabilityMCPURLEnv the variable that gives
+// a run its full URL when its version allows a tool.
+const (
+	AgentCapabilityMCPPath   = "/mcp"
+	AgentCapabilityMCPURLEnv = "GREGALE_CAPABILITY_MCP_URL"
+)
+
+// AgentCapabilityTools are the tools the capability gateway has. A policy
+// names only these, so a typo is refused rather than silently matching
+// nothing.
+var AgentCapabilityTools = []string{AgentCapabilityWebFetch}
+
+// AgentCapabilityPolicy is a version's capability policy (ADR-20261027090016
+// §3, amendment 1). Sensitive, TaintMode, Web and Data are refused until
+// their rollout steps ship, so a seller never believes a rule is enforced
+// that is not.
+type AgentCapabilityPolicy struct {
+	Tools     []AgentCapabilityTool   `json:"tools,omitempty"`
+	Budgets   *AgentCapabilityBudgets `json:"budgets,omitempty"`
+	Sensitive []string                `json:"sensitive,omitempty"`
+	TaintMode string                  `json:"taint_mode,omitempty"`
+	Web       json.RawMessage         `json:"web,omitempty"`
+	Data      json.RawMessage         `json:"data,omitempty"`
+}
+
+// AgentCapabilityTool sets one tool's mode.
+type AgentCapabilityTool struct {
+	Name string `json:"name"`
+	Mode string `json:"mode"`
+}
+
+// AgentCapabilityBudgets are a run's capability budgets. ToolCalls 0 takes
+// the plan's AgentToolCallsPerRunMax.
+type AgentCapabilityBudgets struct {
+	ToolCalls int `json:"tool_calls,omitempty"`
+}
+
+// Allows reports whether the policy allows the tool.
+func (p *AgentCapabilityPolicy) Allows(tool string) bool {
+	if p == nil {
+		return false
+	}
+	for _, t := range p.Tools {
+		if t.Name == tool {
+			return t.Mode == AgentCapabilityAllow
+		}
+	}
+	return false
+}
+
+// ToolCallBudget is the run's tool-call budget on plan: the policy's, capped
+// at the plan's maximum, or the maximum when the policy names none.
+func (p *AgentCapabilityPolicy) ToolCallBudget(plan Plan) int {
+	ceiling := AgentToolCallsPerRunMax[plan.PlanIndex()]
+	if p == nil || p.Budgets == nil || p.Budgets.ToolCalls <= 0 {
+		return ceiling
+	}
+	return min(p.Budgets.ToolCalls, ceiling)
 }
 
 // CreateAgentRequest is the body of POST /v1/agents: the agent and its
