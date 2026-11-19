@@ -128,6 +128,7 @@ WHERE t.account_id = sqlc.arg(account_id)::uuid
   AND t.platform_tenant_id IS NOT NULL
   AND e->>'flag' = sqlc.arg(flag_key)::text
   AND e->>'rule_id' = sqlc.arg(rule_id)::text
+  AND e->>'reason' IS DISTINCT FROM 'holdout'
   AND jsonb_typeof(e->'value') = 'string'
 GROUP BY 1, 2
 ORDER BY 3
@@ -294,6 +295,7 @@ WHERE t.account_id = sqlc.arg(account_id)::uuid
   AND t.platform_tenant_id IS NOT NULL
   AND e->>'flag' = sqlc.arg(flag_key)::text
   AND e->>'rule_id' = sqlc.arg(rule_id)::text
+  AND e->>'reason' IS DISTINCT FROM 'holdout'
   AND jsonb_typeof(e->'value') = 'string'
   AND length(e->>'value') BETWEEN 1 AND 128
 GROUP BY 2, 3

@@ -32,6 +32,9 @@ type flagExperimentPgFixture struct {
 	// decision records a request whose checkout decision matched rule (or
 	// the default, with rule "").
 	decision func(customer, rule string, at time.Time)
+	// held records a request whose checkout decision the environment
+	// holdout served control on the weighted rule (ADR 20261119173702 §2).
+	held func(customer string, at time.Time)
 }
 
 func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixture {
@@ -83,6 +86,10 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 			return
 		}
 		insert(customer, fmt.Sprintf(`[{"flag":"checkout","value":true,"rule_id":%q,"config_version":1,"reason":"rule_match","source":"configuration","used":false}]`, rule), at, 200, 10)
+	}
+	f.held = func(customer string, at time.Time) {
+		t.Helper()
+		insert(customer, `[{"flag":"checkout","type":"variant","value":"legacy","rule_id":"weighted","config_version":1,"reason":"holdout","source":"configuration","used":false}]`, at, 200, 10)
 	}
 	return f
 }

@@ -53,15 +53,15 @@ type FlagExperiment struct {
 	// running; Allocation fixed or bandit, with the bandit's last posterior
 	// and re-weight time; DenominatorEvent a ratio metric's denominator and
 	// Percentile a percentile metric's percentile (ADR 20261119173702).
-	Unit                string
-	Layer               string
-	Traffic             int
-	LayerFrom, LayerTo  int
-	Allocation          string
-	Bandit              []flags.BanditArm
-	BanditWeightedAt    *time.Time
-	DenominatorEvent    string
-	Percentile          int
+	Unit               string
+	Layer              string
+	Traffic            int
+	LayerFrom, LayerTo int
+	Allocation         string
+	Bandit             []flags.BanditArm
+	BanditWeightedAt   *time.Time
+	DenominatorEvent   string
+	Percentile         int
 }
 
 // SubjectUnits reports whether the experiment counts subjects; its units

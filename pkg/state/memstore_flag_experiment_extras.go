@@ -14,13 +14,16 @@ import (
 // SetRolloutMetricArmsForTest.
 
 // RecordFlagExperimentExposures implements FlagExperimentExtrasStore.
-func (m *MemStore) RecordFlagExperimentExposures(_ context.Context, environmentID string, exposures []FlagExperimentExposure) (int, error) {
+func (m *MemStore) RecordFlagExperimentExposures(_ context.Context, accountID, environmentID string, exposures []FlagExperimentExposure) (int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fe := m.flagEventsLocked()
 	fe.experimentsLocked()
 	accepted := 0
 	for _, e := range exposures {
+		if t, ok := m.platformTenants[e.CustomerID]; !ok || t.AccountID != accountID || t.Status != "active" {
+			continue
+		}
 		var x *FlagExperiment
 		for _, c := range fe.experiments {
 			if c.EnvironmentID == environmentID && c.Status == flags.ExperimentRunning && c.SubjectUnits() && c.FlagKey == e.Flag && c.RuleID == e.RuleID {

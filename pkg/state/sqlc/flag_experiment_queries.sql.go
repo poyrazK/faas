@@ -156,6 +156,7 @@ WHERE t.account_id = $2::uuid
   AND t.platform_tenant_id IS NOT NULL
   AND e->>'flag' = $7::text
   AND e->>'rule_id' = $8::text
+  AND e->>'reason' IS DISTINCT FROM 'holdout'
   AND jsonb_typeof(e->'value') = 'string'
   AND length(e->>'value') BETWEEN 1 AND 128
 GROUP BY 2, 3
@@ -797,6 +798,7 @@ WHERE t.account_id = $2::uuid
   AND t.platform_tenant_id IS NOT NULL
   AND e->>'flag' = $7::text
   AND e->>'rule_id' = $8::text
+  AND e->>'reason' IS DISTINCT FROM 'holdout'
   AND jsonb_typeof(e->'value') = 'string'
 GROUP BY 1, 2
 ORDER BY 3

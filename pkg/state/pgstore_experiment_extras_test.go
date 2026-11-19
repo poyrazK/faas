@@ -27,7 +27,7 @@ func TestPg_FlagExperimentSubjectUnits(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
 	h1, h2 := state.AnalyticsSubjectHash(f.env, "user-1"), state.AnalyticsSubjectHash(f.env, "user-2")
 	exp := []state.FlagExperimentExposure{{Flag: "checkout", RuleID: "weighted", Variant: "new", CustomerID: a, SubjectHash: h1, At: now}}
-	if n, err := s.RecordFlagExperimentExposures(ctx, f.env, exp); err != nil || n != 0 {
+	if n, err := s.RecordFlagExperimentExposures(ctx, acct, f.env, exp); err != nil || n != 0 {
 		t.Fatalf("exposures to a draft = %d, %v; want none", n, err)
 	}
 	if _, err := s.StartFlagExperiment(ctx, f.env, "by-user", x.Weights, [2]int{}, now.Add(-time.Hour), 5); err != nil {
@@ -36,8 +36,9 @@ func TestPg_FlagExperimentSubjectUnits(t *testing.T) {
 	exp = append(exp,
 		state.FlagExperimentExposure{Flag: "checkout", RuleID: "weighted", Variant: "legacy", CustomerID: a, SubjectHash: h2, At: now},
 		state.FlagExperimentExposure{Flag: "checkout", RuleID: "other", Variant: "new", CustomerID: a, SubjectHash: h1, At: now},
-		state.FlagExperimentExposure{Flag: "checkout", RuleID: "weighted", Variant: "legacy", CustomerID: a, SubjectHash: h1, At: now.Add(time.Minute)})
-	if n, err := s.RecordFlagExperimentExposures(ctx, f.env, exp); err != nil || n != 3 {
+		state.FlagExperimentExposure{Flag: "checkout", RuleID: "weighted", Variant: "legacy", CustomerID: a, SubjectHash: h1, At: now.Add(time.Minute)},
+		state.FlagExperimentExposure{Flag: "checkout", RuleID: "weighted", Variant: "new", CustomerID: "00000000-0000-4000-8000-000000000099", SubjectHash: h1, At: now})
+	if n, err := s.RecordFlagExperimentExposures(ctx, acct, f.env, exp); err != nil || n != 3 {
 		t.Fatalf("exposures = %d, %v; want 3 on the experiment's rule", n, err)
 	}
 	running, err := s.ListRunningFlagExperiments(ctx, "", 10)
@@ -172,5 +173,36 @@ func TestPg_FeatureFlagRolloutMetricArms(t *testing.T) {
 		EnvironmentID: f.env, EnvironmentSlug: "production", FlagKey: "checkout", RuleID: "stage", Event: "order", Since: since, MaxUnits: 100})
 	if err != nil || treatment.Exposed != 1 || treatment.Converted != 1 || comparison.Exposed != 2 || comparison.Converted != 0 {
 		t.Fatalf("rollout arms = %+v / %+v, %v", comparison, treatment, err)
+	}
+}
+
+// ADR 20261119173702 §2: customers the environment holdout served control
+// are not units of the experiment on their rule.
+func TestPg_FlagExperimentHoldoutNotCounted(t *testing.T) {
+	f := newFlagExperimentPgFixture(t, "flags-holdout")
+	s, ctx, acct := f.s, f.ctx, f.acct
+	a, b := f.tenant("a"), f.tenant("b")
+	start := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Minute)
+	x, err := s.CreateFlagExperiment(ctx, state.FlagExperiment{AccountID: acct, ProjectID: f.project, EnvironmentID: f.env,
+		Key: "held", FlagKey: "checkout", RuleID: "weighted", Control: "legacy", MetricEvent: "order_completed",
+		MixingLift: 0.02, Weights: map[string]int{"legacy": 50, "new": 50}, CreatedBy: acct}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.StartFlagExperiment(ctx, f.env, x.Key, x.Weights, [2]int{}, start, 5); err != nil {
+		t.Fatal(err)
+	}
+	f.exposure(a, "new", start.Add(time.Minute), 200, 10)
+	f.held(b, start.Add(time.Minute))
+	running, err := s.ListRunningFlagExperiments(ctx, "", 10)
+	if err != nil || len(running) != 1 {
+		t.Fatalf("running = %+v, %v", running, err)
+	}
+	if read, err := s.AdvanceFlagExperimentUnits(ctx, running[0], start, start.Add(time.Hour), 1000); err != nil || read != 1 {
+		t.Fatalf("AdvanceFlagExperimentUnits read %d, %v; want only the rule_match customer", read, err)
+	}
+	arms, _, err := s.FlagExperimentArms(ctx, running[0], 1)
+	if err != nil || len(arms) != 1 || arms[0].Variant != "new" || arms[0].Exposed != 1 {
+		t.Fatalf("arms = %+v, %v; want the held-out customer left out", arms, err)
 	}
 }

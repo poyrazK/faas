@@ -45,18 +45,18 @@ type FlagExperimentExposure struct {
 // RolloutMetricQuery selects a metric-driven rollout stage's groups.
 type RolloutMetricQuery struct {
 	AccountID, ProjectID, EnvironmentID, EnvironmentSlug string
-	FlagKey, RuleID, Event                              string
-	Since                                               time.Time
-	MaxUnits                                            int
+	FlagKey, RuleID, Event                               string
+	Since                                                time.Time
+	MaxUnits                                             int
 }
 
 // FlagExperimentExtrasStore keeps subject units, ratio and percentile
 // metric data, bandit state and segment arms.
 type FlagExperimentExtrasStore interface {
 	// RecordFlagExperimentExposures adds subject units for the exposures
-	// that match a running subject experiment of the environment, and
-	// returns how many did.
-	RecordFlagExperimentExposures(ctx context.Context, environmentID string, exposures []FlagExperimentExposure) (int, error)
+	// of the account's active customers that match a running subject
+	// experiment of the environment, and returns how many did.
+	RecordFlagExperimentExposures(ctx context.Context, accountID, environmentID string, exposures []FlagExperimentExposure) (int, error)
 	// FlagExperimentRatioArms returns per-variant numerator and denominator
 	// sums with the delta method's squares and products.
 	FlagExperimentRatioArms(ctx context.Context, x FlagExperiment) ([]flags.RatioArm, error)
@@ -106,7 +106,7 @@ func unitRef(id, customer pgtype.UUID, hash []byte, first time.Time) FlagExperim
 }
 
 // RecordFlagExperimentExposures implements FlagExperimentExtrasStore.
-func (s *PgStore) RecordFlagExperimentExposures(ctx context.Context, environmentID string, exposures []FlagExperimentExposure) (int, error) {
+func (s *PgStore) RecordFlagExperimentExposures(ctx context.Context, accountID, environmentID string, exposures []FlagExperimentExposure) (int, error) {
 	if len(exposures) == 0 {
 		return 0, nil
 	}
@@ -114,6 +114,9 @@ func (s *PgStore) RecordFlagExperimentExposures(ctx context.Context, environment
 	running, err := q.RunningSubjectExperiments(ctx, s.pool, uuidToPgtype(environmentID))
 	if err != nil || len(running) == 0 {
 		return 0, flagExperimentErrOrNil("exposures", err)
+	}
+	if exposures, err = activeTenantExposures(ctx, q, s.pool, accountID, exposures); err != nil {
+		return 0, err
 	}
 	byRule := map[[2]string]pgtype.UUID{}
 	for _, r := range running {
@@ -283,4 +286,36 @@ func (s *PgStore) FeatureFlagRolloutMetricArms(ctx context.Context, in RolloutMe
 		}
 	}
 	return comparison, treatment, nil
+}
+
+// activeTenantExposures keeps exposures of the account's active customers,
+// with their customer ids in canonical form.
+func activeTenantExposures(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, accountID string, exposures []FlagExperimentExposure) ([]FlagExperimentExposure, error) {
+	seen := map[string]bool{}
+	ids := make([]pgtype.UUID, 0, len(exposures))
+	for _, e := range exposures {
+		if id := uuidToPgtype(e.CustomerID); id.Valid && !seen[pgUUIDString(id)] {
+			seen[pgUUIDString(id)] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := q.ActivePlatformTenantIDs(ctx, db, sqlc.ActivePlatformTenantIDsParams{AccountID: uuidToPgtype(accountID), Ids: ids})
+	if err != nil {
+		return nil, fmt.Errorf("flag experiment exposures: customers: %w", err)
+	}
+	active := map[string]bool{}
+	for _, id := range rows {
+		active[pgUUIDString(id)] = true
+	}
+	out := exposures[:0:0]
+	for _, e := range exposures {
+		if id := uuidToPgtype(e.CustomerID); id.Valid && active[pgUUIDString(id)] {
+			e.CustomerID = pgUUIDString(id)
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }

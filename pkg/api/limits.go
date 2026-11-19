@@ -2941,6 +2941,11 @@ const (
 	// ExperimentSegmentFDR is the Benjamini–Hochberg false discovery rate
 	// of segment results.
 	ExperimentSegmentFDR = 0.05
+	// ExperimentBanditShipProbability and ExperimentBanditShipLoss are when
+	// a bandit recommends shipping an arm: best with at least this
+	// probability, giving up less than this conversion rate by choosing it.
+	ExperimentBanditShipProbability = 0.95
+	ExperimentBanditShipLoss        = 0.001
 	// RolloutMetricDefaultMaxDecrease and RolloutMetricDefaultMinUnits are
 	// a metric-driven rollout's defaults.
 	RolloutMetricDefaultMaxDecrease = 0.01

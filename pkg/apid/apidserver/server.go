@@ -2474,6 +2474,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.refreshInsightCohort))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
+	// ADR 20261119173702 §2: exclusive layers and the environment holdout.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-layers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperimentLayers)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiment-layers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperimentLayer))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteFlagExperimentLayer))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-holdout", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentHoldout)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/experiment-holdout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagExperimentHoldout))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-holdout/report", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentHoldoutReport)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
 	// ADR-20261104120000: enable the crons a full clone copied paused into a stage.
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/automation/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeEnvironmentAutomation))))
