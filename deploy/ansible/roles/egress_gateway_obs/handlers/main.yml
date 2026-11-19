@@ -1,0 +1,11 @@
+---
+- name: restart wg-obs
+  ansible.builtin.systemd:
+    name: "wg-quick@{{ gateway_obs_iface }}"
+    state: restarted
+
+- name: reload gateway obs firewall
+  ansible.builtin.systemd:
+    name: faas-gateway-obs-firewall
+    state: restarted
+    daemon_reload: true

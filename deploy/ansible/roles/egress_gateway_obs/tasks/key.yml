@@ -1,0 +1,40 @@
+---
+# Both ends: WireGuard, the host's own key and a range that collides with
+# nothing already on the host. The private key never leaves the host; the
+# config loads it with `wg set` (PostUp), so Ansible handles only the public
+# key.
+
+- name: egress_gateway_obs — install wireguard-tools
+  ansible.builtin.apt:
+    name: wireguard-tools
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: egress_gateway_obs — the tunnel range overlaps nothing on this host
+  ansible.builtin.script:
+    cmd: check_obs_range.py {{ gateway_obs_cidr | quote }} {{ gateway_obs_iface | quote }}
+    executable: python3
+  changed_when: false
+
+- name: egress_gateway_obs — mint this host's key once
+  ansible.builtin.shell: |
+    set -eu
+    umask 077
+    wg genkey > /etc/wireguard/{{ gateway_obs_iface }}.key
+  args:
+    creates: /etc/wireguard/{{ gateway_obs_iface }}.key
+    executable: /bin/bash
+
+- name: egress_gateway_obs — derive this host's public key
+  ansible.builtin.shell: |
+    set -eu
+    wg pubkey < /etc/wireguard/{{ gateway_obs_iface }}.key
+  args:
+    executable: /bin/bash
+  register: gateway_obs_pubkey
+  changed_when: false
+
+- name: egress_gateway_obs — publish the public key to the other end
+  ansible.builtin.set_fact:
+    gateway_obs_public_key: "{{ gateway_obs_pubkey.stdout | trim }}"

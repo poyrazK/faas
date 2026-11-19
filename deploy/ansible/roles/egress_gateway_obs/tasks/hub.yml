@@ -1,0 +1,73 @@
+---
+# The control plane's end of wg-obs: one peer per gateway host, and the
+# Prometheus targets for them. Runs after tasks/key.yml on every gateway
+# owner, so their public keys are known.
+
+- name: egress_gateway_obs — require Loki and the gateways' keys
+  ansible.builtin.assert:
+    that:
+      - gateway_obs_loki_address | length > 0
+      # Routed into wg-obs on the gateway, so it must not be the control
+      # plane's public address, which carries the tunnel itself.
+      - gateway_obs_loki_address is match('^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|100\.(6[4-9]|[7-9][0-9]|1[01][0-9]|12[0-7])\.)')
+      - gateway_obs_owners | map('extract', hostvars, 'gateway_obs_public_key') | select('defined') | list | length == gateway_obs_owners | length
+    fail_msg: >-
+      wg-obs needs faas_obs_loki_address (a private address) on the control
+      plane, and every gateway host's key from the play before this one: run
+      the whole gateway_observability.yml without --limit.
+
+- name: egress_gateway_obs — mint and read the control plane's key
+  ansible.builtin.include_tasks: key.yml
+
+- name: egress_gateway_obs — render the tunnel
+  ansible.builtin.template:
+    src: hub-wg-obs.conf.j2
+    dest: /etc/wireguard/{{ gateway_obs_iface }}.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart wg-obs
+
+- name: egress_gateway_obs — start the tunnel
+  ansible.builtin.systemd:
+    name: wg-quick@{{ gateway_obs_iface }}
+    enabled: true
+    state: started
+
+# The control plane's firewall is the nftables role's (policy_nftables.conf.j2
+# accepts Loki pushes on wg-obs while faas_gateway_obs_enabled is on). This
+# play does not re-render the control plane's whole firewall; it checks it.
+- name: egress_gateway_obs — read the control plane's firewall
+  ansible.builtin.command: nft list ruleset
+  register: gateway_obs_hub_ruleset
+  changed_when: false
+
+- name: egress_gateway_obs — the control plane's firewall accepts Loki pushes on wg-obs
+  ansible.builtin.assert:
+    that:
+      - gateway_obs_hub_ruleset.stdout is search('iifname "' ~ gateway_obs_iface ~ '" ip saddr ' ~ (gateway_obs_cidr | regex_escape) ~ ' tcp dport 3100 accept')
+    fail_msg: >-
+      The control plane's firewall does not accept Loki pushes on
+      {{ gateway_obs_iface }} yet. Converge its nftables and prometheus roles
+      with faas_gateway_obs_enabled set (docs/runbooks/agent-egress-gateway.md
+      §Off-host logs and metrics), then re-run.
+
+- name: egress_gateway_obs — create the file-SD directory
+  ansible.builtin.file:
+    path: "{{ gateway_obs_file_sd_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+# Prometheus re-reads these on change; no reload.
+- name: egress_gateway_obs — write the gateways' scrape targets
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ gateway_obs_file_sd_dir }}/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - egress-gateway-shippers.json
+    - agentproxyd.json

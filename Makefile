@@ -1251,6 +1251,10 @@ bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tena
 bootstrap-agent-egress-gateway: ansible-preflight ## ADR-20261117185346: converge the agent egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/agent_egress_gateway.yml
 
+.PHONY: bootstrap-gateway-observability
+bootstrap-gateway-observability: ansible-preflight ## ADR-20261117185346 amendment 2026-11-19: wg-obs, Alloy and scrape targets for the egress gateway hosts.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/gateway_observability.yml
+
 .PHONY: bootstrap-postgres-standby
 bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml

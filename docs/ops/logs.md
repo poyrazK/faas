@@ -25,8 +25,9 @@ Do this once per environment, after the measurement gate in the ADR (§7): `scri
 
 1. **Create a dedicated bucket** and an HMAC/S3 key that can read, write and
    delete in it only.
-   - Add a lifecycle rule that deletes objects after 16 days, as a backstop for
-     Loki's 14-day compactor.
+   - Add a lifecycle rule that deletes objects after 32 days, as a backstop for
+     Loki's compactor: 14 days for most streams, 30 for the agent egress
+     connection log (ADR-20261117185346 amendment 2026-11-19).
    - On GCS, use HMAC keys and the S3-interop endpoint
      `storage.googleapis.com`.
 2. **Write the bucket key on the control plane** as root-only:

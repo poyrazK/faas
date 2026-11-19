@@ -1,0 +1,28 @@
+#!/usr/sbin/nft -f
+# {{ ansible_managed }}
+# ADR-20261117185346 amendment 2026-11-19: what wg-obs may carry on the
+# gateway, in its own table beside faas_tenant_gw and faas_agent_gw. The
+# control plane reaches only the metrics listeners; nothing is forwarded
+# into or out of the tunnel, so no tenant or agent traffic can reach the
+# control plane through it.
+table inet faas_gateway_obs
+delete table inet faas_gateway_obs
+
+table inet faas_gateway_obs {
+  chain input {
+    type filter hook input priority -10; policy accept;
+    iifname "{{ gateway_obs_iface }}" ct state established,related accept
+    iifname "{{ gateway_obs_iface }}" ip saddr {{ gateway_obs_hub_address }} tcp dport { {{ gateway_obs_alloy_port }}, {{ gateway_obs_agentproxyd_port }} } accept
+    iifname "{{ gateway_obs_iface }}" ip saddr {{ gateway_obs_hub_address }} icmp type echo-request accept
+    iifname "{{ gateway_obs_iface }}" drop
+    # The metrics listeners bind the tunnel address. Linux would deliver a
+    # packet for it arriving on any interface; only wg-obs and loopback may.
+    iifname != { "{{ gateway_obs_iface }}", "lo" } ip daddr {{ gateway_obs_address }} drop
+  }
+
+  chain forward {
+    type filter hook forward priority -10; policy accept;
+    iifname "{{ gateway_obs_iface }}" drop
+    oifname "{{ gateway_obs_iface }}" drop
+  }
+}

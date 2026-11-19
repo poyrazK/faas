@@ -1,0 +1,100 @@
+---
+# ADR-20261117185346 amendment 2026-11-19: get the egress gateways' logs and
+# metrics off the gateway hosts. Each gateway host (tenant, agent, or one host
+# that is both) gets a wg-obs tunnel to the control plane that runs Loki and
+# Prometheus, Alloy with a logs leaf, and its scrape targets. Run after the
+# gateways and the control plane are converged with faas_gateway_obs_enabled
+# and faas_obs_logs_enabled set:
+#
+#   make ANSIBLE_INVENTORY=deploy/ansible/.generated/inventory/hosts.ini \
+#     bootstrap-gateway-observability
+#
+# Run it whole, never with --limit: the control plane's end needs every
+# gateway's public key from the first play. With the switch off, every play
+# ends at once.
+
+- name: Gateway observability — mint each gateway host's wg-obs key
+  hosts: tenant_egress_gateway:agent_egress_gateway
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/gateway_obs.yml
+  tasks:
+    - name: Gateway observability — skip unless on, and once per host
+      ansible.builtin.meta: end_host
+      when: not (gateway_obs_on | bool) or inventory_hostname != gateway_obs_owner
+
+    - name: Gateway observability — the gateway's key
+      ansible.builtin.include_role:
+        name: egress_gateway_obs
+        tasks_from: key.yml
+
+- name: Gateway observability — the control plane's end of wg-obs and the scrape targets
+  hosts: control_plane[0]
+  become: true
+  gather_facts: true
+  vars_files:
+    - vars/gateway_obs.yml
+  tasks:
+    - name: Gateway observability — skip unless on and a gateway exists
+      ansible.builtin.meta: end_host
+      when: not (gateway_obs_on | bool) or gateway_obs_owners | length == 0
+
+    - name: Gateway observability — the control plane's end
+      ansible.builtin.include_role:
+        name: egress_gateway_obs
+        tasks_from: hub.yml
+
+- name: Gateway observability — each gateway's tunnel, logs leaf and Alloy
+  hosts: tenant_egress_gateway:agent_egress_gateway
+  become: true
+  gather_facts: false
+  vars_files:
+    - vars/gateway_obs.yml
+  tasks:
+    - name: Gateway observability — skip unless on, and once per host
+      ansible.builtin.meta: end_host
+      when: not (gateway_obs_on | bool) or inventory_hostname != gateway_obs_owner
+
+    - name: Gateway observability — the gateway's end
+      ansible.builtin.include_role:
+        name: egress_gateway_obs
+        tasks_from: gateway.yml
+
+    # A gateway takes a compute node's shipper-only leaf, issued on the
+    # control plane into a per-host staging directory and copied in: it
+    # never holds the CA (ADR-20261023124955 §2).
+    - name: Gateway observability — the gateway's logs leaf
+      ansible.builtin.include_role:
+        name: platform_logs_pki
+      vars:
+        faas_box_role: compute-only
+        faas_node_name: "{{ gateway_obs_owner }}"
+
+    - name: Gateway observability — find agentproxyd's journal namespace
+      ansible.builtin.stat:
+        path: /var/log/journal/{{ ansible_machine_id }}.agentproxyd
+      register: gateway_obs_proxy_namespace
+
+    - name: Gateway observability — Alloy
+      ansible.builtin.include_role:
+        name: alloy
+      vars:
+        alloy_listen_address: "{{ gateway_obs_address }}"
+        alloy_host_label: "{{ gateway_obs_owner }}"
+        alloy_loki_url: "https://{{ gateway_obs_loki_address }}:3100/loki/api/v1/push"
+        alloy_loki_server_name: "{{ hostvars[gateway_obs_hub].faas_obs_loki_server_name | default('loki.faas', true) }}"
+        alloy_journal_units:
+          - wg-quick@wg-tenant.service
+          - wg-quick@wg-agent.service
+          - wg-quick@wg-obs.service
+          - faas-tenant-egress-firewall.service
+          - faas-agent-egress-firewall.service
+          - faas-gateway-obs-firewall.service
+          - faas-agentproxyd.service
+          - node_exporter.service
+        # The connection log (ADR-20261117185346 §5): its own stream, kept 30
+        # days in Loki (loki_retention_streams). outcome is a closed set.
+        alloy_journal_namespaces: >-
+          {{ [{'name': 'agentproxyd', 'job': 'agent-egress-connections', 'labels': ['outcome']}]
+             if gateway_obs_proxy_namespace.stat.exists else [] }}

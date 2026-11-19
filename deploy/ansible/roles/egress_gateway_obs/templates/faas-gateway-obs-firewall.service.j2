@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=faas egress gateway observability tunnel firewall (ADR-20261117185346 amendment 2026-11-19)
+Before=wg-quick@{{ gateway_obs_iface }}.service
+Wants=network-pre.target
+After=network-pre.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/faas/gateway-obs/gateway-obs.nft
+ExecStop=/usr/sbin/nft delete table inet faas_gateway_obs
+
+[Install]
+WantedBy=multi-user.target

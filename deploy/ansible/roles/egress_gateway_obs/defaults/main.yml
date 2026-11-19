@@ -1,0 +1,16 @@
+---
+# egress_gateway_obs (ADR-20261117185346 amendment 2026-11-19): the wg-obs
+# tunnel between the control plane and each egress gateway host. The tunnel
+# names and addresses come from vars/gateway_obs.yml, which every play that
+# runs this role loads.
+
+# The metrics ports Prometheus scrapes on a gateway's tunnel address.
+gateway_obs_alloy_port: 9080
+gateway_obs_agentproxyd_port: 9473
+# Control plane → gateway keepalive: the control plane dials out and keeps
+# the tunnel up, so it needs no inbound internet port.
+gateway_obs_keepalive: 25
+gateway_obs_mtu: 1420
+# Where the control plane writes the scrape targets prometheus.yml.j2's
+# file-SD jobs read.
+gateway_obs_file_sd_dir: /etc/prometheus/file_sd

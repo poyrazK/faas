@@ -114,6 +114,18 @@
         force: true
       notify: restart faas-agentproxyd
 
+# With wg-obs on, the metrics listener binds the tunnel address. A non-local
+# bind lets the proxy start whether or not wg-obs is up, so the observability
+# tunnel never holds up agent egress.
+- name: agentproxyd — allow binding the wg-obs address before it exists
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_file: /etc/sysctl.d/60-faas-gateway-obs.conf
+    state: present
+    reload: true
+  when: gateway_obs_on | default(false) | bool
+
 - name: agentproxyd — bound the connection log's journal namespace
   ansible.builtin.template:
     src: journald-agentproxyd.conf.j2

@@ -1,0 +1,37 @@
+---
+# ADR-20261117185346 amendment 2026-11-19: the egress gateways' observability
+# tunnel, wg-obs. These are derived names only, loaded with vars_files by
+# every play that needs them. Play vars outrank inventory vars, so nothing
+# here shares a name with an operator variable. The operator sets:
+#
+#   faas_gateway_obs_enabled      true to ship the gateways' logs and metrics
+#                                 (needs faas_obs_logs_enabled as well)
+#   faas_gateway_obs_tunnel_cidr  optional, default 10.255.254.0/29
+#   faas_gateway_obs_listen_port  optional, the gateways' UDP port, 51822
+#   faas_gateway_obs_endpoint     optional host var on a gateway: the address
+#                                 the control plane dials, default ansible_host
+gateway_obs_on: "{{ (faas_gateway_obs_enabled | default(false) | bool) and (faas_obs_logs_enabled | default(false) | bool) }}"
+gateway_obs_iface: wg-obs
+gateway_obs_cidr: "{{ faas_gateway_obs_tunnel_cidr | default('10.255.254.0/29', true) }}"
+gateway_obs_prefix_len: "{{ gateway_obs_cidr.split('/')[1] | int }}"
+gateway_obs_port: "{{ faas_gateway_obs_listen_port | default(51822, true) | int }}"
+# The control-plane host that runs Loki and Prometheus, as for compute nodes.
+gateway_obs_hub: "{{ groups['control_plane'] | default([]) | first | default('') }}"
+gateway_obs_loki_address: "{{ hostvars[gateway_obs_hub].faas_obs_loki_address | default('') if gateway_obs_hub else '' }}"
+
+# The tenant and agent gateways may be one host under two inventory names.
+# One name per host owns its tunnel: the first, sorted. groups[] ignores
+# --limit, so every play agrees on the owners and their addresses.
+gateway_obs_names: "{{ ((groups['tenant_egress_gateway'] | default([])) + (groups['agent_egress_gateway'] | default([]))) | unique | sort }}"
+gateway_obs_owner_by_host: "{{ dict(gateway_obs_names | map('extract', hostvars, 'ansible_host') | reverse | zip(gateway_obs_names | reverse)) }}"
+gateway_obs_owners: "{{ gateway_obs_owner_by_host.values() | list | sort }}"
+
+# Addresses: the control plane is the range's first host, each gateway host
+# the next ones in owner order.
+gateway_obs_net: "{{ gateway_obs_cidr.split('/')[0].split('.') }}"
+gateway_obs_hub_address: "{{ gateway_obs_net[:3] | join('.') }}.{{ gateway_obs_net[3] | int + 1 }}"
+gateway_obs_address_base: "{{ gateway_obs_net[:3] | join('.') }}"
+gateway_obs_address_first: "{{ gateway_obs_net[3] | int + 2 }}"
+# On a gateway host: the name that owns its tunnel, and its tunnel address.
+gateway_obs_owner: "{{ gateway_obs_owner_by_host[ansible_host | default(inventory_hostname)] | default('') }}"
+gateway_obs_address: "{{ gateway_obs_address_base }}.{{ gateway_obs_address_first | int + gateway_obs_owners.index(gateway_obs_owner) }}"

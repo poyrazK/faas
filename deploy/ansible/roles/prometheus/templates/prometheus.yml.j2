@@ -178,6 +178,21 @@ scrape_configs:
 {% endfor %}
 {% endfor %}
 {% endif %}
+{% if (faas_box_role | default('single-box')) == 'control-plane' and (prom_promtail_enabled | default(false) | bool) %}
+  # ADR-20261117185346 amendment 2026-11-19: the egress gateway hosts sit
+  # outside the private network. Prometheus reaches them over wg-obs, at
+  # tunnel addresses gateway_observability.yml writes here. A fleet without
+  # gateways has no targets; one without platform logs has no gateway jobs,
+  # because wg-obs needs Loki.
+  - job_name: "promtail-egress-gateway"
+    file_sd_configs:
+      - files: ["/etc/prometheus/file_sd/egress-gateway-shippers.json"]
+    metrics_path: "/metrics"
+  - job_name: "agentproxyd"
+    file_sd_configs:
+      - files: ["/etc/prometheus/file_sd/agentproxyd.json"]
+    metrics_path: "/metrics"
+{% endif %}
 {% if prom_loki_metrics_target | default('') | length > 0 %}
   # Dedicated Loki meta-monitoring. The /metrics endpoint is intentionally
   # scraped independently of Promtail so a backend outage is distinguishable

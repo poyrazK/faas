@@ -23,7 +23,11 @@ faas_agentproxyd_registration_port: 15081
 # address.
 faas_agentproxyd_http_port: 15080
 faas_agentproxyd_tls_port: 15443
-faas_agentproxyd_metrics_listen: 127.0.0.1:9473
+# Loopback, or the gateway's wg-obs address once the gateways' logs and
+# metrics leave the host (ADR-20261117185346 amendment 2026-11-19), where the
+# control plane's Prometheus scrapes it. The play loads vars/gateway_obs.yml.
+faas_agentproxyd_metrics_listen: >-
+  {{ (gateway_obs_address ~ ':9473') if (gateway_obs_on | default(false) | bool) else '127.0.0.1:9473' }}
 # The connection log (ADR-20261117185346 §5) lives in agentproxyd's own
 # journal namespace on the gateway, so the host's 7-day journal bound does
 # not cut it short: abuse desks report days to weeks after the traffic.

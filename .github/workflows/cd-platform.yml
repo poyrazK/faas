@@ -538,7 +538,11 @@ jobs:
           import json
           import sys
 
-          targets = json.load(open(sys.argv[1]))["data"]["activeTargets"]
+          # No release deploys the egress gateways; their own alerts cover
+          # them (ADR-20261117185346 amendment 2026-11-19).
+          gateways = {"promtail-egress-gateway", "agentproxyd"}
+          targets = [t for t in json.load(open(sys.argv[1]))["data"]["activeTargets"]
+                     if t.get("labels", {}).get("job") not in gateways]
           raise SystemExit(0 if targets and all(t.get("health") == "up" for t in targets) else 1)
           PY
             then

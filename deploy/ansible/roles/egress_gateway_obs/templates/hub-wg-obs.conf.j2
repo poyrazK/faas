@@ -1,0 +1,19 @@
+# {{ ansible_managed }}
+# ADR-20261117185346 amendment 2026-11-19: the control plane's end of wg-obs.
+# It dials every egress gateway host and keeps the tunnel up, so it needs no
+# inbound internet port. Each gateway may send it only Loki pushes (the
+# control plane's firewall), and it reaches each gateway only for metrics
+# (the gateway's faas_gateway_obs table).
+[Interface]
+Address = {{ gateway_obs_hub_address }}/{{ gateway_obs_prefix_len }}
+MTU = {{ gateway_obs_mtu }}
+PostUp = wg set %i private-key /etc/wireguard/%i.key
+{% for owner in gateway_obs_owners %}
+
+# {{ owner }}
+[Peer]
+PublicKey = {{ hostvars[owner].gateway_obs_public_key }}
+Endpoint = {{ hostvars[owner].faas_gateway_obs_endpoint | default(hostvars[owner].ansible_host, true) }}:{{ gateway_obs_port }}
+AllowedIPs = {{ gateway_obs_address_base }}.{{ gateway_obs_address_first | int + loop.index0 }}/32
+PersistentKeepalive = {{ gateway_obs_keepalive }}
+{% endfor %}

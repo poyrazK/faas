@@ -1,0 +1,96 @@
+# ADR-20261117185346 amendment 2026-11-19: the egress gateways' alerts fire on
+# their symptom and stay quiet on a healthy gateway.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a down proxy pages, an unreachable gateway warns
+    interval: 1m
+    input_series:
+      - series: up{job="agentproxyd",instance="10.255.254.2:9473",gateway="agent-egress-gateway"}
+        values: 0+0x15
+      - series: up{job="promtail-egress-gateway",instance="10.255.254.2:9080",gateway="agent-egress-gateway"}
+        values: 1+0x15
+      - series: up{job="promtail-egress-gateway",instance="10.255.254.3:9080",gateway="tenant-egress-gateway"}
+        values: 0+0x15
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: FaasAgentProxyDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: FaasAgentProxyDown
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: agentproxyd
+              family: egress_gateways
+              job: agentproxyd
+              instance: 10.255.254.2:9473
+              gateway: agent-egress-gateway
+            exp_annotations:
+              summary: agentproxyd on agent-egress-gateway is down
+              description: Control-plane Prometheus cannot scrape agentproxyd on agent-egress-gateway over wg-obs. While the proxy is down, agent TCP 80 and 443 are refused (it fails closed), so sandbox sessions with web egress reach no site. If FaasEgressGatewayUnreachable fires too, the host or wg-obs is down rather than the proxy.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md
+      - eval_time: 9m
+        alertname: FaasEgressGatewayUnreachable
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasEgressGatewayUnreachable
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: egress-gateway
+              family: egress_gateways
+              job: promtail-egress-gateway
+              instance: 10.255.254.3:9080
+              gateway: tenant-egress-gateway
+            exp_annotations:
+              summary: Egress gateway host tenant-egress-gateway is unreachable over wg-obs
+              description: Control-plane Prometheus cannot scrape Alloy on tenant-egress-gateway. The gateway host, its wg-obs tunnel or Alloy is down, and its logs (the agent egress connection log among them) are not leaving it; they stay in the gateway's journal.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md
+
+  # First 1/s of 11/s refused by cap_vm (9%, quiet), then 3/s of 11.5/s
+  # (26%, fires). upstream_error is not a refusal. unregistered at 0.5/s
+  # fires its own alert.
+  - name: refusal spikes warn, a few refusals do not
+    interval: 1m
+    input_series:
+      - series: agent_egress_connections_total{job="agentproxyd",gateway="agent-egress-gateway",outcome="accepted"}
+        values: 0+540x20 10800+420x30
+      - series: agent_egress_connections_total{job="agentproxyd",gateway="agent-egress-gateway",outcome="cap_vm"}
+        values: 0+60x20 1200+180x30
+      - series: agent_egress_connections_total{job="agentproxyd",gateway="agent-egress-gateway",outcome="upstream_error"}
+        values: 0+60x50
+      - series: agent_egress_connections_total{job="agentproxyd",gateway="agent-egress-gateway",outcome="unregistered"}
+        values: 0+0x20 0+30x30
+    alert_rule_test:
+      - eval_time: 19m
+        alertname: FaasAgentEgressRefusalSpike
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: FaasAgentEgressUnregisteredRefusals
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: FaasAgentEgressRefusalSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: agentproxyd
+              family: egress_gateways
+              gateway: agent-egress-gateway
+            exp_annotations:
+              summary: agentproxyd on agent-egress-gateway refuses 26.09% of agent connections
+              description: More than 20% of agent egress connections, and at least one a second, have been refused by the proxy's caps, blocklist or destination checks for 10 minutes. Split by outcome with sum by (outcome) (rate(agent_egress_connections_total[5m])); a runaway session hits cap_vm, fleet-wide load on one site hits cap_domain_fleet. The connection log in Loki names the sessions.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md
+      - eval_time: 40m
+        alertname: FaasAgentEgressUnregisteredRefusals
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: agentproxyd
+              family: egress_gateways
+              gateway: agent-egress-gateway
+            exp_annotations:
+              summary: agentproxyd on agent-egress-gateway refuses connections from unregistered agent VMs
+              description: Agent VMs are connecting without a live registration, so the proxy cannot name them and refuses them. vmmd's registrations or renewals are not arriving over wg-agent; check vmmd's journal on the nodes for agent egress registration renewal failed and the wg-agent handshakes.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md

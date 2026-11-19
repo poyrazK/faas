@@ -165,6 +165,9 @@ table inet faas {
     {{ faas_priv }}ip saddr {{ cidr }} tcp dport 3100 accept comment "Loki push from compute Promtail (ADR-20261023124955)"
 {% endfor -%}
 {% endif -%}
+{% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and (faas_gateway_obs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and (faas_box_role | default('single-box')) != 'compute-only' -%}
+    iifname "wg-obs" ip saddr {{ faas_gateway_obs_tunnel_cidr | default('10.255.254.0/29', true) }} tcp dport 3100 accept comment "Loki push from the egress gateways over wg-obs (ADR-20261117185346 amendment 2026-11-19)"
+{% endif -%}
 {% if (faas_obs_logs_enabled | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_control_plane_allowed_cidrs is defined and faas_control_plane_allowed_cidrs -%}
 {% for cidr in faas_control_plane_allowed_cidrs -%}
     {{ faas_priv }}ip saddr {{ cidr }} tcp dport 9080 accept comment "Promtail metrics scraped from control (ADR-20261023124955)"

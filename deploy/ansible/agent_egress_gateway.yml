@@ -14,6 +14,10 @@
   hosts: agent_egress_gateway
   become: true
   gather_facts: true
+  # wg-obs (ADR-20261117185346 amendment 2026-11-19): with it on, agentproxyd
+  # serves its metrics on the gateway's tunnel address.
+  vars_files:
+    - vars/gateway_obs.yml
   roles:
     - role: agent_egress_gateway
 

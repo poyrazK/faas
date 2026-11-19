@@ -630,6 +630,27 @@
         name: platform_logs_pki
       when: faas_obs_logs_enabled | default(false) | bool
 
+# The egress gateway hosts' shipper leaves (ADR-20261117185346 amendment
+# 2026-11-19), issued on the control plane like a compute node's.
+- name: Renew the egress gateways' platform-log leaves
+  hosts: tenant_egress_gateway:agent_egress_gateway
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars_files:
+    - vars/gateway_obs.yml
+  tasks:
+    - name: pki renewal — a gateway host's platform-log leaf
+      ansible.builtin.include_role:
+        name: platform_logs_pki
+      vars:
+        faas_box_role: compute-only
+        faas_node_name: "{{ gateway_obs_owner }}"
+      when:
+        - gateway_obs_on | bool
+        - inventory_hostname == gateway_obs_owner
+
 # Outbound relay (ADR-989): outboundd's relay server leaf and each compute
 # node's vmmd relay client leaf are fleet-PKI feature leaves too. Each task
 # reissues its leaf within 30 days of expiry and restarts its daemon only

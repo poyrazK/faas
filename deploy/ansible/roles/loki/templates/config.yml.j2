@@ -76,6 +76,14 @@ limits_config:
   max_query_series: {{ loki_max_query_series }}
   max_entries_limit_per_query: {{ loki_max_entries_limit_per_query }}
   retention_period: {{ loki_retention_period }}
+{% if loki_retention_streams | length > 0 %}
+  retention_stream:
+{% for stream in loki_retention_streams %}
+    - selector: '{{ stream.selector }}'
+      priority: {{ stream.priority }}
+      period: {{ stream.period }}
+{% endfor %}
+{% endif %}
   reject_old_samples: true
   reject_old_samples_max_age: {{ loki_retention_period }}
   allow_structured_metadata: false
