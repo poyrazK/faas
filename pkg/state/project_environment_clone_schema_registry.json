@@ -22106,6 +22106,16 @@
     "kind": "operational"
   },
   {
+    "table": "hosted_task_rehearsal_plans",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",

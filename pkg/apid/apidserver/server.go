@@ -3175,6 +3175,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
 	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
 	mux.HandleFunc("POST /v1/task-tool-source-intents/{id}/bindings/revoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskBindings()))))
+	mux.HandleFunc("GET /v1/task-tool-source-intents/{id}/rehearsal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/rehearsal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
+	mux.HandleFunc("PUT /v1/task-tool-source-intents/{id}/rehearsal/decision", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.privateTools.HostedTaskRehearsal()))))
 
 	mux.HandleFunc("GET /v1/task-tool-release-intents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.privateTools.TaskReleaseIntent())))
 	mux.HandleFunc("PUT /v1/task-tool-release-intents/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.privateTools.TaskReleaseIntent()))))

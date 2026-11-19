@@ -324,3 +324,22 @@ FROM apps a WHERE a.id=sqlc.arg(app_id);
 -- name: LockHostedTaskBindingDatabase :one
 SELECT id::text,account_id::text,state FROM managed_postgres_databases
 WHERE account_id=$1 AND id=$2 FOR SHARE NOWAIT;
+
+-- name: LockHostedTaskRehearsalPlan :one
+SELECT payload, expires_at FROM hosted_task_rehearsal_plans
+WHERE account_id = $1 AND id = $2 FOR UPDATE;
+
+-- The owner, requester and binding keys have already been validated under row
+-- locks. Real-clock checks fence their expiration and the observation deadline
+-- even if processing lasted past either one.
+-- name: SaveHostedTaskRehearsalPlan :execrows
+INSERT INTO hosted_task_rehearsal_plans (account_id, id, payload, expires_at)
+SELECT sqlc.arg(account_id), sqlc.arg(id), sqlc.arg(payload), sqlc.arg(expires_at)
+WHERE (NOT sqlc.arg(require_fresh)::boolean OR sqlc.arg(expires_at)::timestamptz > clock_timestamp())
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = sqlc.arg(account_id) AND k.id = ANY(sqlc.arg(authority_keys)::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+ON CONFLICT (account_id, id) DO UPDATE SET payload = excluded.payload
+WHERE hosted_task_rehearsal_plans.expires_at = excluded.expires_at;
