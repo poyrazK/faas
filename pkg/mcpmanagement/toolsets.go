@@ -241,6 +241,13 @@ var toolsetOf = map[string]string{
 	"gregale_list_budgets":                     ToolsetOperate,
 	"gregale_plan_budget_change":               ToolsetOperate,
 	"gregale_apply_budget_change":              ToolsetOperate,
+	"gregale_search_logs":                      ToolsetDiagnose,
+	"gregale_get_log_facets":                   ToolsetDiagnose,
+	"gregale_list_log_drains":                  ToolsetDiagnose,
+	"gregale_get_log_drain_health":             ToolsetDiagnose,
+	"gregale_list_notification_channels":       ToolsetOperate,
+	"gregale_test_notification_channel":        ToolsetOperate,
+	"gregale_list_org_members":                 ToolsetOperate,
 
 	"gregale_plan_domain":     ToolsetProvision,
 	"gregale_plan_bucket":     ToolsetProvision,

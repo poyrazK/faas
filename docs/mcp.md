@@ -7291,6 +7291,23 @@ ADR-20261118160000.
   revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
   and spend caps ask a person first.
 
+## Log search, drains, channels and organization members
+
+ADR-20261119110000.
+
+- Logs (toolset `diagnose`): `gregale_search_logs` filters by source, level,
+  route, status, deployment, request, trace and text over a window (default
+  the last hour); `gregale_get_log_facets` counts matches to narrow a search.
+  `gregale_list_log_drains` and `gregale_get_log_drain_health` show drains
+  and their delivery.
+- Channels (toolset `operate`): `gregale_list_notification_channels` and
+  `gregale_test_notification_channel` (one test message, at most once a
+  minute per channel).
+- Drain and channel destinations show only their host (`https://hooks.slack.com`,
+  `…@example.com`); the rest of a webhook URL is often its credential.
+- `gregale_list_org_members` (toolset `operate`) lists an organization's
+  members, roles and pending invitations.
+
 ## Read product analytics
 
 Four read-only tools in the `diagnose` toolset query product analytics (see
