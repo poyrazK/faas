@@ -186,11 +186,14 @@ Metal checks on gregale-internal-test-1, 2026-11-19 (#7620):
 - `pkg/fcvm`, `TestMetalSandboxWebEgressPolicy` and
   `TestMetalSandboxBrowserReadsAGrantedPage`: grant-only egress, deny policy,
   the domain log, and Chromium reading a granted page.
+- `pkg/agentproxy`, `TestMetalAgentEgressGatewayCaps`: each of the proxy's
+  three concurrent-connection caps filled with held connections, the next one
+  refused with its outcome, other domains and accounts still carried, and
+  slots returned once connections close.
 
 Still owed before or during step 5:
 
 - A real WireGuard handshake: the test host has no `wg`, so step 5's
   handshake check is the first one.
-- The proxy's three cap refusals under load (ADR §4 rollout).
 - Shipping the proxy log off the gateway host. Until then the log lives only
   on the gateway for 30 days.

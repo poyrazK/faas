@@ -1536,11 +1536,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-458: Opt-in automatic recovery for critical route error regressions](458-critical-route-automatic-rollback.md)
 - [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
 - [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
-- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with no telemetry; amendment 2: validated probes pass the platform's own auth gates, never the app's
+- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with no telemetry; amendment 2: validated probes pass the platform's own auth gates, never the app's; amendment 3: probes never reset the idle timer
 - [ADR-976: Route advisor](976-route-advisor.md) — suggest cache, async and per-consumer throttle rules from observed traffic with what-if estimates; rules are created disabled
 - [ADR-844: Default report-mode route health selectors](844-default-report-mode-route-health.md) — seed observed critical routes for unconfigured apps on their first canary advance
 - [ADR-846: Stage-pooled evidence for low-traffic critical routes](846-pooled-route-health-evidence.md) — re-evaluate sparse routes over two halves of the stage so far with unchanged thresholds
-- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with no telemetry; amendment 2: validated probes pass the platform's own auth gates, never the app's
+- [ADR-847: Opt-in synthetic probes for routes without organic traffic](847-synthetic-route-probes.md) — probe opted-in GET/HEAD routes on candidate and stable with no telemetry; amendment 2: validated probes pass the platform's own auth gates, never the app's; amendment 3: probes never reset the idle timer
 - [ADR-977: Opt-in service wake-ahead along measured edges](977-service-wake-ahead.md) — wake the services a waking app is measured to call, below a 60% residency guard, through the ordinary wake path (amends ADR-196)
 - [ADR-978: Route priority for the warm-capacity queue](978-route-priority-under-load.md) — order saturated requests critical/normal/bulk and let higher classes take lower-class queue places
 - [ADR-1152: Route feature evidence, advisor settings, and token-free rollout completion](1152-route-feature-evidence-and-rollout-completion.md) — show learned wake-ahead edges and queue outcomes, suggest the settings, and complete finished rollouts without the safe-release tokens (#1926)
@@ -2488,6 +2488,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261116140000 · Observed HTTP cron delivery outcomes](20261116140000-observed-http-cron-delivery-outcomes.md)
 
 - [ADR-20261117010000 · Targeted runtime diagnostic selection](20261117010000-targeted-runtime-diagnostic-selection.md)
+- [ADR-20261117195246 · Runtime diagnostic collection telemetry](20261117195246-runtime-diagnostic-collection-telemetry.md)
+- [ADR-20261117202547 · Runtime collection admission](20261117202547-runtime-collection-admission.md)
 
 - [ADR-20261117020000 · Observed delayed-task dispatch outcomes](20261117020000-observed-delayed-task-dispatch-outcomes.md)
 - [ADR-20261117070839: Owner review of retained hosted Task source](20261117070839-hosted-task-source-owner-review.md) — fixed-expiry source review decisions, separate from credential and execution authority.

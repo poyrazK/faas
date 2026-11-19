@@ -156,6 +156,11 @@ type App struct {
 	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
 	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
 	PerInstanceConcurrency int
+	// FunctionRunnerSlots is how many requests a function instance's
+	// generated runner executes at once (interpreter workers × the app's
+	// function_concurrency); zero for apps without one. It sizes burst
+	// scale-out only, never admission (burstScaleOutConcurrency).
+	FunctionRunnerSlots int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -7883,6 +7888,7 @@ haveApp:
 	// Reconcile pressure accumulated by the app-level burst. Public snapshots
 	// use deployment-scoped admissions; explicit pin URLs skip expansion.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
+	burstPerVM := burstScaleOutConcurrency(app, perVMConcurrency)
 	waitedForBurst := false
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
@@ -7891,9 +7897,9 @@ haveApp:
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
-			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency, routing)
+			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM, routing)
 		} else {
-			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM)
 		}
 		if burstErr != nil {
 			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
@@ -8819,9 +8825,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
+	//
+	// A route probe (ADR-847) is platform traffic, not customer activity: it
+	// still refreshes the gateway's cached target below, but it never resets
+	// the idle timer. A probed app otherwise never parked, kept its RAM and
+	// its billed running time, and never captured a snapshot (ADR-847
+	// amendment 2026-11-19).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
 		now := time.Now()
-		h.lastSeen.Touch(target.InstanceID, now)
+		if !isRouteProbe(r.Context()) {
+			h.lastSeen.Touch(target.InstanceID, now)
+		}
 		if recorder, ok := h.backend.(targetActivityRecorder); ok {
 			recorder.TouchTarget(appID, target.InstanceID, now)
 		}

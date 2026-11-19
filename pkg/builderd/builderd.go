@@ -1390,12 +1390,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			}
 		}
 	}()
+	stopSteps := b.followBuildSteps(ctx, build.ID, handle)
 	var out BuildOutcome
 	if warmStarted {
 		out, warmCaptured, err = warmVM.WaitForWarmCompletion(ctx, handle)
 	} else {
 		out, err = b.vm.WaitForCompletion(ctx, handle)
 	}
+	stopSteps()
 	stopWatch()
 	<-watchDone
 	// A borrowed slot that gave its memory back to tenants returns the build

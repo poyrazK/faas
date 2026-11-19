@@ -322,6 +322,27 @@ func (m *sqlCredentialRoles) ApplyCustomRoles(ctx context.Context, material mana
 			}
 		}
 	}
+	// Default roles: every login of an access mode starts as the role
+	// declared its default, or as itself.
+	for _, access := range []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite, managedpostgres.CredentialReadOnly} {
+		want := ""
+		for _, spec := range desired {
+			if slices.Contains(spec.DefaultFor, access) && slices.Contains(spec.GrantedTo, access) {
+				want = spec.Name
+			}
+		}
+		for _, loginAccess := range accessLogins(access) {
+			logins, err := scopeLogins(ctx, tx, scope.scope, loginAccess)
+			if err != nil {
+				return err
+			}
+			for _, login := range logins {
+				if err := setLoginDefaultRole(ctx, tx, login, want, existing); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	// Drop this scope's roles that are no longer declared, children first.
 	var removed []string
 	for name, row := range existing {
@@ -420,9 +441,6 @@ func ensureLoginCustomRoles(ctx context.Context, tx pgx.Tx, role credentialRole)
 		}
 		return nil
 	}
-	if len(role.customRoles) == 0 {
-		return nil
-	}
 	existing, err := customRolesByMarker(ctx, tx)
 	if err != nil {
 		return err
@@ -444,5 +462,43 @@ func ensureLoginCustomRoles(ctx context.Context, tx pgx.Tx, role credentialRole)
 			return err
 		}
 	}
-	return nil
+	// The default role is set once it exists and is granted; until then
+	// the next custom-role apply sets it.
+	want := ""
+	if row, ok := existing[role.defaultCustomRole]; ok && row.marker == marker && slices.Contains(role.customRoles, role.defaultCustomRole) {
+		want = role.defaultCustomRole
+	}
+	return setLoginDefaultRole(ctx, tx, role.name, want, existing)
+}
+
+// loginDefaultRole is the custom role a login's role setting names, or ""
+// when it has none.
+func loginDefaultRole(ctx context.Context, tx pgx.Tx, login string, existing map[string]customRoleRow) (string, error) {
+	var settings []string
+	if err := tx.QueryRow(ctx, `SELECT COALESCE(rolconfig, ARRAY[]::text[]) FROM pg_roles WHERE rolname = $1`, login).Scan(&settings); err != nil {
+		return "", err
+	}
+	for _, setting := range settings {
+		if name, ok := strings.CutPrefix(setting, "role="); ok {
+			if _, custom := existing[name]; custom {
+				return name, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// setLoginDefaultRole makes want ("" for none) the custom role login starts
+// as. It only touches a role setting that names a custom role.
+func setLoginDefaultRole(ctx context.Context, tx pgx.Tx, login, want string, existing map[string]customRoleRow) error {
+	current, err := loginDefaultRole(ctx, tx, login, existing)
+	if err != nil || current == want {
+		return err
+	}
+	if want == "" {
+		_, err = tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(login)+" RESET role")
+		return err
+	}
+	_, err = tx.Exec(ctx, "ALTER ROLE "+roleIdentifier(login)+" SET role TO "+roleIdentifier(want))
+	return err
 }

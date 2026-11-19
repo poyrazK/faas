@@ -1385,6 +1385,25 @@
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
 
+    # ADR-20261023171905: this node's schedd records its quiet pauses in the
+    # billing pause ledger (group_vars/compute_nodes/quiet_pause_billing.yml).
+    # meterd's quiet_pause_unbilled mode on the control plane decides what the
+    # ledger does to bills. The switch was a hand drop-in from 2026-11-17.
+    - name: Install schedd's quiet pause ledger switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-quiet-pause-ledger.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_QUIET_PAUSE_LEDGER={{ '1' if (schedd_quiet_pause_ledger | default(false) | bool) else '0' }}
+
+    - name: Remove the hand-installed quiet pause ledger drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-schedd.service.d/70-faas-quiet-pause-ledger.conf
+        state: absent
+
     # ADR-20261109170000: refuse v1 layer signatures, which do not name their
     # storage key and can be replayed onto another app's layer. Only true once
     # `gregalectl artifact resign` has converted every stored layer.

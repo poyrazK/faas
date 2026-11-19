@@ -1,4 +1,4 @@
--- filename: 20261119103635100_api_key_data_read_scope.sql
+-- filename: 20261119170402100_api_key_data_read_scope.sql
 -- migration-compat: expand
 -- ADR-20261117215858: data:read reads customer data: database rows, message bodies, workflow payloads.
 -- Keep the database check aligned with api.validScopes. The widened check

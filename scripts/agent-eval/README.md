@@ -94,6 +94,11 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   `gregale.yaml`). Others that appear during the run are listed as
   `not_attributed` and left alone. Cleanup deletes only the run's apps and
   projects that did not exist before the run, never one it redeployed.
+- Cleanup purges each app it deletes (`gregale app purge`), because a deleted
+  app holds its name for seven days and the next run's agent would otherwise
+  find the repository's natural name taken. `left_behind` lists `app:<slug>`
+  for an app it could not delete and `name:<slug>` for one whose name is
+  still held.
 - A task's `follow_up` is sent once (Claude only, by resuming the session) when
   the agent finished its turn but the task's checks don't pass yet, for
   example because it stopped to ask before deploying.

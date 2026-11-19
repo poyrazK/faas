@@ -491,6 +491,26 @@ type AgentRunCallback struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+// ADR-20261027090016 amendment 1: capability calls outboundd refused, by policy (denied), exhausted budget (budget) or a tool switched off (disabled).
+type AgentRunCapabilityDecision struct {
+	ID        pgtype.UUID
+	RunID     pgtype.UUID
+	AccountID pgtype.UUID
+	Tool      string
+	Decision  string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 1: per-run capability counts written by outboundd. tool_calls are the calls admitted against the run's tool-call budget.
+type AgentRunCapabilitySummary struct {
+	RunID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ToolCalls    int32
+	RefusedCalls int32
+	FirstCallAt  pgtype.Timestamptz
+	LastCallAt   pgtype.Timestamptz
+}
+
 // ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
 type AgentRunOutput struct {
 	RunID        pgtype.UUID
@@ -566,6 +586,8 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	// ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.
+	CapabilityPolicy []byte
 }
 
 type AlertChannelResolveRetry struct {
@@ -7047,6 +7069,15 @@ type HostedTaskRehearsalPlan struct {
 	ExpiresAt pgtype.Timestamptz
 }
 
+type HostedTaskRehearsalRun struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
 type HostedTaskSourceIntent struct {
 	AccountID  pgtype.UUID
 	ID         string
@@ -8933,6 +8964,7 @@ type ManagedPostgresCustomRole struct {
 	RetryAt      pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	DefaultFor   []string
 }
 
 type ManagedPostgresCutover struct {

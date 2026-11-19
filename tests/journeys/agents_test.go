@@ -147,6 +147,7 @@ func statelessAgent(t *testing.T, tg *target, shape agentShape) {
 		s.step("sleeping_agent_parks", func(t *testing.T) { tg.ok(t, 2*time.Minute, "app", "park", j.app) })
 		s.step("agent_wakes", j.wakes)
 		s.step("agent_runs_with_its_credential", j.runsWithCredential)
+		s.step("agent_subscribes_to_github", j.subscribesToGitHub)
 	}
 }
 
@@ -325,6 +326,29 @@ func (j *agentJourney) runsWithCredential(t *testing.T) {
 		messages := threadMessages(j.threadView(t, thread))
 		for _, m := range messages {
 			if strings.HasPrefix(str(m, "content.text"), want) {
+				return true, compact(messages)
+			}
+		}
+		return false, compact(messages)
+	})
+}
+
+// agentWatchRepository is a repository in no journey account's GitHub
+// installations: the subscription is made, and no event ever fires.
+const agentWatchRepository = "gregale-e2e/no-such-repository"
+
+// subscribesToGitHub asks the agent to watch a repository. Like gregale_run,
+// gregale_github_subscribe needs the app's workload token on the invocation;
+// it answers at once with the subscription it made.
+func (j *agentJourney) subscribesToGitHub(t *testing.T) {
+	thread := j.threadID + "-watch"
+	j.publish(t, thread, "w-1", "watch "+agentWatchRepository)
+	want := "gregale_github_subscribe answered: Subscribed to "
+	eventually(t, "the agent's gregale_github_subscribe answer", agentThreadWait, 5*time.Second, func() (bool, string) {
+		messages := threadMessages(j.threadView(t, thread))
+		for _, m := range messages {
+			text := str(m, "content.text")
+			if strings.HasPrefix(text, want) && strings.Contains(text, " on "+agentWatchRepository+" until ") {
 				return true, compact(messages)
 			}
 		}

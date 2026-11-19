@@ -61,6 +61,7 @@ type planDir struct {
 	accountID string
 	expires   time.Time
 	bytes     int64
+	inUse     int
 }
 
 type sourceUpload struct {
@@ -112,7 +113,7 @@ func (u *uploadStore) pruneLocked() {
 		}
 	}
 	for dir, d := range u.dirs {
-		if now.After(d.expires) {
+		if d.inUse == 0 && !now.Before(d.expires) {
 			removeUploadPlanFiles(dir)
 			delete(u.dirs, dir)
 		}
@@ -298,6 +299,38 @@ func (u *uploadStore) newDir(accountID string, bytes int64) (string, error) {
 		return "", err
 	}
 	return dir, nil
+}
+
+// pinDir holds staged files and the CLI checkpoint while apply is in flight.
+func (u *uploadStore) pinDir(dir string) (func(), error) {
+	u.mu.Lock()
+	d, ok := u.dirs[dir]
+	if !ok || !time.Now().Before(d.expires) {
+		u.mu.Unlock()
+		return nil, invalid("plan_expired", "the reviewed upload is no longer staged; create a new plan")
+	}
+	d.inUse++
+	u.dirs[dir] = d
+	u.mu.Unlock()
+	return func() {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		if d, ok := u.dirs[dir]; ok {
+			d.inUse--
+			u.dirs[dir] = d
+		}
+	}, nil
+}
+
+// keepDirUntil extends an existing reservation without allocating more staging
+// capacity. Apply holds a pin while it records the native approval.
+func (u *uploadStore) keepDirUntil(dir string, deadline time.Time) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if d, ok := u.dirs[dir]; ok && d.expires.Before(deadline) {
+		d.expires = deadline
+		u.dirs[dir] = d
+	}
 }
 
 func (u *uploadStore) removeDir(dir string) {

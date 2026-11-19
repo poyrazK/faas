@@ -1993,3 +1993,61 @@ broker helper. Runs therefore stream and use routes like apps.
   `outboundd` checks the Run grant and lease on every request.
 - Older vmmd or guest images keep the broker helper, so a mixed rollout keeps
   working.
+
+## Agent capability gateway
+
+ADR-20261027090016, amendment 1. On an agent run's relay, outboundd serves MCP
+(Streamable HTTP) at `/mcp`. agentd gives the harness the full URL as
+`GREGALE_CAPABILITY_MCP_URL` when the run's version allows at least one tool.
+The path exists only for agent runs. Apps, Runs and plain callers get 404.
+
+- **What a run sees.** Each request re-checks the run's lease, then reads the
+  version's `capability_policy`. `tools/list` returns only tools that the
+  policy allows and that are switched on in this region. A version without a
+  policy lists nothing.
+- **Budget.** Before a tool runs, the call is counted against the run's
+  budget: the policy's `budgets.tool_calls`, capped at the plan's
+  `AgentToolCallsPerRunMax`. The count is a conditional update on
+  `agent_run_capability_summaries`, so concurrent calls cannot pass the
+  budget together.
+- **Refusals.** A refused call is answered with an MCP error result and
+  written to `agent_run_capability_decisions`. The reasons are `denied` (the
+  policy does not allow it), `budget` (the budget is used up) and `disabled`
+  (the tool is switched off here). A tool name the gateway does not know
+  writes no row.
+- **Metrics:**
+  - `outbound_capability_calls_total{source,decision}`, where decision is
+    `allowed`, `denied`, `budget`, `disabled` or `failed`;
+  - `outbound_capability_call_seconds{source}`;
+  - `agent_budget_exhausted_total{kind}`.
+
+  A rising `failed` count means the ledger or a tool's upstream is failing.
+  The agent sees "unavailable", never the internal error.
+
+Read a run's refusals:
+
+```sql
+SELECT tool, decision, created_at FROM agent_run_capability_decisions WHERE run_id = '<run>' ORDER BY created_at;
+```
+
+### `web_fetch`
+
+The first built-in tool (ADR-20261027090018 tier 1). It sends a GET for one
+URL and returns the page's text; HTML is reduced to its visible text.
+
+- **Destinations.** It reaches only public IPv4 addresses on ports 80 and
+  443. The name is re-resolved at every connection, redirects included, and
+  the whole answer is refused if any address is not public (`pkg/publicdest`).
+- **Bounds.** At most `AgentWebFetchRedirectsMax` redirects,
+  `AgentWebFetchMaxBytes` of body (the result says when it truncated), and
+  `AgentWebFetchTimeoutSec` in all. Only text, JSON and XML types are
+  returned.
+- **Switch.** `FAAS_OUTBOUND_AGENT_WEB_FETCH=1` on outboundd. Off, the tool is
+  not listed, and a call to it is recorded as `disabled`.
+
+**Keep it off in production for now.** The fetches leave from the
+control-plane host, not from an agent egress address. ADR-20261027090016 §1
+requires tool traffic to leave through the agent egress gateway; routing
+outboundd's fetches there is its own change, after the gateway host exists
+(`docs/runbooks/agent-egress-production-rollout.md`). It is safe to switch on
+in a development fleet.

@@ -1905,6 +1905,7 @@ func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingR
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
 		SupportsBorrowedBuilders:           s.borrowed.Supported(),
+		SupportsCacheExportStaging:         true,
 	}
 	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
 	// its configured base generation degraded. The report is cached; Ping

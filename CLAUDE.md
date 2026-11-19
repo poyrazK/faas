@@ -107,7 +107,10 @@ docs/adr/
 - **Billing uses plan RAM + 8 MB per running second** (§4.7), not sampled RSS. Sampled
   RSS is telemetry only. Customers get predictable bills; the model's math depends on it.
 - **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic
-  only when tenant residency < 60%. Builds never outrank tenant wakes.
+  only when tenant residency < 60%. Builds never outrank tenant wakes. With
+  `builder_elastic_slots` on (ADR-20261118154632) each node runs `builder_slots`' reserved
+  slots plus borrowed ones in `faas-borrowed.slice` that give their memory back to tenants
+  (builderd at 85%, vmmd at 92% of the tenant fence); reserved stays 1 until step 7.
 
 ## Hard limits (source: financial model §1 as amended by the Oct 2026 COGS report, ADR-1430; encoded in pkg/api/limits.go)
 

@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 )
 
@@ -32,6 +33,10 @@ type SaveCustomRoleRequest struct {
 	BypassRLS  bool
 	GrantedTo  []CredentialAccess
 	MemberOf   []string
+	// DefaultFor lists the access modes whose logins start as this role.
+	// nil keeps the role's current defaults that are still granted, so a
+	// client that does not know the field never clears it.
+	DefaultFor *[]CredentialAccess
 }
 
 // NewCustomRoleService needs a store that also persists declarations.
@@ -79,9 +84,13 @@ func (s *CustomRoleService) Save(ctx context.Context, request SaveCustomRoleRequ
 	if database.State != StateReady || database.ProviderResourceID == "" {
 		return CustomRole{}, ErrConflict
 	}
+	defaults, err := s.defaultsFor(ctx, request, grants)
+	if err != nil {
+		return CustomRole{}, err
+	}
 	role, err := s.store.SaveCustomRole(ctx, CustomRole{
 		AccountID: request.AccountID, DatabaseID: request.DatabaseID, Name: request.Name,
-		BypassRLS: request.BypassRLS, GrantedTo: grants, MemberOf: parents,
+		BypassRLS: request.BypassRLS, GrantedTo: grants, MemberOf: parents, DefaultFor: defaults,
 	}, CustomRolesMax, s.now())
 	if err != nil {
 		return CustomRole{}, err
@@ -90,6 +99,31 @@ func (s *CustomRoleService) Save(ctx context.Context, request SaveCustomRoleRequ
 		return role, err
 	}
 	return s.find(ctx, request.AccountID, request.DatabaseID, request.Name, role)
+}
+
+// defaultsFor resolves a request's DefaultFor: given, it is validated
+// against grants; absent, the role's current defaults that grants still
+// cover are kept.
+func (s *CustomRoleService) defaultsFor(ctx context.Context, request SaveCustomRoleRequest, grants []CredentialAccess) ([]CredentialAccess, error) {
+	if request.DefaultFor != nil {
+		return NormalizeCustomRoleDefaults(*request.DefaultFor, grants)
+	}
+	roles, err := s.store.ListCustomRoles(ctx, request.AccountID, request.DatabaseID)
+	if err != nil {
+		return nil, err
+	}
+	var kept []CredentialAccess
+	for _, role := range roles {
+		if role.Name != request.Name || role.State == CustomRoleDeleting {
+			continue
+		}
+		for _, access := range role.DefaultFor {
+			if slices.Contains(grants, access) {
+				kept = append(kept, access)
+			}
+		}
+	}
+	return NormalizeCustomRoleDefaults(kept, grants)
 }
 
 // Delete removes a role from the declaration and drops it from the database.
@@ -214,20 +248,21 @@ func (s *CustomRoleService) apply(ctx context.Context, database Database, backen
 }
 
 // customRoleGrants names the declared roles a login of access on database
-// receives when issued. Stores without declarations grant none.
-func customRoleGrants(ctx context.Context, databases Store, database Database, access CredentialAccess) (CustomRoleGrants, error) {
+// receives when issued, and the one it starts as ("" for none). Stores
+// without declarations grant none.
+func customRoleGrants(ctx context.Context, databases Store, database Database, access CredentialAccess) (CustomRoleGrants, string, error) {
 	store, ok := databases.(CustomRoleStore)
 	if !ok {
-		return "", nil
+		return "", "", nil
 	}
 	roles, err := store.ListCustomRoles(ctx, database.AccountID, database.ID)
 	if errors.Is(err, ErrNotFound) {
-		return "", nil
+		return "", "", nil
 	}
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	return CustomRoleGrantsFor(roles, access), nil
+	return CustomRoleGrantsFor(roles, access), CustomRoleDefaultFor(roles, access), nil
 }
 
 // CustomRoles returns a custom-role service over the binding service's

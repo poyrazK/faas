@@ -1771,7 +1771,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.Role == role.RoleComputeOnly {
 			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
 		}
-		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		// ADR-20261117190000: granted compute nodes cannot list the store,
+		// so the jobs/ and sources/ sweeps run here too.
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).WithSweep(store).Run(ctx)
 		log.Info("schedd: object GC enabled")
 	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
@@ -1990,6 +1992,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
 			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
+	if cfg.ReadinessProbeAppHost {
+		engine.EnableReadinessProbeAppHost(cfg.GetAppsDomain(os.Getenv))
+		log.Info("schedd: readiness probes send the app's public host (ADR-20261119140000)")
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()

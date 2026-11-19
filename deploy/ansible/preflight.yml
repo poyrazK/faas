@@ -60,19 +60,9 @@
           python={{ ansible_python.version.major }}).
 
     - name: Resolve and cache the provider-neutral private address
-      ansible.builtin.set_fact:
-        faas_private_dns_address: >-
-          {{ faas_private_address | default(ansible_default_ipv4.address, true) }}
-        cacheable: true
-
-    - name: Require a concrete private transport address
-      ansible.builtin.assert:
-        that:
-          - faas_private_dns_address | default('') | length > 0
-        fail_msg: >-
-          {{ inventory_hostname }} has no private transport address. Set
-          faas_private_address in provider-owned inventory; do not put a
-          provider IP into daemon configuration or the committed manifest.
+      ansible.builtin.include_tasks: tasks/resolve_private_address.yml
+      vars:
+        faas_private_address_cacheable: true
 
     - name: Require systemd on a production host
       ansible.builtin.assert:

@@ -44,6 +44,10 @@ faas_meterd_egress_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # transition to activate provider delivery and reconciliation paging.
 faas_billing_mode: disabled
 
+# meterd's quiet pause billing mode (ADR-20261023171905): off, shadow or on.
+# group_vars/control_plane/quiet_pause_billing.yml sets the fleet's value.
+meterd_quiet_pause_unbilled: "off"
+
 # FAAS_ENVIRONMENT for apid. CD sets "production" for production
 # environments; apid then refuses new object storage buckets while the
 # operator safety policy is smaller than the largest plan

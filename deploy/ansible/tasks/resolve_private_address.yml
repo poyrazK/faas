@@ -1,0 +1,40 @@
+---
+# Resolve this host's private transport address into faas_private_dns_address
+# (ADR-20261109100000, amendment 2026-11-19). Needs gathered facts.
+#
+# Order: faas_private_address from the provider inventory; else, when the
+# manifest names the private card (overlay.interface, rendered as
+# faas_private_iface), that card's IPv4; else the default route's IPv4.
+#
+# The card comes before the default route because a bare-metal host's default
+# route is its public address: an OVH server routes the internet through its
+# public card and reaches its peers on the vRack card. A named card with no
+# IPv4 fails here instead of falling back to the public address.
+#
+# Set faas_private_address_cacheable to keep the fact in the fact cache
+# (preflight does, so a later role-limited bootstrap can read every peer's).
+- name: private address — resolve this host's private transport address
+  ansible.builtin.set_fact:
+    faas_private_dns_address: >-
+      {{ faas_private_address
+         if (faas_private_address | default('', true) | length > 0)
+         else ((((ansible_facts | default({}))[faas_private_iface | replace('-', '_') | replace('.', '_')]
+                 | default((ansible_facts | default({}))[faas_private_iface] | default({}))).ipv4
+                | default({})).address | default(''))
+         if (faas_private_iface | default('', true) | length > 0)
+         else (((ansible_facts | default({})).default_ipv4 | default({})).address | default('')) }}
+    cacheable: "{{ faas_private_address_cacheable | default(false) | bool }}"
+  tags: [private-endpoints]
+
+- name: private address — require a concrete private transport address
+  ansible.builtin.assert:
+    that:
+      - faas_private_dns_address | default('') | length > 0
+    fail_msg: >-
+      {{ inventory_hostname }} has no private transport address.
+      {% if faas_private_iface | default('', true) | length > 0 %}The private
+      card {{ faas_private_iface }} named by the manifest has no IPv4 address.
+      {% else %}Set faas_private_address in the provider inventory or give the
+      host a default IPv4 route.{% endif %} Do not put a provider IP into daemon
+      configuration or the committed manifest.
+  tags: [private-endpoints]

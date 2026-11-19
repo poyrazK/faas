@@ -34,6 +34,16 @@ type WarmVM interface {
 	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
 }
 
+// BuildConsoleVM is the optional capability to follow a running builder's
+// console. builderd reads BuildKit's step lines from it while the build runs,
+// so a deploy shows "[3/12] RUN mvn package" instead of going quiet until the
+// VM exits (retail-store feedback A3, 2026-11-17). FollowBuildConsole calls
+// line for each console line, oldest first, until the VM's console closes or
+// ctx ends. Its error only costs the live steps; the build is unaffected.
+type BuildConsoleVM interface {
+	FollowBuildConsole(ctx context.Context, h BuildHandle, line func(string)) error
+}
+
 // DeferredCacheVM is the optional capability behind DeferCacheExport
 // (ADR-20261029171525). When WaitForCompletion reports
 // BuildOutcome.DependencyCacheDeferred, it has kept the build drive, and the

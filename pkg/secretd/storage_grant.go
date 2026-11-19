@@ -100,6 +100,7 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 	var order []storageSubject
 	for i, o := range objects {
 		r := storagegrant.Request{Key: o.GetKey(), Op: storagegrant.Op(o.GetOp()), Generation: o.GetGeneration(),
+			ETag: o.GetEtag(), UploadID: o.GetUploadId(), PartNumber: o.GetPartNumber(),
 			ContentType: o.GetContentType(), Metadata: o.GetMetadata()}
 		if err := r.Validate(); err != nil {
 			s.metrics.refuse(rpcGrantStorageObjects, ReasonNotAuthorized)

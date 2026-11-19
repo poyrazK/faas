@@ -1438,3 +1438,15 @@ var XInitPrimePath = initPrimePath
 func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
 	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
 }
+
+// DrainQueuePushLane runs one push lane over dispatch (ADR-972 amendment
+// 2026-11-19).
+func DrainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	return drainQueuePushLane(ctx, dispatch)
+}
+
+// ReportTriggerPoll records a poll's record count, as dispatchOneTrigger does.
+func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx, records) }
+
+// ErrTriggerGatewayDispatch marks a batch the gateway could not take.
+var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch

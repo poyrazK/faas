@@ -35,7 +35,10 @@
 # handoff; a 2026-11-17 Kroki deploy spent 130.8 s exporting its cache against
 # 12.4 s for the image. Off until a one-node canary compares build start to
 # imaged handoff; a hand drop-in that sets FAAS_BUILD_DEFER_CACHE_EXPORT=1
-# sorts after this file and runs the canary.
+# sorts after this file and runs the canary. builderd refused the switch from
+# 2026-11-06 to 2026-11-19 (bug hunt H104); since amendment 2 vmmd stages the
+# export run's inputs, and a build defers only on a vmmd whose Ping reports
+# supports_cache_export_staging.
 #
 # false renders 0, so turning one off takes effect at the next daemon start.
 schedd_async_wake_finalize: true
