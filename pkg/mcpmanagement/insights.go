@@ -60,6 +60,7 @@ func registerInsights(s *mcp.Server, m *management) {
 	register(s, m, "gregale_get_insight_funnel", "Compute a product analytics funnel: units that did 2 to 6 events in order within a window, with conversion per step, optionally split by flag variant or property. Read-only.", m.getInsightFunnel)
 	register(s, m, "gregale_get_insight_retention", "Compute product analytics retention: cohorts by first start event and the share that sent the return event in each later day or week, optionally split by flag variant or property. Read-only.", m.getInsightRetention)
 	register(s, m, "gregale_get_insight_requests", "Read request telemetry by a flag's served value: requests, server errors and p95 latency per variant. Read-only.", m.getInsightRequests)
+	register(s, m, "gregale_list_insight_cohorts", "List an environment's saved cohorts: definition, member count, the plan's member bound and the last refresh. Flag rules target a cohort with the gregale.cohort attribute. Read-only.", m.listInsightCohorts)
 }
 
 func parseInsightTime(raw, name string) (*time.Time, error) {
@@ -158,4 +159,22 @@ func (m *management) getInsightRequests(ctx context.Context, args insightRequest
 		return nil, err
 	}
 	return insightResult("requests", res), nil
+}
+
+type insightCohortsArgs struct {
+	Project     string `json:"project" jsonschema:"Project slug"`
+	Environment string `json:"environment" jsonschema:"Named project environment, e.g. production"`
+}
+
+const insightCohortGuidance = "Members are recomputed hourly. truncated=true means more customers matched than max_members; the lowest customer IDs were kept. A refresh_error keeps the previous members. Rules target a cohort with {\"attribute\": \"gregale.cohort\", \"op\": \"in\", \"values\": [KEY]}; requests see a change within a minute."
+
+func (m *management) listInsightCohorts(ctx context.Context, args insightCohortsArgs) (any, error) {
+	if err := validateFlagExperimentScope(args.Project, args.Environment); err != nil {
+		return nil, err
+	}
+	res, err := m.client.ListProjectInsightCohorts(ctx, args.Project, args.Environment)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"cohorts": res.Cohorts, "guidance": insightCohortGuidance}, nil
 }

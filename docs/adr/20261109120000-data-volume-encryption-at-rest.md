@@ -206,3 +206,46 @@ For a host whose manifest address is a name:
   anything is written.
 
 IP-addressed fleets render exactly as before.
+
+## Amendment 5 (2026-11-19): an encrypted host must boot unattended
+
+The first reboot of an encrypted OVH host (bhs-3) ended in emergency mode,
+with no network and a locked root account. The journal showed three faults,
+each enough to stop an unattended boot or to weaken it:
+
+1. Nothing asked for the unlock. crypttab marks the volume `_netdev`, so
+   systemd-cryptsetup-generator hangs it on `remote-cryptsetup.target` alone,
+   and OVH's Ubuntu 24.04 image leaves that target disabled.
+2. The compute cache and Grype binds beneath `/srv/fc` had no `nofail`.
+   `local-fs.target` required them, and they required the encrypted volume,
+   which unlocks only after early boot (`clevis-luks-askpass.path` runs after
+   `sysinit.target`). systemd found ordering cycles, the device timed out
+   after 90 s, and `local-fs.target` failed. The `/srv/fc/jail` tmpfs of the
+   xfs role has the same shape.
+3. `br-tenants-up.service` (nftables role) took default dependencies. Its
+   implicit `After=basic.target`, with `Before=nftables.service`, closes a
+   cycle through cloud-init and `network-pre.target`; systemd broke it by
+   dropping the nftables start job, so the host would boot without its
+   firewall.
+
+So, on a host whose `/srv/fc` is the encrypted volume:
+
+- the storage role enables `remote-cryptsetup.target`;
+- every fstab mount beneath `/srv/fc` is `nofail`, so boot never waits for
+  Tang, and the faas units require those mounts instead
+  (`faas-.service.d/12-faas-storage-binds.conf` for the cache and Grype
+  binds, `13-faas-jail-tmpfs.conf` for the jail tmpfs), as they already do
+  for the volume and the encrypted paths;
+- `br-tenants-up.service` sets `DefaultDependencies=no` on every host.
+
+Plain volumes keep their mount options. With these changes bhs-3 rebooted to
+`running`: Tang unlocked the volume 11.5 s into boot, every mount came up, and
+nftables loaded. `TestMountsBeneathTheDataVolumeAreNofailWhenEncrypted` keeps
+every future mount beneath `/srv/fc` honest.
+
+The first reconverge after this amendment stacked the cache bind on bhs-2:
+`ansible.posix.mount` with `state: mounted` tests "already mounted" with
+`os.path.ismount`, which is false for a bind whose parent is a bind of the
+same filesystem, and on an encrypted host `/var/lib/faas` is one. The cache
+and Grype binds are therefore written to fstab as `present` and mounted only
+when `findmnt` finds nothing at the path, on every host.

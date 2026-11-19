@@ -219,6 +219,11 @@ var cliTreeAliases = []cliTreeAlias{
 	{"insight funnel get", "insights funnel"},
 	{"insight retention get", "insights retention"},
 	{"insight request list", "insights requests"},
+	{"insight cohort list", "insights cohorts list"},
+	{"insight cohort create", "insights cohorts create"},
+	{"insight cohort get", "insights cohorts get"},
+	{"insight cohort delete", "insights cohorts delete"},
+	{"insight cohort refresh", "insights cohorts refresh"},
 	{"insight", "insights"},
 
 	// Data.
@@ -518,6 +523,7 @@ var cliTreeAliases = []cliTreeAlias{
 	// Retained hosted Task source review takes its action as an argument too.
 	{"mcp server tasks audit", "mcp tasks source-review"},
 	{"mcp server tasks bind", "mcp tasks bindings"},
+	{"mcp server tasks rehearse", "mcp tasks rehearsal"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},

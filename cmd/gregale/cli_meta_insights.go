@@ -11,3 +11,11 @@ func insightsMetaCommon() []cliFlag {
 		{Name: "by", Short: "breakdown: flag:KEY or property:KEY", Value: "BREAKDOWN"},
 	}
 }
+
+// insightCohortMetaScope is the project scope of `insight cohort` commands.
+func insightCohortMetaScope() []cliFlag {
+	return []cliFlag{
+		{Name: "project", Short: "project slug", Value: "slug", Req: true},
+		{Name: "environment", Short: "named environment (default production)", Value: "slug"},
+	}
+}

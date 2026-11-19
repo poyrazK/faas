@@ -83,6 +83,11 @@ func (f *GregaleFlags) newRequestState(headers http.Header) *flagRequestState {
 	if family := singleFlagHeader(headers, GregaleClientUAFamilyHeader); validFlagKey(family) {
 		attributes[flagAttributeUAFamily] = family
 	}
+	if cohorts := singleFlagHeader(headers, GregaleFlagCohortsHeader); cohorts != "" {
+		if _, ok := parseFlagCohorts(cohorts); ok {
+			attributes[flagAttributeCohort] = cohorts
+		}
+	}
 	kills := map[string]struct{}{}
 	for _, part := range strings.Split(singleFlagHeader(headers, GregaleFlagKillsHeader), ",") {
 		if key := strings.TrimSpace(part); validFlagKey(key) && len(kills) < 100 {

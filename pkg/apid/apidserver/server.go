@@ -2467,6 +2467,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/funnel", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightFunnel)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/insights/retention", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.postInsightRetention)))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/insights/requests", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightRequests)))
+	// ADR 20261119102741 §3: analytics cohorts, targeted with gregale.cohort.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listInsightCohorts)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createInsightCohort))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getInsightCohort)))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteInsightCohort))))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.refreshInsightCohort))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))

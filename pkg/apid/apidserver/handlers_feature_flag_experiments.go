@@ -53,6 +53,7 @@ func flagExperimentResponse(x state.FlagExperiment) api.FlagExperiment {
 	}
 	out.Guardrails, out.LatencyThresholdMS = guardrailSettingsResponse(x.Guardrails), x.LatencyThresholdMS
 	out.StopReason, out.Breach = x.StopReason, x.Breach
+	flagExperimentMetricResponse(&out, x)
 	return out
 }
 
@@ -89,11 +90,9 @@ func validFlagExperimentRequest(req api.FlagExperimentCreateRequest) *api.Proble
 	}
 	switch {
 	case req.MetricKind != "" && !flags.ValidMetricKind(req.MetricKind):
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_kind is conversion or mean")
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_kind is conversion, mean, funnel or retention")
 	case !flags.ValidExperimentKey(req.Key):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "key is 1 to 64 lowercase letters, digits and hyphens")
-	case !flags.ValidEventName(req.MetricEvent):
-		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment", "metric_event is a conversion event name: ^[a-z][a-z0-9_.-]{0,63}$")
 	case !(lift > 0 && lift <= 1):
 		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid experiment",
 			"mixing_lift is in (0, 1]: an absolute conversion-rate lift, or a standardized effect size for mean metrics")
@@ -131,18 +130,20 @@ func (s *server) createFlagExperiment(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, p)
 		return
 	}
+	metric, p := s.flagExperimentMetricFrom(req, acct)
+	if p != nil {
+		api.WriteProblem(w, p)
+		return
+	}
 	weights, p := experimentRuleWeights(r.Context(), flagStore, scope, req.Flag, req.RuleID, req.Control)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
 	}
-	kind := req.MetricKind
-	if kind == "" {
-		kind = flags.ExperimentMetricConversion
-	}
 	x, err := store.CreateFlagExperiment(r.Context(), state.FlagExperiment{AccountID: scope.AccountID, ProjectID: scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID, Key: req.Key, FlagKey: req.Flag, RuleID: req.RuleID, Control: req.Control,
-		MetricEvent: req.MetricEvent, MetricKind: kind, MixingLift: flagExperimentMixing(req), Weights: weights,
+		MetricEvent: metric.event, MetricKind: metric.kind, MetricDefinition: metric.def, Cuped: req.Cuped == nil || *req.Cuped,
+		MixingLift: flagExperimentMixing(req), Weights: weights,
 		Guardrails: defaultFlagExperimentGuardrails(req.Guardrails), CreatedBy: acct.ID}, api.FlagExperimentsMaxPerEnvironment)
 	if err == nil && req.Start {
 		x, err = store.StartFlagExperiment(r.Context(), scope.EnvironmentID, req.Key, weights, time.Now(), api.FlagExperimentsMaxRunning)
@@ -233,7 +234,7 @@ func (s *server) getFlagExperimentResults(w http.ResponseWriter, r *http.Request
 		writeFlagExperimentError(w, err)
 		return
 	}
-	in, err := loadFlagExperimentReport(r.Context(), store, x)
+	in, err := loadFlagExperimentReport(r.Context(), store, x, s.productAnalyticsOn(acct.ID, string(acct.Plan)))
 	if err != nil {
 		writeFlagExperimentError(w, err)
 		return
@@ -248,12 +249,16 @@ type flagExperimentReport struct {
 	crossed    int64
 	errs, slow []flags.RatioArm
 	latency    map[string]map[int]int64
+	cuped      flagExperimentCupedInput
 }
 
-func loadFlagExperimentReport(ctx context.Context, store state.FlagExperimentStore, x state.FlagExperiment) (flagExperimentReport, error) {
+func loadFlagExperimentReport(ctx context.Context, store state.FlagExperimentStore, x state.FlagExperiment, analyticsOn bool) (flagExperimentReport, error) {
 	var in flagExperimentReport
 	var err error
 	if in.arms, in.crossed, err = store.FlagExperimentArms(ctx, x, api.FlagExperimentMinUnitsPerArm); err != nil {
+		return in, err
+	}
+	if in.cuped, err = loadFlagExperimentCuped(ctx, store, x, analyticsOn); err != nil {
 		return in, err
 	}
 	if in.errs, in.slow, err = store.FlagExperimentGuardrailArms(ctx, x.ID); err != nil {
@@ -306,18 +311,19 @@ func (s *server) shipFlagExperiment(w http.ResponseWriter, r *http.Request, acct
 }
 
 // flagExperimentResults applies the ADR's statistics to an experiment's arms.
-func flagExperimentResults(x state.FlagExperiment, arms []flags.Arm) flags.Results {
+func flagExperimentResults(x state.FlagExperiment, arms []flags.Arm, cuped flagExperimentCupedInput) flags.Results {
 	return flags.ExperimentResults(flags.ResultsInput{
 		Arms: arms, Control: x.Control, Weights: x.Weights, MixingLift: x.MixingLift,
 		Alpha: api.FlagExperimentAlpha, SRMAlpha: api.FlagExperimentSRMAlpha,
 		MinUnits: api.FlagExperimentMinUnitsPerArm, MinConversions: api.FlagExperimentMinConversionsPerArm,
 		MinPValues: x.MinPValues, Kind: x.MetricKind,
+		Cuped: cuped.arms, CupedReason: cuped.reason, MinCupedPValues: x.MinCupedPValues,
 	})
 }
 
 func flagExperimentResultsResponse(x state.FlagExperiment, in flagExperimentReport, project, environment string) api.FlagExperimentResults {
 	arms, crossed := in.arms, in.crossed
-	res := flagExperimentResults(x, arms)
+	res := flagExperimentResults(x, arms, in.cuped)
 	guardrails := flagExperimentGuardrails(x, in.errs, in.slow)
 	rec := flags.Recommend(flags.RecommendInput{Results: res, Kind: x.MetricKind, Running: x.Status == flags.ExperimentRunning,
 		StopReason: x.StopReason, Guardrails: guardrails})
@@ -335,11 +341,12 @@ func flagExperimentResultsResponse(x state.FlagExperiment, in flagExperimentRepo
 		Recommendation: api.FlagExperimentRecommendation{Action: rec.Action, Variant: rec.Variant, Summary: rec.Summary,
 			Commands: flagExperimentCommands(rec, x, project, environment)}}
 	for _, v := range res.Variants {
-		vr := api.FlagExperimentVariantResult{FlagExperimentArm: arm(v.Arm), Status: v.Status}
+		vr := api.FlagExperimentVariantResult{FlagExperimentArm: arm(v.Arm), Status: v.Status, Unadjusted: comparisonResponse(v.Unadjusted)}
 		if c := v.Comparison; c != nil {
 			vr.Lift, vr.RelativeLift, vr.Low, vr.High, vr.PValue = &c.Lift, &c.RelativeLift, &c.Low, &c.High, &c.PValue
 		}
 		out.Variants = append(out.Variants, vr)
 	}
+	out.Cuped = cupedResponse(res.Cuped)
 	return out
 }

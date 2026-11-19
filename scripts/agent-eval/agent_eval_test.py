@@ -530,6 +530,28 @@ class CliLoginTests(unittest.TestCase):
         plain = ev.Gregale("/bin/gregale", "https://api.example", "tok")
         self.assertEqual(ev.attribute(plain, touched, ""), (touched, {"apps": [], "projects": []}))
 
+    def test_cleanup_purges_deleted_apps_so_the_next_run_gets_the_name(self):
+        calls = []
+        failing = {("app", "delete", "--yes", "--delete-bindings", "stuck"), ("app", "purge", "--yes", "held")}
+
+        def cli(*args, **kwargs):
+            calls.append(args)
+            return mock.Mock(returncode=1 if args in failing else 0, stdout="", stderr="")
+
+        g = ev.CliGregale("/bin/gregale")
+        with mock.patch.object(g, "cli", side_effect=cli):
+            left = ev.cleanup(g, {"apps": ["express-hello-world", "held", "stuck"], "projects": ["voting"]}, None)
+        self.assertEqual(calls, [
+            ("project", "delete", "--yes", "--detach-services", "voting"),
+            ("app", "delete", "--yes", "--delete-bindings", "express-hello-world"),
+            ("app", "purge", "--yes", "express-hello-world"),
+            ("app", "delete", "--yes", "--delete-bindings", "held"),
+            ("app", "purge", "--yes", "held"),
+            # An app that could not be deleted is not purged.
+            ("app", "delete", "--yes", "--delete-bindings", "stuck"),
+        ])
+        self.assertEqual(left, ["name:held", "app:stuck"])
+
     def test_claude_tool_inputs_are_evidence_but_not_recorded(self):
         lines = [json.dumps({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "mcp__gregale__gregale_get_app", "input": {"app": "voting-app-redis"}}]}})]

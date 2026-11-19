@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.flag_experiment import FlagExperiment
     from ..models.flag_experiment_arm import FlagExperimentArm
+    from ..models.flag_experiment_cuped import FlagExperimentCuped
     from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
     from ..models.flag_experiment_latency import FlagExperimentLatency
     from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
@@ -34,6 +35,8 @@ class FlagExperimentResults:
     sample_ratio_mismatch: bool
     crossed_units: int
     """Customers that saw more than one variant and are left out."""
+    cuped: FlagExperimentCuped
+    """CUPED variance reduction on the results; reason says why it was not applied."""
     guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
     latency: list[FlagExperimentLatency] | Unset = UNSET
     recommendation: FlagExperimentRecommendation | Unset = UNSET
@@ -55,6 +58,8 @@ class FlagExperimentResults:
         sample_ratio_mismatch = self.sample_ratio_mismatch
 
         crossed_units = self.crossed_units
+
+        cuped = self.cuped.to_dict()
 
         guardrails: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.guardrails, Unset):
@@ -84,6 +89,7 @@ class FlagExperimentResults:
                 "sample_ratio_p_value": sample_ratio_p_value,
                 "sample_ratio_mismatch": sample_ratio_mismatch,
                 "crossed_units": crossed_units,
+                "cuped": cuped,
             }
         )
         if guardrails is not UNSET:
@@ -99,6 +105,7 @@ class FlagExperimentResults:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.flag_experiment import FlagExperiment
         from ..models.flag_experiment_arm import FlagExperimentArm
+        from ..models.flag_experiment_cuped import FlagExperimentCuped
         from ..models.flag_experiment_guardrail import FlagExperimentGuardrail
         from ..models.flag_experiment_latency import FlagExperimentLatency
         from ..models.flag_experiment_recommendation import FlagExperimentRecommendation
@@ -121,6 +128,8 @@ class FlagExperimentResults:
         sample_ratio_mismatch = d.pop("sample_ratio_mismatch")
 
         crossed_units = d.pop("crossed_units")
+
+        cuped = FlagExperimentCuped.from_dict(d.pop("cuped"))
 
         _guardrails = d.pop("guardrails", UNSET)
         guardrails: list[FlagExperimentGuardrail] | Unset = UNSET
@@ -154,6 +163,7 @@ class FlagExperimentResults:
             sample_ratio_p_value=sample_ratio_p_value,
             sample_ratio_mismatch=sample_ratio_mismatch,
             crossed_units=crossed_units,
+            cuped=cuped,
             guardrails=guardrails,
             latency=latency,
             recommendation=recommendation,

@@ -54,11 +54,13 @@ sends the app's public host and, since #7623, `X-Forwarded-Proto: https`.
 
 ## Consequences
 
-- Following `docs/deploy-django.md` as written passes readiness once the
-  switch is on and the release with this guest-init is live. The docs keep
-  `SECURE_REDIRECT_EXEMPT` until then; with the probe carrying
-  `X-Forwarded-Proto: https` it is no longer needed and can be dropped from
-  the docs after the switch is on.
+- A Django app whose health path is a plain view, with `ALLOWED_HOSTS` set
+  to its public host, passes readiness once the switch is on and the release
+  with this guest-init is live. Until then `docs/deploy-django.md` answers
+  `/healthz` in a middleware placed before `SecurityMiddleware`, which runs
+  before Django's host check and its HTTPS redirect. The middleware stays
+  correct after the switch; the docs keep it while environment and preview
+  scopes still probe with the instance address (below).
 - An app that answered the instance address but rejects its own public host
   would now fail readiness. Such an app also rejects its traffic, so it was
   not serving customers.
@@ -75,6 +77,9 @@ sends the app's public host and, since #7623, `X-Forwarded-Proto: https`.
 2. Run metal (`make test-metal`) on the release: wake, restore and liveness
    paths.
 3. Turn the switch on for one node's schedd, deploy a Django app configured
-   exactly as `docs/deploy-django.md` says, and confirm readiness passes and
+   as `docs/deploy-django.md` says but with `/healthz` as a plain `urls.py`
+   view named by `hosting.health` (no middleware), with
+   `SECURE_SSL_REDIRECT` on, and confirm readiness passes and
    liveness stays green across a park and wake and a vmmd restart.
-4. Turn it on fleet-wide; simplify the Django docs' HTTPS section.
+4. Turn it on fleet-wide. Drop the health middleware from the Django docs
+   only once environment and preview scopes send their host too.

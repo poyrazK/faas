@@ -2265,8 +2265,12 @@ from .flag_evidence_page import FlagEvidencePage
 from .flag_experiment import FlagExperiment
 from .flag_experiment_arm import FlagExperimentArm
 from .flag_experiment_breach import FlagExperimentBreach
+from .flag_experiment_comparison import FlagExperimentComparison
 from .flag_experiment_create_request import FlagExperimentCreateRequest
 from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_cuped import FlagExperimentCuped
+from .flag_experiment_cuped_reason import FlagExperimentCupedReason
+from .flag_experiment_funnel import FlagExperimentFunnel
 from .flag_experiment_guardrail import FlagExperimentGuardrail
 from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
 from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
@@ -2282,6 +2286,8 @@ from .flag_experiment_metric_kind import FlagExperimentMetricKind
 from .flag_experiment_recommendation import FlagExperimentRecommendation
 from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
 from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_retention import FlagExperimentRetention
+from .flag_experiment_retention_period import FlagExperimentRetentionPeriod
 from .flag_experiment_ship_request import FlagExperimentShipRequest
 from .flag_experiment_ship_response import FlagExperimentShipResponse
 from .flag_experiment_status import FlagExperimentStatus
@@ -2476,6 +2482,11 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .insight_cohort import InsightCohort
+from .insight_cohort_list import InsightCohortList
+from .insight_cohort_request import InsightCohortRequest
+from .insight_cohort_request_kind import InsightCohortRequestKind
+from .insight_cohort_request_where import InsightCohortRequestWhere
 from .insight_event_point import InsightEventPoint
 from .insight_event_series import InsightEventSeries
 from .insight_event_series_interval import InsightEventSeriesInterval
@@ -9285,8 +9296,12 @@ __all__ = (
     "FlagExperiment",
     "FlagExperimentArm",
     "FlagExperimentBreach",
+    "FlagExperimentComparison",
     "FlagExperimentCreateRequest",
     "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentCuped",
+    "FlagExperimentCupedReason",
+    "FlagExperimentFunnel",
     "FlagExperimentGuardrail",
     "FlagExperimentGuardrailName",
     "FlagExperimentGuardrailRequest",
@@ -9302,6 +9317,8 @@ __all__ = (
     "FlagExperimentRecommendation",
     "FlagExperimentRecommendationAction",
     "FlagExperimentResults",
+    "FlagExperimentRetention",
+    "FlagExperimentRetentionPeriod",
     "FlagExperimentShipRequest",
     "FlagExperimentShipResponse",
     "FlagExperimentStatus",
@@ -9492,6 +9509,11 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InsightCohort",
+    "InsightCohortList",
+    "InsightCohortRequest",
+    "InsightCohortRequestKind",
+    "InsightCohortRequestWhere",
     "InsightEventPoint",
     "InsightEventSeries",
     "InsightEventSeriesInterval",

@@ -22243,6 +22243,7 @@
       "experiment_id",
       "first_exposed_at",
       "latency_requests",
+      "pre_value",
       "requests",
       "slow_requests",
       "value_sum",
@@ -22258,14 +22259,17 @@
       "control",
       "created_at",
       "created_by",
+      "cuped",
       "environment_id",
       "flag_key",
       "guardrails",
       "id",
       "key",
       "latency_threshold_ms",
+      "metric_definition",
       "metric_event",
       "metric_kind",
+      "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
       "project_id",
@@ -22325,6 +22329,32 @@
       "instance_id",
       "probe_done_at",
       "woke_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohorts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_by",
+      "definition",
+      "environment_id",
+      "id",
+      "key",
+      "members",
+      "refresh_error",
+      "refresh_requested_at",
+      "refreshed_at",
+      "truncated"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohort_members",
+    "columns": [
+      "cohort_id",
+      "customer_id"
     ],
     "kind": "operational"
   },
