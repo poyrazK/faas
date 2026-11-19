@@ -6284,12 +6284,15 @@ var cliCommands = []cliCommand{
 					{Name: "bypass-rls", Short: "the role bypasses row-level security (refused with Data API or Auth)"},
 					{Name: "grant-to", Short: "access modes whose logins may SET ROLE to it (default migration,read_write)", Value: "MODES"},
 					{Name: "member-of", Short: "custom roles of the database it is a member of", Value: "ROLES"},
+					{Name: "default-for", Short: "access modes whose logins start every session as it: read_write, read_only (empty clears)", Value: "MODES"},
 				}, Notes: []string{"Gregale creates the role; no login gets admin rights. Logins switch to it with SET ROLE, which is how tools such as Windmill use their roles.",
+					"--default-for makes logins start as the role, for tools whose own connection must act as it (Windmill's windmill_admin). Poolers refuse a role set in the connection string. A login starts as at most one role.",
 					"Names are lowercase letters, digits and underscores; names starting with gregale, pg_, neon and other provider prefixes are reserved. A database holds at most 16 custom roles; Hobby and above."},
-					Examples: []string{"gregale postgres roles create windmill-db windmill_user", "gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user"}},
+					Examples: []string{"gregale postgres roles create windmill-db windmill_user", "gregale postgres roles create windmill-db windmill_admin --bypass-rls --member-of windmill_user --default-for read_write"}},
 				{Name: "grant", Short: "Let more logins SET ROLE to a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
 					{Name: "to", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
-				}, Examples: []string{"gregale postgres roles grant windmill-db windmill_user --to read_only"}},
+					{Name: "default", Short: "logins of these access modes also start every session as it (read_write, read_only)"},
+				}, Examples: []string{"gregale postgres roles grant windmill-db windmill_user --to read_only", "gregale postgres roles grant windmill-db windmill_admin --to read_write --default"}},
 				{Name: "revoke", Short: "Stop logins of access modes from using a custom role", Positionals: []string{"<database>", "<role>"}, Flags: []cliFlag{
 					{Name: "from", Short: "access modes: migration, read_write, read_only", Req: true, Value: "MODES"},
 				}},

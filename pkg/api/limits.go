@@ -2302,6 +2302,16 @@ const QueueBindingMaxConcurrency = 10000
 // cannot flood the pool with lanes it would only drop.
 const QueuePushDispatchSlotsPerNode = 32
 
+// QueuePushLaneDrainBudget and QueuePushLaneDrainMaxRecords bound one push
+// lane run (ADR-972 amendment 2026-11-19): a lane keeps claiming the next
+// record while polls return records, until either bound, then frees its slot
+// for the next tick. One record per lane per tick capped a binding at about
+// 40 deliveries/s on prod however fast the handler was.
+const (
+	QueuePushLaneDrainBudget     = time.Second
+	QueuePushLaneDrainMaxRecords = 64
+)
+
 // BrokerTriggerDispatchSlotsPerNode bounds the external broker triggers
 // (Kafka, NATS, Redis Streams, SQS-compatible) one schedd polls and delivers
 // at once, one batch per trigger (ADR-20261027162741). Each account with
@@ -15512,6 +15522,13 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // FunctionInterpreterMaxWorkers bounds active generated-adapter processes in
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
+
+// FunctionRunnerSlots is how many requests one function instance's generated
+// runner executes at once: its interpreter workers, each serving
+// function_concurrency requests (ADR-1342; zero or less means one).
+func FunctionRunnerSlots(functionConcurrency int) int {
+	return FunctionInterpreterMaxWorkers * max(functionConcurrency, 1)
+}
 
 // FunctionPostgresMaxPools bounds registered pool owners per interpreter.
 // It is a structural runtime bound, not a database connection entitlement.

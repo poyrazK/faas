@@ -790,6 +790,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
 		PerInstanceConcurrency:       perInstanceConcurrency,
+		FunctionRunnerSlots:          functionRunnerSlots(app),
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,
@@ -1849,4 +1850,13 @@ func (r pgRouter) deploymentAliasReserved(ctx context.Context, label string) (bo
 		return false, errors.New("deployment alias reservation reader is unavailable")
 	}
 	return false, nil
+}
+
+// functionRunnerSlots is a function app's runner execution slots for burst
+// scale-out (gateway.App.FunctionRunnerSlots); zero for other apps.
+func functionRunnerSlots(app state.App) int {
+	if app.Type != state.AppTypeFunction || app.Runtime == "" {
+		return 0
+	}
+	return api.FunctionRunnerSlots(app.Manifest.FunctionConcurrency)
 }

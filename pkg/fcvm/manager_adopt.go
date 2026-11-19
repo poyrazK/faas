@@ -374,6 +374,7 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		}
 		m.rememberNamespace(r.Lease.Netns, *anchored)
 		m.rememberLink(id, veth)
+		m.adoptTenantPortFlood(ctx, id, r.Lease.VethHost)
 		for _, a := range private {
 			m.rememberLink(id, a) // Teardown removes the side-link it owns.
 		}
@@ -419,6 +420,20 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 	delete(m.restartQuarantine, id)
 	m.mu.Unlock()
 	return nil
+}
+
+// adoptTenantPortFlood gives a surviving guest's br-tenants port the flags a
+// new port gets at setup (netns.TenantPortFloodOffCommand): a port made by an
+// older vmmd still takes every namespace's broadcast and multicast. A failure
+// costs only that: the guest is adopted either way.
+func (m *Manager) adoptTenantPortFlood(ctx context.Context, instance, vethHost string) {
+	if vethHost == "" {
+		return
+	}
+	if err := m.runCommands(ctx, [][]string{netns.TenantPortFloodOffCommand(vethHost)}); err != nil {
+		m.log.Warn("adopt: tenant port still takes other namespaces' broadcast and multicast",
+			"instance", instance, "veth", vethHost, "err", err)
+	}
 }
 
 // driveHandoffAdopter rebuilds a measured guest's drive handoff
