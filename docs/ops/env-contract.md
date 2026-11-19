@@ -135,6 +135,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |  | `` |  |
+| `FAAS_BUILDER_SLOT_CPUS` | builderd | `dev-only` |  |  | `` | acceptance-host override of the online CPU count that caps builder_slots max (ADR-20261118154632); production leaves it unset |
 | `FAAS_BUILDER_WARM_BUILDERS` | builderd | `default` |  |  | `` | opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline |
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
 | `FAAS_BUILD_BUILDKIT_SEED` | builderd, shared | `dropin` |  |  | `` | boolean switch (ADR-20261030122204): builderd keeps a per-node BuildKit seed of the platform images Railpack builds start from, made by a seed run in an idle builder slot that first asks the artifact cache for room, and gives each Railpack build a reflink copy as the builder VM's drive2; needs a reflink-capable build-drive filesystem and vmmd and guest-init with seed drive support; code default off; ansible builderd_buildkit_seed (group_vars/compute_nodes/perf_switches.yml, false) renders zz-faas-perf-switches.conf |
@@ -672,6 +673,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MANIFEST_PATH` | imaged | `dropin` |  |  | `` |  |
 | `FAAS_MCP_BRIDGE_LOOPBACK` | gatewayd-public | `dropin` |  |  | `` | ADR-20261026195952; absolute URL of the hosted management MCP bridge on the control-plane host. Unset leaves /mcp on the api. host to the compute data plane |
 | `FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION` | apid | `default` |  |  | `` | ADR-20261117135916; opt-in owner-selected native managed PostgreSQL Task binding qualification; bounded read-only probes, metadata receipts only, no execution authority |
+| `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN` | apid | `default` |  |  | `` | ADR-20261118062934; opt-in hosted Task rehearsal plans and separate owner approval for a disposable target |
 | `FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION` | apid | `default` |  |  | `` | ADR-20261116183545; opt-in encrypted authored Task source retention; only 1 enables writes, using independent Account-domain sealing; no approval or execution authority |
 | `FAAS_MCP_PRIVATE_TOOL_INVOCATION` | apid | `default` |  |  | `` | ADR-20261113200000; operator opt-in for private delegated tool execution. Unset or any value other than 1 disables execution. Enable on apid only after the tool migrations and a separate Account seal-domain identity are staged; bridge flags and independent connection consent remain required |
 | `FAAS_MCP_PRIVATE_TOOL_PUBLICATION` | apid | `default` |  |  | `` | ADR-20261114173309; operator opt-in for API-held private candidate verification. Unset or any value other than 1 disables it. Enable only with matching API, CLI and bridge versions; separate owner approval remains required and approved behavioral fixtures may have external effects |
@@ -736,6 +738,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH` | outboundd | `dropin` |  |  | `` | workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
+| `FAAS_OWNER_BALANCE` | schedd | `default` |  |  | `` | ADR-20261118160000: the control plane's schedd moves parked, long-idle apps toward the least owned node; on by default, `off` turns the balance off |
 | `FAAS_OWNER_CACHE` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off |
 | `FAAS_PADDLE_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |

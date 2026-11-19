@@ -23,6 +23,10 @@ const (
 	// one turns the app's next wake into a remote fetch of its drive and
 	// memory (2026-11-13, a 6.2 s wake and a 503 on production-us).
 	EvictLast = 2
+	// EvictOwned marks the live snapshot captures and layers of apps this
+	// node owns: their wakes are placed here, so they outlast the copies of
+	// apps other nodes own (ADR-20261118160000).
+	EvictOwned = 3
 )
 
 // CachedEntry is one blob in the node cache.
@@ -51,7 +55,7 @@ func (c *LocalCacheBackend) MaxBytes() int64 {
 }
 
 // SetEvictionTier makes eviction take entries in tier order (EvictFirst,
-// EvictNormal, EvictLast), oldest first within a tier. nil restores plain
+// EvictNormal, EvictLast, EvictOwned), oldest first within a tier. nil restores plain
 // oldest-first eviction.
 func (c *LocalCacheBackend) SetEvictionTier(tier func(key string) int) {
 	c.mu.Lock()

@@ -2254,6 +2254,8 @@ from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_event import FlagEvent
+from .flag_event_flags import FlagEventFlags
+from .flag_event_properties import FlagEventProperties
 from .flag_events_request import FlagEventsRequest
 from .flag_events_response import FlagEventsResponse
 from .flag_events_response_dropped import FlagEventsResponseDropped
@@ -2357,6 +2359,8 @@ from .get_obs_runtime_builds_expected_role import GetObsRuntimeBuildsExpectedRol
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_profile_capture_view_kind import GetProfileCaptureViewKind
+from .get_project_insight_events_interval import GetProjectInsightEventsInterval
+from .get_project_insight_events_unit import GetProjectInsightEventsUnit
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -2415,6 +2419,12 @@ from .hosted_task_binding_selection import HostedTaskBindingSelection
 from .hosted_task_binding_verification import HostedTaskBindingVerification
 from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
 from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
+from .hosted_task_rehearsal_decision import HostedTaskRehearsalDecision
+from .hosted_task_rehearsal_decision_decision import HostedTaskRehearsalDecisionDecision
+from .hosted_task_rehearsal_plan import HostedTaskRehearsalPlan
+from .hosted_task_rehearsal_plan_status import HostedTaskRehearsalPlanStatus
+from .hosted_task_rehearsal_plan_version import HostedTaskRehearsalPlanVersion
+from .hosted_task_rehearsal_prepare import HostedTaskRehearsalPrepare
 from .hosted_task_source_check import HostedTaskSourceCheck
 from .hosted_task_source_decision import HostedTaskSourceDecision
 from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
@@ -2466,6 +2476,27 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .insight_event_point import InsightEventPoint
+from .insight_event_series import InsightEventSeries
+from .insight_event_series_interval import InsightEventSeriesInterval
+from .insight_event_series_unit import InsightEventSeriesUnit
+from .insight_funnel import InsightFunnel
+from .insight_funnel_breakdown import InsightFunnelBreakdown
+from .insight_funnel_request import InsightFunnelRequest
+from .insight_funnel_request_unit import InsightFunnelRequestUnit
+from .insight_funnel_step import InsightFunnelStep
+from .insight_funnel_unit import InsightFunnelUnit
+from .insight_request_variant import InsightRequestVariant
+from .insight_requests import InsightRequests
+from .insight_retention import InsightRetention
+from .insight_retention_period import InsightRetentionPeriod
+from .insight_retention_request import InsightRetentionRequest
+from .insight_retention_request_period import InsightRetentionRequestPeriod
+from .insight_retention_request_unit import InsightRetentionRequestUnit
+from .insight_retention_row import InsightRetentionRow
+from .insight_retention_unit import InsightRetentionUnit
+from .insight_step_request import InsightStepRequest
+from .insight_step_request_where import InsightStepRequestWhere
 from .inspect_durable_entity_quota_migration_response_200 import InspectDurableEntityQuotaMigrationResponse200
 from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEntityQuotaPolicyResponse200
 from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
@@ -9243,6 +9274,8 @@ __all__ = (
     "FlagDecisionSource",
     "FlagDecisionType",
     "FlagEvent",
+    "FlagEventFlags",
+    "FlagEventProperties",
     "FlagEventsRequest",
     "FlagEventsResponse",
     "FlagEventsResponseDropped",
@@ -9344,6 +9377,8 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
     "GetProfileCaptureViewKind",
+    "GetProjectInsightEventsInterval",
+    "GetProjectInsightEventsUnit",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -9400,6 +9435,12 @@ __all__ = (
     "HostedTaskBindingVerification",
     "HostedTaskBindingVerificationStatus",
     "HostedTaskBindingVerificationVersion",
+    "HostedTaskRehearsalDecision",
+    "HostedTaskRehearsalDecisionDecision",
+    "HostedTaskRehearsalPlan",
+    "HostedTaskRehearsalPlanStatus",
+    "HostedTaskRehearsalPlanVersion",
+    "HostedTaskRehearsalPrepare",
     "HostedTaskSourceCheck",
     "HostedTaskSourceDecision",
     "HostedTaskSourceDecisionDecision",
@@ -9451,6 +9492,27 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InsightEventPoint",
+    "InsightEventSeries",
+    "InsightEventSeriesInterval",
+    "InsightEventSeriesUnit",
+    "InsightFunnel",
+    "InsightFunnelBreakdown",
+    "InsightFunnelRequest",
+    "InsightFunnelRequestUnit",
+    "InsightFunnelStep",
+    "InsightFunnelUnit",
+    "InsightRequests",
+    "InsightRequestVariant",
+    "InsightRetention",
+    "InsightRetentionPeriod",
+    "InsightRetentionRequest",
+    "InsightRetentionRequestPeriod",
+    "InsightRetentionRequestUnit",
+    "InsightRetentionRow",
+    "InsightRetentionUnit",
+    "InsightStepRequest",
+    "InsightStepRequestWhere",
     "InspectDurableEntityQuotaMigrationResponse200",
     "InspectDurableEntityQuotaPolicyResponse200",
     "InspectDurableEntityRegistryCleanupResponse200",

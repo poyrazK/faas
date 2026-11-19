@@ -1,0 +1,221 @@
+package toolregistry_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
+	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
+	"github.com/onebox-faas/faas/pkg/toolpublication"
+)
+
+func TestMCPHostedTaskRehearsalMemory(t *testing.T) {
+	exerciseHostedTaskRehearsal(t, state.NewMemStore(), nil)
+}
+
+func TestMCPHostedTaskRehearsalPostgres(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	if err := db.MigrateUp(t.Context(), pool); err != nil {
+		t.Fatal(err)
+	}
+	exerciseHostedTaskRehearsal(t, state.NewPgStore(pool), pool)
+}
+
+func exerciseHostedTaskRehearsal(t *testing.T, store state.Store, pool *pgxpool.Pool) {
+	t.Helper()
+	f, _, opts := seedHostedTaskBindingFixture(t, store, pool)
+	opts.RehearsalPlanEnabled = true
+	f.executor = toolregistry.NewPrivateExecutor(store, opts)
+	t.Cleanup(f.executor.Close)
+	ctx := t.Context()
+	makeOwner := func(label string) state.APIKey {
+		t.Helper()
+		_, hash, err := api.GenerateAPIKey()
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, err := store.CreateAPIKey(ctx, f.account.ID, hash, label, api.ScopesAdminOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return key
+	}
+	owner, other := makeOwner("rehearsal-owner"), makeOwner("other-admin")
+	journal := store.(state.HostedTaskRehearsalStore)
+	run := func(id string, executor *toolregistry.PrivateExecutor, key *state.APIKey, method, suffix string, in any) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, err := json.Marshal(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestContext := middleware.WithPrincipal(ctx, f.account, key, nil)
+		req := httptest.NewRequestWithContext(requestContext, method, "/v1/task-tool-source-intents/"+id+"/rehearsal"+suffix, bytes.NewReader(raw))
+		req.SetPathValue("id", id)
+		w := httptest.NewRecorder()
+		executor.HostedTaskRehearsal()(w, req, f.account)
+		return w
+	}
+	read := func(id string, w *httptest.ResponseRecorder, status string) api.HostedTaskRehearsalPlan {
+		t.Helper()
+		var out api.HostedTaskRehearsalPlan
+		if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &out) != nil || out.Status != status ||
+			tasktoolrehearsal.Validate(out, f.account.ID, id) != nil || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("want %s: %d %s", status, w.Code, w.Body)
+		}
+		for _, private := range []string{owner.ID, other.ID, "private-owner", "MIGRATION_URL", "binding-test", "db.example.com", "ClaimAcquired"} {
+			if strings.Contains(w.Body.String(), private) {
+				t.Fatal("private rehearsal data exposed")
+			}
+		}
+		return out
+	}
+
+	id, pinned := completeRehearsalQualification(t, f, "claim")
+	disabled := toolregistry.NewPrivateExecutor(store, toolregistry.PrivateExecutionOptions{})
+	t.Cleanup(disabled.Close)
+	if w := run(id, disabled, &owner, http.MethodPut, "", pinned); w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("disabled plan: %d", w.Code)
+	}
+	for _, key := range []*state.APIKey{&f.key, nil} {
+		if w := run(id, f.executor, key, http.MethodPut, "", pinned); w.Code == http.StatusOK {
+			t.Fatal("non-personal-admin plan accepted")
+		}
+	}
+	spoofed := map[string]any{"intent_sha256": pinned.IntentSHA256, "review_sha256": pinned.ReviewSHA256, "binding_sha256": pinned.BindingSHA256, "target_id": uuid.NewString()}
+	if w := run(id, f.executor, &owner, http.MethodPut, "", spoofed); w.Code != http.StatusBadRequest {
+		t.Fatalf("caller chose a target: %d", w.Code)
+	}
+	plan := read(id, run(id, f.executor, &owner, http.MethodPut, "", pinned), tasktoolrehearsal.Planned)
+	retry := read(id, run(id, f.executor, &owner, http.MethodPut, "", pinned), tasktoolrehearsal.Planned)
+	if plan.PlanSHA256 != retry.PlanSHA256 || plan.TargetID != retry.TargetID || !plan.ExpiresAt.Equal(retry.ExpiresAt) {
+		t.Fatal("plan retry renewed immutable identity")
+	}
+	claim := state.HostedTaskRehearsalChange{OwnerKeyID: owner.ID, PlanSHA256: plan.PlanSHA256}
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired {
+		t.Fatalf("unapproved claim acquired: %v", err)
+	}
+	decision := api.HostedTaskRehearsalDecision{PlanSHA256: plan.PlanSHA256, Decision: "approve"}
+	wrong := api.HostedTaskRehearsalDecision{PlanSHA256: toolpublication.Digest([]byte("different plan")), Decision: decision.Decision}
+	if w := run(id, f.executor, &owner, http.MethodPut, "/decision", wrong); w.Code != http.StatusConflict {
+		t.Fatalf("wrong plan approved: %d", w.Code)
+	}
+	approve := read(id, run(id, f.executor, &owner, http.MethodPut, "/decision", decision), tasktoolrehearsal.Approved)
+	replay := read(id, run(id, f.executor, &owner, http.MethodPut, "/decision", decision), tasktoolrehearsal.Approved)
+	if !approve.ApprovedAt.Equal(*replay.ApprovedAt) {
+		t.Fatal("approval renewed its timestamp")
+	}
+	changedOwner := claim
+	changedOwner.OwnerKeyID = other.ID
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, changedOwner); !errors.Is(err, state.ErrConflict) || out.ClaimAcquired {
+		t.Fatalf("a different key acquired the approval: %v", err)
+	}
+	var wg sync.WaitGroup
+	type attempt struct {
+		out state.HostedTaskRehearsalResult
+		err error
+	}
+	attempts := make(chan attempt, 4)
+	for range 4 {
+		wg.Go(func() {
+			out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim)
+			attempts <- attempt{out: out, err: err}
+		})
+	}
+	wg.Wait()
+	close(attempts)
+	acquired := 0
+	for a := range attempts {
+		if a.err != nil || a.out.Plan.Status != tasktoolrehearsal.Claimed {
+			t.Fatalf("claim failed: %+v, %v", a.out, a.err)
+		}
+		if a.out.ClaimAcquired {
+			acquired++
+		}
+	}
+	if acquired != 1 {
+		t.Fatalf("expected one claim, got %d", acquired)
+	}
+	if pool != nil {
+		journal = state.NewPgStore(pool)
+	}
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Claimed {
+		t.Fatalf("durable claim replay: %+v, %v", out, err)
+	}
+	read(id, run(id, disabled, &owner, http.MethodGet, "", nil), tasktoolrehearsal.Claimed)
+
+	id, pinned = completeRehearsalQualification(t, f, "drift")
+	plan = read(id, run(id, f.executor, &owner, http.MethodPut, "", pinned), tasktoolrehearsal.Planned)
+	decision.PlanSHA256 = plan.PlanSHA256
+	read(id, run(id, f.executor, &owner, http.MethodPut, "/decision", decision), tasktoolrehearsal.Approved)
+	// Revoke the source approval without changing its immutable digests.
+	source := store.(state.HostedTaskSourceIntentStore)
+	if _, err := source.ChangeHostedTaskSourceIntent(ctx, f.account.ID, id, "decide", api.HostedTaskSourceDecision{
+		IntentSHA256: pinned.IntentSHA256, ReviewSHA256: pinned.ReviewSHA256, Decision: "revoke",
+	}, state.HostedTaskSourceOwner{KeyID: owner.ID}); err != nil {
+		t.Fatal(err)
+	}
+	claim.PlanSHA256 = plan.PlanSHA256
+	if out, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.ClaimHostedTaskRehearsal, claim); err != nil || out.ClaimAcquired || out.Plan.Status != tasktoolrehearsal.Stale {
+		t.Fatalf("source revocation did not fence the claim: %+v, %v", out, err)
+	}
+	read(id, run(id, disabled, &other, http.MethodGet, "", nil), tasktoolrehearsal.Stale)
+}
+
+func completeRehearsalQualification(t *testing.T, f *hostedSourceFixture, name string) (string, api.HostedTaskRehearsalPrepare) {
+	t.Helper()
+	ctx := t.Context()
+	id := toolpublication.Digest([]byte(f.account.ID + ":rehearsal:" + name))
+	w := f.call(t, http.MethodPut, id, f.request, &f.key)
+	var source api.HostedTaskSourceIntent
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &source) != nil {
+		t.Fatalf("source prepare: %d %s", w.Code, w.Body)
+	}
+	owner := state.HostedTaskSourceOwner{Session: true}
+	if _, err := f.store.(state.HostedTaskSourceIntentStore).ChangeHostedTaskSourceIntent(ctx, f.account.ID, id, "decide", api.HostedTaskSourceDecision{
+		IntentSHA256: source.IntentSHA256, ReviewSHA256: source.ReviewSHA256, Decision: "approve",
+	}, owner); err != nil {
+		t.Fatal(err)
+	}
+	selection := api.HostedTaskBindingSelection{IntentSHA256: source.IntentSHA256, ReviewSHA256: source.ReviewSHA256, Namespace: "binding-test",
+		WebDatabaseRef: "secret:DATABASE_URL", WorkerDatabaseRef: "secret:DATABASE_URL", MigrationDatabaseRef: "secret:MIGRATION_URL", ObserverDatabaseRef: "secret:DATABASE_URL"}
+	body, err := json.Marshal(selection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequestWithContext(ctx, http.MethodPut, "/v1/task-tool-source-intents/"+id+"/bindings", bytes.NewReader(body))
+	r.SetPathValue("id", id)
+	r = r.WithContext(middleware.WithPrincipal(r.Context(), f.account, nil, nil))
+	w = httptest.NewRecorder()
+	f.executor.HostedTaskBindings()(w, r, f.account)
+	var binding api.HostedTaskBindingVerification
+	if w.Code != http.StatusOK || json.Unmarshal(w.Body.Bytes(), &binding) != nil {
+		t.Fatalf("binding selection: %d %s", w.Code, w.Body)
+	}
+	journal := f.store.(state.HostedTaskBindingStore)
+	change := state.HostedTaskBindingChange{Owner: owner, BindingSHA256: binding.BindingSHA256, Claim: uuid.NewString()}
+	if _, err := journal.ChangeHostedTaskBindings(ctx, f.account.ID, id, "claim", change); err != nil {
+		t.Fatal(err)
+	}
+	// SQL role probing has its own native acceptance test. This fixture
+	// records the completed observation to exercise the rehearsal barrier.
+	change.Checks = tasktoolbinding.Results("passed")
+	out, err := journal.ChangeHostedTaskBindings(ctx, f.account.ID, id, "record", change)
+	if err != nil || out.Public.Status != "passed" {
+		t.Fatalf("binding record: %+v, %v", out.Public, err)
+	}
+	return id, api.HostedTaskRehearsalPrepare{IntentSHA256: source.IntentSHA256, ReviewSHA256: source.ReviewSHA256, BindingSHA256: binding.BindingSHA256}
+}

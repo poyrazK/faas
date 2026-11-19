@@ -22,5 +22,17 @@ export type FlagEvent = {
    * When the event happened; within the last 24 hours. Defaults to now.
    */
   at?: string;
+  /**
+   * Optional end-user subject of the request; only its hash is stored.
+   */
+  subject?: string;
+  /**
+   * Optional string properties; keys match ^[a-z][a-z0-9_]{0,63}$, values are at most 256 bytes.
+   */
+  properties?: Record<string, string>;
+  /**
+   * Served value, as a string, of each flag the request evaluated before the event.
+   */
+  flags?: Record<string, string>;
 };
 

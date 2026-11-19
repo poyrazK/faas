@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -47,6 +48,9 @@ func cmdSupportAccessRequest(args []string) int {
 	fs.SetOutput(osStderr)
 	org := fs.String("org", "", "organization slug (a personal account's organization slug works too)")
 	reason := fs.String("reason", "", "why support needs access; the customer reads it (3..400 characters)")
+	apps := fs.String("apps", "", "comma-separated app slugs to ask for (default: the customer chooses)")
+	hours := fs.Int("hours", 0, "how long to ask for, 1..168 hours (default: the customer chooses)")
+	extend := fs.String("extend", "", "live grant id to extend: asks again for its apps unless --apps names others")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -54,8 +58,17 @@ func cmdSupportAccessRequest(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl support-access request: --org and --reason are required")
 		return 2
 	}
+	if *hours < 0 || *hours > int(api.SupportGrantMaxTTL/time.Hour) {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl support-access request: --hours must be 1 to %d\n", int(api.SupportGrantMaxTTL/time.Hour))
+		return 2
+	}
 	var out api.SupportAccessRequest
-	body := api.OperatorSupportAccessRequest{Org: strings.TrimSpace(*org), Reason: strings.TrimSpace(*reason)}
+	body := api.OperatorSupportAccessRequest{Org: strings.TrimSpace(*org), Reason: strings.TrimSpace(*reason), TTLHours: *hours, Extends: strings.TrimSpace(*extend)}
+	for _, slug := range strings.Split(*apps, ",") {
+		if slug = strings.TrimSpace(slug); slug != "" {
+			body.Apps = append(body.Apps, slug)
+		}
+	}
 	if code := supportAccessCall("request", http.MethodPost, "/v1/admin/support-access/requests", "", body, &out); code != 0 {
 		return code
 	}

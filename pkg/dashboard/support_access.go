@@ -20,4 +20,28 @@ type SupportAccessOrg struct {
 	Enabled  bool
 	Apps     []string
 	Access   api.SupportAccess
+	// Open is the requests waiting for a decision, with their approval
+	// form filled in from what support asked for.
+	Open []SupportAccessRequestForm
+	// Durations is the grant form's duration choices.
+	Durations []SupportAccessDuration
+}
+
+// SupportAccessRequestForm is one open request and its approval form.
+type SupportAccessRequestForm struct {
+	Request api.SupportAccessRequest
+	// Asked describes what support asked for, e.g. "web, api for 4 hours".
+	Asked string
+	// AppsValue fills the form's apps field.
+	AppsValue string
+	Durations []SupportAccessDuration
+	// Focus marks the request a mail linked to.
+	Focus bool
+}
+
+// SupportAccessDuration is one choice of the duration select.
+type SupportAccessDuration struct {
+	Hours    int
+	Label    string
+	Selected bool
 }

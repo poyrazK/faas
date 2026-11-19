@@ -20,6 +20,8 @@ on:
       - 'pkg/apid/mcpreadiness/**'
       - 'pkg/state/mcp_readiness_expectation.go'
       - 'pkg/apid/apidserver/private_publication*'
+      - 'pkg/apid/apidserver/hosted_task_acceptance_test.go'
+      - 'pkg/tasktoolbinding/**'
       - 'pkg/api/tool_publication*'
       - 'pkg/state/tool_publication*'
       - 'pkg/state/toolpublicationdb/**'
@@ -521,4 +523,6 @@ jobs:
           GOMEMLIMIT: 2GiB
           GOGC: 30
           GOMAXPROCS: 2
-        run: go test -race -v -p=1 ./pkg/apid/apidserver ./migrations -run 'TestPGHandler_RegressionTriageGuardAndReplay|TestPGHandler_DebugRegressionReopensWhenErrorsAppear|TestRegressionReviewVersionFastDefaultAndLegacyHistory|TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestPrivatePublicationExactReplicaProtocol|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+        run: |
+          go test -race -v -p=1 ./pkg/apid/apidserver ./migrations -run 'TestPGHandler_RegressionTriageGuardAndReplay|TestPGHandler_DebugRegressionReopensWhenErrorsAppear|TestRegressionReviewVersionFastDefaultAndLegacyHistory|TestScopedRouteMonitor|TestScopedTelemetry|TestScopedWorkerObservation|TestWorkerRolloutObservationHTTP|TestReviewedWorkloadRollout|TestMemReviewedRollout|TestPgReviewedRollout|TestMemReviewedServiceRecovery|TestPgReviewedServiceRecovery|TestMemReviewedPinnedServiceReadiness|TestPgReviewedPinnedServiceReadiness|TestReviewedNativeSource|TestReviewedSourceRef|TestSourceRef_|TestReleaseReviewHTTP|TestMemReleaseReview|TestPgReleaseReview|TestMemReviewedNamedStaging|TestPgReviewedNamedStaging|TestPrivatePublicationExactReplicaProtocol|TestMCP|TestStateless|TestClient|TestCall|TestLegacyStateless|TestMirrored|TestConfig|TestOAuth|TestMem_UpdateDeploymentTraffic_Expected|TestNpmIntegrity|TestScanExtractedMCP|TestListTemplates|TestScorecard' -count=1
+          DATABASE_URL=postgres://mcp:mcp-ci-only@localhost:5432/mcp?sslmode=disable go test -race -v -p=1 ./pkg/apid/apidserver -run '^TestHostedTaskNativeAcceptance$' -count=1

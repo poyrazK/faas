@@ -135,7 +135,6 @@ func TestElasticSlotsReservedThenBorrowed(t *testing.T) {
 }
 
 func TestElasticSlotsBorrowedRefusals(t *testing.T) {
-	ctx := context.Background()
 	tests := []struct {
 		name     string
 		prepare  func(t *testing.T, store *state.MemStore, vm *borrowedFakeVM, e *ElasticSlots, p *memoryProbe) state.Build
@@ -154,6 +153,7 @@ func TestElasticSlotsBorrowedRefusals(t *testing.T) {
 			return queuedBuild(t, store)
 		}, wantPart: "cannot read this node's memory"},
 		{name: "given back twice", prepare: func(t *testing.T, store *state.MemStore, _ *borrowedFakeVM, _ *ElasticSlots, _ *memoryProbe) state.Build {
+			ctx := context.Background()
 			buildID := queuedBuild(t, store).ID
 			for i := 0; i < api.BuildMaxPreemptions; i++ {
 				claim, err := store.ClaimQueuedBuild(ctx, buildID)
@@ -169,6 +169,7 @@ func TestElasticSlotsBorrowedRefusals(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
 			store := state.NewMemStore()
 			vm := &borrowedFakeVM{supported: true}
 			b, e, probe := newElasticBuilderd(t, store, vm, builderslots.Slots{Reserved: 1, Max: 2})

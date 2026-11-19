@@ -66,17 +66,32 @@ func (g SupportGrant) Covers(appID string) bool {
 	return len(g.AppIDs) == 0 || slices.Contains(g.AppIDs, appID)
 }
 
-// SupportGrantRequest is an operator's request for a grant.
+// SupportGrantRequest is an operator's request for a grant. AppIDs and TTL
+// are what support asks for (empty and zero leave the choice to the
+// customer); ExtendsGrantID names the grant a request to extend continues.
 type SupportGrantRequest struct {
-	ID         string
-	OrgID      string
-	OperatorID string
-	Reason     string
-	Status     string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
-	DecidedAt  *time.Time
-	DecidedBy  string
+	ID             string
+	OrgID          string
+	OperatorID     string
+	Reason         string
+	Status         string
+	CreatedAt      time.Time
+	ExpiresAt      time.Time
+	DecidedAt      *time.Time
+	DecidedBy      string
+	AppIDs         []string
+	TTL            time.Duration
+	ExtendsGrantID string
+}
+
+// NewSupportGrantRequest is what an operator asks for.
+type NewSupportGrantRequest struct {
+	OrgID          string
+	OperatorID     string
+	Reason         string
+	AppIDs         []string
+	TTL            time.Duration
+	ExtendsGrantID string
 }
 
 // NewSupportGrant is what a customer grants.
@@ -99,12 +114,15 @@ type SupportGrantStore interface {
 	ListSupportGrants(ctx context.Context, orgID string) ([]SupportGrant, error)
 	ListLiveSupportGrants(ctx context.Context) ([]SupportGrant, error)
 	RevokeSupportGrant(ctx context.Context, orgID, id, revokedBy string) error
-	CreateSupportGrantRequest(ctx context.Context, orgID, operatorID, reason string) (SupportGrantRequest, error)
+	CreateSupportGrantRequest(ctx context.Context, req NewSupportGrantRequest) (SupportGrantRequest, error)
 	ListSupportGrantRequests(ctx context.Context, orgID string) ([]SupportGrantRequest, error)
 	// ApproveSupportGrantRequest decides an open request and creates its
 	// grant atomically.
 	ApproveSupportGrantRequest(ctx context.Context, requestID string, grant NewSupportGrant) (SupportGrant, error)
 	DeclineSupportGrantRequest(ctx context.Context, orgID, requestID, decidedBy string) error
+	// ClaimEndedSupportGrants marks up to limit grants that ended in the
+	// last day as summarized and returns them, each exactly once.
+	ClaimEndedSupportGrants(ctx context.Context, limit int) ([]SupportGrant, error)
 }
 
 var (
@@ -118,6 +136,31 @@ func ValidSupportReason(reason string) bool {
 	n := utf8.RuneCountInString(reason)
 	return n >= api.SupportReasonMinChars && n <= api.SupportReasonMaxChars
 }
+
+// ValidSupportGrantRequest checks a request before it is stored.
+func ValidSupportGrantRequest(r NewSupportGrantRequest) error {
+	if r.OrgID == "" || r.OperatorID == "" || !ValidSupportReason(r.Reason) || len(r.AppIDs) > SupportGrantMaxApps ||
+		r.TTL < 0 || r.TTL > SupportGrantMaxTTL || (r.TTL != 0 && r.TTL < time.Hour) {
+		return ErrInvalidArgument
+	}
+	for _, id := range append(slices.Clone(r.AppIDs), nonEmpty(r.ExtendsGrantID)...) {
+		if _, err := uuid.Parse(id); err != nil {
+			return ErrInvalidArgument
+		}
+	}
+	return nil
+}
+
+func nonEmpty(s string) []string {
+	if s == "" {
+		return nil
+	}
+	return []string{s}
+}
+
+// supportGrantSummaryWindow bounds how long after its end a grant still
+// gets a summary, so a loop that was down for days does not mail old news.
+const supportGrantSummaryWindow = 24 * time.Hour
 
 // ValidSupportGrant checks a grant before it is stored.
 func ValidSupportGrant(g NewSupportGrant) error {
@@ -136,14 +179,16 @@ func ValidSupportGrant(g NewSupportGrant) error {
 // ---- MemStore ----
 
 type memSupportGrants struct {
-	grants   map[string]SupportGrant
-	requests map[string]SupportGrantRequest
+	grants     map[string]SupportGrant
+	requests   map[string]SupportGrantRequest
+	summarized map[string]bool
 }
 
 func (m *MemStore) supportGrantsLocked() *memSupportGrants {
 	if m.supportGrants.grants == nil {
 		m.supportGrants.grants = map[string]SupportGrant{}
 		m.supportGrants.requests = map[string]SupportGrantRequest{}
+		m.supportGrants.summarized = map[string]bool{}
 	}
 	return &m.supportGrants
 }
@@ -259,12 +304,13 @@ func (m *MemStore) RevokeSupportGrant(_ context.Context, orgID, id, revokedBy st
 	return nil
 }
 
-func (m *MemStore) CreateSupportGrantRequest(_ context.Context, orgID, operatorID, reason string) (SupportGrantRequest, error) {
+func (m *MemStore) CreateSupportGrantRequest(_ context.Context, in NewSupportGrantRequest) (SupportGrantRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !ValidSupportReason(reason) || operatorID == "" {
-		return SupportGrantRequest{}, ErrInvalidArgument
+	if err := ValidSupportGrantRequest(in); err != nil {
+		return SupportGrantRequest{}, err
 	}
+	orgID := in.OrgID
 	if _, ok := m.orgs[orgID]; !ok {
 		return SupportGrantRequest{}, ErrNotFound
 	}
@@ -278,8 +324,9 @@ func (m *MemStore) CreateSupportGrantRequest(_ context.Context, orgID, operatorI
 	if open >= SupportGrantMaxOpenRequests {
 		return SupportGrantRequest{}, ErrSupportRequestLimit
 	}
-	req := SupportGrantRequest{ID: uuid.NewString(), OrgID: orgID, OperatorID: operatorID, Reason: reason,
-		Status: SupportRequestOpen, CreatedAt: now, ExpiresAt: now.Add(SupportGrantRequestTTL)}
+	req := SupportGrantRequest{ID: uuid.NewString(), OrgID: orgID, OperatorID: in.OperatorID, Reason: in.Reason,
+		Status: SupportRequestOpen, CreatedAt: now, ExpiresAt: now.Add(SupportGrantRequestTTL),
+		AppIDs: slices.Clone(in.AppIDs), TTL: in.TTL, ExtendsGrantID: in.ExtendsGrantID}
 	m.supportGrants.requests[req.ID] = req
 	return req, nil
 }
@@ -328,6 +375,36 @@ func (m *MemStore) DeclineSupportGrantRequest(_ context.Context, orgID, requestI
 	return m.decideSupportRequestLocked(orgID, requestID, decidedBy, SupportRequestDeclined)
 }
 
+func (m *MemStore) ClaimEndedSupportGrants(_ context.Context, limit int) ([]SupportGrant, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sg := m.supportGrantsLocked()
+	now := time.Now()
+	var out []SupportGrant
+	for id, g := range sg.grants {
+		if sg.summarized[id] || g.Live(now) || !supportGrantEnd(g).After(now.Add(-supportGrantSummaryWindow)) {
+			continue
+		}
+		out = append(out, g)
+	}
+	slices.SortFunc(out, func(a, b SupportGrant) int { return supportGrantEnd(a).Compare(supportGrantEnd(b)) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	for _, g := range out {
+		sg.summarized[g.ID] = true
+	}
+	return out, nil
+}
+
+// supportGrantEnd is when a grant that is no longer live ended.
+func supportGrantEnd(g SupportGrant) time.Time {
+	if g.RevokedAt != nil && g.RevokedAt.Before(g.ExpiresAt) {
+		return *g.RevokedAt
+	}
+	return g.ExpiresAt
+}
+
 // checkSupportGrantFenceLocked is the memory twin of LockSupportGrant.
 func (m *MemStore) checkSupportGrantFenceLocked(ctx context.Context, f OrgAccessFence) error {
 	grant, ok := m.supportGrantsLocked().grants[f.SupportGrantID]
@@ -351,11 +428,16 @@ func supportGrantFromRow(row grantsql.GrantByIDRow) SupportGrant {
 }
 
 func supportRequestFromRow(row grantsql.SupportGrantRequest) SupportGrantRequest {
-	return SupportGrantRequest{
+	req := SupportGrantRequest{
 		ID: pgUUIDString(row.ID), OrgID: pgUUIDString(row.OrgID), OperatorID: pgUUIDString(row.OperatorAccountID),
 		Reason: row.Reason, Status: row.Status, CreatedAt: row.CreatedAt.Time, ExpiresAt: row.ExpiresAt.Time,
 		DecidedAt: timestamptzPtr(row.DecidedAt), DecidedBy: pgUUIDStringNullable(row.DecidedByAccountID),
+		AppIDs: pgUUIDStrings(row.AppIds), ExtendsGrantID: pgUUIDStringNullable(row.ExtendsGrantID),
 	}
+	if row.TtlSeconds.Valid {
+		req.TTL = time.Duration(row.TtlSeconds.Int32) * time.Second
+	}
+	return req
 }
 
 func insertSupportGrantParams(g NewSupportGrant) (grantsql.InsertGrantParams, error) {
@@ -465,14 +547,27 @@ func (s *PgStore) RevokeSupportGrant(ctx context.Context, orgID, id, revokedBy s
 	return nil
 }
 
-func (s *PgStore) CreateSupportGrantRequest(ctx context.Context, orgID, operatorID, reason string) (SupportGrantRequest, error) {
-	if !ValidSupportReason(reason) {
-		return SupportGrantRequest{}, ErrInvalidArgument
+func (s *PgStore) CreateSupportGrantRequest(ctx context.Context, in NewSupportGrantRequest) (SupportGrantRequest, error) {
+	if err := ValidSupportGrantRequest(in); err != nil {
+		return SupportGrantRequest{}, err
 	}
-	org, err1 := parsePgUUID(orgID)
-	operator, err2 := parsePgUUID(operatorID)
+	org, err1 := parsePgUUID(in.OrgID)
+	operator, err2 := parsePgUUID(in.OperatorID)
 	if err1 != nil || err2 != nil {
 		return SupportGrantRequest{}, ErrInvalidArgument
+	}
+	params := grantsql.InsertRequestParams{
+		OrgID: org, OperatorID: operator, Reason: in.Reason,
+		TtlSeconds: SupportGrantRequestTTL.Seconds(), MaxOpen: SupportGrantMaxOpenRequests,
+	}
+	for _, id := range in.AppIDs {
+		params.AppIds = append(params.AppIds, mustPgUUID(id))
+	}
+	if in.TTL > 0 {
+		params.GrantTtlSeconds = pgtype.Int4{Int32: int32(in.TTL / time.Second), Valid: true}
+	}
+	if in.ExtendsGrantID != "" {
+		params.ExtendsGrantID = mustPgUUID(in.ExtendsGrantID)
 	}
 	var row grantsql.SupportGrantRequest
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -481,10 +576,7 @@ func (s *PgStore) CreateSupportGrantRequest(ctx context.Context, orgID, operator
 			return err
 		}
 		var err error
-		row, err = q.InsertRequest(ctx, tx, grantsql.InsertRequestParams{
-			OrgID: org, OperatorID: operator, Reason: reason,
-			TtlSeconds: SupportGrantRequestTTL.Seconds(), MaxOpen: SupportGrantMaxOpenRequests,
-		})
+		row, err = q.InsertRequest(ctx, tx, params)
 		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -564,4 +656,19 @@ func (s *PgStore) DeclineSupportGrantRequest(ctx context.Context, orgID, request
 		return fmt.Errorf("state: decline support access request: %w", mapErr(err))
 	}
 	return nil
+}
+
+func (s *PgStore) ClaimEndedSupportGrants(ctx context.Context, limit int) ([]SupportGrant, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := grantsql.New().ClaimEndedGrants(ctx, s.pool, int32(min(limit, 1000)))
+	if err != nil {
+		return nil, fmt.Errorf("state: claim ended support grants: %w", mapErr(err))
+	}
+	out := make([]SupportGrant, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, supportGrantFromRow(grantsql.GrantByIDRow(row)))
+	}
+	return out, nil
 }
