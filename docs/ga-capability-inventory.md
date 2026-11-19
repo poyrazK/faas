@@ -166,7 +166,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 55 | Production forks | `forks` | `production-forks` preview | `env: FAAS_APP_FORKS` | preview |
 | 56 | Crash snapshots | `crash-snapshots` | `crash-snapshots` preview | `env: FAAS_CRASH_SNAPSHOTS` | preview |
 | 57 | Dev Bridge: run one service on a laptop | `/v1/dev`, `gregale dev` | `dev-bridge` internal | `faas_dev_bridge_enabled: false` | internal |
-| 58 | Developer environments: expiring `gregale dev` environments, developer session leases, file watch and sync, live source patch without rebuild | `/v1/dev/sessions`, dashboard `developer_environments` | **MISSING** | plan: `DeveloperApps` | preview |
+| 58 | Developer environments: expiring `gregale dev` environments, developer session leases, file watch and sync, live source patch without rebuild | `/v1/dev/sessions`, dashboard `developer_environments` | `developer-environments` preview (journey `TestDevLoop`: edit live in 6.8 s on prod 2026-11-19, fails over 60 s) | plan: `DeveloperApps` | preview |
 | 59 | Scenario tests and release rehearsal: run scenarios against expiring developer environments, record and replay, network fault injection | `/v1/dev/test-runs`, `gregale test`, `gregale chaos` | **MISSING** | — | internal |
 | 60 | Env vars: diff, history and rollback, push / pull, environment clone, secret scanning | `env`, `env-diff`, `gregale env` | **MISSING** | — | GA |
 | 61 | Secrets: sealed values, references, revocations, hot reload without restart, delivery status | `secrets`, `secret-references`, `secret-revocations`, guest `FAAS_SECRETS_RELOAD_*` | **MISSING** | — | GA |

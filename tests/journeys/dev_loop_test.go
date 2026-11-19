@@ -8,7 +8,14 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// devEditToLiveBound fails edit_to_live when an edit went live through a
+// full build instead of a live patch. It leaves headroom over the target
+// for public-network distance and the poll interval.
+const devEditToLiveBound = 4 * api.DevEditToLiveTarget
 
 // TestDevLoop is the remote developer loop: `gregale dev` builds a
 // developer environment from a local checkout, an edit is live without a
@@ -58,16 +65,20 @@ func TestDevLoop(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "version.txt"), []byte("dev-v2\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		// A live patch serves the edit in seconds. When the patch cannot
-		// hold (no patch eligibility, or the patched process failed to
-		// restart: 349 s on prod 2026-11-16, until the deferred build), the
-		// edit lands with the full build. The metric tracks the 15 s target;
-		// this bound checks only that the edit lands at all.
+		// A live patch serves the edit in seconds (6.8 s on prod
+		// 2026-11-19). When the patch cannot hold, the edit lands only with
+		// the full build (349 s on prod 2026-11-16), so the wait allows a
+		// build and the step then fails on the live-patch bound below.
 		eventually(t, "the edit serving without a redeploy", 10*time.Minute, 2*time.Second, func() (bool, string) {
 			r := tg.devGet(devURL, proxy, "/")
 			return r.status == http.StatusOK && strings.Contains(string(r.body), "dev-v2"), r.String()
 		})
-		t.Logf("metric dev_edit_to_live_s=%.1f", time.Since(start).Seconds())
+		elapsed := time.Since(start)
+		t.Logf("metric dev_edit_to_live_s=%.1f", elapsed.Seconds())
+		if elapsed > devEditToLiveBound {
+			t.Fatalf("edit took %s to go live, over %s (4x the %s target): it landed with a full build, not a live patch",
+				elapsed.Round(100*time.Millisecond), devEditToLiveBound, api.DevEditToLiveTarget)
+		}
 	}) {
 		return
 	}
