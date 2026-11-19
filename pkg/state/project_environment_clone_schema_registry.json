@@ -21445,6 +21445,30 @@
     "kind": "operational"
   },
   {
+    "table": "agent_run_capability_summaries",
+    "columns": [
+      "account_id",
+      "first_call_at",
+      "last_call_at",
+      "refused_calls",
+      "run_id",
+      "tool_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_decisions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "decision",
+      "id",
+      "run_id",
+      "tool"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_deliveries",
     "columns": [
       "account_id",
