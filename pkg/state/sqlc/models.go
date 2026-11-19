@@ -16023,9 +16023,10 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput  []byte
-	EgressAllow []string
-	EgressDeny  []string
+	TaskOutput   []byte
+	EgressAllow  []string
+	EgressDeny   []string
+	PlacedNodeID pgtype.Text
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -16599,6 +16600,17 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
 }
 
 type StorageObjectDeletion struct {

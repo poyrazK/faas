@@ -204,3 +204,25 @@ back the same day.
   no build can use.
 - The metal test checks that the installed seed has its directory's owner,
   which fails without the handoff even as root.
+
+## Second production canary (2026-11-18)
+
+The second canary ran on fsn-2 (compute-1) on rc.355, which carries the
+handoff, from 2026-11-18 19:59Z to 2026-11-19 07:15Z. fsn-3 ran without the
+seed in the same window.
+
+| | Builds | vm_build p50 | vm_build p90 | build command p50 |
+|---|---|---|---|---|
+| fsn-2, seeded | 8 | 41 s | 72 s | 31 s |
+| fsn-3, unseeded, same window | 7 | 74 s | 108 s | 67 s |
+| fsn-2, unseeded, three days before | 165 | 85 s | 120 s | 75 s |
+
+- Every build on fsn-2 ran seeded, and builderd logged no error.
+- The seed belongs to builderd's directory owner. It takes about 2.4 GiB of
+  `/srv/fc`.
+- A release in the window changed the platform images. builderd made a new
+  seed in 87 s and dropped the old one.
+
+production-us turns the seed on for every compute node
+(`builderd_buildkit_seed` in `deploy/ansible/group_vars/compute_nodes/perf_switches.yml`).
+The daemon default stays off.

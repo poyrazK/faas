@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -351,6 +352,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("imaged: %w", err)
 	} else if deferred {
 		log.Info("imaged: shared-store deletes deferred to the control plane")
+	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, getenv, storageBackend, "imaged", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
 	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {

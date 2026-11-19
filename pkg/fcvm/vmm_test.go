@@ -1114,6 +1114,48 @@ func TestHealthcheckProbe_ContextCanceled(t *testing.T) {
 	}
 }
 
+// TestHealthcheckClient_LeavesNoConnectionInGuest pins that the readiness
+// probe closes its connection. A keep-alive connection left open in the guest
+// was reset by releaseInheritedConnections right after a restore's readiness
+// wait, and the app (gunicorn gthread) logged ECONNABORTED on every wake.
+func TestHealthcheckClient_LeavesNoConnectionInGuest(t *testing.T) {
+	var open atomic.Int64
+	var keepAliveAsked atomic.Bool
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !r.Close {
+			keepAliveAsked.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			open.Add(1)
+		case http.StateClosed, http.StateHijacked:
+			open.Add(-1)
+		}
+	}
+	srv.Start()
+	defer srv.Close()
+	addr := strings.TrimPrefix(srv.URL, "http://")
+	client := (*JailerVMM)(nil).healthcheckClient()
+	for i := 0; i < 3; i++ {
+		if ok, err := healthcheckProbe(context.Background(), client, addr, "/healthz"); !ok || err != nil {
+			t.Fatalf("probe %d = (%v, %v), want ready", i, ok, err)
+		}
+	}
+	if keepAliveAsked.Load() {
+		t.Error("readiness probe asked the app to keep its connection open")
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for open.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := open.Load(); n != 0 {
+		t.Fatalf("%d probe connection(s) still open in the guest after readiness; release would reset them", n)
+	}
+}
+
 // TestHealthcheckProbe_TransportError: an unrouted host (TEST-NET-1,
 // RFC 5737) yields a transport error → (false, nil) per the helper's
 // retry-friendly contract — the loop interprets that as "not ready yet".

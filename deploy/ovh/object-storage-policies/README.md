@@ -57,3 +57,24 @@ so creating rules back to back from a stale page drops one. Prefer one
 `aws s3api put-bucket-lifecycle-configuration` with the whole file;
 in the manager, reload between rules and read the configuration back
 with `GET /cloud/project/{serviceName}/region/BHS/storage/{name}/lifecycle`.
+
+## Putting a key on a host
+
+`deploy/ovh/install-s3-key.sh` writes a key where a host reads it. It reads
+the key pair in your terminal (the secret without echo) and sends it on the
+SSH session's stdin, so it never reaches a command line, a log or the
+screen. The program that merges it runs as root on the host, keeps every
+other line, leaves the previous file as a root-only `.bak-<time>` copy and
+prints key names only. Copy each secret from the user's "View the secret
+key" in the manager.
+
+| What | Command | File |
+|---|---|---|
+| a GCP compute node's artifact store, with the GCS read fallback (migration phase 1 step 4) | `install-s3-key.sh storage-env --ssh 'gcloud compute ssh <node> --zone <zone> --tunnel-through-iap --' --bucket gregale-prod-artifacts --fallback gcs` | `/etc/faas/storage.env`, root:faas 0440 |
+| an OVH compute node's artifact store (node join) | `install-s3-key.sh storage-env --ssh 'ssh ubuntu@<host>' --bucket gregale-prod-artifacts --delete-mode defer` | same |
+| the OVH control node's backup remote (phase 1 step 8) | `install-s3-key.sh rclone --ssh 'ssh ubuntu@<host>' --bucket gregale-prod-pg-backups` | `/etc/faas/secrets/storage-box/rclone.conf`, root 0400: `[offhostbox]` is an alias of `[offhostbox-s3]:<bucket>`, so the backup paths stay `offhostbox:faas-pg-*` |
+| the log archive key on the Ansible controller | `install-s3-key.sh log-archive --out <log_archive.credentials_src>` | that file, 0600 |
+
+Add `--dry-run` to see which keys would change without writing anything.
+The script does not restart anything: drain, restart and undrain as the
+runbook says. Tests: `install-s3-key_test.sh` (also in CI).
