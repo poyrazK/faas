@@ -418,6 +418,14 @@ HTTP 400 Bad Request
 
 ## C
 
+### `cache_shrink_needs_evict`
+
+HTTP 409 Conflict · Shrinking needs evict
+
+### `cache_waking`
+
+HTTP 503 Service Unavailable · Redis cache is waking
+
 ### `canary_step_conflict`
 
 HTTP 409 Conflict · Canary step changed
@@ -1661,6 +1669,18 @@ See [Plans and pricing](plans.md), [Managed PostgreSQL](postgres.md#usage-and-li
 HTTP 503 Service Unavailable · Managed PostgreSQL unavailable
 
 See [Managed PostgreSQL](postgres.md).
+
+### `managed_redis_binding_target_missing`
+
+HTTP 409 Conflict · Cache binding target missing
+
+### `managed_redis_limit`
+
+HTTP 403 Forbidden · Managed Redis cache limit reached
+
+### `managed_redis_not_in_plan`
+
+HTTP 403 Forbidden · Managed Redis is not included in this plan
 
 ### `max_min_instances_exceeded`
 
