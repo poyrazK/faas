@@ -67,6 +67,7 @@ CREATE TABLE agent_versions (
  ai_budget_millicents bigint,
  deliveries jsonb NOT NULL DEFAULT '[]',
  pause_during_model_calls boolean NOT NULL DEFAULT true,
+ capability_policy jsonb,
  PRIMARY KEY (agent_id, version)
 );
 CREATE TABLE agent_runs (
@@ -237,6 +238,7 @@ CREATE TABLE sandbox_sessions (
  lease_token text,
  lease_expires_at timestamptz,
  node_id text,
+ placed_node_id text CHECK (placed_node_id IS NULL OR (char_length(placed_node_id) >= 1 AND char_length(placed_node_id) <= 128)),
  instance_id text,
  close_requested_at timestamptz,
  last_activity_at timestamptz NOT NULL DEFAULT now(),

@@ -26,6 +26,7 @@ type flagExperimentPgFixture struct {
 	acct     string
 	project  string
 	env      string
+	dep      string
 	tenant   func(name string) string
 	exposure func(customer, variant string, at time.Time, status, latencyMS int32)
 }
@@ -45,7 +46,7 @@ func newFlagExperimentPgFixture(t *testing.T, slug string) flagExperimentPgFixtu
 	if err != nil {
 		t.Fatalf("environment: %v", err)
 	}
-	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID}
+	f := flagExperimentPgFixture{s: s, ctx: ctx, acct: acct, project: project.ID, env: env.ID, dep: depID}
 	f.tenant = func(name string) string {
 		tn, _, err := s.CreatePlatformTenant(ctx, acct, name, name, 100)
 		if err != nil {
@@ -134,7 +135,7 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 		t.Fatalf("arms = %+v crossed %d; want %+v and 1 crossed", arms, crossed, want)
 	}
 
-	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}); err != nil {
+	if err := s.SaveFlagExperimentProgress(ctx, x.ID, start.Add(time.Hour), map[string]float64{"new": 0.4}, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetFlagExperiment(ctx, f.env, "checkout-v2")

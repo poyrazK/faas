@@ -341,7 +341,7 @@ func (m *management) restoreEnvironmentPlans() error {
 
 func (m *management) pruneReleasePlans() {
 	for id, p := range m.plans {
-		if time.Now().After(p.ExpiresAt) {
+		if !p.localInFlight && time.Now().After(p.ExpiresAt) {
 			if work := m.provisions[id]; work != nil && work.status == "running" {
 				continue
 			}

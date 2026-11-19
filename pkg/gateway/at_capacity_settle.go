@@ -32,11 +32,15 @@ const (
 // app_concurrency_reached with a true count). Otherwise it re-reads the app's
 // live targets and waits briefly for one to become routable. Past the wait it
 // is ErrInstanceSlotsSettling (#5709: "max_concurrency is 1; 0 already live").
-func (h *Handler) settleAtCapacity(ctx context.Context, app App, limits api.Limits, effectiveMax int, pick func() PickResult) (PickResult, error) {
+//
+// deploymentID names the requesting lane (empty for production): only that
+// lane's instances count against its limit, so a warm stage instance does not
+// turn production's requests into 429s (prod 2026-11-19).
+func (h *Handler) settleAtCapacity(ctx context.Context, app App, deploymentID string, limits api.Limits, effectiveMax int, pick func() PickResult) (PickResult, error) {
 	if picked := pick(); picked.OK {
 		return picked, nil
 	}
-	if observed := backendCapacityCount(h.backend, app.ID); observed >= effectiveMax {
+	if observed := backendLaneCapacityCount(h.backend, app.ID, deploymentID); observed >= effectiveMax {
 		return PickResult{}, api.ErrAppConcurrencyReachedAt(limits, effectiveMax, observed)
 	}
 	if reconciler, ok := h.backend.(liveTargetReconciler); ok {

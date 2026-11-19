@@ -469,6 +469,9 @@ type Instance struct {
 	// it serves sandbox calls, and only for that session. WakeSandbox sets
 	// it.
 	SandboxID string
+	// agentEgressIP is the VM's address in this node's agent tunnel slice
+	// (ADR-20261117185346 §2); invalid for a VM on the tenant path.
+	agentEgressIP netip.Addr
 	// AgentRunRelay is the run principal of the VM's relay; host-only.
 	AgentRunRelay *AgentRunRelay `json:"-"`
 	// ExecutionID is the Runs execution principal (the one-shot instance ID).
@@ -652,6 +655,8 @@ type Instance struct {
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
 	HealthcheckPath string
+	// ProbeHost is WakeRequest.ProbeHost, kept for the prime burst.
+	ProbeHost       string
 	HealthcheckGRPC bool
 	// HealthcheckGRPCService is the health.v1 service gRPC readiness checked;
 	// plan-default liveness checks the same service.
@@ -1439,6 +1444,9 @@ type Manager struct {
 	// host policy so concurrent static-egress and SMTP allowlist changes
 	// cannot overwrite each other's fields.
 	hostPolicyMu sync.Mutex
+	// agentEgress is the agent tunnel (ADR-20261117185346, agent_egress.go);
+	// its maps are guarded by mu. Zero keeps sandboxes on the tenant path.
+	agentEgress agentEgressState
 
 	// Quiet pause (ADR-1151; quiet_pause.go). quietActivity is nil unless
 	// vmmd.toml enables quiet pause. quietMu guards quietStates and is a
@@ -1679,6 +1687,7 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 			AppID:        inst.AppID,
 		})
 	}
+	agentRules := m.agentEgressRulesLocked()
 	for id, starting := range m.staticEgressStarting {
 		if m.live[id] != nil {
 			continue
@@ -1704,6 +1713,9 @@ func (m *Manager) renderHostSMTPAllowlistRules(ctx context.Context, ifChanged bo
 	next := *cur
 	next.SMTPAllowlistRules = rules
 	next.StaticEgressRules = staticRules
+	if cfg := m.agentEgress.cfg; cfg != nil {
+		next.AgentEgressIface, next.AgentEgressRules = cfg.Iface, agentRules
+	}
 	next.StaticEgressBlockedSources = blockedSources
 	next.PrivateNetworkBridges = privateBridges
 	if next.TenantEgressIface != "" && len(staticRules) > 0 {
@@ -2411,11 +2423,14 @@ type LivenessProbeConfig struct {
 	GRPC                     bool
 	GRPCService              string
 	Port                     int
-	PeriodSeconds            int
-	TimeoutSeconds           int
-	ConsecutiveFailures      int
-	CooldownSeconds          int
-	IdleResetOnDestroy       bool
+	// Host (ADR-20261119140000) is the Host header guest-init's HTTP probe
+	// sends, with X-Forwarded-Proto: https; empty keeps 127.0.0.1:<port>.
+	Host                string
+	PeriodSeconds       int
+	TimeoutSeconds      int
+	ConsecutiveFailures int
+	CooldownSeconds     int
+	IdleResetOnDestroy  bool
 	// UnpromisedPath marks an HTTP probe of the plan-default path on an app
 	// whose startup contract never proved that path: its readiness was a
 	// declared path such as /actuator/health, or its TCP listener (a direct
@@ -2806,6 +2821,7 @@ func (m *Manager) startLivenessLoop(ctx context.Context, instance string, slot i
 		if inst.Port > 0 && inst.Port <= 65535 {
 			cfg.Port = inst.Port
 		}
+		cfg.Host = inst.ProbeHost
 	}
 	m.mu.Unlock()
 	if m.livenessStarter == nil {
@@ -4197,6 +4213,9 @@ type WakeRequest struct {
 	// It must match the timeout written by builderd into the build manifest;
 	// vmmd uses it to retain the corresponding export/teardown headroom.
 	BuildTimeoutSec int
+	// BorrowedBuilder runs a builder VM in faas-borrowed.slice on a
+	// borrowed builder slot (ADR-20261118154632). Ignored for app VMs.
+	BorrowedBuilder bool
 	// BuildRegistryCredentials are the sealed registry credentials of the
 	// app a builder VM builds (ADR-20261026091500). prepareWakeFiles opens
 	// them into the builder's secrets.env as a Docker config. Ignored for
@@ -4211,6 +4230,12 @@ type WakeRequest struct {
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
 	BuildKitSeedDrive string
+	// CacheExportManifest is a deferred dependency cache export run's
+	// build.json (ADR-20261029171525 amendment 2). The run boots on the
+	// drive its build left; before boot vmmd stages this manifest and a
+	// fresh entropy seed there and removes the build's build-done.json, in
+	// the guest disk sandbox. Empty for every other VM.
+	CacheExportManifest []byte
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port
@@ -4225,6 +4250,9 @@ type WakeRequest struct {
 	// customer bind there. The path is stamped on Instance for readers
 	// that resolve it without a second request lookup.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness and prime
+	// GETs send; empty sends the instance address (legacy).
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool
@@ -5224,8 +5252,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	if lease.IsBuilder {
+		lease.cacheExportManifest = string(req.CacheExportManifest)
+	}
 	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
+	if lease.IsBuilder && req.BorrowedBuilder {
+		lease.cgroupParent = BorrowedBuilderCgroupParent
+	}
 	lease.BuildTimeoutSec = req.BuildTimeoutSec
 	if lease.IsBuilder && lease.BuildTimeoutSec <= 0 {
 		lease.BuildTimeoutSec = api.BuildTimeoutSeconds
@@ -5468,6 +5502,15 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err := m.prepareStaticEgressWake(ctx, req, qualificationOnly); err != nil {
 		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
 	}
+	undoAgentEgress, agentErr := m.prepareAgentEgressWake(ctx, req, lease)
+	if agentErr != nil {
+		return nil, fmt.Errorf("wake %s: %w", req.Instance, agentErr)
+	}
+	defer func() {
+		if err != nil {
+			undoAgentEgress()
+		}
+	}()
 	// Issue #679 / PR-A: cache the per-app slice BEFORE the
 	// operator-bundle merge so SetEgressOperatorBundle can read
 	// the authoritative per-app set on a subsequent bundle
@@ -5748,7 +5791,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// teardown kills it and releases the lease.
 	if !m.preparesWakeStateBeforeBoot() {
 		if lease.IsBuilder {
-			err = writeBuildCgroup(req.Instance, req.MemSizeMiB)
+			err = writeBuildCgroup(builderCgroupParent(lease), req.Instance, req.MemSizeMiB)
 		} else {
 			err = writeLeaseCgroup(lease, wakeGuestMemoryMiB(req))
 		}
@@ -5868,7 +5911,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		StaticEgressExcluded:   req.StaticEgressExcluded,
 		PrivateNetworkExcluded: req.privateNetworkExcluded,
 		WakeID:                 wakeID, NodeID: fields.NodeID,
-		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
+		Plan: req.Plan, RequestConcurrency: req.RequestConcurrency, Port: req.Port, HealthcheckPath: req.HealthcheckPath, ProbeHost: req.ProbeHost, HealthcheckGRPC: req.HealthcheckGRPC,
 		HealthcheckGRPCService:   req.HealthcheckGRPCService,
 		RoutedPortRawTCP:         req.RoutedPortRawTCP,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
@@ -6017,6 +6060,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.adoptBootingEgressLocked(inst)
+		m.agentEgressStartedLocked(inst)
 		m.live[req.Instance] = inst
 		m.recordProvenWorkerLocked(inst)
 		if starting := m.functionStarting[req.Instance]; starting != nil && starting.Lease.processGeneration == inst.Lease.processGeneration {
@@ -6205,6 +6249,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			// Per-deployment readiness action. The HTTP path and gRPC
 			// mode/service are forwarded together; both target :8080.
 			HealthcheckPath:          req.HealthcheckPath,
+			ProbeHost:                req.ProbeHost,
 			HealthcheckGRPC:          req.HealthcheckGRPC,
 			HealthcheckGRPCService:   req.HealthcheckGRPCService,
 			ImageHealthcheckRequired: req.ImageHealthcheckRequired,

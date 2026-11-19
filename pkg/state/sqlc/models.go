@@ -491,6 +491,26 @@ type AgentRunCallback struct {
 	CreatedAt      pgtype.Timestamptz
 }
 
+// ADR-20261027090016 amendment 1: capability calls outboundd refused, by policy (denied), exhausted budget (budget) or a tool switched off (disabled).
+type AgentRunCapabilityDecision struct {
+	ID        pgtype.UUID
+	RunID     pgtype.UUID
+	AccountID pgtype.UUID
+	Tool      string
+	Decision  string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 1: per-run capability counts written by outboundd. tool_calls are the calls admitted against the run's tool-call budget.
+type AgentRunCapabilitySummary struct {
+	RunID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ToolCalls    int32
+	RefusedCalls int32
+	FirstCallAt  pgtype.Timestamptz
+	LastCallAt   pgtype.Timestamptz
+}
+
 // ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
 type AgentRunOutput struct {
 	RunID        pgtype.UUID
@@ -566,6 +586,8 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	// ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.
+	CapabilityPolicy []byte
 }
 
 type AlertChannelResolveRetry struct {
@@ -707,6 +729,45 @@ type AlertTestSend struct {
 	Result       []byte
 	CreatedAt    pgtype.Timestamptz
 	CompletedAt  pgtype.Timestamptz
+}
+
+type AnalyticsCohort struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	Definition         []byte
+	Members            int32
+	Truncated          bool
+	RefreshedAt        pgtype.Timestamptz
+	RefreshRequestedAt pgtype.Timestamptz
+	RefreshError       string
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+}
+
+type AnalyticsCohortMember struct {
+	CohortID   pgtype.UUID
+	CustomerID pgtype.UUID
+}
+
+type AnalyticsEvent struct {
+	ID            int64
+	AccountID     pgtype.UUID
+	EnvironmentID pgtype.UUID
+	CustomerID    pgtype.UUID
+	SubjectHash   []byte
+	Name          string
+	At            pgtype.Timestamptz
+	Value         int64
+	Properties    []byte
+	Flags         []byte
+}
+
+type AnalyticsPropertyKey struct {
+	EnvironmentID pgtype.UUID
+	Key           string
+	CreatedAt     pgtype.Timestamptz
 }
 
 type ApiConsumer struct {
@@ -2039,6 +2100,15 @@ type AppTaskAttachSession struct {
 	CreatedAt         pgtype.Timestamptz
 }
 
+// ADR-20261118070000 service-mesh caller identity of a running app task VM, written by schedd.
+type AppTaskNetwork struct {
+	TaskID     pgtype.UUID
+	NodeID     pgtype.UUID
+	HostIp     netip.Addr
+	LeaseToken pgtype.UUID
+	Active     bool
+}
+
 type AppTcpListener struct {
 	ID           pgtype.UUID
 	AccountID    pgtype.UUID
@@ -2741,6 +2811,7 @@ type Build struct {
 	NotBefore                    pgtype.Timestamptz
 	CoalescedWith                pgtype.UUID
 	BuilderNodeName              pgtype.Text
+	Preemptions                  int32
 }
 
 type BuildExportPublication struct {
@@ -6738,6 +6809,9 @@ type FlagExperiment struct {
 	StopReason         string
 	Breach             []byte
 	ValueThroughDay    pgtype.Date
+	MetricDefinition   []byte
+	Cuped              bool
+	MinCupedPValues    []byte
 }
 
 type FlagExperimentLatency struct {
@@ -6759,6 +6833,7 @@ type FlagExperimentUnit struct {
 	LatencyRequests int64
 	SlowRequests    int64
 	ValueSum        int64
+	PreValue        pgtype.Float8
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -7009,6 +7084,22 @@ type HostedTaskBindingQualification struct {
 	ID        string
 	Payload   []byte
 	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalPlan struct {
+	AccountID pgtype.UUID
+	ID        string
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalRun struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
 }
 
 type HostedTaskSourceIntent struct {
@@ -8897,6 +8988,7 @@ type ManagedPostgresCustomRole struct {
 	RetryAt      pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	DefaultFor   []string
 }
 
 type ManagedPostgresCutover struct {
@@ -15963,9 +16055,10 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput  []byte
-	EgressAllow []string
-	EgressDeny  []string
+	TaskOutput   []byte
+	EgressAllow  []string
+	EgressDeny   []string
+	PlacedNodeID pgtype.Text
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -16541,6 +16634,17 @@ type StatusObservationBucket struct {
 	HasTelemetry bool
 }
 
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
+}
+
 type StorageObjectDeletion struct {
 	StorageKey    string
 	Reason        string
@@ -16727,6 +16831,7 @@ type SupportGrant struct {
 	ExpiresAt          pgtype.Timestamptz
 	RevokedAt          pgtype.Timestamptz
 	RevokedByAccountID pgtype.UUID
+	SummarySentAt      pgtype.Timestamptz
 }
 
 type SupportGrantRequest struct {
@@ -16739,6 +16844,9 @@ type SupportGrantRequest struct {
 	ExpiresAt          pgtype.Timestamptz
 	DecidedAt          pgtype.Timestamptz
 	DecidedByAccountID pgtype.UUID
+	AppIds             []pgtype.UUID
+	TtlSeconds         pgtype.Int4
+	ExtendsGrantID     pgtype.UUID
 }
 
 type SupportMessage struct {

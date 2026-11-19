@@ -30,18 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
   sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
-  sqlc.arg(pause_during_model_calls)::boolean)
+  sqlc.arg(pause_during_model_calls)::boolean,sqlc.narg(capability_policy)::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many
@@ -161,7 +161,8 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;
@@ -561,6 +562,13 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''
    ORDER BY d.created_at DESC, d.id DESC LIMIT 1) tpl ON true
  WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: MarkSandboxSessionPlaced :execrows
+-- schedd placed the session (ADR-20261117190000): record the node before it
+-- boots the VM, so secretd grants that node the session's image and
+-- snapshot. node_id stays unset until the VM is up.
+UPDATE sandbox_sessions SET placed_node_id=sqlc.arg(node_id)::text, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
 
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.

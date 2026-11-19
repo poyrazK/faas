@@ -122,6 +122,12 @@ BEGIN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_open_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_open_audit TO faas_secretd;
 	END IF;
+	-- ADR-20261117190000: storage_grant_audit names every tenant object
+	-- grant secretd signed for a node; compute must not erase it.
+	IF to_regclass('public.storage_grant_audit') IS NOT NULL THEN
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.storage_grant_audit FROM faas_runtime;
+		GRANT SELECT, INSERT ON public.storage_grant_audit TO faas_secretd;
+	END IF;
 	IF to_regclass('public.secret_verification_audit') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.secret_verification_audit FROM faas_runtime;
 		GRANT SELECT, INSERT ON public.secret_verification_audit TO faas_secretd;
@@ -206,6 +212,17 @@ BEGIN
 			EXECUTE format('REVOKE faas_owner_authority FROM %I', r);
 		END IF;
 	END LOOP;
+END
+$$;
+-- meterd keeps request_telemetry and log_events partitioned through two
+-- owner-run functions (migration 20261118162630014); EXECUTE is revoked from
+-- PUBLIC, so only meterd's login may call them. Absent before that migration.
+DO $$
+BEGIN
+	IF to_regrole('faas_meterd') IS NOT NULL AND to_regprocedure('public.monthly_partitions_ensure(regclass)') IS NOT NULL THEN
+		GRANT EXECUTE ON FUNCTION public.monthly_partitions_ensure(regclass) TO faas_meterd;
+		GRANT EXECUTE ON FUNCTION public.monthly_partitions_drop_expired(regclass) TO faas_meterd;
+	END IF;
 END
 $$;
 -- Objects the next migrations create carry the same grants. Only objects the

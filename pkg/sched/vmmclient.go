@@ -553,6 +553,9 @@ type AppSpec struct {
 	// disabled gRPC preserve legacy TCP readiness. Both probe modes
 	// target <HostIP>:8080 (ADR-009/portnorm).
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header vmmd's readiness and
+	// prime GETs send: the app's public host. Empty keeps the legacy probe.
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness.
 	// Empty HealthcheckGRPCService checks overall server health.
 	HealthcheckGRPC        bool
@@ -2086,6 +2089,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.
 		HealthcheckPath:          a.HealthcheckPath,
+		ProbeHost:                a.ProbeHost,
 		HealthcheckGrpc:          a.HealthcheckGRPC,
 		HealthcheckGrpcService:   a.HealthcheckGRPCService,
 		RoutedPortRawTcp:         a.RoutedPortRawTCP,

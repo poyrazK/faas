@@ -155,6 +155,11 @@ func (m *MemStore) ChangeHostedTaskBindings(ctx context.Context, account, id, ac
 	if err := ctx.Err(); err != nil {
 		return zero, err
 	}
+	return m.changeHostedTaskBindingsLocked(ctx, account, id, action, in)
+}
+
+func (m *MemStore) changeHostedTaskBindingsLocked(ctx context.Context, account, id, action string, in HostedTaskBindingChange) (HostedTaskBindingRecord, error) {
+	var zero HostedTaskBindingRecord
 	if action != "get" && !m.hostedTaskSourceOwnerFreshLocked(account, in.Owner) {
 		return zero, ErrNotFound
 	}

@@ -127,6 +127,7 @@ var adoptionInstanceInventory = map[string]string{
 	"admissionHeldFrom":               "rebuilt",
 	"ExecutionOnly":                   "refused", // execution kind
 	"SandboxID":                       "refused", // sandbox sessions are execution-only
+	"agentEgressIP":                   "refused", // a sandbox session's agent tunnel address (ADR-20261117185346)
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -170,6 +171,7 @@ var adoptionInstanceInventory = map[string]string{
 	"Plan":                            "rebuilt",
 	"Port":                            "rebuilt",
 	"HealthcheckPath":                 "rebuilt",
+	"ProbeHost":                       "rebuilt", // ADR-20261119140000: liveness and readiness loops name the app host
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
 	"RequestConcurrency":              "rebuilt",

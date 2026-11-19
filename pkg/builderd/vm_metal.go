@@ -53,6 +53,13 @@ type VMMDriver struct {
 	cli  vmmdpb.VmmdClient
 	conn *grpc.ClientConn
 
+	// borrowed caches vmmd's supports_borrowed_builders
+	// (ADR-20261118154632).
+	borrowed pingCapability
+	// cacheExportStaging caches vmmd's supports_cache_export_staging
+	// (ADR-20261029171525 amendment 2).
+	cacheExportStaging pingCapability
+
 	// builderBase is drive0: the read-only shared base that holds
 	// buildkit/Railpack/etc. Default is the canonical per-architecture
 	// runner-builder path.
@@ -329,6 +336,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		os.Remove(drive1Path)
 		return BuildHandle{}, err
 	}
+	// The cache export run's inputs reach the drive only through vmmd's
+	// guest disk sandbox (ADR-20261029171525 amendment 2), so a build defers
+	// its export only on a vmmd that stages them.
+	if bManifest.DeferCacheExport && !d.SupportsCacheExportStaging(ctx) {
+		bManifest.DeferCacheExport = false
+	}
 	bManifest.DockerHubMirrors = d.dockerHubMirrors
 	seedDrive, err := d.prepareBuildKitSeedDrive(ctx, req, &bManifest, instance)
 	if err != nil {
@@ -358,7 +371,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	if cachePath == "" {
 		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, "", nil)
 	} else {
-		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, cachePath,
+		// A new app with no cache of its own starts from its account's
+		// family cache (retail-store feedback A4); it publishes to its own.
+		d.dependencyCacheMu.Lock()
+		stagePath := dependencyCacheStagePath(d.driveDir, cachePath, req.DependencyCacheSeedKey, req.DependencyCacheKey)
+		d.dependencyCacheMu.Unlock()
+		cacheRestored, driveErr = createBuildDrive1WithCacheStager(ctx, drive1Path, bManifest, req.SourcePath, req.SourceSHA256, stagePath,
 			func(src, dst string, maxBytes int64) error {
 				d.dependencyCacheMu.Lock()
 				defer d.dependencyCacheMu.Unlock()
@@ -382,10 +400,12 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		TimeoutSec:                  timeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheSeedKey:      req.DependencyCacheSeedKey,
 		DependencyCacheRestored:     cacheRestored,
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
-		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+		BuilderSliceOOMCounterValid: oomCounterErr == nil && !req.Borrowed,
+		Borrowed:                    req.Borrowed,
 		HostSeedDrive:               seedDrive,
 		SeedOnly:                    req.BuildKitSeedOnly,
 	}
@@ -422,6 +442,9 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			// seed run's empty drive. An older vmmd ignores it and the guest
 			// keeps BuildKit on drive1.
 			BuildkitSeedDrive: seedDrive,
+			// ADR-20261118154632: only sent after Ping reported
+			// supports_borrowed_builders.
+			Borrowed: req.Borrowed,
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -500,6 +523,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		TimeoutSec:                  timeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          req.DependencyCacheKey,
+		DependencyCacheSeedKey:      req.DependencyCacheSeedKey,
 		DependencyCacheRestored:     true,
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
@@ -777,11 +801,12 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 	exitCode := int(resp.GetExitCode())
 	ociImage := filepath.Join(h.ExportDir, "build", "out", "image.tar")
 	res := BuildOutcome{
-		BuildID:    h.BuildID,
-		ExitCode:   exitCode,
-		OCIImage:   ociImage,
-		ExportDir:  h.ExportDir,
-		InstanceID: h.Instance,
+		BuildID:             h.BuildID,
+		ExitCode:            exitCode,
+		OCIImage:            ociImage,
+		ExportDir:           h.ExportDir,
+		InstanceID:          h.Instance,
+		PreemptedForTenants: resp.GetPreemptedForTenants(),
 	}
 	// The guest's build-done manifest is authoritative for builder results.
 	// Firecracker may be SIGKILLed after the guest has reached "System
@@ -841,6 +866,11 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				touchErr := os.Chtimes(cachePath, now, now)
 				d.dependencyCacheMu.Unlock()
 				_ = os.RemoveAll(cacheSource)
+				if os.IsNotExist(touchErr) {
+					// It ran on a family cache it did not change; the
+					// next build seeds from the family again.
+					touchErr = nil
+				}
 				if touchErr != nil {
 					res.DependencyCacheStoreError = touchErr.Error()
 				}
@@ -849,6 +879,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 				shared, cacheErr := publishDependencyCache(cacheSource, cachePath, dependencyCacheMaxBytes, d.platformLayers)
 				res.DependencyCacheSharedBytes = shared
 				if cacheErr == nil {
+					recordDependencyCacheFamily(d.driveDir, h.DependencyCacheSeedKey, h.DependencyCacheKey)
 					cacheErr = sweepDependencyCaches(d.driveDir, time.Now())
 				}
 				d.dependencyCacheMu.Unlock()
@@ -902,9 +933,17 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 	manifest.TimeoutSec = api.BuildCacheExportTimeoutSeconds
 	exportDir := filepath.Join(d.exportDir, h.BuildID+DeferredCacheInstanceSuffix)
 	defer func() { _ = os.RemoveAll(exportDir) }()
-	if err := prepareCacheExportDrive(ctx, h.HostDrive1, manifest); err != nil {
+	// The drive is guest-written, so builderd never edits it: vmmd stages
+	// this manifest, a fresh entropy seed and the removal of the build's
+	// result in its guest disk sandbox (ADR-20261029171525 amendment 2).
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
 		d.DiscardDeferredCache(h)
-		return BuildOutcome{}, fmt.Errorf("builderd: prepare cache export drive: %w", err)
+		return BuildOutcome{}, fmt.Errorf("builderd: marshal cache export manifest: %w", err)
+	}
+	if !d.SupportsCacheExportStaging(ctx) {
+		d.DiscardDeferredCache(h)
+		return BuildOutcome{}, errors.New("builderd: vmmd no longer stages a cache export run's inputs")
 	}
 	oomKillsAtStart, oomCounterErr := readCgroupOOMKills(builderSliceMemoryEventsPath)
 	cacheHandle := BuildHandle{
@@ -915,6 +954,7 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 		TimeoutSec:                  manifest.TimeoutSec,
 		StartedAt:                   time.Now(),
 		DependencyCacheKey:          h.DependencyCacheKey,
+		DependencyCacheSeedKey:      h.DependencyCacheSeedKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
 		HostSeedDrive:               seedDrive,
@@ -930,9 +970,10 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 			MemSizeMib: int32(api.BuildVMRAMMB),
 		},
 		Build: &vmmdpb.BuildSpec{
-			ExportDir:         exportDir,
-			TimeoutSec:        int32(manifest.TimeoutSec),
-			BuildkitSeedDrive: seedDrive,
+			ExportDir:           exportDir,
+			TimeoutSec:          int32(manifest.TimeoutSec),
+			BuildkitSeedDrive:   seedDrive,
+			CacheExportManifest: manifestData,
 		},
 		Plan:      h.DeferredCache.Plan,
 		AccountId: manifest.TenantID,
@@ -966,78 +1007,6 @@ func (d *VMMDriver) DiscardDeferredCache(h BuildHandle) {
 	if h.HostSeedDrive != "" {
 		_ = os.Remove(h.HostSeedDrive)
 	}
-}
-
-// prepareCacheExportDrive turns a deferred build's offline drive into a cache
-// export run's: the CacheExportOnly manifest and a fresh one-shot entropy
-// seed. It also drops the build's result. A second VM that dies before
-// writing its own result still publishes nothing, because only that run
-// writes /build/out/cache. The edits use debugfs, as refreshWarmBuilderDrive's
-// do, after the build's journal is replayed.
-func prepareCacheExportDrive(ctx context.Context, drivePath string, manifest api.BuildManifest) error {
-	if err := replayDriveJournal(ctx, drivePath); err != nil {
-		return err
-	}
-	manifestData, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-	if err := replaceDriveFileData(ctx, drivePath, manifestData, "/upper/etc/faas/build.json", true); err != nil {
-		return fmt.Errorf("replace build manifest: %w", err)
-	}
-	seed := make([]byte, 256)
-	if _, err := rand.Read(seed); err != nil {
-		return fmt.Errorf("generate entropy seed: %w", err)
-	}
-	if err := replaceDriveFileData(ctx, drivePath, seed, "/upper/etc/faas/entropy.seed", false); err != nil {
-		return fmt.Errorf("replace entropy seed: %w", err)
-	}
-	_ = runDebugfs(ctx, drivePath, "rm /upper/etc/faas/build-done.json")
-	return nil
-}
-
-// replayDriveJournal replays an offline drive's ext4 journal. A builder VM
-// powers off without unmounting drive1, so its last transactions can still be
-// in the journal. debugfs ignores the journal and writes the blocks in place;
-// the next guest kernel replays the journal at mount and overwrites those
-// edits with the build's own blocks. In production (2026-11-01) that removed
-// a deferred cache export's entropy seed and brought back the build's own
-// manifest, and the export VM failed with "read build entropy seed: no such
-// file or directory".
-func replayDriveJournal(ctx context.Context, drivePath string) error {
-	output, err := exec.CommandContext(ctx, "e2fsck", "-E", "journal_only", "-y", drivePath).CombinedOutput()
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		// 1 = file system changed, which a replay may report.
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("replay drive journal: %w (%s)", err, strings.TrimSpace(string(output)))
-	}
-	return nil
-}
-
-// replaceDriveFileData stages data in a private temporary file and writes it
-// to guestPath in an offline drive image.
-func replaceDriveFileData(ctx context.Context, image string, data []byte, guestPath string, requireRemove bool) error {
-	f, err := os.CreateTemp("", "faas-drive-file-")
-	if err != nil {
-		return fmt.Errorf("create staging file: %w", err)
-	}
-	path := f.Name()
-	defer func() { _ = os.Remove(path) }()
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("stage file: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("sync staging file: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close staging file: %w", err)
-	}
-	return replaceWarmFile(ctx, image, path, guestPath, requireRemove)
 }
 
 // refreshWarmBuilderDrive updates the manifest, source archive, and one-shot

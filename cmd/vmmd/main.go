@@ -39,6 +39,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -66,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -915,6 +917,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
 	}
@@ -928,6 +934,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	} else if deferred {
 		log.Info("vmmd: shared-store deletes deferred to the control plane")
+	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "vmmd", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical
@@ -1391,6 +1404,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if strings.TrimSpace(os.Getenv("FAAS_SANDBOX_WEB_NODE_EGRESS")) == "1" {
 		log.Warn("vmmd: web-mode sandbox sessions may leave from this node's own address (FAAS_SANDBOX_WEB_NODE_EGRESS=1)")
 		mgr.WithSandboxWebNodeEgress(true)
+	}
+	// ADR-20261117185346 §3: sandbox sessions with egress leave through the
+	// agent tunnel. The switch with an incomplete tunnel refuses to start
+	// rather than leave sessions on the tenant path.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENT_EGRESS_GATEWAY")) == "1" {
+		cfg, err := agentEgressConfigFromEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		if err := mgr.SetAgentEgress(cfg); err != nil {
+			return fmt.Errorf("vmmd: %w", err)
+		}
+		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String(),
+			"proxy", cfg.Proxy != nil)
+		go mgr.RunAgentEgressRenewal(ctx)
 	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.
@@ -2183,6 +2211,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
 		WithSandboxWorkspaces(storageBackend)
+	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
+	// give-back of their memory to tenants.
+	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)
+	impl.WithBorrowedBuilders(borrowedBuilders)
+	go borrowedBuilders.Run(ctx, func(killCtx context.Context, instance string) error {
+		_, _, err := signalAdapter{mgr}.SignalAndKill(killCtx, instance, 9, 0)
+		return err
+	})
+	if store != nil && pool != nil {
+		startBorrowedBuilderWatcher(ctx, store, pool, borrowedBuilders, log)
+	}
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(

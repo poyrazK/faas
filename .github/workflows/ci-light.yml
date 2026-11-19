@@ -464,6 +464,18 @@ jobs:
           echo "$HOME/.local/vacuum/bin" >> "$GITHUB_PATH"
       - name: spec-check
         run: make spec-check
+      # Every gregale command a customer page writes runs as written, in the
+      # command tree's names (cmd/gregale TestDocsCommandsRunAsWritten and
+      # TestDocsSpellCommandsInTheTree). The light tier selects no cmd/gregale
+      # test for a docs-only change, so this runs when a page or the CLI changes.
+      - name: docs commands run as written
+        run: |
+          set -euo pipefail
+          if git diff --name-only "$LIGHT_DIFF_BASE" HEAD | grep -qE '^(docs/|cmd/gregale/|examples/|packaging/claude-plugin/)'; then
+            make docs-commands-check
+          else
+            echo "no customer page or CLI change"
+          fi
 
       # ---- migrations: ID hygiene always, database checks when they change ----
       # The hygiene gate compares against main and every open pull request, so

@@ -33,6 +33,8 @@ says so instead of skipping silently.
 
 ## Retention
 
+How long logs and request events are kept depends on your plan:
+
 | Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
 |---|---|---|---|---|
 | Free | 1 day | 1 day | — | — |

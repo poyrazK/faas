@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagExperimentFunnel } from './FlagExperimentFunnel.js';
 import type { FlagExperimentGuardrailSettings } from './FlagExperimentGuardrailSettings.js';
+import type { FlagExperimentRetention } from './FlagExperimentRetention.js';
 /**
  * A flag experiment.
  */
@@ -12,7 +14,13 @@ export type FlagExperiment = {
   rule_id: string;
   control: string;
   metric_event: string;
-  metric_kind: 'conversion' | 'mean';
+  metric_kind: 'conversion' | 'mean' | 'funnel' | 'retention';
+  funnel?: FlagExperimentFunnel;
+  retention?: FlagExperimentRetention;
+  /**
+   * Whether results are adjusted with CUPED.
+   */
+  cuped: boolean;
   status: 'draft' | 'running' | 'stopped';
   mixing_lift: number;
   weights: Record<string, number>;

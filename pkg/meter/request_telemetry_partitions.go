@@ -31,80 +31,13 @@ type RequestTelemetryPartitionCoverage struct {
 // the work after the lock as well as acquiring it (as for log_events).
 const RequestTelemetryPartitionReconcileTimeout = 5 * time.Second
 
-// ensureRequestTelemetryPartitionsSQL moves any overlapping default rows into
-// a standalone table before attaching it. ACCESS EXCLUSIVE serializes the
-// short DDL transaction with inserts, closing the gap between DELETE and
-// ATTACH. All statements roll back together on failure.
-//
-// The pass returns before locking when the three months are already attached,
-// which is every hourly pass but about one a month. When it does lock, a short
-// lock timeout makes it retry on the next pass instead of queueing: a queued
-// ACCESS EXCLUSIVE request blocks every later reader of request_telemetry, so
-// waiting behind the retention sweep stalled apid's telemetry reads for 20 s
-// (prod 2026-11-09 21:17Z).
-const ensureRequestTelemetryPartitionsSQL = `
-DO $$
-DECLARE
-    month_offset integer;
-    range_start timestamptz;
-    range_end timestamptz;
-    partition_name text;
-    schema_name text := current_schema();
-    is_attached boolean;
-    attached_count integer;
-BEGIN
-    SELECT count(*) INTO attached_count
-      FROM generate_series(0, 2) AS n
-     WHERE EXISTS (
-         SELECT 1
-           FROM pg_inherits i
-           JOIN pg_class child ON child.oid = i.inhrelid
-          WHERE i.inhparent = format('%I.request_telemetry', schema_name)::regclass
-            AND child.relnamespace = schema_name::regnamespace
-            AND child.relname = 'request_telemetry_' || to_char(date_trunc('month', now()) + make_interval(months => n), 'YYYYMM'));
-    IF attached_count = 3 THEN
-        RETURN;
-    END IF;
-    PERFORM set_config('lock_timeout', '2s', true);
-    EXECUTE format(
-        'LOCK TABLE %I.request_telemetry IN ACCESS EXCLUSIVE MODE',
-        schema_name);
-    FOR month_offset IN 0..2 LOOP
-        range_start := date_trunc('month', now()) + make_interval(months => month_offset);
-        range_end := range_start + interval '1 month';
-        partition_name := 'request_telemetry_' || to_char(range_start, 'YYYYMM');
-
-        SELECT EXISTS (
-            SELECT 1
-              FROM pg_inherits i
-              JOIN pg_class child ON child.oid = i.inhrelid
-              JOIN pg_class parent ON parent.oid = i.inhparent
-              JOIN pg_namespace ns ON ns.oid = child.relnamespace
-             WHERE parent.oid = format('%I.request_telemetry', schema_name)::regclass
-               AND ns.nspname = schema_name
-               AND child.relname = partition_name
-        ) INTO is_attached;
-        IF is_attached THEN
-            CONTINUE;
-        END IF;
-        IF to_regclass(format('%I.%I', schema_name, partition_name)) IS NOT NULL THEN
-            RAISE EXCEPTION 'request telemetry partition % exists but is not attached', partition_name;
-        END IF;
-
-        EXECUTE format(
-            'CREATE TABLE %I.%I (LIKE %I.request_telemetry INCLUDING ALL)',
-            schema_name, partition_name, schema_name);
-        EXECUTE format(
-            'INSERT INTO %I.%I SELECT * FROM %I.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
-            schema_name, partition_name, schema_name, range_start, range_end);
-        EXECUTE format(
-            'DELETE FROM %I.request_telemetry_default WHERE received_at >= %L AND received_at < %L',
-            schema_name, range_start, range_end);
-        EXECUTE format(
-            'ALTER TABLE %I.request_telemetry ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)',
-            schema_name, schema_name, partition_name, range_start, range_end);
-    END LOOP;
-END $$;`
+// ensureRequestTelemetryPartitionsSQL keeps the current and next two months
+// attached, moving overlapping default rows first. The work runs as the schema
+// owner inside monthly_partitions_ensure (migration 20261118162630014): meterd's
+// runtime login holds no DDL. The function returns before locking when the
+// months are attached, and its lock timeout makes a busy pass retry next hour
+// instead of queueing ahead of every reader (prod 2026-11-09 21:17Z).
+const ensureRequestTelemetryPartitionsSQL = `SELECT monthly_partitions_ensure('request_telemetry'::regclass)`
 
 const requestTelemetryPartitionCoverageSQL = `
 WITH expected(name, ordinal) AS (

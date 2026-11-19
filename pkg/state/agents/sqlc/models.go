@@ -182,6 +182,7 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type App struct {
@@ -316,6 +317,7 @@ type SandboxSession struct {
 	LeaseToken          pgtype.Text
 	LeaseExpiresAt      pgtype.Timestamptz
 	NodeID              pgtype.Text
+	PlacedNodeID        pgtype.Text
 	InstanceID          pgtype.Text
 	CloseRequestedAt    pgtype.Timestamptz
 	LastActivityAt      pgtype.Timestamptz

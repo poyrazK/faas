@@ -7,6 +7,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ListBucketObjectsResponse200ItemsItem")
 
 
@@ -15,6 +17,8 @@ class ListBucketObjectsResponse200ItemsItem:
     key: str
     size_bytes: int
     last_modified: datetime.datetime
+    from_parent: bool | Unset = UNSET
+    """In an environment branch's bucket, the object is read from the parent environment's bucket."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -23,6 +27,8 @@ class ListBucketObjectsResponse200ItemsItem:
         size_bytes = self.size_bytes
 
         last_modified = self.last_modified.isoformat()
+
+        from_parent = self.from_parent
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -33,6 +39,8 @@ class ListBucketObjectsResponse200ItemsItem:
                 "last_modified": last_modified,
             }
         )
+        if from_parent is not UNSET:
+            field_dict["from_parent"] = from_parent
 
         return field_dict
 
@@ -45,10 +53,13 @@ class ListBucketObjectsResponse200ItemsItem:
 
         last_modified = datetime.datetime.fromisoformat(d.pop("last_modified"))
 
+        from_parent = d.pop("from_parent", UNSET)
+
         list_bucket_objects_response_200_items_item = cls(
             key=key,
             size_bytes=size_bytes,
             last_modified=last_modified,
+            from_parent=from_parent,
         )
 
         list_bucket_objects_response_200_items_item.additional_properties = d

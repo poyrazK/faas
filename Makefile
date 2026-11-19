@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd edgednsd signd secretd neond hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd mcp-bridged maild mail-report mail-metrics mail-feedback mailctl schedd vmmd pgproxyd dbbackupd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd agentd agentproxyd edgednsd signd secretd neond hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -490,10 +490,12 @@ migrations-land: ## Merge origin/main into a migration-carrying branch: take mai
 	python3 scripts/migrations_land.py
 
 .PHONY: agent-eval-test
-agent-eval-test: ## Unit tests of agent-eval and first-hour reports; no live runs (ADR-20261026152009)
+agent-eval-test: ## Unit tests of agent-eval and first-hour acceptance; no live runs (ADR-20261026152009)
 	python3 scripts/agent-eval/agent_eval_test.py
 	python3 -I scripts/first-hour/baseline_test.py
 	python3 -I scripts/first-hour/qualify_release_test.py
+	python3 -I scripts/first-hour/onboarding_test.py
+	python3 scripts/ci/start-native_test.py
 
 AGENT_EVAL_AGENTS ?= claude
 AGENT_EVAL_TOOLSETS ?= core,all
@@ -1245,6 +1247,10 @@ bootstrap-database-nodes: ansible-preflight ## ADR-1027: authorize pgproxyd on t
 bootstrap-tenant-egress-gateway: ansible-preflight ## ADR-372: converge the tenant egress gateway, then register every compute node with it.
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/tenant_egress_gateway.yml
 
+.PHONY: bootstrap-agent-egress-gateway
+bootstrap-agent-egress-gateway: ansible-preflight ## ADR-20261117185346: converge the agent egress gateway, then register every compute node with it.
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/agent_egress_gateway.yml
+
 .PHONY: bootstrap-postgres-standby
 bootstrap-postgres-standby: ## ADR-1344 §8: seed and converge the warm-standby PostgreSQL replica (converge the control plane first).
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_standby.yml
@@ -1732,6 +1738,10 @@ pricing-check: ## Verify generated customer pricing is in sync
 docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
 	@$(GO) run ./cmd/docs-links-check
 	@python3 scripts/ops/check_live_docs_test.py
+
+.PHONY: docs-commands-check
+docs-commands-check: ## Verify every gregale command in the customer docs runs as written, in the command tree's names
+	@$(GO) test -count=1 -run '^(TestDocsCommandsRunAsWritten|TestDocsSpellCommandsInTheTree)$$' ./cmd/gregale
 
 .PHONY: docs-live-check
 docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)

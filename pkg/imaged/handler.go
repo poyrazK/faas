@@ -2394,7 +2394,12 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		// the output is. The output itself stays out of the deployment error,
 		// which reaches notifications; the task receipt keeps it.
 		if task.ExitCode != nil {
-			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/{slug}/tasks/%s)", *task.ExitCode, task.ID)
+			// The path named a literal {slug} (prod 2026-11-19); name the app.
+			appRef := dep.AppID
+			if app, appErr := h.store.AppByID(ctx, dep.AppID); appErr == nil && app.Slug != "" {
+				appRef = app.Slug
+			}
+			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/%s/tasks/%s)", *task.ExitCode, appRef, task.ID)
 		}
 		var err error
 		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {

@@ -52,7 +52,9 @@ func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.Ap
 		// gregale.yaml's hosting.start is the customer's explicit command, so
 		// it replaces whatever the image carries; a Railpack build with no
 		// detected start keeps the base image's CMD (python3), which exits at
-		// once on an empty stdin (Hunt 12 H12-29).
+		// once on an empty stdin (Hunt 12 H12-29). A pinned inferred start
+		// replaces Railpack's fixed `main:app`, which names an application
+		// object this source does not define (ADR-1500 amendment 4).
 		config.Entrypoint, config.Cmd = nil, command
 	} else if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if command, ok := profileStartCommand(dep); ok {
@@ -187,10 +189,12 @@ func profileStartCommand(dep state.Deployment) ([]string, bool) {
 	return shellCommand(profile.StartCommand), true
 }
 
-// configuredStartCommand is the deployment's explicit hosting.start command.
+// configuredStartCommand is the deployment's start command that replaces the
+// built image's: gregale.yaml's explicit hosting.start, or an inferred start
+// the profile pinned over Railpack's fixed Python start.
 func configuredStartCommand(dep state.Deployment) ([]string, bool) {
 	profile, ok := persistedProfile(dep)
-	if !ok || !profile.StartFromConfig || strings.TrimSpace(profile.StartCommand) == "" {
+	if !ok || !profile.StartFromConfig && !profile.StartPinned || strings.TrimSpace(profile.StartCommand) == "" {
 		return nil, false
 	}
 	return shellCommand(strings.TrimSpace(profile.StartCommand)), true

@@ -70,6 +70,10 @@ func (r *flagExperimentReconciler) warn(ctx context.Context, msg string, err err
 }
 
 func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
+	// Retention holds whatever the flags say: raw analytics events past
+	// their plan's retention go even while analytics or flags are off.
+	r.sweepAnalytics(ctx, now)
+	r.refreshCohorts(ctx, now)
 	if !r.server.platformFlagOn(platformflags.CustomerFlags) {
 		return
 	}
@@ -100,6 +104,25 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
 		}
 		cancel()
+	}
+}
+
+// analyticsSweepBatches bounds the delete statements one pass runs per plan.
+const analyticsSweepBatches = 20
+
+// sweepAnalytics deletes product analytics events past each plan's
+// analytics retention (ADR 20261117084505 §2).
+func (r *flagExperimentReconciler) sweepAnalytics(ctx context.Context, now time.Time) {
+	store, ok := r.server.store.(state.AnalyticsStore)
+	if !ok {
+		return
+	}
+	retention := map[string]int{}
+	for _, p := range []api.Plan{api.PlanFree, api.PlanHobby, api.PlanPro, api.PlanScale} {
+		retention[string(p)] = p.AnalyticsRetentionDays()
+	}
+	if _, err := store.SweepAnalyticsEvents(ctx, now, retention, api.AnalyticsSweepBatch, analyticsSweepBatches); err != nil {
+		r.warn(ctx, "product analytics: retention sweep failed", err)
 	}
 }
 
@@ -134,23 +157,47 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 			return err
 		}
 	}
+	// Funnel and retention units count once their deadline is before the
+	// new cursor (ADR 20261119102741 §1).
+	x.TelemetryCursor = from
+	if err := r.analyticsSteps(ctx, x, now); err != nil {
+		r.warn(ctx, "flag experiments: analytics metrics failed", err, "experiment", x.ID)
+	}
 	arms, _, err := r.store.FlagExperimentArms(ctx, x, api.FlagExperimentMinUnitsPerArm)
 	if err != nil {
 		return err
 	}
-	minP := map[string]float64{}
-	for k, v := range x.MinPValues {
-		minP[k] = v
+	cuped, err := loadFlagExperimentCuped(ctx, r.store, x, r.server.productAnalyticsOn(x.AccountID, x.Plan))
+	if err != nil {
+		return err
 	}
-	for _, v := range flagExperimentResults(x, arms).Variants {
-		if v.Comparison == nil {
+	minP, minCuped := cloneFloatMap(x.MinPValues), cloneFloatMap(x.MinCupedPValues)
+	keepMin := func(m map[string]float64, variant string, c *flags.Comparison) {
+		if c == nil {
+			return
+		}
+		if prev, ok := m[variant]; !ok || c.PValue < prev {
+			m[variant] = c.PValue
+		}
+	}
+	for _, v := range flagExperimentResults(x, arms, cuped).Variants {
+		if v.Unadjusted != nil {
+			// CUPED applied: Comparison is adjusted.
+			keepMin(minP, v.Variant, v.Unadjusted)
+			keepMin(minCuped, v.Variant, v.Comparison)
 			continue
 		}
-		if prev, ok := minP[v.Variant]; !ok || v.Comparison.PValue < prev {
-			minP[v.Variant] = v.Comparison.PValue
-		}
+		keepMin(minP, v.Variant, v.Comparison)
 	}
-	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP)
+	return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, minP, minCuped)
+}
+
+func cloneFloatMap(in map[string]float64) map[string]float64 {
+	out := make(map[string]float64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // guard fixes the latency threshold and checks the guardrails on the units

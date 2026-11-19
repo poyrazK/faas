@@ -19,6 +19,7 @@ type serviceProxyLiveIdentityStore interface {
 	LiveServiceCallersByHostIP(context.Context, string, string) ([]state.Instance, error)
 	AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
 	InstanceByID(context.Context, string) (state.Instance, error)
+	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
 }
 
 type resolveServiceCallerClient interface {
@@ -136,10 +137,28 @@ func managedProbeCaller(ctx context.Context, store serviceProxyLiveIdentityStore
 		if err != nil {
 			return nil, err
 		}
-		if len(callers) != 1 || callers[0].ID != task.ID || callers[0].AppID != task.AppID || callers[0].DeploymentID != task.DeploymentID {
+		if len(callers) == 1 && callers[0].ID == task.ID && callers[0].AppID == task.AppID && callers[0].DeploymentID == task.DeploymentID {
+			return callers, nil
+		}
+		if len(callers) != 0 {
 			return nil, nil
 		}
-		return callers, nil
+		// An ordinary `app exec` task calls its app's services as its app
+		// (retail-store follow-up, 2026-11-17: every exec call got 403
+		// "caller identity is unknown"). vmmd attests the address belongs to
+		// this task, and the task row is running under a live lease; the
+		// service proxy then applies the app's own bindings and ACLs. A task
+		// of an app inside a rehearsal run keeps the recorder-fenced path
+		// above, so containment is unchanged.
+		runID, err := store.ScenarioRehearsalNetworkRun(ctx, task.AppID)
+		if err != nil {
+			return nil, err
+		}
+		if runID != "" {
+			return nil, nil
+		}
+		return []state.Instance{{ID: task.ID, AppID: task.AppID, DeploymentID: task.DeploymentID,
+			NodeID: nodeName, HostIP: hostIP, State: string(state.StateRunning)}}, nil
 	}
 	if pin.Type != api.BindingTypeService || pin.ManagedService == nil || !pin.ManagedService.Valid() ||
 		pin.ManagedService.CallerDeploymentID != task.DeploymentID || pin.ManagedService.Scope != task.DeploymentScope ||

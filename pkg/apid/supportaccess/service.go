@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type Store interface {
 	AppByID(ctx context.Context, id string) (state.App, error)
 	AccountByID(ctx context.Context, id string) (state.Account, error)
 	OrgBySlug(ctx context.Context, slug string) (state.Org, error)
+	OrgByID(ctx context.Context, id string) (state.Org, error)
+	ListOrgActivity(ctx context.Context, filter state.OrgActivityFilter) ([]state.OrgActivity, error)
 }
 
 // Deps wires the service into apid.
@@ -41,7 +44,14 @@ type Deps struct {
 	Activity func(ctx context.Context, entry state.OrgActivity)
 	// Audit emits an audit event.
 	Audit func(ctx context.Context, kind string, subject *string, data map[string]any)
+	// DashboardURL makes a dashboard path absolute for a mail.
+	DashboardURL func(path string) string
+	// Mail sends one mail to the organization's owners and admins.
+	Mail func(ctx context.Context, kind, orgID, subject, body string)
 }
+
+// PagePath is the dashboard's Support access page.
+const PagePath = "/dashboard/support-access"
 
 // Service implements grants and requests.
 type Service struct{ d Deps }
@@ -75,12 +85,16 @@ func (s *Service) Grant(ctx context.Context, actor state.Account, org state.Org,
 }
 
 // Approve decides an open request and grants its access atomically.
+// An empty body approves what the request asked for.
 func (s *Service) Approve(ctx context.Context, actor state.Account, org state.Org, requestID string, in api.CreateSupportGrantRequest) (api.SupportGrant, *api.Problem) {
-	reason := strings.TrimSpace(in.Reason)
-	if reason == "" {
-		reason = s.requestReason(ctx, org.ID, requestID)
+	req, found := s.findRequest(ctx, org.ID, requestID)
+	if found && len(in.Apps) == 0 && in.TTLHours == 0 && strings.TrimSpace(in.Reason) == "" {
+		in.Apps = s.newNames().slugs(ctx, req.AppIDs)
+		in.TTLHours = int(req.TTL / time.Hour)
 	}
-	in.Reason = reason
+	if found && strings.TrimSpace(in.Reason) == "" {
+		in.Reason = req.Reason
+	}
 	grant, prob := s.newGrant(ctx, actor, org, in, requestID)
 	if prob != nil {
 		return api.SupportGrant{}, prob
@@ -115,28 +129,95 @@ func (s *Service) Revoke(ctx context.Context, actor state.Account, org state.Org
 	return nil
 }
 
-// Request is an operator asking the organization for access.
-func (s *Service) Request(ctx context.Context, operator state.Account, orgSlug, reason string) (api.SupportAccessRequest, *api.Problem) {
-	org, err := s.d.Store.OrgBySlug(ctx, strings.TrimSpace(orgSlug))
+// Request is an operator asking the organization for access: for the apps
+// and time in.Apps and in.TTLHours, or to extend the grant in.Extends.
+func (s *Service) Request(ctx context.Context, operator state.Account, in api.OperatorSupportAccessRequest) (api.SupportAccessRequest, *api.Problem) {
+	org, err := s.d.Store.OrgBySlug(ctx, strings.TrimSpace(in.Org))
 	if err != nil {
 		return api.SupportAccessRequest{}, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Organization not found", "no organization with that slug")
 	}
 	if !s.enabled(org.ID, operator.ID) {
 		return api.SupportAccessRequest{}, errDisabled
 	}
-	reason = strings.TrimSpace(reason)
+	reason := strings.TrimSpace(in.Reason)
 	if !state.ValidSupportReason(reason) {
 		return api.SupportAccessRequest{}, api.ErrValidation(reasonRule + "; the customer reads it")
 	}
-	req, err := s.d.Store.CreateSupportGrantRequest(ctx, org.ID, operator.ID, reason)
+	ask, prob := s.newRequest(ctx, operator, org, in)
+	if prob != nil {
+		return api.SupportAccessRequest{}, prob
+	}
+	ask.Reason = reason
+	req, err := s.d.Store.CreateSupportGrantRequest(ctx, ask)
 	if err != nil {
 		return api.SupportAccessRequest{}, storeProblem(err, "could not request support access")
 	}
-	s.activity(ctx, org.ID, operator, true, "support_access.requested", "support_access_request", req.ID, map[string]any{"reason": reason})
-	s.audit(ctx, "support_access.requested", operator.ID, map[string]any{"org_id": org.ID, "request_id": req.ID, "reason": reason})
-	s.notify(ctx, "support_access_requested", org.ID, "Gregale support ("+accountLabel(operator)+") asks for access to deploy, roll back and restart your apps: "+
-		reason+". Nothing changes unless an owner or admin approves it on the dashboard's Support access page.")
-	return requestView(org.Slug, operator, req), nil
+	view := s.newNames().requestView(ctx, org.Slug, operator, req)
+	s.activity(ctx, org.ID, operator, true, "support_access.requested", "support_access_request", req.ID,
+		map[string]any{"reason": reason, "apps": view.Apps, "ttl_hours": view.TTLHours, "extends": view.Extends})
+	s.audit(ctx, "support_access.requested", operator.ID, map[string]any{"org_id": org.ID, "request_id": req.ID, "reason": reason,
+		"app_ids": req.AppIDs, "ttl_hours": view.TTLHours, "extends": req.ExtendsGrantID})
+	s.notify(ctx, "support_access_requested", org.ID, requestMailText(operator, view, s.dashboardURL(RequestPath(req.ID))))
+	return view, nil
+}
+
+// RequestPath is the dashboard page that opens one request's approval form.
+func RequestPath(requestID string) string { return PagePath + "?request=" + url.QueryEscape(requestID) }
+
+// newRequest resolves what an operator asks for. Extending a grant asks for
+// its apps again unless in.Apps names others.
+func (s *Service) newRequest(ctx context.Context, operator state.Account, org state.Org, in api.OperatorSupportAccessRequest) (state.NewSupportGrantRequest, *api.Problem) {
+	out := state.NewSupportGrantRequest{OrgID: org.ID, OperatorID: operator.ID}
+	maxHours := int(api.SupportGrantMaxTTL / time.Hour)
+	if in.TTLHours < 0 || in.TTLHours > maxHours {
+		return out, api.ErrValidation(fmt.Sprintf("ttl_hours must be 1 to %d, or 0 to leave it to the customer", maxHours))
+	}
+	out.TTL = time.Duration(in.TTLHours) * time.Hour
+	if len(in.Apps) > api.SupportGrantMaxApps {
+		return out, api.ErrValidation(fmt.Sprintf("a request names at most %d apps", api.SupportGrantMaxApps))
+	}
+	for _, slug := range in.Apps {
+		app, err := s.d.Store.AppBySlug(ctx, strings.TrimSpace(slug))
+		if err != nil || app.OrgID != org.ID {
+			return out, api.ErrValidation("app " + slug + " is not an app of this organization")
+		}
+		out.AppIDs = append(out.AppIDs, app.ID)
+	}
+	if extends := strings.TrimSpace(in.Extends); extends != "" {
+		grant, err := s.d.Store.SupportGrantByID(ctx, extends)
+		if err != nil || grant.OrgID != org.ID || !grant.Live(time.Now()) {
+			return out, api.ErrValidation("extends must name a live grant of this organization")
+		}
+		out.ExtendsGrantID = grant.ID
+		if len(out.AppIDs) == 0 {
+			out.AppIDs = grant.AppIDs
+		}
+	}
+	return out, nil
+}
+
+// requestMailText is the change line of the request mail.
+func requestMailText(operator state.Account, view api.SupportAccessRequest, link string) string {
+	scope := "your apps"
+	if len(view.Apps) > 0 {
+		scope = strings.Join(view.Apps, ", ")
+	}
+	ask := "access to deploy, roll back and restart " + scope
+	if view.TTLHours > 0 {
+		ask += fmt.Sprintf(" for %d hours", view.TTLHours)
+	}
+	if view.Extends != "" {
+		ask = "more time on its current access: " + ask
+	}
+	return "Gregale support (" + accountLabel(operator) + ") asks for " + ask + ": " + view.Reason +
+		". Nothing changes unless an owner or admin approves it: " + link
+}
+
+func (s *Service) dashboardURL(path string) string {
+	if s.d.DashboardURL == nil {
+		return path
+	}
+	return s.d.DashboardURL(path)
 }
 
 // Overview lists the organization's grants and requests for viewer.
@@ -156,7 +237,7 @@ func (s *Service) Overview(ctx context.Context, org state.Org, viewer state.Acco
 	}
 	for _, req := range requests {
 		operator, _ := names.account(ctx, req.OperatorID)
-		out.Requests = append(out.Requests, requestView(org.Slug, operator, req))
+		out.Requests = append(out.Requests, names.requestView(ctx, org.Slug, operator, req))
 	}
 	return out, nil
 }
@@ -213,17 +294,17 @@ func (s *Service) newGrant(ctx context.Context, actor state.Account, org state.O
 	return grant, nil
 }
 
-func (s *Service) requestReason(ctx context.Context, orgID, requestID string) string {
+func (s *Service) findRequest(ctx context.Context, orgID, requestID string) (state.SupportGrantRequest, bool) {
 	requests, err := s.d.Store.ListSupportGrantRequests(ctx, orgID)
 	if err != nil {
-		return ""
+		return state.SupportGrantRequest{}, false
 	}
 	for _, req := range requests {
 		if req.ID == requestID {
-			return req.Reason
+			return req, true
 		}
 	}
-	return ""
+	return state.SupportGrantRequest{}, false
 }
 
 func (s *Service) recordGrant(ctx context.Context, actor state.Account, g state.SupportGrant, kind string) {
@@ -281,6 +362,17 @@ func (n *names) account(ctx context.Context, id string) (state.Account, error) {
 	return acct, err
 }
 
+// slugs names app ids, skipping apps that are gone.
+func (n *names) slugs(ctx context.Context, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		if slug, ok := n.app(ctx, id); ok {
+			out = append(out, slug)
+		}
+	}
+	return out
+}
+
 func (n *names) view(ctx context.Context, g state.SupportGrant) api.SupportGrant {
 	out := api.SupportGrant{
 		ID: g.ID, Org: g.OrgSlug, Apps: []string{}, AllApps: len(g.AppIDs) == 0, Reason: g.Reason, RequestID: g.RequestID,
@@ -308,10 +400,11 @@ func (n *names) view(ctx context.Context, g state.SupportGrant) api.SupportGrant
 	return out
 }
 
-func requestView(orgSlug string, operator state.Account, req state.SupportGrantRequest) api.SupportAccessRequest {
+func (n *names) requestView(ctx context.Context, orgSlug string, operator state.Account, req state.SupportGrantRequest) api.SupportAccessRequest {
 	out := api.SupportAccessRequest{
 		ID: req.ID, Org: orgSlug, Operator: "Gregale support", Reason: req.Reason, Status: req.Status,
 		CreatedAt: req.CreatedAt.UTC().Format(time.RFC3339), ExpiresAt: req.ExpiresAt.UTC().Format(time.RFC3339),
+		Apps: n.slugs(ctx, req.AppIDs), TTLHours: int(req.TTL / time.Hour), Extends: req.ExtendsGrantID,
 	}
 	if operator.Email != "" {
 		out.Operator = "Gregale support (" + operator.Email + ")"
@@ -354,8 +447,11 @@ func (s *Service) activity(ctx context.Context, orgID string, actor state.Accoun
 	if err != nil {
 		return
 	}
+	// The store refuses an entry without a source, and keeps one row per
+	// source: every support event is its own row.
 	entry := state.OrgActivity{OrgID: org, OccurredAt: time.Now().UTC(), Kind: kind, ActorType: state.OrgActivityActorUser,
-		ActorLabel: accountLabel(actor), ResourceType: resourceType, ResourceID: resourceID, ResourceLabel: "Gregale support access"}
+		ActorLabel: accountLabel(actor), ResourceType: resourceType, ResourceID: resourceID, ResourceLabel: "Gregale support access",
+		SourceType: kind, SourceID: kind + ":" + uuid.NewString()}
 	if operator {
 		entry.ActorType, entry.ActorLabel = state.OrgActivityActorOperator, "Gregale support ("+accountLabel(actor)+")"
 	}

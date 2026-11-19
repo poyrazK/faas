@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -31,6 +32,30 @@ func deployTargetSummary(exists, linked bool) string {
 		return "existing app, linked to this directory"
 	default:
 		return "existing app, not linked to this directory; this deploy replaces its running release"
+	}
+}
+
+// rememberCreatedApp links dir to the app this deploy just created when no
+// saved or committed context covers dir. Without it a later plain `gregale
+// deploy` there targeted an app named after the directory: on prod
+// 2026-11-19, `deploy --name bh1119-probe` then `deploy` created a second app
+// and took the bare global slug probe.gregale.dev. An existing app is never
+// linked implicitly (see guardUnlinkedExistingApp).
+func rememberCreatedApp(dir, slug string) {
+	if dir == "" || slug == "" {
+		return
+	}
+	if _, _, err := targetProjectContext(dir); !errors.Is(err, errProjectContextNotFound) {
+		return
+	}
+	if err := rememberInitApp(dir, slug); err != nil {
+		if !jsonOutput {
+			_, _ = fmt.Fprintf(osStderr, "warning: could not remember %s in %s: %v; run `gregale link --app %s` there\n", slug, dir, err, slug)
+		}
+		return
+	}
+	if !jsonOutput {
+		PrintOK(osStdout, "Remembered app %s in %s", slug, projectContextPath(dir))
 	}
 }
 

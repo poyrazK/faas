@@ -21,6 +21,8 @@ type memFlagExperimentUnit struct {
 	crossed                        bool
 	requests, errors, tested, slow int64
 	valueSum                       int64
+	convertedAt                    time.Time
+	preValue                       *float64
 }
 
 func (fe *memFlagEvents) experimentsLocked() map[string]*FlagExperiment {
@@ -40,6 +42,10 @@ func cloneFlagExperiment(x *FlagExperiment) FlagExperiment {
 	out.MinPValues = map[string]float64{}
 	for k, v := range x.MinPValues {
 		out.MinPValues[k] = v
+	}
+	out.MinCupedPValues = map[string]float64{}
+	for k, v := range x.MinCupedPValues {
+		out.MinCupedPValues[k] = v
 	}
 	if x.Breach != nil {
 		out.Breach = map[string]any{}
@@ -188,6 +194,9 @@ func (m *MemStore) FlagExperimentArms(_ context.Context, x FlagExperiment, minUn
 	for _, u := range m.flagEvents.units[x.ID] {
 		if u.crossed {
 			crossed++
+			continue
+		}
+		if !memUnitCounted(x, u) {
 			continue
 		}
 		a := byVariant[u.variant]
@@ -417,11 +426,11 @@ func (m *MemStore) AdvanceFlagExperimentUnits(context.Context, FlagExperiment, t
 }
 
 // SaveFlagExperimentProgress implements FlagExperimentStore.
-func (m *MemStore) SaveFlagExperimentProgress(_ context.Context, experimentID string, cursor time.Time, minPValues map[string]float64) error {
+func (m *MemStore) SaveFlagExperimentProgress(_ context.Context, experimentID string, cursor time.Time, minPValues, minCupedPValues map[string]float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if x := m.flagEventsLocked().experimentsLocked()[experimentID]; x != nil && x.Status == flags.ExperimentRunning {
-		x.TelemetryCursor, x.MinPValues = cursor, minPValues
+		x.TelemetryCursor, x.MinPValues, x.MinCupedPValues = cursor, minPValues, minCupedPValues
 	}
 	return nil
 }

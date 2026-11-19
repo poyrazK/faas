@@ -3520,6 +3520,7 @@
       "kind",
       "log_path",
       "not_before",
+      "preemptions",
       "source_bytes",
       "started_at",
       "status"
@@ -10644,6 +10645,7 @@
       "bypass_rls",
       "created_at",
       "database_id",
+      "default_for",
       "granted_to",
       "last_error",
       "member_of",
@@ -14166,15 +14168,18 @@
   {
     "table": "support_grant_requests",
     "columns": [
+      "app_ids",
       "created_at",
       "decided_at",
       "decided_by_account_id",
       "expires_at",
+      "extends_grant_id",
       "id",
       "operator_account_id",
       "org_id",
       "reason",
-      "status"
+      "status",
+      "ttl_seconds"
     ],
     "kind": "account_identity"
   },
@@ -14190,7 +14195,8 @@
       "reason",
       "request_id",
       "revoked_at",
-      "revoked_by_account_id"
+      "revoked_by_account_id",
+      "summary_sent_at"
     ],
     "kind": "account_identity"
   },
@@ -18222,6 +18228,7 @@
       "node_id",
       "outcome_code",
       "outcome_message",
+      "placed_node_id",
       "preset",
       "ram_mb",
       "state",
@@ -19502,6 +19509,17 @@
     "kind": "operational"
   },
   {
+    "table": "app_task_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "scenario_command_networks",
     "columns": [
       "active",
@@ -20400,6 +20418,20 @@
     "kind": "operational"
   },
   {
+    "table": "storage_grant_audit",
+    "columns": [
+      "access",
+      "app_id",
+      "granted_at",
+      "id",
+      "node_id",
+      "objects",
+      "subject_class",
+      "subject_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "storage_object_deletions",
     "columns": [
       "attempts",
@@ -21218,6 +21250,7 @@
       "account_id",
       "agent_id",
       "ai_budget_millicents",
+      "capability_policy",
       "created_at",
       "deliveries",
       "harness_image",
@@ -21409,6 +21442,30 @@
       "lease_id",
       "reserved_millicents",
       "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_summaries",
+    "columns": [
+      "account_id",
+      "first_call_at",
+      "last_call_at",
+      "refused_calls",
+      "run_id",
+      "tool_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_decisions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "decision",
+      "id",
+      "run_id",
+      "tool"
     ],
     "kind": "operational"
   },
@@ -22091,6 +22148,28 @@
     "kind": "operational"
   },
   {
+    "table": "hosted_task_rehearsal_plans",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_runs",
+    "columns": [
+      "account_id",
+      "approval_expires_at",
+      "id",
+      "plan_sha256",
+      "reserved_at",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "tool_publications",
     "columns": [
       "account_id",
@@ -22164,6 +22243,7 @@
       "experiment_id",
       "first_exposed_at",
       "latency_requests",
+      "pre_value",
       "requests",
       "slow_requests",
       "value_sum",
@@ -22179,14 +22259,17 @@
       "control",
       "created_at",
       "created_by",
+      "cuped",
       "environment_id",
       "flag_key",
       "guardrails",
       "id",
       "key",
       "latency_threshold_ms",
+      "metric_definition",
       "metric_event",
       "metric_kind",
+      "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
       "project_id",
@@ -22246,6 +22329,57 @@
       "instance_id",
       "probe_done_at",
       "woke_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohorts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_by",
+      "definition",
+      "environment_id",
+      "id",
+      "key",
+      "members",
+      "refresh_error",
+      "refresh_requested_at",
+      "refreshed_at",
+      "truncated"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohort_members",
+    "columns": [
+      "cohort_id",
+      "customer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_events",
+    "columns": [
+      "account_id",
+      "at",
+      "customer_id",
+      "environment_id",
+      "flags",
+      "id",
+      "name",
+      "properties",
+      "subject_hash",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_property_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key"
     ],
     "kind": "operational"
   }

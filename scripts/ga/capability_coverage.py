@@ -34,6 +34,8 @@ RULES = [
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
     # Offline export tools belong to the existing CLI capability (row 156).
     (r"^export$", "`gregale` CLI"),
+    # Per-agent setup guides document driving the CLI from a coding agent.
+    (r"^(claude-code|codex|cursor|antigravity|gemini-cli)$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
     (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
@@ -96,6 +98,8 @@ RULES = [
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
     (r"/v1/internal/(apps|services)/", "INFRA"),
+    # agentproxyd's registration API, reached by vmmd over wg-agent (ADR-20261117185346 §4).
+    (r"^/v1/registrations/", "INFRA"),
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
@@ -151,6 +155,7 @@ RULES = [
     (r"^credhash$", "INFRA"),
     # ADR-20261115180000: shared-store object deletion on the control plane.
     (r"^objectgc$", "INFRA"),
+    (r"^storagegrant$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
     # ADR-20261109170000: the layer verifiers' v2-only switch.
@@ -227,7 +232,7 @@ RULES = [
     (r"keys?$|api-key|^/v1/keys|scopes|service-caller-key|key-pool", "API keys"),
     (r"^mail$|mail|email|notification-email|magic-link|postmark|resend", "Customer notification emails"),
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
-    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag-(kills|request-attributes)$|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
+    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
     # --- developer tools
     (r"mcp-management|mcpmanagement|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),

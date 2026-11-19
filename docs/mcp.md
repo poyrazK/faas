@@ -71,6 +71,14 @@ apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
 
+Start an upload deploy plan within 15 minutes. If its resumable upload commit
+returns `approval_required`, the bridge keeps the original plan, staged source
+and upload checkpoint through the deadline in `approval.expires_at`. The review
+page shows that same deadline. After approval, retry the same plan ID. The
+bridge rechecks the app and its release state and commits the original upload.
+A changed app or release requires a new plan. The temporary staged files live
+on the current bridge process's host and are cleared on bridge restart.
+
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
 
@@ -7145,6 +7153,28 @@ Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
 
+## Read product analytics
+
+Five read-only tools in the `diagnose` toolset query product analytics (see
+[Flags](flags.md#analyze-product-events)). All take `project` and
+`environment`; the first three also take optional `from`, `until` (RFC 3339),
+`unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
+
+- `gregale_get_insight_events` takes `event`, `interval` and `where`, and
+  returns the event's series.
+- `gregale_get_insight_funnel` takes 2 to 6 `steps` and a `window`.
+- `gregale_get_insight_retention` takes `start`, `return`, `period` and
+  `periods`.
+- `gregale_get_insight_requests` takes `flag` and returns requests, server
+  errors and p95 latency per variant.
+- `gregale_list_insight_cohorts` lists saved cohorts with their definition,
+  member count, the plan's member bound and the last refresh; rules target a
+  cohort with the `gregale.cohort` attribute (see
+  [Target a cohort](flags.md#target-a-cohort)).
+
+Each result carries guidance: a flag breakdown is observational, so causal
+claims need an experiment.
+
 ## Watch one rollout
 
 `gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and
@@ -9618,3 +9648,17 @@ These are historical catalog/configuration observations, not retained payload
 decryption, migration compatibility, VM connectivity or execution readiness.
 All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
 `owner_authorization_required=true`. No deployment or Task execution occurs.
+
+### Plan a contained hosted Task rehearsal
+
+Once a retained source review has a passing binding observation, an unscoped personal administrator API key can reserve a disposable rehearsal target. APID must enable `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN=1`, hosted source retention, and binding verification.
+
+```bash
+gregale mcp server tasks rehearse plan --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --binding-sha256 BINDING_DIGEST
+gregale mcp server tasks rehearse approve --id INTENT --plan-sha256 PLAN_DIGEST
+gregale mcp server tasks rehearse get --id INTENT
+```
+
+Review the allocated target identity, queue namespace, and fixed expiry before approving. The plan expires with the passing binding observation and retries preserve its identity and deadline. Use `rehearsal revoke --id INTENT --plan-sha256 PLAN_DIGEST` to withdraw an unconsumed approval. These commands only record planning and approval metadata. Runtime allocation, migration and candidate verification belong to the contained runner. See [the rehearsal plan ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).

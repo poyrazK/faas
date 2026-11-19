@@ -105,7 +105,7 @@ func fetchObsBundleSection(ctx context.Context, client *http.Client, address str
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return obsFetchHTTPFailure(section, resp.StatusCode)
+		return obsFetchResponseFailure(section, resp)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, api.ObsIncidentBundleResponseMaxBytes+1))
 	if err != nil {

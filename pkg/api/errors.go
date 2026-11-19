@@ -742,6 +742,8 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeObsRuntimeBusy refuses a runtime collection before any source work.
+	CodeObsRuntimeBusy = "obs_runtime_busy"
 	// CodeColdWakeRateLimited is the 429 a client gets past the number of
 	// different parked apps it may wake through one gateway a minute (H75).
 	CodeColdWakeRateLimited = "cold_wake_rate_limited"
@@ -1850,6 +1852,9 @@ const (
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
+	// CodeAppNotPurgeable (409): POST /v1/deleted-apps/{id}/purge refused
+	// before closing the restore window; the detail names what to fix.
+	CodeAppNotPurgeable = "app_not_purgeable"
 
 	// CodeAccountDeletionManagedPostgres (409): the account still owns live
 	// managed PostgreSQL databases, which must be deleted before the account
@@ -2348,6 +2353,11 @@ func StatusForCode(code string) int {
 		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
+		return http.StatusServiceUnavailable
+	case CodeApplicationStandardsPending:
+		// A busy runtime-state fence or a policy update in flight; both
+		// details say to retry. Across gRPC it had no status and became a
+		// 500 on a mesh call (prod 2026-11-19).
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -3402,6 +3412,16 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrObsRuntimeBusy describes process-wide runtime collection saturation.
+// The retry interval is a hint; it does not reserve capacity or cause a retry.
+func ErrObsRuntimeBusy(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeObsRuntimeBusy,
+		"Runtime collection busy", "The runtime collector is at capacity. Retry after the indicated delay.").
+		WithLimit(ObsRuntimeBuildCollectionsMax, observed).
+		WithHeader("Retry-After", strconv.Itoa(int(ObsRuntimeBuildBusyRetryAfter/time.Second))).
+		WithDocs("https://github.com/poyrazK/faas/blob/main/docs/ops/post-deployment-monitoring.md#runtime-collector-overload")
 }
 
 // ErrAPIRateLimited refuses an authenticated API request past the account's

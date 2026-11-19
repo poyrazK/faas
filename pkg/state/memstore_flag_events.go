@@ -16,6 +16,12 @@ type memFlagEvents struct {
 	units       map[string]map[string]*memFlagExperimentUnit
 	// latency histograms by experiment, variant and bucket.
 	latency map[string]map[string]map[int]int64
+	// analytics events and property keys by environment (ADR 20261117084505).
+	analytics    []memAnalyticsEvent
+	propertyKeys map[string]map[string]bool
+	// cohorts by ID and their members (ADR 20261119102741 §3).
+	cohorts       map[string]*AnalyticsCohort
+	cohortMembers map[string][]string
 }
 
 type flagConversionKeyMem struct {
@@ -98,6 +104,9 @@ func (m *MemStore) IngestFlagEvents(_ context.Context, in FlagEventIngest) (Flag
 		if at.After(row.LastAt) {
 			row.LastAt = at
 		}
+	}
+	if in.Analytics {
+		m.memAddAnalyticsLocked(in, named[:granted])
 	}
 	return res, nil
 }

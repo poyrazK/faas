@@ -168,6 +168,9 @@ func secretsList(args []string) int {
 	}
 	code := renderSecretListHuman(*app, *scope, *secretClass, *olderThan, *deliveryStatus, &resp, keys...)
 	printSecretKeyHints(*app, *scope, secretKeyHints(keys, availableKeys, secretMetadataKeys(&resp)))
+	if *scope != api.EnvScopeAllSentinel && *secretClass == "" && *deliveryStatus == "" && age == 0 {
+		printPlainVariables(osStdout, client, *app, *scope, keys)
+	}
 	return code
 }
 
@@ -514,6 +517,7 @@ func secretsSet(args []string) int {
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after saving values")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
 	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
+	plain := fs.Bool("plain", false, "store KEY=VALUE as a readable, non-secret variable instead of a sealed secret")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		return printErr("Invalid secret input", err)
@@ -553,6 +557,12 @@ func secretsSet(args []string) int {
 	}
 	appSource := targetValueSource(*app, resolvedApp)
 	*app = resolvedApp
+	if *plain {
+		if *fromStdin || *interactive || fileSpecified || *secretClass != "" || *waitForAck || *restart || *dryRun {
+			return printErr("Invalid --plain", errors.New("--plain takes KEY=VALUE arguments only; it cannot be combined with --file, --from-stdin, --interactive, --class, --wait-for-ack, --restart or --dry-run"))
+		}
+		return setPlainVariables(*app, *scope, positionals)
+	}
 
 	if *secretClass != "" && *secretClass != api.SecretClassPersistent && *secretClass != api.SecretClassEphemeral {
 		return printErr("Invalid secret class", errors.New("--class must be persistent or ephemeral"))

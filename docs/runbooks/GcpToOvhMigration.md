@@ -1,0 +1,459 @@
+# Moving production from GCP to OVHcloud bare metal (ADR-1344 §8)
+
+This runbook moves the whole fleet: the shared artifact store, the control
+plane, the compute nodes, app traffic, the log archive and the off-host
+backups. It strings together runbooks that already exist and adds the steps
+only this move needs. Read each linked runbook before the day.
+
+**The control plane moves with downtime** (owner decision, 2026-11-19).
+GCP stops writing, a final backup is taken, and the OVH control node is
+rebuilt from it with the existing rebuild procedure
+(`ControlPlaneStateBackup.md`, "Rebuild a control plane from backups").
+Nothing replicates between the providers. GCP's production configuration
+changes only to turn on control-plane state backups, and until OVH serves
+traffic the rollback is to start GCP again.
+
+The plan has three phases:
+
+1. **Prepare (days ahead, no customer impact).** The OVH hosts are built and
+   joined to nothing. The GCP fleet switches its artifact store to the OVH
+   bucket, the old GCS objects are copied over, and the restore is
+   rehearsed on the OVH control node.
+2. **Cut over (one window).** GCP's control plane stops, the final backups
+   are taken and copied to OVH, the OVH control node is rebuilt from them,
+   OVH compute nodes join, GCP compute nodes drain, and app DNS moves.
+3. **Settle (days after).** GCP is retired, or later rebuilt as a warm
+   standby.
+
+What to expect:
+
+- **API downtime from the freeze to the first deploy on OVH**, about one to
+  two hours. Most of it is the control node's first bootstrap and the
+  PostgreSQL restore. The rehearsal (phase 1 step 9) measures the restore.
+- **Warm apps keep serving** from the GCP compute nodes until they drain
+  (ADR-1344 §5). A wake needs the control plane's database, so apps that are
+  not running fail from the freeze until the OVH compute nodes serve.
+- **Nothing written after the final backup survives.** The window stops the
+  control plane, takes the backups, then stops GCP's PostgreSQL, so nothing
+  can write after the backup.
+- **One cold boot per app on its first OVH wake.** GCP production runs
+  without a CPU template, so its snapshots belong to the GCP platform's slot
+  and no OVH CPU restores them (ADR-20261024225612, `cpu_incompatible` in the
+  cold-reason metric). Each app is recaptured on OVH after that boot.
+
+## Why this order
+
+- **No phase runs OVH and GCP hosts against each other over the internet.**
+  Compute nodes reach the control plane's Postgres with `sslmode=disable`
+  and schedd/vmmd over the private overlay. That is fine on a VPC or a
+  vRack, and not across providers. The database crosses providers once, as
+  an encrypted backup in a bucket.
+- **OVH hosts cannot read GCS.** There is no metadata server off GCP, and
+  the `gregale-prod` org policy (`iam.disableServiceAccountKeyCreation`)
+  forbids the service-account key a `GOOGLE_APPLICATION_CREDENTIALS`
+  fallback would need. So the store moves while the fleet is still on GCP
+  (GCP nodes write to the OVH bucket and read misses through their own GCS
+  identity, `FAAS_STORAGE_FALLBACK_BACKEND=gcs`), and in the window a GCP
+  host copies the backups into the OVH backup bucket.
+- **Drained apps park to the shared store.** Once every artifact lives in the
+  OVH bucket, a GCP node can drain and its apps wake on OVH from their app
+  layers (a cold boot, see above) with nothing left on GCP.
+- **A restored copy of production runs no daemon outside the window.** Its
+  daemons would act on production data: send mail, fire webhooks, bill. The
+  rehearsal restores into a throwaway PostgreSQL only.
+
+## Go / no-go (all must hold before the window)
+
+- [ ] S3 artifact store (PR #6724, ADR-20261107123000) merged and in the
+      release GCP runs.
+- [ ] OVH hardware delivered: one control node (≥ 32 GB RAM, NVMe) and the
+      compute nodes, all on one vRack. **Compute CPUs are Ice Lake or Milan**:
+      Firecracker CPU templates (`pkg/fcvm/cputemplate.go`) cover Skylake,
+      Cascade Lake, Ice Lake and Milan only, and a snapshot restores only on
+      its own CPU class. Naples (EPYC 7xx1) and Ryzen are out. Buy one CPU
+      model for all compute nodes, or set `vmmd_cpu_template` (T2CL for
+      Cascade/Ice Lake, T2A for Milan) so snapshots move between them.
+- [ ] The cold-boot memory headroom fix (#7440, ADR-20261116170000) is in
+      the release: every app cold-boots once on cutover day, and 128 MB apps
+      ran out of memory on cold boot without it.
+- [ ] One OVH Additional IP per compute node for the app entry (`entry_ipv4`,
+      ADR-20261103163954 §2), routed to that server. No role puts it on
+      the host: add it to the public card in its own netplan file
+      (`/etc/netplan/61-entry-ip.yaml`, `addresses: [<ip>/32]` under the
+      card named in `50-cloud-init.yaml`) and check it answers ping.
+- [ ] OVH account: 2FA on every login, API tokens scoped and listed, IPMI and
+      rescue mode understood (disk encryption, ADR-20261109120000, covers
+      the rescue-mode risk to data volumes).
+- [ ] OVH Object Storage buckets in the compute region: artifacts,
+      log archive, backups. Keys per purpose (below), never shared.
+- [ ] **Control-plane state backups run on GCP** (phase 1 step 2). Production
+      had none on 2026-11-19 (`faas_cp_state_backup_recipients` was empty),
+      and the rebuild cannot keep the CA, the HMAC keys or `sealed.env`
+      without a bundle.
+- [ ] Each OVH host's private address resolves to its vRack card, not its
+      public one (ADR-20261109100000 amendment 2026-11-19): a read-only
+      `make ansible-preflight` shows `10.20.0.x` for every host.
+- [ ] CD and Ansible reach the OVH hosts from inside the vRack (a runner or
+      bastion there) before the host firewall limits SSH to the vRack. CD
+      must be able to deploy to the OVH control node in the window.
+- [ ] The OVH manifest (below) passes `make manifest-ansible` and the
+      read-only `make ansible-preflight`. Strict `make verify-fleet` runs
+      after the window (phase 2 step 9).
+- [ ] The restore rehearsal (phase 1 step 9) passed, and its time fits the
+      window.
+
+## Keys
+
+| Key | Bucket | Rights | Where it lives |
+|---|---|---|---|
+| node artifact key (one per compute node) | artifacts | get, put, list; **no delete** | `storage.env` on that node |
+| control-plane artifact key | artifacts | get, put, list, delete | `storage.env` on the control node |
+| log archive key | log archive | put, get, list, delete (account erasure) | `log_archive.credentials_src` on the controller |
+| backup key | backups | put, get, list; **no delete** | `/etc/faas/secrets/storage-box/rclone.conf` |
+
+The policies are in `deploy/ovh/object-storage-policies/`, with the user
+for each key and each bucket's lifecycle. The backup key is append-only
+like the GCS writer role: the WAL prune deletes only local segments, and
+the bucket lifecycle removes old recovery points (ADR-20261118203000).
+
+Nodes go without delete through `FAAS_STORAGE_DELETE_MODE=defer`: deletes
+become `storage_object_deletions` rows that the control plane's object GC
+(`FAAS_SCHEDD_OBJECT_GC`) carries out (ADR-20261115180000). The S3 backend
+supports it.
+
+## The OVH manifest
+
+`deploy/manifest/production/ovh-live.template.yaml` is the OVH topology. Its
+drift test (`pkg/renderer/ovh_production_manifest_test.go`) keeps it to these
+differences from `gcp-live.template.yaml`:
+
+- `fleet`: the OVH hosts. The control-plane entry keeps the GCP `address`
+  (`fsn-1.gregale.dev:9091`), so every fleet name and `postgresql.dsn` point
+  at the new host with no other edits (`ControlPlaneFailover.md` step 4).
+  Compute hosts get `public_ipv4` (their own address) and `entry_ipv4` (the
+  Additional IP), and no `public_ipv4_forwarded`.
+- `overlay`: `provider: static`, `interface:` the vRack card, `cidr:` the
+  vRack range (ADR-20261109100000).
+- `ssh.allowed_cidrs`: the vRack range plus operator sources. With no
+  provider firewall, nftables is the only SSH boundary.
+- `egress`: drop `danger_accept_rfc1918_lateral_movement` and the GCP VPC
+  exception; add the vRack range only if needed.
+- `disk_encryption`: on, Tang on each host's peers
+  (ADR-20261109120000).
+- `log_archive`: the OVH endpoint, `auth: static`, `credentials_src`.
+- `artifact_signer`: keep enabled (signd on the control node).
+- No `postgresql.standby`: the database moves as a backup. A warm standby
+  at the other provider (phase 3) needs the manifest to accept a public
+  standby address, which it refuses today.
+
+Never put provider IPs other than these host fields, or any key, in the
+manifest.
+
+## Phase 1: prepare
+
+1. **Build the OVH hosts.** Install the OS, then converge only what needs no
+   fleet: disk encryption, Tang, the host firewall. Do not join the compute
+   nodes or bootstrap the control plane.
+2. **Turn on control-plane state backups on GCP.** Create an operator age
+   identity, keep it offline, and set its public key in
+   `faas_cp_state_backup_recipients` for the control plane
+   (`ControlPlaneStateBackup.md`, "Turn it on"). After the converge, run
+   `faas-cp-state-backup.service` once and check that a bundle lands under
+   `offhostbox:faas-cp-state/<GCP control node>/`. The identity is needed
+   again only in the rehearsal and the window.
+3. **Prove the bucket** from one GCP compute node with the node key:
+
+   ```bash
+   sudo gregalectl artifact lifecycle-check   # with the S3 storage.env override
+   ```
+
+4. **Switch the GCP fleet's artifact store to the OVH bucket** with the GCS
+   read fallback, one node at a time (drain, change `storage.env`, restart,
+   undrain):
+
+   ```
+   FAAS_STORAGE_BACKEND=s3
+   FAAS_S3_BUCKET=… FAAS_S3_ENDPOINT=https://s3.<region>.io.cloud.ovh.<tld>
+   FAAS_S3_REGION=… FAAS_S3_PATH_STYLE=…
+   FAAS_S3_ACCESS_KEY_ID=… FAAS_S3_SECRET_ACCESS_KEY=…
+   FAAS_STORAGE_FALLBACK_BACKEND=gcs
+   ```
+
+   The control plane switches the same way, with its own key. New builds and
+   snapshots now land in OVH; misses read GCS.
+5. **Bulk-copy the old objects** from a GCP host, keeping user metadata (the
+   S3 store reads GCS's encoding unchanged):
+
+   ```bash
+   rclone copy --metadata --checksum gcs:<gcs bucket> ovh:<ovh bucket>
+   ```
+
+   Repeat until a run copies nothing new. Then do a cross-node restore of a
+   snapshot that was written to GCS before step 4, on a node whose cache does
+   not hold it.
+6. **Remove the fallback** (`FAAS_STORAGE_FALLBACK_BACKEND` unset) node by
+   node. From here GCS is read by nothing; keep it until phase 3.
+7. **Log archive bucket.** Copy `faas-logs/` from the GCS archive to the OVH
+   archive bucket (same `rclone copy`) so customers keep their 90 days.
+8. **Backup remote on the OVH control node.** Put the OVH backup remote
+   (`type = s3`, `no_check_bucket = true`) in
+   `/etc/faas/secrets/storage-box/rclone.conf` on the OVH control node under
+   the `offhostbox` name, so `offhostbox:faas-pg-basebackup/` is
+   `gregale-prod-pg-backups/faas-pg-basebackup/`. The restore reads from it,
+   and after the window the backups push to it.
+9. **Rehearse the restore on the OVH control node.** Copy the newest
+   backups to the OVH bucket as in phase 2 step 4 (GCP keeps running). The
+   newest base backup is the nightly one (03:00 UTC), and WAL since then
+   grows about 1.1 GB an hour, so rehearse early in the UTC day and set the
+   WAL `--max-age` just above the backup's age. On
+   the OVH control node, restore them into a throwaway cluster ("Restoring
+   PostgreSQL", rehearsal): a scratch data directory, another port, no
+   archiving and no faas daemon. Then:
+   - check that it promoted, that `SELECT max(version_id) FROM
+     goose_db_version` matches GCP, and that `accounts` and `apps` row
+     counts match GCP within the backup's age;
+   - on the operator machine, prove the identity opens the newest state
+     bundle without writing its contents anywhere:
+     `gcloud storage cat gs://<backup bucket>/faas-cp-state/<GCP control node>/<newest>.tar.age | age -d -i cp-state-operator.key | tar -tf -`;
+   - time the copy and the restore;
+   - stop the throwaway cluster and delete its data directory and the staged
+     backup.
+10. **Lower the TTLs** of the control-plane address record and the app entry
+    records to 60 s, a day ahead.
+
+## Phase 2: cut over (one window)
+
+1. **Freeze**: pause CD, announce the window, no deploys. Note the release
+   GCP's control plane runs (commit and any per-unit versions): OVH must get
+   that release, not a newer one, because the restored database is at its
+   migrations.
+2. **Stop GCP's control plane.** On the GCP control node, stop every faas
+   unit and timer, and leave PostgreSQL up. The API is down from here.
+
+   ```bash
+   sudo systemctl stop 'faas-*.timer' 'faas-*.service'
+   sudo -u postgres psql -d faas -Atc \
+     "SELECT (SELECT max(version_id) FROM goose_db_version), (SELECT count(*) FROM accounts), (SELECT count(*) FROM apps)"
+   ```
+
+   Keep that output: step 5 compares the restored database with it.
+3. **Take the final backups**, one after the other, then stop PostgreSQL:
+
+   ```bash
+   sudo systemctl start faas-pg-basebackup.service
+   sudo systemctl start faas-pg-basebackup-push.service
+   sudo systemctl start faas-cp-state-backup.service
+   sudo -u postgres psql -Atc 'SELECT pg_walfile_name(pg_switch_wal())'
+   sudo -u postgres psql -Atc 'SELECT last_archived_wal, failed_count FROM pg_stat_archiver'
+   ```
+
+   Repeat the last query until `last_archived_wal` is the segment the switch
+   printed. Check each unit's journal for success. Then stop PostgreSQL and
+   mask it, so nothing on GCP can write again (the cluster is `16 main`;
+   check with `pg_lsclusters`):
+
+   ```bash
+   sudo systemctl stop postgresql@16-main
+   sudo systemctl mask postgresql@16-main
+   ```
+
+4. **Copy the backups to OVH.** In a root shell on the GCP control node
+   (`sudo -i`), give rclone the OVH backup key through the environment, for
+   this shell only, so it is never written to disk:
+
+   ```bash
+   read -r -p 'OVH backup key id: ' RCLONE_CONFIG_OVH_ACCESS_KEY_ID
+   read -r -s -p 'OVH backup key secret: ' RCLONE_CONFIG_OVH_SECRET_ACCESS_KEY; echo
+   export RCLONE_CONFIG_OVH_ACCESS_KEY_ID RCLONE_CONFIG_OVH_SECRET_ACCESS_KEY \
+     RCLONE_CONFIG_OVH_TYPE=s3 RCLONE_CONFIG_OVH_PROVIDER=Other \
+     RCLONE_CONFIG_OVH_ENDPOINT=https://s3.bhs.io.cloud.ovh.net \
+     RCLONE_CONFIG_OVH_REGION=bhs RCLONE_CONFIG_OVH_NO_CHECK_BUCKET=true
+   conf=/etc/faas/secrets/storage-box/rclone.conf
+   dst=ovh:gregale-prod-pg-backups
+   b=$(rclone --config "$conf" lsf --dirs-only offhostbox:faas-pg-basebackup/ | sort | tail -1)
+   rclone --config "$conf" copy --checksum "offhostbox:faas-pg-basebackup/$b" "$dst/faas-pg-basebackup/$b"
+   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-pg-wal "$dst/faas-pg-wal"
+   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-cp-state "$dst/faas-cp-state"
+   exit
+   ```
+
+   `$b` must be the backup step 3 made. Recovery needs WAL only from that
+   backup's start, so copy no older WAL than the backup: production writes
+   about 1.1 GB of WAL an hour (27 GB a day, 2026-11-19), against a base
+   backup of about 0.8 GB. Widen `--max-age` if step 3 started more than an
+   hour before this copy. The backup key can write but not delete, so a
+   repeated copy is safe.
+5. **Rebuild the control plane on OVH** with the OVH manifest, following
+   `ControlPlaneStateBackup.md`, "Rebuild a control plane from backups",
+   steps 1–6. For this move:
+   - step 1: the manifest is `ovh-live.template.yaml`, materialized with the
+     release from step 1;
+   - step 2: the bundle is in the OVH bucket under
+     `faas-cp-state/<GCP control node>/`;
+   - step 5: bootstrap may start faas units against its new, empty
+     database. Stop them all (`systemctl stop 'faas-*.timer'
+     'faas-*.service'`), not only the S3 gateway, then restore as in
+     "Restoring PostgreSQL" below and compare it with step 2's output before
+     the object-storage hold;
+   - step 5 also repoints the address's public DNS record to the OVH
+     control node (`ControlPlaneFailover.md` step 5) and deploys the release
+     from step 1 with `CP_HOST` set to the OVH control node
+     (`ControlPlaneFailover.md` step 7).
+6. **Join the OVH compute nodes** (`provider-neutral-node-join.md`) with the
+   node keys and `FAAS_STORAGE_DELETE_MODE=defer`. Run the serving probe on
+   each.
+7. **Retire the GCP compute nodes**, one at a time. They cannot reach the
+   new control plane, so nothing parks: on each, stop every faas unit,
+   including the tunnel connector (`faas-cloudflared`), so it stops taking
+   traffic:
+
+   ```bash
+   sudo systemctl stop 'faas-*.timer' 'faas-*.service'
+   ```
+
+   Then, against the OVH control plane, cold-evict its instances and retire
+   it (`compute-node-compromise.md` uses the same commands):
+
+   ```bash
+   gregalectl compute-nodes force-drain --node <gcp node> --reason move_to_ovh --yes
+   gregalectl compute-nodes drain-status --node <gcp node>   # until empty
+   gregalectl compute-nodes retire --node <gcp node> --reason move_to_ovh --yes
+   ```
+
+   Their apps wake on OVH on the next request, from the app layers in the OVH
+   bucket. The warm apps they served are down from the stop until that wake.
+   Keep the machines until phase 3: they are the rollback.
+8. **Move app traffic**: point the app entry records (or the tunnel, if the
+   zone still uses it) at the OVH compute nodes (`EdgeDirectEntry.md`,
+   `AppEdgeCutover.md`), and the platform hosts' Cloudflare origin at the OVH
+   control node (`ControlPlaneFailover.md` step 9).
+9. **Check**: `make verify-fleet`, the API, one deploy, one cold wake, one
+   custom domain, a bucket read through the S3 gateway, and that the newest
+   change made before the freeze is present.
+10. **Warm the busiest apps**: request each app that served traffic in the
+    last day, a few at a time, so their one cold boot happens under watch
+    and not on a customer's first request. Watch node memory and the
+    cold-boot failure rate.
+11. **Backups**: run the immediate push (`PostgresBackup.md`) and
+    `faas-cp-state-backup.service`, and confirm both land in the OVH backup
+    bucket.
+12. **Point releases at OVH**: merge the PR that changes
+    `deploy/manifest/production/release-template` to `ovh-live.template.yaml`
+    before the first release after the window. Until it merges, a release
+    still materializes the GCP topology.
+13. **Resume CD.**
+
+### Restoring PostgreSQL
+
+The backup is `pg_basebackup -Ft -z -X stream` (`faas-pg-basebackup.service`):
+`base.tar.gz` is the data directory and `pg_wal.tar.gz` the WAL streamed
+during the backup, which belongs in `pg_wal`. With `recovery.signal` and no
+recovery target, PostgreSQL replays every archived segment from
+`faas-pg-wal/`, then promotes onto a new timeline. `offhostbox` is the OVH
+backup bucket (phase 1 step 8). Run as root on the OVH control node.
+
+Fetch and unpack the newest backup into `$data`:
+
+```bash
+conf=/etc/faas/secrets/storage-box/rclone.conf
+b=$(rclone --config "$conf" lsf --dirs-only offhostbox:faas-pg-basebackup/ | sort | tail -1)
+stage=/srv/fc/pg-restore/$b
+rclone --config "$conf" copy --checksum "offhostbox:faas-pg-basebackup/$b" "$stage"
+install -d -o postgres -g postgres -m 0700 "$data" "$data/pg_wal"
+tar -xzf "$stage/base.tar.gz" -C "$data"
+tar -xzf "$stage/pg_wal.tar.gz" -C "$data/pg_wal"
+chown -R postgres:postgres "$data"
+touch "$data/recovery.signal"
+```
+
+**In the window**, `$data` is the cluster bootstrap made. Move its empty
+data directory aside first, and give recovery its WAL source through
+`conf.d`. The cluster's own configuration under `/etc` stays, including its
+`archive_command`, so the promoted timeline's WAL goes to the OVH bucket:
+
+```bash
+data=$(pg_lsclusters -h | awk '$1 == 16 && $2 == "main" {print $6}')
+systemctl stop postgresql@16-main
+mv "$data" "$data.bootstrap"     # delete once the restore checks out
+# fetch and unpack, as above
+cat > /etc/postgresql/16/main/conf.d/95-faas-restore.conf <<'CONF'
+restore_command = 'rclone copyto offhostbox:faas-pg-wal/%f %p --config /var/lib/pgsql/backup-rclone.conf --stats=0 --quiet'
+CONF
+systemctl start postgresql@16-main
+sudo -u postgres psql -Atc 'SELECT pg_is_in_recovery()'   # repeat until f
+rm /etc/postgresql/16/main/conf.d/95-faas-restore.conf
+systemctl reload postgresql@16-main
+```
+
+**In the rehearsal**, `$data` is a scratch directory such as
+`/srv/fc/pg-rehearsal`, and nothing about the real cluster changes. The
+backup carries no `postgresql.conf` or `pg_hba.conf` (they live under
+`/etc`), so write minimal ones. Leave archiving off: a promoted throwaway
+that archives puts its new timeline in `faas-pg-wal/`, where the backup key
+cannot delete it and the real restore would follow it. Recovery refuses
+settings lower than the primary's, and `pg_controldata` reads those from
+the backup. Bootstrap has not run yet, so install `postgresql-16` and
+`rclone` from the Ubuntu archive first (the package starts an empty
+`16 main` cluster; bootstrap configures it later), and give PostgreSQL a
+copy of the remote it can read:
+
+```bash
+data=/srv/fc/pg-rehearsal
+install -o root -g postgres -m 0440 "$conf" /srv/fc/pg-rehearsal-rclone.conf
+# fetch and unpack, as above
+/usr/lib/postgresql/16/bin/pg_controldata "$data" | grep 'setting:'
+cat > "$data/postgresql.conf" <<'CONF'
+port = 5433
+listen_addresses = ''
+unix_socket_directories = '/tmp'
+archive_mode = off
+restore_command = 'rclone copyto offhostbox:faas-pg-wal/%f %p --config /srv/fc/pg-rehearsal-rclone.conf --stats=0 --quiet'
+# max_connections, max_worker_processes, max_wal_senders,
+# max_prepared_transactions, max_locks_per_transaction: at least the
+# values pg_controldata printed
+CONF
+printf 'local all postgres peer\n' > "$data/pg_hba.conf"
+chown postgres:postgres "$data/postgresql.conf" "$data/pg_hba.conf"
+runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D "$data" -l "$data.log" -W start
+runuser -u postgres -- psql -h /tmp -p 5433 -Atc 'SELECT pg_is_in_recovery()'   # repeat until f
+```
+
+After the checks in phase 1 step 9, stop it
+(`pg_ctl -D "$data" -m fast stop` as `postgres`) and delete `$data`,
+`$data.log`, `/srv/fc/pg-rehearsal-rclone.conf` and the staged backup.
+
+### Rollback
+
+- **Before the OVH control plane serves traffic** (up to phase 2 step 8):
+  1. stop every faas unit on the OVH control node and on any OVH compute
+     node step 6 joined (their tunnel connectors would take traffic), so
+     only one fleet runs;
+  2. on the GCP control node, `systemctl unmask postgresql@16-main`, start
+     PostgreSQL, then start the faas units and timers (or run the
+     control-plane deploy for the same release). GCP's database has not
+     changed since the freeze;
+  3. start the faas units on any GCP compute node step 7 stopped. The
+     force-drain and retire in step 7 were written to the OVH database
+     only.
+- **After OVH served traffic**, writes exist only on OVH. Going back is
+  another move in the other direction (this runbook with the providers
+  swapped), not a restart.
+
+## Phase 3: settle
+
+- **Delete the GCP machines** after a week without rollback. Delete the GCS
+  artifact bucket only after a full `gregalectl artifact lifecycle-check` and
+  a month of backups on OVH.
+- **Warm standby at GCP (ADR-1344 §8)**: optional and later. A replica at
+  another provider reaches the primary over the internet, which the
+  manifest's `postgresql.standby` refuses today (its address must be inside
+  `overlay.cidr`). It needs a cross-site option first (TLS replication
+  already verifies the primary), then `ControlPlaneFailover.md` step 10.
+- **Billing**: the egress allowance numbers were set for GCP egress costs
+  (billing review R8-1); revisit them now.
+
+## Record
+
+For the rehearsal and the real run: API downtime, each step's duration, the
+`rclone` totals, the restore time, cold-wake p50 on OVH, and anything
+bootstrap asked for that this runbook misses.

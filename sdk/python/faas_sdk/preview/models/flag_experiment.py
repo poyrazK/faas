@@ -14,7 +14,9 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.flag_experiment_breach import FlagExperimentBreach
+    from ..models.flag_experiment_funnel import FlagExperimentFunnel
     from ..models.flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
+    from ..models.flag_experiment_retention import FlagExperimentRetention
     from ..models.flag_experiment_weights import FlagExperimentWeights
 
 
@@ -31,11 +33,18 @@ class FlagExperiment:
     control: str
     metric_event: str
     metric_kind: FlagExperimentMetricKind
+    cuped: bool
+    """Whether results are adjusted with CUPED."""
     status: FlagExperimentStatus
     mixing_lift: float
     weights: FlagExperimentWeights
     created_by: str
     created_at: datetime.datetime
+    funnel: FlagExperimentFunnel | Unset = UNSET
+    """A funnel metric: a customer converts when it completes the steps in order within the window after its first
+    exposure."""
+    retention: FlagExperimentRetention | Unset = UNSET
+    """A retention metric: a customer converts when it sends the return event in period N after its first exposure."""
     started_at: datetime.datetime | Unset = UNSET
     stopped_at: datetime.datetime | Unset = UNSET
     analyzed_until: datetime.datetime | Unset = UNSET
@@ -62,6 +71,8 @@ class FlagExperiment:
 
         metric_kind: str = self.metric_kind
 
+        cuped = self.cuped
+
         status: str = self.status
 
         mixing_lift = self.mixing_lift
@@ -71,6 +82,14 @@ class FlagExperiment:
         created_by = self.created_by
 
         created_at = self.created_at.isoformat()
+
+        funnel: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.funnel, Unset):
+            funnel = self.funnel.to_dict()
+
+        retention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.retention, Unset):
+            retention = self.retention.to_dict()
 
         started_at: str | Unset = UNSET
         if not isinstance(self.started_at, Unset):
@@ -108,6 +127,7 @@ class FlagExperiment:
                 "control": control,
                 "metric_event": metric_event,
                 "metric_kind": metric_kind,
+                "cuped": cuped,
                 "status": status,
                 "mixing_lift": mixing_lift,
                 "weights": weights,
@@ -115,6 +135,10 @@ class FlagExperiment:
                 "created_at": created_at,
             }
         )
+        if funnel is not UNSET:
+            field_dict["funnel"] = funnel
+        if retention is not UNSET:
+            field_dict["retention"] = retention
         if started_at is not UNSET:
             field_dict["started_at"] = started_at
         if stopped_at is not UNSET:
@@ -135,7 +159,9 @@ class FlagExperiment:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.flag_experiment_breach import FlagExperimentBreach
+        from ..models.flag_experiment_funnel import FlagExperimentFunnel
         from ..models.flag_experiment_guardrail_settings import FlagExperimentGuardrailSettings
+        from ..models.flag_experiment_retention import FlagExperimentRetention
         from ..models.flag_experiment_weights import FlagExperimentWeights
 
         d = dict(src_dict)
@@ -151,6 +177,8 @@ class FlagExperiment:
 
         metric_kind = check_flag_experiment_metric_kind(d.pop("metric_kind"))
 
+        cuped = d.pop("cuped")
+
         status = check_flag_experiment_status(d.pop("status"))
 
         mixing_lift = d.pop("mixing_lift")
@@ -160,6 +188,20 @@ class FlagExperiment:
         created_by = d.pop("created_by")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _funnel = d.pop("funnel", UNSET)
+        funnel: FlagExperimentFunnel | Unset
+        if isinstance(_funnel, Unset):
+            funnel = UNSET
+        else:
+            funnel = FlagExperimentFunnel.from_dict(_funnel)
+
+        _retention = d.pop("retention", UNSET)
+        retention: FlagExperimentRetention | Unset
+        if isinstance(_retention, Unset):
+            retention = UNSET
+        else:
+            retention = FlagExperimentRetention.from_dict(_retention)
 
         _started_at = d.pop("started_at", UNSET)
         started_at: datetime.datetime | Unset
@@ -212,11 +254,14 @@ class FlagExperiment:
             control=control,
             metric_event=metric_event,
             metric_kind=metric_kind,
+            cuped=cuped,
             status=status,
             mixing_lift=mixing_lift,
             weights=weights,
             created_by=created_by,
             created_at=created_at,
+            funnel=funnel,
+            retention=retention,
             started_at=started_at,
             stopped_at=stopped_at,
             analyzed_until=analyzed_until,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -48,7 +49,7 @@ func cmdOrgsSupportAccess(args []string) int {
 		if jsonOutput {
 			return jsonOut(writeJSON(access))
 		}
-		printSupportAccess(access)
+		printSupportAccess(access, dashboardBaseURL(client.BaseURL()))
 		return 0
 	case "revoke":
 		if err := client.RevokeSupportGrant(ctx, *slug, fs.Arg(0)); err != nil {
@@ -71,7 +72,7 @@ func cmdOrgsSupportAccess(args []string) int {
 	}
 }
 
-func printSupportAccess(access api.SupportAccess) {
+func printSupportAccess(access api.SupportAccess, dashboard string) {
 	if !access.Enabled {
 		_, _ = fmt.Fprintln(osStdout, "Support access is not available for this organization yet.")
 	}
@@ -79,11 +80,12 @@ func printSupportAccess(access api.SupportAccess) {
 	for _, req := range access.Requests {
 		if req.Status == "open" {
 			open++
-			_, _ = fmt.Fprintf(osStdout, "Request %s from %s: %s (expires %s)\n", req.ID, req.Operator, req.Reason, req.ExpiresAt)
+			_, _ = fmt.Fprintf(osStdout, "Request %s from %s asks for %s: %s (expires %s)\n", req.ID, req.Operator, supportAsked(req), req.Reason, req.ExpiresAt)
+			_, _ = fmt.Fprintf(osStdout, "  Approve: %s/dashboard/support-access?request=%s\n", dashboard, url.QueryEscape(req.ID))
 		}
 	}
 	if open > 0 {
-		_, _ = fmt.Fprintln(osStdout, "Approve on the dashboard (gregale org support approve), or reject with gregale org support reject.")
+		_, _ = fmt.Fprintln(osStdout, "Approve on the dashboard, or reject with gregale org support reject.")
 		_, _ = fmt.Fprintln(osStdout)
 	}
 	if len(access.Grants) == 0 {
@@ -100,4 +102,19 @@ func printSupportAccess(access api.SupportAccess) {
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", g.ID, apps, g.Status, g.ExpiresAt, g.CreatedBy)
 	}
 	_ = tw.Flush()
+}
+
+// supportAsked describes what a request asks for.
+func supportAsked(req api.SupportAccessRequest) string {
+	asked := "all apps"
+	if len(req.Apps) > 0 {
+		asked = strings.Join(req.Apps, ",")
+	}
+	if req.TTLHours > 0 {
+		asked += fmt.Sprintf(" for %dh", req.TTLHours)
+	}
+	if req.Extends != "" {
+		asked = "more time (grant " + req.Extends + ") on " + asked
+	}
+	return asked
 }

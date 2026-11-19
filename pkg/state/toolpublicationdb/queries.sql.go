@@ -353,6 +353,44 @@ func (q *Queries) HostedTaskSourceCounts(ctx context.Context, db DBTX, accountID
 	return i, err
 }
 
+const insertHostedTaskRehearsalRun = `-- name: InsertHostedTaskRehearsalRun :execrows
+INSERT INTO hosted_task_rehearsal_runs (account_id, id, run_id, plan_sha256, reserved_at, approval_expires_at)
+SELECT $1, $2, $3, $4,
+       $5, $6
+WHERE $6::timestamptz > clock_timestamp()
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = $1 AND k.id = ANY($7::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+`
+
+type InsertHostedTaskRehearsalRunParams struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+	AuthorityKeys     []pgtype.UUID
+}
+
+func (q *Queries) InsertHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg InsertHostedTaskRehearsalRunParams) (int64, error) {
+	result, err := db.Exec(ctx, insertHostedTaskRehearsalRun,
+		arg.AccountID,
+		arg.ID,
+		arg.RunID,
+		arg.PlanSha256,
+		arg.ReservedAt,
+		arg.ApprovalExpiresAt,
+		arg.AuthorityKeys,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertHostedTaskSourceIntent = `-- name: InsertHostedTaskSourceIntent :exec
 INSERT INTO hosted_task_source_intents(account_id,id,payload,ciphertext,expires_at) VALUES($1,$2,$3,$4,$5)
 `
@@ -742,6 +780,28 @@ func (q *Queries) LockHostedTaskBindingSource(ctx context.Context, db DBTX, arg 
 	row := db.QueryRow(ctx, lockHostedTaskBindingSource, arg.AccountID, arg.ID)
 	var i LockHostedTaskBindingSourceRow
 	err := row.Scan(&i.Payload, &i.Ciphertext, &i.ExpiresAt)
+	return i, err
+}
+
+const lockHostedTaskRehearsalPlan = `-- name: LockHostedTaskRehearsalPlan :one
+SELECT payload, expires_at FROM hosted_task_rehearsal_plans
+WHERE account_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockHostedTaskRehearsalPlanParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type LockHostedTaskRehearsalPlanRow struct {
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockHostedTaskRehearsalPlan(ctx context.Context, db DBTX, arg LockHostedTaskRehearsalPlanParams) (LockHostedTaskRehearsalPlanRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskRehearsalPlan, arg.AccountID, arg.ID)
+	var i LockHostedTaskRehearsalPlanRow
+	err := row.Scan(&i.Payload, &i.ExpiresAt)
 	return i, err
 }
 
@@ -1209,6 +1269,35 @@ func (q *Queries) ReadHostedTaskBindingNamespace(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const readHostedTaskRehearsalRun = `-- name: ReadHostedTaskRehearsalRun :one
+SELECT run_id, plan_sha256, reserved_at, approval_expires_at FROM hosted_task_rehearsal_runs
+WHERE account_id = $1 AND id = $2
+`
+
+type ReadHostedTaskRehearsalRunParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type ReadHostedTaskRehearsalRunRow struct {
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg ReadHostedTaskRehearsalRunParams) (ReadHostedTaskRehearsalRunRow, error) {
+	row := db.QueryRow(ctx, readHostedTaskRehearsalRun, arg.AccountID, arg.ID)
+	var i ReadHostedTaskRehearsalRunRow
+	err := row.Scan(
+		&i.RunID,
+		&i.PlanSha256,
+		&i.ReservedAt,
+		&i.ApprovalExpiresAt,
+	)
+	return i, err
+}
+
 const readTaskRetirementApp = `-- name: ReadTaskRetirementApp :one
 SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE
 `
@@ -1328,6 +1417,46 @@ func (q *Queries) SaveHostedTaskBinding(ctx context.Context, db DBTX, arg SaveHo
 		arg.RequireFresh,
 		arg.RequesterKeyID,
 		arg.OriginalOwnerKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveHostedTaskRehearsalPlan = `-- name: SaveHostedTaskRehearsalPlan :execrows
+INSERT INTO hosted_task_rehearsal_plans (account_id, id, payload, expires_at)
+SELECT $1, $2, $3, $4
+WHERE (NOT $5::boolean OR $4::timestamptz > clock_timestamp())
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = $1 AND k.id = ANY($6::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+ON CONFLICT (account_id, id) DO UPDATE SET payload = excluded.payload
+WHERE hosted_task_rehearsal_plans.expires_at = excluded.expires_at
+`
+
+type SaveHostedTaskRehearsalPlanParams struct {
+	AccountID     pgtype.UUID
+	ID            string
+	Payload       []byte
+	ExpiresAt     pgtype.Timestamptz
+	RequireFresh  bool
+	AuthorityKeys []pgtype.UUID
+}
+
+// The owner, requester and binding keys have already been validated under row
+// locks. Real-clock checks fence their expiration and the observation deadline
+// even if processing lasted past either one.
+func (q *Queries) SaveHostedTaskRehearsalPlan(ctx context.Context, db DBTX, arg SaveHostedTaskRehearsalPlanParams) (int64, error) {
+	result, err := db.Exec(ctx, saveHostedTaskRehearsalPlan,
+		arg.AccountID,
+		arg.ID,
+		arg.Payload,
+		arg.ExpiresAt,
+		arg.RequireFresh,
+		arg.AuthorityKeys,
 	)
 	if err != nil {
 		return 0, err

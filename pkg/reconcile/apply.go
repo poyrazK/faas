@@ -428,6 +428,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
+	applyWorkloadCreateSettings(&app, w, plan)
 	if w.Function != nil {
 		// A functions-project entry deploys as a function app, sized as
 		// `gregale deploy` creates one (ADR-20261108160000).

@@ -118,8 +118,20 @@ func imagedDirectHubOnMaxConns() int32 {
 // imagedParallelPrep reads ImagedParallelPrepEnv as imaged does. A value
 // imaged rejects stops imaged at boot, so it counts as off here.
 func imagedParallelPrep() bool {
-	on, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(ImagedParallelPrepEnv)))
+	on, err := ImagedParallelPrep(os.Getenv(ImagedParallelPrepEnv))
 	return err == nil && on
+}
+
+// ImagedParallelPrep parses ImagedParallelPrepEnv. Unset means on: a
+// project's services otherwise waited for each other's scan and snapshot
+// one deployment at a time (retail-store feedback A3, 2026-11-17); "false"
+// keeps the serial loop.
+func ImagedParallelPrep(raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return true, nil
+	}
+	return strconv.ParseBool(raw)
 }
 
 // schedd retains a session lock throughout each prime's boot and capture.

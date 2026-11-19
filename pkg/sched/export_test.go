@@ -1140,12 +1140,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
-// expose an app instance's CPU, which follows its size (ADR-20261109172421).
-func AppVCPUs(app state.App) int                { return appVCPUs(app) }
-func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
-func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
-func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
+// AppVCPUs, AppCPUMillicores and AppCPUWeight expose an app instance's CPU,
+// which follows its size (ADR-20261109172421). AppCPUBookingMillicores is
+// exported by guest_vcpus.go itself, for pkg/fcvm's metal tests.
+func AppVCPUs(app state.App) int         { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int { return appCPUMillicores(app) }
+func AppCPUWeight(app state.App) int32   { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
@@ -1438,3 +1438,15 @@ var XInitPrimePath = initPrimePath
 func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
 	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
 }
+
+// DrainQueuePushLane runs one push lane over dispatch (ADR-972 amendment
+// 2026-11-19).
+func DrainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	return drainQueuePushLane(ctx, dispatch)
+}
+
+// ReportTriggerPoll records a poll's record count, as dispatchOneTrigger does.
+func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx, records) }
+
+// ErrTriggerGatewayDispatch marks a batch the gateway could not take.
+var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch

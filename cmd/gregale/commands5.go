@@ -261,15 +261,17 @@ func cmdStatus(args []string) int {
 		// in pkg/api/dto.go are the single source of truth.
 		return jsonOut(writeJSON(page))
 	}
-	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
+	// Each indicator names its target, so "degraded" says how far off it is
+	// (retail-store feedback B8, 2026-11-17).
+	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%% (target ≥ %g%%)\n", page.APIAvailabilityPct, api.StatusTargetAPIAvailabilityPct)
 	if page.WakeP95MS == nil {
 		// The status query reports a p95 only from 20 platform wakes in 30
 		// minutes, and omits it when Prometheus is unreachable (H10-46).
 		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms (target ≤ %d ms, platform wakes, last 30 min)\n", *page.WakeP95MS, api.StatusTargetWakeP95MS)
 	}
-	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
+	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%% (target ≥ %d%%, last 24 h; failures caused by customer code are not counted)\n", page.BuildSuccessPct, api.StatusTargetDeploymentSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	// A healthy page's source names the telemetry backend, which is noise for
 	// customers; a degraded one carries the reason the numbers are partial.
@@ -288,10 +290,16 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() ||
+		args[0] == "resume-automation" && !fullEnvironmentCloneCLI() && !environmentBranchCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
-		if fullEnvironmentCloneCLI() {
+		switch {
+		case fullEnvironmentCloneCLI():
 			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
+		case environmentBranchCLI():
+			// Branches copy their parent's automation paused too
+			// (ADR-20261031193635 amendment 2026-11-17).
+			usage = "usage: gregale env <create|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -518,10 +526,7 @@ func envPush(args []string) int {
 	// input path or "<stdin>" so the warning says `File: <stdin>` for
 	// pipe input (matches how envPush surfaces other parse errors).
 	if secretScanMode.isScanEnabled() {
-		origin := *in
-		if *fromStdin {
-			origin = "<stdin>"
-		}
+		origin := envPushOrigin(*in, *fromStdin)
 		scanPairs := make([]secretscan.Pair, len(pairs))
 		for i, p := range pairs {
 			scanPairs[i] = secretscan.Pair{Key: p.k, Value: p.v}
@@ -553,6 +558,7 @@ func envPush(args []string) int {
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
+			PrintWarn(osStderr, "%s", envPushSecretHint(*app, origin))
 			// Build a drop set keyed by (key, value) so a duplicate
 			// KEY with a different VALUE pair is treated distinctly —
 			// the pair table is small (handful of entries per .env
@@ -573,7 +579,7 @@ func envPush(args []string) int {
 		}
 	}
 	if len(pairs) == 0 {
-		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. Use --secret-scan=off to override")
+		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
 	client, err := authedClient()
@@ -631,6 +637,35 @@ func envPush(args []string) int {
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	printSecretUpdateNextSteps(*app, *scope, "", receipt.UpdatedKeys...)
 	return 0
+}
+
+// envPushOrigin names the push input the way scan findings and hints show it.
+func envPushOrigin(path string, fromStdin bool) string {
+	if fromStdin {
+		return "<stdin>"
+	}
+	return path
+}
+
+// envPushSecretHint tells the caller where detected secrets belong. env push
+// drops them; `gregale env set` seals a value deliberately and does not scan
+// it, which is the path the strict-mode rejection already names. Pointing
+// only at --secret-scan=off taught coding agents to turn the scan off for
+// real credentials (agent eval rc.357, Django task).
+func envPushSecretHint(app, origin string) string {
+	appFlag := ""
+	if app != "" {
+		appFlag = " --app " + app
+	}
+	input := " KEY=VALUE"
+	switch {
+	case origin == "<stdin>":
+		input = " --from-stdin"
+	case origin != "":
+		input = " --file " + origin
+	}
+	return "Set detected secrets deliberately with `gregale env set" + appFlag + input +
+		"`; use --secret-scan=off only for test keys the scan misreads"
 }
 
 // renderEnvPushScanWarnings is the envPush-side twin of
@@ -979,6 +1014,7 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -1090,7 +1126,33 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
+		PrintOK(osStdout, "Updated %s to the new name", path)
+	}
 	return 0
+}
+
+// followRenameInSavedContext points the saved context that covers dir at the
+// renamed app. A context still naming the old slug made the next plain
+// `gregale deploy` create a new app under the old name, without the renamed
+// app's database, bucket or crons (prod 2026-11-19). A committed gregale.yaml
+// is the customer's file and is left alone.
+func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.App != oldSlug || newSlug == "" {
+		return "", false
+	}
+	link.App = newSlug
+	root := filepath.Dir(filepath.Dir(path))
+	if projectContextPath(root) != path {
+		return "", false
+	}
+	saved, err := saveProjectContext(root, link)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "warning: renamed %s but could not update %s: %v; run `gregale link --app %s` there\n", oldSlug, path, err, newSlug)
+		return "", false
+	}
+	return saved, true
 }
 
 // cmdAppRestart requests a fresh snapshot restart for an app. The server

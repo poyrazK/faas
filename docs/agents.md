@@ -7,6 +7,11 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+To set up one agent step by step, see
+[Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
+[Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or
+[Deploy with Gemini CLI](gemini-cli.md).
+
 Starting with an empty directory and a Free account? Follow the
 [private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
 for a small internal HTTP app and a CLI deploy, verify, and edit loop.
@@ -82,9 +87,12 @@ application response tools before starting.
 3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
    the user has authorized deployment. Follow the
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
-   review link. After approval, apply the same plan ID to resume the original
-   upload. Use that same plan ID to recover the receipt if the apply response
-   is lost.
+   review link. When the resumable upload commit requires approval, the same
+   plan and source stay available until the deadline shown in
+   `approval.expires_at` and on the review page. After approval, apply the same
+   plan ID to resume the original upload. If the app or its release changed
+   during review, inspect it before creating a new plan. Reuse the plan ID to
+   recover the receipt if the apply response is lost.
 4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
    with `{"app":"fastapi-demo","deployment_id":"<deployment.id>"}`.
    If `pending` is true, poll again with the same ID. Proceed when
@@ -116,7 +124,8 @@ Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
-Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
+Desktop:
 
 ```sh
 gregale mcp connect
@@ -789,9 +798,34 @@ install it and log in or set `FAAS_TOKEN` first.
 ## Project instructions for agents
 
 `gregale init` writes an `AGENTS.md` into each new project. It tells coding
-agents how to deploy, check and roll back that project. Claude Code, Codex,
-Cursor and other agents read it automatically. Edit it like any other project
-file; the CLI never overwrites an existing one.
+agents how to deploy, check and roll back that project. Edit it like any other
+project file; the CLI never overwrites an existing one.
+
+For an existing project, run this in its root, with your app's name:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a "Deploying to Gregale" section to `AGENTS.md`, creating the file if
+the project has none. The section says how to deploy, verify, read a failed
+deploy and roll back `my-api`, and which actions need the user's OK. Without
+`--name`, it uses the app the checkout is linked to, else the directory name.
+Running it again replaces the section in place; the rest of the file stays as
+you wrote it. `--dry-run` shows the changes without writing them.
+
+Codex, Cursor and Antigravity read `AGENTS.md` on their own. For the other
+agents, the command also:
+
+- adds `@AGENTS.md` to an existing `CLAUDE.md`, since Claude Code reads
+  `AGENTS.md` by itself only when a project has no `CLAUDE.md`;
+- creates `.gemini/settings.json` naming `AGENTS.md` in a project with a
+  `.gemini` folder, where Gemini CLI keeps its project settings. An existing
+  settings file is never rewritten; the command says what to add to it.
+
+See [Deploy with Claude Code](claude-code.md),
+[Deploy with Antigravity](antigravity.md) and
+[Deploy with Gemini CLI](gemini-cli.md).
 
 ## Documentation for agents
 

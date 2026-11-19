@@ -33,6 +33,18 @@ func (s *PgStore) ChangeHostedTaskBindings(ctx context.Context, account, id, act
 		defer cancel()
 		_ = tx.Rollback(cleanup)
 	}()
+	out, err := changeHostedTaskBindingsPG(ctx, tx, account, id, action, in)
+	if err != nil {
+		return zero, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return zero, err
+	}
+	return cloneHostedTaskBinding(out), nil
+}
+
+func changeHostedTaskBindingsPG(ctx context.Context, tx pgx.Tx, account, id, action string, in HostedTaskBindingChange) (HostedTaskBindingRecord, error) {
+	var zero HostedTaskBindingRecord
 	q := toolpublicationdb.New()
 	acct := mustPgUUID(account)
 	if _, err := q.LockToolPublicationAccount(ctx, tx, acct); err != nil {
@@ -191,10 +203,7 @@ func saveHostedTaskBindingPG(ctx context.Context, tx pgx.Tx, account, id string,
 	if n != 1 {
 		return zero, ErrConflict
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return zero, err
-	}
-	return cloneHostedTaskBinding(out), nil
+	return out, nil
 }
 
 func captureHostedTaskPinsPG(ctx context.Context, tx pgx.Tx, account string, source api.HostedTaskSourceIntent, in api.HostedTaskBindingSelection, p tasktoolbinding.Policy) ([]tasktoolbinding.Pin, error) {

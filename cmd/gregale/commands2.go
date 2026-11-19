@@ -702,6 +702,7 @@ func cmdApp(args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -1086,7 +1087,7 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
-	var revoked []string
+	var revoked, keptDatabases []string
 	if *deleteBindings {
 		ctx := context.Background()
 		app, err := client.GetApp(ctx, slug)
@@ -1101,6 +1102,7 @@ func cmdAppsRm(args []string) int {
 		if err != nil {
 			return printErr("Could not revoke a database binding", err)
 		}
+		keptDatabases = boundDatabaseNames(bindings)
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
@@ -1116,11 +1118,13 @@ func cmdAppsRm(args []string) int {
 		}
 		if *deleteBindings {
 			out["revoked_bindings"] = revoked
+			out["kept_databases"] = keptDatabases
 		}
 		return jsonOut(writeJSON(out))
 	}
 	if len(revoked) > 0 {
 		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		printKeptDatabases(osStdout, keptDatabases)
 		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
@@ -1145,6 +1149,60 @@ func cmdAppsRestore(args []string) int {
 		return jsonOut(writeJSON(app))
 	}
 	PrintOK(osStdout, "Restored %s", app.Slug)
+	return 0
+}
+
+// cmdAppsPurge implements `gregale app purge <slug>`: it permanently removes
+// one of the caller's deleted apps now instead of at the end of its restore
+// window, so the slug can be reused at once (redeploying a Compose project
+// after a teardown). The interactive path makes the user retype the slug.
+func cmdAppsPurge(args []string) int {
+	fs := newFlagSet("apps-purge", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "purge without prompting; required in non-interactive and JSON mode")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 1 {
+		PrintUsage(os.Stderr, "usage: gregale app purge <slug> [--yes]", "apps")
+		return 1
+	}
+	if code := requireAutomationConfirmation(*yes, "--yes"); code != 0 {
+		return code
+	}
+	slug := fs.Arg(0)
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	deleted, err := findDeletedApp(ctx, client, slug)
+	if err != nil {
+		return printErr("Could not list deleted apps", err)
+	}
+	if deleted == nil {
+		return printErr("Nothing to purge", fmt.Errorf("no deleted app named %q; delete it first with `gregale app delete %s`", slug, slug))
+	}
+	if !*yes {
+		if jsonOutput {
+			return printErr("Confirmation required", errors.New("app purge requires --yes in JSON mode"))
+		}
+		fmt.Fprintf(os.Stderr, "Permanently remove deleted app %q, its deployments and snapshots? This cannot be undone.\n", slug)
+		if !requireTyped(slug) {
+			return 130
+		}
+	}
+	out, err := client.PurgeDeletedApp(ctx, deleted.ID)
+	if err != nil {
+		return printErr("Could not purge app", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(out))
+	}
+	if out.Purged {
+		PrintOK(osStdout, "Purged %s; the name is free to reuse", out.Slug)
+		return 0
+	}
+	PrintOK(osStdout, "Purge of %s started (waiting on %s); it can no longer be restored, and the name frees up within a few minutes", out.Slug, out.PendingReason)
 	return 0
 }
 
@@ -1458,27 +1516,36 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 // gets a restore hint instead of a dead end (Hunt 14 H14-93). The lookup is
 // best effort: any error falls back to the generic message.
 func slugInUseError(ctx context.Context, client *Client, slug string) error {
+	if app, err := findDeletedApp(ctx, client, slug); err == nil && app != nil {
+		if app.RestoreEligible {
+			return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug, slug)
+		}
+		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
+	}
+	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+}
+
+// findDeletedApp returns the caller's deleted app holding slug, or nil when
+// the first 200 inventory rows hold none. An app deleted, restored and
+// deleted again lists once per tombstone; the newest comes first.
+func findDeletedApp(ctx context.Context, client *Client, slug string) (*api.DeletedAppSummary, error) {
 	cursor := ""
 	for page := 0; page < 4; page++ {
 		list, err := client.ListDeletedApps(ctx, cursor, 50)
 		if err != nil {
-			break
+			return nil, err
 		}
-		for _, app := range list.Apps {
-			if app.Slug != slug {
-				continue
+		for i := range list.Apps {
+			if list.Apps[i].Slug == slug {
+				return &list.Apps[i], nil
 			}
-			if app.RestoreEligible {
-				return fmt.Errorf("slug %q belongs to an app you deleted%s; restore it with `gregale app restore %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " that can be restored until "), slug)
-			}
-			return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "))
 		}
 		if list.NextCursor == "" {
 			break
 		}
 		cursor = list.NextCursor
 	}
-	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	return nil, nil
 }
 
 func deletedAppUntil(t *time.Time, prefix string) string {
@@ -1695,7 +1762,19 @@ func errNegativePerInstanceConcurrency(value int) error {
 // caller: the setting is not enabled for this account yet.
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
-		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
+		const hint = "leave it unset to use the plan's concurrency per VM"
+		// printErr renders the APIError it finds in the chain, so a wrapped
+		// explanation never reached the screen (prod 2026-11-19 showed the
+		// raw "unknown field(s)"). Rewrite the problem itself.
+		var ae *APIError
+		if errors.As(err, &ae) {
+			explained := *ae
+			explained.Problem.Detail = detail
+			explained.Problem.Hint = hint
+			return &explained
+		}
+		return fmt.Errorf("%s; %s (%w)", detail, hint, err)
 	}
 	return err
 }
@@ -2042,6 +2121,11 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	projectRetry     map[string]string
+	projectPlan      func(context.Context, *Client, api.PlanResponse) error
+	confirmProject   func(api.PlanResponse) (bool, error)
+	onProjectAttempt func(string) error
+	onProjectApply   func(api.ApplyResponse) error
+	skipProjectLink  bool // The guided session persists its own verified source context.
 	onQueued         func(api.DeploymentResponse)
 	onSubmission     func(deploySubmission) error
 	onUploadSession  func(deployUploadIdentity) error
@@ -2197,6 +2281,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	safeProjectDeploy := fs.Bool("atomic", false, "build an existing HTTP project at zero traffic, then atomically publish its ready release")
 	projectDeploy := fs.Bool("project", false, "deploy all detected workloads as one project (slug defaults from --name or source)")
 	projectSlug := fs.String("project-slug", "", "kebab slug for the project (triggers one-key provision)")
+	appSlugPrefix := fs.String("prefix", "", "name the project's new apps <prefix><service>, e.g. --prefix shop- (overrides x-gregale-slug-prefix)")
 	// --environment targets a registered project environment. The server
 	// resolves the name to the deployment scope after checking the app's
 	// project registry; omitted preserves the legacy default scope.
@@ -2272,6 +2357,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
 	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deploy completion (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
+	// Hosted MCP passes this only when retrying one approved upload commit.
+	resumeUploadID := fs.String("resume-upload-id", "", "require this existing resumable upload on retry")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -2381,6 +2468,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["resume-upload-id"] {
+		if *resumeUploadID == "" || *idempotencyKey == "" || *sourcePath == "" || *createOnly ||
+			*image != "" || *repo != "" || *simplePlan || *dryRun || *diff || *serverDiff || *explainFiles {
+			return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a directory deploy with its original idempotency key"))
+		}
+	}
 	if *explainFiles {
 		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
 			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
@@ -2460,6 +2553,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *progressiveProjectDeploy {
 		ctx = api.ContextWithProjectProgressiveRelease(ctx)
 	}
+	if *appSlugPrefix != "" {
+		if err := reposcan.ValidateSlugPrefix(*appSlugPrefix); err != nil {
+			return printErr("Invalid --prefix", err)
+		}
+		ctx = api.ContextWithProjectAppSlugPrefix(ctx, *appSlugPrefix)
+	}
 	selectedSourceMode, sourceModeErr := resolveDeploySourceMode(*sourceMode, explicit["source"], *worktree,
 		*image != "" || *tarball != "" || *repo != "" || *templateName != "" || *githubSnippet, *createOnly)
 	if sourceModeErr != nil {
@@ -2494,6 +2593,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
+	if *resumeUploadID != "" && (projectRequested || developerSync != nil) {
+		return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a single app upload"))
+	}
 	if sourceMapErr := validateDeployIssueSourceMaps(explicit, *issueSourceMaps, *issueSourceMapDirectory,
 		*trafficPercent == 0, projectRequested || *image != "" || *repo != "" || *templateName != "" || *githubSnippet ||
 			*simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil ||
@@ -2733,6 +2835,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
+		if *templateName == templates.PrivateNode {
+			return printErr("Scaffold the private Node project first", errors.New("run gregale init --template hello-node-private --path ./my-api, then gregale start ./my-api"))
+		}
 		// The data-api template is the bare runtime: it cannot start without a
 		// database binding and token settings, and its copy in this CLI may be
 		// older than the runtime the platform serves (ADR-20261031095954).
@@ -2925,6 +3030,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// prov cleanly (commit_sha and dirty zero-valued).
 	var prov *zeroConfigProvenance
 	var dirtyFileCount int
+	var dirtyBuildFiles []string
 
 	// --github emits a copy-paste GitHub Actions workflow snippet to
 	// stdout and exits 0 (issue #270). This path does not authenticate or
@@ -3327,6 +3433,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if projectRequested && !api.ValidProjectSlug(*projectSlug) {
 		return printErr("Invalid --project-slug", projectSlugValidationError(*projectSlug))
 	}
+	if *appSlugPrefix != "" && !projectRequested {
+		return printErr("Invalid --prefix", errors.New("--prefix names a project's new apps; use it with --project"))
+	}
 	var explicitHeadProv *zeroConfigProvenance
 	if selectedSourceMode == deploySourceHEAD {
 		resolved, resolveErr := resolveExplicitHeadProvenance(sourceDir)
@@ -3405,6 +3514,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 							dirtyFileCount++
 						}
 					}
+					dirtyBuildFiles = uncommittedBuildFiles(dirtyOut, provVal.Root, selectedSourceDir)
 					if file, untracked := uncommittedProjectFile(dirtyOut, provVal.Root, selectedSourceDir); file != "" && !*worktree {
 						switch {
 						case untracked && path.Base(file) != "gregale.yaml":
@@ -3419,7 +3529,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			if dirtyFileCount > 0 && !*worktree {
-				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD. Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount))
+				PrintWarn(osStderr, "%d local %s excluded from deploy; shipping committed HEAD.%s Use --worktree to include them.", dirtyFileCount, pluralizeDeployChange(dirtyFileCount), dirtyBuildFilesSuffix(dirtyBuildFiles))
 			}
 			if *deployedBy == "" && provVal.DeployedBy != "" {
 				*deployedBy = provVal.DeployedBy
@@ -3977,6 +4087,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return runDiff(ctx, client, opts)
 	}
 
+	if *resumeUploadID != "" && *tarball == "" {
+		return printErr("Invalid upload retry", errors.New("no source archive was resolved for the original upload"))
+	}
+
 	// Phase 3 (repo decomposition) one-key provision path. Triggered
 	// by any project scope control (--project, --project-slug, --only,
 	// --exclude, --persist-exclude, or --show-affected) on a --tarball /
@@ -4059,7 +4173,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 
 		plan = withProvidedEnvKeys(plan, deploySecrets)
-		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+		if execution.projectPlan != nil && plan.CanApply {
+			if err := execution.projectPlan(ctx, client, plan); err != nil {
+				return printErr("Could not review project target", err)
+			}
+		}
+		if execution.confirmProject != nil && plan.CanApply {
+			ok, err := execution.confirmProject(plan)
+			if err != nil {
+				return startInputExit(err)
+			}
+			if !ok {
+				return 0
+			}
+		} else if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
 			return code
 		}
 		approvalToken := ""
@@ -4091,6 +4218,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not save project submission attempt; no apply was submitted", saveErr)
 		}
 		defer func() { _ = projectLock.Close() }()
+		if execution.onProjectAttempt != nil {
+			if err := execution.onProjectAttempt(projectSession.record.ID); err != nil {
+				return printErr("Could not save the guided project session", err)
+			}
+		}
 		projectSession.addWarning(localSourceWarning)
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
@@ -4116,6 +4248,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if saveErr := projectSession.rememberProjectApply(apply); saveErr != nil {
 			return renderProjectDeployReceipt(plan, apply, projectSession, false, saveErr)
 		}
+		if execution.onProjectApply != nil {
+			if err := execution.onProjectApply(apply); err != nil {
+				return projectSubmissionFailure(projectSession, err)
+			}
+		}
 		if len(execution.projectRetry) > 0 {
 			if err := validateProjectRetryAcceptance(execution.projectRetry, apply); err != nil {
 				return projectSubmissionFailure(projectSession, err)
@@ -4132,12 +4269,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return waitForSafeProjectRelease(ctx, client, projectSession, time.Duration(*waitTimeoutSeconds)*time.Second)
 			}
 		}
+		if !execution.skipProjectLink && !explicit["tarball"] && *templateName == "" && *environment == "" {
+			linkCheckoutAfterProjectDeploy(osStderr, contextDir, *projectSlug, jsonOutput)
+		}
 		var projectWaitTimeouts []projectWaitTimeout
 		if waitForDeploy && !*safeProjectDeploy && len(apply.Builds) > 0 {
 			apply, projectWaitTimeouts = waitForProjectApplyTimeouts(withProjectWaitProgress(ctx, osStderr, jsonOutput), client, apply,
 				time.Duration(*waitTimeoutSeconds)*time.Second)
 		}
-		return renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
+		if !jsonOutput {
+			renderProjectEndpointsFor(ctx, osStdout, client, apply, *projectSlug, *environment)
+		}
+		return code
 	}
 
 	// A template or gregale.yaml that turns on a capability the account does
@@ -4215,12 +4359,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
+			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
+				_, getErr := client.GetApp(ctx, slug)
+				creating = isNotFound(getErr)
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if err == nil && creating {
+				rememberCreatedApp(contextDir, slug)
+			}
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
@@ -4484,6 +4634,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			var uploadErr error
 			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
+			if *resumeUploadID != "" {
+				uploadCtx = context.WithValue(uploadCtx, requiredUploadIDKey{}, *resumeUploadID)
+			}
 			if err := execution.preparingSubmission(deployKey, "resumable", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)
 			}
@@ -4499,6 +4652,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
 			}
 		} else {
+			if *resumeUploadID != "" {
+				return submissionFailed("Source submission failed", dep, errors.New("the deploy no longer supports its original resumable upload"), deployKey)
+			}
 			var deployErr error
 			if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)
@@ -5608,7 +5764,9 @@ func cmdDomains(args []string) int {
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
-	case subRm:
+	case subRm, "remove":
+		// `domain add` works, so `domain remove` was the natural undo and
+		// answered "Did you mean move?" (prod 2026-11-19).
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).
@@ -7662,7 +7820,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
-		next := recoveryCLI() + " inspect " + recoveryArgument(slug)
+		next := recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 		if deployment != "" {
 			next = recoveryCLI() + " deployment get " + recoveryArgument(deployment)
 		}
@@ -8273,6 +8431,9 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	}
 	code := renderDeployFailure(d)
 	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	if c != nil {
+		printReleaseTaskOutput(ctx, c, os.Stderr, appSlug, d)
+	}
 	return code
 }
 

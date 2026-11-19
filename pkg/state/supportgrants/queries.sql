@@ -63,15 +63,16 @@ SELECT pg_advisory_xact_lock(hashtextextended('support_grant_requests:' || sqlc.
 -- At most max_open open, unexpired requests per organization; run under
 -- LockOrgRequests in the same transaction.
 -- name: InsertRequest :one
-INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at)
+INSERT INTO support_grant_requests (org_id, operator_account_id, reason, expires_at, app_ids, ttl_seconds, extends_grant_id)
 SELECT sqlc.arg(org_id)::uuid, sqlc.arg(operator_id)::uuid, sqlc.arg(reason)::text,
-       clock_timestamp() + make_interval(secs => sqlc.arg(ttl_seconds)::double precision)
+       clock_timestamp() + make_interval(secs => sqlc.arg(ttl_seconds)::double precision),
+       sqlc.narg(app_ids)::uuid[], sqlc.narg(grant_ttl_seconds)::int, sqlc.narg(extends_grant_id)::uuid
 WHERE (SELECT count(*) FROM support_grant_requests r
        WHERE r.org_id = sqlc.arg(org_id)::uuid AND r.status = 'open' AND r.expires_at > now()) < sqlc.arg(max_open)::int
-RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id;
+RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id;
 
 -- name: ListRequests :many
-SELECT id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id
+SELECT id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id
 FROM support_grant_requests
 WHERE org_id = sqlc.arg(org_id)::uuid
 ORDER BY created_at DESC
@@ -81,4 +82,21 @@ LIMIT 50;
 UPDATE support_grant_requests
 SET status = sqlc.arg(status)::text, decided_at = clock_timestamp(), decided_by_account_id = sqlc.arg(decided_by)::uuid
 WHERE id = sqlc.arg(id)::uuid AND org_id = sqlc.arg(org_id)::uuid AND status = 'open' AND expires_at > now()
-RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id;
+RETURNING id, org_id, operator_account_id, reason, status, created_at, expires_at, decided_at, decided_by_account_id, app_ids, ttl_seconds, extends_grant_id;
+
+-- ClaimEndedGrants marks up to max grants that ended (revoked or expired) in
+-- the last day and have no summary yet, and returns them for the summary
+-- mail. SKIP LOCKED lets every apid run the loop; each grant is claimed once.
+-- name: ClaimEndedGrants :many
+UPDATE support_grants g SET summary_sent_at = clock_timestamp()
+FROM orgs o
+WHERE o.id = g.org_id AND g.id IN (
+  SELECT e.id FROM support_grants e
+  WHERE e.summary_sent_at IS NULL
+    AND (e.revoked_at IS NOT NULL OR e.expires_at <= now())
+    AND coalesce(e.revoked_at, e.expires_at) > now() - interval '1 day'
+  ORDER BY coalesce(e.revoked_at, e.expires_at)
+  LIMIT sqlc.arg(max_grants)::int
+  FOR UPDATE SKIP LOCKED)
+RETURNING g.id, g.org_id, g.app_ids, g.created_by_account_id, g.request_id, g.reason, g.created_at, g.expires_at,
+          g.revoked_at, g.revoked_by_account_id, o.slug AS org_slug;

@@ -78,3 +78,7 @@ ALTER TABLE app_secrets ADD COLUMN managed_credential_generation bigint;
 CREATE TABLE managed_postgres_bindings(id uuid PRIMARY KEY,account_id uuid NOT NULL,database_account_id uuid NOT NULL,database_id uuid NOT NULL,app_id uuid NOT NULL,scope text NOT NULL,environment_key text NOT NULL,credential_ref text,credential_generation bigint NOT NULL,state text NOT NULL,access text NOT NULL,deleted_at timestamptz);
 CREATE TABLE app_envs(account_id uuid NOT NULL,app_id uuid NOT NULL,scope text NOT NULL,key text NOT NULL,value text NOT NULL,PRIMARY KEY(app_id,scope,key));
 CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY,account_id uuid NOT NULL,state text NOT NULL);
+
+CREATE TABLE hosted_task_rehearsal_plans(account_id uuid NOT NULL,id text NOT NULL,payload jsonb NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));
+
+CREATE TABLE hosted_task_rehearsal_runs(account_id uuid NOT NULL,id text NOT NULL,run_id uuid NOT NULL,plan_sha256 text NOT NULL,reserved_at timestamptz NOT NULL,approval_expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));

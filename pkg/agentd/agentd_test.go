@@ -63,13 +63,15 @@ func openStore(t *testing.T) (*pgxpool.Pool, *agentstore.Store) {
 	for _, name := range []string{"20261029093503390_agent_runs.sql", "20261029093510563_agent_run_execution.sql",
 		"20261029093517736_agent_run_model_access.sql", "20261029093524909_agent_run_checkout.sql", "20261029093538256_agent_deliveries.sql", "20261029093545429_agent_delivery_destinations.sql", "20261029093606948_agent_run_workflow_steps.sql",
 		"20261030205907043_agent_version_pause_during_model_calls.sql",
+		"20261119124526531_agent_capability_policy.sql",
 		"20261031122245453_agent_run_usage.sql", "20261110153935524_sandbox_sessions.sql",
 		"20261110153935557_sandbox_workspace_snapshots.sql", "20261110153935586_sandbox_ports.sql",
 		"20261110153935627_sandbox_session_images.sql", "20261110153935666_sandbox_templates.sql",
 		"20261110153935695_sandbox_session_templates.sql", "20261110153935721_sandbox_session_usage.sql",
 		"20261117075028100_sandbox_sessions_browser.sql", "20261117075028200_sandbox_tasks.sql",
 		"20261117075028300_sandbox_actions.sql", "20261117084816832_sandbox_action_screenshots.sql",
-		"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql"} {
+		"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql",
+		"20261119101645200_sandbox_sessions_placed_node.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

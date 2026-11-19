@@ -119,6 +119,13 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// mountHelperLocal is one copy, beside the chroots, of a mountHelperPath
+	// that lives on another filesystem (the metal tests point it at the test
+	// vmmd in /tmp). Launches hard-link it, as they do the production helper,
+	// instead of copying the executable each time. mountHelperLocalFrom is the
+	// path it was copied from.
+	mountHelperLocal     string
+	mountHelperLocalFrom string
 	// resident holds verified copies of the jailer and firecracker executables
 	// on the jail tmpfs (ADR-20261105100000), launched in place of the
 	// installed ones so a wake after an idle spell reads nothing from disk.
@@ -184,7 +191,8 @@ type JailerVMM struct {
 	// per-VMM *http.Client the waitReady HTTP probe reuses across
 	// its 200ms-cadence loop. Lazily created by healthcheckClient
 	// under mu; nil = first probe. 2s per-probe timeout bounds
-	// the probe within the readyTimeout deadline.
+	// the probe within the readyTimeout deadline. Its transport never
+	// keeps a connection open into a guest (newHealthcheckClient).
 	hcClient *http.Client
 	recs     map[string]*instanceRecord // instance -> per-process bookkeeping (M6 builder VMs)
 	// consoleOpens are console files Restore and boot start creating before
@@ -1393,7 +1401,7 @@ func (v *JailerVMM) BootColdBoot(ctx context.Context, l Lease, spec ColdBootSpec
 		v.logColdBootBreakdown(ctx, l, breakdown)
 		return nil
 	}
-	if err = v.boot(ctx, l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
+	if err = v.boot(withProbeHost(ctx, spec.ProbeHost), l, BuildColdBootConfig(spec, l.Slot), false, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.ImageHealthcheckRequired, spec.StartupDeadlineS, spec.ExecutionMode, spec.WorkerPushDelivery, spec.Workloads, spec.SecretsEnvJSON, spec.APIEnvJSON, spec.ServiceDiscoveryIP, spec.AppTask, nil, &breakdown); err != nil {
 		return err
 	}
 	breakdown.TotalMs = time.Since(t0).Milliseconds()
@@ -1480,6 +1488,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	if len(l.SandboxManifest) > 0 {
 		if err := v.stageSandboxManifestForOwner(ctx, stagingOwner, l.Instance, []byte(l.SandboxManifest)); err != nil {
 			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
+		}
+	}
+	if len(l.cacheExportManifest) > 0 {
+		if err := v.stageCacheExportRunForOwner(ctx, stagingOwner, l.Instance, []byte(l.cacheExportManifest)); err != nil {
+			return fmt.Errorf("vmm: stage cache export run: %w", err)
 		}
 	}
 	stagedRuntimeAt := time.Now()
@@ -1863,8 +1876,14 @@ func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 
 const serviceDiscoveryResolverMode os.FileMode = 0o644
 
+// serviceDiscoveryResolverContents searches svc.gregale, so a Compose
+// service's bare name (`http://orders:8080`, ORDERS_HOST=orders, or a host
+// hard-coded in application.yml) resolves as orders.svc.gregale; with
+// private service addresses (ADR-576) its declared ports answer too
+// (retail-store feedback A2, 2026-11-17). Names with a dot are tried as
+// written first (ndots:1), so external hosts are unaffected.
 func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
-	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\noptions timeout:2 attempts:2\n", ip)
+	return fmt.Appendf(nil, "# Gregale tenant service resolver\nnameserver %s\nsearch svc.gregale\noptions ndots:1 timeout:2 attempts:2\n", ip)
 }
 
 // applyPreBootCgroupFence installs the host-side memory/CPU fence after
@@ -1874,7 +1893,7 @@ func serviceDiscoveryResolverContents(ip netip.Addr) []byte {
 // bypass.
 func (v *JailerVMM) applyPreBootCgroupFence(l Lease, workloads []WorkloadSpec) error {
 	if l.IsBuilder {
-		if err := writeBuildCgroup(l.Instance, l.MemoryMaxMiB); err != nil {
+		if err := writeBuildCgroup(builderCgroupParent(l), l.Instance, l.MemoryMaxMiB); err != nil {
 			return err
 		}
 		return v.trackCgroupFence(l)
@@ -2460,7 +2479,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	}
 	tResume := time.Now()
 	if !spec.KeepPaused && !spec.SkipReady {
-		if err = v.waitApplicationReady(ctx, l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
+		if err = v.waitApplicationReady(withProbeHost(ctx, spec.ProbeHost), l, spec.HealthcheckPath, spec.HealthcheckGRPC, spec.HealthcheckGRPCService, spec.StartupDeadlineS, "", false, spec.ImageHealthcheckRequired, nil); err != nil {
 			return fmt.Errorf("vmm: readiness after restore: %w", err)
 		}
 	}
@@ -5785,6 +5804,15 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		}
 		return fmt.Errorf("vmm: start jailer: %w", startErr)
 	}
+	if l.BorrowedBuilder() {
+		// ADR-20261118154632: if the host still runs out of memory, the
+		// kernel kills a borrowed build before any tenant VM or daemon. The
+		// jailer keeps the value across its exec of Firecracker. builderd's
+		// and vmmd's give-backs still protect tenants if the write fails.
+		if err := writeOOMScoreAdj("/proc", cmd.Process.Pid, api.BorrowedBuilderOOMScoreAdj); err != nil {
+			slog.Default().Warn("vmm: borrowed builder keeps the default OOM priority", "instance", l.Instance, "err", err)
+		}
+	}
 	// Capture before starting Wait: even an immediately exiting child retains
 	// its PID until reaped, so a reused PID cannot enter this checkpoint.
 	v.mu.Lock()
@@ -6282,12 +6310,20 @@ func (v *JailerVMM) stageMountHelper(root string) error {
 	}
 	dst := filepath.Join(root, "faas-mount-helper")
 	_ = os.Remove(dst)
-	if err := os.Link(shared, dst); err == nil {
+	linkErr := os.Link(shared, dst)
+	if linkErr == nil {
 		return nil
 	}
-	// Defensive fallback for non-production tests/configurations where the
-	// chroot base and instance root do not share a filesystem.
-	if err := copyFile(shared, dst); err != nil {
+	if errors.Is(linkErr, syscall.EXDEV) {
+		// The helper is on another filesystem than the chroots. Copy it once
+		// beside them and link that copy from now on.
+		if local, err := v.localMountHelper(shared); err == nil && os.Link(local, dst) == nil {
+			return nil
+		}
+	}
+	// Defensive fallback for configurations where even the chroot base and
+	// the instance root do not share a filesystem.
+	if err := writeExecutable(func() error { return copyFile(shared, dst) }); err != nil {
 		return fmt.Errorf("vmm: stage mount helper: %w", err)
 	}
 	if err := os.Chmod(dst, 0o755); err != nil {
@@ -6314,31 +6350,69 @@ func (v *JailerVMM) ensureMountHelper() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(v.chrootBase, 0o700); err != nil {
-		return "", fmt.Errorf("vmm: create mount helper root: %w", err)
-	}
 	shared := filepath.Join(v.chrootBase, ".faas-mount-helper")
-	tmp, err := os.CreateTemp(v.chrootBase, ".faas-mount-helper-*")
-	if err != nil {
-		return "", fmt.Errorf("vmm: create shared mount helper: %w", err)
-	}
-	tmpPath := tmp.Name()
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpPath)
-		return "", fmt.Errorf("vmm: close shared mount helper: %w", err)
-	}
-	defer func() { _ = os.Remove(tmpPath) }()
-	if err := copyFile(exe, tmpPath); err != nil {
-		return "", fmt.Errorf("vmm: copy shared mount helper: %w", err)
-	}
-	if err := os.Chmod(tmpPath, 0o755); err != nil {
-		return "", fmt.Errorf("vmm: chmod shared mount helper: %w", err)
-	}
-	if err := os.Rename(tmpPath, shared); err != nil {
-		return "", fmt.Errorf("vmm: publish shared mount helper: %w", err)
+	if err := publishMountHelper(v.chrootBase, exe, shared); err != nil {
+		return "", err
 	}
 	v.mountHelperPath = shared
 	return shared, nil
+}
+
+// localMountHelper returns a copy of helper in the chroot base, making it the
+// first time: helper is on another filesystem than the chroots, so they cannot
+// hard-link it.
+func (v *JailerVMM) localMountHelper(helper string) (string, error) {
+	v.mountHelperMu.Lock()
+	defer v.mountHelperMu.Unlock()
+	if v.mountHelperLocal != "" && v.mountHelperLocalFrom == helper {
+		if info, err := os.Stat(v.mountHelperLocal); err == nil && info.Mode().IsRegular() {
+			return v.mountHelperLocal, nil
+		}
+	}
+	local := filepath.Join(v.chrootBase, ".faas-mount-helper-local")
+	if err := publishMountHelper(v.chrootBase, helper, local); err != nil {
+		return "", err
+	}
+	v.mountHelperLocal, v.mountHelperLocalFrom = local, helper
+	return local, nil
+}
+
+// publishMountHelper copies src to dst in dir: written to a temporary name
+// under writeExecutable, so no child holds it open for writing, then renamed
+// into place, so no launch ever execs a partial copy.
+func publishMountHelper(dir, src, dst string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("vmm: create mount helper root: %w", err)
+	}
+	var tmpPath string
+	defer func() {
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+	if err := writeExecutable(func() error {
+		tmp, err := os.CreateTemp(dir, filepath.Base(dst)+"-*")
+		if err != nil {
+			return fmt.Errorf("vmm: create shared mount helper: %w", err)
+		}
+		tmpPath = tmp.Name()
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("vmm: close shared mount helper: %w", err)
+		}
+		if err := copyFile(src, tmpPath); err != nil {
+			return fmt.Errorf("vmm: copy shared mount helper: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpPath, 0o755); err != nil {
+		return fmt.Errorf("vmm: chmod shared mount helper: %w", err)
+	}
+	if err := os.Rename(tmpPath, dst); err != nil {
+		return fmt.Errorf("vmm: publish shared mount helper: %w", err)
+	}
+	return nil
 }
 
 // bindTunSourceForOwner carries the real host TUN device into the jail before
@@ -7819,6 +7893,7 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 	if err != nil {
 		return 0, nil, err
 	}
+	applyProbeHost(req)
 	resp, err := client.Do(req)
 	if err != nil {
 		// Transport error (connection refused, dial timeout,
@@ -7831,14 +7906,13 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 		// away mid-probe — both must be retried).
 		return 0, err, nil
 	}
-	// Drain the body (capped) before close so the cached
-	// transport's keep-alive can reuse the connection. Without
-	// this, every probe opens a fresh TCP socket and TIME_WAIT
-	// accumulates under sustained probing. The 64 KiB cap is a
-	// safety net — production customers' healthcheck responses
-	// are status-only — but bounded drain is required so a
-	// misbehaving runner that streams a 1 GB body can't OOM
-	// the host.
+	// Drain the body (capped) before close so the app finishes its
+	// response and closes the connection itself (the readiness
+	// client sends Connection: close), rather than seeing vmmd
+	// reset it mid-write. The 64 KiB cap is a safety net —
+	// production customers' healthcheck responses are status-only
+	// — but bounded drain is required so a misbehaving runner that
+	// streams a 1 GB body can't OOM the host.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
 	return resp.StatusCode, nil, nil
@@ -7851,14 +7925,39 @@ func healthcheckProbeResult(ctx context.Context, client *http.Client, addr, heal
 // returns a fresh client when the receiver or the cache is nil.
 func (v *JailerVMM) healthcheckClient() *http.Client {
 	if v == nil {
-		return &http.Client{Timeout: 2 * time.Second}
+		return newHealthcheckClient()
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.hcClient == nil {
-		v.hcClient = &http.Client{Timeout: 2 * time.Second}
+		v.hcClient = newHealthcheckClient()
 	}
 	return v.hcClient
+}
+
+// newHealthcheckClient builds the readiness probe client. Keep-alive is off:
+// each probe asks the app to close its connection after the response, so
+// readiness never leaves a connection of vmmd's open in the guest.
+//
+// With http.DefaultTransport the last successful probe stayed idle in the
+// pool for up to 90 s against any app that honours keep-alive (gunicorn
+// gthread, uvicorn, Node, Go). Restore runs readiness inside bringUp, and
+// releaseInheritedConnections right after it took that fresh probe socket for
+// one inherited from the snapshot and destroyed it; the release before a
+// capture or destroy did the same to the cold-boot probe's socket.
+// SOCK_DESTROY fails the app's socket with ECONNABORTED, which gunicorn logs
+// as "Socket error processing request" with a traceback on every deploy and
+// wake (agent eval rc.357, Django task; vmmd "released inherited guest
+// connections after restore" reset=1 on gregale-compute-2).
+func newHealthcheckClient() *http.Client {
+	return &http.Client{
+		Timeout: 2 * time.Second,
+		Transport: &http.Transport{
+			Proxy:             nil, // probes dial the guest's host IP directly
+			DialContext:       (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+			DisableKeepAlives: true,
+		},
+	}
 }
 
 // VsockCharacterizationHostPort is the AF_VSOCK port the host's

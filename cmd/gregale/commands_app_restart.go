@@ -259,7 +259,7 @@ func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusRespo
 	case "completed":
 		command = recoveryCLI() + " app health " + recoveryArgument(slug)
 	case "failed":
-		command = recoveryCLI() + " inspect " + recoveryArgument(slug)
+		command = recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Next command (POSIX shells):\n    %s\n", command)
 	return 0

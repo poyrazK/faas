@@ -91,6 +91,10 @@ func main() {
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}
+	// Nor does a debug session's helper (ADR-20261117070620).
+	if len(os.Args) > 0 && os.Args[0] == appTaskDebugHelperArg0 && os.Getpid() != 1 {
+		os.Exit(runAppTaskDebugHelper(os.Args[1:]))
+	}
 	// Nor does the builder's dependency-cache check, run by the build shell.
 	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
 		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
@@ -163,6 +167,9 @@ func boot() error {
 		return fmt.Errorf("assemble overlay: %w", err)
 	}
 	guestStage("assemble-overlay")
+	// The runtime base is unreachable after the pivot; a debug session
+	// (ADR-20261117070620) needs its tools, so clone them first.
+	captureAppTaskDebugTools(slog.Default())
 	if err := pivotInto(root); err != nil {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
@@ -182,6 +189,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode != modeAppTask {
+		releaseAppTaskDebugTools()
+	}
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
 	}
@@ -661,6 +671,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
+	env = StampJVMHeapEnv(env, argv...)
 	env = StampRestoreReseedEnv(env, argv...)
 	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)

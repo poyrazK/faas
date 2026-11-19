@@ -1,6 +1,6 @@
 # ADR-20261027090016 · The agent capability gateway: one policy, budget and audit for models, tools, web and data
 
-- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored.
+- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored. Amendment 1 (2026-11-19): what is already built, and the first slice.
 - **Date:** 2026-10-19
 - **Amends (when accepted):**
   - ADR-20261027090010 §7: model calls join one per-run capability policy and budget;
@@ -201,3 +201,103 @@ All steps stay on local branches until the owner asks for PRs, behind the intern
 1. Whether customer MCP servers may be marked trusted, and by whom (proposed: the seller, per server, recorded in the audit).
 2. Slack as an approval channel at launch, or webhooks only.
 3. Whether `agents.spawn` (sub-agents) lives here or in ADR-20261027090010's workflow step.
+
+## Amendment 1 (2026-11-19) · What is built, and the first slice
+
+The owner chose a foundation slice (2026-11-19): policies, the MCP endpoint
+for agent runs, a per-run tool-call budget with decision rows, and `web_fetch`
+as the first tool behind a switch. Taint, approval, the audit spool, sessions,
+tenant narrowing and the other tool sources come later, in the rollout order
+above.
+
+### What already exists
+
+- **Step 2 is built for agent runs** (ADR-20261027090010 §7). vmmd mints the
+  relay assertion from agentd's placement data (`AgentRunClaims`:
+  `account_id`, `run_id`, `lease_token`, `platform_tenant_id`, `agent_id`,
+  `agent_version`), and outboundd verifies it and checks the run's live lease
+  on every request (`PostgresAgentRuns.AuthorizeAgentRun`).
+  - A version is keyed by `(agent_id, version)`, so the claim this ADR calls
+    `agent_version_id` is that pair.
+  - Sandbox sessions start the guest relay but have no relay identity yet.
+    They get one in a later step.
+- **Model spend** already has a per-run cap and ledger in outboundd
+  (`agent_run_ai_spend`, `agent_run_ai_reservations`), which §6 keeps.
+- **Stateless agents' platform tools** (`gregale_sleep`, `gregale_run`,
+  `gregale_github_subscribe`, `gregale_browse`, `gregale_browser`) are a RAP
+  toolset in apid (ADR-20261030125501 §4 amendment). They serve function
+  agents, whose runtimes speak RAP. This gateway serves VM agents over MCP.
+  Neither replaces the other in this slice.
+
+### The slice
+
+1. **The policy lives on the version.** `agent_versions.capability_policy`
+   (jsonb, written by apid at version create, immutable like the rest of the
+   version). A version without one allows nothing but its models, as today.
+   For this slice it holds:
+   - `tools`: a list of `{name, mode}`, where `mode` is `allow` or `deny`.
+     `approve` is refused until approval ships (step 6).
+   - `budgets.tool_calls`: calls per run, at most `AgentToolCallsPerRunMax`
+     for the plan. It defaults to that maximum.
+
+   `sensitive`, `taint_mode`, `web`, `data` and per-tenant narrowing are
+   refused at create until their steps ship. Refusing them, rather than
+   ignoring them, keeps a seller from believing a rule is enforced when it is
+   not.
+2. **The endpoint.** outboundd serves `/mcp` (MCP Streamable HTTP, stateless)
+   on the relay, only to agent-run principals; any other caller gets 404.
+   - Every request re-runs the agent-run authorization (live lease, not
+     cancelled), so a finished run loses its tools at once.
+   - `tools/list` returns the registry's tools that the version's policy
+     allows and the operator switched on. The policy is read in the same
+     query as the lease check, so it costs no extra round trip.
+   - agentd gives the harness `GREGALE_CAPABILITY_MCP_URL`
+     (`${GREGALE_OUTBOUND_URL}/mcp`) when the version's policy allows a tool.
+     Preset configuration files that point each harness at it come with the
+     preset work.
+3. **Budget and decisions.**
+   - **The tool-call count is in Postgres for now,** one conditional update
+     per call on `agent_run_capability_summaries` (counts by tool and
+     decision). This deviates from §6, which keeps per-run counters in
+     memory on a pinned replica. vmmd does not pin runs to an outboundd
+     replica yet, and a count that two replicas can each under-read would not
+     fail closed. One write per tool call is small next to the model calls a
+     run makes. In-memory counters with pinning replace it in step 5, before
+     any volume test.
+   - **Decision rows** (`agent_run_capability_decisions`): a call refused by
+     policy, by an exhausted budget, or because the tool is off. These are
+     the low-volume rows §6 keeps in Postgres. An allowed call writes only
+     the summary.
+   - outboundd is the only writer of both tables. apid reads them for the
+     run timeline in a later PR.
+4. **`web_fetch`, the first tool** (ADR-20261027090018 tier 1): GET one URL
+   and return its text.
+   - It dials only public IPv4 on ports 80 and 443, checking every address
+     at connect time, so DNS cannot rebind it to a private one. It follows at
+     most `AgentWebFetchRedirectsMax` redirects, re-checking each.
+   - It reads at most `AgentWebFetchMaxBytes`, and returns text types only.
+   - It is behind `FAAS_OUTBOUND_AGENT_WEB_FETCH` (off). §1 sends tool
+     traffic through the agent egress gateway, and the control plane has no
+     path into it yet. The switch stays off in production until outboundd's
+     fetches leave from an agent address. That routing is its own change,
+     after the gateway host exists (docs/runbooks/agent-egress-production-rollout.md).
+     With the switch off, the tool is not listed.
+
+### Limits added in this slice
+
+| Name | Value |
+|---|---|
+| `AgentToolCallsPerRunMax` | 0 / 1,000 / 5,000 / 20,000 (Free / Hobby / Pro / Scale) |
+| `AgentCapabilityPolicyToolsMax` | 64 |
+| `AgentWebFetchMaxBytes` | 1 MiB |
+| `AgentWebFetchTimeoutSec` | 20 |
+| `AgentWebFetchRedirectsMax` | 5 |
+
+### Metrics added in this slice
+
+- `outbound_capability_calls_total{source,decision}`
+- `outbound_capability_call_seconds{source}`
+- `agent_budget_exhausted_total{kind}`
+
+These are the §12 names above, so later steps add labels, not new names.
+

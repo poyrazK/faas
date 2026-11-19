@@ -2113,11 +2113,23 @@ managed_work:
 List every enrolled workload, including services with no resource permissions.
 The primary must own declared fixtures with `read_write`; at least one sibling
 must have `async: true` and declared async routes. A service with no resource
-capability gets no fixture credentials. PostgreSQL currently supports explicit
-`read_write` access to this fixture database; object access supports `read` and
-`read_write` to this fixture namespace. Declared workers get distinct database
-logins and workload-bound object credentials. Ordinary provider bindings and
-account tokens are never copied. Service secrets cannot override these bindings.
+capability gets no fixture credentials. PostgreSQL supports `read_write`,
+`task_runtime` and `task_observer` on this fixture database. Object access
+supports `read` and `read_write` on this fixture namespace. Declared workers
+get distinct database logins and workload-bound object credentials. Ordinary
+provider bindings and account tokens are never copied. Service secrets cannot
+override these bindings.
+
+For a Task fixture, seed the required Task tables in `public` using the
+fixture SQL. Keep the primary on `read_write` as the sole migration owner.
+Give a worker `postgres: task_runtime` and an observer workload
+`postgres: task_observer`. Both receive their own `DATABASE_URL` for the
+disposable fixture. The runtime can read its Task tables and write queue
+state. The observer can only read the Task inspection tables. Neither
+login is a member of the migration owner role or can create schema objects.
+A Task role cannot be combined with another `read_write` participant or
+with `postgres_fault`. These grants describe the seeded fixture. Recheck
+permissions after any migration that changes them.
 
 An authorized private call to `http://worker.svc.gregale:10081/import` now follows
 the worker's enabled async route path/method/header rules and returns the ordinary

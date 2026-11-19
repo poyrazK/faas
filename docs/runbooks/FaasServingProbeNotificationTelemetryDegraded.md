@@ -38,6 +38,8 @@ or explicit disablement; 1 describes a valid enabled channel without history;
 Codes 0, 1 and 4 do not trigger this warning. Inventory and probe-source failures
 have separate serving coverage warnings.
 
+## Fix the telemetry
+
 On the node, inspect the service and metrics writer using safe diagnostics:
 
 ```bash

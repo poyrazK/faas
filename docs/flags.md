@@ -241,7 +241,7 @@ constraints:
 
 From the CLI, `--attr country=DE,FR` means `in`, `--attr 'plan!=free'` means
 `not_in` and `--attr 'email$=@example.com'` means `ends_with`. `country` and
-`ua_family` are the gateway's attributes; any other bare name is `app.<name>`:
+`ua_family` and `cohort` are the gateway's attributes; any other bare name is `app.<name>`:
 
 ```bash
 gregale flag rule create new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
@@ -636,6 +636,44 @@ gregale flag experiment create checkout-revenue --flag checkout --rule everyone-
   --control legacy --metric order_completed --metric-kind mean --start --project shop
 ```
 
+### Measure a funnel or retention
+
+With product analytics on ([Analyze product events](#analyze-product-events)),
+an experiment can measure what customers do over hours or weeks
+([ADR-20261119102741](adr/20261119102741-experiment-funnel-retention-metrics-cuped-cohorts.md)):
+
+- `--metric-kind funnel` with 2 to 6 `--step` events and a `--window` (1h to
+  720h): a customer converts when it sends the first step after its first
+  exposure and each later step after the previous one, all within the window.
+- `--metric-kind retention` with `--return-event`, `--period day|week` and
+  `--period-number N` (1 to 12): a customer converts when it sends the return
+  event in period N after its first exposure.
+
+```bash
+gregale flag experiment create onboarding --flag checkout --rule everyone-percent --control legacy \
+  --metric-kind funnel --step signup --step add_to_cart --step order_completed --window 72h --start --project shop
+gregale flag experiment create week-one --flag checkout --rule everyone-percent --control legacy \
+  --metric-kind retention --return-event order_completed --period week --period-number 1 --start --project shop
+```
+
+A step or return event may carry a property filter in the API
+(`{"event": "order_completed", "where": {"plan": "pro"}}`). A customer is
+counted only once its window, or N+1 periods, after its first exposure has
+passed, so results appear that long after the experiment starts and a counted
+customer's outcome never changes.
+
+### Variance reduction (CUPED)
+
+Results are adjusted for each customer's behavior in the 14 days before the
+experiment started: the sum of the metric event's values for `mean`, otherwise
+whether it sent the metric event (the first funnel step, the return event).
+Customers with steady habits then add less noise, so significant results
+usually come sooner. `result get` shows the adjusted comparison, which drives
+status and the recommendation, beside the unadjusted one, with the variance
+reduction. The adjustment needs product analytics; without it, or when no
+customer has pre-period events, results are unadjusted and say why. Turn it
+off with `--no-cuped` on create.
+
 ### Guardrails
 
 Every experiment watches two guardrails from request telemetry, with no
@@ -682,6 +720,106 @@ gregale flag experiment promote checkout-v2 new --project shop
 and stops the experiment. MCP agents read the same results and recommendation
 with `gregale_list_flag_experiments` and
 `gregale_get_flag_experiment_results` (release toolset).
+
+## Analyze product events
+
+The same `track()` events also feed product analytics: event series, funnels
+and retention, each of which can be split by the variant a customer saw
+([ADR-20261117084505](adr/20261117084505-product-analytics-events-funnels-retention.md)).
+It is behind the `product_analytics` platform flag and needs a plan with
+analytics retention:
+
+| Plan | Raw event retention |
+|---|---|
+| Free | off |
+| Hobby | 30 days |
+| Pro | 90 days |
+| Scale | 365 days |
+
+Analytics events share the monthly event quota with experiments; an event is
+counted once.
+
+### Send properties and a subject
+
+An event may carry up to 10 string properties (keys
+`^[a-z][a-z0-9_]{0,63}$`, values up to 256 bytes; at most 50 distinct keys per
+environment) and an end-user subject. The subject defaults to the one the
+request's flags were evaluated for; Gregale stores only a hash of it. The SDK
+also attaches every flag decision the request made before the call, so any
+event can be split by variant without extra code.
+
+```ts
+flags.track('order_completed', { value: 4200, properties: { plan: 'pro' } });
+```
+
+```python
+flags.track("order_completed", 4200, properties={"plan": "pro"})
+```
+
+```go
+flags.TrackWith(ctx, "order_completed", preview.TrackOptions{Value: 4200, Properties: map[string]string{"plan": "pro"}})
+```
+
+SDKs that send these fields advertise the `track-v2` capability; older SDKs
+keep working without them.
+
+### Query
+
+```bash
+gregale insight event list --project shop --by flag:checkout --from 14d order_completed
+gregale insight funnel get --project shop --window 72h --by flag:checkout signup add_to_cart order_completed
+gregale insight retention get --project shop --period week --periods 4 signup order_completed
+gregale insight request list --project shop --flag checkout
+```
+
+- `--unit subject` counts end users instead of customers and ignores events
+  without a subject.
+- `--by flag:KEY` uses the flag value carried by the unit's earliest event in
+  the range with that flag (for a funnel, its first-step event); `(none)`
+  means the unit never sent an event with that flag. `--by property:KEY`
+  splits by a property. At most 20 values are listed; the rest are `(other)`.
+- Funnels and retention read at most 200,000 units and say `truncated` when
+  they stop; narrow the range or filter.
+- Ranges stop at the plan's retention and 90 days. `insight request list`
+  reads request telemetry and follows its shorter retention.
+
+The API routes are under
+`/v1/projects/{slug}/environments/{environment}/insights` (`GET events`,
+`POST funnel`, `POST retention`, `GET requests`; all read-only). MCP agents use
+`gregale_get_insight_events`, `gregale_get_insight_funnel`,
+`gregale_get_insight_retention` and `gregale_get_insight_requests`
+(diagnose toolset).
+
+### Target a cohort
+
+A cohort is a saved query whose customers a flag rule can target:
+
+| Kind | Members |
+|---|---|
+| `did` | sent the event (optional property filter) at least `--min-count` times in the last `--days` days |
+| `did_not` | were active in the last 30 days but did not send the event in the last `--days` days |
+| `funnel` | completed the `--step` events within `--window`, starting in the last `--days` days |
+
+```bash
+gregale insight cohort create power-buyers --kind did --event order_completed --min-count 3 --days 30 --project shop
+gregale insight cohort list --project shop
+gregale flag rule create power-tools --id power --attr cohort=power-buyers --project shop
+```
+
+Gregale recomputes a cohort when it is created, hourly, and on
+`gregale insight cohort refresh`. A cohort keeps at most Hobby 1,000 / Pro
+10,000 / Scale 100,000 customers (lowest customer IDs first; `truncated`
+says when more matched), and an environment has at most 20 cohorts. Members
+are verified customers; subjects cannot be cohort members.
+
+The gateway stamps each request's cohorts as the `gregale.cohort` attribute,
+so rules use `in` and `not_in` on cohort keys like any other gateway
+attribute; `ends_with` is refused. Membership seen by a request can lag a
+refresh by up to a minute, and if the lookup fails the attribute is missing,
+so neither `in` nor `not_in` matches. Runtime SDKs need capability
+`cohort-targeting-v1`. The API routes are under
+`/v1/projects/{slug}/environments/{environment}/cohorts`; MCP agents list
+cohorts with `gregale_list_insight_cohorts` (diagnose toolset).
 
 ## Promote a guarded rollout stage
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/migrations"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state/agents"
 )
@@ -84,7 +86,8 @@ var agentMigrations = []string{"20261029093503390_agent_runs.sql", "202610290935
 	"20261112074016981_agent_github_subscriptions.sql", "20261117075028100_sandbox_sessions_browser.sql",
 	"20261117075028200_sandbox_tasks.sql", "20261117075028300_sandbox_actions.sql",
 	"20261117084816832_sandbox_action_screenshots.sql",
-	"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql"}
+	"20261117164722100_sandbox_egress_policies.sql", "20261117164722200_sandbox_session_domains.sql",
+	"20261119101645200_sandbox_sessions_placed_node.sql", "20261119124526531_agent_capability_policy.sql"}
 
 func spec() agents.VersionSpec {
 	return agents.VersionSpec{Harness: agents.Harness{Preset: "codex"}, PromptTemplate: "Triage {{event.title}}", TimeoutSec: 300}
@@ -137,14 +140,25 @@ func TestAgentsAndVersions(t *testing.T) {
 		t.Fatalf("agent limit: %v", err)
 	}
 
+	policy := &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityAllow}},
+		Budgets: &api.AgentCapabilityBudgets{ToolCalls: 40}}
 	image := agents.VersionSpec{Harness: agents.Harness{Image: "ghcr.io/acme/agent:1.4", Run: []string{"agent", "{prompt}"},
-		Models: map[string]string{"openai": "OPENAI_BASE_URL"}}, PromptTemplate: "Go", RAMMB: 2048, TimeoutSec: 600}
+		Models: map[string]string{"openai": "OPENAI_BASE_URL"}}, PromptTemplate: "Go", RAMMB: 2048, TimeoutSec: 600,
+		CapabilityPolicy: policy}
 	agent, v2, err := s.AddVersion(ctx, account, "triage", image, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if agent.LatestVersion != 2 || v2.Version != 2 || v2.Harness.Image == "" || v2.Harness.Models["openai"] != "OPENAI_BASE_URL" || v2.RAMMB != 2048 {
 		t.Fatalf("version 2: %+v %+v", agent, v2)
+	}
+	// ADR-20261027090016 amendment 1: the policy round-trips; a version
+	// without one reads back none.
+	if got, err := s.Version(ctx, account, "triage", 2); err != nil || !reflect.DeepEqual(got.CapabilityPolicy, policy) {
+		t.Fatalf("version 2 policy: %+v %v", got.CapabilityPolicy, err)
+	}
+	if v1.CapabilityPolicy != nil {
+		t.Fatalf("version 1 has a policy: %+v", v1.CapabilityPolicy)
 	}
 	if _, _, err := s.AddVersion(ctx, account, "triage", spec(), 2); !errors.As(err, &limit) || limit.Limit != "AgentVersionsPerAgent" {
 		t.Fatalf("version limit: %v", err)
