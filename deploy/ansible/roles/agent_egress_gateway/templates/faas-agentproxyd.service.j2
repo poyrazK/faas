@@ -22,6 +22,10 @@ ExecStart=/opt/faas/current/bin/agentproxyd \
   -metrics-listen {{ faas_agentproxyd_metrics_listen }} \
   -blocklist /etc/faas/agentproxyd/blocklist.txt
 ExecReload=/bin/kill -HUP $MAINPID
+# The connection log (ADR-20261117185346 §5) goes to its own journal
+# namespace, bounded by /etc/systemd/journald@agentproxyd.conf. Read it with
+# journalctl --namespace=agentproxyd.
+LogNamespace=agentproxyd
 Restart=on-failure
 RestartSec=2s
 MemoryHigh=768M

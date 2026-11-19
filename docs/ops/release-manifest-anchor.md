@@ -8,6 +8,13 @@ file is now a topology template:
 deploy/manifest/production/gcp-live.template.yaml
 ```
 
+The template a release uses is the one file name in
+`deploy/manifest/production/release-template`, resolved by
+`scripts/release-template.sh`. It is checked in, not a CI variable, so the
+tag commit decides which fleet the release targets. The materializer refuses
+a template that carries a credential (`scripts/check-manifest-credentials.sh`),
+because `production-manifest.yaml` is published with the release.
+
 It deliberately contains a schema-valid placeholder release identity. The
 release workflow materializes the final manifest using the tagged commit,
 computes its SHA-256, embeds that hash in `release-manifest.json`, and

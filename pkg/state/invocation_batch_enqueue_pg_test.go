@@ -46,12 +46,14 @@ func TestPgEnqueueInvocationBatchAdmitsInOrderUpToTheCap(t *testing.T) {
 }
 
 // Concurrent batches to one app serialise on its lock and together never pass
-// the pending cap.
+// the pending cap. Queue sends admit single rows unlocked (AdmissionUnlocked);
+// a batch still takes the lock, or concurrent batches deadlock on the
+// backlog counter slots (prod re-run 2026-11-18).
 func TestPgConcurrentInvocationBatchesStayUnderTheCap(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	accountID, appID, _ := seedLiveDeploy(t, store, ctx)
 	template := state.Invocation{AppID: appID, AccountID: accountID, Source: state.InvocationQueue, QueueName: "default",
-		DueAt: time.Now().UTC(), AdmissionMaxPending: 150, AdmissionMaxBacklogBytes: 1 << 30}
+		DueAt: time.Now().UTC(), AdmissionMaxPending: 150, AdmissionMaxBacklogBytes: 1 << 30, AdmissionUnlocked: true}
 	payloads := make([]json.RawMessage, 100)
 	for i := range payloads {
 		payloads[i] = json.RawMessage(`{}`)

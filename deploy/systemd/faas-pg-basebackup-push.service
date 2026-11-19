@@ -17,7 +17,8 @@ After=faas-pg-basebackup.service
 # `rclone copy` is deliberate. The off-host store is a recovery source,
 # not a mirror of the smaller local retention window; pruning a local
 # backup must not delete the remote recovery point. Remote retention is
-# owned by the storage backend's lifecycle policy.
+# owned by the storage backend's lifecycle policy (deploy/backup-lifecycle/,
+# ADR-20261118203000: 14 days of base backups, 16 of WAL).
 #
 # The unsealed rclone config is root:root 0400. This unit runs as root and
 # reads that file directly. `LoadCredential=name:-/path` is not valid

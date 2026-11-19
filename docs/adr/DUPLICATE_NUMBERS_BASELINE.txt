@@ -268,6 +268,3 @@
 
 # Already duplicated on merged main 39bb11f3e9 (2026-11-14).
 20261114120000
-
-# Already duplicated on merged main fc6c109254 (2026-11-18): #7507 and #7512.
-20261116120000

@@ -4,8 +4,10 @@ import (
 	"errors"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/insights"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -51,8 +53,11 @@ func (s *server) runtimeFeatureFlagEvents(w http.ResponseWriter, r *http.Request
 	now := time.Now().UTC()
 	events, invalid := validFlagEvents(req.Events, now)
 	quota := api.Plan(acct.Plan).FlagEventsPerMonth()
+	analytics := api.Plan(acct.Plan).AnalyticsRetentionDays() > 0 &&
+		s.platformFlagFor(platformflags.ProductAnalytics, platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)})
 	res, err := store.IngestFlagEvents(r.Context(), state.FlagEventIngest{
-		Scope: scope, Quota: quota, MaxNames: api.FlagEventNamesMaxPerEnvironment, Events: events, Now: now})
+		Scope: scope, Quota: quota, MaxNames: api.FlagEventNamesMaxPerEnvironment, Events: events, Now: now,
+		Analytics: analytics, MaxPropertyKeys: api.AnalyticsPropertyKeysMaxPerEnvironment})
 	if err != nil {
 		s.log.Error("flag events ingest", "err", err, "environment", scope.EnvironmentID)
 		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
@@ -63,6 +68,29 @@ func (s *server) runtimeFeatureFlagEvents(w http.ResponseWriter, r *http.Request
 		Dropped:  api.FlagEventsDropped{Quota: res.DroppedQuota, UnknownCustomer: res.DroppedUnknownCustomer, NameLimit: res.DroppedNameLimit, Invalid: invalid},
 		Month:    api.FlagEventsMonth{Limit: quota, Accepted: res.MonthAccepted, Dropped: res.MonthDropped},
 	})
+}
+
+// validAnalyticsFields checks an event's product analytics fields
+// (ADR 20261117084505 §1). An event with any invalid one is dropped whole,
+// so a malformed SDK is visible in the invalid count.
+func validAnalyticsFields(e api.FlagEvent) bool {
+	if len(e.Subject) > api.AnalyticsSubjectMaxBytes || len(e.Properties) > api.AnalyticsEventMaxProperties || len(e.Flags) > api.AnalyticsEventMaxFlags {
+		return false
+	}
+	if e.Subject != "" && !flags.ValidSubjectID(e.Subject) {
+		return false
+	}
+	for k, v := range e.Properties {
+		if !insights.ValidPropertyKey(k) || len(v) > api.AnalyticsPropertyValueMaxBytes || !utf8.ValidString(v) {
+			return false
+		}
+	}
+	for k, v := range e.Flags {
+		if !flags.ValidKey(k) || len(v) > api.AnalyticsPropertyValueMaxBytes || !utf8.ValidString(v) {
+			return false
+		}
+	}
+	return true
 }
 
 // validFlagEvents keeps events with a valid name and value whose time is
@@ -77,11 +105,12 @@ func validFlagEvents(in []api.FlagEvent, now time.Time) ([]state.FlagConversionE
 			at = now
 		}
 		if !flags.ValidEventName(e.Name) || e.CustomerID == "" || e.Value > api.FlagEventMaxAbsValue || e.Value < -api.FlagEventMaxAbsValue ||
-			at.Before(now.Add(-api.FlagEventMaxAge)) || at.After(now.Add(api.FlagEventMaxSkew)) {
+			at.Before(now.Add(-api.FlagEventMaxAge)) || at.After(now.Add(api.FlagEventMaxSkew)) || !validAnalyticsFields(e) {
 			invalid++
 			continue
 		}
-		out = append(out, state.FlagConversionEvent{Name: e.Name, CustomerID: e.CustomerID, Value: e.Value, At: at.UTC()})
+		out = append(out, state.FlagConversionEvent{Name: e.Name, CustomerID: e.CustomerID, Value: e.Value, At: at.UTC(),
+			Subject: e.Subject, Properties: e.Properties, Flags: e.Flags})
 	}
 	return out, invalid
 }

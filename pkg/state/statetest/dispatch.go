@@ -40,6 +40,7 @@ var memDispatched = map[string]bool{
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"EndAppDeleteGrace":                      true,
 	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
@@ -641,6 +642,15 @@ func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
 		return o.DeleteAppPermanently(p0, p1)
 	}
 	return s.MemStore.DeleteAppPermanently(p0, p1)
+}
+
+func (s *Mem) EndAppDeleteGrace(p0 context.Context, p1 string) (state.App, error) {
+	if o, ok := s.over.(interface {
+		EndAppDeleteGrace(context.Context, string) (state.App, error)
+	}); ok {
+		return o.EndAppDeleteGrace(p0, p1)
+	}
+	return s.MemStore.EndAppDeleteGrace(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {

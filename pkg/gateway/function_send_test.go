@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// functionSendTestStore is what the send fixture needs from a store; both
+// MemStore and PgStore satisfy it.
+type functionSendTestStore interface {
+	FunctionSendStore
+	CreateAccount(context.Context, string, api.Plan) (state.Account, error)
+	CreateProject(context.Context, state.Project) (state.Project, error)
+	CreateProjectEnvironment(context.Context, state.ProjectEnvironment) (state.ProjectEnvironment, error)
+	CreateApp(context.Context, state.App) (state.App, error)
+	CreateDeployment(context.Context, state.Deployment) (state.Deployment, error)
+	MarkDeploymentLive(context.Context, string) error
+	PublishProjectReleaseSet(context.Context, string, string, string, int, []state.ProjectReleaseMember) (state.ProjectReleaseSet, error)
+}
+
 type functionSendFixture struct {
-	store   *state.MemStore
+	store   functionSendTestStore
 	account state.Account
 	caller  state.App
 	callee  state.App
@@ -21,8 +35,12 @@ type functionSendFixture struct {
 
 func newFunctionSendFixture(t *testing.T, plan api.Plan) functionSendFixture {
 	t.Helper()
+	return newFunctionSendFixtureWith(t, state.NewMemStore(), plan)
+}
+
+func newFunctionSendFixtureWith(t *testing.T, store functionSendTestStore, plan api.Plan) functionSendFixture {
+	t.Helper()
 	ctx := t.Context()
-	store := state.NewMemStore()
 	account, err := store.CreateAccount(ctx, "send-"+uuid.NewString()+"@example.test", plan)
 	if err != nil {
 		t.Fatal(err)
@@ -35,7 +53,7 @@ func newFunctionSendFixture(t *testing.T, plan api.Plan) functionSendFixture {
 		t.Fatal(err)
 	}
 	newApp := func(slug string) state.App {
-		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, Type: state.AppTypeFunction,
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: slug, WorkloadName: slug, Type: state.AppTypeFunction,
 			Status: state.AppActive, RAMMB: 256, MaxConcurrency: 2, Manifest: state.AppManifest{RevisionPinTTLSeconds: 3600}})
 		if err != nil {
 			t.Fatal(err)

@@ -30,13 +30,29 @@ GREGALE_FLAG_CONTEXT_HEADER = "X-Faas-Platform-Tenant-Id"
 GREGALE_FLAG_PROPAGATION_HEADER = "X-Faas-Flag-Context"
 GREGALE_CLIENT_COUNTRY_HEADER = "X-Faas-Client-Country"
 GREGALE_CLIENT_UA_FAMILY_HEADER = "X-Faas-Client-Ua-Family"
-_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1"
+_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2"
 # Conversion events for experiments (ADR 20261115163113).
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _EVENT_BATCH = 100
 _EVENT_QUEUE_MAX = 1000
 _EVENT_FLUSH_S = 5.0
 _EVENT_MAX_ABS_VALUE = 1_000_000_000_000
+# Product analytics event bounds (ADR 20261117084505).
+_EVENT_PROPERTY_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_EVENT_MAX_PROPERTIES = 10
+_EVENT_PROPERTY_MAX_BYTES = 256
+_EVENT_MAX_FLAGS = 32
+
+
+def _valid_event_properties(properties: Any) -> bool:
+    if properties is None:
+        return True
+    if not isinstance(properties, dict) or len(properties) > _EVENT_MAX_PROPERTIES:
+        return False
+    return all(
+        isinstance(k, str) and _EVENT_PROPERTY_KEY.match(k) and isinstance(v, str) and len(v.encode()) <= _EVENT_PROPERTY_MAX_BYTES
+        for k, v in properties.items()
+    )
 GREGALE_FLAG_KILLS_HEADER = "X-Faas-Flag-Kills"
 _APP_ATTRIBUTE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
 _ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$")
@@ -839,15 +855,26 @@ class GregaleFlags:
             raise ValueError("Invalid workload identity")
         return token
 
-    def track(self, name: str, value: int = 0) -> bool:
-        """Record a conversion event for this request's verified customer (experiments).
+    def track(
+        self,
+        name: str,
+        value: int = 0,
+        properties: dict[str, str] | None = None,
+        subject: str | None = None,
+    ) -> bool:
+        """Record an event for this request's verified customer.
 
-        Call inside run_request. Returns False, and counts the event in
-        dropped_events(), when the request has no verified customer, the name or
-        value is invalid, or the local queue is full. Events are sent in batches
-        every 5 s; close() or flush() sends the rest.
+        Events feed experiments and product analytics. Each event carries the
+        request's subject (or ``subject``), up to 10 string ``properties`` and
+        every flag decision the request made so far. Call inside run_request.
+        Returns False, and counts the event in dropped_events(), when the
+        request has no verified customer, the name, value, properties or
+        subject are invalid, or the local queue is full. Events are sent in
+        batches every 5 s; close() or flush() sends the rest.
         """
         request = self._request.get()
+        if subject is None and request is not None:
+            subject = request.subject
         if (
             request is None
             or not request.customer
@@ -855,6 +882,8 @@ class GregaleFlags:
             or not _EVENT_NAME.match(name)
             or not _is_int(value)
             or abs(value) > _EVENT_MAX_ABS_VALUE
+            or not _valid_event_properties(properties)
+            or (subject is not None and not _valid_subject_id(subject))
             or len(self._events) >= _EVENT_QUEUE_MAX
         ):
             self._events_dropped += 1
@@ -863,6 +892,18 @@ class GregaleFlags:
         event: dict[str, Any] = {"name": name, "customer_id": request.customer, "at": at}
         if value:
             event["value"] = value
+        if subject is not None:
+            event["subject"] = subject
+        if properties:
+            event["properties"] = dict(properties)
+        decisions: dict[str, str] = {}
+        for key, decision in request.evidence.items():
+            if len(decisions) >= _EVENT_MAX_FLAGS:
+                break
+            served = decision.get("value")
+            decisions[key] = ("true" if served else "false") if isinstance(served, bool) else str(served)
+        if decisions:
+            event["flags"] = decisions
         self._events.append(event)
         return True
 

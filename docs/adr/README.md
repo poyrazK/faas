@@ -1,4 +1,6 @@
+- [ADR-20261118203000: Off-host backups keep fourteen days](20261118203000-off-host-backups-keep-fourteen-days.md) — proposed; the backup bucket's lifecycle policy (`deploy/backup-lifecycle/`) expires base backups and control-plane state after 14 days, WAL after 16 and unfinished multipart uploads after 2; the operator applies it at bucket provisioning, the hosts stay append-only (amends ADR-056)
 - [ADR-20261118154632: Elastic builder slots](20261118154632-elastic-builder-slots.md) — proposed; behind `builder_elastic_slots` (default off): a hot per-node `builder_slots` setting (reserved + max), borrowed slots in their own slice that use idle tenant memory and give it back (builderd cancels and requeues, vmmd force-kills, `oom_score_adj` 1000), so a build never OOM-kills, refuses or evicts a tenant (amends spec §4.5, §12)
+- [ADR-20261117084505: Product analytics: events, flag breakdowns, funnels and retention](20261117084505-product-analytics-events-funnels-retention.md) — accepted; track() events carry up to 10 properties, a hashed subject and the request flag decisions; raw events kept per-plan (Hobby 30 / Pro 90 / Scale 365 days) on the shared event quota; event series, funnels, retention and requests by variant via `/insights`, `gregale insight` and read-only MCP tools, behind `product_analytics` (amends ADR-20261115163113, ADR-20261116190208)
 - [ADR-20261117185346: Agent egress gateway](20261117185346-agent-egress-gateway.md) — proposed; agent VMs (sessions in every mode with egress, and agent runs) leave on their own addresses through `wg-agent` on the tenant gateway host, per-VM source addresses, `agentproxyd` caps by SNI/Host without decryption, per-session connection log; amends ADR-20261027090014 §4.4 and ADR-20261112121456 §1
 - [ADR-20261116165500: Typed event-triggered pipelines](20261116165500-sdk-event-triggered-pipelines.md) — accepted; SDK preview
 - [ADR-20261116190208: Flag experiments: guardrails, numeric metrics and recommendations](20261116190208-flag-experiment-guardrails-and-numeric-metrics.md) — accepted; default server-error-rate and p95-latency guardrails per customer (delta-method mSPRT against a tolerance) that roll the rule back to control and stop the experiment, `mean` metrics on track() values with winsorizing, results recommendations, `ship`, and read-only MCP tools (amends ADR-20261115163113)
@@ -2479,7 +2481,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261116110000 · Bounded runtime history compaction](20261116110000-bounded-runtime-history-compaction.md)
 
-- [ADR-20261116120000 · Observed command-cron outcomes](20261116120000-observed-command-cron-outcomes.md)
+- [ADR-20261116120001 · Observed command-cron outcomes](20261116120001-observed-command-cron-outcomes.md)
 
 - [ADR-20261116130000 · Observed command-cron admission timing](20261116130000-observed-command-cron-admission-timing.md)
 

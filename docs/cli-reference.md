@@ -96,14 +96,18 @@ gregale menu
 
 Scaffold a project from a built-in template
 
-`gregale init --template <NAME> --path <DIR> [--deploy] [--name <SLUG>] [--secrets-file <PATH>] [--list] [--no-mcp]`
+`gregale init [--template <NAME>] [--path <DIR>] [--deploy] [--name <SLUG>] [--agents] [--dry-run] [--secrets-file <PATH>] [--list] [--no-mcp]`
+
+--agents sets up an existing project for coding agents: it adds a Gregale section to AGENTS.md, makes an existing CLAUDE.md import AGENTS.md, and points Gemini CLI at AGENTS.md in a project with a .gemini folder. Codex, Cursor and Antigravity read AGENTS.md on their own. A second run replaces the section in place.
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name | required; one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
-| `--path <DIR>` | target directory | required |
+| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--path <DIR>` | target directory (required unless --agents, which defaults to .) |  |
 | `--deploy` | deploy after scaffolding |  |
-| `--name <SLUG>` | app slug used with --deploy |  |
+| `--name <SLUG>` | app slug used with --deploy, or the app --agents deploys (default: the linked app, else the directory name) |  |
+| `--agents` | set up an existing project for coding agents instead of scaffolding one |  |
+| `--dry-run` | with --agents, show the changes without writing them |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment (requires --deploy) |  |
 | `--list` | list available templates |  |
 | `--no-mcp` | do not write .mcp.json, which offers Gregale&#39;s MCP server to agents opened in the project |  |
@@ -113,6 +117,7 @@ Examples:
 ```sh
 gregale init --list
 gregale init --template hello-node --path ./my-api
+gregale init --agents --name my-api
 ```
 
 
@@ -153,7 +158,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
 | `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
@@ -2378,6 +2383,26 @@ Also accepted as delete.
 Restore an app during its deletion grace window
 
 `gregale app restore <slug>`
+
+### app purge
+
+Permanently remove a deleted app now and free its name
+
+`gregale app purge [--yes] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | purge without prompting; required in non-interactive and JSON mode |  |
+
+Examples:
+
+```sh
+gregale app delete api --yes && gregale app purge api --yes
+```
+
+A deleted app keeps its name for seven days so it can be restored; purge ends that window at once, so a redeploy (for example the same Compose file under a new project) can reuse the name.
+
+Purging cannot be undone. Delete the app&#39;s object storage buckets first.
 
 ### app instances
 

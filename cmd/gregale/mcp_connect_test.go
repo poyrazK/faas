@@ -485,6 +485,48 @@ func TestMCPConnectVSCodeProjectAndWindsurfHeadless(t *testing.T) {
 	}
 }
 
+// Antigravity gets a serverUrl entry in ~/.gemini/config/mcp_config.json or
+// .agents/mcp_config.json, and signs in only through the browser.
+func TestMCPConnectAntigravity(t *testing.T) {
+	f := newMCPConnectFixture(t, "agy")
+	path := filepath.Join(f.home, ".gemini", "config", "mcp_config.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"mcpServers":{"bigquery":{"serverUrl":"https://bigquery.googleapis.com/mcp"}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := f.run(t, "--client", "antigravity")
+	if code != 0 || !strings.Contains(out, "Customizations") {
+		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
+	}
+	var config struct {
+		MCPServers map[string]map[string]any `json:"mcpServers"`
+	}
+	data, _ := os.ReadFile(path)
+	if err := json.Unmarshal(data, &config); err != nil || config.MCPServers["gregale"]["serverUrl"] != f.api.URL+"/mcp" || config.MCPServers["bigquery"] == nil {
+		t.Fatalf("mcp_config.json = %s (%v)", data, err)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if code, out, errOut := f.run(t, "--client", "antigravity", "--project"); code != 0 {
+		t.Fatalf("--project exit %d\n%s\n%s", code, out, errOut)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, ".agents", "mcp_config.json")); err != nil || !strings.Contains(string(data), `"serverUrl"`) {
+		t.Fatalf(".agents/mcp_config.json = %s (%v)", data, err)
+	}
+
+	before, _ := os.ReadFile(path)
+	code, out, _ = f.run(t, "--client", "antigravity", "--headless", "--force")
+	if code != 0 || !strings.Contains(out, "without --headless") {
+		t.Fatalf("--headless = %d\n%s; want it left to the browser", code, out)
+	}
+	if after, _ := os.ReadFile(path); string(after) != string(before) || strings.Contains(string(after), "Authorization") {
+		t.Fatalf("--headless changed the config:\n%s", after)
+	}
+}
+
 func TestMCPConnectRefusesJSONWithComments(t *testing.T) {
 	f := newMCPConnectFixture(t, "cursor")
 	path := filepath.Join(f.home, ".cursor", "mcp.json")

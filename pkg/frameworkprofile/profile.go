@@ -69,6 +69,14 @@ type Profile struct {
 	// build with no detected start inherits from the runtime base (python3 on
 	// the Python runner) (Hunt 12 H12-29).
 	StartFromConfig bool `json:"start_from_config,omitempty"`
+	// StartPinned reports that StartCommand also replaces the built image's
+	// command although no file named it: the command Railpack builds for this
+	// Flask or FastAPI source cannot serve the application the profile
+	// located (a `main:app` without a main module, `python main.py` that only
+	// defines the app, or none at all), see pythonStartPinned (ADR-1500
+	// amendment 4). Profiles written before it lack the mark and keep the
+	// image's command.
+	StartPinned bool `json:"start_pinned,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
@@ -169,7 +177,12 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
 		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
 		if web := procfileWebCommand(fsys); web != "" {
-			profile.StartCommand = web
+			profile.StartCommand, profile.StartPinned = web, false
+		}
+		// railpack.json's deploy.startCommand outranks the Procfile and
+		// Railpack's own detection, so it is the command the guest runs.
+		if start := railpackConfigStartCommand(fsys); start != "" {
+			profile.StartCommand, profile.StartPinned = start, false
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
@@ -214,7 +227,7 @@ func rootHealthPathWarning(configFile string) Warning {
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
-		profile.StartFromConfig = true
+		profile.StartFromConfig, profile.StartPinned = true, false
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
@@ -293,6 +306,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `FastAPI\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("uvicorn %s:%s --host 0.0.0.0 --port $PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "uvicorn")
 		} else {
 			profile.StartCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("FastAPI", "app:app"))
@@ -310,6 +324,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `Flask\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("gunicorn %s:%s --bind 0.0.0.0:$PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "gunicorn")
 		} else {
 			profile.StartCommand = "gunicorn app:app --bind 0.0.0.0:$PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("Flask", "app:app"))
@@ -714,6 +729,74 @@ func procfileWebCommand(fsys fs.FS) string {
 		}
 	}
 	return ""
+}
+
+// railpackConfigStartCommand returns railpack.json's deploy.startCommand, or
+// "" when the file is absent, unreadable or names none.
+func railpackConfigStartCommand(fsys fs.FS) string {
+	var config struct {
+		Deploy struct {
+			StartCommand string `json:"startCommand"`
+		} `json:"deploy"`
+	}
+	if json.Unmarshal([]byte(readFile(fsys, "railpack.json")), &config) != nil {
+		return ""
+	}
+	return strings.TrimSpace(config.Deploy.StartCommand)
+}
+
+// railpackPythonMainFiles are the files whose presence gives Railpack's
+// Python provider a start command (getMainPythonFile), in its order.
+var railpackPythonMainFiles = []string{"main.py", "app.py", "start.py", "bot.py", "hello.py", "server.py"}
+
+// fastapiServerExtra matches a FastAPI requirement whose extras install
+// uvicorn without naming it: fastapi[standard], fastapi[all] and
+// fastapi[standard-no-fastapi-cloud-cli].
+var fastapiServerExtra = regexp.MustCompile(`(^|[^a-z0-9_.-])fastapi\s*\[[^\]]*\b(standard|all)\b`)
+
+// pythonStartPinned reports whether a located Flask or FastAPI application's
+// inferred start must replace the built image's command because the command
+// Railpack 0.38's Python provider (GetStartCommand) builds cannot serve it:
+//
+//   - With none of its main files, Railpack detects no start and the image
+//     keeps its base's CMD (python3, Hunt 12 H12-29).
+//   - A Flask app whose manifests mention gunicorn, or a FastAPI app whose
+//     manifests mention uvicorn, starts as `main:app` whichever module
+//     defines the application. Without a root main module that fails; a main
+//     module may re-export the application, so its presence keeps it.
+//   - Otherwise Railpack runs `python <main file>`, which only defines the
+//     application and exits unless the file starts a server itself. FastAPI's
+//     own install, fastapi[standard], brings uvicorn without naming it.
+//
+// Railpack tests a dependency as a case-insensitive substring of a manifest,
+// comments included; only root manifests are read here. The pinned command
+// runs server, so it must be installed. manifests is the comment-stripped,
+// lowercased dependency text.
+func pythonStartPinned(fsys fs.FS, manifests, server string) bool {
+	if !pythonDependencyNamed(manifests, server) && (server != "uvicorn" || !fastapiServerExtra.MatchString(manifests)) {
+		return false
+	}
+	script := ""
+	for _, name := range railpackPythonMainFiles {
+		if fileExists(fsys, name) {
+			script = name
+			break
+		}
+	}
+	if script == "" {
+		return true
+	}
+	var raw strings.Builder
+	for _, name := range []string{"requirements.txt", "pyproject.toml", "Pipfile"} {
+		raw.WriteString(strings.ToLower(readFile(fsys, name)))
+		raw.WriteByte('\n')
+	}
+	uses := func(dependency string) bool { return strings.Contains(raw.String(), dependency) }
+	if uses("flask") && uses("gunicorn") || uses("fastapi") && uses("uvicorn") {
+		return !fileExists(fsys, "main.py") && !fileExists(fsys, "main/__init__.py")
+	}
+	body := readFile(fsys, script)
+	return !strings.Contains(body, "__main__") && !strings.Contains(body, ".run(")
 }
 
 func fileExists(fsys fs.FS, path string) bool {

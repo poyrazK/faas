@@ -76,9 +76,10 @@ func (s *PgStore) ScenarioPostgresForApp(ctx context.Context, app string) (rehea
 	if e != nil {
 		return rehearsalpg.Resource{}, e
 	}
-	r, err := scenarioPGResource(v)
+	r, err := scenarioPGResource(v.ScenarioPostgresFixture)
 	if err == nil && r.AppID != app {
-		r.RoleName = rehearsalwork.PostgresRole(r.ID, app)
+		r.ParticipantAccess = v.ParticipantAccess
+		r.RoleName = rehearsalwork.PostgresParticipantRole(r.ID, app, r.ParticipantAccess)
 	}
 	return r, err
 }
@@ -191,11 +192,12 @@ func (m *MemStore) ScenarioPostgresForApp(ctx context.Context, app string) (rehe
 		}
 	} else {
 		part, _ := rehearsalwork.Decode(p.Member.ManagedWorkJSON).Participant(p.Member.Workload)
-		if part.Postgres != "read_write" {
+		if !rehearsalwork.PostgresAccess(part.Postgres) {
 			return rehearsalpg.Resource{}, ErrNotFound
 		}
 		if r.AppID != app {
-			r.RoleName = rehearsalwork.PostgresRole(r.ID, app)
+			r.ParticipantAccess = part.Postgres
+			r.RoleName = rehearsalwork.PostgresParticipantRole(r.ID, app, r.ParticipantAccess)
 		}
 	}
 	return rehearsalpg.CloneResource(r), nil

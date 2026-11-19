@@ -30,8 +30,15 @@ network_access = true
 ## Tell Codex how the project deploys
 
 Codex reads `AGENTS.md`. Projects made with `gregale init` include one with
-Gregale's deploy, check and rollback steps. For an existing project, add the
-section in
+Gregale's deploy, check and rollback steps.
+
+For an existing project, run this in its root:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a Gregale section to `AGENTS.md`; see
 [Project instructions for agents](agents.md#project-instructions-for-agents).
 
 ## Deploy

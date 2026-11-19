@@ -192,6 +192,10 @@ HTTP 422 · No process listening on $PORT; App listens on a different port
 
 See [Deployment overrides](deploy-overrides.md), [Errors](errors.md), [Deploy a web framework](frameworks.md).
 
+### `app_not_purgeable`
+
+HTTP 409 · App not purgeable
+
 ### `app_not_restorable`
 
 HTTP 409 · App not restorable
@@ -1223,6 +1227,10 @@ HTTP 413 · Webhook body too large
 ### `init_sidecar_failed`
 
 The response's `title` and `detail` describe the failure.
+
+### `insights_query_timeout`
+
+HTTP 503 · Analytics query timed out
 
 ### `instance_busy`
 
