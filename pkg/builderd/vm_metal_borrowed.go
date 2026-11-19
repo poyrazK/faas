@@ -10,16 +10,37 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
 
-// borrowedCapabilityTTL is how long builderd trusts vmmd's last answer to
-// whether it runs borrowed builders. vmmd still refuses a borrowed cold boot
-// it cannot run, so a stale yes costs one requeue.
-const borrowedCapabilityTTL = 10 * time.Second
+// pingCapabilityTTL is how long builderd trusts vmmd's last answer to one of
+// its Ping capabilities. vmmd still refuses what it cannot do, so a stale yes
+// costs one requeue or one inline cache export.
+const pingCapabilityTTL = 10 * time.Second
 
-// borrowedCapability caches vmmd's supports_borrowed_builders.
-type borrowedCapability struct {
+// pingCapability caches one of vmmd's Ping capabilities.
+type pingCapability struct {
 	mu        sync.Mutex
 	supported bool
 	at        time.Time
+}
+
+// get answers from the cache, or asks vmmd. An unreachable vmmd answers no.
+func (c *pingCapability) get(ctx context.Context, cli vmmdpb.VmmdClient, has func(*vmmdpb.PingResponse) bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < pingCapabilityTTL {
+		return c.supported
+	}
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	resp, err := cli.Ping(pingCtx, &vmmdpb.PingRequest{})
+	c.supported = err == nil && has(resp)
+	c.at = time.Now()
+	return c.supported
+}
+
+func (c *pingCapability) forget() {
+	c.mu.Lock()
+	c.at = time.Time{}
+	c.mu.Unlock()
 }
 
 // SupportsBorrowedBuilders reports whether the node's vmmd runs builders on
@@ -29,17 +50,7 @@ func (d *VMMDriver) SupportsBorrowedBuilders(ctx context.Context) bool {
 	if d == nil || d.cli == nil {
 		return false
 	}
-	d.borrowed.mu.Lock()
-	defer d.borrowed.mu.Unlock()
-	if !d.borrowed.at.IsZero() && time.Since(d.borrowed.at) < borrowedCapabilityTTL {
-		return d.borrowed.supported
-	}
-	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-	defer cancel()
-	resp, err := d.cli.Ping(pingCtx, &vmmdpb.PingRequest{})
-	d.borrowed.supported = err == nil && resp.GetSupportsBorrowedBuilders()
-	d.borrowed.at = time.Now()
-	return d.borrowed.supported
+	return d.borrowed.get(ctx, d.cli, (*vmmdpb.PingResponse).GetSupportsBorrowedBuilders)
 }
 
 // ForgetBorrowedCapability drops the cached answer, after vmmd refused a
@@ -48,7 +59,16 @@ func (d *VMMDriver) ForgetBorrowedCapability() {
 	if d == nil {
 		return
 	}
-	d.borrowed.mu.Lock()
-	d.borrowed.at = time.Time{}
-	d.borrowed.mu.Unlock()
+	d.borrowed.forget()
+}
+
+// SupportsCacheExportStaging reports whether the node's vmmd stages a
+// deferred cache export run's inputs on the build's drive
+// (ADR-20261029171525 amendment 2). A build defers its dependency cache
+// export only then.
+func (d *VMMDriver) SupportsCacheExportStaging(ctx context.Context) bool {
+	if d == nil || d.cli == nil {
+		return false
+	}
+	return d.cacheExportStaging.get(ctx, d.cli, (*vmmdpb.PingResponse).GetSupportsCacheExportStaging)
 }

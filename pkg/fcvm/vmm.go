@@ -1490,6 +1490,11 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 			return fmt.Errorf("vmm: stage sandbox manifest: %w", err)
 		}
 	}
+	if len(l.cacheExportManifest) > 0 {
+		if err := v.stageCacheExportRunForOwner(ctx, stagingOwner, l.Instance, []byte(l.cacheExportManifest)); err != nil {
+			return fmt.Errorf("vmm: stage cache export run: %w", err)
+		}
+	}
 	stagedRuntimeAt := time.Now()
 	cfgBytes, err := json.Marshal(jailed)
 	if err != nil {

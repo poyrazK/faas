@@ -1618,6 +1618,14 @@ message BuildSpec {
   // itself when tenants need the memory. builderd sets it only when Ping
   // reports supports_borrowed_builders, so an older vmmd never sees it.
   bool borrowed = 6;
+  // The /etc/faas/build.json of a deferred dependency cache export run
+  // (ADR-20261029171525 amendment 2): an api.BuildManifest with
+  // cache_export_only set. The run boots on the drive its build left, which
+  // the guest wrote, so the host never edits it: vmmd writes this manifest
+  // and a fresh entropy seed and removes the build's build-done.json through
+  // the guest disk sandbox before boot. builderd sends it only when Ping
+  // reports supports_cache_export_staging.
+  bytes cache_export_manifest = 7;
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry
@@ -2062,6 +2070,11 @@ message PingResponse {
   // faas-borrowed.slice exists, so this vmmd runs BuildSpec.borrowed
   // builders (ADR-20261118154632).
   bool supports_borrowed_builders = 7;
+  // supports_cache_export_staging: this vmmd stages BuildSpec.
+  // cache_export_manifest on a deferred cache export run's drive
+  // (ADR-20261029171525 amendment 2). builderd defers a build's dependency
+  // cache export only when it is set.
+  bool supports_cache_export_staging = 8;
 }
 
 

@@ -4224,6 +4224,12 @@ type WakeRequest struct {
 	// the node's BuildKit seed, beside drive1 (ADR-20261030122204). Empty for
 	// a two-drive builder and for every VM that is not a builder.
 	BuildKitSeedDrive string
+	// CacheExportManifest is a deferred dependency cache export run's
+	// build.json (ADR-20261029171525 amendment 2). The run boots on the
+	// drive its build left; before boot vmmd stages this manifest and a
+	// fresh entropy seed there and removes the build's build-done.json, in
+	// the guest disk sandbox. Empty for every other VM.
+	CacheExportManifest []byte
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment runtime
 	// port the customer's app binds inside the guest. 0 = legacy 8080
 	// (netns.AppPort default). The host's published and readiness port
@@ -5237,6 +5243,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		lease.restoreIdentity = newRestoreIdentityExpectation()
 	}
 	lease.IsBuilder = req.ExportDir != ""
+	if lease.IsBuilder {
+		lease.cacheExportManifest = string(req.CacheExportManifest)
+	}
 	lease.buildMirrors = m.leaseBuildMirrors(req)
 	m.stampCgroupParent(&lease)
 	if lease.IsBuilder && req.BorrowedBuilder {
