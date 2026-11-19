@@ -355,12 +355,26 @@ closed by a later slice:
     For every customer session it refuses `CONFIG`, `REPLICAOF`, `SLAVEOF`,
     `SYNC`, `PSYNC`, `REPLCONF` and the renamed commands. Valkey keeps these,
     because the handoff needs them.
-  - Not yet verified, and must pass on metal before release:
-    - that the service authorizer admits a cache calling its own address;
-    - that the rollout runs the new VM next to the old one under the
-      cache's `max_instances: 1` (the rollout concurrency grant);
-    - that `CONFIG SET port` opens TCP on a running Valkey 8.1;
-    - the 100-handoff no-lost-writes test from the phasing list.
+  - Verified on metal by `TestManagedRedisMetal`, run
+    redis-20261118T234819:
+    - the service authorizer admits a cache calling its own address;
+    - the rollout runs the new VM next to the old one under the cache's
+      `max_instances: 1`;
+    - `CONFIG SET port` opens TCP on a running Valkey 8.1.4.
+  - Still open before release: the 100-handoff no-lost-writes test from the
+    phasing list.
+  - Metal runs added three requirements:
+    - A resize first wakes the cache and waits up to 60 s for a running
+      instance, while the RAM still matches. A parked cache's snapshot
+      cannot restore once the app's RAM changes, so the source would
+      cold-boot empty. If it does not wake in time, the call returns 503
+      `cache_waking` and the cache is unchanged.
+    - The handoff replicates from the cache's service IP, not its DNS name,
+      and the cache app gets the plan's whole startup window.
+    - A cache deployment counts as a raw TCP listener. Readiness is TCP
+      accept, and there is no plan-default HTTP liveness probe, which had
+      killed a woken cache about 50 s in. schedd recognises a cache by its
+      image (`api.ManagedValkeyImage`), so the wake path needs no lookup.
 - **Park keeps a cache's memory (slice 5, an exception to the snapshot
   rule).** The platform's snapshots are deployment cache, not the memory of
   the last run. Park reuses a healthy init capture, and a VM that served
@@ -375,9 +389,11 @@ closed by a later slice:
     (`isManagedCacheDeployment`). For any other app it keeps the older row
     and drops the new capture.
   - Wake restores the newest live row, as before.
-  - Retiring the old row and publishing the new one are two statements, so
-    a wake that lands between them cold-boots the cache empty. This matches
-    a cache cold boot after node loss.
+  - The old row is retired in the same transaction that publishes the new
+    one (`state.WithReplacedSnapshot`), so a wake always finds a row.
+    Retiring the old row in a separate statement left a window, and a wake
+    120 ms after park cold-booted the cache empty (run
+    redis-20261118T230904).
   - Clean recapture exists so one request's state cannot reach later
     requests. That concern does not apply here: the cache's memory is the
     customer's own data, and it is restored only into the same cache.
