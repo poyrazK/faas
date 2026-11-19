@@ -8759,6 +8759,11 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 		id, rolloutState, startedAt, completedAt, abortedAt, abortedReason); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp update: %w", err)
 	}
+	if rolloutState == "aborted" {
+		if _, err := pgRebalanceAbortedTraffic(ctx, tx, dep); err != nil {
+			return Deployment{}, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp commit: %w", err)
 	}
