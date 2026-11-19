@@ -2480,7 +2480,7 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261116110000 · Bounded runtime history compaction](20261116110000-bounded-runtime-history-compaction.md)
 
-- [ADR-20261116120000 · Observed command-cron outcomes](20261116120000-observed-command-cron-outcomes.md)
+- [ADR-20261116120001 · Observed command-cron outcomes](20261116120001-observed-command-cron-outcomes.md)
 
 - [ADR-20261116130000 · Observed command-cron admission timing](20261116130000-observed-command-cron-admission-timing.md)
 

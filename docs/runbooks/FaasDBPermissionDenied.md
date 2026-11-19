@@ -41,5 +41,10 @@ every caller until the grant is fixed: treat it as an outage of that path.
 4. If the table is deliberately withheld (case 3), fix the code path instead;
    do not widen the grant.
 
+## Confirm recovery
+
+The alert clears once `<daemon>_db_permission_denied_total` stops increasing
+for 10 minutes; re-run the refused path to confirm it succeeds.
+
 The counter must stay at zero for a week of normal traffic before a daemon's
 grants are narrowed further.
