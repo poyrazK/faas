@@ -1798,10 +1798,9 @@ See [Authentication](auth.md), [Errors](errors.md).
 
 ### `obs_runtime_busy`
 
-HTTP 429 · Runtime collection busy
+HTTP 429 Too Many Requests · Runtime collection busy
 
-This apid is at its runtime collection cap. Wait for `Retry-After` or reduce
-overlapping verifiers. See [runtime collector overload](ops/post-deployment-monitoring.md#runtime-collector-overload).
+See [Errors](errors.md).
 
 ### `openapi_docs_not_allowed`
 
