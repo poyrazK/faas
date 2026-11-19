@@ -5761,7 +5761,9 @@ func cmdDomains(args []string) int {
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
-	case subRm:
+	case subRm, "remove":
+		// `domain add` works, so `domain remove` was the natural undo and
+		// answered "Did you mean move?" (prod 2026-11-19).
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).

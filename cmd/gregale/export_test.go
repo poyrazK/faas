@@ -1790,6 +1790,7 @@ var RenderDeploymentProgress = renderDeploymentProgress
 var RenderDeploymentReleaseSummary = renderDeploymentReleaseSummary
 var RenderDeploymentRow = renderDeploymentRow
 var RenderDeploymentRowWide = renderDeploymentRowWide
+var RenderDeploymentHeader = renderDeploymentHeader
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage

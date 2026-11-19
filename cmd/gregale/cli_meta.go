@@ -3307,7 +3307,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},
 				{Name: "environment", Short: "project environment to route this domain to", Value: "SLUG"},
 			}},
-			{Name: subRm, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
+			{Name: subRm, Aliases: []string{"remove"}, Short: "Remove a custom domain binding", Positionals: []string{"<domain>"}, Flags: []cliFlag{
 				{Name: "yes", Bool: true, Short: "confirm removal without prompting"},
 			}},
 			{Name: subDomainsSetDefault, Short: "Set a verified domain as the app default", Positionals: []string{"<domain>"}},
@@ -6848,7 +6848,7 @@ var cliCommands = []cliCommand{
 					{Name: "to", Short: "target environment", Value: "ENV", Req: true},
 					{Name: "sync-config", Short: "include non-secret source config in the promotion preview"},
 				}},
-				{Name: "promote", Short: "Promote workloads or choose environments interactively", Examples: []string{"gregale environment promote my-project --interactive"}, Flags: []cliFlag{
+				{Name: "promote", Short: "Promote workloads or choose environments interactively", Positionals: []string{"<project-slug>"}, Examples: []string{"gregale environment promote my-project --interactive"}, Flags: []cliFlag{
 					{Name: "interactive", Short: "choose source and destination, review changes, confirm, and follow progress", Bool: true},
 					{Name: "from", Short: "source environment (required unless interactive)", Value: "ENV"},
 					{Name: "to", Short: "target environment (required unless interactive)", Value: "ENV"},
