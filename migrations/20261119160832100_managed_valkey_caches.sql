@@ -1,4 +1,4 @@
--- filename: 20261119101654100_managed_valkey_caches.sql
+-- filename: 20261119160832100_managed_valkey_caches.sql
 -- migration-compat: expand
 -- Managed Redis-compatible caches on Valkey (ADR-20261116192126). A cache is
 -- an internal app running the pinned Valkey image; this row marks the app as
