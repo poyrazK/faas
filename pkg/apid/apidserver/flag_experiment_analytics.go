@@ -190,6 +190,48 @@ func (r *flagExperimentReconciler) fillPreValues(ctx context.Context, as state.F
 	return nil
 }
 
+// cohortRefreshBatch bounds the cohorts one pass recomputes.
+const cohortRefreshBatch = 20
+
+// refreshCohorts recomputes cohorts whose refresh was requested or is an
+// hour old (ADR 20261119102741 §3). A cohort of an account without product
+// analytics keeps its members and records why.
+func (r *flagExperimentReconciler) refreshCohorts(ctx context.Context, now time.Time) {
+	cohorts, ok := r.server.store.(state.AnalyticsCohortStore)
+	store, ok2 := r.server.store.(state.AnalyticsStore)
+	if !ok || !ok2 {
+		return
+	}
+	due, err := cohorts.DueAnalyticsCohorts(ctx, now.Add(-api.AnalyticsCohortRefreshInterval), cohortRefreshBatch)
+	if err != nil {
+		r.warn(ctx, "analytics cohorts: list due failed", err)
+		return
+	}
+	for _, c := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		if !r.server.productAnalyticsOn(c.AccountID, c.Plan) {
+			if err := cohorts.FailAnalyticsCohortRefresh(ctx, c.ID, now, "product analytics is off for this account"); err != nil {
+				r.warn(ctx, "analytics cohorts: record failure failed", err, "cohort", c.ID)
+			}
+			continue
+		}
+		cCtx, cancel := context.WithTimeout(ctx, api.AnalyticsQueryTimeout)
+		members, truncated, err := insights.CohortMembers(cCtx, store, cohorts, c, now, api.Plan(c.Plan).AnalyticsCohortMaxMembers())
+		if err == nil {
+			err = cohorts.ReplaceAnalyticsCohortMembers(cCtx, c, members, truncated, now)
+		}
+		cancel()
+		if err != nil {
+			r.warn(ctx, "analytics cohorts: refresh failed", err, "cohort", c.ID)
+			if ferr := cohorts.FailAnalyticsCohortRefresh(ctx, c.ID, now, "refresh failed; the previous members stay in place"); ferr != nil {
+				r.warn(ctx, "analytics cohorts: record failure failed", ferr, "cohort", c.ID)
+			}
+		}
+	}
+}
+
 // analyticsSteps runs the analytics parts of a pass for an experiment.
 func (r *flagExperimentReconciler) analyticsSteps(ctx context.Context, x state.FlagExperiment, now time.Time) error {
 	as, ok := r.store.(state.FlagExperimentAnalyticsStore)

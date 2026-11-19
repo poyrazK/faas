@@ -73,6 +73,7 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 	// Retention holds whatever the flags say: raw analytics events past
 	// their plan's retention go even while analytics or flags are off.
 	r.sweepAnalytics(ctx, now)
+	r.refreshCohorts(ctx, now)
 	if !r.server.platformFlagOn(platformflags.CustomerFlags) {
 		return
 	}
