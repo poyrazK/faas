@@ -14890,6 +14890,9 @@ const (
 	ObsInputHealthTargetsMax = 4096
 	// ADR-20261115080000: advisory identity uses selected critical jobs only.
 	ObsRuntimeBuildBudget = 3 * time.Second
+	// ADR-20261117202547: process-wide runtime collection admission, without queueing.
+	ObsRuntimeBuildCollectionsMax = 2
+	ObsRuntimeBuildBusyRetryAfter = time.Second
 	// ADR-20261115110000: v2 build profiles add builderd and imaged.
 	ObsRuntimeBuildJobsMax          = 8
 	ObsRuntimeBuildSamplesMax       = 4096

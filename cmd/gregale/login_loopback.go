@@ -113,13 +113,33 @@ func loopbackLogin(ctx context.Context, c *Client, ln net.Listener, codeResp api
 	case <-ctx.Done():
 		return printErr("Login interrupted", ctx.Err())
 	case <-timer.C:
-		return printErr("Login expired", errors.New("the browser did not approve in time; run gregale login again"))
+		return printCliLoginRecovery("Login code expired", nil, false)
 	case res := <-results:
 		if res.err != nil {
+			var ae *APIError
+			if errors.As(res.err, &ae) && ae.Problem.Code == api.CodeCliAuthUnavailable {
+				return printCliLoginRecovery("Login code unavailable", ae, false)
+			}
 			return printErr("Login failed", res.err)
 		}
 		return finalizeLogin(ctx, c, res.resp.Plaintext, res.resp.KeyID, res.resp.Account)
 	}
+}
+
+func printCliLoginRecovery(title string, err *APIError, device bool) int {
+	command := recoveryCLI() + " login"
+	if device {
+		command += " --device"
+	}
+	if loginInsecureStorage {
+		command += " --insecure-storage"
+	}
+	hint := fmt.Sprintf("Run %s in this terminal and open the new link in the same browser.", command)
+	if err == nil {
+		return printErr(title, errors.New(hint))
+	}
+	problem := err.Problem
+	return printErr(title, &APIError{Problem: *problem.WithHint(hint)})
 }
 
 // loopbackDeadline is when to stop waiting: the code's expiry plus a little
