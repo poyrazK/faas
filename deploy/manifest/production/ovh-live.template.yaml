@@ -323,9 +323,12 @@ postgresql:
 # It applies to new volumes only, so turn it on before the first bootstrap
 # formats /srv/fc; a plain volume moves only by drain, wipe and rejoin.
 # Needs at least one operator age public key, whose identity stays off the
-# fleet (age-keygen on an operator machine).
-# disk_encryption:
-#   recovery_recipients: ["age1…"]
+# fleet (age-keygen on an operator machine). The recipient below is the
+# owner's recovery key generated 2026-11-19; its identity is held offline by
+# the owner, never on a host or in CI.
+disk_encryption:
+  recovery_recipients:
+    - age1al9thtfgakedgc6rksxcn5up3vkujv7wd7qervn7d82mygkm5sxswe6hq0
 
 release:
   id: pre-1.0-template
