@@ -277,7 +277,7 @@ func (m *RuntimeDiagnosticsMetrics) recordReport(ctx context.Context, out Runtim
 			phase = *observed
 		}
 		origin := runtimeDeadlineCaller
-		if context.Cause(ctx) == errRuntimeCollectionBudget {
+		if errors.Is(context.Cause(ctx), errRuntimeCollectionBudget) {
 			origin = runtimeDeadlineBudget
 		}
 		m.deadlines.WithLabelValues(phase, origin).Inc()
