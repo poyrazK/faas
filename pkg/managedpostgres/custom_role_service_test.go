@@ -219,7 +219,7 @@ func TestCustomRoleServiceDefaultFor(t *testing.T) {
 		t.Fatalf("provider spec default = %v", last[0].DefaultFor)
 	}
 	for name, defaults := range map[string][]CredentialAccess{
-		"migration": {CredentialMigration},
+		"migration":   {CredentialMigration},
 		"not granted": {CredentialReadOnly},
 		"data api":    {CredentialDataAPI},
 	} {

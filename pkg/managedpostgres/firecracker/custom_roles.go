@@ -72,7 +72,7 @@ func validCustomRoleSpecs(desired []managedpostgres.CustomRoleSpec) error {
 }
 
 // defaultRoleSQL makes every login whose credential marker is in markers
-// start as want ('' for none). It only replaces or resets a role setting
+// start as want (” for none). It only replaces or resets a role setting
 // that names a custom role, so the migration login's schema-owner setting
 // is never touched.
 func defaultRoleSQL(markers []string, want string) string {
