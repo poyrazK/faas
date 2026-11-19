@@ -37,7 +37,7 @@ func TestHostedTaskBindingsPostgres(t *testing.T) {
 	}
 	exerciseHostedTaskBindings(t, state.NewPgStore(pool), pool)
 }
-func exerciseHostedTaskBindings(t *testing.T, store state.Store, pool *pgxpool.Pool) {
+func seedHostedTaskBindingFixture(t *testing.T, store state.Store, pool *pgxpool.Pool) (*hostedSourceFixture, func(string, string, string, bool, string), toolregistry.PrivateExecutionOptions) {
 	t.Helper()
 	f := newHostedSourceFixture(t, store)
 	runtimeID, err := age.GenerateX25519Identity()
@@ -100,11 +100,19 @@ func exerciseHostedTaskBindings(t *testing.T, store state.Store, pool *pgxpool.P
 	}
 	f.review.Fingerprint = tasktoolsource.Fingerprint(f.review)
 	f.request.Review, _ = json.Marshal(f.review)
+	opts := toolregistry.PrivateExecutionOptions{SourceRetentionEnabled: true, BindingVerificationEnabled: true, ConnectionRecipients: func() ([]*age.X25519Recipient, error) { return []*age.X25519Recipient{f.identity.Recipient()}, nil }, ConnectionIdentities: func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{f.identity} }, Identities: func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{runtimeID} }}
+	return f, put, opts
+}
+
+func exerciseHostedTaskBindings(t *testing.T, store state.Store, pool *pgxpool.Pool) {
+	t.Helper()
+	f, put, opts := seedHostedTaskBindingFixture(t, store, pool)
 	var connects atomic.Int32
-	opts := toolregistry.PrivateExecutionOptions{SourceRetentionEnabled: true, BindingVerificationEnabled: true, ConnectionRecipients: func() ([]*age.X25519Recipient, error) { return []*age.X25519Recipient{f.identity.Recipient()}, nil }, ConnectionIdentities: func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{f.identity} }, Identities: func(context.Context) []*age.X25519Identity { return []*age.X25519Identity{runtimeID} }, BindingProbeConnect: func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error) {
+	opts.BindingProbeConnect = func(context.Context, *pgx.ConnConfig) (*pgx.Conn, error) {
 		connects.Add(1)
 		return nil, errors.New("private-driver-sentinel")
-	}}
+	}
+
 	f.executor = toolregistry.NewPrivateExecutor(store, opts)
 	t.Cleanup(f.executor.Close)
 	id := toolpublication.Digest([]byte(f.account.ID + ":bindings"))
