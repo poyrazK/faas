@@ -1759,7 +1759,19 @@ func errNegativePerInstanceConcurrency(value int) error {
 // caller: the setting is not enabled for this account yet.
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
-		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
+		const hint = "leave it unset to use the plan's concurrency per VM"
+		// printErr renders the APIError it finds in the chain, so a wrapped
+		// explanation never reached the screen (prod 2026-11-19 showed the
+		// raw "unknown field(s)"). Rewrite the problem itself.
+		var ae *APIError
+		if errors.As(err, &ae) {
+			explained := *ae
+			explained.Problem.Detail = detail
+			explained.Problem.Hint = hint
+			return &explained
+		}
+		return fmt.Errorf("%s; %s (%w)", detail, hint, err)
 	}
 	return err
 }
