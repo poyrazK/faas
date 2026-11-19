@@ -92,7 +92,7 @@
     owner: root
     group: root
     mode: "0755"
-  loop: [faas-tenant.slice, faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
+  loop: [faas-tenant.slice, faas-cp.slice, faas-cp-build.slice, faas-borrowed.slice, system.slice, user.slice, init.scope]
   when: faas_zswap_enabled | bool
 
 - name: zswap — bound the compressed bytes tenants may hold
@@ -121,7 +121,7 @@
       # ADR-906 decision 6: only frozen tenant VMs swap, and only into zswap.
       [{{ 'Scope' if item.endswith('.scope') else 'Slice' }}]
       MemorySwapMax=0
-  loop: [faas-cp.slice, faas-cp-build.slice, system.slice, user.slice, init.scope]
+  loop: [faas-cp.slice, faas-cp-build.slice, faas-borrowed.slice, system.slice, user.slice, init.scope]
   register: zswap_noswap_dropins
   when: faas_zswap_enabled | bool
 

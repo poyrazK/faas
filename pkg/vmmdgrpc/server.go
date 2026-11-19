@@ -264,6 +264,10 @@ type flowSnapshotter interface {
 
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
+	// borrowed is elastic builder slots' vmmd half (ADR-20261118154632);
+	// nil runs no borrowed builders. See WithBorrowedBuilders.
+	borrowed *BorrowedBuilders
+
 	parkStore     state.OperatorParkStore
 	parkNodeID    string
 	restartStore  state.OperatorRestartStore
@@ -814,6 +818,14 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 	const op = "CreateColdBoot"
 	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
+	if req.GetBuild().GetBorrowed() && !s.borrowed.Supported() {
+		// builderd asks only after Ping said yes; the flag or the slice may
+		// have gone since. Refuse rather than run it in faas-cp-build.slice,
+		// whose 5 GiB fence a second builder can overrun (ADR-20261118154632).
+		err := status.Error(codes.FailedPrecondition, "this vmmd runs no borrowed builders: builder_elastic_slots is off or faas-borrowed.slice is missing")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, err
+	}
 	wr, err := toColdBootRequest(ctx, req)
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
@@ -1555,7 +1567,11 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetActivity(req.GetInstance())
 	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
-	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code), RehearsalWorkerFaultId: req.GetRehearsalWorkerFaultId(), RehearsalColdPreparationId: req.GetRehearsalColdPreparationId()}, nil
+	return &vmmdpb.DestroyResponse{
+		Instance: req.GetInstance(), ExitCode: int32(code),
+		RehearsalWorkerFaultId: req.GetRehearsalWorkerFaultId(), RehearsalColdPreparationId: req.GetRehearsalColdPreparationId(),
+		PreemptedForTenants: s.borrowed.TakePreempted(req.GetInstance()),
+	}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful
@@ -1888,6 +1904,7 @@ func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingR
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
+		SupportsBorrowedBuilders:           s.borrowed.Supported(),
 	}
 	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
 	// its configured base generation degraded. The report is cached; Ping
