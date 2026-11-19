@@ -736,6 +736,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OUTBOUNDD_RELAY_TLS_KEY_PATH` | outboundd | `dropin` |  |  | `` | outboundd/server outbound-relay feature leaf; control_plane_service 99-faas-outbound-relay.conf sets it for a tcp:// relay (ADR-989); overrides outboundd.toml |
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OUTBOUNDD_WORKLOAD_IDENTITY_JWKS_PATH` | outboundd | `dropin` |  |  | `` | workload-identity JWKS the relay verifies assertions against (ADR-989, ADR-1141); control_plane_service 99-faas-outbound-relay.conf sets it with the relay and it overrides workload_identity_jwks_path in outboundd.toml |
+| `FAAS_OUTBOUND_AGENT_WEB_FETCH` | outboundd | `default` |  |  | `` | ADR-20261027090016 amendment 1: 1 lists the capability gateway's web_fetch tool to agent runs whose version allows it; keep off in production until outboundd's fetches leave from an agent egress address |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
 | `FAAS_OWNER_BALANCE` | schedd | `default` |  |  | `` | ADR-20261118160000: the control plane's schedd moves parked, long-idle apps toward the least owned node; on by default, `off` turns the balance off |
