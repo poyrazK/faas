@@ -29,7 +29,10 @@ What to expect:
 
 - **API downtime from the freeze to the first deploy on OVH**, about one to
   two hours. Most of it is the control node's first bootstrap and the
-  PostgreSQL restore. The rehearsal (phase 1 step 9) measures the restore.
+  PostgreSQL restore. The rehearsal (phase 1 step 9) measured the restore
+  at about a minute plus one second per 16 MB WAL segment since the base
+  backup. Phase 2 step 3 takes a fresh base backup, so the window replays
+  only minutes of WAL.
 - **Warm apps keep serving** from the GCP compute nodes until they drain
   (ADR-1344 §5). A wake needs the control plane's database, so apps that are
   not running fail from the freeze until the OVH compute nodes serve.
@@ -67,12 +70,16 @@ What to expect:
 - [ ] S3 artifact store (PR #6724, ADR-20261107123000) merged and in the
       release GCP runs.
 - [ ] OVH hardware delivered: one control node (≥ 32 GB RAM, NVMe) and the
-      compute nodes, all on one vRack. **Compute CPUs are Ice Lake or Milan**:
-      Firecracker CPU templates (`pkg/fcvm/cputemplate.go`) cover Skylake,
-      Cascade Lake, Ice Lake and Milan only, and a snapshot restores only on
-      its own CPU class. Naples (EPYC 7xx1) and Ryzen are out. Buy one CPU
-      model for all compute nodes, or set `vmmd_cpu_template` (T2CL for
-      Cascade/Ice Lake, T2A for Milan) so snapshots move between them.
+      compute nodes, all on one vRack. **Compute nodes share one CPU
+      signature**: without a CPU template a snapshot restores only on a host
+      with the same vendor, family, model, stepping and flag set
+      (`SnapshotRestoreCompatible` in `pkg/fcvm/cputemplate.go`), so buy one
+      CPU model and keep kernel and microcode in step. A template
+      (`vmmd_cpu_template`: T2CL for Cascade/Ice Lake, T2A for Milan) is
+      needed only to mix CPU models, and covers Skylake, Cascade Lake, Ice
+      Lake and Milan only. The OVH compute nodes (Xeon E-2388G, Rocket Lake)
+      run without one; on 2026-11-19 both had the same signature (family 6
+      model 167 stepping 1, microcode 0x66, kernel 7.0.0-43).
 - [ ] The cold-boot memory headroom fix (#7440, ADR-20261116170000) is in
       the release: every app cold-boots once on cutover day, and 128 MB apps
       ran out of memory on cold boot without it.
@@ -200,7 +207,12 @@ manifest.
    `/etc/faas/secrets/storage-box/rclone.conf` on the OVH control node under
    the `offhostbox` name, so `offhostbox:faas-pg-basebackup/` is
    `gregale-prod-pg-backups/faas-pg-basebackup/`. The restore reads from it,
-   and after the window the backups push to it.
+   and after the window the backups push to it. `deploy/ovh/install-s3-key.sh
+   rclone --ssh '<ssh to the control node>' --bucket gregale-prod-pg-backups`
+   writes it without the secret touching a command line. The secret is the
+   value under "View the secret key" for the backup user in the OVH manager;
+   the manager's "Download rclone file" is a Swift (OpenStack) config and
+   holds no S3 key.
 9. **Rehearse the restore on the OVH control node.** Copy the newest
    backups to the OVH bucket as in phase 2 step 4 (GCP keeps running). The
    newest base backup is the nightly one (03:00 UTC), and WAL since then
@@ -218,6 +230,16 @@ manifest.
    - time the copy and the restore;
    - stop the throwaway cluster and delete its data directory and the staged
      backup.
+
+   The 2026-11-19 rehearsal on the OVH control node restored the 03:05 UTC
+   base backup: fetching it (826 MB) took 47 s and unpacking it (3.4 GB)
+   13 s, and the database was consistent 13 s after start. Replaying
+   875 WAL segments (14 GB, up to 17:32 UTC) took 16 min 29 s, about one
+   segment a second. That rate is fetching, not replay (PostgreSQL used 8 s of CPU):
+   `restore_command` starts one `rclone` per segment. It promoted at
+   migration `20261119102834810`, the same as GCP, with 14 accounts and
+   744 apps, the same as GCP's rows created by the last replayed
+   transaction.
 10. **Lower the TTLs** of the control-plane address record and the app entry
     records to 60 s, a day ahead.
 
@@ -269,13 +291,24 @@ manifest.
      RCLONE_CONFIG_OVH_ENDPOINT=https://s3.bhs.io.cloud.ovh.net \
      RCLONE_CONFIG_OVH_REGION=bhs RCLONE_CONFIG_OVH_NO_CHECK_BUCKET=true
    conf=/etc/faas/secrets/storage-box/rclone.conf
+   rc=/usr/local/lib/faas/faas-rclone-backup-identity.py
    dst=ovh:gregale-prod-pg-backups
-   b=$(rclone --config "$conf" lsf --dirs-only offhostbox:faas-pg-basebackup/ | sort | tail -1)
-   rclone --config "$conf" copy --checksum "offhostbox:faas-pg-basebackup/$b" "$dst/faas-pg-basebackup/$b"
-   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-pg-wal "$dst/faas-pg-wal"
-   rclone --config "$conf" copy --checksum --max-age 2h offhostbox:faas-cp-state "$dst/faas-cp-state"
+   b=$("$rc" --config "$conf" lsf --dirs-only offhostbox:faas-pg-basebackup/ | sort | tail -1)
+   "$rc" --config "$conf" copy --checksum "offhostbox:faas-pg-basebackup/$b" "$dst/faas-pg-basebackup/$b"
+   "$rc" --config "$conf" copy --checksum --transfers 16 --max-age 2h offhostbox:faas-pg-wal "$dst/faas-pg-wal"
+   "$rc" --config "$conf" copy --checksum --max-age 2h offhostbox:faas-cp-state "$dst/faas-cp-state"
    exit
    ```
+
+   Run rclone through `faas-rclone-backup-identity.py`, as the backup units
+   do. The control node's own service account cannot list the backup bucket
+   (plain `rclone` gets 403 `storage.objects.list`); the wrapper uses it only
+   to mint a one-hour token for the backup writer, and passes the `ovh`
+   remote through unchanged. The rehearsal (2026-11-19) copied the base
+   backup in 41 s and 15 GB of WAL in 67 s, well inside the token's hour.
+   Do not skip the fresh base backup of step 3 to save time: the restore
+   fetches WAL one segment a second, so a night's WAL adds about 15 minutes
+   to the window.
 
    `$b` must be the backup step 3 made. Recovery needs WAL only from that
    backup's start, so copy no older WAL than the backup: production writes
@@ -414,13 +447,18 @@ restore_command = 'rclone copyto offhostbox:faas-pg-wal/%f %p --config /srv/fc/p
 CONF
 printf 'local all postgres peer\n' > "$data/pg_hba.conf"
 chown postgres:postgres "$data/postgresql.conf" "$data/pg_hba.conf"
-runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D "$data" -l "$data.log" -W start
+runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D "$data" -l "$data/rehearsal.log" -W start
+runuser -u postgres -- /usr/lib/postgresql/16/bin/pg_ctl -D "$data" status   # must say running
 runuser -u postgres -- psql -h /tmp -p 5433 -Atc 'SELECT pg_is_in_recovery()'   # repeat until f
 ```
 
+The log goes inside `$data`: `postgres` cannot create files in `/srv/fc`,
+and with `-W` a log it cannot open means no server and no error, only a
+`psql` that never connects. Check `status` before waiting on recovery.
+
 After the checks in phase 1 step 9, stop it
 (`pg_ctl -D "$data" -m fast stop` as `postgres`) and delete `$data`,
-`$data.log`, `/srv/fc/pg-rehearsal-rclone.conf` and the staged backup.
+`/srv/fc/pg-rehearsal-rclone.conf` and the staged backup.
 
 ### Rollback
 
