@@ -91,6 +91,9 @@ type Options struct {
 }
 
 type management struct {
+	// channelTests holds each notification channel's last test send time,
+	// for gregale_test_notification_channel's rate limit.
+	channelTests                 sync.Map
 	grantLifecycle               *Lifecycle
 	lifecycle                    *Lifecycle
 	toolWrites                   map[string]bool

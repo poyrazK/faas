@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -160,7 +161,10 @@ func (m *management) planPreviewChange(ctx context.Context, a planPreviewArgs) (
 	return m.savePlan(p)
 }
 
-func (m *management) runPreviewChange(ctx context.Context, p *releasePlan) (any, error) {
+// runPreviewChange applies a preview plan. A retried destroy skips the
+// ownership check (planning checked it, and the first attempt may already
+// have destroyed the preview) and takes not-found as done.
+func (m *management) runPreviewChange(ctx context.Context, p *releasePlan, retry bool) (any, error) {
 	var req previewChangeRequest
 	if err := json.Unmarshal(p.Operation.Request, &req); err != nil {
 		return nil, err
@@ -174,11 +178,16 @@ func (m *management) runPreviewChange(ctx context.Context, p *releasePlan) (any,
 		}
 		return previewSummary(app), nil
 	case "destroy":
-		if _, err := m.previewOf(ctx, p.App, req.Preview, true); err != nil {
-			return nil, err
+		if !retry {
+			if _, err := m.previewOf(ctx, p.App, req.Preview, true); err != nil {
+				return nil, err
+			}
 		}
 		if err := m.client.DestroyPreview(ctx, req.Preview); err != nil {
-			return nil, err
+			var native *api.APIError
+			if !retry || !errors.As(err, &native) || native.Problem.Status != http.StatusNotFound {
+				return nil, err
+			}
 		}
 		return map[string]any{"destroyed": req.Preview}, nil
 	}

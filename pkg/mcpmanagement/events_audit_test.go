@@ -69,6 +69,8 @@ func (f *eventsFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/v1/audit-log":
 		f.auditLogs++
 		encode(api.ListAuditLogResponse{})
+	case path == "/v1/billing/budgets/b-notify":
+		encode(api.FinancialBudgetResponse{ID: "b-notify", Revision: 3, Spec: financial.BudgetSpec{Name: "egress", Currency: "usd", Scope: financial.BudgetScope{Kind: "account"}, Meters: []string{"egress"}, Basis: "gross_usage", LimitMillicents: 100, NotifyMillicents: []int64{50}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: false}})
 	case path == "/v1/billing/budgets/b-strict":
 		encode(api.FinancialBudgetResponse{ID: "b-strict", Revision: 2, Spec: financial.BudgetSpec{Scope: financial.BudgetScope{Kind: "account"}, Mode: "strict", Action: "reject_traffic"}})
 	case path == "/v1/billing/budgets/preview":
@@ -177,6 +179,14 @@ func TestBudgetsNotifyOnly(t *testing.T) {
 	}
 	if len(f.budgets) != 1 || f.budgets[0].Spec.Action != "notify" || f.budgets[0].Spec.Mode != "monitored" || f.budgets[0].Spec.Scope.Kind != "account" {
 		t.Fatalf("budgets = %+v", f.budgets)
+	}
+	update, err := m.planBudgetChange(t.Context(), planBudgetArgs{Op: "update", BudgetID: "b-notify", LimitMillicents: 900, Reason: "raise"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := update.(budgetPlan).Spec
+	if got.LimitMillicents != 900 || got.Enabled || got.Basis != "gross_usage" || len(got.Meters) != 1 || got.Meters[0] != "egress" || got.Name != "egress" || len(got.NotifyMillicents) != 1 {
+		t.Fatalf("update dropped fields: %+v", got)
 	}
 	limited, _ := newEventsFixture(t, []string{api.ScopeUsageRead}, map[string]string{"alpha": "app-one"})
 	if _, err := limited.planBudgetChange(t.Context(), planBudgetArgs{Op: "create", Scope: "account", Name: "x", Currency: "usd", LimitMillicents: 1, Reason: "x"}); err == nil {

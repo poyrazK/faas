@@ -40,6 +40,15 @@ func TestRunReadOnlyStatementAgainstPostgres(t *testing.T) {
 		t.Fatalf("byte cap: %+v %v", got, err)
 	}
 
+	// A capped result ends the statement instead of draining the rest.
+	start := time.Now()
+	if got, err = run(`SELECT a.g, repeat('x', 100) FROM generate_series(1, 20000) a(g), generate_series(1, 20000) b(g)`, 1, QueryMaxValueBytes); err != nil || got.RowCount != 1 || !got.Truncated {
+		t.Fatalf("large capped query: %+v %v", got, err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("capped query took %s; the statement kept running", took)
+	}
+
 	var queryErr *QueryError
 	for sql, state := range map[string]string{
 		`DELETE FROM agent_query_rows`:                            "25006", // read-only transaction

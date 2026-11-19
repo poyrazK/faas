@@ -250,17 +250,22 @@ func strictDecode(v map[string]any, out any, field string) error {
 	return nil
 }
 
-func (m *management) runEdgeChange(ctx context.Context, p *releasePlan) (any, error) {
+// runEdgeChange applies an edge plan. The rule-set pin is checked only on
+// the first attempt: a retry after an uncertain response may find this plan's
+// own change already in place, and its idempotency key replays that outcome.
+func (m *management) runEdgeChange(ctx context.Context, p *releasePlan, retry bool) (any, error) {
 	var req edgeChangeRequest
 	if err := json.Unmarshal(p.Operation.Request, &req); err != nil {
 		return nil, err
 	}
-	current, err := m.currentRuleSet(ctx, p.App)
-	if err != nil {
-		return nil, err
-	}
-	if current.RulesSHA256 != req.RulesSHA256 {
-		return nil, invalid("plan_stale", "the app's edge rules changed after this plan; plan again")
+	if !retry {
+		current, err := m.currentRuleSet(ctx, p.App)
+		if err != nil {
+			return nil, err
+		}
+		if current.RulesSHA256 != req.RulesSHA256 {
+			return nil, invalid("plan_stale", "the app's edge rules changed after this plan; plan again")
+		}
 	}
 	ctx = api.ContextWithIdempotencyKey(ctx, "mcp-operation-"+p.ID)
 	switch req.Op {

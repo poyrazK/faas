@@ -7234,7 +7234,7 @@ connection has "Read my app data" (`data:read`).
 Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
 
 - `gregale_plan_dead_letter_replay`: up to 50 named dead letters, or the
-  oldest up to 500. A replay runs the app's code again on old input.
+  oldest up to 200. A replay runs the app's code again on old input.
 - `gregale_plan_workflow_recovery`: `retry_step`, `resume` (fails if the run
   was resumed since the plan), `cancel` or `cancel_queued`.
 - `gregale_plan_monitoring_change`: create an SLO; create, enable or disable a

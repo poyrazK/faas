@@ -189,6 +189,33 @@ func TestEdgeChangeRefusesManagedAndForeignRules(t *testing.T) {
 	}
 }
 
+func TestRetriedAppliesReplayTheirOwnOutcome(t *testing.T) {
+	m, f := newEdgeFixture(t, nil)
+	create := map[string]any{"kind": "block", "match_path": "/x", "action": map[string]any{"status": 403}}
+	plan, err := m.planEdgeRuleChange(t.Context(), planEdgeArgs{App: "alpha", Op: "create", Create: create, Reason: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := plan.(releasePlan)
+	f.emu.Lock()
+	f.rulesSHA = "sha-after-our-own-change"
+	f.emu.Unlock()
+	if _, err := m.runEdgeChange(t.Context(), &p, true); err != nil {
+		t.Fatalf("retry refused: %v", err)
+	}
+	if _, err := m.runEdgeChange(t.Context(), &p, false); err == nil {
+		t.Fatal("first attempt against changed rules accepted")
+	}
+	req, _ := json.Marshal(previewChangeRequest{Op: "destroy", Preview: "alpha-pr-gone"})
+	gone := releasePlan{ID: "p1", App: "alpha", Operation: &operationPlan{Kind: "preview_change", Request: req}}
+	if _, err := m.runPreviewChange(t.Context(), &gone, true); err != nil {
+		t.Fatalf("retried destroy of a destroyed preview: %v", err)
+	}
+	if _, err := m.runPreviewChange(t.Context(), &gone, false); err == nil {
+		t.Fatal("first destroy of a missing preview accepted")
+	}
+}
+
 func TestPreviewsStayUnderTheirParent(t *testing.T) {
 	m, f := newEdgeFixture(t, nil)
 	out, err := m.listPreviews(t.Context(), appArgs{App: "alpha"})

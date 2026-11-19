@@ -20,10 +20,14 @@ import (
 // replays and workflow recovery.
 
 const (
-	maxReplayIDs        = 50
-	maxReplayAll        = 500
-	maxCancelQueuedRuns = 50
-	maxIncidentNote     = 4000
+	maxReplayIDs = 50
+	// maxReplayAll matches apid's dead-letter replay limit.
+	maxReplayAll = 200
+	// maxReplayPreviewPages bounds the pages read to find the oldest dead
+	// letters a replay-all takes.
+	maxReplayPreviewPages = 10
+	maxCancelQueuedRuns   = 50
+	maxIncidentNote       = 4000
 )
 
 // payloadKeys hold customer data in DLQ events and workflow runs and steps.
@@ -71,7 +75,7 @@ type planReplayArgs struct {
 	App      string   `json:"app" jsonschema:"App slug"`
 	EventIDs []string `json:"event_ids,omitempty" jsonschema:"Up to 50 dead-letter event IDs to replay; or set all"`
 	All      bool     `json:"all,omitempty" jsonschema:"Replay the oldest dead letters, up to limit"`
-	Limit    int      `json:"limit,omitempty" jsonschema:"With all: 1 to 500; default 100"`
+	Limit    int      `json:"limit,omitempty" jsonschema:"With all: 1 to 200; default 100"`
 	Reason   string   `json:"reason" jsonschema:"Reviewable reason; at most 280 characters"`
 }
 
@@ -144,7 +148,7 @@ func registerAsyncMonitoring(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_synthetics", "List the app's synthetic checks with recent results. Read-only.", m.listSynthetics)
 	register(s, m, "gregale_list_incidents", "List the app's incidents (fired alerts, route monitor and other sources), optionally only open ones. Read-only.", m.listIncidents)
 	register(s, m, "gregale_get_incident", "Read one incident: fires, updates, notes, recent changes and log context. Read-only.", m.getIncident)
-	register(s, m, "gregale_plan_dead_letter_replay", "Review replaying dead letters: up to 50 named events, or the oldest up to 500. A replay runs the app's code again on the old input. Changes nothing; apply with gregale_apply_operation. On a production app an agent connection asks a person first.", m.planDeadLetterReplay)
+	register(s, m, "gregale_plan_dead_letter_replay", "Review replaying dead letters: up to 50 named events, or the oldest up to 200. A replay runs the app's code again on the old input. Changes nothing; apply with gregale_apply_operation. On a production app an agent connection asks a person first.", m.planDeadLetterReplay)
 	register(s, m, "gregale_plan_workflow_recovery", "Review recovering workflow runs: retry a failed step, resume a run, cancel a run, or cancel runs that have not started. Changes nothing; apply with gregale_apply_operation. Agent connections ask a person first.", m.planWorkflowRecovery)
 	register(s, m, "gregale_plan_monitoring_change", "Review creating an SLO, creating, enabling or disabling a synthetic check, or creating or updating a notify-only alert rule on existing channels. Changes nothing; apply with gregale_apply_operation. Deletes stay with people.", m.planMonitoringChange)
 	if m.opts.AllowWrites {
@@ -442,7 +446,7 @@ func (m *management) planDeadLetterReplay(ctx context.Context, a planReplayArgs)
 			req.Limit = 100
 		}
 		if req.Limit < 1 || req.Limit > maxReplayAll {
-			return nil, invalid("invalid_argument", "limit must be from 1 to 500")
+			return nil, invalid("invalid_argument", "limit must be from 1 to 200")
 		}
 	default:
 		if err := validIDs(a.EventIDs, "event_ids", maxReplayIDs); err != nil {
@@ -455,12 +459,27 @@ func (m *management) planDeadLetterReplay(ctx context.Context, a planReplayArgs)
 		return nil, err
 	}
 	var preview []api.DeadLetterEvent
+	previewNote := ""
 	if a.All {
-		page, err := m.client.ListDeadLetterEvents(ctx, a.App, min(req.Limit, 100), "")
-		if err != nil {
-			return nil, err
+		// The list is newest first; a replay-all takes the oldest. Read
+		// pages back to the oldest and preview exactly those.
+		before := ""
+		for range maxReplayPreviewPages {
+			page, err := m.client.ListDeadLetterEvents(ctx, a.App, 100, before)
+			if err != nil {
+				return nil, err
+			}
+			preview = append(preview, page.Events...)
+			before = page.NextBefore
+			if before == "" {
+				break
+			}
 		}
-		preview = page.Events
+		if before != "" {
+			previewNote = "More dead letters exist than this preview read; the replay takes older ones than those shown."
+		}
+		slices.SortStableFunc(preview, func(x, y api.DeadLetterEvent) int { return x.LastFailedAt.Compare(y.LastFailedAt) })
+		preview = preview[:min(len(preview), req.Limit)]
 	} else {
 		for _, id := range req.EventIDs {
 			e, err := m.client.GetDeadLetterEvent(ctx, a.App, id)
@@ -477,7 +496,11 @@ func (m *management) planDeadLetterReplay(ctx context.Context, a planReplayArgs)
 	for _, e := range preview {
 		summary = append(summary, map[string]any{"id": e.ID, "source": e.Source, "error_kind": e.ErrorKind, "retry_count": e.RetryCount, "last_failed_at": e.LastFailedAt})
 	}
-	changes, _ := json.Marshal(map[string]any{"request": req, "dead_letters": summary})
+	view := map[string]any{"request": req, "dead_letters": summary}
+	if previewNote != "" {
+		view["preview_note"] = previewNote
+	}
+	changes, _ := json.Marshal(view)
 	p.Operation.Changes = changes
 	p.TrafficEffect = "Replays the dead letters through the app's current code: their side effects (writes, emails, charges) happen again. Fix the cause first."
 	return m.savePlan(p)
@@ -535,6 +558,14 @@ func (m *management) planWorkflowRecovery(ctx context.Context, a planWorkflowRec
 
 func (m *management) planMonitoringChange(ctx context.Context, a planMonitoringArgs) (any, error) {
 	req := monitoringRequest{Kind: a.Kind, Op: a.Op, ID: a.ID}
+	if (a.Op != "create") != (a.ID != "") {
+		return nil, invalid("invalid_argument", "id is required for enable, disable and update, and refused for create")
+	}
+	if a.ID != "" {
+		if err := validateSegment(a.ID, "id"); err != nil {
+			return nil, err
+		}
+	}
 	app, err := m.consentedApp(ctx, a.App, false)
 	if err != nil {
 		return nil, err
@@ -579,14 +610,6 @@ func (m *management) planMonitoringChange(ctx context.Context, a planMonitoringA
 		req.Alert = s
 	default:
 		return nil, invalid("invalid_argument", "change must be slo/create, synthetic/create|enable|disable or alert/create|update; deletes stay with people")
-	}
-	if (a.Op != "create") != (a.ID != "") {
-		return nil, invalid("invalid_argument", "id is required for enable, disable and update, and refused for create")
-	}
-	if a.ID != "" {
-		if err := validateSegment(a.ID, "id"); err != nil {
-			return nil, err
-		}
 	}
 	p, err := m.operationBase(ctx, operationArgs{App: a.App, Reason: a.Reason}, "monitoring_change", req)
 	if err != nil {

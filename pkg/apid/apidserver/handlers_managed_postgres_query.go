@@ -21,18 +21,8 @@ func (s *server) queryManagedPostgresDatabase(w http.ResponseWriter, r *http.Req
 		managedPostgresNotConfiguredProblem(w)
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, managedpostgres.QueryMaxSQLBytes+4096)
-	var req api.ManagedPostgresQueryRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
-		return
-	}
-	if err := managedpostgres.ValidateQuerySQL(req.SQL); err != nil {
-		api.WriteProblem(w, api.ErrValidation("sql must be 1 to 65536 bytes without NUL"))
-		return
-	}
-	if req.MaxRows < 0 || req.MaxRows > managedpostgres.QueryMaxRows {
-		api.WriteProblem(w, api.ErrValidation("max_rows must be from 1 to 1000"))
+	req, ok := decodeManagedPostgresQuery(w, r)
+	if !ok {
 		return
 	}
 	database, err := s.managedPostgres.Get(r.Context(), acct.ID, r.PathValue("id"))
@@ -41,26 +31,9 @@ func (s *server) queryManagedPostgresDatabase(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := s.managedPostgres.QueryReadOnly(r.Context(), database, req.SQL, req.MaxRows)
-	sum := sha256.Sum256([]byte(req.SQL))
-	audit := map[string]any{"database_id": database.ID, "sql_sha256": hex.EncodeToString(sum[:]), "sql_bytes": len(req.SQL), "row_count": result.RowCount, "truncated": result.Truncated, "outcome": "ok"}
-	var queryErr *managedpostgres.QueryError
-	switch {
-	case errors.As(err, &queryErr):
-		audit["outcome"], audit["sqlstate"] = "query_failed", queryErr.SQLState
-	case err != nil:
-		audit["outcome"] = "error"
-	}
-	s.audit.Emit(r.Context(), "postgres.query_executed", &acct.ID, audit)
-	switch {
-	case queryErr != nil:
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodePostgresQueryFailed, "Query failed", queryErr.Message+" (SQLSTATE "+queryErr.SQLState+")").
-			WithHint("The statement runs read-only as a login that can read the public schema, for at most 5 seconds. Fix the statement and try again."))
-		return
-	case errors.Is(err, managedpostgres.ErrUnsupported):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodePostgresQueryUnsupported, "Queries unsupported", "this database's backend cannot run read-only queries"))
-		return
-	case err != nil:
-		managedPostgresProblem(w, err)
+	s.audit.Emit(r.Context(), "postgres.query_executed", &acct.ID, managedPostgresQueryAudit(database.ID, req.SQL, result, err))
+	if err != nil {
+		managedPostgresQueryProblem(w, err)
 		return
 	}
 	columns := make([]api.ManagedPostgresQueryColumn, 0, len(result.Columns))
@@ -69,4 +42,52 @@ func (s *server) queryManagedPostgresDatabase(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, api.ManagedPostgresQueryResponse{DatabaseID: database.ID, Columns: columns, Rows: result.Rows, RowCount: result.RowCount, Truncated: result.Truncated, DurationMS: result.Duration.Milliseconds()})
+}
+
+// decodeManagedPostgresQuery reads and checks the request body, writing the
+// problem itself when it is invalid.
+func decodeManagedPostgresQuery(w http.ResponseWriter, r *http.Request) (api.ManagedPostgresQueryRequest, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, managedpostgres.QueryMaxSQLBytes+4096)
+	var req api.ManagedPostgresQueryRequest
+	if err := decodeJSON(r, &req); err != nil {
+		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		return req, false
+	}
+	if err := managedpostgres.ValidateQuerySQL(req.SQL); err != nil {
+		api.WriteProblem(w, api.ErrValidation("sql must be 1 to 65536 bytes without NUL"))
+		return req, false
+	}
+	if req.MaxRows < 0 || req.MaxRows > managedpostgres.QueryMaxRows {
+		api.WriteProblem(w, api.ErrValidation("max_rows must be from 1 to 1000"))
+		return req, false
+	}
+	return req, true
+}
+
+// managedPostgresQueryAudit records a query by the hash and size of its SQL,
+// never its text or rows.
+func managedPostgresQueryAudit(databaseID, sql string, result managedpostgres.ReadOnlyQueryResult, err error) map[string]any {
+	sum := sha256.Sum256([]byte(sql))
+	audit := map[string]any{"database_id": databaseID, "sql_sha256": hex.EncodeToString(sum[:]), "sql_bytes": len(sql), "row_count": result.RowCount, "truncated": result.Truncated, "outcome": "ok"}
+	var queryErr *managedpostgres.QueryError
+	switch {
+	case errors.As(err, &queryErr):
+		audit["outcome"], audit["sqlstate"] = "query_failed", queryErr.SQLState
+	case err != nil:
+		audit["outcome"] = "error"
+	}
+	return audit
+}
+
+func managedPostgresQueryProblem(w http.ResponseWriter, err error) {
+	var queryErr *managedpostgres.QueryError
+	switch {
+	case errors.As(err, &queryErr):
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodePostgresQueryFailed, "Query failed", queryErr.Message+" (SQLSTATE "+queryErr.SQLState+")").
+			WithHint("The statement runs read-only as a login that can read the public schema, for at most 5 seconds. Fix the statement and try again."))
+	case errors.Is(err, managedpostgres.ErrUnsupported):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodePostgresQueryUnsupported, "Queries unsupported", "this database's backend cannot run read-only queries"))
+	default:
+		managedPostgresProblem(w, err)
+	}
 }

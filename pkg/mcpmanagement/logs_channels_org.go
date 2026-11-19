@@ -2,11 +2,12 @@ package mcpmanagement
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -21,8 +22,6 @@ import (
 // carry invitation tokens.
 
 const channelTestInterval = time.Minute
-
-var channelTests sync.Map // channel ID -> last test time
 
 type logSearchArgs struct {
 	App          string `json:"app" jsonschema:"App slug"`
@@ -189,11 +188,49 @@ func (m *management) getLogDrainHealth(ctx context.Context, a logDrainArgs) (any
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"drain": drainView(drain), "health": health, "analytics": analytics}, nil
+	return redactURLsIn(map[string]any{"drain": drainView(drain), "health": health, "analytics": analytics})
+}
+
+// urlPattern finds URLs in error text: Go HTTP errors quote the full request
+// URL, so a delivery error can carry a webhook's credential.
+var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://[^\s"'<>\\]+`)
+
+// redactURLs cuts every URL in s to its scheme and host.
+func redactURLs(s string) string {
+	return urlPattern.ReplaceAllStringFunc(s, destinationHost)
+}
+
+// redactURLsIn cuts every URL in v's string values to its scheme and host.
+func redactURLsIn(v any) (any, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	var tree any
+	if err := json.Unmarshal(raw, &tree); err != nil {
+		return nil, err
+	}
+	var walk func(any) any
+	walk = func(n any) any {
+		switch t := n.(type) {
+		case string:
+			return redactURLs(t)
+		case map[string]any:
+			for k, c := range t {
+				t[k] = walk(c)
+			}
+		case []any:
+			for i := range t {
+				t[i] = walk(t[i])
+			}
+		}
+		return n
+	}
+	return walk(tree), nil
 }
 
 func channelView(c api.NotificationChannelResponse) map[string]any {
-	return map[string]any{"id": c.ID, "name": c.Name, "kind": c.Kind, "destination": destinationHost(c.Target), "last_delivered_at": c.LastDeliveredAt, "last_error": c.LastError, "last_error_at": c.LastErrorAt, "created_at": c.CreatedAt}
+	return map[string]any{"id": c.ID, "name": c.Name, "kind": c.Kind, "destination": destinationHost(c.Target), "last_delivered_at": c.LastDeliveredAt, "last_error": redactURLs(c.LastError), "last_error_at": c.LastErrorAt, "created_at": c.CreatedAt}
 }
 
 func (m *management) listNotificationChannels(ctx context.Context, _ struct{}) (any, error) {
@@ -220,15 +257,15 @@ func (m *management) testNotificationChannel(ctx context.Context, a channelArgs)
 		return nil, invalid("invalid_response", "channel identity differs")
 	}
 	now := time.Now()
-	if last, ok := channelTests.Load(a.Channel); ok && now.Sub(last.(time.Time)) < channelTestInterval {
+	if last, ok := m.channelTests.Load(a.Channel); ok && now.Sub(last.(time.Time)) < channelTestInterval {
 		return nil, invalid("rate_limited", "this channel was tested less than a minute ago")
 	}
-	channelTests.Store(a.Channel, now)
+	m.channelTests.Store(a.Channel, now)
 	out, err := m.client.TestNotificationChannel(ctx, a.Channel)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"channel": channelView(c), "result": out}, nil
+	return redactURLsIn(map[string]any{"channel": channelView(c), "result": out})
 }
 
 func (m *management) listOrgMembers(ctx context.Context, a orgArgs) (any, error) {

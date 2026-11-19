@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -84,8 +83,6 @@ var (
 	ErrNotReady = fmt.Errorf("%w: the database is not ready", ErrConflict)
 )
 
-var queriesInFlight sync.Map // database ID → struct{}
-
 // ValidateQuerySQL checks a statement before it reaches a database: present,
 // bounded, valid text without NUL. The read-only login and transaction are
 // the boundary; this only refuses input no database should see.
@@ -120,10 +117,10 @@ func (s *Service) QueryReadOnly(ctx context.Context, database Database, sql stri
 	if !ok || backend.Capabilities.SupportsCredentialAccess(CredentialReadOnly) != nil {
 		return ReadOnlyQueryResult{}, ErrUnsupported
 	}
-	if _, busy := queriesInFlight.LoadOrStore(database.ID, struct{}{}); busy {
+	if _, busy := s.queriesInFlight.LoadOrStore(database.ID, struct{}{}); busy {
 		return ReadOnlyQueryResult{}, ErrQueryBusy
 	}
-	defer queriesInFlight.Delete(database.ID)
+	defer s.queriesInFlight.Delete(database.ID)
 	callCtx, cancel := context.WithTimeout(ctx, queryCallTimeout)
 	defer cancel()
 	started := time.Now()

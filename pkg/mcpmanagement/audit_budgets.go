@@ -41,15 +41,15 @@ type forecastArgs struct {
 type planBudgetArgs struct {
 	Op               string   `json:"op" jsonschema:"create or update"`
 	BudgetID         string   `json:"budget_id,omitempty" jsonschema:"update: the budget"`
-	Scope            string   `json:"scope,omitempty" jsonschema:"account or app; default app"`
-	App              string   `json:"app,omitempty" jsonschema:"scope app: the app"`
-	Name             string   `json:"name" jsonschema:"Budget name"`
-	Currency         string   `json:"currency" jsonschema:"ISO currency such as usd"`
-	Meters           []string `json:"meters,omitempty" jsonschema:"Meters to count; omit for all"`
-	Basis            string   `json:"basis,omitempty" jsonschema:"net_usage or gross_usage; default net_usage"`
-	LimitMillicents  int64    `json:"limit_millicents" jsonschema:"Monthly limit in millicents"`
-	NotifyMillicents []int64  `json:"notify_millicents,omitempty" jsonschema:"Spend levels that notify, in millicents"`
-	Enabled          *bool    `json:"enabled,omitempty" jsonschema:"Default true"`
+	Scope            string   `json:"scope,omitempty" jsonschema:"create: account or app; default app"`
+	App              string   `json:"app,omitempty" jsonschema:"create with scope app: the app"`
+	Name             string   `json:"name,omitempty" jsonschema:"Budget name; required to create, omit to keep on update"`
+	Currency         string   `json:"currency,omitempty" jsonschema:"ISO currency such as usd; required to create, omit to keep on update"`
+	Meters           []string `json:"meters,omitempty" jsonschema:"Meters to count; create: omit for all; update: omit to keep"`
+	Basis            string   `json:"basis,omitempty" jsonschema:"net_usage or gross_usage; create default net_usage; update: omit to keep"`
+	LimitMillicents  int64    `json:"limit_millicents,omitempty" jsonschema:"Monthly limit in millicents; required to create, omit to keep on update"`
+	NotifyMillicents []int64  `json:"notify_millicents,omitempty" jsonschema:"Spend levels that notify, in millicents; update: omit to keep"`
+	Enabled          *bool    `json:"enabled,omitempty" jsonschema:"create default true; update: omit to keep"`
 	Reason           string   `json:"reason" jsonschema:"Reviewable reason; at most 280 characters"`
 }
 
@@ -174,50 +174,28 @@ func (m *management) planBudgetChange(ctx context.Context, a planBudgetArgs) (an
 	if err := validateReason("budget", a.Reason); err != nil {
 		return nil, err
 	}
-	spec := financial.BudgetSpec{Name: a.Name, Currency: a.Currency, Meters: a.Meters, Basis: a.Basis, LimitMillicents: a.LimitMillicents, NotifyMillicents: a.NotifyMillicents, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: a.Enabled == nil || *a.Enabled}
-	if spec.Basis == "" {
-		spec.Basis = "net_usage"
-	}
-	if spec.Meters == nil {
-		spec.Meters = []string{}
-	}
-	if spec.Name == "" || spec.Currency == "" || spec.LimitMillicents <= 0 || !slices.Contains(financial.BudgetBases, spec.Basis) {
-		return nil, invalid("invalid_argument", "a budget needs name, currency, a positive limit_millicents and basis net_usage or gross_usage")
-	}
-	for _, n := range spec.NotifyMillicents {
-		if n <= 0 {
-			return nil, invalid("invalid_argument", "notify_millicents levels must be positive")
-		}
-	}
-	switch a.Scope {
-	case "", "app":
-		app, err := m.consentedApp(ctx, a.App, false)
-		if err != nil {
-			return nil, err
-		}
-		spec.Scope = financial.BudgetScope{Kind: "app", ID: app.ID}
-	case "account":
-		if a.App != "" || m.opts.AllowedApps != nil {
-			return nil, invalid("app_access_denied", "account budgets need a connection to every app and take no app")
-		}
-		spec.Scope = financial.BudgetScope{Kind: "account"}
-	default:
-		return nil, invalid("invalid_argument", "scope must be account or app")
-	}
 	account, err := m.client.Whoami(ctx)
 	if err != nil {
 		return nil, err
 	}
-	p := &budgetPlan{Op: a.Op, AccountID: account.ID, Spec: spec, Reason: a.Reason, ExpiresAt: time.Now().Add(budgetPlanTTL)}
+	p := &budgetPlan{Op: a.Op, AccountID: account.ID, Reason: a.Reason, ExpiresAt: time.Now().Add(budgetPlanTTL)}
 	switch a.Op {
 	case "create":
 		if a.BudgetID != "" {
 			return nil, invalid("invalid_argument", "create takes no budget_id")
 		}
+		scope, err := m.budgetScope(ctx, a)
+		if err != nil {
+			return nil, err
+		}
+		p.Spec = financial.BudgetSpec{Scope: scope, Basis: "net_usage", Meters: []string{}, Enabled: true}
 		p.Effect = "Adds a budget that notifies the account's channels as spend passes each level. Nothing is blocked or stopped."
 	case "update":
 		if err := validateSegment(a.BudgetID, "budget_id"); err != nil {
 			return nil, err
+		}
+		if a.Scope != "" || a.App != "" {
+			return nil, invalid("invalid_argument", "update keeps the budget's scope; it takes no scope or app")
 		}
 		current, err := m.client.GetFinancialBudget(ctx, a.BudgetID)
 		if err != nil {
@@ -229,12 +207,21 @@ func (m *management) planBudgetChange(ctx context.Context, a planBudgetArgs) (an
 		if !notifyOnly(current.Spec) {
 			return nil, invalid("approval_required", "the budget enforces spend; people change enforcing budgets")
 		}
-		p.BudgetID, p.ExpectedRevision, p.Before = a.BudgetID, current.Revision, &current.Spec
-		p.Effect = "Changes the budget's limit and notify levels. Nothing is blocked or stopped."
+		before := current.Spec
+		p.BudgetID, p.ExpectedRevision, p.Before = a.BudgetID, current.Revision, &before
+		// Start from the budget as it is and change only the fields given.
+		p.Spec = current.Spec
+		p.Spec.Meters = slices.Clone(current.Spec.Meters)
+		p.Spec.NotifyMillicents = slices.Clone(current.Spec.NotifyMillicents)
+		p.Effect = "Changes only the given fields of the budget. Nothing is blocked or stopped."
 	default:
 		return nil, invalid("invalid_argument", "op must be create or update")
 	}
-	preview, err := m.client.PreviewFinancialBudget(ctx, spec)
+	overlayBudget(&p.Spec, a)
+	if err := validNotifyBudget(p.Spec); err != nil {
+		return nil, err
+	}
+	preview, err := m.client.PreviewFinancialBudget(ctx, p.Spec)
 	if err != nil {
 		return nil, err
 	}
@@ -292,4 +279,65 @@ func (m *management) applyBudgetChange(ctx context.Context, a applyArgs) (any, e
 	}
 	p.receipt = map[string]any{"plan_id": p.ID, "op": p.Op, "budget": out}
 	return p.receipt, nil
+}
+
+// budgetScope resolves a new budget's scope: an app of this connection, or
+// the account on a connection to every app.
+func (m *management) budgetScope(ctx context.Context, a planBudgetArgs) (financial.BudgetScope, error) {
+	switch a.Scope {
+	case "", "app":
+		app, err := m.consentedApp(ctx, a.App, false)
+		if err != nil {
+			return financial.BudgetScope{}, err
+		}
+		return financial.BudgetScope{Kind: "app", ID: app.ID}, nil
+	case "account":
+		if a.App != "" || m.opts.AllowedApps != nil {
+			return financial.BudgetScope{}, invalid("app_access_denied", "account budgets need a connection to every app and take no app")
+		}
+		return financial.BudgetScope{Kind: "account"}, nil
+	}
+	return financial.BudgetScope{}, invalid("invalid_argument", "scope must be account or app")
+}
+
+// overlayBudget sets the fields the agent gave, and always keeps the budget
+// notify-only.
+func overlayBudget(s *financial.BudgetSpec, a planBudgetArgs) {
+	if a.Name != "" {
+		s.Name = a.Name
+	}
+	if a.Currency != "" {
+		s.Currency = a.Currency
+	}
+	if a.Meters != nil {
+		s.Meters = slices.Clone(a.Meters)
+	}
+	if a.Basis != "" {
+		s.Basis = a.Basis
+	}
+	if a.LimitMillicents != 0 {
+		s.LimitMillicents = a.LimitMillicents
+	}
+	if a.NotifyMillicents != nil {
+		s.NotifyMillicents = slices.Clone(a.NotifyMillicents)
+	}
+	if a.Enabled != nil {
+		s.Enabled = *a.Enabled
+	}
+	s.Mode, s.Action = "monitored", "notify"
+	if s.ResumeRule == "" {
+		s.ResumeRule = "manual"
+	}
+}
+
+func validNotifyBudget(s financial.BudgetSpec) error {
+	if s.Name == "" || s.Currency == "" || s.LimitMillicents <= 0 || !slices.Contains(financial.BudgetBases, s.Basis) {
+		return invalid("invalid_argument", "a budget needs name, currency, a positive limit_millicents and basis net_usage or gross_usage")
+	}
+	for _, n := range s.NotifyMillicents {
+		if n <= 0 {
+			return invalid("invalid_argument", "notify_millicents levels must be positive")
+		}
+	}
+	return nil
 }

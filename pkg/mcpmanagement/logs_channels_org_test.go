@@ -49,7 +49,7 @@ func (f *logsFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case path == "/v1/apps/alpha/log-drains/d-other":
 		encode(api.AppLogDrainResponse{ID: "d-other", AppID: "another-app"})
 	case path == "/v1/notification-channels":
-		encode([]api.NotificationChannelResponse{{ID: "ch-1", Kind: "slack", Target: "https://hooks.slack.com/services/T0/B0/SECRET"}, {ID: "ch-2", Kind: "email", Target: "oncall@example.com"}})
+		encode([]api.NotificationChannelResponse{{ID: "ch-1", Kind: "slack", Target: "https://hooks.slack.com/services/T0/B0/SECRET", LastError: `Post "https://hooks.slack.com/services/T0/B0/SECRET": context deadline exceeded`}, {ID: "ch-2", Kind: "email", Target: "oncall@example.com"}})
 	case path == "/v1/notification-channels/ch-1":
 		encode(api.NotificationChannelResponse{ID: "ch-1", Kind: "slack", Target: "https://hooks.slack.com/services/T0/B0/SECRET"})
 	case path == "/v1/notification-channels/ch-1/test":
@@ -109,7 +109,6 @@ func TestDestinationsHideCredentials(t *testing.T) {
 }
 
 func TestChannelTestIsRateLimited(t *testing.T) {
-	channelTests.Delete("ch-1")
 	m, f := newLogsFixture(t, "")
 	if _, err := m.testNotificationChannel(t.Context(), channelArgs{Channel: "ch-1"}); err != nil {
 		t.Fatal(err)

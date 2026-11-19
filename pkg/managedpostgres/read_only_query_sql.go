@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -78,6 +79,16 @@ func RunReadOnlyStatement(ctx context.Context, conn *pgx.Conn, req ReadOnlyQuery
 		}
 		bytes += size
 		result.Rows = append(result.Rows, row)
+	}
+	if result.Truncated {
+		// End the statement once a cap is reached: closing rows would
+		// otherwise read the rest of the result and hold the database's
+		// query slot until statement_timeout. A cancel request keeps the
+		// connection usable; the statement ends with 57014, which a
+		// truncated result ignores.
+		cancelCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		_ = conn.PgConn().CancelRequest(cancelCtx)
+		cancel()
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil && !result.Truncated {

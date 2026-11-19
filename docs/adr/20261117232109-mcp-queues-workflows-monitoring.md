@@ -42,7 +42,7 @@ Reads (toolset `diagnose`):
 
 Writes (toolset `operate`): `gregale_plan_dead_letter_replay(app, event_ids |
 all + limit, reason)` reviews replaying up to 50 named events or the oldest
-`limit` (at most 500) and lists what it would replay; `gregale_apply_operation`
+`limit` (at most 200, apid's replay limit) and lists what it would replay; `gregale_apply_operation`
 replays them. Each call carries an idempotency key derived from the plan and
 the event, so a retried apply replays nothing twice. No purge tool.
 

@@ -46,7 +46,14 @@ func (f *asyncFixture) serve(w http.ResponseWriter, r *http.Request) {
 	event := api.DeadLetterEvent{ID: "ev-1", AppID: appID, Source: "queue", Payload: json.RawMessage(`{"email":"a@example.com"}`), Headers: json.RawMessage(`{}`), ErrorKind: "handler_error", RetryCount: 5, LastFailedAt: time.Now()}
 	switch {
 	case r.URL.Path == "/v1/apps/alpha/dlq" && r.Method == http.MethodGet:
-		encode(api.DeadLetterEventsResponse{AppSlug: "alpha", Events: []api.DeadLetterEvent{event}})
+		// Newest first, across two pages: ev-old is the oldest.
+		if r.URL.Query().Get("before") == "" {
+			encode(api.DeadLetterEventsResponse{AppSlug: "alpha", Events: []api.DeadLetterEvent{event}, NextBefore: "page2"})
+			return
+		}
+		old := event
+		old.ID, old.LastFailedAt = "ev-old", event.LastFailedAt.Add(-time.Hour)
+		encode(api.DeadLetterEventsResponse{AppSlug: "alpha", Events: []api.DeadLetterEvent{old}})
 	case r.URL.Path == "/v1/apps/alpha/dlq/ev-1" && r.Method == http.MethodGet:
 		encode(event)
 	case strings.HasPrefix(r.URL.Path, "/v1/apps/alpha/dlq/") && strings.HasSuffix(r.URL.Path, "/replay"):
@@ -128,7 +135,7 @@ func TestDeadLetterReplayPlanReplaysEachEventOnce(t *testing.T) {
 	if len(f.replays) != 1 || f.replayKeys[0] != "mcp-operation-"+id+":ev-1" {
 		t.Fatalf("replays=%v keys=%v", f.replays, f.replayKeys)
 	}
-	for _, a := range []planReplayArgs{{App: "alpha", Reason: "none"}, {App: "alpha", All: true, EventIDs: []string{"ev-1"}, Reason: "both"}, {App: "alpha", All: true, Limit: 501, Reason: "big"}} {
+	for _, a := range []planReplayArgs{{App: "alpha", Reason: "none"}, {App: "alpha", All: true, EventIDs: []string{"ev-1"}, Reason: "both"}, {App: "alpha", All: true, Limit: 201, Reason: "big"}} {
 		if _, err := m.planDeadLetterReplay(t.Context(), a); err == nil {
 			t.Errorf("accepted %+v", a)
 		}
@@ -180,6 +187,21 @@ func TestAgentAlertRulesNotifyExistingChannelsOnly(t *testing.T) {
 	}
 	if _, err := m.planMonitoringChange(t.Context(), planMonitoringArgs{App: "alpha", Kind: "alert", Op: "delete", ID: "rule-1", Reason: "x"}); err == nil {
 		t.Fatal("delete accepted")
+	}
+}
+
+func TestReplayAllPreviewShowsTheOldest(t *testing.T) {
+	m, _ := newAsyncFixture(t, nil)
+	plan, err := m.planDeadLetterReplay(t.Context(), planReplayArgs{App: "alpha", All: true, Limit: 1, Reason: "handler fixed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := string(plan.(releasePlan).Operation.Changes)
+	if !strings.Contains(changes, `"id":"ev-old"`) || strings.Contains(changes, `"id":"ev-1"`) {
+		t.Fatalf("preview = %s", changes)
+	}
+	if _, err := m.planDeadLetterReplay(t.Context(), planReplayArgs{App: "alpha", All: true, Limit: maxReplayAll + 1, Reason: "x"}); err == nil {
+		t.Fatal("limit above apid's accepted")
 	}
 }
 

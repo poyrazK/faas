@@ -390,9 +390,9 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 	case "run_command":
 		return m.runCommand(ctx, p)
 	case "edge_change":
-		return m.runEdgeChange(ctx, p)
+		return m.runEdgeChange(ctx, p, retry)
 	case "preview_change":
-		return m.runPreviewChange(ctx, p)
+		return m.runPreviewChange(ctx, p, retry)
 	case "event_change":
 		return m.runEventChange(ctx, p)
 	case "consumer_change":
