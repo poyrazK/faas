@@ -719,6 +719,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdRedis = cmdRedis
 var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
