@@ -209,15 +209,61 @@
     group: root
     mode: "1700"
 
+# ADR-20261109120000 amendment 5: on an encrypted /srv/fc (unlocked through
+# Tang after early boot) a mount beneath it that local-fs.target requires
+# times out and drops boot into emergency mode. There the tmpfs is nofail
+# and every faas unit requires it instead (13-faas-jail-tmpfs.conf).
+- name: xfs — inspect which device holds /srv/fc
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --output, SOURCE, --mountpoint, /srv/fc]
+  register: xfs_fc_source
+  changed_when: false
+  failed_when: false
+
+- name: xfs — note whether /srv/fc is the encrypted data volume
+  ansible.builtin.set_fact:
+    xfs_fc_encrypted: "{{ (xfs_fc_source.stdout | default('') | trim) is match('^/dev/mapper/.+-crypt$') }}"
+
 - name: xfs — persist and mount /srv/fc/jail tmpfs exactly once
   ansible.posix.mount:
     path: /srv/fc/jail
     src: tmpfs
     fstype: tmpfs
-    opts: nodev,nosuid,size=12G,mode=1700
+    opts: "nodev,nosuid,size=12G,mode=1700{{ ',nofail' if (xfs_fc_encrypted | bool) else '' }}"
     dump: "0"
     passno: "0"
     state: mounted
+
+- name: xfs — create the faas unit drop-in directory for the jail tmpfs
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: xfs_fc_encrypted | bool
+
+- name: xfs — keep faas daemons off an unmounted jail tmpfs
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-.service.d/13-faas-jail-tmpfs.conf
+    content: |
+      # Managed by Gregale (xfs, ADR-20261109120000 amendment 5). The jail
+      # tmpfs sits on the encrypted data volume and is nofail, so boot never
+      # waits for Tang; a faas daemon waits for it instead.
+      [Unit]
+      RequiresMountsFor=/srv/fc/jail
+    owner: root
+    group: root
+    mode: "0644"
+  register: xfs_jail_dropin
+  when: xfs_fc_encrypted | bool
+
+- name: xfs — load the jail tmpfs drop-in and the fstab change
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - xfs_fc_encrypted | bool
+    - xfs_jail_dropin is changed
 
 - name: xfs — verify /srv/fc/jail is the required tmpfs
   ansible.builtin.command:
