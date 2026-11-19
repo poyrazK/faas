@@ -25,6 +25,14 @@ loki_config_path: /etc/loki/config.yml
 # 14 days (ADR-20261023124955 §2). With object storage, a bucket lifecycle
 # rule a little longer than this is the backstop for the compactor.
 loki_retention_period: 336h
+# Streams kept longer than loki_retention_period. The agent egress connection
+# log answers abuse reports weeks after the traffic: 30 days, as on the
+# gateway and for the ADR-371 flow log (ADR-20261117185346 amendment
+# 2026-11-19). The bucket's lifecycle backstop must outlast the longest.
+loki_retention_streams:
+  - selector: '{job="agent-egress-connections"}'
+    priority: 1
+    period: 720h
 loki_ingestion_rate_mb: 4
 loki_ingestion_burst_size_mb: 6
 loki_max_streams_per_user: 2000

@@ -2152,6 +2152,9 @@ groups:
   # The journal shipper is Alloy (ADR-20261023185953) or, for one release,
   # Promtail as the rollback. Both scrape under the promtail and
   # promtail-compute jobs; each rule takes whichever family a host exposes.
+  # The egress gateways' Alloy scrapes as promtail-egress-gateway over wg-obs
+  # (ADR-20261117185346 amendment 2026-11-19); its down alert is
+  # FaasEgressGatewayUnreachable in faas_egress_gateways.
   # loki_source_journal_target_lines_total is Alloy's read counter; the
   # go/no-go check (scripts/ops/obs_gate.py) fails until it is seen.
   - name: faas_loki_pipeline
@@ -2160,12 +2163,12 @@ groups:
       - record: loki_send_total
         expr: |
           sum by (instance) (promtail_sent_entries_total)
-            or sum by (instance) (loki_write_sent_entries_total{job=~"promtail|promtail-compute"})
+            or sum by (instance) (loki_write_sent_entries_total{job=~"promtail|promtail-compute|promtail-egress-gateway"})
 
       - record: loki_drop_total
         expr: |
           sum by (instance) (promtail_dropped_entries_total)
-            or sum by (instance) (loki_write_dropped_entries_total{job=~"promtail|promtail-compute"})
+            or sum by (instance) (loki_write_dropped_entries_total{job=~"promtail|promtail-compute|promtail-egress-gateway"})
 
       - alert: FaasLokiPromtailDown
         expr: up{job=~"promtail|promtail-compute"} == 0
@@ -2182,7 +2185,7 @@ groups:
       - alert: FaasLokiShippingDropped
         expr: |
           sum by (instance) (increase(promtail_dropped_entries_total[10m])) > 0
-            or sum by (instance) (increase(loki_write_dropped_entries_total{job=~"promtail|promtail-compute"}[10m])) > 0
+            or sum by (instance) (increase(loki_write_dropped_entries_total{job=~"promtail|promtail-compute|promtail-egress-gateway"}[10m])) > 0
         for: 5m
         labels:
           severity: warn
@@ -2198,14 +2201,14 @@ groups:
           (
             (
               sum by (instance) (increase(promtail_journal_target_lines_total[10m]))
-                or sum by (instance) (increase(loki_source_journal_target_lines_total{job=~"promtail|promtail-compute"}[10m]))
+                or sum by (instance) (increase(loki_source_journal_target_lines_total{job=~"promtail|promtail-compute|promtail-egress-gateway"}[10m]))
             ) > 0
           )
           and on (instance)
           (
             (
               sum by (instance) (increase(promtail_sent_entries_total[10m]))
-                or sum by (instance) (increase(loki_write_sent_entries_total{job=~"promtail|promtail-compute"}[10m]))
+                or sum by (instance) (increase(loki_write_sent_entries_total{job=~"promtail|promtail-compute|promtail-egress-gateway"}[10m]))
             ) == 0
           )
         for: 10m
@@ -10658,3 +10661,64 @@ groups:
           summary: "Neon projects have been without a project key for over two hours"
           description: "The key sweep mints up to 50 keys every 10 minutes, so the backfill should finish within hours. Projects still without a key are called with the admin key. Check FaasNeondProjectKeysFailing and neond's 'key sweep' log lines."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasNeond.md"
+
+  # ADR-20261117185346 amendment 2026-11-19: the egress gateway hosts, scraped
+  # over wg-obs. agentproxyd fails closed, so a down proxy is an agent web
+  # egress outage. Refusals are agentproxyd's own policy outcomes;
+  # upstream_error (the destination failed) is not one.
+  - name: faas_egress_gateways
+    interval: 30s
+    rules:
+      - alert: FaasAgentProxyDown
+        expr: up{job="agentproxyd"} == 0
+        for: 3m
+        labels:
+          severity: page
+          component: agentproxyd
+          family: egress_gateways
+        annotations:
+          summary: "agentproxyd on {{ $labels.gateway }} is down"
+          description: "Control-plane Prometheus cannot scrape agentproxyd on {{ $labels.gateway }} over wg-obs. While the proxy is down, agent TCP 80 and 443 are refused (it fails closed), so sandbox sessions with web egress reach no site. If FaasEgressGatewayUnreachable fires too, the host or wg-obs is down rather than the proxy."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md"
+
+      - alert: FaasEgressGatewayUnreachable
+        expr: up{job="promtail-egress-gateway"} == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: egress-gateway
+          family: egress_gateways
+        annotations:
+          summary: "Egress gateway host {{ $labels.gateway }} is unreachable over wg-obs"
+          description: "Control-plane Prometheus cannot scrape Alloy on {{ $labels.gateway }}. The gateway host, its wg-obs tunnel or Alloy is down, and its logs (the agent egress connection log among them) are not leaving it; they stay in the gateway's journal."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md"
+
+      - alert: FaasAgentEgressRefusalSpike
+        expr: |
+          (
+            sum by (gateway) (rate(agent_egress_connections_total{job="agentproxyd",outcome=~"cap_vm|cap_account_domain|cap_domain_fleet|blocklist|no_sni|bad_destination"}[5m]))
+              / sum by (gateway) (rate(agent_egress_connections_total{job="agentproxyd"}[5m]))
+          ) > 0.2
+          and
+          sum by (gateway) (rate(agent_egress_connections_total{job="agentproxyd",outcome=~"cap_vm|cap_account_domain|cap_domain_fleet|blocklist|no_sni|bad_destination"}[5m])) >= 1
+        for: 10m
+        labels:
+          severity: warn
+          component: agentproxyd
+          family: egress_gateways
+        annotations:
+          summary: "agentproxyd on {{ $labels.gateway }} refuses {{ $value | humanizePercentage }} of agent connections"
+          description: "More than 20% of agent egress connections, and at least one a second, have been refused by the proxy's caps, blocklist or destination checks for 10 minutes. Split by outcome with sum by (outcome) (rate(agent_egress_connections_total[5m])); a runaway session hits cap_vm, fleet-wide load on one site hits cap_domain_fleet. The connection log in Loki names the sessions."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md"
+
+      - alert: FaasAgentEgressUnregisteredRefusals
+        expr: sum by (gateway) (rate(agent_egress_connections_total{job="agentproxyd",outcome="unregistered"}[5m])) > 0.2
+        for: 10m
+        labels:
+          severity: warn
+          component: agentproxyd
+          family: egress_gateways
+        annotations:
+          summary: "agentproxyd on {{ $labels.gateway }} refuses connections from unregistered agent VMs"
+          description: "Agent VMs are connecting without a live registration, so the proxy cannot name them and refuses them. vmmd's registrations or renewals are not arriving over wg-agent; check vmmd's journal on the nodes for agent egress registration renewal failed and the wg-agent handshakes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/agent-egress-gateway.md"

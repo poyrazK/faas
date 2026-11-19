@@ -1,0 +1,82 @@
+---
+# A gateway host's end of wg-obs, its firewall, and Alloy with a logs leaf.
+# Runs on the one inventory name that owns the host (vars/gateway_obs.yml),
+# after the control plane's end exists.
+
+- name: egress_gateway_obs — require Loki's address
+  ansible.builtin.assert:
+    that:
+      - gateway_obs_loki_address | length > 0
+    fail_msg: The control plane needs faas_obs_loki_address (docs/ops/logs.md).
+
+# agentproxyd and Alloy bind the tunnel address. With non-local binds they
+# start whether or not wg-obs is up, so the observability tunnel can never
+# hold up agent egress (the agent_egress_gateway role sets this too, before
+# it moves agentproxyd's metrics listener here).
+- name: egress_gateway_obs — allow binding the tunnel address before it exists
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_nonlocal_bind
+    value: "1"
+    sysctl_file: /etc/sysctl.d/60-faas-gateway-obs.conf
+    state: present
+    reload: true
+
+- name: egress_gateway_obs — create the config directory
+  ansible.builtin.file:
+    path: /etc/faas/gateway-obs
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: egress_gateway_obs — render the firewall
+  ansible.builtin.template:
+    src: gateway-obs.nft.j2
+    dest: /etc/faas/gateway-obs/gateway-obs.nft
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/sbin/nft -c -f %s
+  notify: reload gateway obs firewall
+
+- name: egress_gateway_obs — install the firewall unit
+  ansible.builtin.template:
+    src: faas-gateway-obs-firewall.service.j2
+    dest: /etc/systemd/system/faas-gateway-obs-firewall.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: reload gateway obs firewall
+
+- name: egress_gateway_obs — start the firewall before the tunnel
+  ansible.builtin.systemd:
+    name: faas-gateway-obs-firewall
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: egress_gateway_obs — render the tunnel
+  ansible.builtin.template:
+    src: gateway-wg-obs.conf.j2
+    dest: /etc/wireguard/{{ gateway_obs_iface }}.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify: restart wg-obs
+
+- name: egress_gateway_obs — start the tunnel
+  ansible.builtin.systemd:
+    name: wg-quick@{{ gateway_obs_iface }}
+    enabled: true
+    state: started
+
+- name: egress_gateway_obs — apply a changed tunnel before checking it
+  ansible.builtin.meta: flush_handlers
+
+# The control plane dials in every 25 s; Loki answering proves the tunnel,
+# both firewalls and the route.
+- name: egress_gateway_obs — wait for Loki through the tunnel
+  ansible.builtin.wait_for:
+    host: "{{ gateway_obs_loki_address }}"
+    port: 3100
+    timeout: 90

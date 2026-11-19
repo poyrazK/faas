@@ -79,6 +79,64 @@ loki.process "faas" {
   }
 }
 
+{% for ns in alloy_journal_namespaces %}
+// The {{ ns.name }} journal namespace (LogNamespace={{ ns.name }}): its own
+// files, so its own reader. The stored line is the daemon's JSON; only the
+// closed-set fields listed in alloy_journal_namespaces become labels.
+loki.source.journal "ns_{{ ns.name }}" {
+  path           = "/var/log/journal/{{ ansible_machine_id }}.{{ ns.name }}"
+  max_age        = "{{ alloy_effective_max_age }}"
+  format_as_json = true
+  relabel_rules  = loki.relabel.ns_{{ ns.name }}.rules
+  labels         = {
+    job         = "{{ ns.job }}",
+    host        = "{{ alloy_host_label }}",
+    environment = "{{ alloy_environment }}",
+  }
+  forward_to = [loki.process.ns_{{ ns.name }}.receiver]
+}
+
+loki.relabel "ns_{{ ns.name }}" {
+  forward_to = []
+
+  rule {
+    target_label = "job"
+    replacement  = "{{ ns.job }}"
+  }
+}
+
+loki.process "ns_{{ ns.name }}" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.json {
+    expressions = { message = "MESSAGE" }
+  }
+{% if ns.labels | default([]) | length > 0 %}
+
+  stage.json {
+    source      = "message"
+    expressions = {
+{% for label in ns.labels %}
+      {{ label }} = "{{ label }}",
+{% endfor %}
+    }
+  }
+
+  stage.labels {
+    values = {
+{% for label in ns.labels %}
+      {{ label }} = "",
+{% endfor %}
+    }
+  }
+{% endif %}
+
+  stage.output {
+    source = "message"
+  }
+}
+
+{% endfor %}
 {% if alloy_security_enabled | bool %}
 // Host security evidence (ADR-20261107203000). These streams carry what an
 // intruder with root would erase first: logins, privilege use, account

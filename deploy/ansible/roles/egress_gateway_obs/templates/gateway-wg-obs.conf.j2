@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# ADR-20261117185346 amendment 2026-11-19: this gateway's end of wg-obs. Its
+# one peer is the control plane, which dials in; the routes wg-quick adds
+# send only the control plane's tunnel address and Loki's address into it.
+[Interface]
+Address = {{ gateway_obs_address }}/{{ gateway_obs_prefix_len }}
+ListenPort = {{ gateway_obs_port }}
+MTU = {{ gateway_obs_mtu }}
+PostUp = wg set %i private-key /etc/wireguard/%i.key
+
+# {{ gateway_obs_hub }}
+[Peer]
+PublicKey = {{ hostvars[gateway_obs_hub].gateway_obs_public_key }}
+AllowedIPs = {{ gateway_obs_hub_address }}/32, {{ gateway_obs_loki_address }}/32

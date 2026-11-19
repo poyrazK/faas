@@ -319,6 +319,32 @@
     mode: "0644"
   notify: reload prometheus
 
+# ADR-20261117185346 amendment 2026-11-19: the egress gateways' file-SD
+# jobs. gateway_observability.yml writes the targets; until it runs (or on a
+# fleet without gateways) the files hold none, so Prometheus has nothing to
+# complain about. force: false never empties a list that play wrote.
+- name: prometheus — create the egress gateways' file-SD directory
+  ansible.builtin.file:
+    path: /etc/prometheus/file_sd
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: (faas_box_role | default('single-box')) == 'control-plane'
+
+- name: prometheus — seed the egress gateways' empty target lists
+  ansible.builtin.copy:
+    content: "[]\n"
+    dest: "/etc/prometheus/file_sd/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+    force: false
+  loop:
+    - egress-gateway-shippers.json
+    - agentproxyd.json
+  when: (faas_box_role | default('single-box')) == 'control-plane'
+
 # ADR-098 §9.A meterd data-upstream alerts (issue #951). Source lives
 # at pkg/promqlrules/data_placement.yaml (canonical, per the C8 plan
 # from ADR-098's PR-cluster outline — colocated with the fixture +

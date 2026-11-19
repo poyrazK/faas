@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "fefc7d9eac640f2a8851ec7aa703ac851b9c3d047bf7afe27902268c0614d55b",
+      "revision": "44f11f21069f2c5180b5b72e803e5dd0fd22f2e05775769107394f9bb4a6e4e8",
       "files": [
         "faas.rules.yml"
       ],
@@ -696,6 +696,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "159756a2ca56776574bbe802d4af1452525c22c0fef91e0260b4cfc1f3bb30f2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentEgressRefusalSpike",
+          "definition": {
+            "expression_hash": "aab7597b7c03befe646efb871d19cf1a8d6ce1c0ab2490e049ce7756a955e215",
+            "labels_hash": "a02112033a654ee4c5704b509c6846ba6046e906d3c603e35d25e25c7d23d164",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fb0445097db05e2632a30027a8e7828a0061de44b54330b9b0968aa61f5701c2"
           }
         },
         {
@@ -3156,6 +3169,19 @@
           }
         },
         {
+          "id": "66ffc24a9ce2a5aa2c61b186bf42ba97633e8ae363f9eeb8efe6182867f05827",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentEgressUnregisteredRefusals",
+          "definition": {
+            "expression_hash": "e327b652f5a7984b3d01f9ebcaf520a48b3721ba8327e309ac780298263b1796",
+            "labels_hash": "a02112033a654ee4c5704b509c6846ba6046e906d3c603e35d25e25c7d23d164",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "76bd31b0b311352aacc22100855dd551fcb9f09591370ac29af3828afea55b54"
+          }
+        },
+        {
           "id": "6705af51223a4e2a3fdbf89ea2ee254330a1b4bb765985a2c569f3a9c8cae94d",
           "file_name": "faas.rules.yml",
           "group_name": "fleet_seal_domain",
@@ -3530,6 +3556,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "cfc9daf99753a957b3657c6dc511c460434933a9b6ef82afdbac9503dc7f041a"
+          }
+        },
+        {
+          "id": "745d32535452274ace281b1234660f38dc82708a71d3b27f903ffe78893bb788",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasEgressGatewayUnreachable",
+          "definition": {
+            "expression_hash": "40f8cb788b0779994626167a18d055c6feface8ba7eec7db6136ecddfbe5d101",
+            "labels_hash": "37dcb5aff2c9c67284ac14e34ed4c278863fb3b66f05313bc4284bdbc25394b8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "74d906864f15be3f55c5bf714bc70292638bc9333877ba9506d0a7594478238c"
           }
         },
         {
@@ -4019,11 +4058,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
+            "expression_hash": "e9cd231707f4ff82ff8fa445576f9542585c2f8855d2f5bce06f22fc84355c2c",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
+            "fingerprint": "460a42e75c6fd1b95c851625b778f2a6698e880dcfd15cfcbc841e0585d9104a"
           }
         },
         {
@@ -4050,6 +4089,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b918c3e7e246db95dcfb40497c4235fa8c10c7540b464279e0831bd72016f1fe"
+          }
+        },
+        {
+          "id": "88dabc0ba4d710f55d4fe6d5d2ead16712728fe004ced9c1b5b27894754bdc3f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentProxyDown",
+          "definition": {
+            "expression_hash": "b2fc5cfbe99314b51f91325255ba1239e2448439efedc0f4b8c47cba13ce568c",
+            "labels_hash": "8ee9948a2ac575d746a2ea5178250c8b09d657449605c0e5e4af4729e3aee50e",
+            "for_seconds": 180,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6b8c3430215b1c0b3ec7ee87f38e55829a2635728b3912ef905069c3307f2066"
           }
         },
         {
@@ -7165,11 +7217,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
+            "expression_hash": "45b4b576256155bec70aad28a78f45ed0e1051cc1c38395dcd18725344d0da1b",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
+            "fingerprint": "c20f5371c9d3205c29b377e0edddf8f0e5c9f09dd993c6cade2aef9012ccc15d"
           }
         },
         {
@@ -7436,7 +7488,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "ee5720a72e10c6608113a56161e94a4b9676d6326a500cf808b0d2686470a4fc",
+      "revision": "874d2c022ca9c2f14248cd7753c915a23a0ec3449f359166ac6de2316ba71af4",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -8158,6 +8210,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4babccc330de73c656e95c79e8042832d83bb45d84723632a6be1d4e7915ee15"
+          }
+        },
+        {
+          "id": "159756a2ca56776574bbe802d4af1452525c22c0fef91e0260b4cfc1f3bb30f2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentEgressRefusalSpike",
+          "definition": {
+            "expression_hash": "aab7597b7c03befe646efb871d19cf1a8d6ce1c0ab2490e049ce7756a955e215",
+            "labels_hash": "a02112033a654ee4c5704b509c6846ba6046e906d3c603e35d25e25c7d23d164",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fb0445097db05e2632a30027a8e7828a0061de44b54330b9b0968aa61f5701c2"
           }
         },
         {
@@ -10696,6 +10761,19 @@
           }
         },
         {
+          "id": "66ffc24a9ce2a5aa2c61b186bf42ba97633e8ae363f9eeb8efe6182867f05827",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentEgressUnregisteredRefusals",
+          "definition": {
+            "expression_hash": "e327b652f5a7984b3d01f9ebcaf520a48b3721ba8327e309ac780298263b1796",
+            "labels_hash": "a02112033a654ee4c5704b509c6846ba6046e906d3c603e35d25e25c7d23d164",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "76bd31b0b311352aacc22100855dd551fcb9f09591370ac29af3828afea55b54"
+          }
+        },
+        {
           "id": "6705af51223a4e2a3fdbf89ea2ee254330a1b4bb765985a2c569f3a9c8cae94d",
           "file_name": "faas.rules.yml",
           "group_name": "fleet_seal_domain",
@@ -11083,6 +11161,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "cfc9daf99753a957b3657c6dc511c460434933a9b6ef82afdbac9503dc7f041a"
+          }
+        },
+        {
+          "id": "745d32535452274ace281b1234660f38dc82708a71d3b27f903ffe78893bb788",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasEgressGatewayUnreachable",
+          "definition": {
+            "expression_hash": "40f8cb788b0779994626167a18d055c6feface8ba7eec7db6136ecddfbe5d101",
+            "labels_hash": "37dcb5aff2c9c67284ac14e34ed4c278863fb3b66f05313bc4284bdbc25394b8",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "74d906864f15be3f55c5bf714bc70292638bc9333877ba9506d0a7594478238c"
           }
         },
         {
@@ -11650,11 +11741,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingStalled",
           "definition": {
-            "expression_hash": "09b549bb1d7f764c9bf012daef812ce5e65eefa66ba32aef3d384470717cad9f",
+            "expression_hash": "e9cd231707f4ff82ff8fa445576f9542585c2f8855d2f5bce06f22fc84355c2c",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "378b24927c85de567046a55870aa03a97f2c2e6fc94d4eebde7595091e075511"
+            "fingerprint": "460a42e75c6fd1b95c851625b778f2a6698e880dcfd15cfcbc841e0585d9104a"
           }
         },
         {
@@ -11681,6 +11772,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b918c3e7e246db95dcfb40497c4235fa8c10c7540b464279e0831bd72016f1fe"
+          }
+        },
+        {
+          "id": "88dabc0ba4d710f55d4fe6d5d2ead16712728fe004ced9c1b5b27894754bdc3f",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_egress_gateways",
+          "rule_name": "FaasAgentProxyDown",
+          "definition": {
+            "expression_hash": "b2fc5cfbe99314b51f91325255ba1239e2448439efedc0f4b8c47cba13ce568c",
+            "labels_hash": "8ee9948a2ac575d746a2ea5178250c8b09d657449605c0e5e4af4729e3aee50e",
+            "for_seconds": 180,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6b8c3430215b1c0b3ec7ee87f38e55829a2635728b3912ef905069c3307f2066"
           }
         },
         {
@@ -14900,11 +15004,11 @@
           "group_name": "faas_loki_pipeline",
           "rule_name": "FaasLokiShippingDropped",
           "definition": {
-            "expression_hash": "c5d809f14c92e4e1d4984e0636bfa3a54ded8254511b6d507bcccd551411b6c4",
+            "expression_hash": "45b4b576256155bec70aad28a78f45ed0e1051cc1c38395dcd18725344d0da1b",
             "labels_hash": "5dc703aab6eca7efc60d593bba0a18ae10a7575d0a3b3de804ba4ce62ae00a55",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "54ac9a138926a4c1d83f65c602f65eb528559a1b4996d0884ac049cc5aa1950c"
+            "fingerprint": "c20f5371c9d3205c29b377e0edddf8f0e5c9f09dd993c6cade2aef9012ccc15d"
           }
         },
         {

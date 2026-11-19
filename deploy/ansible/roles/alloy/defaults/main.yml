@@ -89,6 +89,12 @@ alloy_journal_units:
   - loki.service
   - node_exporter.service
 alloy_journal_max_age: 12h
+# Journal namespaces a daemon logs to with LogNamespace= (systemd 245+), each
+# shipped as its own stream: name, the job label, and the closed-set fields
+# of the daemon's JSON line that become labels (ADR-143). The egress gateway
+# ships agentproxyd's connection log this way (ADR-20261117185346 amendment
+# 2026-11-19). A namespace must exist when Alloy starts.
+alloy_journal_namespaces: []
 
 # Host security evidence (ADR-20261107203000). A root attacker can wipe the
 # local journal and audit log; these streams leave the host as they are

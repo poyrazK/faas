@@ -1,0 +1,6 @@
+[
+{% for name in groups['agent_egress_gateway'] | default([]) if hostvars[name].faas_agentproxyd_enabled | default(false) | bool %}
+{% set owner = gateway_obs_owner_by_host[hostvars[name].ansible_host] %}
+  {"targets": ["{{ gateway_obs_address_base }}.{{ gateway_obs_address_first | int + gateway_obs_owners.index(owner) }}:{{ gateway_obs_agentproxyd_port }}"], "labels": {"gateway": "{{ name }}"}}{{ "," if not loop.last }}
+{% endfor %}
+]

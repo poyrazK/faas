@@ -1,0 +1,5 @@
+[
+{% for owner in gateway_obs_owners %}
+  {"targets": ["{{ gateway_obs_address_base }}.{{ gateway_obs_address_first | int + loop.index0 }}:{{ gateway_obs_alloy_port }}"], "labels": {"gateway": "{{ owner }}"}}{{ "," if not loop.last }}
+{% endfor %}
+]
