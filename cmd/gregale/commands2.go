@@ -4264,7 +4264,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
 		if !jsonOutput {
-			renderProjectEndpoints(ctx, osStdout, client, apply)
+			renderProjectEndpointsFor(ctx, osStdout, client, apply, *projectSlug, *environment)
 		}
 		return code
 	}
