@@ -622,6 +622,9 @@ func run(args []string) (status int) {
 		return cmdDeployTokens(args[1:])
 	case "sandbox-templates":
 		return cmdSandboxTemplates(args[1:])
+	case "agents":
+		// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+		return cmdAgents(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":

@@ -39,6 +39,8 @@ var cliTreeVerbs = []string{
 	"branch",
 	// undo: reverse what an agent changed (ADR-20261112080601).
 	"undo",
+	// deny: refuse a hosted agent run's call (ADR-20261027090016 amendment 2).
+	"deny",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
