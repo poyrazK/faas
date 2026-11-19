@@ -312,16 +312,24 @@ func (s *PgStore) AnalyticsCustomerTotals(ctx context.Context, m AnalyticsMatch,
 // cohorts of the deployment's environment that contain the customer, for
 // the gateway's X-Faas-Flag-Cohorts (ADR 20261119102741 §4).
 func (s *PgStore) AnalyticsCohortsForDeploymentCustomer(ctx context.Context, deploymentID, customerID string) ([]string, error) {
-	dep, err1 := uuid.Parse(deploymentID)
-	cust, err2 := uuid.Parse(customerID)
-	if err1 != nil || err2 != nil {
+	if !validUUIDs(deploymentID, customerID) {
 		// No project deployment or verified customer: no cohorts.
 		return nil, nil
 	}
 	keys, err := sqlc.New().AnalyticsCohortsForDeploymentCustomer(ctx, s.pool, sqlc.AnalyticsCohortsForDeploymentCustomerParams{
-		CustomerID: uuidToPgtype(cust.String()), DeploymentID: uuidToPgtype(dep.String())})
+		CustomerID: uuidToPgtype(customerID), DeploymentID: uuidToPgtype(deploymentID)})
 	if err != nil {
 		return nil, fmt.Errorf("analytics cohorts for customer: %w", err)
 	}
 	return keys, nil
+}
+
+// validUUIDs reports whether every id parses as a UUID.
+func validUUIDs(ids ...string) bool {
+	for _, id := range ids {
+		if _, err := uuid.Parse(id); err != nil {
+			return false
+		}
+	}
+	return true
 }
