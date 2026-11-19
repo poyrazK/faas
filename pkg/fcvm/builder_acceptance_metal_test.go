@@ -78,6 +78,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Fatal(err)
 	}
+	startBuilderDNSStub(t)
 	buildTimeoutSeconds := api.BuildTimeoutSeconds
 	if raw := os.Getenv("FAAS_METAL_BUILD_TIMEOUT_SECONDS"); raw != "" {
 		value, err := strconv.Atoi(raw)
