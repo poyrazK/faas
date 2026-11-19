@@ -6241,6 +6241,34 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "redis",
+		DocSlug: "redis",
+		Short:   "Create and bind managed Redis-compatible (Valkey) caches",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List managed Redis caches"},
+			{Name: "create", Short: "Create a managed Redis cache", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "memory", Short: "data size in MB, a multiple of 32 up to 512 (default 128)", Value: "MB"},
+				{Name: "eviction-policy", Short: "what to evict when full (default allkeys-lru)", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
+				{Name: "idle-timeout", Short: "seconds without traffic before the cache parks (default 900)", Value: "SECONDS"},
+			}, Examples: []string{"gregale redis create sessions --memory 128"}},
+			{Name: "get", Short: "Show one managed Redis cache", Positionals: []string{"<name>"}},
+			{Name: "bind", Short: "Set the cache's connection URL on an app", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "app", Short: "app that receives the URL", Req: true, Value: "APP"},
+				{Name: "env", Short: "environment variable (default REDIS_URL)", Value: "KEY"},
+			}, Examples: []string{"gregale redis bind sessions --app web"}},
+			{Name: "resize", Short: "Change a cache's size or eviction policy; its data is kept", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "memory", Short: "new data size in MB", Value: "MB"},
+				{Name: "eviction-policy", Short: "new eviction policy", Value: "POLICY", ClosedSet: api.ManagedValkeyEvictionPolicies},
+				{Name: "evict", Short: "allow shrinking below the data the cache holds"},
+			}, Examples: []string{"gregale redis resize sessions --memory 256"}},
+			{Name: "update", Short: "Move a cache to the current Valkey release; its data is kept", Positionals: []string{"<name>"}},
+			{Name: "restart", Short: "Restart a managed Redis cache; its data is kept", Positionals: []string{"<name>"}},
+			{Name: "delete", Short: "Delete a managed Redis cache and its data", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "yes", Short: "skip the typed confirmation"},
+			}},
+		},
+	},
+	{
 		Name:    "postgres",
 		DocSlug: "postgres",
 		Short:   "Create, attach and restore managed PostgreSQL databases",

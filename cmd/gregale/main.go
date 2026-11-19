@@ -535,6 +535,8 @@ func run(args []string) (status int) {
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
+	case "redis":
+		return cmdRedis(args[1:])
 	case "realtime":
 		return cmdRealtime(args[1:])
 	case dispatchDeploys:

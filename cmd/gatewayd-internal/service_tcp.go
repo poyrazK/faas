@@ -74,6 +74,14 @@ func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetReso
 			TCPPorts:    serviceTCPPorts(app, live),
 			IdleTimeout: serviceTCPIdleTimeout(resolved),
 		}
+		// A managed Redis cache gets the RESP-aware session (ADR-20261116192126).
+		if caches, ok := store.(state.ManagedValkeyStore); ok {
+			if _, cacheErr := caches.GetManagedValkeyCache(ctx, app.ID); cacheErr == nil {
+				result.Redis = true
+			} else if !errors.Is(cacheErr, state.ErrNotFound) {
+				return gateway.ServiceTCPTarget{}, false, fmt.Errorf("service TCP: managed cache: %w", cacheErr)
+			}
+		}
 		if caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0 {
 			member, memberErr := store.ScenarioTestMemberByApp(ctx, caller.ID)
 			if memberErr != nil && !errors.Is(memberErr, state.ErrNotFound) {
