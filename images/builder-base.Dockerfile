@@ -38,8 +38,9 @@ ARG BUILDKIT_GRPC_VERSION=1.83.2
 # buildkitd and buildctl get the patched release.
 ARG BUILDKIT_COMPRESS_VERSION=1.20.3
 # BuildKit 0.32.2 pins containerd v2.3.3 (GHSA-p7v4-vr35-mj6f, HIGH) and
-# Railpack 0.38.0 v2.3.4; both get the patched release.
-ARG CONTAINERD_VERSION=2.3.6
+# Railpack 0.38.0 v2.3.4; both get the patched release. v2.3.7 also fixes
+# GHSA-vwhp-8p66-mq4f (HIGH), which failed the builder-base gate on 2026-11-20.
+ARG CONTAINERD_VERSION=2.3.7
 # BuildKit 0.32.2 selects go.opentelemetry.io/otel/sdk and otel/trace v1.44.0
 # and Railpack 0.38.0 v1.46.0 (GHSA-q7gw-24fr-5p69, attribute length limit
 # bypass). Both builds raise every stable otel module they require to this
