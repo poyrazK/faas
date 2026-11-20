@@ -327,6 +327,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_mcp_oauth_test.go::TestDashboardMCPOAuthRenewalRecovery"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly"},
+        {"kind": "test", "locator": "tests/journeys/dev_loop_test.go::TestDevLoop"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_mcp_catalog_monitor_test.go::TestMCPCatalogMonitorHTTPRoles"},
