@@ -110,4 +110,34 @@ func TestPostgresAgentRunApprovals(t *testing.T) {
 	if _, err := a.RequestApproval(ctx, identity, req); !errors.Is(err, ErrApprovalRefused) {
 		t.Fatalf("a run 20 s from its deadline asked: %v", err)
 	}
+
+	// ADR-20261027090016 amendment 3: a run that may earn credit can wait
+	// until its cap's deadline.
+	if _, err := pool.Exec(ctx, `UPDATE agent_runs SET deadline_credit_max_sec = 600 WHERE id = $1`, run.ID); err != nil {
+		t.Fatal(err)
+	}
+	credited, err := a.RequestApproval(ctx, identity, req)
+	if err != nil {
+		t.Fatalf("a run with credit left was refused: %v", err)
+	}
+	if left := time.Until(credited.ExpiresAt); left > 600*time.Second || left < 500*time.Second {
+		t.Errorf("expires in %v, want 300 s + 600 s credit − 280 s run − 30 s margin", left)
+	}
+	var released *time.Time
+	for range 2 {
+		if err := a.ReleaseApproval(ctx, identity, credited.ID); err != nil {
+			t.Fatal(err)
+		}
+		var at time.Time
+		if err := pool.QueryRow(ctx, `SELECT released_at FROM agent_run_approvals WHERE id = $1`, credited.ID).Scan(&at); err != nil {
+			t.Fatal(err)
+		}
+		if released != nil && !at.Equal(*released) {
+			t.Errorf("a second release moved released_at from %v to %v", *released, at)
+		}
+		released = &at
+	}
+	if err := a.ReleaseApproval(ctx, other, credited.ID); err != nil {
+		t.Fatal(err)
+	}
 }
