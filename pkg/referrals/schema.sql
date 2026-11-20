@@ -257,7 +257,7 @@ CREATE INDEX sales_commission_payouts_owner ON sales_commission_payouts(owner_id
 
 CREATE VIEW sales_referral_overview AS
 SELECT r.account_id,l.owner_id,l.kind,
- COALESCE(a.email,buyer.email,'')::text AS email,
+ COALESCE(a.email,buyer.email,'') AS email,
  COALESCE(a.plan,o.plan,'')::text AS plan,
  COALESCE(a.status,o.status,'')::text AS account_status,
  r.created_at,r.stage,r.note,r.follow_up,r.currency,

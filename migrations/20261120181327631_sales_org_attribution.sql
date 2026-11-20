@@ -46,7 +46,7 @@ CREATE OR REPLACE TRIGGER orgs_erase_referral_subject AFTER DELETE ON orgs
 -- +goose StatementBegin
 CREATE OR REPLACE VIEW sales_referral_overview AS
 SELECT r.account_id,l.owner_id,l.kind,
- COALESCE(a.email,buyer.email,'')::text AS email,
+ COALESCE(a.email,buyer.email,'') AS email,
  COALESCE(a.plan,o.plan,'')::text AS plan,
  COALESCE(a.status,o.status,'')::text AS account_status,
  r.created_at,r.stage,r.note,r.follow_up,r.currency,
