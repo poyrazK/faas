@@ -32,7 +32,19 @@ What to expect:
   PostgreSQL restore. The rehearsal (phase 1 step 9) measured the restore
   at about a minute plus one second per 16 MB WAL segment since the base
   backup. Phase 2 step 3 takes a fresh base backup, so the window replays
-  only minutes of WAL.
+  only minutes of WAL. Phase 1 step 10 builds the bootstrap's slowest part
+  ahead (10 min 51 s on 2026-11-20; 82 s once current), so the bootstrap
+  itself is the one step not yet timed. Estimate for 2026-11-20:
+
+  | Step | Time |
+  |---|---|
+  | Freeze, final backups, copy to OVH | ~10 min |
+  | Restore and install control-plane state, re-seal | ~10 min |
+  | Bootstrap, slow software already current | ~20–40 min, untimed |
+  | PostgreSQL restore | ~3 min |
+  | Deploy the release through CD | ~15 min |
+  | Join both compute nodes (budget 105 min each) | ~30–60 min |
+  | Move traffic, checks | ~15 min |
 - **Warm apps keep serving** from the GCP compute nodes until they drain
   (ADR-1344 §5). A wake needs the control plane's database, so apps that are
   not running fail from the freeze until the OVH compute nodes serve.
@@ -376,7 +388,35 @@ manifest.
    migration `20261119102834810`, the same as GCP, with 14 accounts and
    744 apps, the same as GCP's rows created by the last replayed
    transaction.
-10. **Lower the TTLs** of the control-plane address record and the app entry
+10. **Build the control plane's slow software ahead**, on the OVH control
+    node, with the release GCP will run at the freeze, and again the day
+    before the window if a release changed its pins. It is the
+    pre-install play of `deploy/ansible/postgres_standby.yml` pointed at
+    the OVH hosts: `firecracker` builds the guest kernel from source and
+    fetches Firecracker, `supply_chain_scanners` fetches Syft, Grype and the
+    Grype database. Both only download, verify and build: no service
+    starts, no `/etc/faas` file is read and nothing touches a database, so
+    they are safe before the restore. The window's bootstrap then finds
+    their output current. Render the OVH manifest and inventory with the
+    release's pins (`scripts/materialize-release-manifest.sh` with the
+    release's `production-manifest.yaml` values and `runtime-bases.env`,
+    then `gregalectl manifest ansible`), and run:
+
+    ```yaml
+    - hosts: bhs-1                 # faas_box_role: control-plane
+      gather_facts: false
+      become: true
+      roles: [firecracker, supply_chain_scanners]
+    - hosts: "bhs-2:bhs-3"         # compute-only
+      gather_facts: false
+      become: true
+      roles: [supply_chain_scanners]
+    ```
+
+    On 2026-11-20 with rc.360 it took 10 min 51 s (vmlinux 4 min 34 s on
+    4 jobs, Grype database 1–3 min per host), and a second run 82 s. Then
+    run the read-only `make ansible-preflight` with the same inventory.
+11. **Lower the TTLs** of the control-plane address record and the app entry
     records to 60 s, a day ahead.
 
 ## Phase 2: cut over (one window)
