@@ -1191,9 +1191,11 @@ groups:
   - name: gcp_ops_agent
     interval: 30s
     rules:
+      # Only GCE hosts run the GCP agent: node_exporter's DMI vendor is
+      # "Google" there. The OVHcloud fleet (2026-11-20) has no agent to miss.
       - alert: FaasGCPOpsAgentMissing
         expr: |
-          up{job="node-compute"} == 1
+          (up{job="node-compute"} == 1 and on(instance) node_dmi_info{job="node-compute",system_vendor="Google"})
           unless on(instance)
           node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
         for: 5m

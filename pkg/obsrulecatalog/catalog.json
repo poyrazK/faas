@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "9f82fba41f0ad06cd53c91f9d5ccaf38e2ae786d7e8db15f5160c0ecd80ae6d3",
+      "revision": "49dcf705f1b6fb79fc896c5b64e928bfef3db503b90e208a8fa2766ae5dd0b33",
       "files": [
         "faas.rules.yml"
       ],
@@ -5930,11 +5930,11 @@
           "group_name": "gcp_ops_agent",
           "rule_name": "FaasGCPOpsAgentMissing",
           "definition": {
-            "expression_hash": "7e0369e93cb7da82273d3761fa0032396ef51aca3baaf4f941956acb1d738111",
+            "expression_hash": "ef34dd7c17ebc2bb3ea451990b11f295d614bca8a02b65097111d5c15284aa22",
             "labels_hash": "879b86c718974ed1c024dd4043196924904bae089d54aa830e8dd1ee3caf5060",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c506088edacce4653c90e7be11a30f003d5d77721241ff337a3632f1d505c7cc"
+            "fingerprint": "182249e1169dfdc3f94d617b40be6cdbd8cb72c2ae4470ecf03f28333842eb3a"
           }
         },
         {
@@ -7488,7 +7488,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "188978ee46cd1255bf59901bb5e66e2b693b640032aa02eb2bf3f379c19af3a0",
+      "revision": "707180ec9fdc603c6e60308798b6a11bda07133b725a7f1b75dda1440afad461",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -13678,11 +13678,11 @@
           "group_name": "gcp_ops_agent",
           "rule_name": "FaasGCPOpsAgentMissing",
           "definition": {
-            "expression_hash": "7e0369e93cb7da82273d3761fa0032396ef51aca3baaf4f941956acb1d738111",
+            "expression_hash": "ef34dd7c17ebc2bb3ea451990b11f295d614bca8a02b65097111d5c15284aa22",
             "labels_hash": "879b86c718974ed1c024dd4043196924904bae089d54aa830e8dd1ee3caf5060",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c506088edacce4653c90e7be11a30f003d5d77721241ff337a3632f1d505c7cc"
+            "fingerprint": "182249e1169dfdc3f94d617b40be6cdbd8cb72c2ae4470ecf03f28333842eb3a"
           }
         },
         {
