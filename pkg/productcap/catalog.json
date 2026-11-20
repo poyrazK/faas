@@ -89,6 +89,7 @@
         "/v1/sandboxes"
       ],
       "cli": [
+        "agents",
         "sandbox-templates"
       ],
       "consumers": [
