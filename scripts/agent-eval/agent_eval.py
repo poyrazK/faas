@@ -71,7 +71,7 @@ CLAUDE_ALLOWED_TOOLS = ["Bash(gregale *)", "Bash(curl *)", "Read", "Edit", "Writ
 # It may also read the web: a person's agent can read gregale.dev docs.
 CLAUDE_ANY_SHELL = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebFetch", "WebSearch", "mcp__gregale"]
 # Agents whose session the eval can resume for a task's follow_up reply.
-FOLLOW_UP_AGENTS = ("claude",)
+FOLLOW_UP_AGENTS = ("claude", "codex")
 
 
 class EvalError(Exception):
@@ -185,17 +185,26 @@ def claude_command(prompt: str, run_dir: Path, gregale: str, toolset: str, budge
     return command
 
 
-def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> list[str]:
+def codex_command(prompt: str, project: Path, gregale: str, toolset: str, model: str | None, writes: bool, keep_session: bool = False,
+                  resume: str | None = None) -> list[str]:
+    """A headless Codex run. A repo task keeps its session (no --ephemeral) so a
+    follow_up reply can resume it; `resume` continues that session. `codex exec
+    resume` takes no -C or -s: the sandbox comes from config and the working
+    directory is the project the run starts in."""
     # --ignore-user-config keeps your own Codex settings and MCP servers out.
-    command = ["codex", "exec", "--json", "--ephemeral", "--ignore-user-config", "--skip-git-repo-check", "-C", str(project), "-s", "workspace-write",
-               "-c", "sandbox_workspace_write.network_access=true", "-c", "shell_environment_policy.inherit=all"]
+    config = ["-c", "sandbox_workspace_write.network_access=true", "-c", "shell_environment_policy.inherit=all"]
     if toolset != "none":
-        command += ["-c", f"mcp_servers.gregale.command={json.dumps(gregale)}",
-                    "-c", f"mcp_servers.gregale.args={json.dumps(mcp_args(toolset, writes))}",
-                    "-c", 'mcp_servers.gregale.env_vars=["FAAS_TOKEN","FAAS_API"]']
+        config += ["-c", f"mcp_servers.gregale.command={json.dumps(gregale)}",
+                   "-c", f"mcp_servers.gregale.args={json.dumps(mcp_args(toolset, writes))}",
+                   "-c", 'mcp_servers.gregale.env_vars=["FAAS_TOKEN","FAAS_API"]']
     if model:
-        command += ["-m", model]
-    return command + [prompt]
+        config += ["-m", model]
+    if resume:
+        return ["codex", "exec", "resume", "--json", "--ignore-user-config", "--skip-git-repo-check", "-c", 'sandbox_mode="workspace-write"', *config,
+                resume, prompt]
+    session = [] if keep_session else ["--ephemeral"]
+    return ["codex", "exec", "--json", *session, "--ignore-user-config", "--skip-git-repo-check", "-C", str(project), "-s", "workspace-write", *config,
+            prompt]
 
 
 def gemini_command(prompt: str, run_dir: Path, gregale: str, toolset: str, model: str | None, writes: bool) -> tuple[list[str], dict]:
@@ -332,7 +341,9 @@ def parse_codex(lines) -> dict:
     failed = False
     for event in _events(lines):
         kind = event.get("type")
-        if kind == "turn.completed":
+        if kind == "thread.started":
+            metrics["session_id"] = event.get("thread_id") or ""
+        elif kind == "turn.completed":
             metrics["turns"] += 1
             usage = event.get("usage") or {}
             metrics["input_tokens"] += usage.get("input_tokens", 0)
@@ -828,10 +839,19 @@ def agent_command(agent: str, prompt: str, task: dict, run_dir: Path, project: P
     if agent == "claude":
         return claude_command(prompt, run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, any_shell=bool(task.get("repo"))), {}
     if agent == "codex":
-        return codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
+        return codex_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes, keep_session=bool(task.get("repo"))), {}
     if agent == "gemini":
         return gemini_command(prompt, run_dir, gregale.binary, toolset, model, options.mcp_writes)
     return cursor_command(prompt, project, gregale.binary, toolset, model, options.mcp_writes), {}
+
+
+def follow_up_command(agent: str, task: dict, run_dir: Path, project: Path, gregale: Gregale, toolset: str, options, session_id: str) -> list[str]:
+    """The task's follow_up reply, resuming the agent's session (FOLLOW_UP_AGENTS)."""
+    model = getattr(options, f"{agent}_model", None)
+    if agent == "codex":
+        return codex_command(task["follow_up"], project, gregale.binary, toolset, model, options.mcp_writes, resume=session_id)
+    return claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], model, options.mcp_writes, any_shell=True,
+                          resume=session_id)
 
 
 def cleanup(gregale: Gregale, created: dict, slug: str | None) -> list[str]:
@@ -946,8 +966,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
             # The agent stopped short (often to ask a question); answer once, as the person would.
             if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
                 remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
-                again = claude_command(task["follow_up"], run_dir, gregale.binary, toolset, task["budget_usd"], getattr(options, "claude_model", None),
-                                       options.mcp_writes, any_shell=True, resume=metrics["session_id"])
+                again = follow_up_command(agent, task, run_dir, project, gregale, toolset, options, metrics["session_id"])
                 more = invoke(again, project, env, remaining, record)
                 (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
                 metrics = merge_metrics(metrics, PARSERS[agent](more))

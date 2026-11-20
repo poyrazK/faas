@@ -99,9 +99,9 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   find the repository's natural name taken. `left_behind` lists `app:<slug>`
   for an app it could not delete and `name:<slug>` for one whose name is
   still held.
-- A task's `follow_up` is sent once (Claude only, by resuming the session) when
-  the agent finished its turn but the task's checks don't pass yet, for
-  example because it stopped to ask before deploying.
+- A task's `follow_up` is sent once (Claude and Codex, by resuming the
+  session) when the agent finished its turn but the task's checks don't pass
+  yet, for example because it stopped to ask before deploying.
 - `wrote_outside_run` lists files the agent's file tools wrote outside its run
   directory and adds that anti-pattern. `home_writes` lists files under your
   home directory, two levels down, that changed during the run (agent config
@@ -122,6 +122,9 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   - Tokens come from `turn.completed`; Codex reports no cost.
   - If your default model isn't available on your account, pass
     `--codex-model`.
+  - A repository task keeps its session (no `--ephemeral`) so the follow-up
+    can run `codex exec resume`. An old Codex CLI may reject every model on a
+    ChatGPT account (`model_not_found`, 0.138 on 2026-11-19); upgrade it.
 - **Gemini CLI**: `gemini -p --output-format stream-json --approval-mode yolo
   --skip-trust`.
   - Needs `GEMINI_API_KEY` (or `GOOGLE_API_KEY`, or Vertex AI): the personal
