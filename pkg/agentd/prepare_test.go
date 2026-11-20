@@ -91,8 +91,15 @@ func TestPrepareModelEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if req.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:2774/i/"+id || req.Env["ANTHROPIC_API_KEY"] != relayPlaceholderKey {
+	// OpenCode's AI SDK takes the base URL to include /v1; Claude Code's
+	// Anthropic SDK appends /v1/messages itself.
+	if req.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:2774/i/"+id+"/v1" || req.Env["ANTHROPIC_API_KEY"] != relayPlaceholderKey {
 		t.Fatalf("anthropic env %v", req.Env)
+	}
+	claude := claim
+	claude.Harness.Preset = "claude-code"
+	if _, req, err := prepare(claude); err != nil || req.Env["ANTHROPIC_BASE_URL"] != "http://127.0.0.1:2774/i/"+id {
+		t.Fatalf("claude-code anthropic env %v %v", req.Env, err)
 	}
 	if _, ok := req.Env["OPENAI_BASE_URL"]; ok {
 		t.Fatalf("a provider without an integration got a base URL: %v", req.Env)
