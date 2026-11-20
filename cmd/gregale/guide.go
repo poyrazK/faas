@@ -51,7 +51,7 @@ var guidePages = []guidePage{
 		Notes: []string{
 			"A Compose file or several services: see `gregale guide compose-project`.",
 			"A private URL can return 401 without credentials after a successful deploy. release verify checks the exact deployment using owner access; it does not verify anonymous public access.",
-			"A source build must answer HTTP GET /healthz on its port; see `gregale guide health-checks`.",
+			"Readiness: a health route found in the source (or hosting.health) must answer 2xx; with none, an open port is enough. Do not pass / as the health path. An app that checks the Host header (Django ALLOWED_HOSTS) needs the health route answered first; see `gregale guide health-checks`.",
 		},
 	},
 	{
@@ -87,7 +87,9 @@ var guidePages = []guidePage{
 		},
 		Notes: []string{
 			"A Compose healthcheck: runs inside the instance and replaces the default probe.",
-			"A source build without one is probed with HTTP GET /healthz on its serving port; a 2xx is ready.",
+			"A source build is probed with HTTP GET on the health route found in its source (/healthz, /health, /readyz, /ready, /livez, /live) or named in hosting.health; a 2xx is ready. With neither, it is ready once its port accepts connections.",
+			"Do not use / as the health path: the edge can answer a public health path itself, so visitors to / would get {\"status\":\"ok\"} instead of the page.",
+			"The probe sends the instance's internal address as Host. An app that rejects unknown hosts (Django ALLOWED_HOSTS) fails with app_startup_timeout unless it answers the health path before that check, in a middleware: https://gregale.dev/docs/deploy-django#health-check. Do not add the internal address to the allow-list.",
 			"A Dockerfile HEALTHCHECK adds a command check; it does not replace the HTTP probe.",
 			"A directly deployed image is ready once its port accepts connections.",
 			"A message broker or memcached never answers HTTP: built from source it fails with app_startup_timeout; deploy its image.",

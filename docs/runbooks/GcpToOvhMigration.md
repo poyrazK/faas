@@ -108,11 +108,15 @@ What to expect:
       after the window (phase 2 step 9).
 - [ ] The restore rehearsal (phase 1 step 9) passed, and its time fits the
       window.
+- [ ] CD can give each OVH compute node its own no-delete key (see "Keys").
+      Until it can, the OVH compute nodes join with the shared
+      delete-capable key the GCP fleet uses.
 
 ## Keys
 
 | Key | Bucket | Rights | Where it lives |
 |---|---|---|---|
+| GCP fleet artifact key (temporary) | artifacts | get, put, list, delete | the `COMPUTE_STORAGE_ENV` secret, phase 1 steps 3–6 until the cutover |
 | node artifact key (one per compute node) | artifacts | get, put, list; **no delete** | `storage.env` on that node |
 | control-plane artifact key | artifacts | get, put, list, delete | `storage.env` on the control node |
 | log archive key | log archive | put, get, list, delete (account erasure) | `log_archive.credentials_src` on the controller |
@@ -126,7 +130,21 @@ the bucket lifecycle removes old recovery points (ADR-20261118203000).
 Nodes go without delete through `FAAS_STORAGE_DELETE_MODE=defer`: deletes
 become `storage_object_deletions` rows that the control plane's object GC
 (`FAAS_SCHEDD_OBJECT_GC`) carries out (ADR-20261115180000). The S3 backend
-supports it.
+supports it, but CD cannot deliver it yet (checked 2026-11-20):
+
+- every compute rollout copies one `storage.env`, from the
+  `COMPUTE_STORAGE_ENV` secret, to every compute node
+  (`node_join.yml`) and to the control plane (`node_join_control_plane.yml`),
+  so nodes and control plane hold the same key;
+- the `gregalectl artifact` commands CD runs (publish, verify,
+  lifecycle-check) refuse `FAAS_STORAGE_DELETE_MODE` in that file;
+- `artifact lifecycle-check`, which gates every compute and control-plane
+  rollout, deletes its probe object, so a no-delete key fails it.
+
+So while the fleet is on GCP it uses one delete-capable key, the user
+`gregale-gcp-fleet-artifacts`: the same right the GCP compute and
+control-plane service accounts hold on the GCS bucket
+(`roles/storage.objectAdmin`). Delete that user at the cutover.
 
 ## The OVH manifest
 
@@ -168,28 +186,81 @@ manifest.
    `faas-cp-state-backup.service` once and check that a bundle lands under
    `offhostbox:faas-cp-state/<GCP control node>/`. The identity is needed
    again only in the rehearsal and the window.
-3. **Prove the bucket** from one GCP compute node with the node key:
+3. **Create the GCP fleet key and prove it.** In the OVH manager, Public
+   Cloud, Users & Roles, add the user `gregale-gcp-fleet-artifacts`
+   (ObjectStore operator). Then in Object Storage, Users, its `...` menu:
+   "Import a user access policy (JSON)" with
+   `deploy/ovh/object-storage-policies/gregale-gcp-fleet-artifacts.json`,
+   then "Enable". The key id is the row's access key; the secret is under
+   "View the secret key".
+
+   Prove it from one GCP compute node with the check CD runs, against a
+   throwaway `storage.env` holding the step 4 contents (root:faas 0440 in
+   a fresh directory under `/run`, deleted afterwards; the key arrives on
+   SSH stdin, not on a command line):
 
    ```bash
-   sudo gregalectl artifact lifecycle-check   # with the S3 storage.env override
+   sudo -u faas-imaged gregalectl artifact lifecycle-check \
+     --env-file "$probe/storage.env" --lifecycle-env-file /etc/faas/imaged-storage.env --json
    ```
 
+   It must print `"backend": "s3"`, `"read_verified": true` and
+   `"deleted": true`.
 4. **Switch the GCP fleet's artifact store to the OVH bucket** with the GCS
-   read fallback, one node at a time (drain, change `storage.env`, restart,
-   undrain):
+   read fallback. Set the `production-us` environment secret
+   `COMPUTE_STORAGE_ENV` to today's lines with the backend changed and the
+   S3 and fallback lines added (`gh secret set COMPUTE_STORAGE_ENV --env
+   production-us` reading stdin):
 
    ```
    FAAS_STORAGE_BACKEND=s3
-   FAAS_S3_BUCKET=… FAAS_S3_ENDPOINT=https://s3.<region>.io.cloud.ovh.<tld>
-   FAAS_S3_REGION=… FAAS_S3_PATH_STYLE=…
-   FAAS_S3_ACCESS_KEY_ID=… FAAS_S3_SECRET_ACCESS_KEY=…
+   FAAS_STORAGE_LOCAL_PREFIXES=none
+   FAAS_REQUIRE_SHARED_ARTIFACTS=1
+   FAAS_STORAGE_CACHE_SERVE_STALE=0
+   FAAS_STORAGE_SNAPSHOT_COMPRESSION=zstd
    FAAS_STORAGE_FALLBACK_BACKEND=gcs
+   FAAS_GCS_BUCKET=gregale-prod-280686321025-artifacts
+   FAAS_S3_BUCKET=gregale-prod-artifacts
+   FAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net
+   FAAS_S3_REGION=bhs
+   FAAS_S3_PATH_STYLE=0
+   FAAS_S3_ACCESS_KEY_ID=…
+   FAAS_S3_SECRET_ACCESS_KEY=…
    ```
 
-   The control plane switches the same way, with its own key. New builds and
-   snapshots now land in OVH; misses read GCS.
-5. **Bulk-copy the old objects** from a GCP host, keeping user metadata (the
-   S3 store reads GCS's encoding unchanged):
+   Leave out `FAAS_STORAGE_DELETE_MODE` (the artifact commands refuse it),
+   and leave `COMPUTE_IMAGED_STORAGE_ENV` as the registry login: an S3 pair
+   there overrides this key for imaged, vmmd and apid.
+
+   Then redeploy the release production runs with `cd-platform`: the same
+   `release_tag`, `compute_targets` and `compute_pki_source=live-node` as
+   the last rollout (the default `secret` is for enrollment and fails on
+   existing hosts: "ca.key is missing"). The compute rollout installs the
+   file on both compute nodes and the control plane. The control-plane
+   stage runs first, so restart the control plane's readers once the
+   compute rollout is done:
+
+   ```bash
+   sudo systemctl restart faas-apid.service faas-schedd.service faas-signd.service
+   ```
+
+   Writes now go to OVH only; a read falls back to GCS only on not-found,
+   and a delete hits both. Until a node is switched it cannot read what a
+   switched one wrote (a GCS primary has no S3 fallback), so avoid deploys
+   while the rollout runs: a wake there cold-boots, and an app built on a
+   switched node cannot cold-boot on an unswitched one.
+
+   The first node's canary runs inside that window, so it can fail for
+   exactly this reason. On 2026-11-20 fsn-2's canary built on fsn-2 (to
+   OVH) and cold-booted on fsn-3 (GCS only): `gcs get ... 404`. The leg
+   had already activated fsn-2; only the gate failed, and the rollout
+   stopped before fsn-3. Roll forward rather than back: run `cd-platform`
+   again with only the remaining node in `compute_targets`. Its canary
+   then runs with every node switched (it passed), and the restart of the
+   control-plane readers follows.
+5. **Bulk-copy the old objects** from the GCP control node, whose service
+   account reads the GCS bucket, keeping user metadata (the S3 store reads
+   GCS's encoding unchanged), with the step 3 key in the environment only:
 
    ```bash
    rclone copy --metadata --checksum gcs:<gcs bucket> ovh:<ovh bucket>
@@ -197,9 +268,12 @@ manifest.
 
    Repeat until a run copies nothing new. Then do a cross-node restore of a
    snapshot that was written to GCS before step 4, on a node whose cache does
-   not hold it.
-6. **Remove the fallback** (`FAAS_STORAGE_FALLBACK_BACKEND` unset) node by
-   node. From here GCS is read by nothing; keep it until phase 3.
+   not hold it. A copy that races a delete can bring a deleted object back
+   to OVH, where nothing references it; it costs storage, nothing else.
+6. **Remove the fallback**: set `COMPUTE_STORAGE_ENV` again without
+   `FAAS_STORAGE_FALLBACK_BACKEND` and `FAAS_GCS_BUCKET`, redeploy and
+   restart the control-plane readers as in step 4. From here GCS is read
+   by nothing; keep it until phase 3.
 7. **Log archive bucket.** Copy `faas-logs/` from the GCS archive to the OVH
    archive bucket (same `rclone copy`) so customers keep their 90 days.
 8. **Backup remote on the OVH control node.** Put the OVH backup remote
