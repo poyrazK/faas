@@ -639,6 +639,12 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		add("framework_unknown", "warning", "Gregale could not identify the application framework.", "Set an explicit start command or Dockerfile.")
 	}
 	for _, warning := range summary.Runtime.Warnings {
+		// A function runs its handler under the platform runner, so it has
+		// no start script by design; health led with "No npm start script"
+		// for every `gregale add function` scaffold (prod 2026-11-20).
+		if summary.App.Type == "function" && warning.Code == "missing_start_command" {
+			continue
+		}
 		add("profile_"+warning.Code, "warning", warning.Message, "Review the inferred deployment profile before the next release.")
 	}
 	if summary.API.Available && summary.API.Endpoints == 0 && (summary.App.WorkloadClass == "http" || summary.App.WorkloadClass == "graphql") {

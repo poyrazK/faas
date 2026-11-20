@@ -49,5 +49,9 @@ func TestQueueMessageRefusedWith4xxIsDeadLetteredAtOnce(t *testing.T) {
 		if got.Status != tc.want {
 			t.Errorf("code %d durable=%v: status %q, want %q (%s)", tc.code, tc.durable, got.Status, tc.want, got.Error)
 		}
+		// prod 2026-11-20: a refusal read "max_attempts" after one attempt.
+		if wantCode := map[bool]string{true: "function_refused_input", false: "function_state_failed"}[tc.want == "dead_letter"]; got.Code != wantCode {
+			t.Errorf("code %d durable=%v: result code %q, want %q", tc.code, tc.durable, got.Code, wantCode)
+		}
 	}
 }

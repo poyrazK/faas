@@ -5740,6 +5740,14 @@ func cmdDomains(args []string) int {
 				return 1
 			}
 			*domain = fs.Arg(0)
+		} else if fs.NArg() == 2 && *slug == "" {
+			// prod 2026-11-20: `domain add <app> <domain>` printed only the
+			// usage line. Name the form that works.
+			app, name := fs.Arg(0), fs.Arg(1)
+			if strings.Contains(app, ".") && !strings.Contains(name, ".") {
+				app, name = name, app
+			}
+			return printErr("Unexpected argument", fmt.Errorf("pass the app with --app: gregale domain create %s --app %s", name, app))
 		} else if fs.NArg() != 0 {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
