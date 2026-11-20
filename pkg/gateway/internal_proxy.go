@@ -534,7 +534,43 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, release := p.publicTrafficContext(r.Context())
 	defer release()
+	upload := r.Body
+	if drainable(r) {
+		// The transport closes the body it sent; net/http then stops
+		// reading the upload. Keep it open so the rest can be drained.
+		r.Body = uncloseableBody{upload}
+	}
 	p.serveHTTP(w, p.withPreference(r.WithContext(WithStartTime(ctx, time.Now()))))
+	if drainable(r) {
+		drainUnreadUpload(w, upload)
+	}
+}
+
+type uncloseableBody struct{ io.Reader }
+
+func (uncloseableBody) Close() error { return nil }
+
+func drainable(r *http.Request) bool {
+	return r.Body != nil && r.Body != http.NoBody && r.ContentLength > 0 && r.ContentLength <= earlyAnswerDrainBytes
+}
+
+// Bounds on the upload drainUnreadUpload reads after an early answer: the
+// largest body any route accepts, and the time the rest may take to arrive.
+const (
+	earlyAnswerDrainBytes   = api.MaxEdgeRuleLimitBodyBytesStreaming
+	earlyAnswerDrainTimeout = 60 * time.Second
+)
+
+// drainUnreadUpload reads and discards what is left of the request body
+// after the answer is written. net/http reads at most 256 KiB of an unread
+// body and then closes the connection; a client that sends the whole upload
+// before it reads the answer, as Cloudflare does, saw the close as a broken
+// pipe and returned its own 502 in place of the app's answer (prod hunt
+// 2026-11-20, R12-2). A body larger than any route accepts, or one that
+// stalls, is left to the close.
+func drainUnreadUpload(w http.ResponseWriter, body io.Reader) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(earlyAnswerDrainTimeout))
+	_, _ = io.CopyN(io.Discard, body, earlyAnswerDrainBytes)
 }
 
 func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
