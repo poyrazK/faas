@@ -3109,7 +3109,11 @@ const (
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
-	OutboundAIReserveBytesPerToken       int64 = 4
+	// A generation call that names no output ceiling reserves its model's
+	// longest response from the price catalog for its cost, or this for a
+	// model the catalog does not know (cost-control review 2026-11-19, N17).
+	OutboundAIUnknownModelOutputReserveTokens int64 = 32_768
+	OutboundAIReserveBytesPerToken            int64 = 4
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
