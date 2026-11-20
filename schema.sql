@@ -31414,6 +31414,7 @@ CREATE TABLE public.agent_run_approvals (
     arguments_summary text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    released_at timestamp with time zone,
     CONSTRAINT agent_run_approvals_arguments_sha256_check CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT agent_run_approvals_arguments_summary_check CHECK ((octet_length(arguments_summary) <= 2048)),
     CONSTRAINT agent_run_approvals_check CHECK ((expires_at > created_at)),
@@ -31426,6 +31427,13 @@ CREATE TABLE public.agent_run_approvals (
 --
 
 COMMENT ON TABLE public.agent_run_approvals IS 'ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.';
+
+
+--
+-- Name: COLUMN agent_run_approvals.released_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_run_approvals.released_at IS 'ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.';
 
 
 --
@@ -31607,6 +31615,7 @@ CREATE TABLE public.agent_runs (
     workflow_run_id uuid,
     workflow_step text,
     workflow_event text,
+    deadline_credit_max_sec integer DEFAULT 0 NOT NULL,
     CONSTRAINT agent_runs_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_runs_attempt_check CHECK ((attempt >= 1)),
     CONSTRAINT agent_runs_boot_ms_check CHECK (((boot_ms IS NULL) OR (boot_ms >= 0))),
@@ -31652,6 +31661,13 @@ COMMENT ON TABLE public.agent_runs IS 'ADR-20261027090010 agent runs; apid inser
 --
 
 COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd replica holding the lease; diagnostics only.';
+
+
+--
+-- Name: COLUMN agent_runs.deadline_credit_max_sec; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_runs.deadline_credit_max_sec IS 'ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.';
 
 
 --
@@ -63727,6 +63743,14 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 ALTER TABLE ONLY public.agent_run_usage
     ADD CONSTRAINT agent_run_usage_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: agent_runs agent_runs_deadline_credit_max_sec_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_runs
+    ADD CONSTRAINT agent_runs_deadline_credit_max_sec_check CHECK (((deadline_credit_max_sec >= 0) AND (deadline_credit_max_sec <= 3600))) NOT VALID;
 
 
 --

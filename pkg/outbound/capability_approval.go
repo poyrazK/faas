@@ -63,7 +63,14 @@ type AgentApprovalStore interface {
 	// ApprovalDecision returns the decision ("approve" or "deny"), or "" while
 	// there is none.
 	ApprovalDecision(ctx context.Context, run AgentRunIdentity, approvalID string) (string, error)
+	// ReleaseApproval records that the call stopped waiting, which ends the
+	// wait's deadline credit (ADR-20261027090016 amendment 3).
+	ReleaseApproval(ctx context.Context, run AgentRunIdentity, approvalID string) error
 }
+
+// approvalReleaseTimeout bounds the write that ends a wait; it runs after
+// the call's own context may be gone.
+const approvalReleaseTimeout = 5 * time.Second
 
 func newApprovalCounter() *prometheus.CounterVec {
 	return prometheus.NewCounterVec(prometheus.CounterOpts{Name: "agent_approvals_total",
@@ -111,6 +118,13 @@ func (g *CapabilityGateway) awaitApproval(ctx context.Context, cr capabilityRun,
 	if err != nil {
 		return nil, fmt.Errorf("capability gateway: request approval: %w", err)
 	}
+	defer func() {
+		// A failed write only lets the credit run on to the decision or the
+		// expiry, which the cap bounds.
+		rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), approvalReleaseTimeout)
+		defer cancel()
+		_ = store.ReleaseApproval(rctx, cr.run, approval.ID)
+	}()
 	poll := g.ApprovalPoll
 	if poll <= 0 {
 		poll = time.Duration(api.AgentRunApprovalPollMillis) * time.Millisecond

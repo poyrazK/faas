@@ -459,6 +459,8 @@ type AgentRun struct {
 	WorkflowRunID          pgtype.UUID
 	WorkflowStep           pgtype.Text
 	WorkflowEvent          pgtype.Text
+	// ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.
+	DeadlineCreditMaxSec int32
 }
 
 type AgentRunAiReservation struct {
@@ -488,6 +490,8 @@ type AgentRunApproval struct {
 	ArgumentsSummary string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	// ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.
+	ReleasedAt pgtype.Timestamptz
 }
 
 // ADR-20261027090016 amendment 2: the seller's decision on an agent run approval, written once by apid; outboundd reads it.
