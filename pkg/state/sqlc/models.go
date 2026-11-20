@@ -14832,6 +14832,20 @@ type ReferralAttribution struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	AttributionSource   string
+	SubjectKind         string
+	SelectedBy          pgtype.UUID
+}
+
+type ReferralCreditChange struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	ChangedBy         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ReferralLink struct {
@@ -15904,6 +15918,32 @@ type SalesActivity struct {
 	TaskID        pgtype.UUID
 }
 
+type SalesCommissionAgreement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	EffectiveFrom pgtype.Timestamptz
+	Note          string
+	CreatedBy     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type SalesCommissionPayout struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OwnerID     pgtype.UUID
+	AmountCents int64
+	Currency    string
+	PaidOn      pgtype.Date
+	Reference   string
+	Note        string
+	RecordedBy  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	VoidedAt    pgtype.Timestamptz
+	VoidedBy    pgtype.UUID
+	VoidReason  string
+}
+
 type SalesInquiry struct {
 	ID             pgtype.UUID
 	Name           string
@@ -16008,6 +16048,12 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         interface{}
 	ReferredRewardCents int64
+	SubjectKind         string
+	OrgName             string
+	CommissionBps       int32
+	PayoutID            pgtype.UUID
+	PayoutCents         int64
+	PayoutPaidOn        pgtype.Date
 }
 
 type SalesTask struct {
@@ -16021,6 +16067,16 @@ type SalesTask struct {
 	UpdatedBy   pgtype.UUID
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type SalesTeamMember struct {
+	AccountID pgtype.UUID
+	Role      string
+	Active    bool
+	UpdatedBy pgtype.UUID
+	Version   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 // ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.
