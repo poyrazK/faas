@@ -21,7 +21,7 @@ Compose read them: an optional `export ` prefix, `#` comment lines, and a value
 wrapped in double quotes loses them and has `\n`, `\"` and `\\` unescaped,
 while one in single quotes loses them and stays literal. `env push` skips a
 key with an empty value (`KEY=`) with a warning before saving anything; remove
-a value with `gregale secrets unset`. `KEY=VALUE` arguments are used as your shell passes
+a value with `gregale env unset`. `KEY=VALUE` arguments are used as your shell passes
 them.
 
 The effective precedence is OS environment, manifest environment, shared

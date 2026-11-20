@@ -588,7 +588,7 @@ func envPush(args []string) int {
 	nonEmpty := make([]pair, 0, len(pairs))
 	for _, p := range pairs {
 		if p.v == "" {
-			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale secrets unset %s %s`", p.k, *app, p.k)
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale env unset %s %s`", p.k, *app, p.k)
 			continue
 		}
 		nonEmpty = append(nonEmpty, p)
