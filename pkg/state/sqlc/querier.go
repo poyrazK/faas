@@ -110,6 +110,9 @@ type Querier interface {
 	// the CHECK on latency_hist rejects a flattened array of another width. The
 	// update is additive, so apid replicas flushing the same key add up.
 	AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg AddRequestAnalyticsMinutesParams) error
+	// A signed change: a change that lowers cost gives budget back, never below
+	// zero.
+	AdjustAgentBudgetStanding(ctx context.Context, db DBTX, arg AdjustAgentBudgetStandingParams) error
 	// Record the source's unchanged legacy settings so creating a stage head
 	// cannot reclassify a production identity as a stage-only service.
 	AdmitLegacyProjectEnvironmentCloneSource(ctx context.Context, db DBTX, arg AdmitLegacyProjectEnvironmentCloneSourceParams) error
@@ -2395,6 +2398,9 @@ type Querier interface {
 	GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error)
 	GetAgentApprovalRequestState(ctx context.Context, db DBTX, id pgtype.UUID) (GetAgentApprovalRequestStateRow, error)
 	GetAgentBudgetSpend(ctx context.Context, db DBTX, arg GetAgentBudgetSpendParams) (int64, error)
+	// Cost-control review 2026-11-19 (N10): the always-on cost the key's changes
+	// keep running. It never resets.
+	GetAgentBudgetStanding(ctx context.Context, db DBTX, keyID pgtype.UUID) (int64, error)
 	// ADR-20261111114059: the key's own budget; no row means the plan default.
 	GetAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.UUID) (pgtype.Int8, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
@@ -7710,6 +7716,10 @@ type Querier interface {
 	RequeuePreemptedBuild(ctx context.Context, db DBTX, arg RequeuePreemptedBuildParams) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
+	// Cost-control review 2026-11-19 (N9): adds millicents only while the total
+	// stays within limit, in one statement, so two concurrent requests cannot
+	// both pass a check of the same total. No row returned means over budget.
+	ReserveAgentBudgetStanding(ctx context.Context, db DBTX, arg ReserveAgentBudgetStandingParams) ([]int64, error)
 	ReserveBillingUsageIntent(ctx context.Context, db DBTX, arg ReserveBillingUsageIntentParams) (int64, error)
 	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)

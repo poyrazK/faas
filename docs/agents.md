@@ -344,14 +344,21 @@ your account's spend cap still bounds it.
 Within the budget the change goes through. Past it, Gregale answers
 `428 approval_required` with a review link, as for other approvals, and the
 review page shows the change's added monthly cost. Approving lets that one
-change through. Lowering cost never asks, and does not give budget back.
+change through. Lowering cost never asks, and gives the budget back.
+
+The budget holds the total always-on cost the agent's changes keep running,
+not what it added this month: it does not reset on the 1st, so capacity an
+agent added last month still counts. A prewarm must fit the budget when it is
+made but stops counting once made, since its window ends on its own. Two
+changes sent at once cannot both fit into the same headroom: each reserves
+its cost before it is written.
 
 Without a budget of its own, an agent gets half its plan's default spend cap:
 $5 a month on Hobby, $25 on Pro, $75 on Scale ($0 on Free, which cannot keep
 instances warm). Set a budget, make it unlimited, or go back to the default:
 
 ```sh
-gregale mcp connection budget <id>             # budget and this month's use
+gregale mcp connection budget <id>             # budget and the always-on cost in use
 gregale mcp connection budget <id> --set 40    # $40 a month
 gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
@@ -401,7 +408,7 @@ scales to zero adds nothing; its compute, storage and egress follow use.
 ## See your agents at a glance
 
 `gregale mcp connection status` shows each connected agent on one line: its
-pending approval requests, the always-on cost it committed this month
+pending approval requests, the always-on cost its changes keep running
 against its budget, how many of its changes of the last 7 days undo can
 reverse, and its last change. Give an id for one agent in detail, with the
 review link of each pending request:
