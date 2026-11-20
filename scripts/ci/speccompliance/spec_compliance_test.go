@@ -124,6 +124,7 @@ var previewFields = map[string]map[string]bool{
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
