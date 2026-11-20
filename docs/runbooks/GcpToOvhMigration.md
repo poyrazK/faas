@@ -249,6 +249,15 @@ manifest.
    switched one wrote (a GCS primary has no S3 fallback), so avoid deploys
    while the rollout runs: a wake there cold-boots, and an app built on a
    switched node cannot cold-boot on an unswitched one.
+
+   The first node's canary runs inside that window, so it can fail for
+   exactly this reason. On 2026-11-20 fsn-2's canary built on fsn-2 (to
+   OVH) and cold-booted on fsn-3 (GCS only): `gcs get ... 404`. The leg
+   had already activated fsn-2; only the gate failed, and the rollout
+   stopped before fsn-3. Roll forward rather than back: run `cd-platform`
+   again with only the remaining node in `compute_targets`. Its canary
+   then runs with every node switched (it passed), and the restart of the
+   control-plane readers follows.
 5. **Bulk-copy the old objects** from the GCP control node, whose service
    account reads the GCS bucket, keeping user metadata (the S3 store reads
    GCS's encoding unchanged), with the step 3 key in the environment only:
