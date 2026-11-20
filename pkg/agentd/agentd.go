@@ -541,6 +541,7 @@ func (r *run) placed(ctx context.Context, p *scheddpb.AgentRunPlaced) bool {
 		return false
 	}
 	if r.creditMaxSec > 0 {
+		//nolint:contextcheck // credit polling lives as long as the run's stream (runCtx), not this frame's ctx.
 		go r.grantCredit(r.runCtx)
 	}
 	return true
