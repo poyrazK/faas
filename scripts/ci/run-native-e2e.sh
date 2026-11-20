@@ -490,7 +490,8 @@ if [[ -n "${phase}" ]]; then
     # A source build plus one managed workflow guest recovery round trip.
     managed-operation-only) phase_timeout=35m ;;
     # Three cache deployments (create, resize) plus park and restart.
-    managed-redis-only) phase_timeout=45m ;;
+    # The opt-in soak (FAAS_E2E_REDIS_SOAK=1) runs 100 handoffs instead.
+    managed-redis-only) phase_timeout=45m; if [[ "${FAAS_E2E_REDIS_SOAK:-}" == 1 ]]; then phase_timeout=330m; fi ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
     # Eight native source builds plus real minute-spaced verification rounds.
