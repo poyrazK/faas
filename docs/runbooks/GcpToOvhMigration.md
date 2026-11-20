@@ -115,7 +115,8 @@ What to expect:
       `make ansible-preflight` shows `10.20.0.x` for every host.
 - [ ] CD and Ansible reach the OVH hosts from inside the vRack (a runner or
       bastion there) before the host firewall limits SSH to the vRack. CD
-      must be able to deploy to the OVH control node in the window.
+      must be able to deploy to the OVH control node in the window. See
+      "CD access" below.
 - [ ] The OVH manifest (below) passes `make manifest-ansible` and the
       read-only `make ansible-preflight`. Strict `make verify-fleet` runs
       after the window (phase 2 step 9).
@@ -160,6 +161,52 @@ So while the fleet is on GCP it uses one delete-capable key, the user
 `gregale-gcp-fleet-artifacts`: the same right the GCP compute and
 control-plane service accounts hold on the GCS bucket
 (`roles/storage.objectAdmin`). Delete that user at the cutover.
+
+## CD access
+
+CD runs on the control plane: production's two `faas-fleet-us` runners
+(`gregale-cp`, `gregale-cp-2`) live on the GCP control node, and they log in
+to every host as `root` with one of two keys, `gregale-prod-cd-cp` (the
+control plane) and `gregale-prod-cd-compute` (every host). Each host's root
+`authorized_keys` limits the key to the runner host's private address
+(`from=`, no forwarding), and sshd allows root by key only
+(`PermitRootLogin prohibit-password`). The role default is `no`; GCP sets
+`prohibit-password` in operator-held Ansible variables.
+
+On OVH the same model points at bhs-1, the control node:
+
+- **Root login (done 2026-11-20).** The three hosts converged
+  `host_hardening` with `-e faas_hardening_sshd_permit_root_login=prohibit-password`.
+  Pass the same variable to every converge, the window's bootstrap
+  included, or it falls back to `no` and locks CD out. Root's
+  `authorized_keys` holds only the CD keys, limited to
+  `from="10.20.0.1"` (bhs-1's vRack address): bhs-1 has both keys,
+  bhs-2 and bhs-3 the compute key. The OVH install's own key for root was
+  removed (`/root/.ssh/authorized_keys.bak-20261120` keeps the old file).
+- **Runners on bhs-1 (done 2026-11-20).** `make bootstrap-fleet-runner`
+  (`deploy/ansible/fleet_runner.yml`) with `faas_runner_hosts=bhs-1`,
+  `faas_runner_instances=2` and `faas_runner_labels=["faas-fleet-ovh"]`, a
+  label no workflow uses, so the runners (`bhs-1`, `bhs-1-2`, user
+  `faas-runner`) are online without taking GCP's jobs. The role accepts
+  exactly one `faas-fleet-<word>` label, so `faas-fleet-us-ovh` is refused.
+  The Make target fetches a short-lived registration token through `gh`.
+- **In the window, before phase 2 step 5's deploy:**
+  - stop the GCP runners (`faas-github-runner*.service` on the GCP control
+    node) and move the bhs-1 runners from `faas-fleet-ovh` to
+    `faas-fleet-us` (`gh api -X PUT
+    repos/poyrazK/faas/actions/runners/<id>/labels -f 'labels[]=faas-fleet-us'`
+    for each; `gh api repos/poyrazK/faas/actions/runners` lists the ids);
+  - set `COMPUTE_KNOWN_HOSTS` to the OVH host keys under the fleet names
+    (`fsn-1.gregale.dev`, `bhs-2.gregale.dev`, `bhs-3.gregale.dev`). The
+    ED25519 fingerprints on 2026-11-20: bhs-1
+    `SHA256:TmZZ4H588uPpzbT7FEOoRsu6qjuaAOLNjrcr1Wjr2QY`, bhs-2
+    `SHA256:iqOzBAS7ewNswvawLkqTnXkjJalQ968PCPGuqvi35Jo`, bhs-3
+    `SHA256:/I39vLRzzLGSQohnatPFNzLJV1l2oxYuaYFi5ETnjG4`;
+  - `CP_HOST` stays `fsn-1.gregale.dev`: bhs-1 resolves the fleet names
+    to vRack addresses through the `/etc/hosts` bootstrap renders, so CD's
+    traffic never leaves the vRack;
+  - `cd-platform` takes the OVH compute nodes in `compute_targets`, with
+    those fingerprints in `ssh_host_key_sha256`.
 
 ## The OVH manifest
 
