@@ -175,6 +175,12 @@ fails with `403 plan_public_auth_bearer_not_allowed`,
 `plan_public_auth_basic_not_allowed` or
 `plan_public_auth_ip_allowlist_not_allowed`.
 
+Once a private app's API key requirement or the `bearer` mode has accepted a
+Gregale API key, Gregale removes the `Authorization` header before the
+request reaches your app: the key belongs to the caller's account, and your
+app has no use for it. A `basic` password still reaches the app, and so does
+an `Authorization` header on an app with no such gate.
+
 - **Basic auth:** the username is 1 to 128 bytes and the password 12 to 256
   bytes. Gregale stores them encrypted. After 10 wrong passwords in a minute
   from one network (an IPv4 /24 or IPv6 /64), that network gets `429` until
