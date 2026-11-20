@@ -12,11 +12,15 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -185,4 +189,197 @@ func redisMetalDoOnce(t *testing.T, f *privateTCPImageFixture, host string, cmds
 	}
 	out.status = resp.StatusCode
 	return out
+}
+
+// TestManagedRedisHandoffSoakMetal runs FAAS_E2E_REDIS_SOAK_HANDOFFS
+// (default 100) back-to-back handoffs on one cache while a writer INCRs a
+// counter through the private address the whole time, and checks after
+// every handoff that no acknowledged write was lost: the counter is at
+// least the number of INCRs the cache acknowledged, and the key written
+// before the soak is still there. Handoffs rotate grow, shrink (with evict;
+// the data is far below either size) and upgrade, so both RAM changes and
+// same-RAM image moves are covered (ADR-20261116192126: resize and upgrade
+// keep the data). It takes hours, so it runs only on request:
+// FAAS_E2E_REDIS_SOAK=1.
+func TestManagedRedisHandoffSoakMetal(t *testing.T) {
+	if os.Getenv("FAAS_E2E_REDIS_SOAK") != "1" {
+		t.Skip("set FAAS_E2E_REDIS_SOAK=1 to run the managed Redis handoff soak")
+	}
+	handoffs := 100
+	if v := os.Getenv("FAAS_E2E_REDIS_SOAK_HANDOFFS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			t.Fatalf("FAAS_E2E_REDIS_SOAK_HANDOFFS=%q is not a positive count", v)
+		}
+		handoffs = n
+	}
+	f := newPrivateTCPImageFixture(t)
+	if f == nil {
+		return
+	}
+	ctx := context.Background()
+	store := state.NewPgStore(f.pool)
+	name := "soak-" + randHexSuffix()
+	raw, status := doReq(t, f.h, f.key, http.MethodPost, "/v1/redis", api.CreateRedisCacheRequest{Name: name, MemoryMB: 64})
+	if status != http.StatusCreated {
+		t.Fatalf("create cache: status=%d body=%s", status, raw)
+	}
+	cacheApp, err := store.AppBySlug(ctx, name)
+	if err != nil {
+		t.Fatalf("load cache app: %v", err)
+	}
+	t.Cleanup(func() { f.parkAtCleanup(t, cacheApp) })
+	waitRedisDeploymentLive(t, ctx, f, store, cacheApp.ID, "")
+	index, err := store.AppServiceAddressIndex(ctx, cacheApp.ID)
+	if err != nil {
+		t.Fatalf("service address index: %v", err)
+	}
+	address, ok := api.ServiceAddressForIndex(index)
+	if !ok {
+		t.Fatalf("cache %s has no service address", name)
+	}
+	host := address.String()
+	if got := redisMetalDo(t, f, host, "SET marker kept", "SET soak 0"); got.status != http.StatusOK || len(got.Replies) != 2 || got.Replies[0] != "+OK\r\n" {
+		t.Fatalf("seed: status=%d replies=%q err=%s", got.status, got.Replies, got.Error)
+	}
+
+	w := startRedisSoakWriter(t, f, host)
+	memory := 64
+	started := time.Now()
+	for i := 1; i <= handoffs; i++ {
+		var path, method string
+		var body any
+		switch i % 3 {
+		case 1:
+			memory, method, path = 96, http.MethodPatch, "/v1/redis/"+name
+			body = api.UpdateRedisCacheRequest{MemoryMB: memory}
+		case 2:
+			memory, method, path = 64, http.MethodPatch, "/v1/redis/"+name
+			body = api.UpdateRedisCacheRequest{MemoryMB: memory, Evict: true}
+		default:
+			method, path = http.MethodPost, "/v1/redis/"+name+"/upgrade"
+		}
+		ackedBefore := w.acked.Load()
+		dep := startRedisSoakHandoff(t, f, method, path, body)
+		waitRedisDeploymentLive(t, ctx, f, store, cacheApp.ID, dep)
+		// Writes must resume on the new VM before the next handoff.
+		deadline := time.Now().Add(3 * time.Minute)
+		for w.acked.Load() <= ackedBefore+3 && time.Now().Before(deadline) {
+			time.Sleep(time.Second)
+		}
+		acked := w.acked.Load()
+		if acked <= ackedBefore+3 {
+			f.h.DumpLogs(t)
+			t.Fatalf("handoff %d: writes did not resume within 3 min (acked %d before, %d now; last error %s)", i, ackedBefore, acked, w.lastError())
+		}
+		got := redisMetalDo(t, f, host, "GET soak", "GET marker", "INFO memory")
+		if got.status != http.StatusOK || len(got.Replies) != 3 {
+			f.h.DumpLogs(t)
+			t.Fatalf("handoff %d: read back: status=%d replies=%q err=%s", i, got.status, got.Replies, got.Error)
+		}
+		counter, err := strconv.ParseInt(redisBulkString(got.Replies[0]), 10, 64)
+		if err != nil || counter < acked {
+			f.h.DumpLogs(t)
+			t.Fatalf("handoff %d: lost writes: counter=%q, acknowledged INCRs=%d", i, got.Replies[0], acked)
+		}
+		if got.Replies[1] != "$4\r\nkept\r\n" {
+			t.Fatalf("handoff %d: marker key lost: %q", i, got.Replies[1])
+		}
+		if !strings.Contains(got.Replies[2], "maxmemory:"+strconv.Itoa(memory<<20)) {
+			t.Fatalf("handoff %d: maxmemory is not %d MB: %s", i, memory, got.Replies[2])
+		}
+		t.Logf("handoff %d/%d (%s %s) PASS: counter=%d acked=%d refused=%d elapsed=%s",
+			i, handoffs, method, path, counter, acked, w.refused.Load(), time.Since(started).Round(time.Second))
+	}
+	w.stop()
+	t.Logf("soak PASS: %d handoffs, %d acknowledged writes, none lost, %d refused while switching, %s",
+		handoffs, w.acked.Load(), w.refused.Load(), time.Since(started).Round(time.Second))
+}
+
+// redisSoakWriter INCRs the soak counter as fast as one caller allows and
+// counts the INCRs the cache acknowledged. A refused or failed request is
+// not acknowledged, so it may or may not have applied; the check is only
+// that every acknowledged one did.
+type redisSoakWriter struct {
+	acked   atomic.Int64
+	refused atomic.Int64
+	done    chan struct{}
+	stopped chan struct{}
+	mu      sync.Mutex
+	lastErr string
+}
+
+func startRedisSoakWriter(t *testing.T, f *privateTCPImageFixture, host string) *redisSoakWriter {
+	w := &redisSoakWriter{done: make(chan struct{}), stopped: make(chan struct{})}
+	go func() {
+		defer close(w.stopped)
+		for {
+			select {
+			case <-w.done:
+				return
+			default:
+			}
+			got := redisMetalDoOnce(t, f, host, "INCR soak")
+			if got.status == http.StatusOK && len(got.Replies) == 1 && strings.HasPrefix(got.Replies[0], ":") {
+				w.acked.Add(1)
+				continue
+			}
+			w.refused.Add(1)
+			w.mu.Lock()
+			w.lastErr = fmt.Sprintf("status=%d replies=%q err=%s", got.status, got.Replies, got.Error)
+			w.mu.Unlock()
+			time.Sleep(500 * time.Millisecond)
+		}
+	}()
+	t.Cleanup(w.stop)
+	return w
+}
+
+func (w *redisSoakWriter) stop() {
+	select {
+	case <-w.done:
+	default:
+		close(w.done)
+	}
+	<-w.stopped
+}
+
+func (w *redisSoakWriter) lastError() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.lastErr
+}
+
+// startRedisSoakHandoff starts one handoff and returns its deployment. The
+// previous handoff's rollout may still be settling (the old VM draining), so
+// a 409/429/503 refusal is retried for up to five minutes.
+func startRedisSoakHandoff(t *testing.T, f *privateTCPImageFixture, method, path string, body any) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Minute)
+	for {
+		raw, status := doReq(t, f.h, f.key, method, path, body)
+		if status == http.StatusAccepted {
+			var change api.RedisCacheChange
+			if err := json.Unmarshal(raw, &change); err != nil || change.DeploymentID == "" {
+				t.Fatalf("%s %s: response without a deployment: %s", method, path, raw)
+			}
+			return change.DeploymentID
+		}
+		retry := status == http.StatusConflict || status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+		if !retry || time.Now().After(deadline) {
+			f.h.DumpLogs(t)
+			t.Fatalf("%s %s: status=%d body=%s", method, path, status, raw)
+		}
+		t.Logf("%s %s refused (%d %s); retrying", method, path, status, raw)
+		time.Sleep(10 * time.Second)
+	}
+}
+
+// redisBulkString is a RESP bulk string's value ("$2\r\n42\r\n" -> "42").
+func redisBulkString(reply string) string {
+	_, rest, ok := strings.Cut(reply, "\r\n")
+	if !ok {
+		return ""
+	}
+	return strings.TrimSuffix(rest, "\r\n")
 }
