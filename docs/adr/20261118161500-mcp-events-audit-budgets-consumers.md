@@ -1,4 +1,4 @@
-# ADR-20261118160000: Agents manage event subscriptions, API consumers and notify-only budgets, and read the audit trail
+# ADR-20261118161500: Agents manage event subscriptions, API consumers and notify-only budgets, and read the audit trail
 
 Date: 2026-11-18
 Status: Accepted
