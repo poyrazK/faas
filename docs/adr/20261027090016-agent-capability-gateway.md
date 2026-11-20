@@ -452,10 +452,14 @@ wait is billed, as amendment 2 says; the credit only moves the deadline.
 
 ### Who enforces it
 
-- **vmmd holds the deadline.** Its host timer and the exchange's context
-  move from `timeout_sec` to `timeout_sec + credit` when agentd says so. At
-  the deadline vmmd resumes the guest and sends the cancel frame, and it
-  reports the run as `timed_out`, not `cancelled`.
+- **vmmd holds the deadline.** `AgentRunStart.deadline_sec` carries the
+  seller's `timeout_sec` beside the request, whose own `timeout_sec` is now
+  the guest ceiling. vmmd's host timer and the exchange's context start at
+  `deadline_sec` and move to `deadline_sec + credit` when agentd says so,
+  never past the ceiling. At the deadline vmmd resumes the guest and sends
+  the cancel frame, and it reports the run as `timed_out`, not `cancelled`.
+  An older vmmd reads only the request and so gives the run the whole
+  ceiling; the release order below keeps that from happening.
 - **agentd computes credit.** While a run's version has an `approve` tool,
   agentd reads the run's credit every `AgentRunApprovalCreditPollSec` and,
   when it grew, sends `AgentRunExtend{credit_ms}` on the RunAgent stream. The
@@ -469,23 +473,29 @@ wait is billed, as amendment 2 says; the credit only moves the deadline.
   MaxTimeoutSec)`, and vmmd enforces the real deadline. `MaxTimeoutSec`
   rises from 3,600 to 7,200 so a Scale run at its 3,600 s plan limit can
   still earn credit.
-- **outboundd's expiry** becomes the first of:
-  - `now + AgentRunApprovalTimeoutSec`;
-  - the run's deadline plus the credit still unearned, since the wait itself
-    earns credit until the cap: `deadline + (AgentRunApprovalCreditMaxSec −
-    credit) − AgentRunApprovalDeadlineMarginSec`;
-  - the guest ceiling minus the margin.
-
-  An expiry that leaves 1 s or less still refuses the call.
+- **outboundd's expiry** becomes the first of `now +
+  AgentRunApprovalTimeoutSec` and `running_at + least(timeout_sec +
+  deadline_credit_max_sec, MaxTimeoutSec) − AgentRunApprovalDeadlineMarginSec`.
+  While a call waits it earns credit one second per second until the cap, so
+  the deadline stays the same distance ahead until the cap is reached; the
+  cap's deadline is therefore the last moment a wait can end. With no credit
+  (`deadline_credit_max_sec = 0`) this is amendment 2's expiry. An expiry
+  that leaves 1 s or less still refuses the call.
 
 The margin (30 s) is more than five times the poll (5 s), so agentd extends
 the deadline before vmmd reaches it.
 
 ### Data
 
-`agent_run_approvals.released_at timestamptz NULL`, written by outboundd when
-the held call ends. Expand-only; an older outboundd leaves it null, and the
-wait then ends at the decision or the expiry.
+- `agent_run_approvals.released_at timestamptz NULL`, written by outboundd
+  when the held call ends. An older outboundd leaves it null, and the wait
+  then ends at the decision or the expiry.
+- `agent_runs.deadline_credit_max_sec integer NOT NULL DEFAULT 0`, written by
+  agentd when the run starts running: the credit this run may earn, 0 when
+  the switch is off or the version has no `approve` tool. outboundd reads it
+  for the expiry, so outboundd needs no switch of its own.
+
+Both are expand-only.
 
 ### Bounds
 
@@ -508,8 +518,8 @@ Units release independently (docs/release-compatibility.md), so each step
 works beside the previous release:
 1. This amendment.
 2. Guest: `MaxTimeoutSec` 7,200. An older agentd never sends more than 3,600.
-3. Data and outboundd: `released_at`, and the new expiry, which reads credit
-   only once step 5's switch is on.
+3. Data and outboundd: both columns, `released_at` writes and the new
+   expiry, which is unchanged while every run's credit cap is 0.
 4. schedd and vmmd: the `AgentRunExtend` frame and the movable deadline. An
    older schedd or vmmd ignores the frame, as both ignore unknown frames
    today, and the run keeps its plain deadline.
