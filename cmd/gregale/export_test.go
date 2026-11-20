@@ -2792,6 +2792,7 @@ var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
 
 // Deploy preflights (#6625, #6631).
 var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var GregaleStateHome = gregaleStateHome
 var SourceCapLookupBudgets = &sourceCapLookupBudgets
 var SourceUploadLimitError = sourceUploadLimitError
 

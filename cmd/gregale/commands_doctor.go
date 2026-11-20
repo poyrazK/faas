@@ -1118,6 +1118,10 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			// port and health path described it as HTTP (Hunt 14 H14-42).
 			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
 				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else if rep.Profile.HealthDefaulted {
+				// No health route found: ready once the port accepts
+				// connections (ADR-079 amendment 2), not a /healthz probe.
+				_, _ = fmt.Fprintf(w, " · port=%d · health=none (ready once the port accepts connections)\n", rep.Profile.Port)
 			} else {
 				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
 			}

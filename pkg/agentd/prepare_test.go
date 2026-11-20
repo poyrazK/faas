@@ -168,7 +168,8 @@ func TestPrepareWiresPresetHarnesses(t *testing.T) {
 		switch name {
 		case "codex":
 			if !strings.Contains(cmd, `-c mcp_servers.gregale.url="`+url+`"`) ||
-				!strings.Contains(cmd, "mcp_servers.gregale.tool_timeout_sec=3720") || req.Command[1] != "-c" {
+				!strings.Contains(cmd, "mcp_servers.gregale.tool_timeout_sec=3720") || req.Command[1] != "-c" ||
+				!strings.Contains(cmd, `-c mcp_servers.gregale.default_tools_approval_mode="approve" exec`) {
 				t.Errorf("codex: %q", cmd)
 			}
 		case "claude-code":
@@ -177,7 +178,7 @@ func TestPrepareWiresPresetHarnesses(t *testing.T) {
 				t.Errorf("claude-code: %q %v", cmd, req.Env)
 			}
 		case "opencode":
-			if req.Env["OPENCODE_CONFIG_CONTENT"] != `{"mcp":{"gregale":{"enabled":true,"type":"remote","url":"`+url+`"}}}` ||
+			if req.Env["OPENCODE_CONFIG_CONTENT"] != `{"mcp":{"gregale":{"enabled":true,"timeout":3720000,"type":"remote","url":"`+url+`"}}}` ||
 				!slices.Equal(req.Command, []string{"opencode", "run", "go"}) {
 				t.Errorf("opencode: %q %v", cmd, req.Env)
 			}
