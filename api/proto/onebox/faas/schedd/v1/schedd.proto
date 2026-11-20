@@ -1481,7 +1481,15 @@ message AgentRunRequest {
     AgentRunStart start = 1;
     AgentRunCancel cancel = 2;
     AgentRunProceed proceed = 3;
+    AgentRunExtend extend = 4;
   }
+}
+
+// AgentRunExtend is the run's total approval-wait credit (ADR-20261027090016
+// amendment 3); schedd forwards it to vmmd. A schedd that predates it
+// ignores it.
+message AgentRunExtend {
+  int64 credit_ms = 1;
 }
 
 // AgentRunProceed lets a placed run boot.
@@ -1512,6 +1520,10 @@ message AgentRunStart {
   // version has AgentSizeHistoryMinRuns of them. schedd's measured charge
   // books and charges the run from it; an older agentd sends 0.
   int32 history_peak_private_mb = 11;
+  // deadline_sec is the seller's timeout when the run's timeout_sec is a
+  // guest ceiling above it (ADR-20261027090016 amendment 3); 0: the run's
+  // timeout_sec.
+  int32 deadline_sec = 12;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010

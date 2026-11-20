@@ -170,8 +170,22 @@ SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::t
 -- name: MarkAgentRunRunning :execrows
 -- The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
 UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
-  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint, updated_at=now()
+  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint,
+  deadline_credit_max_sec=sqlc.arg(deadline_credit_max_sec)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: ListAgentRunApprovalWaits :many
+-- ADR-20261027090016 amendment 3: each approval waits from its request
+-- until its decision, its expiry or outboundd's release, whichever is
+-- first; one still held waits until now. Fenced by the run's lease.
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = sqlc.arg(run_id)::text::uuid AND r.lease_token = sqlc.arg(lease_token)::text
+ ORDER BY p.created_at
+ LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()

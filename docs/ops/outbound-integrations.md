@@ -2055,7 +2055,8 @@ description says each call waits for the seller. A call is held in outboundd:
    account's agent webhooks, in one transaction.
 2. The call waits. The relay connection is silent, so a run whose version has
    the model-wait pause on is paused and unbilled meanwhile; elsewhere the wait
-   is billed. The run's own deadline keeps running.
+   is billed. The run's own deadline keeps running, unless deadline credit is
+   on (below).
 3. The seller decides with `POST /v1/agent-runs/{id}/approvals/{approval_id}`
    (`{"decision":"approve"|"deny","note":"..."}`); apid writes
    `agent_run_approval_decisions` once, only before expiry. outboundd polls it
@@ -2074,8 +2075,21 @@ that long (Codex: `tool_timeout_sec`).
 Metric: `agent_approvals_total{outcome}`, outcome `approved`, `denied`,
 `expired`, `abandoned` (the run went away while waiting) or `refused`.
 
+Deadline credit (amendment 3, agentd `FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT`,
+ansible `faas_agentd_approval_deadline_credit`, off): a run whose version has
+an `approve` tool earns credit for the wall time any of its approvals waited,
+up to `AgentRunApprovalCreditMaxSec`. A wait ends at the decision, the expiry
+or `released_at`, which outboundd writes when it stops holding the call.
+agentd sends the guest `timeout_sec + cap` (at most 7,200 s) as its ceiling,
+records the cap in `agent_runs.deadline_credit_max_sec`, reads the credit
+every `AgentRunApprovalCreditPollSec` and sends it through schedd to vmmd,
+which stops the run at `timeout_sec + credit` and reports `timed_out`.
+outboundd's expiry then uses `running_at + timeout_sec + cap`. Turn it on only
+after every agent node runs a guest, vmmd and schedd from this release.
+Metric: `agent_run_deadline_credit_seconds_total`.
+
 ```sql
-SELECT p.id, p.tool, p.created_at, p.expires_at, d.decision, d.decided_by, d.decided_at
+SELECT p.id, p.tool, p.created_at, p.expires_at, p.released_at, d.decision, d.decided_by, d.decided_at
   FROM agent_run_approvals p LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
  WHERE p.run_id = '<run>' ORDER BY p.created_at;
 ```
