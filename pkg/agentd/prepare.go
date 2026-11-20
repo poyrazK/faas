@@ -54,10 +54,6 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 	if len(command) == 0 {
 		return Machine{}, agentrunproto.Request{}, errors.New("the agent version has no command")
 	}
-	args := make([]string, len(command))
-	for i, arg := range command {
-		args[i] = strings.ReplaceAll(arg, agentpresets.PromptPlaceholder, prompt)
-	}
 	event := []byte(claim.Inputs)
 	if len(event) == 0 {
 		event = []byte(`{}`)
@@ -70,6 +66,11 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 	}
 	modelEnv(env, claim.Harness.Models, claim.Integrations)
 	capabilityEnv(env, claim.CapabilityPolicy)
+	command = wireCapabilities(env, command, preset, isPreset)
+	args := make([]string, len(command))
+	for i, arg := range command {
+		args[i] = strings.ReplaceAll(arg, agentpresets.PromptPlaceholder, prompt)
+	}
 	if len(env) == 0 {
 		env = nil
 	}

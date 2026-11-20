@@ -211,7 +211,10 @@ gregale key create coding-agent --scopes apps:read,deploy:write
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `env:write` for the MCP tools that set non-secret variables.
+and crons. It also changes app settings, including turning off an app's
+request authentication, and deletes apps (a soft delete that `gregale app
+restore` reverses within the grace period). An agent key's `--approvals`
+(default `all`) puts deletes and production changes in front of a person. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access

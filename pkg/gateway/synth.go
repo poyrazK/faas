@@ -1212,12 +1212,47 @@ func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDi
 			DeploymentID:   out.ResolvedDeploymentID,
 		}
 	}
+	status := batchDispatchStatusRetry
+	if rec.InvocationID != "" && invocationRefusedInput(statusCode) {
+		// docs/dead-letters.md: a queue message whose handler refused its
+		// input with a 4xx is dead-lettered, not retried. A 400 was retried
+		// to max_attempts like a 503 (prod 2026-11-19). 408 and 429 remain
+		// retryable, as for webhook receivers.
+		status = "dead_letter"
+	}
 	return batchDispatchResult{
 		ItemIdentifier: rec.ItemIdentifier,
-		Status:         batchDispatchStatusRetry,
-		Error:          fmt.Sprintf("function state=%s", out.State),
+		Status:         status,
+		Error:          batchFailureDetail(out.State, statusCode, out.Result),
 		Code:           "function_state_" + string(out.State),
 	}
+}
+
+// invocationRefusedInput reports a 4xx that retrying the same input cannot fix.
+func invocationRefusedInput(statusCode int) bool {
+	return statusCode >= 400 && statusCode < 500 && statusCode != http.StatusRequestTimeout && statusCode != http.StatusTooManyRequests
+}
+
+// batchFailureDetailMaxBytes bounds the response excerpt a dead letter keeps.
+const batchFailureDetailMaxBytes = 300
+
+// batchFailureDetail names what the function answered. A dead letter said
+// only "max_attempts: function state=failed", without the status or the
+// handler's message (prod 2026-11-19); the invocation record of the same
+// delivery already kept "application returned HTTP 404: {…}".
+func batchFailureDetail(state any, statusCode int, result []byte) string {
+	detail := fmt.Sprintf("function state=%v", state)
+	if statusCode != 0 {
+		detail = fmt.Sprintf("function returned HTTP %d", statusCode)
+	}
+	excerpt := strings.TrimSpace(string(result))
+	if excerpt == "" {
+		return detail
+	}
+	if len(excerpt) > batchFailureDetailMaxBytes {
+		excerpt = strings.ToValidUTF8(excerpt[:batchFailureDetailMaxBytes], "") + "…"
+	}
+	return detail + ": " + excerpt
 }
 
 // batchFailuresEnvelope is the function's response shape for

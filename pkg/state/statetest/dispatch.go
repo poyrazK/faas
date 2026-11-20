@@ -115,6 +115,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"InvocationByID":                                          true,
 	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
@@ -788,6 +789,15 @@ func (s *Mem) CreateTCPListener(p0 context.Context, p1 state.TCPListener) (state
 		return o.CreateTCPListener(p0, p1)
 	}
 	return s.MemStore.CreateTCPListener(p0, p1)
+}
+
+func (s *Mem) InvocationByID(p0 context.Context, p1 string) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		InvocationByID(context.Context, string) (state.Invocation, error)
+	}); ok {
+		return o.InvocationByID(p0, p1)
+	}
+	return s.MemStore.InvocationByID(p0, p1)
 }
 
 func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (state.DeadLetterEvent, error) {

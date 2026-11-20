@@ -49254,6 +49254,21 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
 
 
 --
+-- Name: managed_valkey_caches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_valkey_caches (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    memory_mb integer NOT NULL,
+    eviction_policy text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_valkey_caches_eviction_policy_check CHECK ((eviction_policy = ANY (ARRAY['allkeys-lru'::text, 'allkeys-lfu'::text, 'allkeys-random'::text, 'volatile-lru'::text, 'volatile-lfu'::text, 'volatile-random'::text, 'volatile-ttl'::text, 'noeviction'::text]))),
+    CONSTRAINT managed_valkey_caches_memory_mb_check CHECK ((((memory_mb >= 32) AND (memory_mb <= 4096)) AND ((memory_mb % 32) = 0)))
+);
+
+
+--
 -- Name: mcp_bridge_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -71603,6 +71618,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 
 --
+-- Name: managed_valkey_caches managed_valkey_caches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: mcp_bridge_leases mcp_bridge_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -84801,6 +84824,13 @@ CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_r
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
+
+
+--
+-- Name: managed_valkey_caches_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_valkey_caches_account_idx ON public.managed_valkey_caches USING btree (account_id);
 
 
 --
@@ -107119,6 +107149,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_caches managed_valkey_caches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

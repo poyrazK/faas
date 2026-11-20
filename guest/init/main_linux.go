@@ -1394,8 +1394,11 @@ func runBuildOnce(m api.BuildManifest) error {
 	// fetch/unpack step; without the console mirror the host only sees a hot
 	// Firecracker process and cannot distinguish progress from a deadlock.
 	bk.WaitDelay = 2 * time.Second
-	bk.Stdout = io.MultiWriter(os.Stdout, &buildkitLog)
-	bk.Stderr = io.MultiWriter(os.Stderr, &buildkitLog)
+	// The console is the customer's build log: drop buildkitd's debug
+	// entries and stack frames there. buildkitLog keeps them for the
+	// start-failure tail.
+	bk.Stdout = io.MultiWriter(newBuildkitConsoleFilter(os.Stdout), &buildkitLog)
+	bk.Stderr = io.MultiWriter(newBuildkitConsoleFilter(os.Stderr), &buildkitLog)
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}

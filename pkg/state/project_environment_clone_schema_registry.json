@@ -22408,5 +22408,16 @@
       "key"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "managed_valkey_caches",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "eviction_policy",
+      "memory_mb"
+    ],
+    "kind": "operational"
   }
 ]

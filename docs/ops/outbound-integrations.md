@@ -2002,6 +2002,20 @@ ADR-20261027090016, amendment 1. On an agent run's relay, outboundd serves MCP
 `approve` mode, at least one tool.
 The path exists only for agent runs. Apps, Runs and plain callers get 404.
 
+A run that uses its preset's own command is also wired up
+(`pkg/agentd/capability_harness.go`). The server is named `gregale`, and each
+harness gets a tool-call timeout of the approval timeout plus two minutes:
+
+- `codex` gets `-c mcp_servers.gregale.url=...` and `tool_timeout_sec`.
+- `claude-code` gets `--mcp-config` (inline JSON) and
+  `--allowedTools mcp__gregale`, with `MCP_TOOL_TIMEOUT` in milliseconds.
+- `opencode` gets `OPENCODE_CONFIG_CONTENT` with a remote server. Its per-call
+  timeout is the release default, so a long approval wait may be abandoned
+  there.
+
+A seller's own command gets only the URL variable and must register the
+server itself. Nothing is written to the read-only agent-base drive.
+
 - **What a run sees.** Each request re-checks the run's lease, then reads the
   version's `capability_policy`. `tools/list` returns only tools that the
   policy allows and that are switched on in this region. A version without a

@@ -719,6 +719,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdRedis = cmdRedis
 var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
@@ -2981,4 +2982,10 @@ var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
 // UncommittedProjectFile exposes the HEAD-deploy project-file check.
 func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
 	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}
+
+// BucketUploadContentType returns the content type an upload would store.
+func BucketUploadContentType(args []string) (string, error) {
+	o, err := parseBucketTransfer(args)
+	return o.contentType, err
 }
