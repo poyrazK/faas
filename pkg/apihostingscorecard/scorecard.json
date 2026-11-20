@@ -548,6 +548,22 @@
       ]
     },
     {
+      "id": "managed-redis-preview",
+      "name": "Managed Redis preview qualification",
+      "category": "reliability",
+      "description": "A Hobby-and-up account creates a Valkey cache, binds it to an app, and keeps its data across scale to zero, restart, resize and upgrade; RESP replies stay in pipeline order through the gateway, and the managed-redis flag (default off) is the rollback (ADR-20261116192126).",
+      "capabilities": ["managed-redis"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheCreateBindDelete"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheResizeAndUpgradeHandOff"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCachePlanGates"},
+        {"kind": "test", "locator": "pkg/gateway/redis_session_test.go::TestRedisSessionForwardsCommands"},
+        {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisMetal"},
+        {"kind": "runbook", "locator": "docs/redis.md"}
+      ]
+    },
+    {
       "id": "mcp-hosting-readiness",
       "name": "Stateless MCP hosting qualification",
       "category": "compatibility",

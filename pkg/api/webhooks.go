@@ -180,8 +180,14 @@ type AgentApprovalWebhookPayload struct {
 // launch.
 const AgentRunFinishedWebhookEvent = "agent_run.finished"
 
+// AgentRunApprovalRequestedWebhookEvent reaches account receivers when a
+// run's tool call waits for the seller's decision (ADR-20261027090016
+// amendment 2). Like agent_run.finished, it stays out of the CLI and the
+// public spec until launch.
+const AgentRunApprovalRequestedWebhookEvent = "agent_run.approval_requested"
+
 // AllowedAccountAgentWebhookEvents are the account events agent runs add.
-var AllowedAccountAgentWebhookEvents = []string{AgentRunFinishedWebhookEvent}
+var AllowedAccountAgentWebhookEvents = []string{AgentRunFinishedWebhookEvent, AgentRunApprovalRequestedWebhookEvent}
 
 // ReservedAppWebhookEvent reports whether typ names an event Gregale itself
 // delivers to webhooks. An app's explicit outbox delivery cannot use one: it

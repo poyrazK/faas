@@ -117,6 +117,26 @@ type AgentRun struct {
 	WorkflowEvent          pgtype.Text
 }
 
+type AgentRunApproval struct {
+	ID               pgtype.UUID
+	RunID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+type AgentRunApprovalDecision struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	Decision   string
+	Note       string
+	DecidedBy  string
+	DecidedAt  pgtype.Timestamptz
+}
+
 type AgentRunCallback struct {
 	RunID          pgtype.UUID
 	AccountID      pgtype.UUID

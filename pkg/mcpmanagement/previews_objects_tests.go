@@ -336,7 +336,7 @@ func (m *management) runWorkflowTests(ctx context.Context, a workflowTestsArgs) 
 		return nil, err
 	}
 	if w.TestSuite == nil || len(w.TestSuite.Cases) == 0 {
-		return nil, invalid("no_tests", "the workflow has no saved test cases; save some with gregale workflows test")
+		return nil, invalid("no_tests", "the workflow has no saved test cases; save some with gregale workflow test")
 	}
 	return m.client.RunStoredWorkflowTests(ctx, a.App, a.Workflow, api.RunStoredWorkflowTestsRequest{ExpectedVersion: w.Version})
 }

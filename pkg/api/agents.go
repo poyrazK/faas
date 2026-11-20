@@ -31,6 +31,11 @@ const (
 	CodeAgentBusy        = "agent_busy"
 	CodeAgentRunNotFound = "agent_run_not_found"
 	CodeAgentRunFinished = "agent_run_finished"
+	// CodeAgentRunApprovalNotFound: the run has no such approval;
+	// CodeAgentRunApprovalClosed: it already has a decision or expired
+	// (ADR-20261027090016 amendment 2).
+	CodeAgentRunApprovalNotFound = "agent_run_approval_not_found"
+	CodeAgentRunApprovalClosed   = "agent_run_approval_closed"
 	// CodeAgentRunNotFinished: the run has no outputs until it finishes.
 	CodeAgentRunNotFinished = "agent_run_not_finished"
 	// CodeAgentOutputFileNotFound: the run kept no such output file.
@@ -170,8 +175,8 @@ type AgentVersionSpec struct {
 	CapabilityPolicy *AgentCapabilityPolicy `json:"capability_policy,omitempty"`
 }
 
-// Capability tool modes (ADR-20261027090016 §3). approve is refused until
-// run approvals ship.
+// Capability tool modes (ADR-20261027090016 §3). A tool in approve mode
+// waits for the seller's decision on each call (amendment 2).
 const (
 	AgentCapabilityAllow   = "allow"
 	AgentCapabilityDeny    = "deny"
@@ -220,17 +225,78 @@ type AgentCapabilityBudgets struct {
 	ToolCalls int `json:"tool_calls,omitempty"`
 }
 
-// Allows reports whether the policy allows the tool.
-func (p *AgentCapabilityPolicy) Allows(tool string) bool {
+// Mode is the tool's mode under the policy: allow, approve or deny. A tool
+// the policy does not name is denied.
+func (p *AgentCapabilityPolicy) Mode(tool string) string {
 	if p == nil {
-		return false
+		return AgentCapabilityDeny
 	}
 	for _, t := range p.Tools {
 		if t.Name == tool {
-			return t.Mode == AgentCapabilityAllow
+			return t.Mode
 		}
 	}
-	return false
+	return AgentCapabilityDeny
+}
+
+// Allows reports whether the policy allows the tool without approval.
+func (p *AgentCapabilityPolicy) Allows(tool string) bool { return p.Mode(tool) == AgentCapabilityAllow }
+
+// Lists reports whether a run may call the tool at all: allowed, or
+// allowed once the seller approves the call.
+func (p *AgentCapabilityPolicy) Lists(tool string) bool {
+	m := p.Mode(tool)
+	return m == AgentCapabilityAllow || m == AgentCapabilityApprove
+}
+
+// Agent run approval states and decisions (ADR-20261027090016 amendment 2).
+const (
+	AgentRunApprovalPending  = "pending"
+	AgentRunApprovalApproved = "approved"
+	AgentRunApprovalDenied   = "denied"
+	AgentRunApprovalExpired  = "expired"
+
+	AgentRunApprovalDecisionApprove = "approve"
+	AgentRunApprovalDecisionDeny    = "deny"
+)
+
+// AgentRunApproval is one call of a run waiting for, or holding, the
+// seller's decision. ArgumentsSummary is untrusted agent text.
+type AgentRunApproval struct {
+	ID               string     `json:"id"`
+	RunID            string     `json:"run_id"`
+	Tool             string     `json:"tool"`
+	ArgumentsSHA256  string     `json:"arguments_sha256"`
+	ArgumentsSummary string     `json:"arguments_summary"`
+	State            string     `json:"state"`
+	Note             string     `json:"note,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	ExpiresAt        time.Time  `json:"expires_at"`
+	DecidedAt        *time.Time `json:"decided_at,omitempty"`
+}
+
+// AgentRunApprovalList is a run's approvals, oldest first.
+type AgentRunApprovalList struct {
+	Items []AgentRunApproval `json:"items"`
+}
+
+// DecideAgentRunApprovalRequest is the body of
+// POST /v1/agent-runs/{id}/approvals/{approval_id}.
+type DecideAgentRunApprovalRequest struct {
+	Decision string `json:"decision"`
+	Note     string `json:"note,omitempty"`
+}
+
+// AgentRunApprovalRequestedWebhookPayload is agent_run.approval_requested.
+type AgentRunApprovalRequestedWebhookPayload struct {
+	ApprovalID       string    `json:"approval_id"`
+	RunID            string    `json:"run_id"`
+	AgentID          string    `json:"agent_id"`
+	Tenant           string    `json:"tenant,omitempty"`
+	Tool             string    `json:"tool"`
+	ArgumentsSHA256  string    `json:"arguments_sha256"`
+	ArgumentsSummary string    `json:"arguments_summary"`
+	ExpiresAt        time.Time `json:"expires_at"`
 }
 
 // ToolCallBudget is the run's tool-call budget on plan: the policy's, capped
