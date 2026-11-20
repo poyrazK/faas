@@ -34,5 +34,13 @@ export type DeadLetterEvent = {
   last_failed_at: string;
   replayed_at?: string | null;
   created_at: string;
+  /**
+   * Earlier replays of an invocation entry that failed again (single-entry read only; omitted when never replayed).
+   */
+  replay_count?: number;
+  /**
+   * When the entry was last replayed (single-entry read only).
+   */
+  last_replayed_at?: string;
 };
 

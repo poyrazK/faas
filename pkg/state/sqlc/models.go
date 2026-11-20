@@ -6838,6 +6838,16 @@ type FlagExperiment struct {
 	MetricDefinition   []byte
 	Cuped              bool
 	MinCupedPValues    []byte
+	Unit               string
+	Layer              string
+	Traffic            int32
+	LayerFrom          int32
+	LayerTo            int32
+	Allocation         string
+	Bandit             []byte
+	BanditWeightedAt   pgtype.Timestamptz
+	DenominatorEvent   string
+	Percentile         int32
 }
 
 type FlagExperimentLatency struct {
@@ -6860,6 +6870,9 @@ type FlagExperimentUnit struct {
 	SlowRequests    int64
 	ValueSum        int64
 	PreValue        pgtype.Float8
+	UnitCustomerID  pgtype.UUID
+	SubjectHash     []byte
+	DenSum          int64
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.

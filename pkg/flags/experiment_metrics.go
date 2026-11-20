@@ -24,7 +24,9 @@ const (
 )
 
 // BinaryMetric reports whether kind counts converted customers.
-func BinaryMetric(kind string) bool { return kind != ExperimentMetricMean }
+func BinaryMetric(kind string) bool {
+	return kind == "" || kind == ExperimentMetricConversion || kind == ExperimentMetricFunnel || kind == ExperimentMetricRetention
+}
 
 // AnalyticsMetric reports whether kind reads product analytics events.
 func AnalyticsMetric(kind string) bool {
@@ -190,6 +192,9 @@ const (
 	CupedPending    = "pre_period_pending"
 	CupedNoVariance = "no_pre_period_variance"
 	CupedNoData     = "no_pre_period_data"
+	// CupedUnsupported is a metric or unit CUPED does not adjust: ratio and
+	// percentile metrics and subject units (ADR 20261119173702).
+	CupedUnsupported = "not_supported"
 )
 
 type cupedTotals struct{ n, y, y2, x, x2, xy float64 }

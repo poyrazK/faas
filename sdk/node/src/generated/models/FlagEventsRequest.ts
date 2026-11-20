@@ -3,10 +3,15 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FlagEvent } from './FlagEvent.js';
+import type { FlagExposure } from './FlagExposure.js';
 /**
  * A batch of runtime conversion events.
  */
 export type FlagEventsRequest = {
-  events: Array<FlagEvent>;
+  /**
+   * 1 to 100 events, or none when the batch carries only exposures.
+   */
+  events?: Array<FlagEvent>;
+  exposures?: Array<FlagExposure>;
 };
 

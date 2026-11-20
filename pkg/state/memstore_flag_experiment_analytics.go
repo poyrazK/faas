@@ -23,14 +23,14 @@ func (m *MemStore) FlagExperimentConversionCandidates(_ context.Context, x FlagE
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.flagEventsLocked().experimentsLocked()
-	start, horizon := x.MetricDefinition.StartOffset(x.MetricKind), x.MetricDefinition.Horizon(x.MetricKind)
+	start, horizon := x.MetricDefinition.StartOffset(x.MetricKind), conversionHorizon(x)
 	var out []FlagExperimentUnitRef
 	for id, u := range m.flagEvents.units[x.ID] {
 		if u.crossed || u.converted || id <= afterCustomer ||
 			u.firstExposed.Add(start).After(now) || !u.firstExposed.Add(horizon).After(notBefore) {
 			continue
 		}
-		out = append(out, FlagExperimentUnitRef{CustomerID: id, FirstExposedAt: u.firstExposed})
+		out = append(out, memUnitRef(id, u))
 	}
 	slices.SortFunc(out, func(a, b FlagExperimentUnitRef) int { return compareStrings(a.CustomerID, b.CustomerID) })
 	if len(out) > limit {
@@ -53,17 +53,17 @@ func (m *MemStore) MarkFlagExperimentUnitConversions(_ context.Context, experime
 }
 
 // FlagExperimentUnitsWithoutPreValue implements FlagExperimentAnalyticsStore.
-func (m *MemStore) FlagExperimentUnitsWithoutPreValue(_ context.Context, experimentID string, limit int) ([]string, error) {
+func (m *MemStore) FlagExperimentUnitsWithoutPreValue(_ context.Context, experimentID string, limit int) ([]FlagExperimentUnitRef, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.flagEventsLocked().experimentsLocked()
-	var out []string
+	var out []FlagExperimentUnitRef
 	for id, u := range m.flagEvents.units[experimentID] {
 		if u.preValue == nil {
-			out = append(out, id)
+			out = append(out, memUnitRef(id, u))
 		}
 	}
-	slices.Sort(out)
+	slices.SortFunc(out, func(a, b FlagExperimentUnitRef) int { return compareStrings(a.CustomerID, b.CustomerID) })
 	if len(out) > limit {
 		out = out[:limit]
 	}
@@ -126,4 +126,12 @@ func (m *MemStore) FlagExperimentCupedArms(_ context.Context, x FlagExperiment, 
 	}
 	slices.SortFunc(arms, func(a, b flags.CupedArm) int { return compareStrings(a.Variant, b.Variant) })
 	return arms, pending, nil
+}
+
+func memUnitRef(id string, u *memFlagExperimentUnit) FlagExperimentUnitRef {
+	ref := FlagExperimentUnitRef{CustomerID: id, FirstExposedAt: u.firstExposed, Customer: id}
+	if u.subjectHash != nil {
+		ref.Customer, ref.SubjectHash = u.customer, u.subjectHash
+	}
+	return ref
 }

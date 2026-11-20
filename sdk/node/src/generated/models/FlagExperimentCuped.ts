@@ -16,6 +16,6 @@ export type FlagExperimentCuped = {
    * Share of the metric's variance removed, 0 to 1.
    */
   variance_reduction?: number;
-  reason?: 'off' | 'pre_period_pending' | 'no_pre_period_variance' | 'no_pre_period_data';
+  reason?: 'off' | 'pre_period_pending' | 'no_pre_period_variance' | 'no_pre_period_data' | 'not_supported';
 };
 
