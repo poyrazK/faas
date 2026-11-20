@@ -129533,6 +129533,11 @@ components:
         last_failed_at: { type: string, format: date-time }
         replayed_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
+        replay_count:
+          type: integer
+          format: int64
+          description: Earlier replays of an invocation entry that failed again (single-entry read only; omitted when never replayed).
+        last_replayed_at: { type: string, format: date-time, description: "When the entry was last replayed (single-entry read only)." }
 
     DeadLetterEventsResponse:
       description: "A page of unified dead-letter events ordered newest-first."

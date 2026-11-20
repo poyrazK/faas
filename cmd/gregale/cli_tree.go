@@ -77,6 +77,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
+	{"agent", "Approve or deny the tool calls hosted agent runs wait on", "Agents"},
 	{"account", "Manage your account, MFA and data exports", "Account"},
 	{"org", "Manage orgs, members and invitations", "Account"},
 	{"key", "Manage your account's API keys", "Account"},
@@ -375,6 +376,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client status", "mcp task-get"},
 	{"mcp client wait", "mcp task-wait"},
 	{"mcp client cancel", "mcp task-cancel"},
+	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+	{"agent run approval list", "agents runs approvals"},
+	{"agent run approve", "agents runs approve"},
+	{"agent run deny", "agents runs deny"},
 
 	// Account.
 	{"account mfa", "mfa"},

@@ -68,12 +68,9 @@ func startSessionPath(scope string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir := os.Getenv("XDG_STATE_HOME")
-	if dir == "" {
-		dir, err = os.UserConfigDir()
-		if err != nil {
-			return "", fmt.Errorf("locate start session directory: %w", err)
-		}
+	dir, _, err := gregaleStateHome()
+	if err != nil {
+		return "", fmt.Errorf("locate start session directory: %w", err)
 	}
 	key := sha256.Sum256([]byte(scope))
 	return filepath.Join(dir, "gregale", "start", hex.EncodeToString(key[:])+".json"), nil

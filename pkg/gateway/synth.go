@@ -1212,12 +1212,25 @@ func (s *SynthServer) dispatchBatchRecordWithin(ctx context.Context, req batchDi
 			DeploymentID:   out.ResolvedDeploymentID,
 		}
 	}
+	status := batchDispatchStatusRetry
+	if rec.InvocationID != "" && invocationRefusedInput(statusCode) {
+		// docs/dead-letters.md: a queue message whose handler refused its
+		// input with a 4xx is dead-lettered, not retried. A 400 was retried
+		// to max_attempts like a 503 (prod 2026-11-19). 408 and 429 remain
+		// retryable, as for webhook receivers.
+		status = "dead_letter"
+	}
 	return batchDispatchResult{
 		ItemIdentifier: rec.ItemIdentifier,
-		Status:         batchDispatchStatusRetry,
+		Status:         status,
 		Error:          batchFailureDetail(out.State, statusCode, out.Result),
 		Code:           "function_state_" + string(out.State),
 	}
+}
+
+// invocationRefusedInput reports a 4xx that retrying the same input cannot fix.
+func invocationRefusedInput(statusCode int) bool {
+	return statusCode >= 400 && statusCode < 500 && statusCode != http.StatusRequestTimeout && statusCode != http.StatusTooManyRequests
 }
 
 // batchFailureDetailMaxBytes bounds the response excerpt a dead letter keeps.

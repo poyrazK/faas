@@ -42,11 +42,17 @@ func TestClassify(t *testing.T) {
 		{"POST /v1/apps/{slug}/dlq:replay_all", api.AgentApprovalProduction, TargetApp},
 		{"POST /v1/workflows/runs/{id}/steps/{step}/retry", api.AgentApprovalProduction, TargetNone},
 		{"POST /v1/workflows/runs/{id}/resume", api.AgentApprovalProduction, TargetNone},
-		// ADR-20261118160000: subscription pauses, event recoveries, consumer spend caps.
+		// ADR-20261118161500: subscription pauses, event recoveries, consumer spend caps.
 		{"POST /v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/pause", api.AgentApprovalProduction, TargetApp},
 		{"POST /v1/apps/{slug}/event-recoveries", api.AgentApprovalProduction, TargetApp},
 		{"PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap", api.AgentApprovalBilling, TargetNone},
 		{"PUT /v1/billing/budgets/{id}", api.AgentApprovalBilling, TargetNone},
+		// ADR-20261119190000: experiment start/ship, workflow publish, schema versions and registration.
+		{"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", api.AgentApprovalProduction, TargetNone},
+		{"POST /v1/apps/{slug}/workflows/stored/{name}/publish", api.AgentApprovalProduction, TargetApp},
+		{"PUT /v1/apps/{slug}/event-subscriptions/{subscriptionID}/schema-versions", api.AgentApprovalProduction, TargetApp},
+		{"POST /v1/event-schemas", api.AgentApprovalProduction, TargetNone},
 		// Deploy review 2026-11-10 (D3): project deploys, promotions,
 		// release sets and GitOps sources, in their ServeMux spelling.
 		// Apps/projects review 2026-11-10 (P10): production configuration

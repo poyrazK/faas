@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// Audit trail, spend forecast and notify-only budgets (ADR-20261118160000).
+// Audit trail, spend forecast and notify-only budgets (ADR-20261118161500).
 // The account audit log needs a connection consented to every app; a
 // connection limited to some apps reads only those apps' audit events.
 // Spend reads and budgets need usage:read. Agents create and edit only

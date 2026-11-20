@@ -11,11 +11,20 @@ policies imported on 2026-11-19. Nothing a host runs reads them.
 | `gregale-bhs-2-artifacts` | `gregale-bhs-2-artifacts.json` | `gregale-prod-artifacts` | no | `storage.env` on `bhs-2` |
 | `gregale-bhs-3-artifacts` | `gregale-bhs-3-artifacts.json` | `gregale-prod-artifacts` | no | `storage.env` on `bhs-3` |
 | `gregale-log-archive` | `gregale-log-archive.json` | `gregale-prod-log-archive` | yes: account erasure | `log_archive.credentials_src` on the controller |
+| `gregale-gcp-fleet-artifacts` | `gregale-gcp-fleet-artifacts.json` | `gregale-prod-artifacts` | yes: one key for the whole GCP fleet | the `COMPUTE_STORAGE_ENV` secret, until the cutover |
 | `gregale-pg-backups` | `gregale-pg-backups.json` | `gregale-prod-pg-backups` | no: append-only | the backup `rclone.conf` on `bhs-1` |
 
-Compute nodes never delete: they run with `FAAS_STORAGE_DELETE_MODE=defer`
-and the control plane's object GC does the deleting
-(ADR-20261115180000). The log archive key deletes because account
+`gregale-gcp-fleet-artifacts` exists only while the GCP fleet writes to
+the OVH bucket (`GcpToOvhMigration.md` phase 1 steps 3–6). CD installs
+one `storage.env` from one secret on every node and the control plane, so
+that key needs the control plane's delete right, the same right the GCP
+service accounts hold on the GCS bucket today. Delete the user at the
+cutover.
+
+Compute nodes on OVH are meant never to delete: they run with
+`FAAS_STORAGE_DELETE_MODE=defer` and the control plane's object GC does
+the deleting (ADR-20261115180000). CD cannot install per-node keys yet
+(`GcpToOvhMigration.md`, "Keys"). The log archive key deletes because account
 erasure removes `faas-logs/{instance}/` (`pkg/logarchive`,
 `docs/runbooks/FaasAccountErasureDeferred.md`). The backup key cannot
 delete, so a stolen control plane cannot erase its own backups; only the
@@ -25,8 +34,11 @@ if a node or backup policy gains a delete or bucket-admin action.
 
 ## Apply
 
-In the manager: Public Cloud, Users & Roles, the user's `...` menu,
-"Import JSON policy" and upload the file. The manager has no paste field.
+Create the user in Public Cloud, Users & Roles (role ObjectStore
+operator). The policy is not there: in Object Storage, the Users tab, the
+user's `...` menu, "Import a user access policy (JSON)", and upload the
+file (the manager has no paste field). "Enable" in the same menu creates
+the S3 key.
 Read it back with `GET /cloud/project/{serviceName}/user/{userId}/policy`.
 
 The backup user owns `gregale-prod-pg-backups`, so prove OVH enforces the
