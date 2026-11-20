@@ -1726,7 +1726,7 @@
       "id": "developer-environments",
       "name": "Developer environments",
       "category": "runtime",
-      "description": "Run an expiring remote copy of an app for development, with file sync.",
+      "description": "Run an expiring remote copy of an app for development, with file sync and live source patches that put an edit live without a rebuild.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -1735,7 +1735,7 @@
         "scale"
       ],
       "docs_url": "/docs/dev",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly",
+      "acceptance_test": "tests/journeys/dev_loop_test.go::TestDevLoop",
       "settings": [
         "manifest.dev"
       ],
