@@ -555,20 +555,28 @@ manifest.
    repeated copy is safe.
 5. **Rebuild the control plane on OVH** with the OVH manifest, following
    `ControlPlaneStateBackup.md`, "Rebuild a control plane from backups",
-   steps 1–6. For this move:
+   steps 1–9 (step 10 comes after the joins). For this move:
    - step 1: the manifest is `ovh-live.template.yaml`, materialized with the
      release from step 1;
-   - step 2: the bundle is in the OVH bucket under
+   - step 2: install the `gregalectl` of the release GCP's control plane
+     runs;
+   - step 3: the bundle is in the OVH bucket under
      `faas-cp-state/<GCP control node>/`;
-   - step 5: bootstrap may start faas units against its new, empty
-     database. Stop them all (`systemctl stop 'faas-*.timer'
-     'faas-*.service'`), not only the S3 gateway, then restore as in
-     "Restoring PostgreSQL" below and compare it with step 2's output before
-     the object-storage hold;
-   - step 5 also repoints the address's public DNS record to the OVH
-     control node (`ControlPlaneFailover.md` step 5) and deploys the release
-     from step 1 with `CP_HOST` set to the OVH control node
-     (`ControlPlaneFailover.md` step 7).
+   - step 4: reinstall phase 1 step 8's remote (`install-s3-key.sh rclone
+     … --bucket gregale-prod-pg-backups`), because the bundle brought back
+     GCP's;
+   - step 6: bootstrap from a checkout of the release from step 1. The
+     manifest's `log_archive.credentials_src`
+     (`/operator/secrets/log-archive-s3.json`) must exist on the operator
+     machine and on the CD runner host;
+   - step 7: restore as in "Restoring PostgreSQL" below, and compare it
+     with step 2's output before the object-storage hold;
+   - step 8: GCP's bundles lack the Alertmanager receiver files, so copy
+     them from the GCP control node (`ssh <old host>` is `gcloud compute ssh
+     <GCP control node> --zone us-east1-b --tunnel-through-iap --command`);
+   - step 9: the owner repoints `api.` (and `s3.`, `origin.`, `edge.`) to
+     the OVH control node in Cloudflare first. Then deploy the release from
+     step 1 with `CP_HOST` set to the OVH control node.
 6. **Join the OVH compute nodes** (`provider-neutral-node-join.md`) with the
    node keys and `FAAS_STORAGE_DELETE_MODE=defer`. Run the serving probe on
    each.
