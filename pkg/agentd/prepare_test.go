@@ -216,3 +216,49 @@ func TestDeadlineCredit(t *testing.T) {
 		}
 	}
 }
+
+// Codex ignores OPENAI_BASE_URL, so its preset command selects a provider
+// that points at the relay; a run without an OpenAI integration or with the
+// seller's own command is left alone.
+func TestPrepareRoutesCodexThroughTheRelay(t *testing.T) {
+	preset, _ := agentpresets.Lookup("codex")
+	const id = "int-1"
+	base := agentrunproto.OutboundRelayEndpoint + "/i/" + id + "/v1"
+	claim := agentstore.Claim{RunID: "run-1", AccountID: "acct", Plan: "pro", TimeoutSec: 120, Template: "go",
+		Harness:      agentstore.Harness{Preset: "codex", Run: preset.Run, Models: map[string]string{"openai": "OPENAI_BASE_URL"}},
+		Integrations: map[string]string{"openai": id}}
+	_, req, err := prepare(claim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{"codex",
+		"-c", `model_provider="gregale"`,
+		"-c", `model_providers.gregale.name="gregale"`,
+		"-c", `model_providers.gregale.base_url="` + base + `"`,
+		"-c", `model_providers.gregale.env_key="OPENAI_API_KEY"`,
+		"-c", `model_providers.gregale.wire_api="responses"`,
+		"-c", "model_providers.gregale.supports_websockets=false"}, "exec", "--skip-git-repo-check", "-s", "workspace-write", "go")
+	if !slices.Equal(req.Command, want) || req.Env["OPENAI_API_KEY"] != relayPlaceholderKey {
+		t.Errorf("command %q env %v", req.Command, req.Env)
+	}
+
+	tools := claim
+	tools.CapabilityPolicy = &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityAllow}}}
+	if _, req, err := prepare(tools); err != nil || !strings.Contains(strings.Join(req.Command, " "), `model_provider="gregale"`) ||
+		!strings.Contains(strings.Join(req.Command, " "), "mcp_servers.gregale.url=") || req.Command[len(req.Command)-1] != "go" {
+		t.Errorf("codex with tools: %q %v", req.Command, err)
+	}
+	none := claim
+	none.Integrations = nil
+	if _, req, err := prepare(none); err != nil || !slices.Equal(req.Command, []string{"codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "go"}) {
+		t.Errorf("codex without an integration: %q %v", req.Command, err)
+	}
+	own := claim
+	own.Harness.Run = []string{"codex", "exec", "{prompt}"}
+	if _, req, err := prepare(own); err != nil || !slices.Equal(req.Command, []string{"codex", "exec", "go"}) {
+		t.Errorf("codex with the seller's command: %q %v", req.Command, err)
+	}
+	if !slices.Equal(preset.Run, []string{"codex", "exec", "--skip-git-repo-check", "-s", "workspace-write", "{prompt}"}) {
+		t.Errorf("the preset's command was modified: %q", preset.Run)
+	}
+}

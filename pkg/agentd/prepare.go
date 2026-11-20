@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/agentpresets"
@@ -66,7 +67,9 @@ func prepare(claim agentstore.Claim) (Machine, agentrunproto.Request, error) {
 	}
 	modelEnv(env, claim.Harness.Models, claim.Integrations)
 	capabilityEnv(env, claim.CapabilityPolicy)
+	presetCommand := isPreset && slices.Equal(command, preset.Run)
 	command = wireCapabilities(env, command, preset, isPreset)
+	command = wireModels(env, command, preset, presetCommand)
 	args := make([]string, len(command))
 	for i, arg := range command {
 		args[i] = strings.ReplaceAll(arg, agentpresets.PromptPlaceholder, prompt)
