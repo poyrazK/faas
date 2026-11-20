@@ -11,6 +11,7 @@ import (
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
@@ -242,7 +243,7 @@ func (c *Client) WakeWithIdentity(ctx context.Context, appID, deploymentID, scop
 // ADR-016.
 func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger}, waitForScheduler)
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger, StaleInstanceId: sched.StaleInstanceHintFromContext(ctx)}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
@@ -255,7 +256,7 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 // scheduler's authoritative deployment identity on every request.
 func (c *Client) AdmitInstanceWithIdentity(ctx context.Context, appID, deploymentID, scope, trigger string) (instanceID, nodeID, deploymentIDOut, wakeID string, method int32, atCapacity bool, port int, identity api.PlatformIdentity, err error) {
 	ctx = withWakeCorrelation(ctx, trigger)
-	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger}, waitForScheduler)
+	resp, err := c.cli.AdmitInstance(ctx, &scheddpb.AdmitInstanceRequest{AppId: appID, DeploymentId: deploymentID, Scope: scope, Trigger: trigger, StaleInstanceId: sched.StaleInstanceHintFromContext(ctx)}, waitForScheduler)
 	if err != nil {
 		return "", "", "", "", 0, false, 0, api.PlatformIdentity{}, liftErr(err)
 	}

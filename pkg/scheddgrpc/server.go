@@ -524,6 +524,12 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 //     app_concurrency_reached outcome is NEVER lifted
 //     to a gRPC error: it surfaces as at_capacity=true
 //     so the gateway can treat it as a no-op.
+// staleInstanceHintReconciler is the optional engine seam AdmitInstance
+// uses for a request carrying stale_instance_id (*sched.Engine implements it).
+type staleInstanceHintReconciler interface {
+	ReconcileStaleInstanceHint(ctx context.Context, appID, instanceID string) bool
+}
+
 func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
 	const op = "AdmitInstance"
 	received := time.Now()
@@ -537,6 +543,14 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 	}
 	start := time.Now()
 	ctx = withIncomingCorrelation(ctx)
+	// The gateway's forward to this instance came back "target not found on
+	// node". Fail the row first if its vmmd confirms the VM is gone, so a
+	// ghost RUNNING row stops holding the app's concurrency slot.
+	if staleID := req.GetStaleInstanceId(); staleID != "" && !req.GetIsMirror() {
+		if r, ok := s.engine.(staleInstanceHintReconciler); ok {
+			r.ReconcileStaleInstanceHint(ctx, req.GetAppId(), staleID)
+		}
+	}
 	// PR-A3 (issue #72 / ADR-125): is_mirror routes the admit
 	// through Engine.AdmitMirrorInstance so the per-rule slot
 	// cap fires and mode='mirror' is stamped on the instances

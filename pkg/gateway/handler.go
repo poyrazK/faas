@@ -8249,7 +8249,13 @@ haveApp:
 			}
 		}
 		if recovery, ok := h.backend.(staleTargetRecovery); ok {
-			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
+			recoveryCtx := staleContext
+			if !frozen {
+				// Name the dead target so schedd can ask its vmmd and fail
+				// a row whose VM is gone instead of answering at capacity.
+				recoveryCtx = sched.WithStaleInstanceHint(staleContext, failed.InstanceID)
+			}
+			recovery.RecoverStaleTarget(recoveryCtx, app.ID, app.Scope, limits.MaxConcurrency)
 		}
 	}
 	staleSignal := &staleTargetSignal{}

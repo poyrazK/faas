@@ -652,6 +652,13 @@ message AdmitInstanceRequest {
   // the ledger, placement, RAM, and node limits still apply to every
   // admission. Additive per ADR-016.
   bool burst_continuation = 7;
+  // stale_instance_id names an instance whose forward the gateway just saw
+  // fail with "target not found on node". Before admitting, schedd asks
+  // that instance's vmmd for its live set and fails the row if the VM is
+  // not there, so a row left RUNNING after its VM was retired (for example
+  // during a database outage) stops holding the app's concurrency slot.
+  // Empty means no hint. Older schedds ignore it. Additive per ADR-016.
+  string stale_instance_id = 8;
 }
 
 // AdmitInstanceResponse is the typed result of Engine.AdmitInstance.

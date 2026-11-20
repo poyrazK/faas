@@ -1382,6 +1382,9 @@ func XFillLedger(t testing.TB, r *SnapshotRefresher, nodeID string, percent int)
 // XSetNow replaces the refresher's clock.
 func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
 
+// XSetNow pins the engine clock (stale instance hint tests).
+func (e *Engine) XSetNow(now func() time.Time) { e.now = now }
+
 // XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
 func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
