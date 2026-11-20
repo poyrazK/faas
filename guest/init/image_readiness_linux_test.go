@@ -31,6 +31,7 @@ func TestImageReadinessExecutesFreshCheckInRuntime(t *testing.T) {
 	marker := filepath.Join(dir, "healthy")
 	r := readinessTestRuntime([]string{"CMD-SHELL", `test "$CHECK_SECRET" = accepted && test -f healthy`}, 1)
 	r.dir = dir
+	r.manifest.Healthcheck.ImageTiming.TimeoutNS = int64(5 * time.Second) // spawn time on loaded CI runners
 	r.env = append(r.env, "CHECK_SECRET=accepted")
 	if err := os.WriteFile(marker, nil, 0600); err != nil {
 		t.Fatal(err)
@@ -52,6 +53,8 @@ func TestImageReadinessUsesRotatedScopedSecrets(t *testing.T) {
 	want := filepath.Join(dir, "expected")
 	runtime := readinessTestRuntime([]string{"CMD-SHELL", `test "$CHECK_SECRET" = "$(cat expected)" && test "$PLATFORM_MARKER" = kept && test "$PORT" = 9090`}, 1)
 	runtime.dir = dir
+	// sh + cat exceeded the 20 ms default on loaded CI runners (prod hunt PR #7689).
+	runtime.manifest.Healthcheck.ImageTiming.TimeoutNS = int64(5 * time.Second)
 	runtime.manifest.Port = 9090
 	initial := map[string]string{"CHECK_SECRET": "initial"}
 	current := initial

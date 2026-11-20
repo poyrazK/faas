@@ -6741,6 +6741,12 @@ type DeadLetterEvent struct {
 	LastFailedAt  time.Time       `json:"last_failed_at"`
 	ReplayedAt    *time.Time      `json:"replayed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// ReplayCount and LastReplayedAt report earlier replays of an invocation
+	// entry. A replay that fails again reopens the same entry (replayed_at
+	// clears so it can be replayed again); these keep the history visible.
+	// Set by the single-entry read only.
+	ReplayCount    int64      `json:"replay_count,omitempty"`
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type DeadLetterEventsResponse struct {

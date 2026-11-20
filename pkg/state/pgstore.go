@@ -71,6 +71,7 @@ type PgStore struct {
 	trafficScopedBinding   bool
 	realtimeEventSchemas   *realtimeEventSchemaCache
 	taskToolExecutionSlots *semaphore.Weighted
+	finalUsage             *finalUsageBeforeCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -86,7 +87,8 @@ func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 		slots = int64(pool.Config().MaxConns / 2)
 	}
 	return &PgStore{taskToolExecutionSlots: semaphore.NewWeighted(slots), pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
-		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
+		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache(),
+		finalUsage: newFinalUsageBeforeCache()}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -24093,10 +24095,15 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	if err != nil {
 		return 0, err
 	}
-	// Only an account that changed plan this month reads its usage before the
-	// change: the month's total less the usage since, a short indexed range.
+	// Only an account whose plan was activated again this month reads its
+	// usage before the activation's hour. Once that usage is final it is
+	// summed once per process (finalUsageBefore); until then it is the month's
+	// total less the usage since, a range of at most MeterUsageFinalAfter.
 	monthEnd := monthStart.AddDate(0, 1, 0)
 	usageBefore := func(at time.Time) (int64, error) {
+		if usageFinalBefore(at, now) {
+			return s.finalUsageBefore(ctx, accountID, monthStart, at.UTC())
+		}
 		var since int64
 		if err := s.pool.QueryRow(ctx,
 			`select COALESCE(SUM(mb_seconds), 0)::bigint

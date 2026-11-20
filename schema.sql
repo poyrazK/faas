@@ -31378,6 +31378,57 @@ COMMENT ON TABLE public.agent_run_ai_spend IS 'ADR-20261027090010 §7 per-run mo
 
 
 --
+-- Name: agent_run_approval_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_approval_decisions (
+    approval_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    decision text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    decided_by text DEFAULT ''::text NOT NULL,
+    decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_approval_decisions_decided_by_check CHECK ((char_length(decided_by) <= 200)),
+    CONSTRAINT agent_run_approval_decisions_decision_check CHECK ((decision = ANY (ARRAY['approve'::text, 'deny'::text]))),
+    CONSTRAINT agent_run_approval_decisions_note_check CHECK ((octet_length(note) <= 1024))
+);
+
+
+--
+-- Name: TABLE agent_run_approval_decisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_approval_decisions IS 'ADR-20261027090016 amendment 2: the seller''s decision on an agent run approval, written once by apid; outboundd reads it.';
+
+
+--
+-- Name: agent_run_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_approvals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool text NOT NULL,
+    arguments_sha256 text NOT NULL,
+    arguments_summary text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT agent_run_approvals_arguments_sha256_check CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT agent_run_approvals_arguments_summary_check CHECK ((octet_length(arguments_summary) <= 2048)),
+    CONSTRAINT agent_run_approvals_check CHECK ((expires_at > created_at)),
+    CONSTRAINT agent_run_approvals_tool_check CHECK (((char_length(tool) >= 1) AND (char_length(tool) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_run_approvals; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_approvals IS 'ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.';
+
+
+--
 -- Name: agent_run_callbacks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -49203,6 +49254,21 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
 
 
 --
+-- Name: managed_valkey_caches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_valkey_caches (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    memory_mb integer NOT NULL,
+    eviction_policy text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_valkey_caches_eviction_policy_check CHECK ((eviction_policy = ANY (ARRAY['allkeys-lru'::text, 'allkeys-lfu'::text, 'allkeys-random'::text, 'volatile-lru'::text, 'volatile-lfu'::text, 'volatile-random'::text, 'volatile-ttl'::text, 'noeviction'::text]))),
+    CONSTRAINT managed_valkey_caches_memory_mb_check CHECK ((((memory_mb >= 32) AND (memory_mb <= 4096)) AND ((memory_mb % 32) = 0)))
+);
+
+
+--
 -- Name: mcp_bridge_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63608,6 +63674,22 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 
 --
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_pkey PRIMARY KEY (approval_id);
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_run_callbacks agent_run_callbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71536,6 +71618,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 
 --
+-- Name: managed_valkey_caches managed_valkey_caches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: mcp_bridge_leases mcp_bridge_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78059,6 +78149,13 @@ CREATE INDEX agent_github_subscriptions_repository_idx ON public.agent_github_su
 --
 
 CREATE INDEX agent_run_ai_reservations_run_idx ON public.agent_run_ai_reservations USING btree (run_id, expires_at);
+
+
+--
+-- Name: agent_run_approvals_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_approvals_run_idx ON public.agent_run_approvals USING btree (run_id, created_at);
 
 
 --
@@ -84727,6 +84824,13 @@ CREATE UNIQUE INDEX managed_realtime_subscription_tickets_id ON public.managed_r
 --
 
 CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_realtime_subscription_tickets USING btree (endpoint_id, principal);
+
+
+--
+-- Name: managed_valkey_caches_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_valkey_caches_account_idx ON public.managed_valkey_caches USING btree (account_id);
 
 
 --
@@ -97464,6 +97568,38 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 
 --
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_approval_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_approval_id_fkey FOREIGN KEY (approval_id) REFERENCES public.agent_run_approvals(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_run_callbacks agent_run_callbacks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -107013,6 +107149,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_caches managed_valkey_caches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

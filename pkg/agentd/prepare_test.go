@@ -3,6 +3,7 @@ package agentd
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -141,6 +142,55 @@ func TestAIBudget(t *testing.T) {
 	} {
 		if got := aiBudget(agentstore.Claim{Plan: tc.plan, AIBudgetMillicents: tc.budget}); got != tc.want {
 			t.Errorf("%s/%d: %d, want %d", tc.plan, tc.budget, got, tc.want)
+		}
+	}
+}
+
+// adr: 20261027090016 amendment 2 — a preset harness is told about the
+// gateway with a tool timeout long enough for an approval; a seller's own
+// command and a run without tools are left as they are.
+func TestPrepareWiresPresetHarnesses(t *testing.T) {
+	policy := &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityApprove}}}
+	const url = "http://127.0.0.1:2774/mcp"
+	for _, name := range []string{"codex", "claude-code", "opencode"} {
+		preset, _ := agentpresets.Lookup(name)
+		claim := agentstore.Claim{RunID: "run-1", AccountID: "acct", Plan: "pro", TimeoutSec: 120, Template: "go",
+			Harness: agentstore.Harness{Preset: name, Run: preset.Run}, CapabilityPolicy: policy}
+		_, req, err := prepare(claim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := strings.Join(req.Command, " ")
+		if req.Command[0] != preset.Run[0] || !slices.Contains(req.Command, "go") {
+			t.Errorf("%s: command %q lost the binary or the prompt", name, cmd)
+		}
+		switch name {
+		case "codex":
+			if !strings.Contains(cmd, `-c mcp_servers.gregale.url="`+url+`"`) ||
+				!strings.Contains(cmd, "mcp_servers.gregale.tool_timeout_sec=3720") || req.Command[1] != "-c" {
+				t.Errorf("codex: %q", cmd)
+			}
+		case "claude-code":
+			if !strings.HasSuffix(cmd, `--mcp-config {"mcpServers":{"gregale":{"type":"http","url":"`+url+`"}}} --allowedTools mcp__gregale`) ||
+				req.Env["MCP_TOOL_TIMEOUT"] != "3720000" {
+				t.Errorf("claude-code: %q %v", cmd, req.Env)
+			}
+		case "opencode":
+			if req.Env["OPENCODE_CONFIG_CONTENT"] != `{"mcp":{"gregale":{"enabled":true,"type":"remote","url":"`+url+`"}}}` ||
+				!slices.Equal(req.Command, []string{"opencode", "run", "go"}) {
+				t.Errorf("opencode: %q %v", cmd, req.Env)
+			}
+		}
+
+		own := claim
+		own.Harness.Run = []string{preset.Run[0], "{prompt}"}
+		if _, req, err := prepare(own); err != nil || len(req.Command) != 2 || req.Env[api.AgentCapabilityMCPURLEnv] != url {
+			t.Errorf("%s with the seller's command: %q %v", name, req.Command, err)
+		}
+		bare := claim
+		bare.CapabilityPolicy = nil
+		if _, req, err := prepare(bare); err != nil || len(req.Command) != len(preset.Run) {
+			t.Errorf("%s without tools: %q %v", name, req.Command, err)
 		}
 	}
 }
