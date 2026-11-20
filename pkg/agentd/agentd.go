@@ -62,6 +62,13 @@ type Config struct {
 	PollInterval time.Duration
 	// SweepInterval is how often expired leases are handled.
 	SweepInterval time.Duration
+	// ApprovalDeadlineCredit lets a run's deadline grow while its approvals
+	// wait (ADR-20261027090016 amendment 3). It stays off until every node
+	// runs a guest that accepts the higher timeout ceiling.
+	ApprovalDeadlineCredit bool
+	// CreditPoll is how often a credited run's approval waits are read;
+	// zero: AgentRunApprovalCreditPollSec.
+	CreditPoll time.Duration
 }
 
 func (c Config) withDefaults() Config {
@@ -287,6 +294,10 @@ type run struct {
 	// schedd placed the run (zero until then).
 	opened   time.Time
 	placedAt time.Time
+	// creditMaxSec is the approval-wait credit the run may earn; 0: none.
+	creditMaxSec int
+	// runCtx ends when the run's stream does.
+	runCtx context.Context
 }
 
 // drive takes one claimed run from starting to a terminal state, or back to
@@ -323,7 +334,14 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 		a.requeue(ctx, claim, err)
 		return
 	}
-	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim), ramMB: machine.RAMMB, opened: opened}
+	r := &run{a: a, claim: claim, stream: stream, stopRun: stop, aiBudget: aiBudget(claim), ramMB: machine.RAMMB, opened: opened,
+		runCtx: runCtx}
+	var deadlineSec int32
+	if a.cfg.ApprovalDeadlineCredit && a.creditStore() != nil {
+		if r.creditMaxSec, req.TimeoutSec = deadlineCredit(claim); r.creditMaxSec > 0 {
+			deadlineSec = int32(claim.TimeoutSec)
+		}
+	}
 	body, err := json.Marshal(req)
 	if err == nil {
 		err = r.send(&scheddpb.AgentRunRequest{Frame: &scheddpb.AgentRunRequest_Start{Start: &scheddpb.AgentRunStart{
@@ -332,7 +350,7 @@ func (a *Agentd) drive(ctx context.Context, claim agentstore.Claim) {
 			Relay: &scheddpb.AgentRunRelay{LeaseToken: claim.LeaseToken, TenantId: claim.TenantID, AgentId: claim.AgentID,
 				AgentVersion: int32(claim.AgentVersion)},
 			InputKey: inputKey, PauseDuringModelCalls: claim.PauseDuringModelCalls,
-			HistoryPeakPrivateMb: int32(a.versionPeak(ctx, claim)),
+			HistoryPeakPrivateMb: int32(a.versionPeak(ctx, claim)), DeadlineSec: deadlineSec,
 		}}})
 	}
 	if err != nil {
@@ -505,7 +523,7 @@ func (r *run) usage(ctx context.Context, u *scheddpb.AgentRunUsage) {
 
 // placed records the fence, then lets schedd boot the run.
 func (r *run) placed(ctx context.Context, p *scheddpb.AgentRunPlaced) bool {
-	if err := r.a.store.MarkRunning(ctx, r.claim.RunID, r.claim.LeaseToken, p.GetNodeId(), p.GetInstance(), r.aiBudget); err != nil {
+	if err := r.markRunning(ctx, p); err != nil {
 		// Lost lease, or the store is down: nothing has booted, so stop
 		// here; the sweeper queues the starting run again.
 		r.a.log.Warn("agentd: mark running", "run_id", r.claim.RunID, "err", err)
@@ -521,6 +539,10 @@ func (r *run) placed(ctx context.Context, p *scheddpb.AgentRunPlaced) bool {
 	if err := r.send(&scheddpb.AgentRunRequest{Frame: &scheddpb.AgentRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}); err != nil {
 		r.streamEnded(ctx, err)
 		return false
+	}
+	if r.creditMaxSec > 0 {
+		//nolint:contextcheck // credit polling lives as long as the run's stream (runCtx), not this frame's ctx.
+		go r.grantCredit(r.runCtx)
 	}
 	return true
 }

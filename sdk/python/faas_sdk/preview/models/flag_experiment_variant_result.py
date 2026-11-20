@@ -39,6 +39,10 @@ class FlagExperimentVariantResult:
     """Always-valid p-value (running minimum)."""
     unadjusted: FlagExperimentComparison | Unset = UNSET
     """A variant's comparison with control without CUPED."""
+    best_probability: float | Unset = UNSET
+    """A bandit arm's posterior probability of being best; bandits report no p-values."""
+    expected_loss: float | Unset = UNSET
+    """Conversion rate a bandit gives up by choosing this arm."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +70,10 @@ class FlagExperimentVariantResult:
         if not isinstance(self.unadjusted, Unset):
             unadjusted = self.unadjusted.to_dict()
 
+        best_probability = self.best_probability
+
+        expected_loss = self.expected_loss
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,6 +97,10 @@ class FlagExperimentVariantResult:
             field_dict["p_value"] = p_value
         if unadjusted is not UNSET:
             field_dict["unadjusted"] = unadjusted
+        if best_probability is not UNSET:
+            field_dict["best_probability"] = best_probability
+        if expected_loss is not UNSET:
+            field_dict["expected_loss"] = expected_loss
 
         return field_dict
 
@@ -124,6 +136,10 @@ class FlagExperimentVariantResult:
         else:
             unadjusted = FlagExperimentComparison.from_dict(_unadjusted)
 
+        best_probability = d.pop("best_probability", UNSET)
+
+        expected_loss = d.pop("expected_loss", UNSET)
+
         flag_experiment_variant_result = cls(
             variant=variant,
             exposed=exposed,
@@ -136,6 +152,8 @@ class FlagExperimentVariantResult:
             high=high,
             p_value=p_value,
             unadjusted=unadjusted,
+            best_probability=best_probability,
+            expected_loss=expected_loss,
         )
 
         flag_experiment_variant_result.additional_properties = d

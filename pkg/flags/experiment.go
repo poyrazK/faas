@@ -30,7 +30,8 @@ const (
 // ValidMetricKind reports whether kind is a metric kind.
 func ValidMetricKind(kind string) bool {
 	switch kind {
-	case ExperimentMetricConversion, ExperimentMetricMean, ExperimentMetricFunnel, ExperimentMetricRetention:
+	case ExperimentMetricConversion, ExperimentMetricMean, ExperimentMetricFunnel, ExperimentMetricRetention,
+		ExperimentMetricRatio, ExperimentMetricPercentile:
 		return true
 	}
 	return false
@@ -59,6 +60,13 @@ func ExperimentWeights(f Flag) map[string]int {
 // carry one: a weighted rule of an enabled variant flag that allocates by
 // customer, with control among the flag's variants.
 func ExperimentRule(cfg Config, flagKey, ruleID, control string) (Rule, Flag, error) {
+	return ExperimentRuleForUnit(cfg, flagKey, ruleID, control, ExperimentUnitCustomer)
+}
+
+// ExperimentRuleForUnit is ExperimentRule for customer or subject units: a
+// subject experiment needs a rule that allocates by subject
+// (ADR 20261119173702 §1).
+func ExperimentRuleForUnit(cfg Config, flagKey, ruleID, control, unit string) (Rule, Flag, error) {
 	i := slices.IndexFunc(cfg.Flags, func(f Flag) bool { return f.Key == flagKey })
 	if i < 0 {
 		return Rule{}, Flag{}, fmt.Errorf("flag %q does not exist", flagKey)
@@ -75,8 +83,12 @@ func ExperimentRule(cfg Config, flagKey, ruleID, control string) (Rule, Flag, er
 	if r.Value != nil {
 		return Rule{}, Flag{}, fmt.Errorf("rule %q serves one value; experiments need a rule that allocates by variant weight", ruleID)
 	}
-	if len(r.Subjects) > 0 || r.RolloutUnit == "subject" {
-		return Rule{}, Flag{}, fmt.Errorf("rule %q allocates by subject; experiments compare customers", ruleID)
+	bySubject := len(r.Subjects) > 0 || r.RolloutUnit == "subject"
+	switch {
+	case unit == ExperimentUnitSubject && r.RolloutUnit != "subject":
+		return Rule{}, Flag{}, fmt.Errorf("rule %q allocates by customer; a subject experiment needs rollout_unit subject", ruleID)
+	case unit != ExperimentUnitSubject && bySubject:
+		return Rule{}, Flag{}, fmt.Errorf("rule %q allocates by subject; experiments compare customers unless unit is subject", ruleID)
 	}
 	if !slices.ContainsFunc(f.Variants, func(v FlagVariant) bool { return v.Key == control }) {
 		return Rule{}, Flag{}, fmt.Errorf("control %q is not a variant of flag %q", control, flagKey)

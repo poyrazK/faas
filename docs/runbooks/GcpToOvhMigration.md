@@ -32,7 +32,19 @@ What to expect:
   PostgreSQL restore. The rehearsal (phase 1 step 9) measured the restore
   at about a minute plus one second per 16 MB WAL segment since the base
   backup. Phase 2 step 3 takes a fresh base backup, so the window replays
-  only minutes of WAL.
+  only minutes of WAL. Phase 1 step 10 builds the bootstrap's slowest part
+  ahead (10 min 51 s on 2026-11-20; 82 s once current), so the bootstrap
+  itself is the one step not yet timed. Estimate for 2026-11-20:
+
+  | Step | Time |
+  |---|---|
+  | Freeze, final backups, copy to OVH | ~10 min |
+  | Restore and install control-plane state, re-seal | ~10 min |
+  | Bootstrap, slow software already current | ~20–40 min, untimed |
+  | PostgreSQL restore | ~3 min |
+  | Deploy the release through CD | ~15 min |
+  | Join both compute nodes (budget 105 min each) | ~30–60 min |
+  | Move traffic, checks | ~15 min |
 - **Warm apps keep serving** from the GCP compute nodes until they drain
   (ADR-1344 §5). A wake needs the control plane's database, so apps that are
   not running fail from the freeze until the OVH compute nodes serve.
@@ -64,6 +76,19 @@ What to expect:
 - **A restored copy of production runs no daemon outside the window.** Its
   daemons would act on production data: send mail, fire webhooks, bill. The
   rehearsal restores into a throwaway PostgreSQL only.
+- **Customer object storage does not move; it starts empty on OVH.** A
+  bucket keeps the backend it was created on, and nothing moves a bucket
+  between backends (`docs/ops/object-storage-operator-notes.md`, "Switch
+  providers"). GCP's backend, `gcs-us-east1-prod-v1`, signs through the
+  GCP machine identity, which no OVH host has, so a GCS bucket left in the
+  database would answer 503 after the window. Production's only buckets
+  were seven test buckets of the owner's account (13 MB, unused for two
+  weeks; customer object storage is not launched). They were emptied and
+  deleted on 2026-11-20 with `gregale bucket version delete` and
+  `gregale bucket delete`, and the upstream project holds no bucket. Check
+  before the window that `object_buckets` has no row outside `deleted`.
+  The OVH control plane runs without the S3 gateway until an OVH backend
+  is set up (below).
 
 ## Go / no-go (all must hold before the window)
 
@@ -102,17 +127,88 @@ What to expect:
       `make ansible-preflight` shows `10.20.0.x` for every host.
 - [ ] CD and Ansible reach the OVH hosts from inside the vRack (a runner or
       bastion there) before the host firewall limits SSH to the vRack. CD
-      must be able to deploy to the OVH control node in the window.
+      must be able to deploy to the OVH control node in the window. See
+      "CD access" below.
 - [ ] The OVH manifest (below) passes `make manifest-ansible` and the
       read-only `make ansible-preflight`. Strict `make verify-fleet` runs
       after the window (phase 2 step 9).
 - [ ] The restore rehearsal (phase 1 step 9) passed, and its time fits the
       window.
+- [ ] No customer bucket outside `deleted`:
+      `SELECT state, count(*) FROM object_buckets GROUP BY 1` on GCP.
+- [ ] CD can give each OVH compute node its own no-delete key (see "Keys").
+      Until it can, the OVH compute nodes join with the shared
+      delete-capable key the GCP fleet uses.
+
+## Open blockers (prep pass, 2026-11-20)
+
+Walking phase 2 against the code found these. Each stops the window after
+production is down, so all must be closed, and the go/no-go list above is
+not complete without them.
+
+1. **No release carries the OVH topology.** Every release signs the
+   manifest `deploy/manifest/production/release-template` names (today
+   `gcp-live`). The control-plane converge and the compute join use that
+   signed manifest, refuse hosts it does not declare and bind its hash, so
+   the step 5 deploy and step 6 joins fail with any release so far. Needs a
+   release whose pointer is `ovh-live.template.yaml`, ideally GCP's commit
+   plus only the pointer and the fixes below (PRs #7710 and #7713), so the
+   restored database sees no new migration. CD checks out the release tag,
+   so the fixes reach the window only inside that release. Step 12 (the
+   pointer PR after the window) is too late.
+2. ~~**CD cannot do the first deploy onto a rebuilt control node.**~~
+   **Resolved by PR #7713:** `host-state` reports a host with no
+   `/opt/faas/current` as fresh, so a full release converges every role.
+   The observer then requires `/readyz` to answer ready within 5 minutes
+   after the switch, not before it. Repoint `api.` first (rebuild step 9).
+3. ~~**gregalectl is not on the host before the first activation.**~~
+   **Resolved by PR #7713:** `deploy/scripts/install-release-gregalectl.sh`
+   installs GCP's release binary, cosign-verified like CD (rebuild step 2).
+4. ~~**The bundle overwrites the OVH backup remote.**~~ **Resolved by PR
+   #7713:** rebuild step 4 reinstalls phase 1 step 8's remote right after
+   `cp_state_restore.yml`.
+5. ~~**Bootstrap needs operator inputs the bundle lacks.**~~ **Resolved by
+   PR #7713.**
+   - `make … ANSIBLE_VARS_FILE=…` passes a vars file. Rebuild step 6 lists
+     a minimal one with no real secrets: key-only root login, a throwaway
+     PostgreSQL password, Alertmanager in dev mode and edgednsd off.
+   - CD's first activation then converges every role with the real vars.
+   - The log archive JSON (`credentials_src`) must be on the operator
+     machine and the CD runner host.
+   - The Alertmanager receiver files are copied from GCP (rebuild step 8).
+   - `secrets init` uses `--preserve-existing --no-db` (rebuild step 5).
+6. **Data sealed to GCP's `host.age` would be lost.** `host.age` is not in
+   the bundle; `fleet-seal migrate` skips rows it cannot open and MFA TOTP
+   envelopes are not migrated. Check on GCP before the freeze.
+7. **The xfs role refused the encrypted data volume** (crypto_LUKS):
+   fixed by PR #7710, which the OVH release must contain.
+8. **Compute joins**: one PKI bundle per node, issued on bhs-1 after the
+   restore (`gregalectl pki issue-bundle … --cn bhs-N --transport-san
+   bhs-N.gregale.dev`) into `COMPUTE_PKI_TARBALL_B64`, one `cd-compute`
+   run per node (`rollout_phase=full`, `pki_source=secret`); the node
+   canary goes through public DNS, so skip it (direct `cd-compute`) and run
+   acceptance after traffic moves. Stage the Cloudflare tunnel token
+   (`/etc/faas/secrets/cloudflared/tunnel-token`) and
+   `/etc/faas/secrets/edge-tls/origin-pull-ca.pem` on bhs-2 and bhs-3
+   first. `COMPUTE_STORAGE_ENV` must lose the GCS fallback and
+   `COMPUTE_ANSIBLE_VARS_B64` must keep key-only root login.
+9. **Traffic**: no record exists for `fsn-1`; the owner repoints
+   `api.` and `s3.` (proxied) and `origin.` and `edge.` (DNS-only) to
+   bhs-1 in the Cloudflare dashboard; app hosts stay on the tunnel;
+   `systemctl disable faas-cloudflared` on the GCP nodes, or a reboot
+   rejoins the tunnel; custom-domain certificates are issued again on the
+   new edge.
+10. ~~**Bootstrap side effects.**~~ **Resolved by PR #7713:** rebuild
+    step 6 stops the backup timers and every `faas-*` service right after
+    bootstrap. Step 7 restarts the timers after the hold. Alertmanager and
+    edgednsd stay off until CD's converge. The window plan avoids
+    03:00–03:45 UTC.
 
 ## Keys
 
 | Key | Bucket | Rights | Where it lives |
 |---|---|---|---|
+| GCP fleet artifact key (temporary) | artifacts | get, put, list, delete | the `COMPUTE_STORAGE_ENV` secret, phase 1 steps 3–6 until the cutover |
 | node artifact key (one per compute node) | artifacts | get, put, list; **no delete** | `storage.env` on that node |
 | control-plane artifact key | artifacts | get, put, list, delete | `storage.env` on the control node |
 | log archive key | log archive | put, get, list, delete (account erasure) | `log_archive.credentials_src` on the controller |
@@ -126,7 +222,67 @@ the bucket lifecycle removes old recovery points (ADR-20261118203000).
 Nodes go without delete through `FAAS_STORAGE_DELETE_MODE=defer`: deletes
 become `storage_object_deletions` rows that the control plane's object GC
 (`FAAS_SCHEDD_OBJECT_GC`) carries out (ADR-20261115180000). The S3 backend
-supports it.
+supports it, but CD cannot deliver it yet (checked 2026-11-20):
+
+- every compute rollout copies one `storage.env`, from the
+  `COMPUTE_STORAGE_ENV` secret, to every compute node
+  (`node_join.yml`) and to the control plane (`node_join_control_plane.yml`),
+  so nodes and control plane hold the same key;
+- the `gregalectl artifact` commands CD runs (publish, verify,
+  lifecycle-check) refuse `FAAS_STORAGE_DELETE_MODE` in that file;
+- `artifact lifecycle-check`, which gates every compute and control-plane
+  rollout, deletes its probe object, so a no-delete key fails it.
+
+So while the fleet is on GCP it uses one delete-capable key, the user
+`gregale-gcp-fleet-artifacts`: the same right the GCP compute and
+control-plane service accounts hold on the GCS bucket
+(`roles/storage.objectAdmin`). Delete that user at the cutover.
+
+## CD access
+
+CD runs on the control plane: production's two `faas-fleet-us` runners
+(`gregale-cp`, `gregale-cp-2`) live on the GCP control node, and they log in
+to every host as `root` with one of two keys, `gregale-prod-cd-cp` (the
+control plane) and `gregale-prod-cd-compute` (every host). Each host's root
+`authorized_keys` limits the key to the runner host's private address
+(`from=`, no forwarding), and sshd allows root by key only
+(`PermitRootLogin prohibit-password`). The role default is `no`; GCP sets
+`prohibit-password` in operator-held Ansible variables.
+
+On OVH the same model points at bhs-1, the control node:
+
+- **Root login (done 2026-11-20).** The three hosts converged
+  `host_hardening` with `-e faas_hardening_sshd_permit_root_login=prohibit-password`.
+  Pass the same variable to every converge, the window's bootstrap
+  included, or it falls back to `no` and locks CD out. Root's
+  `authorized_keys` holds only the CD keys, limited to
+  `from="10.20.0.1"` (bhs-1's vRack address): bhs-1 has both keys,
+  bhs-2 and bhs-3 the compute key. The OVH install's own key for root was
+  removed (`/root/.ssh/authorized_keys.bak-20261120` keeps the old file).
+- **Runners on bhs-1 (done 2026-11-20).** `make bootstrap-fleet-runner`
+  (`deploy/ansible/fleet_runner.yml`) with `faas_runner_hosts=bhs-1`,
+  `faas_runner_instances=2` and `faas_runner_labels=["faas-fleet-ovh"]`, a
+  label no workflow uses, so the runners (`bhs-1`, `bhs-1-2`, user
+  `faas-runner`) are online without taking GCP's jobs. The role accepts
+  exactly one `faas-fleet-<word>` label, so `faas-fleet-us-ovh` is refused.
+  The Make target fetches a short-lived registration token through `gh`.
+- **In the window, before phase 2 step 5's deploy:**
+  - stop the GCP runners (`faas-github-runner*.service` on the GCP control
+    node) and move the bhs-1 runners from `faas-fleet-ovh` to
+    `faas-fleet-us` (`gh api -X PUT
+    repos/poyrazK/faas/actions/runners/<id>/labels -f 'labels[]=faas-fleet-us'`
+    for each; `gh api repos/poyrazK/faas/actions/runners` lists the ids);
+  - set `COMPUTE_KNOWN_HOSTS` to the OVH host keys under the fleet names
+    (`fsn-1.gregale.dev`, `bhs-2.gregale.dev`, `bhs-3.gregale.dev`). The
+    ED25519 fingerprints on 2026-11-20: bhs-1
+    `SHA256:TmZZ4H588uPpzbT7FEOoRsu6qjuaAOLNjrcr1Wjr2QY`, bhs-2
+    `SHA256:iqOzBAS7ewNswvawLkqTnXkjJalQ968PCPGuqvi35Jo`, bhs-3
+    `SHA256:/I39vLRzzLGSQohnatPFNzLJV1l2oxYuaYFi5ETnjG4`;
+  - `CP_HOST` stays `fsn-1.gregale.dev`: bhs-1 resolves the fleet names
+    to vRack addresses through the `/etc/hosts` bootstrap renders, so CD's
+    traffic never leaves the vRack;
+  - `cd-platform` takes the OVH compute nodes in `compute_targets`, with
+    those fingerprints in `ssh_host_key_sha256`.
 
 ## The OVH manifest
 
@@ -168,28 +324,81 @@ manifest.
    `faas-cp-state-backup.service` once and check that a bundle lands under
    `offhostbox:faas-cp-state/<GCP control node>/`. The identity is needed
    again only in the rehearsal and the window.
-3. **Prove the bucket** from one GCP compute node with the node key:
+3. **Create the GCP fleet key and prove it.** In the OVH manager, Public
+   Cloud, Users & Roles, add the user `gregale-gcp-fleet-artifacts`
+   (ObjectStore operator). Then in Object Storage, Users, its `...` menu:
+   "Import a user access policy (JSON)" with
+   `deploy/ovh/object-storage-policies/gregale-gcp-fleet-artifacts.json`,
+   then "Enable". The key id is the row's access key; the secret is under
+   "View the secret key".
+
+   Prove it from one GCP compute node with the check CD runs, against a
+   throwaway `storage.env` holding the step 4 contents (root:faas 0440 in
+   a fresh directory under `/run`, deleted afterwards; the key arrives on
+   SSH stdin, not on a command line):
 
    ```bash
-   sudo gregalectl artifact lifecycle-check   # with the S3 storage.env override
+   sudo -u faas-imaged gregalectl artifact lifecycle-check \
+     --env-file "$probe/storage.env" --lifecycle-env-file /etc/faas/imaged-storage.env --json
    ```
 
+   It must print `"backend": "s3"`, `"read_verified": true` and
+   `"deleted": true`.
 4. **Switch the GCP fleet's artifact store to the OVH bucket** with the GCS
-   read fallback, one node at a time (drain, change `storage.env`, restart,
-   undrain):
+   read fallback. Set the `production-us` environment secret
+   `COMPUTE_STORAGE_ENV` to today's lines with the backend changed and the
+   S3 and fallback lines added (`gh secret set COMPUTE_STORAGE_ENV --env
+   production-us` reading stdin):
 
    ```
    FAAS_STORAGE_BACKEND=s3
-   FAAS_S3_BUCKET=… FAAS_S3_ENDPOINT=https://s3.<region>.io.cloud.ovh.<tld>
-   FAAS_S3_REGION=… FAAS_S3_PATH_STYLE=…
-   FAAS_S3_ACCESS_KEY_ID=… FAAS_S3_SECRET_ACCESS_KEY=…
+   FAAS_STORAGE_LOCAL_PREFIXES=none
+   FAAS_REQUIRE_SHARED_ARTIFACTS=1
+   FAAS_STORAGE_CACHE_SERVE_STALE=0
+   FAAS_STORAGE_SNAPSHOT_COMPRESSION=zstd
    FAAS_STORAGE_FALLBACK_BACKEND=gcs
+   FAAS_GCS_BUCKET=gregale-prod-280686321025-artifacts
+   FAAS_S3_BUCKET=gregale-prod-artifacts
+   FAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net
+   FAAS_S3_REGION=bhs
+   FAAS_S3_PATH_STYLE=0
+   FAAS_S3_ACCESS_KEY_ID=…
+   FAAS_S3_SECRET_ACCESS_KEY=…
    ```
 
-   The control plane switches the same way, with its own key. New builds and
-   snapshots now land in OVH; misses read GCS.
-5. **Bulk-copy the old objects** from a GCP host, keeping user metadata (the
-   S3 store reads GCS's encoding unchanged):
+   Leave out `FAAS_STORAGE_DELETE_MODE` (the artifact commands refuse it),
+   and leave `COMPUTE_IMAGED_STORAGE_ENV` as the registry login: an S3 pair
+   there overrides this key for imaged, vmmd and apid.
+
+   Then redeploy the release production runs with `cd-platform`: the same
+   `release_tag`, `compute_targets` and `compute_pki_source=live-node` as
+   the last rollout (the default `secret` is for enrollment and fails on
+   existing hosts: "ca.key is missing"). The compute rollout installs the
+   file on both compute nodes and the control plane. The control-plane
+   stage runs first, so restart the control plane's readers once the
+   compute rollout is done:
+
+   ```bash
+   sudo systemctl restart faas-apid.service faas-schedd.service faas-signd.service
+   ```
+
+   Writes now go to OVH only; a read falls back to GCS only on not-found,
+   and a delete hits both. Until a node is switched it cannot read what a
+   switched one wrote (a GCS primary has no S3 fallback), so avoid deploys
+   while the rollout runs: a wake there cold-boots, and an app built on a
+   switched node cannot cold-boot on an unswitched one.
+
+   The first node's canary runs inside that window, so it can fail for
+   exactly this reason. On 2026-11-20 fsn-2's canary built on fsn-2 (to
+   OVH) and cold-booted on fsn-3 (GCS only): `gcs get ... 404`. The leg
+   had already activated fsn-2; only the gate failed, and the rollout
+   stopped before fsn-3. Roll forward rather than back: run `cd-platform`
+   again with only the remaining node in `compute_targets`. Its canary
+   then runs with every node switched (it passed), and the restart of the
+   control-plane readers follows.
+5. **Bulk-copy the old objects** from the GCP control node, whose service
+   account reads the GCS bucket, keeping user metadata (the S3 store reads
+   GCS's encoding unchanged), with the step 3 key in the environment only:
 
    ```bash
    rclone copy --metadata --checksum gcs:<gcs bucket> ovh:<ovh bucket>
@@ -197,9 +406,12 @@ manifest.
 
    Repeat until a run copies nothing new. Then do a cross-node restore of a
    snapshot that was written to GCS before step 4, on a node whose cache does
-   not hold it.
-6. **Remove the fallback** (`FAAS_STORAGE_FALLBACK_BACKEND` unset) node by
-   node. From here GCS is read by nothing; keep it until phase 3.
+   not hold it. A copy that races a delete can bring a deleted object back
+   to OVH, where nothing references it; it costs storage, nothing else.
+6. **Remove the fallback**: set `COMPUTE_STORAGE_ENV` again without
+   `FAAS_STORAGE_FALLBACK_BACKEND` and `FAAS_GCS_BUCKET`, redeploy and
+   restart the control-plane readers as in step 4. From here GCS is read
+   by nothing; keep it until phase 3.
 7. **Log archive bucket.** Copy `faas-logs/` from the GCS archive to the OVH
    archive bucket (same `rclone copy`) so customers keep their 90 days.
 8. **Backup remote on the OVH control node.** Put the OVH backup remote
@@ -240,7 +452,35 @@ manifest.
    migration `20261119102834810`, the same as GCP, with 14 accounts and
    744 apps, the same as GCP's rows created by the last replayed
    transaction.
-10. **Lower the TTLs** of the control-plane address record and the app entry
+10. **Build the control plane's slow software ahead**, on the OVH control
+    node, with the release GCP will run at the freeze, and again the day
+    before the window if a release changed its pins. It is the
+    pre-install play of `deploy/ansible/postgres_standby.yml` pointed at
+    the OVH hosts: `firecracker` builds the guest kernel from source and
+    fetches Firecracker, `supply_chain_scanners` fetches Syft, Grype and the
+    Grype database. Both only download, verify and build: no service
+    starts, no `/etc/faas` file is read and nothing touches a database, so
+    they are safe before the restore. The window's bootstrap then finds
+    their output current. Render the OVH manifest and inventory with the
+    release's pins (`scripts/materialize-release-manifest.sh` with the
+    release's `production-manifest.yaml` values and `runtime-bases.env`,
+    then `gregalectl manifest ansible`), and run:
+
+    ```yaml
+    - hosts: bhs-1                 # faas_box_role: control-plane
+      gather_facts: false
+      become: true
+      roles: [firecracker, supply_chain_scanners]
+    - hosts: "bhs-2:bhs-3"         # compute-only
+      gather_facts: false
+      become: true
+      roles: [supply_chain_scanners]
+    ```
+
+    On 2026-11-20 with rc.360 it took 10 min 51 s (vmlinux 4 min 34 s on
+    4 jobs, Grype database 1–3 min per host), and a second run 82 s. Then
+    run the read-only `make ansible-preflight` with the same inventory.
+11. **Lower the TTLs** of the control-plane address record and the app entry
     records to 60 s, a day ahead.
 
 ## Phase 2: cut over (one window)
@@ -318,20 +558,28 @@ manifest.
    repeated copy is safe.
 5. **Rebuild the control plane on OVH** with the OVH manifest, following
    `ControlPlaneStateBackup.md`, "Rebuild a control plane from backups",
-   steps 1–6. For this move:
+   steps 1–9 (step 10 comes after the joins). For this move:
    - step 1: the manifest is `ovh-live.template.yaml`, materialized with the
      release from step 1;
-   - step 2: the bundle is in the OVH bucket under
+   - step 2: install the `gregalectl` of the release GCP's control plane
+     runs;
+   - step 3: the bundle is in the OVH bucket under
      `faas-cp-state/<GCP control node>/`;
-   - step 5: bootstrap may start faas units against its new, empty
-     database. Stop them all (`systemctl stop 'faas-*.timer'
-     'faas-*.service'`), not only the S3 gateway, then restore as in
-     "Restoring PostgreSQL" below and compare it with step 2's output before
-     the object-storage hold;
-   - step 5 also repoints the address's public DNS record to the OVH
-     control node (`ControlPlaneFailover.md` step 5) and deploys the release
-     from step 1 with `CP_HOST` set to the OVH control node
-     (`ControlPlaneFailover.md` step 7).
+   - step 4: reinstall phase 1 step 8's remote (`install-s3-key.sh rclone
+     … --bucket gregale-prod-pg-backups`), because the bundle brought back
+     GCP's;
+   - step 6: bootstrap from a checkout of the release from step 1. The
+     manifest's `log_archive.credentials_src`
+     (`/operator/secrets/log-archive-s3.json`) must exist on the operator
+     machine and on the CD runner host;
+   - step 7: restore as in "Restoring PostgreSQL" below, and compare it
+     with step 2's output before the object-storage hold;
+   - step 8: GCP's bundles lack the Alertmanager receiver files, so copy
+     them from the GCP control node (`ssh <old host>` is `gcloud compute ssh
+     <GCP control node> --zone us-east1-b --tunnel-through-iap --command`);
+   - step 9: the owner repoints `api.` (and `s3.`, `origin.`, `edge.`) to
+     the OVH control node in Cloudflare first. Then deploy the release from
+     step 1 with `CP_HOST` set to the OVH control node.
 6. **Join the OVH compute nodes** (`provider-neutral-node-join.md`) with the
    node keys and `FAAS_STORAGE_DELETE_MODE=defer`. Run the serving probe on
    each.
@@ -361,8 +609,9 @@ manifest.
    `AppEdgeCutover.md`), and the platform hosts' Cloudflare origin at the OVH
    control node (`ControlPlaneFailover.md` step 9).
 9. **Check**: `make verify-fleet`, the API, one deploy, one cold wake, one
-   custom domain, a bucket read through the S3 gateway, and that the newest
-   change made before the freeze is present.
+   custom domain, and that the newest change made before the freeze is
+   present. There is no customer bucket to read until an OVH object
+   storage backend exists (phase 3).
 10. **Warm the busiest apps**: request each app that served traffic in the
     last day, a few at a time, so their one cold boot happens under watch
     and not on a customer's first request. Watch node memory and the
@@ -487,6 +736,16 @@ After the checks in phase 1 step 9, stop it
   manifest's `postgresql.standby` refuses today (its address must be inside
   `overlay.cidr`). It needs a cross-site option first (TLS replication
   already verifies the primary), then `ControlPlaneFailover.md` step 10.
+- **Customer object storage on OVH**, before it launches: a separate OVH
+  Public Cloud project for customer buckets (100 buckets per project,
+  1,000 after a support request), an S3 user there that creates and
+  deletes buckets, a backend such as `ovh-bhs-prod-v1` (`driver: s3`) as
+  the `us-east-1` default in `object-storage.json`, the `object_storage`
+  block in `ovh-live.template.yaml`, the OVH usage driver with its API keys
+  and access-log bucket for billing
+  (`docs/ops/object-storage-operator-notes.md`), and creation-time Object
+  Lock (ADR-20261119065000), because OVH cannot turn it on for an existing
+  bucket.
 - **Billing**: the egress allowance numbers were set for GCP egress costs
   (billing review R8-1); revisit them now.
 

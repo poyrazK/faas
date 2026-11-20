@@ -88,6 +88,7 @@ type AgentRun struct {
 	State                  string
 	RamMb                  pgtype.Int4
 	TimeoutSec             int32
+	DeadlineCreditMaxSec   int32
 	Attempt                int32
 	LeaseToken             pgtype.Text
 	LeaseExpiresAt         pgtype.Timestamptz
@@ -126,6 +127,7 @@ type AgentRunApproval struct {
 	ArgumentsSummary string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	ReleasedAt       pgtype.Timestamptz
 }
 
 type AgentRunApprovalDecision struct {

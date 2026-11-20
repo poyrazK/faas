@@ -33,8 +33,12 @@ func TestOVHObjectStoragePoliciesKeepEachKeyToItsBucket(t *testing.T) {
 	}
 	wants := map[string]want{
 		"gregale-cp-artifacts.json": {"gregale-prod-artifacts", true},
-		"gregale-log-archive.json":  {string(logBucket[1]), true},
-		"gregale-pg-backups.json":   {"gregale-prod-pg-backups", false},
+		// The GCP fleet's key while it writes to the OVH bucket (phase 1):
+		// CD installs one storage.env on every node and the control plane,
+		// so it carries the control plane's rights. Deleted at the cutover.
+		"gregale-gcp-fleet-artifacts.json": {"gregale-prod-artifacts", true},
+		"gregale-log-archive.json":         {string(logBucket[1]), true},
+		"gregale-pg-backups.json":          {"gregale-prod-pg-backups", false},
 	}
 	computeHosts := regexp.MustCompile(`(?m)^    - name: (\S+)\n      role: compute-only$`).FindAllSubmatch(manifest, -1)
 	if len(computeHosts) == 0 {

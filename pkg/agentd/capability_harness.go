@@ -33,10 +33,15 @@ type presetCapabilityWiring struct {
 
 var presetCapabilityWirings = map[string]presetCapabilityWiring{
 	// Codex: -c overrides config.toml keys; tool_timeout_sec defaults to 60.
+	// codex exec runs with approval policy "never", under which it refuses
+	// every MCP tool call that would ask first, so the server's tools are
+	// approved up front: the gateway applies the version's policy itself.
 	"codex": {args: func(url string) ([]string, []string) {
+		server := "mcp_servers." + capabilityServerName
 		return []string{
-			"-c", "mcp_servers." + capabilityServerName + ".url=" + strconv.Quote(url),
-			"-c", "mcp_servers." + capabilityServerName + ".tool_timeout_sec=" + strconv.Itoa(capabilityToolTimeoutSec),
+			"-c", server + ".url=" + strconv.Quote(url),
+			"-c", server + ".tool_timeout_sec=" + strconv.Itoa(capabilityToolTimeoutSec),
+			"-c", server + `.default_tools_approval_mode="approve"`,
 		}, nil
 	}},
 	// Claude Code: --mcp-config takes inline JSON; print mode runs an MCP
@@ -52,11 +57,12 @@ var presetCapabilityWirings = map[string]presetCapabilityWiring{
 		},
 	},
 	// OpenCode: OPENCODE_CONFIG_CONTENT is inline config layered over the
-	// files. Its per-call timeout key differs between releases, so the
-	// timeout is left to the release default; amendment 2 notes the gap.
+	// files. The server's timeout (milliseconds) bounds each tool call; the
+	// default is a minute.
 	"opencode": {env: func(url string) map[string]string {
 		return map[string]string{"OPENCODE_CONFIG_CONTENT": mcpServersJSON("mcp",
-			map[string]any{"type": "remote", "url": url, "enabled": true})}
+			map[string]any{"type": "remote", "url": url, "enabled": true,
+				"timeout": capabilityToolTimeoutSec * 1000})}
 	}},
 }
 
@@ -85,9 +91,6 @@ func wireCapabilities(env map[string]string, command []string, preset agentprese
 		return command
 	}
 	prepend, appendArgs := wiring.args(url)
-	out := make([]string, 0, len(command)+len(prepend)+len(appendArgs))
-	out = append(out, command[0])
-	out = append(out, prepend...)
-	out = append(out, command[1:]...)
-	return append(out, appendArgs...)
+	out := prependArgs(command, prepend)
+	return append(out[:len(out):len(out)], appendArgs...)
 }

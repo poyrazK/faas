@@ -36,6 +36,9 @@ type Rule struct {
 	// Value is a boolean for boolean flags, or a variant key for variant flags.
 	// Variant rules may omit it to use the configured weighted allocation.
 	Value any `json:"value,omitempty"`
+	// Experiment is the running experiment of a weighted rule: its layer
+	// slice and the environment holdout apply (ADR 20261119173702 §2).
+	Experiment *RuleExperiment `json:"experiment,omitempty"`
 }
 
 // Condition matches one request attribute. A missing attribute never
@@ -249,6 +252,8 @@ type ProgressiveRollout struct {
 	MaximumHTTP5xxRateBasisPoints int   `json:"maximum_http_5xx_rate_basis_points"`
 	MaximumP95LatencyMS           int   `json:"maximum_p95_latency_ms"`
 	WindowSeconds                 int   `json:"window_seconds"`
+	// Metric gates stages on a product metric (ADR 20261119173702 §5).
+	Metric *RolloutMetric `json:"metric,omitempty"`
 }
 type Flag struct {
 	Key         string `json:"key"`
@@ -275,6 +280,9 @@ type FlagVariant struct {
 type Config struct {
 	Flags  []Flag              `json:"flags"`
 	Groups map[string][]string `json:"groups"`
+	// Holdout and Layers isolate experiments (ADR 20261119173702 §2).
+	Holdout *Holdout `json:"holdout,omitempty"`
+	Layers  []Layer  `json:"layers,omitempty"`
 }
 type Bundle struct {
 	EnvironmentID string `json:"environment_id"`
@@ -483,6 +491,16 @@ func evaluateFlag(b Bundle, f Flag, c EvaluationContext, fallback any) Decision 
 		if len(r.Subjects) > 0 && !slices.Contains(r.Subjects, subject) {
 			continue
 		}
+		if r.Experiment != nil {
+			inSlice, held := experimentGate(b.Config, *r.Experiment, customer, subject)
+			if !inSlice {
+				continue
+			}
+			if held {
+				d.Value, d.RuleID, d.Reason = r.Experiment.Control, r.ID, ReasonHoldout
+				return d
+			}
+		}
 		if r.Rollout != nil {
 			bucket := Bucket(f.Seed, f.Key, customer)
 			if r.RolloutUnit == "subject" {
@@ -662,6 +680,9 @@ func Validate(c Config) error {
 				if p.MinimumUsedRequests < 1 || p.MinimumUsedRequests > api.FlagsMaxProgressiveMinimumRequests || p.MaximumHTTP5xxRateBasisPoints < 0 || p.MaximumHTTP5xxRateBasisPoints > 10000 || p.MaximumP95LatencyMS < 1 || p.MaximumP95LatencyMS > api.FlagsMaxProgressiveLatencyMS || p.WindowSeconds < api.FlagsMinProgressiveWindowSeconds || p.WindowSeconds > api.FlagsMaxProgressiveWindowSeconds {
 					return fmt.Errorf("invalid progressive rollout evidence thresholds")
 				}
+				if err := validateRolloutMetric(r); err != nil {
+					return err
+				}
 			}
 			if len(r.Customers) == 0 && r.Group == "" && len(r.Subjects) == 0 && len(r.Attributes) == 0 && r.Rollout == nil {
 				return fmt.Errorf("rule requires customer, group, attribute, or rollout targeting")
@@ -680,7 +701,7 @@ func Validate(c Config) error {
 			}
 		}
 	}
-	return nil
+	return validateExperiments(c)
 }
 
 func validateConditions(conditions []Condition) error {

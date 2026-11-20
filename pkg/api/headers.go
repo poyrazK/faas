@@ -47,6 +47,12 @@ const (
 	// FlagSDKKillCapability advertises an SDK that understands killed flags;
 	// older SDKs get bundles without them, so they fall back as flag_missing.
 	FlagSDKKillCapability = "kill-v1"
+	// FlagSDKExperimentLayersCapability advertises an SDK that applies a
+	// rule experiment's layer slice and the environment holdout;
+	// FlagSDKSubjectExposuresCapability one that reports subject exposures
+	// (ADR 20261119173702).
+	FlagSDKExperimentLayersCapability = "experiment-layers-v1"
+	FlagSDKSubjectExposuresCapability = "subject-exposures-v1"
 	// TraceIDHeader carries the canonical W3C trace id for a request. Unlike
 	// RequestIDHeader, this value is always the 32-character lowercase OTel
 	// trace id when tracing is active.

@@ -27,6 +27,7 @@ type fakeApprovalStore struct {
 	expires  time.Time
 	requests []ToolApprovalRequest
 	reads    int
+	released []string
 	decide   func(reads int) string
 }
 
@@ -45,6 +46,13 @@ func (f *fakeApprovalStore) ApprovalDecision(context.Context, AgentRunIdentity, 
 	defer f.amu.Unlock()
 	f.reads++
 	return f.decide(f.reads), nil
+}
+
+func (f *fakeApprovalStore) ReleaseApproval(_ context.Context, _ AgentRunIdentity, id string) error {
+	f.amu.Lock()
+	defer f.amu.Unlock()
+	f.released = append(f.released, id)
+	return nil
 }
 
 func approve(tools ...string) *api.AgentCapabilityPolicy {
@@ -123,6 +131,9 @@ func TestCapabilityGatewayHoldsApproveModeCalls(t *testing.T) {
 				store.requests[0].ArgumentsSummary != `{"url":"https://example.com"}` || len(store.requests[0].ArgumentsSHA256) != 64) {
 				t.Errorf("requests %+v", store.requests)
 			}
+			if wantReleased := !tc.refuse; (len(store.released) == 1 && store.released[0] == "ap-1") != wantReleased {
+				t.Errorf("released %v, want a release: %v", store.released, wantReleased)
+			}
 			if got := testutil.ToFloat64(metrics.approvals.WithLabelValues(tc.outcome)); got != 1 {
 				t.Errorf("agent_approvals_total{outcome=%q} = %v", tc.outcome, got)
 			}
@@ -154,6 +165,9 @@ func TestCapabilityGatewayAbandonedApproval(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(metrics.approvals.WithLabelValues(ApprovalAbandoned)); got != 1 {
 		t.Errorf("abandoned = %v", got)
+	}
+	if len(store.released) != 1 {
+		t.Errorf("an abandoned call was not released: %v", store.released)
 	}
 }
 

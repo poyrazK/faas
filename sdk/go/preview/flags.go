@@ -53,8 +53,10 @@ const (
 )
 
 var (
-	flagKeyPattern  = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
-	flagUUIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	flagKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
+	// flagExperimentKey is an experiment key (ADR 20261119173702).
+	flagExperimentKey = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$`)
+	flagUUIDPattern   = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 	// ErrFlagRequestMissing means a flag check ran outside this client's middleware.
 	ErrFlagRequestMissing = errors.New("faas: flag checks require GregaleFlags middleware")
@@ -108,6 +110,8 @@ type runtimeFlagsBundle struct {
 	version       int64
 	flags         map[string]runtimeFeatureFlag
 	groups        map[string]map[string]struct{}
+	holdout       *runtimeHoldout
+	layers        map[string]string
 }
 
 type runtimeFeatureFlag struct {
@@ -131,6 +135,7 @@ type runtimeFlagRule struct {
 	conditions  []flagCondition
 	value       any
 	valueSet    bool
+	experiment  *runtimeRuleExperiment
 }
 
 type runtimeFlagVariant struct {
@@ -448,6 +453,8 @@ type wireFlagsBundle struct {
 	Version       *int64                     `json:"version"`
 	Flags         []wireFlag                 `json:"flags"`
 	Groups        map[string]json.RawMessage `json:"groups"`
+	Holdout       json.RawMessage            `json:"holdout"`
+	Layers        json.RawMessage            `json:"layers"`
 }
 
 type wireFlag struct {
@@ -470,6 +477,7 @@ type wireFlagRule struct {
 	RolloutUnit json.RawMessage `json:"rollout_unit"`
 	Attributes  json.RawMessage `json:"attributes"`
 	Value       json.RawMessage `json:"value"`
+	Experiment  json.RawMessage `json:"experiment"`
 }
 
 type wireVariant struct {
@@ -509,8 +517,15 @@ func validateRuntimeBundle(raw []byte) (*runtimeFlagsBundle, error) {
 		}
 		bundle.groups[name] = set
 	}
+	var err error
+	if bundle.holdout, err = decodeFlagHoldout(wire.Holdout); err != nil {
+		return nil, err
+	}
+	if bundle.layers, err = decodeFlagLayers(wire.Layers); err != nil {
+		return nil, err
+	}
 	for _, wireFlag := range wire.Flags {
-		flag, err := validateWireFlag(wireFlag, bundle.groups)
+		flag, err := validateWireFlag(wireFlag, bundle.groups, bundle.layers)
 		if err != nil {
 			return nil, err
 		}
@@ -522,7 +537,7 @@ func validateRuntimeBundle(raw []byte) (*runtimeFlagsBundle, error) {
 	return bundle, nil
 }
 
-func validateWireFlag(wire wireFlag, groups map[string]map[string]struct{}) (runtimeFeatureFlag, error) {
+func validateWireFlag(wire wireFlag, groups map[string]map[string]struct{}, layers map[string]string) (runtimeFeatureFlag, error) {
 	flag := runtimeFeatureFlag{key: wire.Key, enabled: wire.Enabled != nil && *wire.Enabled, killed: wire.Killed != nil && *wire.Killed, seed: wire.Seed, rules: make([]runtimeFlagRule, 0, len(wire.Rules))}
 	if !validFlagKey(wire.Key) || wire.Enabled == nil || wire.Seed == "" || len(wire.Seed) > 128 || strings.ContainsRune(wire.Seed, 0) || wire.Rules == nil || len(wire.Rules) > 32 {
 		return runtimeFeatureFlag{}, errors.New("invalid Flags definition")
@@ -583,6 +598,9 @@ func validateWireFlag(wire wireFlag, groups map[string]map[string]struct{}) (run
 	for _, wireRule := range wire.Rules {
 		rule, err := validateWireFlagRule(wireRule, flag.typ, variantKeys, groups)
 		if err != nil {
+			return runtimeFeatureFlag{}, err
+		}
+		if rule.experiment, err = decodeRuleExperiment(wireRule.Experiment, flag.typ, rule, variantKeys, layers); err != nil {
 			return runtimeFeatureFlag{}, err
 		}
 		if _, exists := ruleIDs[rule.id]; exists {
@@ -884,6 +902,16 @@ func evaluateRuntimeVariantWithAttributes(bundle *runtimeFlagsBundle, key, custo
 				continue
 			}
 		}
+		if rule.experiment != nil {
+			inSlice, held := bundle.experimentGate(rule.experiment, customer, subject)
+			if !inSlice {
+				continue
+			}
+			if held {
+				decision.Value, decision.RuleID, decision.Reason = rule.experiment.control, rule.id, "holdout"
+				return decision
+			}
+		}
 		var rolloutBucket *int
 		if rule.rollout != nil {
 			bucket := flagBucket(flag.seed, flag.key, customer)
@@ -1039,6 +1067,9 @@ func (f *GregaleFlags) Variant(ctx context.Context, key, fallback string) (FlagD
 		}
 	} else if state.fresh && state.bundle != nil {
 		decision = evaluateRuntimeVariantWithAttributes(state.bundle, key, state.customer, subject, requestFlagAttributes(ctx, state), nil, fallback)
+		if decision.Reason == "rule_match" && subject != "" && state.bundle.subjectExperiment(key, decision.RuleID) {
+			f.recordExposure(decision, state.customer, subject, f.now())
+		}
 	} else {
 		decision = FlagDecision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: bundleVersion(state.bundle), Reason: "configuration_stale", Source: "fallback"}
 	}

@@ -1,8 +1,10 @@
 package main_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,6 +52,59 @@ func TestDeploySessionStoragePreflight(t *testing.T) {
 	})
 	if len(leftovers) != 0 {
 		t.Fatalf("preflight left files behind: %v", leftovers)
+	}
+}
+
+// A coding agent's sandbox (Codex workspace-write) leaves the user config
+// directory read-only, and every first deploy stopped with "Could not save
+// deploy session" (agent eval 2026-11-19). With no XDG_STATE_HOME the state
+// moves to a private temp directory, the deploy says where, and every kind
+// of state (deploy sessions, uploads, start sessions) uses the same one. A
+// fallback directory someone else could open is refused.
+func TestDeploySessionStorageFallsBackFromAReadOnlyConfigDir(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	client := api.NewClient("https://api.example.test", "test-token")
+	readOnly := t.TempDir()
+	if err := os.Chmod(readOnly, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readOnly, 0o700) })
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", readOnly)            // macOS: ~/Library/Application Support
+	t.Setenv("XDG_CONFIG_HOME", readOnly) // Linux
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	var stderr bytes.Buffer
+	old := *main.OsStderr
+	*main.OsStderr = &stderr
+	t.Cleanup(func() { *main.OsStderr = old })
+
+	if err := main.PreflightDeploySessionStorage(client); err != nil {
+		t.Fatalf("read-only config dir: %v", err)
+	}
+	want := filepath.Join(tmp, fmt.Sprintf("gregale-state-%d", os.Getuid()))
+	if got := stderr.String(); !strings.Contains(got, "not writable") || !strings.Contains(got, want) || !strings.Contains(got, "XDG_STATE_HOME") {
+		t.Fatalf("fallback note = %q, want the not-writable default, %s and XDG_STATE_HOME", got, want)
+	}
+	dir, from, err := main.GregaleStateHome()
+	if err != nil || dir != want || !strings.HasPrefix(from, readOnly) {
+		t.Fatalf("GregaleStateHome() = %q, %q, %v; want %q from under %q", dir, from, err, want, readOnly)
+	}
+	info, err := os.Stat(want)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("fallback dir: %v, %v; want mode 0700", info, err)
+	}
+
+	if err := os.Chmod(want, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := main.GregaleStateHome(); err == nil || !strings.Contains(err.Error(), "open to other users") {
+		t.Fatalf("world-readable fallback dir: err = %v", err)
+	}
+	if err := main.PreflightDeploySessionStorage(client); err == nil || !strings.Contains(err.Error(), "nothing was created or deployed") {
+		t.Fatalf("refused fallback dir must fail the preflight: err = %v", err)
 	}
 }
 

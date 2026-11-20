@@ -2921,6 +2921,50 @@ const (
 	AnalyticsCohortRefreshInterval = time.Hour
 )
 
+// Subject units, layers and the holdout, richer metrics, bandits and
+// metric-driven rollouts (ADR 20261119173702).
+const (
+	// FlagLayersMaxPerEnvironment bounds an environment's experiment layers.
+	FlagLayersMaxPerEnvironment = 10
+	// FlagHoldoutMaxBasisPoints bounds the environment holdout (20%).
+	FlagHoldoutMaxBasisPoints = 2000
+	// FlagExposuresPerRequest bounds the exposures one runtime events
+	// request may carry.
+	FlagExposuresPerRequest = 100
+	// FlagExposureDedupe is how long an SDK keeps an exposure it reported,
+	// so it reports one per flag, customer, subject and variant at most
+	// this often; FlagExposureDedupeEntries bounds that set.
+	FlagExposureDedupe        = time.Hour
+	FlagExposureDedupeEntries = 10_000
+	// ExperimentBanditFloorBasisPoints is the least share a bandit arm keeps.
+	ExperimentBanditFloorBasisPoints = 1000
+	// ExperimentBanditMinShiftBasisPoints is the least weight change that
+	// republishes a bandit's weights; ExperimentBanditInterval the least
+	// time between republishes.
+	ExperimentBanditMinShiftBasisPoints = 500
+	ExperimentBanditInterval            = time.Hour
+	// ExperimentBanditSamples is the posterior draws per arm and pass.
+	ExperimentBanditSamples = 10_000
+	// ExperimentPercentileResamples is the bootstrap resamples of a
+	// percentile metric.
+	ExperimentPercentileResamples = 1000
+	// ExperimentPercentileMaxUnits bounds the per-unit values a percentile
+	// metric reads per arm.
+	ExperimentPercentileMaxUnits = 50_000
+	// ExperimentSegmentFDR is the Benjamini–Hochberg false discovery rate
+	// of segment results.
+	ExperimentSegmentFDR = 0.05
+	// ExperimentBanditShipProbability and ExperimentBanditShipLoss are when
+	// a bandit recommends shipping an arm: best with at least this
+	// probability, giving up less than this conversion rate by choosing it.
+	ExperimentBanditShipProbability = 0.95
+	ExperimentBanditShipLoss        = 0.001
+	// RolloutMetricDefaultMaxDecrease and RolloutMetricDefaultMinUnits are
+	// a metric-driven rollout's defaults.
+	RolloutMetricDefaultMaxDecrease = 0.01
+	RolloutMetricDefaultMinUnits    = 100
+)
+
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
 // quota is per plan: Limits.FlagEventsPerMonth.
 const (
@@ -11799,6 +11843,12 @@ const (
 	AgentRunApprovalSummaryMaxBytes   = 2048
 	AgentRunApprovalNoteMaxBytes      = 1024
 	AgentRunApprovalPollMillis        = 1000
+	// ADR-20261027090016 amendment 3: a run's deadline grows by the wall
+	// time its approvals waited, at most AgentRunApprovalCreditMaxSec.
+	// agentd reads a run's credit every AgentRunApprovalCreditPollSec,
+	// well inside AgentRunApprovalDeadlineMarginSec.
+	AgentRunApprovalCreditMaxSec  = 3600
+	AgentRunApprovalCreditPollSec = 5
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most

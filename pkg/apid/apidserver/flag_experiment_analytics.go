@@ -111,6 +111,8 @@ func loadFlagExperimentCuped(ctx context.Context, store state.FlagExperimentStor
 	switch {
 	case !x.Cuped || !ok:
 		return flagExperimentCupedInput{reason: flags.CupedOff}, nil
+	case !cupedSupported(x):
+		return flagExperimentCupedInput{reason: flags.CupedUnsupported}, nil
 	case !analyticsOn:
 		return flagExperimentCupedInput{reason: flags.CupedNoData}, nil
 	}
@@ -122,6 +124,13 @@ func loadFlagExperimentCuped(ctx context.Context, store state.FlagExperimentStor
 		return flagExperimentCupedInput{reason: flags.CupedPending}, nil
 	}
 	return flagExperimentCupedInput{arms: arms}, nil
+}
+
+// cupedSupported reports whether CUPED applies: not to subject units,
+// whose pre-period is not per customer, nor to ratio or percentile metrics
+// (ADR 20261119173702 §1, §3).
+func cupedSupported(x state.FlagExperiment) bool {
+	return !x.SubjectUnits() && !customMetric(x.MetricKind)
 }
 
 func cupedResponse(c flags.CupedSummary) api.FlagExperimentCuped {
@@ -173,9 +182,13 @@ func (r *flagExperimentReconciler) fillPreValues(ctx context.Context, as state.F
 	if !ok {
 		return nil
 	}
-	ids, err := as.FlagExperimentUnitsWithoutPreValue(ctx, x.ID, api.ExperimentAnalyticsUnitsPerPass)
-	if err != nil || len(ids) == 0 {
+	units, err := as.FlagExperimentUnitsWithoutPreValue(ctx, x.ID, api.ExperimentAnalyticsUnitsPerPass)
+	if err != nil || len(units) == 0 {
 		return err
+	}
+	ids := make([]string, 0, len(units))
+	for _, u := range units {
+		ids = append(ids, u.CustomerID)
 	}
 	for start := 0; start < len(ids); start += 2000 {
 		batch := ids[start:min(start+2000, len(ids))]
@@ -238,12 +251,12 @@ func (r *flagExperimentReconciler) analyticsSteps(ctx context.Context, x state.F
 	if !ok || !r.server.productAnalyticsOn(x.AccountID, x.Plan) {
 		return nil
 	}
-	if flags.AnalyticsMetric(x.MetricKind) {
+	if x.UsesAnalyticsConversions() {
 		if err := r.markAnalyticsConversions(ctx, as, x, now); err != nil {
 			return err
 		}
 	}
-	if x.Cuped {
+	if x.Cuped && cupedSupported(x) {
 		return r.fillPreValues(ctx, as, x)
 	}
 	return nil

@@ -21,6 +21,25 @@ if ! [[ "$baseline_sample_count" =~ ^[1-9][0-9]*$ ]]; then
   echo "ROLLOUT_BASELINE_SAMPLE_COUNT must be a positive integer, got '$baseline_sample_count'" >&2
   exit 2
 fi
+# A control plane rebuilt from backups has no API until its first
+# activation starts it (docs/runbooks/ControlPlaneStateBackup.md, "Rebuild a
+# control plane from backups"). Its baseline cannot be healthy, so that one
+# activation is judged on the API becoming ready afterwards, within
+# ROLLOUT_FIRST_ACTIVATION_READY_SECONDS, instead of on a baseline.
+first_activation="${ROLLOUT_FIRST_ACTIVATION:-false}"
+first_ready_seconds="${ROLLOUT_FIRST_ACTIVATION_READY_SECONDS:-300}"
+if [[ "$first_activation" != true && "$first_activation" != false ]]; then
+  echo "ROLLOUT_FIRST_ACTIVATION must be true or false, got '$first_activation'" >&2
+  exit 2
+fi
+if ! [[ "$first_ready_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ROLLOUT_FIRST_ACTIVATION_READY_SECONDS must be a positive integer, got '$first_ready_seconds'" >&2
+  exit 2
+fi
+if [[ "$first_activation" == true && "${ROLLOUT_REQUIRE_API_BASELINE:-false}" == true ]]; then
+  echo "a first activation has no API baseline to require; unset ROLLOUT_REQUIRE_API_BASELINE" >&2
+  exit 2
+fi
 probe_proxy="${ROLLOUT_PROBE_PROXY:-}"
 app_url="${ROLLOUT_APP_PROBE_URL:-}"
 status_url="${ROLLOUT_STATUS_PROBE_URL:-}"
@@ -136,12 +155,22 @@ done
 
 command_status=0
 wait "$command_pid" || command_status=$?
-sample rollout api "$probe_url" "$((sample_number + 1))" "$primary_log" 3
+sample_number=$((sample_number + 1))
+sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+if [[ "$first_activation" == true ]] && (( command_status == 0 )); then
+  ready_deadline=$((SECONDS + first_ready_seconds))
+  until tail -n 1 "$primary_log" | awk -F '\t' '{ exit !($9 == 0 && $5 >= 200 && $5 < 300) }' \
+    || (( SECONDS >= ready_deadline )); do
+    sleep "$probe_interval_seconds"
+    sample_number=$((sample_number + 1))
+    sample rollout api "$probe_url" "$sample_number" "$primary_log" 3
+  done
+fi
 if [[ -n "$app_url" ]]; then
-  sample rollout app "$app_url" "$((sample_number + 1))" "$app_log" 8
+  sample rollout app "$app_url" "$sample_number" "$app_log" 8
 fi
 if [[ -n "$status_url" ]]; then
-  sample rollout status "$status_url" "$((sample_number + 1))" "$status_log" 3
+  sample rollout status "$status_url" "$sample_number" "$status_log" 3
 fi
 for pid in "${secondary_pids[@]:-}"; do
   [[ -n "$pid" ]] || continue
@@ -150,9 +179,10 @@ done
 trap - INT TERM
 
 gate_status=0
-if summary="$(python3 - "$probe_url" "$app_url" "${logs[@]}" <<'PY'
+if summary="$(ROLLOUT_FIRST_ACTIVATION="$first_activation" python3 - "$probe_url" "$app_url" "${logs[@]}" <<'PY'
 import collections
 import math
+import os
 import sys
 
 urls = {"api": sys.argv[1], "app": sys.argv[2]}
@@ -175,6 +205,7 @@ TIMEOUT_BUDGET = 3
 TIMEOUT_STREAK = 2
 
 gate_failed = False
+first_activation = os.environ.get("ROLLOUT_FIRST_ACTIVATION") == "true"
 rows = []
 details = []
 warnings = []
@@ -189,7 +220,17 @@ for target in ("api", "app", "status"):
     successful = [sample for sample in rollout if good(sample)]
     failed = [sample for sample in rollout if not good(sample)]
     baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)
-    if target != "status" and baseline_ready and failed:
+    judged_as_first = first_activation and target == "api"
+    if judged_as_first:
+        # The rebuilt control plane had no API before this activation; the
+        # gate is that it answers ready by the end of the readiness wait.
+        final = sorted(rollout, key=lambda sample: sample[1])[-1:]
+        if final and good(final[0]):
+            tolerated.append(f"api: first activation of a rebuilt control plane; the API answered ready at {final[0][2]} UTC.")
+        else:
+            gate_failed = True
+            details.append("api: gate failed: the API did not answer ready after the first activation of a rebuilt control plane.")
+    if target != "status" and baseline_ready and failed and not judged_as_first:
         ordered = sorted(rollout, key=lambda sample: sample[1])
         answered = [sample for sample in failed if sample[7] != CURL_TIMEOUT]
         streak = longest = 0
@@ -212,7 +253,7 @@ for target in ("api", "app", "status"):
             tolerated.append(f"{target} tolerated {len(failed)} isolated timed-out sample(s) of {len(rollout)} (budget {TIMEOUT_BUDGET}, at most {TIMEOUT_STREAK} in a row, final sample healthy).")
     maximum_latency_ms = math.ceil(1000 * max((sample[4] for sample in rollout), default=0))
     rows.append(f"| {target} | {len(baseline_successful)}/{len(baseline)} | {len(rollout)} | {len(successful)} | {len(failed)} | {maximum_latency_ms} ms |")
-    if not baseline_ready:
+    if not baseline_ready and not judged_as_first:
         details.append(f"{target}: rollout attribution is **inconclusive** because its baseline was not healthy.")
         if target != "status":
             # A gate without a healthy baseline guards nothing; say so loudly

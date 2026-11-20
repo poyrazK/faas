@@ -102,6 +102,14 @@ func (s *PostgresStore) List(ctx context.Context, scope Scope, after string, lim
 			at := r.EligibleAt.Time
 			record.EligibleAt = &at
 		}
+		record.SubjectKind, record.OrgName = r.SubjectKind, r.OrgName
+		if r.Kind == "sales" {
+			record.CommissionBPS = r.CommissionBps
+		}
+		if r.PayoutID.Valid {
+			record.PayoutCents = r.PayoutCents
+			record.PayoutPaidOn = r.PayoutPaidOn.Time.Format(time.DateOnly)
+		}
 		out = append(out, record)
 	}
 	return out, nil

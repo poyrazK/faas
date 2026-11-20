@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-After ADR-20261118160000 the management MCP server could read a bounded log
+After ADR-20261118161500 the management MCP server could read a bounded log
 snapshot (`gregale_get_logs`) but not search logs over a window, see why a
 log drain stopped delivering, list the notification channels its alert rules
 need, or say who is in an organization. The APIs exist
