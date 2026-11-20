@@ -22,7 +22,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -32,6 +31,15 @@ type staleInstanceKey struct{}
 // staleInstanceHintTimeout bounds the one Stats call the check makes, so a
 // wedged vmmd delays the recovery admission by at most this much.
 const staleInstanceHintTimeout = 3 * time.Second
+
+// staleInstanceHintGrace is how old a RUNNING row must be before the hint can
+// fail it. It is far shorter than the sweep's InstanceDivergenceGraceSeconds:
+// the sweep judges sampled telemetry, while the hint carries a failed forward
+// to a target that was routable and asks vmmd's live set directly. The grace
+// only covers a row committed RUNNING a moment before vmmd lists the VM. The
+// 60 s grace missed the gate's second owner_crash: the replacement booted
+// seconds before its owner crashed, and its ghost row held the slot again.
+const staleInstanceHintGrace = 2 * time.Second
 
 // WithStaleInstanceHint names the instance the gateway just proved stale.
 // The schedd client carries it on AdmitInstance.
@@ -61,7 +69,7 @@ func (e *Engine) ReconcileStaleInstanceHint(ctx context.Context, appID, instance
 		return false
 	}
 	// A just-started VM may not be in vmmd's live set yet.
-	if !ins.StartedAt.IsZero() && e.clockNow().Sub(ins.StartedAt) < time.Duration(api.InstanceDivergenceGraceSeconds)*time.Second {
+	if !ins.StartedAt.IsZero() && e.clockNow().Sub(ins.StartedAt) < staleInstanceHintGrace {
 		return false
 	}
 	statsCtx, cancel := context.WithTimeout(ctx, staleInstanceHintTimeout)

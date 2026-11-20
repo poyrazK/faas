@@ -14,7 +14,9 @@ import (
 type statsFunc = func(context.Context, string) (*sched.StatsSnapshot, error)
 
 func TestReconcileStaleInstanceHint(t *testing.T) {
-	past := time.Duration(api.InstanceDivergenceGraceSeconds+60) * time.Second
+	// Seconds, not the sweep's 60 s grace: a replacement that booted moments
+	// before its owner crashed must still be judged.
+	past := 10 * time.Second
 	empty := func(string) statsFunc {
 		return func(context.Context, string) (*sched.StatsSnapshot, error) { return &sched.StatsSnapshot{}, nil }
 	}
@@ -43,7 +45,7 @@ func TestReconcileStaleInstanceHint(t *testing.T) {
 			},
 			afterStart: past, wantState: state.StateRunning,
 		},
-		{name: "inside the grace window: row stays", stats: empty, afterStart: time.Second, wantState: state.StateRunning},
+		{name: "inside the grace window: row stays", stats: empty, afterStart: 500 * time.Millisecond, wantState: state.StateRunning},
 		{name: "hint for another app: row stays", stats: empty, afterStart: past, otherApp: true, wantState: state.StateRunning},
 	}
 	for _, tc := range cases {
