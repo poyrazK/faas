@@ -140,6 +140,67 @@ What to expect:
       Until it can, the OVH compute nodes join with the shared
       delete-capable key the GCP fleet uses.
 
+## Open blockers (prep pass, 2026-11-20)
+
+Walking phase 2 against the code found these. Each stops the window after
+production is down, so all must be closed, and the go/no-go list above is
+not complete without them.
+
+1. **No release carries the OVH topology.** Every release signs the
+   manifest `deploy/manifest/production/release-template` names (today
+   `gcp-live`). The control-plane converge and the compute join use that
+   signed manifest, refuse hosts it does not declare and bind its hash, so
+   the step 5 deploy and step 6 joins fail with any release so far. Needs a
+   release whose pointer is `ovh-live.template.yaml`, ideally GCP's commit
+   plus only the pointer and the fixes below, so the restored database sees
+   no new migration. Step 12 (the pointer PR after the window) is too late.
+2. **CD cannot do the first deploy onto a rebuilt control node.**
+   `unit_deploy.sh host-state` needs `/opt/faas/current/release-manifest.json`,
+   and activation waits for `api.gregale.dev/readyz` to be healthy first.
+   Needs a hand activation of the first release (or both made tolerant of a
+   fresh host).
+3. **gregalectl is not on the host before the first activation**, yet the
+   rebuild runs `restore-cp-state` and `secrets init` there, and bootstrap's
+   signd role runs `/usr/local/bin/gregalectl`. Install the cosign-verified
+   binary from GCP's release first.
+4. **The bundle overwrites the OVH backup remote.** `cp_state_restore.yml`
+   installs GCP's `/etc/faas/secrets/storage-box/rclone.conf` (and
+   `archive-creds.json`) over phase 1 step 8's. Reinstall the OVH remote
+   (`install-s3-key.sh rclone`) before the PostgreSQL restore.
+5. **Bootstrap needs operator inputs the bundle lacks**, normally inside
+   `CP_ANSIBLE_VARS_B64`: `faas_hardening_sshd_permit_root_login`,
+   `faas_postgres_password`, the Alertmanager heartbeat/channel files, the
+   edgednsd Cloudflare token (`faas_edgednsd_cf_token_src`), and the log
+   archive JSON (`install-s3-key.sh log-archive --out`). The Make target
+   cannot pass them: run `ansible-playbook … -e @vars.yml`. Plain
+   `gregalectl secrets init` refuses after a restore; use
+   `--preserve-existing --no-db`.
+6. **Data sealed to GCP's `host.age` would be lost.** `host.age` is not in
+   the bundle; `fleet-seal migrate` skips rows it cannot open and MFA TOTP
+   envelopes are not migrated. Check on GCP before the freeze.
+7. **The xfs role refused the encrypted data volume** (crypto_LUKS):
+   fixed by PR #7710, which the OVH release must contain.
+8. **Compute joins**: one PKI bundle per node, issued on bhs-1 after the
+   restore (`gregalectl pki issue-bundle … --cn bhs-N --transport-san
+   bhs-N.gregale.dev`) into `COMPUTE_PKI_TARBALL_B64`, one `cd-compute`
+   run per node (`rollout_phase=full`, `pki_source=secret`); the node
+   canary goes through public DNS, so skip it (direct `cd-compute`) and run
+   acceptance after traffic moves. Stage the Cloudflare tunnel token
+   (`/etc/faas/secrets/cloudflared/tunnel-token`) and
+   `/etc/faas/secrets/edge-tls/origin-pull-ca.pem` on bhs-2 and bhs-3
+   first. `COMPUTE_STORAGE_ENV` must lose the GCS fallback and
+   `COMPUTE_ANSIBLE_VARS_B64` must keep key-only root login.
+9. **Traffic**: no record exists for `fsn-1`; the owner repoints
+   `api.` and `s3.` (proxied) and `origin.` and `edge.` (DNS-only) to
+   bhs-1 in the Cloudflare dashboard; app hosts stay on the tunnel;
+   `systemctl disable faas-cloudflared` on the GCP nodes, or a reboot
+   rejoins the tunnel; custom-domain certificates are issued again on the
+   new edge.
+10. **Bootstrap side effects**: keep `faas-*` units, edgednsd and
+    Alertmanager stopped or silenced until the restore and
+    `object-storage hold`; avoid 03:00–03:30 UTC, when the empty cluster
+    would push a base backup that `lsf | sort | tail -1` then picks.
+
 ## Keys
 
 | Key | Bucket | Rights | Where it lives |
