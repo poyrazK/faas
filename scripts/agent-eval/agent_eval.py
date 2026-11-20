@@ -281,7 +281,8 @@ def merge_metrics(first: dict, second: dict) -> dict:
     merged["commands"] = list(first.get("commands") or []) + list(second.get("commands") or [])
     merged["written_paths"] = list(first.get("written_paths") or []) + list(second.get("written_paths") or [])
     merged["tool_inputs"] = list(first.get("tool_inputs") or []) + list(second.get("tool_inputs") or [])
-    merged["first_answer"] = first.get("answer", "")
+    merged["first_answer"] = first["first_answer"] if "first_answer" in first else first.get("answer", "")
+    merged["session_id"] = second.get("session_id") or first.get("session_id")
     return merged
 
 
@@ -890,6 +891,11 @@ def invoke(command: list[str], project: Path, env: dict, timeout: float, record:
 # cold wake, short next to the task's own 120 s check.
 FOLLOW_UP_HTTP_DEADLINE_S = 30
 
+# The most follow_up replies one run gets. On 2026-11-19 Codex deployed Flask
+# and Go privately, answered the first "go ahead" by asking whether to make the
+# app public, and failed with one reply.
+MAX_FOLLOW_UPS = 2
+
 
 def needs_follow_up(task: dict, metrics: dict, record: dict, slug: str | None, project: Path, gregale: Gregale, created: dict) -> bool:
     """Answer the task's follow_up when the agent finished its turn but the task
@@ -962,19 +968,23 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         metrics = PARSERS[agent](lines)
         evidence = run_evidence(metrics, project)
         created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
-        if needs_follow_up(task, metrics, record, slug, project, gregale, created):
-            # The agent stopped short (often to ask a question); answer once, as the person would.
-            if agent in FOLLOW_UP_AGENTS and metrics.get("session_id"):
-                remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
-                again = follow_up_command(agent, task, run_dir, project, gregale, toolset, options, metrics["session_id"])
-                more = invoke(again, project, env, remaining, record)
-                (run_dir / f"{agent}-follow-up.jsonl").write_text("\n".join(more))
-                metrics = merge_metrics(metrics, PARSERS[agent](more))
-                record["follow_ups"] = 1
-                evidence = run_evidence(metrics, project)
-                created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
-            else:
-                record["follow_ups"] = "unsupported"
+        # The agent stopped short (often to ask a question); answer as the
+        # person would, up to MAX_FOLLOW_UPS times.
+        follow_ups = 0
+        while follow_ups < MAX_FOLLOW_UPS and needs_follow_up(task, metrics, record, slug, project, gregale, created):
+            if agent not in FOLLOW_UP_AGENTS or not metrics.get("session_id"):
+                record["follow_ups"] = follow_ups or "unsupported"
+                break
+            follow_ups += 1
+            remaining = max(int(task["timeout_s"] - (time.monotonic() - started)), 60)
+            again = follow_up_command(agent, task, run_dir, project, gregale, toolset, options, metrics["session_id"])
+            more = invoke(again, project, env, remaining, record)
+            suffix = "" if follow_ups == 1 else f"-{follow_ups}"
+            (run_dir / f"{agent}-follow-up{suffix}.jsonl").write_text("\n".join(more))
+            metrics = merge_metrics(metrics, PARSERS[agent](more))
+            record["follow_ups"] = follow_ups
+            evidence = run_evidence(metrics, project)
+            created, record["not_attributed"] = attribute(gregale, gregale.touched_since(before, record["started_at"]), evidence, slug)
         record["duration_s"] = round(time.monotonic() - started, 1)
         record.update({k: v for k, v in metrics.items() if k != "tool_inputs"})
         record["created"] = created
