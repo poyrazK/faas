@@ -64,6 +64,19 @@ What to expect:
 - **A restored copy of production runs no daemon outside the window.** Its
   daemons would act on production data: send mail, fire webhooks, bill. The
   rehearsal restores into a throwaway PostgreSQL only.
+- **Customer object storage does not move; it starts empty on OVH.** A
+  bucket keeps the backend it was created on, and nothing moves a bucket
+  between backends (`docs/ops/object-storage-operator-notes.md`, "Switch
+  providers"). GCP's backend, `gcs-us-east1-prod-v1`, signs through the
+  GCP machine identity, which no OVH host has, so a GCS bucket left in the
+  database would answer 503 after the window. Production's only buckets
+  were seven test buckets of the owner's account (13 MB, unused for two
+  weeks; customer object storage is not launched). They were emptied and
+  deleted on 2026-11-20 with `gregale bucket version delete` and
+  `gregale bucket delete`, and the upstream project holds no bucket. Check
+  before the window that `object_buckets` has no row outside `deleted`.
+  The OVH control plane runs without the S3 gateway until an OVH backend
+  is set up (below).
 
 ## Go / no-go (all must hold before the window)
 
@@ -108,6 +121,8 @@ What to expect:
       after the window (phase 2 step 9).
 - [ ] The restore rehearsal (phase 1 step 9) passed, and its time fits the
       window.
+- [ ] No customer bucket outside `deleted`:
+      `SELECT state, count(*) FROM object_buckets GROUP BY 1` on GCP.
 - [ ] CD can give each OVH compute node its own no-delete key (see "Keys").
       Until it can, the OVH compute nodes join with the shared
       delete-capable key the GCP fleet uses.
@@ -435,8 +450,9 @@ manifest.
    `AppEdgeCutover.md`), and the platform hosts' Cloudflare origin at the OVH
    control node (`ControlPlaneFailover.md` step 9).
 9. **Check**: `make verify-fleet`, the API, one deploy, one cold wake, one
-   custom domain, a bucket read through the S3 gateway, and that the newest
-   change made before the freeze is present.
+   custom domain, and that the newest change made before the freeze is
+   present. There is no customer bucket to read until an OVH object
+   storage backend exists (phase 3).
 10. **Warm the busiest apps**: request each app that served traffic in the
     last day, a few at a time, so their one cold boot happens under watch
     and not on a customer's first request. Watch node memory and the
@@ -561,6 +577,16 @@ After the checks in phase 1 step 9, stop it
   manifest's `postgresql.standby` refuses today (its address must be inside
   `overlay.cidr`). It needs a cross-site option first (TLS replication
   already verifies the primary), then `ControlPlaneFailover.md` step 10.
+- **Customer object storage on OVH**, before it launches: a separate OVH
+  Public Cloud project for customer buckets (100 buckets per project,
+  1,000 after a support request), an S3 user there that creates and
+  deletes buckets, a backend such as `ovh-bhs-prod-v1` (`driver: s3`) as
+  the `us-east-1` default in `object-storage.json`, the `object_storage`
+  block in `ovh-live.template.yaml`, the OVH usage driver with its API keys
+  and access-log bucket for billing
+  (`docs/ops/object-storage-operator-notes.md`), and creation-time Object
+  Lock (ADR-20261119065000), because OVH cannot turn it on for an existing
+  bucket.
 - **Billing**: the egress allowance numbers were set for GCP egress costs
   (billing review R8-1); revisit them now.
 
