@@ -11,6 +11,7 @@ import os
 import re
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -623,6 +624,59 @@ class FollowUpTests(unittest.TestCase):
         self.assertFalse(self.decide([{"ok": False}], completed=False)[0])
         self.assertFalse(self.decide([{"ok": False}], timed_out=True)[0])
         self.assertFalse(self.decide([{"ok": False}], task={"checks": []})[0])
+
+
+class FollowUpLoopTests(unittest.TestCase):
+    """run_one answers a stopped agent up to MAX_FOLLOW_UPS times: Codex asked
+    "make it public?" after the first "go ahead" (2026-11-19 run)."""
+
+    def run_with(self, agent, decisions, session_ids=("thread-1",)):
+        client = ev.Gregale("/bin/echo", "https://api.example.test", "fixture-token")
+        client.inventory = mock.Mock(return_value={"apps": set(), "projects": set()})
+        client.touched_since = mock.Mock(return_value={})
+        client.cli = mock.Mock(return_value=mock.Mock(returncode=0, stdout="", stderr=""))
+        options = types.SimpleNamespace(keep_apps=True, keep_dirs=False, mcp_writes=False,
+                                        claude_model=None, codex_model=None, gemini_model=None, cursor_model=None)
+        task = {"id": "t", "template": "node-hello", "prompt": "Deploy {app}.", "timeout_s": 600, "budget_usd": 1,
+                "follow_up": "Yes, go ahead with what you recommend.", "checks": []}
+        replies = iter(session_ids)
+
+        def parse(lines):
+            return {"completed": True, "answer": "Make it public?", "session_id": next(replies, None), "commands": [], "turns": 1}
+
+        with mock.patch.object(ev, "invoke", return_value=["{}"]) as invoke, \
+                mock.patch.dict(ev.PARSERS, {agent: parse}), \
+                mock.patch.object(ev, "needs_follow_up", side_effect=list(decisions)) as needs, \
+                mock.patch.object(ev, "attribute", return_value=({"apps": [], "projects": []}, [])), \
+                mock.patch.object(ev, "run_checks", return_value=[]), \
+                mock.patch.object(ev, "home_writes", return_value=[]):
+            record = ev.run_one(task, agent, "none", client, options)
+        return record, invoke, needs
+
+    def test_answers_twice_then_stops(self):
+        record, invoke, needs = self.run_with("codex", [True, True, True])
+        self.assertEqual(record["follow_ups"], ev.MAX_FOLLOW_UPS)
+        self.assertEqual(invoke.call_count, 1 + ev.MAX_FOLLOW_UPS)
+        self.assertEqual(needs.call_count, ev.MAX_FOLLOW_UPS)
+        # A resumed Codex run that reports no thread id still resumes the first one.
+        self.assertIn("thread-1", invoke.call_args_list[-1].args[0])
+        self.assertEqual(record["turns"], 1 + ev.MAX_FOLLOW_UPS)
+
+    def test_stops_once_the_checks_pass(self):
+        record, invoke, _ = self.run_with("codex", [True, False])
+        self.assertEqual((record["follow_ups"], invoke.call_count), (1, 2))
+        record, invoke, _ = self.run_with("codex", [False])
+        self.assertNotIn("follow_ups", record)
+        self.assertEqual(invoke.call_count, 1)
+
+    def test_an_agent_without_resume_is_unsupported(self):
+        record, invoke, _ = self.run_with("gemini", [True])
+        self.assertEqual((record["follow_ups"], invoke.call_count), ("unsupported", 1))
+
+    def test_merge_keeps_the_first_answer_and_session_over_two_follow_ups(self):
+        first = {"answer": "Shall I deploy?", "session_id": "s1", "turns": 1}
+        merged = ev.merge_metrics(ev.merge_metrics(first, {"answer": "Make it public?", "turns": 1}), {"answer": "Live.", "turns": 1})
+        self.assertEqual((merged["first_answer"], merged["answer"], merged["session_id"], merged["turns"]), ("Shall I deploy?", "Live.", "s1", 3))
 
 
 class OutsideWriteTests(unittest.TestCase):

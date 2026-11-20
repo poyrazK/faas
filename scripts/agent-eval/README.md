@@ -99,9 +99,11 @@ python3 scripts/agent-eval/agent_eval.py summarize agent-eval-results.jsonl
   find the repository's natural name taken. `left_behind` lists `app:<slug>`
   for an app it could not delete and `name:<slug>` for one whose name is
   still held.
-- A task's `follow_up` is sent once (Claude and Codex, by resuming the
-  session) when the agent finished its turn but the task's checks don't pass
-  yet, for example because it stopped to ask before deploying.
+- A task's `follow_up` is sent (Claude and Codex, by resuming the session)
+  when the agent finished its turn but the task's checks don't pass yet, for
+  example because it stopped to ask before deploying. It is sent up to twice:
+  an agent may ask again, such as whether to make a private app public.
+  `follow_ups` records how many were sent.
 - `wrote_outside_run` lists files the agent's file tools wrote outside its run
   directory and adds that anti-pattern. `home_writes` lists files under your
   home directory, two levels down, that changed during the run (agent config
