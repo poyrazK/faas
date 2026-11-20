@@ -168,15 +168,19 @@ On OVH the same model points at bhs-1, the control node:
   `from="10.20.0.1"` (bhs-1's vRack address): bhs-1 has both keys,
   bhs-2 and bhs-3 the compute key. The OVH install's own key for root was
   removed (`/root/.ssh/authorized_keys.bak-20261120` keeps the old file).
-- **Runners on bhs-1, ahead of time.** `make bootstrap-fleet-runner` with
-  `faas_runner_hosts` set to bhs-1, `faas_runner_instances=2` and
-  `faas_runner_labels` set to a label no workflow uses yet
-  (`faas-fleet-us-ovh`), so the runners come online without taking GCP's
-  jobs. The Make target fetches a short-lived registration token through
-  `gh`.
+- **Runners on bhs-1 (done 2026-11-20).** `make bootstrap-fleet-runner`
+  (`deploy/ansible/fleet_runner.yml`) with `faas_runner_hosts=bhs-1`,
+  `faas_runner_instances=2` and `faas_runner_labels=["faas-fleet-ovh"]`, a
+  label no workflow uses, so the runners (`bhs-1`, `bhs-1-2`, user
+  `faas-runner`) are online without taking GCP's jobs. The role accepts
+  exactly one `faas-fleet-<word>` label, so `faas-fleet-us-ovh` is refused.
+  The Make target fetches a short-lived registration token through `gh`.
 - **In the window, before phase 2 step 5's deploy:**
   - stop the GCP runners (`faas-github-runner*.service` on the GCP control
-    node) and give the bhs-1 runners the `faas-fleet-us` label;
+    node) and move the bhs-1 runners from `faas-fleet-ovh` to
+    `faas-fleet-us` (`gh api -X PUT
+    repos/poyrazK/faas/actions/runners/<id>/labels -f 'labels[]=faas-fleet-us'`
+    for each; `gh api repos/poyrazK/faas/actions/runners` lists the ids);
   - set `COMPUTE_KNOWN_HOSTS` to the OVH host keys under the fleet names
     (`fsn-1.gregale.dev`, `bhs-2.gregale.dev`, `bhs-3.gregale.dev`). The
     ED25519 fingerprints on 2026-11-20: bhs-1
