@@ -152,29 +152,31 @@ not complete without them.
    signed manifest, refuse hosts it does not declare and bind its hash, so
    the step 5 deploy and step 6 joins fail with any release so far. Needs a
    release whose pointer is `ovh-live.template.yaml`, ideally GCP's commit
-   plus only the pointer and the fixes below, so the restored database sees
-   no new migration. Step 12 (the pointer PR after the window) is too late.
-2. **CD cannot do the first deploy onto a rebuilt control node.**
-   `unit_deploy.sh host-state` needs `/opt/faas/current/release-manifest.json`,
-   and activation waits for `api.gregale.dev/readyz` to be healthy first.
-   Needs a hand activation of the first release (or both made tolerant of a
-   fresh host).
-3. **gregalectl is not on the host before the first activation**, yet the
-   rebuild runs `restore-cp-state` and `secrets init` there, and bootstrap's
-   signd role runs `/usr/local/bin/gregalectl`. Install the cosign-verified
-   binary from GCP's release first.
-4. **The bundle overwrites the OVH backup remote.** `cp_state_restore.yml`
-   installs GCP's `/etc/faas/secrets/storage-box/rclone.conf` (and
-   `archive-creds.json`) over phase 1 step 8's. Reinstall the OVH remote
-   (`install-s3-key.sh rclone`) before the PostgreSQL restore.
-5. **Bootstrap needs operator inputs the bundle lacks**, normally inside
-   `CP_ANSIBLE_VARS_B64`: `faas_hardening_sshd_permit_root_login`,
-   `faas_postgres_password`, the Alertmanager heartbeat/channel files, the
-   edgednsd Cloudflare token (`faas_edgednsd_cf_token_src`), and the log
-   archive JSON (`install-s3-key.sh log-archive --out`). The Make target
-   cannot pass them: run `ansible-playbook … -e @vars.yml`. Plain
-   `gregalectl secrets init` refuses after a restore; use
-   `--preserve-existing --no-db`.
+   plus only the pointer and the fixes below (PRs #7710 and #7713), so the
+   restored database sees no new migration. CD checks out the release tag,
+   so the fixes reach the window only inside that release. Step 12 (the
+   pointer PR after the window) is too late.
+2. ~~**CD cannot do the first deploy onto a rebuilt control node.**~~
+   **Resolved by PR #7713:** `host-state` reports a host with no
+   `/opt/faas/current` as fresh, so a full release converges every role.
+   The observer then requires `/readyz` to answer ready within 5 minutes
+   after the switch, not before it. Repoint `api.` first (rebuild step 9).
+3. ~~**gregalectl is not on the host before the first activation.**~~
+   **Resolved by PR #7713:** `deploy/scripts/install-release-gregalectl.sh`
+   installs GCP's release binary, cosign-verified like CD (rebuild step 2).
+4. ~~**The bundle overwrites the OVH backup remote.**~~ **Resolved by PR
+   #7713:** rebuild step 4 reinstalls phase 1 step 8's remote right after
+   `cp_state_restore.yml`.
+5. ~~**Bootstrap needs operator inputs the bundle lacks.**~~ **Resolved by
+   PR #7713.**
+   - `make … ANSIBLE_VARS_FILE=…` passes a vars file. Rebuild step 6 lists
+     a minimal one with no real secrets: key-only root login, a throwaway
+     PostgreSQL password, Alertmanager in dev mode and edgednsd off.
+   - CD's first activation then converges every role with the real vars.
+   - The log archive JSON (`credentials_src`) must be on the operator
+     machine and the CD runner host.
+   - The Alertmanager receiver files are copied from GCP (rebuild step 8).
+   - `secrets init` uses `--preserve-existing --no-db` (rebuild step 5).
 6. **Data sealed to GCP's `host.age` would be lost.** `host.age` is not in
    the bundle; `fleet-seal migrate` skips rows it cannot open and MFA TOTP
    envelopes are not migrated. Check on GCP before the freeze.
@@ -196,10 +198,11 @@ not complete without them.
    `systemctl disable faas-cloudflared` on the GCP nodes, or a reboot
    rejoins the tunnel; custom-domain certificates are issued again on the
    new edge.
-10. **Bootstrap side effects**: keep `faas-*` units, edgednsd and
-    Alertmanager stopped or silenced until the restore and
-    `object-storage hold`; avoid 03:00–03:30 UTC, when the empty cluster
-    would push a base backup that `lsf | sort | tail -1` then picks.
+10. ~~**Bootstrap side effects.**~~ **Resolved by PR #7713:** rebuild
+    step 6 stops the backup timers and every `faas-*` service right after
+    bootstrap. Step 7 restarts the timers after the hold. Alertmanager and
+    edgednsd stay off until CD's converge. The window plan avoids
+    03:00–03:45 UTC.
 
 ## Keys
 
@@ -555,20 +558,28 @@ manifest.
    repeated copy is safe.
 5. **Rebuild the control plane on OVH** with the OVH manifest, following
    `ControlPlaneStateBackup.md`, "Rebuild a control plane from backups",
-   steps 1–6. For this move:
+   steps 1–9 (step 10 comes after the joins). For this move:
    - step 1: the manifest is `ovh-live.template.yaml`, materialized with the
      release from step 1;
-   - step 2: the bundle is in the OVH bucket under
+   - step 2: install the `gregalectl` of the release GCP's control plane
+     runs;
+   - step 3: the bundle is in the OVH bucket under
      `faas-cp-state/<GCP control node>/`;
-   - step 5: bootstrap may start faas units against its new, empty
-     database. Stop them all (`systemctl stop 'faas-*.timer'
-     'faas-*.service'`), not only the S3 gateway, then restore as in
-     "Restoring PostgreSQL" below and compare it with step 2's output before
-     the object-storage hold;
-   - step 5 also repoints the address's public DNS record to the OVH
-     control node (`ControlPlaneFailover.md` step 5) and deploys the release
-     from step 1 with `CP_HOST` set to the OVH control node
-     (`ControlPlaneFailover.md` step 7).
+   - step 4: reinstall phase 1 step 8's remote (`install-s3-key.sh rclone
+     … --bucket gregale-prod-pg-backups`), because the bundle brought back
+     GCP's;
+   - step 6: bootstrap from a checkout of the release from step 1. The
+     manifest's `log_archive.credentials_src`
+     (`/operator/secrets/log-archive-s3.json`) must exist on the operator
+     machine and on the CD runner host;
+   - step 7: restore as in "Restoring PostgreSQL" below, and compare it
+     with step 2's output before the object-storage hold;
+   - step 8: GCP's bundles lack the Alertmanager receiver files, so copy
+     them from the GCP control node (`ssh <old host>` is `gcloud compute ssh
+     <GCP control node> --zone us-east1-b --tunnel-through-iap --command`);
+   - step 9: the owner repoints `api.` (and `s3.`, `origin.`, `edge.`) to
+     the OVH control node in Cloudflare first. Then deploy the release from
+     step 1 with `CP_HOST` set to the OVH control node.
 6. **Join the OVH compute nodes** (`provider-neutral-node-join.md`) with the
    node keys and `FAAS_STORAGE_DELETE_MODE=defer`. Run the serving probe on
    each.

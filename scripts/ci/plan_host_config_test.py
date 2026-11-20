@@ -94,6 +94,7 @@ class PlanTest(unittest.TestCase):
             ("not a unit release", dict(RELEASE, kind="other"), host(record()), None, "format 2"),
             ("N±1", RELEASE, host(record()), "d" * 40, "N±1"),
             ("host runs another full release", RELEASE, host(record(), base="e" * 40), None, "deploy that full release"),
+            ("a rebuilt host has no active release", RELEASE, host(None, base=None), None, "no active release yet"),
             ("host converged newer content", RELEASE, host(record(commit="f" * 40)), None, "not an ancestor"),
         ]
         for name, release, state, previous, want in cases:
@@ -147,6 +148,13 @@ class FullReleaseTest(unittest.TestCase):
                 self.assertEqual(written, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
+
+    def test_a_rebuilt_host_with_no_active_release_converges_every_role(self):
+        # unit_deploy.sh host-state on a control plane rebuilt from backups,
+        # before its first activation: no release, maybe no record.
+        fresh = {"current": None, "base_git_sha": None, "manifest_hash": None, "record": None, "contract": None}
+        out, _ = phc.plan_full_release(COMMIT, fresh, NEW)
+        self.assertEqual((out["action"], out["roles"], out["all"]), ("all", NEW["order"], True))
 
 
 class GateTest(unittest.TestCase):
