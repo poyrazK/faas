@@ -31,6 +31,20 @@ type Forecast struct {
 // at least one observed day, and a caller-provided freshness verdict. Daily
 // aggregates with gaps must not be passed as complete coverage.
 func ForecastMeter(accountID string, start, end, completeThrough time.Time, quantity int64, price Price, coverageComplete, fresh bool) (Forecast, error) {
+	var covered time.Duration
+	if coverageComplete {
+		covered = completeThrough.Sub(start)
+	}
+	return ForecastMeterOverCovered(accountID, start, end, completeThrough, covered, quantity, price, fresh)
+}
+
+// ForecastMeterOverCovered projects the run rate over the covered time
+// only: quantity was observed in covered of the elapsed period, so a few
+// unsampled minutes neither stop the forecast nor understate it. covered
+// equal to the elapsed time is ForecastMeter's uninterrupted coverage;
+// zero means coverage too incomplete to project. The caller decides how
+// much of the elapsed time must be covered.
+func ForecastMeterOverCovered(accountID string, start, end, completeThrough time.Time, covered time.Duration, quantity int64, price Price, fresh bool) (Forecast, error) {
 	out := Forecast{Method: "elapsed_time_run_rate_v1", AccountID: accountID, PeriodStart: start.UTC(), PeriodEnd: end.UTC(), CompleteThrough: completeThrough.UTC(), PriceVersion: price.Version, Meter: price.Meter, Currency: price.Currency}
 	if accountID == "" || !start.Before(end) || end.Sub(start) > 32*24*time.Hour || quantity < 0 || completeThrough.Before(start) || completeThrough.After(end) {
 		return out, ErrInvalid
@@ -38,7 +52,7 @@ func ForecastMeter(accountID string, start, end, completeThrough time.Time, quan
 	if _, err := CostMeter(accountID, start, end, price, nil); err != nil {
 		return out, err
 	}
-	if !coverageComplete {
+	if covered <= 0 || covered > completeThrough.Sub(start) {
 		out.Reason = "incomplete_coverage"
 		return out, nil
 	}
@@ -46,7 +60,10 @@ func ForecastMeter(accountID string, start, end, completeThrough time.Time, quan
 		out.Reason = "stale_evidence"
 		return out, nil
 	}
-	elapsed := completeThrough.Sub(start)
+	elapsed := covered
+	if covered < completeThrough.Sub(start) {
+		out.Method = "covered_time_run_rate_v1"
+	}
 	if elapsed < 24*time.Hour {
 		out.Reason = "insufficient_history"
 		return out, nil

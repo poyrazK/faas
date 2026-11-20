@@ -2579,31 +2579,38 @@ const (
 const FinancialEvidencePageMax = 1000
 
 const (
-	FinancialAllocationMax           = 10000
-	FinancialPeriodListMax           = 36
-	FinancialEvidenceFreshness       = 3 * time.Minute
-	FinancialBudgetsPerAccount       = 128
-	FinancialBudgetNameBytes         = 128
-	FinancialBudgetActorBytes        = 256
-	FinancialBudgetThresholds        = 8
-	FinancialBudgetDrainMax          = 300
-	FinancialBudgetMoneyMax          = int64(9007199254740991)
-	FinancialBudgetRevisionMax       = int64(9007199254740991)
-	FinancialBudgetHistoryMax        = 100
-	FinancialBudgetSpecBytes         = 16384
-	FinancialBudgetOperationKeyBytes = 255
-	FinancialBudgetAlertBatch        = 32
-	FinancialBudgetAlertLease        = time.Minute
-	FinancialBudgetDeliveryInterval  = 30 * time.Second
-	FinancialBudgetAlertSendTimeout  = 20 * time.Second
-	FinancialBudgetAlertRetryBase    = time.Minute
-	FinancialBudgetAlertRetryMax     = time.Hour
-	FinancialBudgetAlertAttemptsMax  = 2147483647
-	FinancialBudgetResidentCountMax  = 2147483647
-	FinancialBudgetCommandClockGrace = 5 * time.Second
-	FinancialSourceIDBytes           = 512
-	FinancialAdjustmentActorBytes    = 256
-	FinancialAdjustmentReasonBytes   = 512
+	FinancialAllocationMax     = 10000
+	FinancialPeriodListMax     = 36
+	FinancialEvidenceFreshness = 3 * time.Minute
+	// A month-end forecast extrapolates over the sampled minutes when at
+	// least this percent of the elapsed minutes were sampled and the last
+	// FinancialForecastRecentWindow was sampled whole; one lost minute no
+	// longer hides forecasts and projected-overrun alerts for the rest of
+	// the month (cost-control review 2026-11-19).
+	FinancialForecastMinCoveragePercent = 99
+	FinancialForecastRecentWindow       = time.Hour
+	FinancialBudgetsPerAccount          = 128
+	FinancialBudgetNameBytes            = 128
+	FinancialBudgetActorBytes           = 256
+	FinancialBudgetThresholds           = 8
+	FinancialBudgetDrainMax             = 300
+	FinancialBudgetMoneyMax             = int64(9007199254740991)
+	FinancialBudgetRevisionMax          = int64(9007199254740991)
+	FinancialBudgetHistoryMax           = 100
+	FinancialBudgetSpecBytes            = 16384
+	FinancialBudgetOperationKeyBytes    = 255
+	FinancialBudgetAlertBatch           = 32
+	FinancialBudgetAlertLease           = time.Minute
+	FinancialBudgetDeliveryInterval     = 30 * time.Second
+	FinancialBudgetAlertSendTimeout     = 20 * time.Second
+	FinancialBudgetAlertRetryBase       = time.Minute
+	FinancialBudgetAlertRetryMax        = time.Hour
+	FinancialBudgetAlertAttemptsMax     = 2147483647
+	FinancialBudgetResidentCountMax     = 2147483647
+	FinancialBudgetCommandClockGrace    = 5 * time.Second
+	FinancialSourceIDBytes              = 512
+	FinancialAdjustmentActorBytes       = 256
+	FinancialAdjustmentReasonBytes      = 512
 )
 
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for

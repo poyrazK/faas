@@ -270,8 +270,13 @@ a [spend cap](#spend-cap).
 
 Coverage reports the retention start, complete sampling minutes, freshness, and
 unpriced quantities. A missing sample does not establish zero usage. Quantity
-run-rate forecasts need one full day of complete, fresh evidence and unchanged
-price terms; unavailable projections omit amounts and explain why. Interface
+run-rate forecasts need one full day of fresh evidence and unchanged price
+terms; unavailable projections omit amounts and explain why. A few unsampled
+minutes do not stop a forecast: when at least 99% of the month's elapsed
+minutes were sampled and the last hour is complete, coverage reports
+`projectable: true` and the forecast extrapolates over the sampled minutes
+only (method `covered_time_run_rate_v1`), so budget projections and
+projected-overrun alerts keep working. Interface
 egress observations currently have delayed source coverage, so they do not claim
 complete transfer forecasts. Forecasts do not control admission.
 
