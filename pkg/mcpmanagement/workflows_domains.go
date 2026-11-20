@@ -21,7 +21,7 @@ type saveWorkflowDraftArgs struct {
 	App             string         `json:"app" jsonschema:"App slug"`
 	Workflow        string         `json:"workflow" jsonschema:"Saved workflow name"`
 	ExpectedVersion int64          `json:"expected_version" jsonschema:"The workflow's current version from gregale_list_workflow_tests; 0 to create it"`
-	Definition      map[string]any `json:"definition" jsonschema:"The workflow definition, as gregale workflows get prints it"`
+	Definition      map[string]any `json:"definition" jsonschema:"The workflow definition, as gregale workflow get prints it"`
 }
 
 type planWorkflowPublishArgs struct {
