@@ -167,6 +167,8 @@ faas_credential_data_api_plain_lookup: true
 faas_sales_enabled: false
 faas_sales_emails: []
 faas_sales_manager_emails: []
+# Owner admins manage the team, agreements, credit moves and payout records.
+faas_sales_admin_emails: []
 faas_referral_currency: usd
 faas_referral_reward_cents: 0
 faas_referral_new_customer_reward_cents: 0

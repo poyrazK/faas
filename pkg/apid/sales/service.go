@@ -41,13 +41,16 @@ func (s *Service) scope(w http.ResponseWriter, r *http.Request, acct state.Accou
 	}
 	role := ""
 	if staff {
-		team, err := s.roster(r.Context())
-		if err != nil {
-			unavailable(w)
-			return referrals.Scope{}, false
+		denied := !acct.MFAEnrolled()
+		if !denied {
+			team, err := s.roster(r.Context())
+			if err != nil {
+				unavailable(w)
+				return referrals.Scope{}, false
+			}
+			role = team.role(acct.Email)
 		}
-		role = team.role(acct.Email)
-		if role == "" || !acct.MFAEnrolled() {
+		if denied || role == "" {
 			api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Sales access required", "a sales team account with an enrolled authenticator is required"))
 			return referrals.Scope{}, false
 		}

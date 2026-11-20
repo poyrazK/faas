@@ -24,6 +24,11 @@ func (s *checkoutRouteStore) CheckoutState(_ context.Context, account string) (r
 	s.account = account
 	return referrals.CheckoutState{Eligible: true}, nil
 }
+
+// TeamRoster: no portal members; the embedded store has no database.
+func (s *checkoutRouteStore) TeamRoster(context.Context) (map[string]string, error) {
+	return map[string]string{}, nil
+}
 func (s *checkoutRouteStore) AttributeCheckout(_ context.Context, account string, input referrals.Attribution, _ []string) (bool, error) {
 	s.calls++
 	s.account = account

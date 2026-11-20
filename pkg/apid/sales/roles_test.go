@@ -39,7 +39,9 @@ func (f *teamFake) AddAgreement(_ context.Context, _, _ string, in referrals.Agr
 	f.agreement = in
 	return referrals.Agreement{CommissionBPS: in.CommissionBPS, EffectiveFrom: in.EffectiveFrom}, nil
 }
-func (f *teamFake) Agreements(context.Context, string) ([]referrals.Agreement, error) { return nil, nil }
+func (f *teamFake) Agreements(context.Context, string) ([]referrals.Agreement, error) {
+	return nil, nil
+}
 func (f *teamFake) CurrentCommission(_ context.Context, _ string, fallback int32) (int32, error) {
 	if f.bps > 0 {
 		return f.bps, nil
@@ -57,7 +59,9 @@ func (f *teamFake) RecordPayout(_ context.Context, _, customer string, in referr
 	f.payouts++
 	return referrals.Payout{AccountID: customer, AmountCents: in.AmountCents}, nil
 }
-func (f *teamFake) VoidPayout(context.Context, string, string, string) (bool, error) { return true, nil }
+func (f *teamFake) VoidPayout(context.Context, string, string, string) (bool, error) {
+	return true, nil
+}
 func (f *teamFake) Payouts(_ context.Context, scope referrals.Scope, _ string, _ bool) ([]referrals.Payout, error) {
 	f.payScope = scope
 	return nil, nil
@@ -143,18 +147,26 @@ func mustRoster(t *testing.T, s *Service) roster {
 func TestOwnerAdminOnlyActions(t *testing.T) {
 	type action struct {
 		name, method, path, body string
-		pathValues                map[string]string
-		run                       func(*Service, *httptest.ResponseRecorder, *http.Request, state.Account)
+		pathValues               map[string]string
+		run                      func(*Service, *httptest.ResponseRecorder, *http.Request, state.Account)
 	}
 	customer := "33333333-3333-3333-3333-333333333333"
 	member := "22222222-2222-2222-2222-222222222222"
 	actions := []action{
 		{"team", "GET", "/v1/sales/admin/team", "", nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AdminTeam(w, r, a) }},
 		{"add member", "POST", "/v1/sales/admin/team", `{"email":"seller@example.com","role":"rep"}`, nil, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AddMember(w, r, a) }},
-		{"update member", "PUT", "/v1/sales/admin/team/" + member, `{"role":"manager","active":true,"version":1}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.UpdateMember(w, r, a) }},
-		{"agreement", "POST", "/v1/sales/admin/team/" + member + "/agreements", `{"commission_bps":1500,"note":"2026 contract"}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.AddAgreement(w, r, a) }},
-		{"move credit", "PUT", "/v1/sales/customers/" + customer + "/credit", `{"owner_id":"` + member + `","reason":"wrong code"}`, map[string]string{"account": customer}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.MoveCredit(w, r, a) }},
-		{"payout", "POST", "/v1/sales/customers/" + customer + "/payouts", `{"amount_cents":500,"paid_on":"2026-11-20","reference":"wire"}`, map[string]string{"account": customer}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) { s.RecordPayout(w, r, a) }},
+		{"update member", "PUT", "/v1/sales/admin/team/" + member, `{"role":"manager","active":true,"version":1}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
+			s.UpdateMember(w, r, a)
+		}},
+		{"agreement", "POST", "/v1/sales/admin/team/" + member + "/agreements", `{"commission_bps":1500,"note":"2026 contract"}`, map[string]string{"member": member}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
+			s.AddAgreement(w, r, a)
+		}},
+		{"move credit", "PUT", "/v1/sales/customers/" + customer + "/credit", `{"owner_id":"` + member + `","reason":"wrong code"}`, map[string]string{"account": customer}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
+			s.MoveCredit(w, r, a)
+		}},
+		{"payout", "POST", "/v1/sales/customers/" + customer + "/payouts", `{"amount_cents":500,"paid_on":"2026-11-20","reference":"wire"}`, map[string]string{"account": customer}, func(s *Service, w *httptest.ResponseRecorder, r *http.Request, a state.Account) {
+			s.RecordPayout(w, r, a)
+		}},
 	}
 	for _, role := range []string{referrals.RoleRep, referrals.RoleManager, referrals.RoleAdmin} {
 		for _, a := range actions {
