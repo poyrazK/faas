@@ -461,7 +461,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -487,7 +487,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -582,6 +582,22 @@ func envPush(args []string) int {
 		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
+	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
+	// keys before it were saved, so the push half-applied and --restart
+	// never ran. Empty values are skipped up front instead.
+	nonEmpty := make([]pair, 0, len(pairs))
+	for _, p := range pairs {
+		if p.v == "" {
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale secrets unset %s %s`", p.k, *app, p.k)
+			continue
+		}
+		nonEmpty = append(nonEmpty, p)
+	}
+	if len(nonEmpty) == 0 {
+		PrintFail(os.Stderr, "every KEY=VALUE pair has an empty value; nothing was pushed")
+		return 1
+	}
+	pairs = nonEmpty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -2412,6 +2428,34 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// dotenvValue reads a .env value the way dotenv and Docker Compose do: a
+// value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
+// one in single quotes loses them and stays literal. prod 2026-11-20:
+// API_URL="https://…" reached the app with the quotes, so every quoted URL
+// or token in a pushed .env was wrong. Other values are unchanged.
+func dotenvValue(v string) string {
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return v[1 : len(v)-1]
+	}
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+	}
+	return v
+}
+
+// parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an
+// optional `export ` prefix, then KEY=VALUE with dotenv quoting. Every file and
+// stdin input reads values this way, so a .env pushes, deploys and runs under
+// `gregale dev` alike; KEY=VALUE arguments are left as the shell passed them.
+func parseDotenvLine(line string) (secretsPair, error) {
+	p, err := parseSecretsPair(stripDotenvExport(line))
+	if err != nil {
+		return p, err
+	}
+	p.Value = dotenvValue(p.Value)
+	return p, nil
 }
 
 // stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can
