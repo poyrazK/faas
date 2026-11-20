@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/agentpresets"
+	"github.com/onebox-faas/faas/pkg/agentrunproto"
 	"github.com/onebox-faas/faas/pkg/api"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 )
@@ -192,6 +193,26 @@ func TestPrepareWiresPresetHarnesses(t *testing.T) {
 		bare.CapabilityPolicy = nil
 		if _, req, err := prepare(bare); err != nil || len(req.Command) != len(preset.Run) {
 			t.Errorf("%s without tools: %q %v", name, req.Command, err)
+		}
+	}
+}
+
+func TestDeadlineCredit(t *testing.T) {
+	approve := &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityApprove}}}
+	allow := &api.AgentCapabilityPolicy{Tools: []api.AgentCapabilityTool{{Name: api.AgentCapabilityWebFetch, Mode: api.AgentCapabilityAllow}}}
+	for name, tc := range map[string]struct {
+		policy                   *api.AgentCapabilityPolicy
+		timeout, credit, ceiling int
+	}{
+		"no policy":         {nil, 600, 0, 600},
+		"no approve tool":   {allow, 600, 0, 600},
+		"room for the cap":  {approve, 600, api.AgentRunApprovalCreditMaxSec, 600 + api.AgentRunApprovalCreditMaxSec},
+		"scale plan max":    {approve, 3600, 3600, 7200},
+		"ceiling bounds it": {approve, agentrunproto.MaxTimeoutSec, 0, agentrunproto.MaxTimeoutSec},
+	} {
+		credit, ceiling := deadlineCredit(agentstore.Claim{TimeoutSec: tc.timeout, CapabilityPolicy: tc.policy})
+		if credit != tc.credit || ceiling != tc.ceiling {
+			t.Errorf("%s: credit %d ceiling %d, want %d %d", name, credit, ceiling, tc.credit, tc.ceiling)
 		}
 	}
 }

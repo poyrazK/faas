@@ -505,6 +505,11 @@ type Instance struct {
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
 	AgentWaitPauseAfter time.Duration
+	// AgentRunDeadline is an agent run's seller deadline when it is below
+	// the request's timeout, the guest ceiling (ADR-20261027090016
+	// amendment 3; agent_run_deadline.go). Zero: the request's timeout.
+	// Guarded by Manager.mu.
+	AgentRunDeadline time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -1486,6 +1491,9 @@ type Manager struct {
 	agentWaitMetrics *AgentWaitMetrics
 	agentWaitMu      sync.Mutex
 	agentWaits       map[string]*agentWaitState
+	// agentDeadlineMu guards agentDeadlines, a leaf lock like agentWaitMu.
+	agentDeadlineMu sync.Mutex
+	agentDeadlines  map[string]*agentDeadline
 	// agentUsageTick is the agent run usage sample interval
 	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
 	agentUsageTick time.Duration

@@ -20,6 +20,10 @@ faas_agentd_concurrency: 8
 faas_agentd_checkouts: true
 faas_agentd_output_files: true
 faas_agentd_deliveries: true
+# ADR-20261027090016 amendment 3: approval waits extend a run's deadline.
+# Off until every agent node runs a guest with the 7,200 s timeout ceiling
+# and a vmmd and schedd that forward the credit.
+faas_agentd_approval_deadline_credit: false
 
 # The S3 gateway's https origin for bucket deliveries; empty fails them.
 faas_agentd_s3_endpoint: ""

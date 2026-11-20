@@ -6,6 +6,7 @@ Environment=FAAS_AGENTD_CONCURRENCY={{ faas_agentd_concurrency }}
 Environment=FAAS_AGENTD_CHECKOUTS={{ '1' if faas_agentd_checkouts | bool else '0' }}
 Environment=FAAS_AGENTD_OUTPUT_FILES={{ '1' if faas_agentd_output_files | bool else '0' }}
 Environment=FAAS_AGENTD_DELIVERIES={{ '1' if faas_agentd_deliveries | bool else '0' }}
+Environment=FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT={{ '1' if faas_agentd_approval_deadline_credit | bool else '0' }}
 {% if faas_agentd_s3_endpoint %}
 Environment=FAAS_AGENTD_S3_ENDPOINT={{ faas_agentd_s3_endpoint }}
 {% endif %}
