@@ -108,6 +108,7 @@ type management struct {
 	environmentPlans             map[string]*environmentPlan
 	flagPlans                    map[string]*flagPlan
 	budgetPlans                  map[string]*budgetPlan
+	reviewedPlans                map[string]*reviewedPlan
 	actions                      map[string]actionRecord
 	environmentActions           map[string]environmentActionRecord
 	environmentRollbackOutcomes  map[string]environmentRollbackLookup
@@ -205,7 +206,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if opts.docs == nil {
 		opts.docs = newDocsLibrary(docsSiteURL, nil)
 	}
-	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), flagPlans: make(map[string]*flagPlan), budgetPlans: make(map[string]*budgetPlan), secretRequests: make(map[string]*secretRequest)}
+	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), flagPlans: make(map[string]*flagPlan), budgetPlans: make(map[string]*budgetPlan), reviewedPlans: make(map[string]*reviewedPlan), secretRequests: make(map[string]*secretRequest)}
 	if err := m.restorePlans(); err != nil {
 		return nil, nil, err
 	}
@@ -261,6 +262,8 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerEventsConsumers(s, m)
 	registerAuditBudgets(s, m)
 	registerLogsChannelsOrg(s, m)
+	registerExperimentsSchemas(s, m)
+	registerWorkflowsDomains(s, m)
 	registerInsights(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)

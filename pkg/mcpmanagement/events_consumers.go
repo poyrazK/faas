@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Event subscriptions and API consumers (ADR-20261118160000). Reads are
+// Event subscriptions and API consumers (ADR-20261118161500). Reads are
 // app-scoped. Pausing or resuming a subscription, recovering events and
 // changing consumers are reviewed operation plans applied by
 // gregale_apply_operation. apid asks a person before production pauses and
@@ -38,8 +38,9 @@ type eventRecoveriesArgs struct {
 
 type planEventArgs struct {
 	App           string         `json:"app" jsonschema:"App slug"`
-	Op            string         `json:"op" jsonschema:"pause, resume, recover or cancel_recovery"`
-	Subscription  string         `json:"subscription,omitempty" jsonschema:"pause, resume: the subscription"`
+	Op            string         `json:"op" jsonschema:"pause, resume, recover, cancel_recovery, set_schema_versions or reset_schema_versions"`
+	Subscription  string         `json:"subscription,omitempty" jsonschema:"pause, resume, set_schema_versions, reset_schema_versions: the subscription"`
+	Versions      []string       `json:"versions,omitempty" jsonschema:"set_schema_versions: the event schema versions the subscription accepts"`
 	RatePerSecond int            `json:"rate_per_second,omitempty" jsonschema:"resume: optional delivery rate limit"`
 	Recovery      map[string]any `json:"recovery,omitempty" jsonschema:"recover: what to replay, as POST /v1/apps/{slug}/event-recoveries takes it: mode, subscription_id, event_source, event_type, failure_code, outcome, min_age_seconds, rate_per_second, ..."`
 	RecoveryID    string         `json:"recovery_id,omitempty" jsonschema:"cancel_recovery: the recovery job"`
@@ -52,6 +53,7 @@ type eventChangeRequest struct {
 	RatePerSecond int                       `json:"rate_per_second,omitempty"`
 	Recovery      *api.EventRecoveryRequest `json:"recovery,omitempty"`
 	RecoveryID    string                    `json:"recovery_id,omitempty"`
+	Versions      []string                  `json:"versions,omitempty"`
 }
 
 type consumerArgs struct {
@@ -85,7 +87,7 @@ func registerEventsConsumers(s *mcp.Server, m *management) {
 	register(s, m, "gregale_get_event_subscription_health", "Read one subscription's consumer and delivery health over a window: backlog, lag, failures and delivery control. Read-only.", m.getEventSubscriptionHealth)
 	register(s, m, "gregale_list_event_deliveries", "List the app's event deliveries, newest first: event, subscription, state, attempts and last error. No payloads. Read-only.", m.listEventDeliveries)
 	register(s, m, "gregale_list_event_recoveries", "List the app's event recovery jobs and their progress. Read-only.", m.listEventRecoveries)
-	register(s, m, "gregale_plan_event_change", "Review pausing or resuming a subscription's deliveries, recovering (replaying) matched events, or cancelling a recovery. A recover plan shows how many events match. Changes nothing; apply with gregale_apply_operation. On a production app, pauses and recoveries ask a person first.", m.planEventChange)
+	register(s, m, "gregale_plan_event_change", "Review pausing or resuming a subscription's deliveries, recovering (replaying) matched events, cancelling a recovery, or setting which event schema versions a subscription accepts. A recover plan shows how many events match. Changes nothing; apply with gregale_apply_operation. On a production app, pauses, recoveries and schema version changes ask a person first.", m.planEventChange)
 	register(s, m, "gregale_list_api_consumers", "List the app's API consumers (your customers calling the app): name, external ref and status. Read-only.", m.listAPIConsumers)
 	register(s, m, "gregale_get_api_consumer", "Read one API consumer with its usage, spend cap and plan assignments. Key values are never shown. Read-only.", m.getAPIConsumer)
 	register(s, m, "gregale_plan_api_consumer_change", "Review creating, revoking, capping the monthly spend of, or assigning a plan to an API consumer. Changes nothing; apply with gregale_apply_operation. Revoking, plans and spend caps ask a person first.", m.planAPIConsumerChange)
@@ -195,6 +197,26 @@ func (m *management) planEventChange(ctx context.Context, a planEventArgs) (any,
 			"pause":  "Stops delivering the subscription's events; they queue until resumed.",
 			"resume": "Delivers the subscription's queued events again, from the oldest.",
 		}[a.Op]
+	case "set_schema_versions", "reset_schema_versions":
+		if a.Recovery != nil || a.RecoveryID != "" || a.RatePerSecond != 0 || (a.Op == "reset_schema_versions") != (len(a.Versions) == 0) {
+			return nil, invalid("invalid_argument", "set_schema_versions takes subscription and versions; reset_schema_versions takes subscription")
+		}
+		for _, v := range a.Versions {
+			if err := validEventName(v, "versions"); err != nil {
+				return nil, err
+			}
+		}
+		if err := m.appSubscription(ctx, a.App, a.Subscription); err != nil {
+			return nil, err
+		}
+		if before, err := m.client.GetEventSubscriptionSchemaVersions(ctx, a.App, a.Subscription); err == nil {
+			view["schema_versions_before"] = before
+		}
+		req.Subscription, req.Versions = a.Subscription, a.Versions
+		effect = map[string]string{
+			"set_schema_versions":   "The subscription accepts only events of these schema versions; events of other versions are excluded from its deliveries.",
+			"reset_schema_versions": "The subscription accepts events of every schema version again.",
+		}[a.Op]
 	case "recover":
 		if a.Subscription != "" || a.RecoveryID != "" || a.RatePerSecond != 0 {
 			return nil, invalid("invalid_argument", "recover takes only recovery")
@@ -236,7 +258,7 @@ func (m *management) planEventChange(ctx context.Context, a planEventArgs) (any,
 		view["recovery"] = job
 		effect = "Stops the recovery; events it already replayed stay replayed."
 	default:
-		return nil, invalid("invalid_argument", "op must be pause, resume, recover or cancel_recovery")
+		return nil, invalid("invalid_argument", "op must be pause, resume, recover, cancel_recovery, set_schema_versions or reset_schema_versions")
 	}
 	p, err := m.operationBase(ctx, operationArgs{App: a.App, Reason: a.Reason}, "event_change", req)
 	if err != nil {
@@ -268,6 +290,10 @@ func (m *management) runEventChange(ctx context.Context, p *releasePlan) (any, e
 		return m.client.CreateEventRecovery(ctx, p.App, rec)
 	case "cancel_recovery":
 		return m.client.CancelEventRecovery(ctx, req.RecoveryID)
+	case "set_schema_versions":
+		return m.client.SetEventSubscriptionSchemaVersions(ctx, p.App, req.Subscription, req.Versions)
+	case "reset_schema_versions":
+		return m.client.ResetEventSubscriptionSchemaVersions(ctx, p.App, req.Subscription)
 	}
 	return nil, invalid("invalid_plan", "unsupported event change")
 }

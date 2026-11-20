@@ -5053,6 +5053,34 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// ADR-20261027090016 amendment 2. The internal agents capability
+		// (pkg/productcap/catalog.json) keeps it out of customer discovery.
+		Name:    "agents",
+		DocSlug: "agents",
+		Short:   "Approve or deny the tool calls a hosted agent run waits on",
+		Subcommands: []cliSub{
+			{Name: "runs", Short: "Decide a run's tool calls that need approval", Subcommands: []cliSub{
+				{Name: "approvals", Short: "List a run's approvals, oldest first", Positionals: []string{"<run-id>"},
+					Notes:    []string{"ARGUMENTS is the agent's own summary of the call, shortened to one line; --json prints it whole with the SHA-256 of the exact arguments."},
+					Flags:    []cliFlag{{Name: "json", Short: "Print JSON", Bool: true}},
+					Examples: []string{"gregale agent run approval list run_0123"}},
+				{Name: "approve", Short: "Let a pending call go ahead", Positionals: []string{"<run-id>", "<approval-id>"},
+					Notes: []string{"A decision is taken once, while the approval is pending; a decided or expired approval is refused."},
+					Flags: []cliFlag{
+						{Name: "note", Short: "note recorded with the decision", Value: "TEXT"},
+						{Name: "json", Short: "Print JSON", Bool: true},
+					},
+					Examples: []string{"gregale agent run approve run_0123 apr_0456 --note \"looks right\""}},
+				{Name: "deny", Short: "Refuse a pending call; the tool fails", Positionals: []string{"<run-id>", "<approval-id>"},
+					Flags: []cliFlag{
+						{Name: "note", Short: "note recorded with the decision", Value: "TEXT"},
+						{Name: "json", Short: "Print JSON", Bool: true},
+					},
+					Examples: []string{"gregale agent run deny run_0123 apr_0456 --note \"wrong repository\""}},
+			}},
+		},
+	},
+	{
 		Name:    "invocations",
 		DocSlug: "invocations",
 		Short:   "List, inspect and wait on invocations across your account",
