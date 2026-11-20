@@ -129,6 +129,11 @@ count. Past the limit, creating a key fails with `409 api_key_limit_exceeded`.
 For keys an organization owns, see
 [organization API keys](account.md#organization-api-keys).
 
+Your code never sees a Gregale API key: once a private app's key requirement
+or `bearer` mode has verified one, Gregale strips the `Authorization` header,
+since the key belongs to the caller's account. A `basic` password is passed
+on, as is any `Authorization` header no gate reads.
+
 ### Expiry and rotation
 
 Every new key expires one year after it is made. Agent keys expire after 90
@@ -174,12 +179,6 @@ and `--public-auth open` removes it. On a plan without the mode, the change
 fails with `403 plan_public_auth_bearer_not_allowed`,
 `plan_public_auth_basic_not_allowed` or
 `plan_public_auth_ip_allowlist_not_allowed`.
-
-Once a private app's API key requirement or the `bearer` mode has accepted a
-Gregale API key, Gregale removes the `Authorization` header before the
-request reaches your app: the key belongs to the caller's account, and your
-app has no use for it. A `basic` password still reaches the app, and so does
-an `Authorization` header on an app with no such gate.
 
 - **Basic auth:** the username is 1 to 128 bytes and the password 12 to 256
   bytes. Gregale stores them encrypted. After 10 wrong passwords in a minute
