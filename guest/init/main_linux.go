@@ -1519,8 +1519,9 @@ func runBuildOnce(m api.BuildManifest) error {
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
 	), secretEnv...)
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	stdoutConsole, stderrConsole := newBuildOutputFilter(os.Stdout), newBuildOutputFilter(os.Stderr)
+	cmd.Stdout = io.MultiWriter(stdoutConsole, &buf)
+	cmd.Stderr = io.MultiWriter(stderrConsole, &buf)
 	clock.stage("build-command")
 	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -1543,6 +1544,12 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Use exit 124 for the durable build marker even when the stuck
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		// A stuck descendant may still be writing after a timeout; only a
+		// finished command's last partial line is flushed.
+		stdoutConsole.Flush()
+		stderrConsole.Flush()
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A failure to reach the registry for a platform-owned image is the
