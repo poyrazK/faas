@@ -11799,6 +11799,12 @@ const (
 	AgentRunApprovalSummaryMaxBytes   = 2048
 	AgentRunApprovalNoteMaxBytes      = 1024
 	AgentRunApprovalPollMillis        = 1000
+	// ADR-20261027090016 amendment 3: a run's deadline grows by the wall
+	// time its approvals waited, at most AgentRunApprovalCreditMaxSec.
+	// agentd reads a run's credit every AgentRunApprovalCreditPollSec,
+	// well inside AgentRunApprovalDeadlineMarginSec.
+	AgentRunApprovalCreditMaxSec  = 3600
+	AgentRunApprovalCreditPollSec = 5
 	// Agent callbacks (ADR-20261030125501 §3): a tool posts its result to a
 	// signed per-thread URL, and apid publishes it into that thread's lane of
 	// the app's AgentInboxChannel. A token lives at most

@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/onebox-faas/faas/pkg/agentrunproto"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -17,7 +18,10 @@ import (
 // (ADR-20261027090016 amendment 2). The run's capability summary row
 // serializes its requests, so concurrent calls cannot pass the pending cap
 // together. The request expires at the approval timeout or a margin before
-// the run's deadline, whichever is sooner.
+// the run's latest deadline, whichever is sooner. A run's deadline grows by
+// its approval waits up to deadline_credit_max_sec (ADR-20261027090016
+// amendment 3), and a wait earns credit one second per second until that
+// cap, so the cap's deadline is the last moment this wait can end.
 func (a *PostgresAgentRuns) RequestApproval(ctx context.Context, run AgentRunIdentity, req ToolApprovalRequest) (ToolApproval, error) {
 	if !validAgentRunIDs(run, run.RunID) {
 		return ToolApproval{}, ErrApprovalRefused
@@ -32,7 +36,7 @@ func (a *PostgresAgentRuns) RequestApproval(ctx context.Context, run AgentRunIde
 		err := tx.QueryRow(ctx, `
 			WITH bound AS (
 				SELECT least(now() + make_interval(secs => $5::int),
-				             run.running_at + make_interval(secs => run.timeout_sec - $6::int)) AS expires_at
+				             run.running_at + make_interval(secs => least(run.timeout_sec + run.deadline_credit_max_sec, $10::int) - $6::int)) AS expires_at
 				  FROM agent_runs run
 				 WHERE run.id = $1::uuid AND run.account_id = $2::uuid AND run.lease_token = $7
 				   AND run.lease_expires_at > clock_timestamp()
@@ -47,6 +51,7 @@ func (a *PostgresAgentRuns) RequestApproval(ctx context.Context, run AgentRunIde
 			RETURNING id::text, expires_at`,
 			run.RunID, run.AccountID, req.Tool, req.ArgumentsSHA256, api.AgentRunApprovalTimeoutSec,
 			api.AgentRunApprovalDeadlineMarginSec, run.LeaseToken, api.AgentRunApprovalsPendingMax, req.ArgumentsSummary,
+			agentrunproto.MaxTimeoutSec,
 		).Scan(&out.ID, &out.ExpiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrApprovalRefused
@@ -94,6 +99,21 @@ func (a *PostgresAgentRuns) ApprovalDecision(ctx context.Context, run AgentRunId
 		return "", fmt.Errorf("read approval decision: %w", err)
 	}
 	return decision, nil
+}
+
+// ReleaseApproval records when outboundd stopped holding the call. The
+// first release stands.
+func (a *PostgresAgentRuns) ReleaseApproval(ctx context.Context, run AgentRunIdentity, approvalID string) error {
+	if _, err := uuid.Parse(approvalID); err != nil {
+		return fmt.Errorf("release approval: invalid approval id")
+	}
+	if _, err := a.pool.Exec(ctx, `
+		UPDATE agent_run_approvals SET released_at = now()
+		 WHERE id = $1::uuid AND run_id = $2::uuid AND account_id = $3::uuid AND released_at IS NULL`,
+		approvalID, run.RunID, run.AccountID); err != nil {
+		return fmt.Errorf("release approval: %w", err)
+	}
+	return nil
 }
 
 var _ AgentApprovalStore = (*PostgresAgentRuns)(nil)

@@ -21279,6 +21279,7 @@
       "checkout_commit",
       "checkout_installation_id",
       "checkout_repository",
+      "deadline_credit_max_sec",
       "dedupe_key",
       "exit_code",
       "finished_at",
@@ -21478,6 +21479,7 @@
       "created_at",
       "expires_at",
       "id",
+      "released_at",
       "run_id",
       "tool"
     ],
