@@ -508,6 +508,12 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 	}, nil
 }
 
+// staleInstanceHintReconciler is the optional engine seam AdmitInstance
+// uses for a request carrying stale_instance_id (*sched.Engine implements it).
+type staleInstanceHintReconciler interface {
+	ReconcileStaleInstanceHint(ctx context.Context, appID, instanceID string) bool
+}
+
 // AdmitInstance (issue #168) is the schedule scale-out RPC. Unlike
 // Wake it does not run the Phase-1 fast-path: each call either admits
 // a fresh instance or returns at_capacity=true. The gateway calls
@@ -524,12 +530,6 @@ func (s *Server) Wake(ctx context.Context, req *scheddpb.WakeRequest) (*scheddpb
 //     app_concurrency_reached outcome is NEVER lifted
 //     to a gRPC error: it surfaces as at_capacity=true
 //     so the gateway can treat it as a no-op.
-// staleInstanceHintReconciler is the optional engine seam AdmitInstance
-// uses for a request carrying stale_instance_id (*sched.Engine implements it).
-type staleInstanceHintReconciler interface {
-	ReconcileStaleInstanceHint(ctx context.Context, appID, instanceID string) bool
-}
-
 func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceRequest) (*scheddpb.AdmitInstanceResponse, error) {
 	const op = "AdmitInstance"
 	received := time.Now()
