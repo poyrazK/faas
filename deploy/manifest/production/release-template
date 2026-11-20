@@ -4,4 +4,4 @@
 # only in its own reviewed PR: at the GCP → OVHcloud cutover
 # (docs/runbooks/GcpToOvhMigration.md, phase 2) it becomes
 # ovh-live.template.yaml.
-gcp-live.template.yaml
+ovh-live.template.yaml
