@@ -457,13 +457,18 @@ const (
 // admission queue one account may hold at most
 // GatewayWakeAdmissionQueuedPerAccount waiting and
 // GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
-// burst cannot take every slot.
+// burst cannot take every slot. The running share is a third of
+// GatewayWakeAdmissionParallelism, so two other accounts always find a free
+// slot. On the OVHcloud fleet a snapshot restore holds a slot for ~0.2 s, and
+// a share of 2 queued a single account's 11-app burst for up to 1 s
+// (2026-11-20 restore test); a microservice app that wakes several services
+// at once needs more than two at a time.
 const (
 	GatewayColdWakeAppsPerClient          = 20
 	GatewayColdWakeClientWindow           = time.Minute
 	GatewayColdWakeClientsTrackedMax      = 100_000
-	GatewayWakeAdmissionQueuedPerAccount  = 8
-	GatewayWakeAdmissionRunningPerAccount = 2
+	GatewayWakeAdmissionQueuedPerAccount  = 16
+	GatewayWakeAdmissionRunningPerAccount = 4
 )
 
 // PasswordResetMailInFlightMax caps the forgot-password requests one apid
@@ -9459,8 +9464,11 @@ const (
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
 	// requests per app; this cap protects the control plane when many
-	// different apps become cold at the same time.
-	GatewayWakeAdmissionParallelism = 4
+	// different apps become cold at the same time. Each admission costs
+	// the control-plane database a few short reads (~10-100 ms); 12 per
+	// gateway was sized for the OVHcloud control plane (12 threads, local
+	// NVMe Postgres) after 4 queued restore bursts behind one another.
+	GatewayWakeAdmissionParallelism = 12
 	// GatewayWakeAdmissionQueueCap bounds distinct app leaders waiting
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.
