@@ -99,6 +99,27 @@ class EvidenceContracts(unittest.TestCase):
             with self.assertRaises(ob.native.Failure):
                 ob.validate(report)
 
+    def test_private_run_requires_same_project_anonymous_denial_and_exact_rollout(self):
+        report = passing_report()
+        report["provenance"]["template"] = ob.PRIVATE_NODE
+        report["artifact"]["private_starter_available"] = True
+        self.assertEqual(ob.validate(report), "incomplete")
+        report["phases"]["edited_release_rollout"] = {"status": "passed", "seconds": 400}
+        proof = report["proof"]
+        proof.update(project_absent_before=True, project_absent_after=True,
+                     edited_release_rollout={"deployment_sha256": "e" * 64, "traffic_percent": 100})
+        for name in ("first_response", "edited_response"):
+            proof[name].update(project_sha256="9" * 64, anonymous_http_status=404)
+        self.assertEqual(ob.validate(report), "passed")
+        for row, key, bad in ((proof, "project_absent_before", False), (proof, "project_absent_after", False),
+                              (proof["first_response"], "anonymous_http_status", 200),
+                              (proof["edited_response"], "anonymous_http_status", 401),
+                              (proof["edited_response"], "project_sha256", "8" * 64),
+                              (proof["edited_release_rollout"], "deployment_sha256", "b" * 64),
+                              (proof["edited_release_rollout"], "traffic_percent", 99)):
+            with self.subTest(key=key), mock.patch.dict(row, {key: bad}), self.assertRaises(ob.native.Failure):
+                ob.validate(report)
+
 
 class ResponseContracts(unittest.TestCase):
     def setUp(self):
@@ -127,6 +148,14 @@ class ResponseContracts(unittest.TestCase):
 
 
 class IsolationContracts(unittest.TestCase):
+    def test_browser_handoff_preserves_lowercase_device_code_and_complete_url(self):
+        url = "https://example.test/cli-auth"
+        self.assertIsNone(ob.browser_handoff("Opening " + url, False))
+        self.assertEqual(ob.browser_handoff("Opening " + url + "\n", False),
+                         {"url": url, "phase": "browser_login"})
+        self.assertEqual(ob.browser_handoff(f"Your code: 123a-b456\nOpen {url} and enter the code there.\n", True),
+                         {"url": url, "phase": "browser_login", "code": "123a-b456"})
+
     def test_cli_single_pretty_json_and_ndjson_collections_are_both_supported(self):
         account = {"id": "account", "plan": "free"}
         rows = [{"id": "one"}, {"id": "two"}]
@@ -174,8 +203,9 @@ class IsolationContracts(unittest.TestCase):
 
 
 class OwnershipContracts(unittest.TestCase):
-    def make_run(self, root):
-        return ob.Run(argparse.Namespace(out=root / "evidence", api="https://api.fixture.test", expected_email="private@example.test"))
+    def make_run(self, root, template=ob.NODE):
+        return ob.Run(argparse.Namespace(out=root / "evidence", api="https://api.fixture.test", expected_email="private@example.test",
+                                         template=template, device_login=False, file_credentials=False))
 
     def test_missing_app_exit_four_is_accepted_before_start_and_after_cleanup(self):
         # Recorded rc.349 contract: a 404 not_found exits 4, not the generic 1.
@@ -198,6 +228,21 @@ class OwnershipContracts(unittest.TestCase):
             self.assertEqual(run.cleanup(), [])
             self.assertEqual(run.report["phases"]["cleanup_app"]["status"], "passed")
             self.assertEqual(run.report["proof"]["final_app_count"], 0)
+
+    def test_transport_retry_is_limited_to_read_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = self.make_run(Path(temp))
+            transport = subprocess.CompletedProcess([], 3, "", '{"code":"transport_error"}')
+            success = subprocess.CompletedProcess([], 0, '[]', "")
+            with mock.patch.object(ob.subprocess, "run", side_effect=[transport, success]) as process, \
+                    mock.patch.object(ob.time, "sleep"):
+                self.assertEqual(run.call("release", "verify", "release", "--app", run.slug, "--path", "/"), [])
+                self.assertEqual(process.call_count, 2)
+            self.assertEqual(run.report["metrics"]["transient_read_retries"], 1)
+            with mock.patch.object(ob.subprocess, "run", return_value=transport) as process, \
+                    self.assertRaises(ob.native.Failure):
+                run.call("app", "delete", run.slug, "--yes")
+            process.assert_called_once()
 
     def test_free_plan_gate_does_not_downgrade_or_mutate_another_plan(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -228,6 +273,17 @@ class OwnershipContracts(unittest.TestCase):
                 self.assertEqual(run.cleanup(), ["app_cleanup_failed"])
                 self.assertEqual(call.call_args_list, [mock.call("app", "list")])
 
+    def test_private_cleanup_refuses_a_replaced_project(self):
+        with tempfile.TemporaryDirectory() as temp:
+            run = self.make_run(Path(temp), ob.PRIVATE_NODE)
+            run.registered = True
+            run.session = {"app_id": str(uuid.uuid4()), "project_id": str(uuid.uuid4())}
+            app = {"slug": run.slug, "id": run.session["app_id"], "project_id": run.session["project_id"]}
+            project = {"slug": run.slug, "id": str(uuid.uuid4())}
+            with mock.patch.object(run, "call", side_effect=[[app], [project]]) as call:
+                self.assertEqual(run.cleanup(), ["app_cleanup_failed"])
+                self.assertEqual(call.call_args_list, [mock.call("app", "list"), mock.call("project", "list")])
+
     def test_reports_exclude_supplied_email_login_url_response_and_local_paths(self):
         with tempfile.TemporaryDirectory() as temp:
             run = self.make_run(Path(temp))
@@ -244,7 +300,8 @@ class OwnershipContracts(unittest.TestCase):
 
 class EntryPointContracts(unittest.TestCase):
     def prepared_run(self, root):
-        return ob.Run(argparse.Namespace(out=root / "evidence", api="https://api.fixture.test", expected_email="private@example.test"))
+        return ob.Run(argparse.Namespace(out=root / "evidence", api="https://api.fixture.test", expected_email="private@example.test",
+                                         template=ob.NODE, device_login=False, file_credentials=False))
 
     def test_install_only_never_logs_in_or_deploys_and_cannot_pass(self):
         with tempfile.TemporaryDirectory() as temp:

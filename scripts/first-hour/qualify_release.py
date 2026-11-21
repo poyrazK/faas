@@ -6,6 +6,7 @@ qualification.json/md and baseline.json/md are suitable for CI artifacts.
 """
 import argparse
 import hashlib
+from http.client import IncompleteRead
 import json
 import os
 import platform
@@ -17,7 +18,7 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -39,16 +40,25 @@ class QualificationError(Exception):
 
 def download(url, destination, limit):
     request = Request(url, headers={"User-Agent": "gregale-first-hour-qualification"})
-    try:
-        with urlopen(request, timeout=60) as response, destination.open("xb") as output:
-            size = 0
-            while chunk := response.read(1024 * 1024):
-                size += len(chunk)
-                if size > limit:
-                    raise QualificationError("download_too_large")
-                output.write(chunk)
-    except (URLError, TimeoutError) as error:
-        raise QualificationError("download_failed") from error
+    for delay in (1, 2, 0):
+        created = False
+        try:
+            with urlopen(request, timeout=60) as response, destination.open("xb") as output:
+                created = True
+                size = 0
+                while chunk := response.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > limit:
+                        raise QualificationError("download_too_large")
+                    output.write(chunk)
+            return
+        except (URLError, TimeoutError, ConnectionError, IncompleteRead) as error:
+            if created:
+                destination.unlink()
+            permanent = isinstance(error, HTTPError) and 400 <= error.code < 500 and error.code not in (408, 429)
+            if not delay or permanent:
+                raise QualificationError("download_failed") from error
+            time.sleep(delay)
 
 
 def github_json(resource, directory, name):
@@ -67,6 +77,27 @@ def source_commit(tag, directory):
             break
         ref = github_json(f"git/tags/{ref['sha']}", directory, f"tag-{depth}.json")["object"]
     raise QualificationError("invalid_release_source")
+
+
+def github_rate_limited(error):
+    response = error.__cause__
+    return isinstance(response, HTTPError) and (
+        response.code == 429 or response.code == 403 and response.headers.get("X-RateLimit-Remaining") == "0"
+    )
+
+
+def public_git_commit(tag):
+    ref = "refs/tags/" + tag
+    peeled = ref + "^{}"
+    result = subprocess.run(["git", "ls-remote", "--exit-code", "--tags", f"https://github.com/{REPO}.git", ref, peeled],
+                            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, capture_output=True, text=True, timeout=45)
+    if result.returncode != 0:
+        raise QualificationError("release_tag_lookup_failed")
+    refs = {name: sha for sha, name in (line.split() for line in result.stdout.splitlines())}
+    commit = refs.get(peeled, refs.get(ref, ""))
+    if not SHA.fullmatch(commit):
+        raise QualificationError("invalid_release_source")
+    return commit
 
 
 def checksum_for(text, archive):
@@ -112,16 +143,25 @@ def prepare_cli(tag, directory, evidence):
     if not TAG.fullmatch(tag):
         raise QualificationError("invalid_release_tag")
     evidence.update(release_tag=tag, release_url=f"https://github.com/{REPO}/releases/tag/{tag}")
-    release = github_json(f"releases/tags/{tag}", directory, "release.json")
-    if release.get("tag_name") != tag or release.get("draft") or not release.get("published_at"):
-        raise QualificationError("release_not_published", "blocked")
+    try:
+        release = github_json(f"releases/tags/{tag}", directory, "release.json")
+    except QualificationError as error:
+        if not github_rate_limited(error):
+            raise
+        # The public archive and checksum must still download anonymously from
+        # the exact tag. Verify its stamped source against the public Git ref.
+        release = None
     system, arch = host_target()
     name = f"gregale_{tag[1:]}_{system}_{arch}.tar.gz"
     base = f"https://github.com/{REPO}/releases/download/{tag}"
-    assets = {asset["name"] for asset in release.get("assets", []) if asset.get("state") == "uploaded"}
-    evidence.update(published_at=release["published_at"], platform=f"{system}/{arch}", archive=name, archive_url=f"{base}/{name}")
-    if not {name, "CLI-SHA256SUMS"} <= assets:
-        raise QualificationError("release_assets_missing", "blocked")
+    evidence.update(platform=f"{system}/{arch}", archive=name, archive_url=f"{base}/{name}")
+    if release is not None:
+        if release.get("tag_name") != tag or release.get("draft") or not release.get("published_at"):
+            raise QualificationError("release_not_published", "blocked")
+        evidence["published_at"] = release["published_at"]
+        assets = {asset["name"] for asset in release.get("assets", []) if asset.get("state") == "uploaded"}
+        if not {name, "CLI-SHA256SUMS"} <= assets:
+            raise QualificationError("release_assets_missing", "blocked")
     manifest, archive = directory / "CLI-SHA256SUMS", directory / name
     download(f"{base}/CLI-SHA256SUMS", manifest, 1024 * 1024)
     expected = checksum_for(manifest.read_text(), name)
@@ -138,7 +178,16 @@ def prepare_cli(tag, directory, evidence):
     identity = json.loads(version.stdout)
     if identity.get("version") != tag:
         raise QualificationError("cli_version_mismatch")
-    commit = source_commit(tag, directory)
+    if release is not None:
+        try:
+            commit = source_commit(tag, directory)
+        except QualificationError as error:
+            if not github_rate_limited(error):
+                raise
+            release = None
+    if release is None:
+        commit = public_git_commit(tag)
+        evidence["source_lookup"] = "public_git_tag"
     if identity.get("git_sha") != commit:
         raise QualificationError("cli_source_mismatch")
     evidence.update(cli_version=tag, cli_source_sha=commit)
