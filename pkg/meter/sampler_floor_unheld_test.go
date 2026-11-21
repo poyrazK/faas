@@ -28,17 +28,22 @@ func TestSampler_FloorUnheldByPlatformIsNotBilled(t *testing.T) {
 	for _, tc := range []struct {
 		name         string
 		lastResident time.Duration // before the rolled minute; 0 = never
+		young        bool          // the deployment is created in the rolled minute
 		wantFloor    bool
 	}{
 		{name: "never held since an old deployment", wantFloor: false},
 		{name: "held an hour ago", lastResident: time.Hour, wantFloor: false},
 		{name: "held two minutes ago", lastResident: 2 * time.Minute, wantFloor: true},
+		{name: "brand-new deployment bills from t=0", young: true, wantFloor: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			// The deployment is created at the real clock; the rolled minute
-			// is a day later, so it is older than the grace.
+			// The deployment is created at the real clock; unless young, the
+			// rolled minute is a day later, so it is older than the grace.
 			base := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Minute)
+			if tc.young {
+				base = time.Now().UTC().Truncate(time.Minute)
+			}
 			store := &floorLedgerStore{ledgerStore: newLedgerStore()}
 			if tc.lastResident > 0 {
 				store.lastResident = base.Add(-tc.lastResident)

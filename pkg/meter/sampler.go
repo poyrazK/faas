@@ -1011,7 +1011,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 				continue
 			}
 			if exactResidency {
-				held, heldErr := s.floorHeld(ctx, app.ID, floorDeployment, minute)
+				held, heldErr := s.floorHeld(ctx, app, floorDeployment, minute)
 				if heldErr != nil {
 					return out, heldErr
 				}
@@ -1077,20 +1077,21 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 // floorHeld reports whether the platform is holding appID's min-instances
 // floor in minute, so its synthetic gap may be billed: some instance of the
 // app was resident within api.MinInstancesFloorUnheldGrace before the minute
-// ends, or the floor's deployment is younger than the grace (billed from t=0,
-// ADR-060). A store without the residency ledger keeps the old behaviour.
-func (s *Sampler) floorHeld(ctx context.Context, appID, deploymentID string, minute time.Time) (bool, error) {
+// ends, or the floor itself is younger than the grace: its deployment was
+// created, or a scheduled window opened, within it (billed from t=0, ADR-060,
+// ADR-195). A store without the residency ledger keeps the old behaviour.
+func (s *Sampler) floorHeld(ctx context.Context, app state.App, deploymentID string, minute time.Time) (bool, error) {
 	ledger, ok := s.store.(state.AppFloorResidencyStore)
 	if !ok {
 		return true, nil
 	}
 	end := minute.Add(time.Minute)
 	since := minute.Add(-api.MinInstancesFloorUnheldGrace)
-	resident, err := ledger.AppResidentSince(ctx, appID, since, end)
+	resident, err := ledger.AppResidentSince(ctx, app.ID, since, end)
 	if err != nil {
-		return false, fmt.Errorf("meter: floor residency %s: %w", appID, err)
+		return false, fmt.Errorf("meter: floor residency %s: %w", app.ID, err)
 	}
-	if resident || deploymentID == "" {
+	if resident || deploymentID == "" || app.EffectiveMinInstancesAt(since) < app.EffectiveMinInstancesAt(minute) {
 		return true, nil
 	}
 	dep, err := s.store.DeploymentByID(ctx, deploymentID)
@@ -1100,7 +1101,7 @@ func (s *Sampler) floorHeld(ctx context.Context, appID, deploymentID string, min
 	if err != nil {
 		return false, fmt.Errorf("meter: floor deployment %s: %w", deploymentID, err)
 	}
-	return !dep.CreatedAt.IsZero() && dep.CreatedAt.After(since), nil
+	return !dep.CreatedAt.IsZero() && dep.CreatedAt.After(since) && dep.CreatedAt.Before(end), nil
 }
 
 // billableFloorDeployment reports whether an app has capacity that is live or
