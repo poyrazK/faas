@@ -128,16 +128,33 @@ type consoleFileOpen struct {
 	f    *os.File // nil when the open failed
 }
 
-// openConsoleFile creates or truncates a console file. A failure leaves the
-// VM without the file copy; the per-instance ring still gets the output.
-// O_APPEND lets Firecracker write a file console itself.
+// openConsoleFile creates or truncates a console file, creating its
+// directory when it is missing. A failure leaves the VM without the file
+// copy, and is logged: the per-instance ring still gets the output, but every
+// wait that reads the console file (builder and agent-run readiness, guest
+// halt and stop detection) can no longer see its marker. No role created
+// /var/log/faas on a fresh host, and agent-run captures timed out there with
+// nothing on the console (metal, 2026-11-21). O_APPEND lets Firecracker write
+// a file console itself.
 func openConsoleFile(path string) *os.File {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o640)
+	if errors.Is(err, os.ErrNotExist) {
+		if mkErr := os.MkdirAll(filepath.Dir(path), consoleLogDirMode); mkErr == nil {
+			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o640)
+		} else {
+			err = mkErr
+		}
+	}
 	if err != nil {
+		slog.Warn("vmm: console file unavailable; console readiness waits cannot succeed", "path", path, "err", err)
 		return nil
 	}
 	return f
 }
+
+// consoleLogDirMode matches what the acceptance playbook creates
+// (root:faas 0750); vmmd runs as root.
+const consoleLogDirMode = 0o750
 
 // preopenConsoleFile starts creating instance's console file so that
 // startJailer does not wait for it. On production-us (rc.285) that create

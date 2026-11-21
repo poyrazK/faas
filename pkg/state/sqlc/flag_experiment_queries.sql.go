@@ -1928,7 +1928,8 @@ func (q *Queries) SetFlagExperimentValueThrough(ctx context.Context, db DBTX, ar
 
 const startFlagExperiment = `-- name: StartFlagExperiment :one
 UPDATE flag_experiments x
-SET status = 'running', started_at = $1::timestamptz, telemetry_cursor = $1::timestamptz,
+SET status = 'running', started_at = $1::timestamptz,
+    telemetry_cursor = date_trunc('minute', $1::timestamptz) - interval '1 microsecond',
     weights = $2::jsonb, layer_from = $3::int, layer_to = $4::int
 WHERE x.environment_id = $5::uuid AND x.key = $6::text AND x.status = 'draft'
   AND (SELECT count(*) FROM flag_experiments r WHERE r.environment_id = $5::uuid AND r.status = 'running') < $7::bigint
@@ -1945,7 +1946,11 @@ type StartFlagExperimentParams struct {
 	MaxRunning    int64
 }
 
-// Starts a draft while the environment runs fewer than max_running.
+// Starts a draft while the environment runs fewer than max_running. The
+// telemetry cursor starts just before the start minute: gateways collapse
+// request telemetry into rows stamped at their minute's start, so a cursor at
+// the start instant would skip every exposure in that minute
+// (FlagExperimentStartCursor).
 func (q *Queries) StartFlagExperiment(ctx context.Context, db DBTX, arg StartFlagExperimentParams) (FlagExperiment, error) {
 	row := db.QueryRow(ctx, startFlagExperiment,
 		arg.Now,
