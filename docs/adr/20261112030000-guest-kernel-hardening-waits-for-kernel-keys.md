@@ -75,3 +75,19 @@ Status: proposed. Unblocks the no-module kernel; does not ship it.
   for running nodes except the key they read. The no-module build returns in
   a later release, and its rollout makes every app snapshot stale once: plan
   it outside launch week, with the cold-boot wave watched.
+
+## Amendment 2 (2026-11-21): the no-module build returns
+
+Status: proposed; ships after amendment 1 is released and after launch week.
+
+- The release script, the Ansible fallback and the packer prebuild turn off
+  `CONFIG_MODULES` and `CONFIG_KEXEC_FILE` again, as #6970 did, and
+  `TestGuestKernelBuildsLoadNoKernelCode` runs again.
+- The new kernel publishes under its own content-addressed key (amendment 1),
+  so `cd-compute` no longer collides with `kernel/<fc_version>`.
+- Every app snapshot captured on the old kernel is refused by the backing check
+  and cold-boots once, then re-snapshots. Roll it out with the cold-boot rate
+  and `gateway_wake_latency_seconds` watched, node by node.
+- Sandbox sessions may be switched on in production only after this kernel
+  runs on every agent node and `TestMetalSandboxRootStaysInsideTheVM` passes
+  on it.

@@ -62,6 +62,12 @@ else
     printf 'CONFIG_IP_PNP=y\n' >> "${KERNEL_SRC}/.config"
 fi
 
+# No kernel code from inside a guest (ADR-20261027090013 §10): sandbox
+# sessions give the tenant root, so the guest kernel loads no modules and
+# cannot kexec. The pinned config builds nothing as a module.
+sed -i -e 's/^CONFIG_MODULES=.*/# CONFIG_MODULES is not set/' \
+    -e 's/^CONFIG_KEXEC_FILE=.*/# CONFIG_KEXEC_FILE is not set/' "${KERNEL_SRC}/.config"
+
 # Build deps per firecracker docs: make gcc flex bison libssl-dev
 # libelf-dev bc kmod cpio xz.
 apt-get update -qq

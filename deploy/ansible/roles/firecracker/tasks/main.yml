@@ -316,6 +316,21 @@
   register: ip_pnp_config
   when: not (faas_kernel_release_staged | bool)
 
+# No kernel code from inside a guest (ADR-20261027090013 §10): sandbox
+# sessions give the tenant root, so the guest kernel loads no modules and
+# cannot kexec. Same edits as scripts/build-firecracker-kernel.sh.
+- name: firecracker — disable loadable modules and kexec in the guest kernel
+  ansible.builtin.lineinfile:
+    path: /usr/src/linux-{{ fc_kernel_version }}/.config
+    regexp: "^(# )?CONFIG_{{ item }}(=.*| is not set)$"
+    line: "# CONFIG_{{ item }} is not set"
+    state: present
+  loop:
+    - MODULES
+    - KEXEC_FILE
+  register: no_kernel_code_config
+  when: not (faas_kernel_release_staged | bool)
+
 - name: firecracker — inspect existing kernel build output
   ansible.builtin.stat:
     path: "/usr/src/linux-{{ fc_kernel_version }}/vmlinux"
@@ -334,7 +349,8 @@
          or (obsolete_virtio_config.changed | default(false) | bool)
          or (virtio_blk_config.changed | default(false) | bool)
          or (fuse_config.changed | default(false) | bool)
-         or (ip_pnp_config.changed | default(false) | bool) }}
+         or (ip_pnp_config.changed | default(false) | bool)
+         or (no_kernel_code_config.changed | default(false) | bool) }}
   when: not (faas_kernel_release_staged | bool)
 
 - name: firecracker — build kernel (vmlinux) with 4 jobs
