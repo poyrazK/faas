@@ -2,3 +2,19 @@
 # provider registry, rendered from faas_managed_postgres_config.
 [Service]
 Environment=FAAS_MANAGED_POSTGRES_CONFIG={{ faas_managed_postgres_config_path }}
+{% for path in faas_managed_postgres_env_files %}
+EnvironmentFile={{ path }}
+{% endfor %}
+{% if faas_managed_postgres_production_approval | length > 0 %}
+# Production provisioning approval (ADR-20261028103115): an owner decision.
+Environment=FAAS_MANAGED_POSTGRES_PRODUCTION_BACKEND={{ faas_managed_postgres_production_approval.backend }}
+Environment=FAAS_MANAGED_POSTGRES_PRODUCTION_FINGERPRINT={{ faas_managed_postgres_production_approval.fingerprint }}
+Environment=FAAS_MANAGED_POSTGRES_PRODUCTION_APPROVED_AT={{ faas_managed_postgres_production_approval.approved_at }}
+Environment=FAAS_MANAGED_POSTGRES_PRODUCTION_UNTIL={{ faas_managed_postgres_production_approval.until }}
+{% endif %}
+{% if faas_managed_postgres_cap_enforcement | length > 0 %}
+Environment=FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT={{ faas_managed_postgres_cap_enforcement }}
+{% endif %}
+{% if faas_managed_postgres_storage_cap_enforcement | length > 0 %}
+Environment=FAAS_MANAGED_POSTGRES_STORAGE_CAP_ENFORCEMENT={{ faas_managed_postgres_storage_cap_enforcement }}
+{% endif %}

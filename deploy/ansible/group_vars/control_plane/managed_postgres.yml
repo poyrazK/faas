@@ -1,0 +1,53 @@
+# group_vars/control_plane/managed_postgres.yml — production's managed
+# PostgreSQL provider registry (managed_postgres_config role).
+#
+# Recreated 2026-11-21 after the GCP -> OVH move lost the hand-installed
+# /etc/faas/managed-postgres-canary.json. The backend is GCP prod's, rebuilt
+# from its recorded placement fingerprint:
+#   neon-production-canary 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
+# (snapbox-db's; the role refuses any change that would strand a database).
+# fleet, max_databases_per_account and the CU rate are GCP prod's 2026-11-04
+# values; the other usage ceilings and rates were not recorded and are Neon
+# Launch list prices / ceilings above every plan (plans tighten them).
+faas_managed_postgres_config:
+  default_region: us-east-2
+  defaults: {us-east-2: neon-production-canary}
+  max_databases_per_account: 10
+  provisioning_enabled: true
+  health: {enabled: true, interval_seconds: 60, stale_after_seconds: 300}
+  fleet:
+    max_databases: 20
+    max_monthly_cost_millicents: 2000000          # $20/month provider cost
+  usage:
+    enabled: true
+    collection_interval_seconds: 300
+    window_seconds: 3600
+    stale_after_seconds: 10800
+    max_monthly_cost_millicents: 2000000
+    max_monthly_compute_unit_seconds: 2700000      # 750 CU-h
+    max_monthly_storage_byte_seconds: 280000000000000000   # ~100 GiB for a month
+    max_monthly_history_byte_seconds: 280000000000000000
+    max_monthly_egress_bytes: 1099511627776        # 1 TiB
+    compute_unit_hour_millicents: 10600            # Neon Launch $0.106 / CU-h
+    storage_gib_hour_millicents: 48                # $0.35 / GB-month
+    history_gib_hour_millicents: 27                # $0.20 / GB-month
+    egress_gib_millicents: 10000                   # $0.10 / GB
+  backends:
+    - id: neon-production-canary
+      driver: neon
+      region: us-east-2
+      namespace: org-sparkling-mode-74377673       # Neon org "Gregale" (Launch plan)
+      settings:
+        region_id: aws-us-east-2
+        database_name: gregale
+        max_storage_bytes: "107374182400"
+        max_restore_window_seconds: "604800"
+      secret_env: {api-key: FAAS_NEON_API_KEY}
+
+# The Neon key lives here on prod (in the cp-state bundle), not in sealed.env.
+faas_managed_postgres_env_files:
+  - /etc/faas/secrets/managed-postgres/provider.env
+
+# No approval here yet: new databases stay closed in production until the
+# owner sets faas_managed_postgres_production_approval (see the role defaults;
+# GCP used 7-day windows).
