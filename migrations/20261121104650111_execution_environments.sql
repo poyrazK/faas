@@ -3,7 +3,7 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- Ownership survives account removal until imaged acknowledges physical GC.
-CREATE TABLE execution_environments (
+CREATE TABLE IF NOT EXISTS execution_environments (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
  principal_id text NOT NULL DEFAULT '',
@@ -27,9 +27,16 @@ CREATE TABLE execution_environments (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CHECK (status != 'ready' OR (image_digest ~ '^[0-9a-f]{64}$' AND guest_executor_digest ~ '^[0-9a-f]{64}$' AND base_key != '' AND artifact_bytes > 0))
 );
-CREATE UNIQUE INDEX execution_environments_recipe_unique ON execution_environments(account_id,principal_id,recipe_digest) WHERE status != 'deleted';
-CREATE INDEX execution_environments_pending ON execution_environments(status,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS execution_environments_recipe_unique ON execution_environments(account_id,principal_id,recipe_digest) WHERE status != 'deleted';
+CREATE INDEX IF NOT EXISTS execution_environments_pending ON execution_environments(status,created_at);
 ALTER TABLE executions ADD COLUMN IF NOT EXISTS environment_id uuid;
-ALTER TABLE executions ADD CONSTRAINT executions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES execution_environments(id) NOT VALID;
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'executions'::regclass AND conname = 'executions_environment_id_fkey') THEN
+  ALTER TABLE executions ADD CONSTRAINT executions_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES execution_environments(id) NOT VALID;
+ END IF;
+END $$;
+-- +goose StatementEnd
 -- +goose Down
 SELECT 1;

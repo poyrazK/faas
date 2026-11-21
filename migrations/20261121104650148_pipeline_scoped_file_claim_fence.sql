@@ -2,6 +2,9 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF to_regprocedure('execution_pipeline_scoped_file_claim_fence()') IS NULL THEN
 CREATE FUNCTION execution_pipeline_scoped_file_claim_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.status='running' AND NEW.lease_token IS DISTINCT FROM OLD.lease_token
@@ -14,9 +17,18 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END $guard$;
 -- +goose StatementEnd
-CREATE TRIGGER execution_pipeline_scoped_file_claim_fence BEFORE UPDATE ON agent_execution_workflows
- FOR EACH ROW EXECUTE FUNCTION execution_pipeline_scoped_file_claim_fence();
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'agent_execution_workflows'::regclass AND tgname = 'execution_pipeline_scoped_file_claim_fence') THEN
+  CREATE TRIGGER execution_pipeline_scoped_file_claim_fence BEFORE UPDATE ON agent_execution_workflows
+   FOR EACH ROW EXECUTE FUNCTION execution_pipeline_scoped_file_claim_fence();
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
