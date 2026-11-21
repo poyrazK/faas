@@ -11,10 +11,23 @@ With rehearsal planning, source retention and binding verification enabled, an u
 
 An owner approves or revokes the exact plan digest in a separate request. Approval pins the native administrator key privately so its authority can be rechecked later. Approval and revoke replay the original receipt. Metadata inspection and revocation remain accessible while admission is disabled. The plan never outlives the passing observation, which expires within one minute and cannot extend the retained source lifetime.
 
-A private store operation consumes the approval once. The caller must present the approving personal key and exact plan digest. PostgreSQL checks retained source, binding selection and completed evidence, app and credential pins, and native key authority under the same transaction as the one-time claim. It checks the real clock after lock waits and in the write predicate. Expiry, drift and revocation permanently invalidate unconsumed plans. Replayed claims return historical metadata without acquiring the claim. The API and CLI expose planning, inspection and owner decisions. They return closed metadata without source, credentials or binding references.
+A private store operation consumes the approval once. The caller must present the approving personal key and exact plan digest. PostgreSQL checks retained source, binding selection and completed evidence, app and credential pins, and native key authority under the same transaction as the one-time claim. It checks the real clock after lock waits and in the write predicate. Expiry, drift and revocation permanently invalidate unconsumed plans. The native claim transaction also inserts one private run reservation keyed by the retained intent. It pins the plan digest, target identity, claim time and original approval deadline. A reservation failure rolls back the claim. Replays return the same reservation without acquiring execution ownership. Historical claims made before reservations can return their plan status without creating a run. The API and CLI expose planning, inspection and owner decisions. They return closed metadata without source, credentials or binding references.
 
-The companion journal follows the binding identity lifetime and is kept outside environment clones. Plan creation, approval and private claim do not provision capacity, open retained source, run probes or migrations, deploy workloads, or alter traffic. Connecting the claim to a contained runner requires a separate change with execution and cleanup evidence.
+The plan and run journals follow the binding identity lifetime and are kept outside environment clones. Keeping them separate preserves reservations during rolling upgrades with older plan writers. Plan creation, approval and private claim do not provision capacity, open retained source, run probes or migrations, deploy workloads, or alter traffic. Connecting the claim to a contained runner requires a separate change with execution and cleanup evidence.
 
 ## Validation
 
 Native memory and PostgreSQL tests exercise owner authorization, immutable replays, credential or authority drift, and concurrent claims. The OpenAPI and CLI contracts expose the preview owner operations.
+
+## Candidate handoff
+
+The private launch entry checks that the authenticated key holds the exact
+unconsumed approval. It opens the account-encrypted source under the original
+namespace and verifies both reviewed trees before packing deterministic build
+archives in memory. The native claim rechecks the original authority, evidence
+and deadline. Only the call that acquires the reservation receives the archives.
+Retries receive the same run identity. An unavailable or changed source cannot
+spend the approval.
+
+The archive handoff is private to the control plane. Contained workload
+provisioning and execution evidence are separate from this handoff.

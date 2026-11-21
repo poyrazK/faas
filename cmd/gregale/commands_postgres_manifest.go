@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 	"time"
@@ -50,7 +51,12 @@ func resolveManagedPostgresDatabase(ctx context.Context, client managedPostgresC
 		match = candidate
 	}
 	if match.ID == "" {
-		return api.ManagedPostgresDatabase{}, fmt.Errorf("no managed database named or identified %q", reference)
+		// A missing database is not_found (exit 4), like the API's 404 for an
+		// unknown ID. It answered invalid_request (exit 1), so callers waiting
+		// for a purged database to disappear never saw it go (production
+		// TestManagedPostgres/purge_restored 2026-11-19).
+		return api.ManagedPostgresDatabase{}, &APIError{Problem: *api.NewProblem(http.StatusNotFound, api.CodeNotFound,
+			"Managed PostgreSQL database not found", fmt.Sprintf("no managed database named or identified %q", reference))}
 	}
 	return match, nil
 }

@@ -159,10 +159,15 @@
     group: root
     mode: "0755"
 
+# The release install writes 99-faas-role.conf for every daemon
+# (pkg/roleTemplating), after this role on a fresh join. A shared file name let
+# it replace this drop-in and drop the compute-only health listener and apid
+# history target (OVH cutover, 2026-11-20). This drop-in has its own name and
+# sorts after the installer's, so both apply and these settings win.
 - name: gatewayd_internal_service — install FAAS_REALTIME_ROLE drop-in
   ansible.builtin.template:
     src: 99-faas-realtimed-role.conf.j2
-    dest: /etc/systemd/system/faas-realtimed.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-realtimed.service.d/zz-faas-realtimed-role.conf
     owner: root
     group: root
     mode: "0644"

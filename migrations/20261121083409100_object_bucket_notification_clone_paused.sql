@@ -1,4 +1,4 @@
--- filename: 20261119103407100_object_bucket_notification_clone_paused.sql
+-- filename: 20261121083409100_object_bucket_notification_clone_paused.sql
 -- migration-compat: expand
 -- ADR-20261104120000 (amendment 2026-11-16): a full environment clone copies
 -- each captured bucket's notification configuration into its target bucket

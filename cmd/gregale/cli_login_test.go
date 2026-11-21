@@ -262,6 +262,10 @@ func TestCmdLogin_CodeExpired(t *testing.T) {
 		!strings.Contains(errBuf.String(), "cli_auth_code_unavailable") {
 		t.Errorf("stderr missing expired message: %q", errBuf.String())
 	}
+	if !strings.Contains(errBuf.String(), "gregale login --device") ||
+		!strings.Contains(errBuf.String(), "open the new link in the same browser") {
+		t.Errorf("stderr missing the typed-code retry steps: %q", errBuf.String())
+	}
 }
 
 // TestCmdLogin_CodeConsumed_Race: server exchange first returns 404

@@ -179,7 +179,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 	backoff := loginPollBackoff
 	for {
 		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
-			return printErr("Login code expired", errors.New("run gregale login again to obtain a new code"))
+			return printCliLoginRecovery("Login code expired", nil, true)
 		}
 		select {
 		case <-ctx.Done():
@@ -197,7 +197,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			case api.CodeCliAuthPending:
 				continue // keep polling
 			case api.CodeCliAuthUnavailable:
-				return printErr("Login code unavailable", err)
+				return printCliLoginRecovery("Login code unavailable", ae, true)
 			default:
 				return printErr("Login failed", err)
 			}

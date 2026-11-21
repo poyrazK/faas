@@ -68,6 +68,9 @@ func TestMCPInstanceProbesForwardTheTargetInstance(t *testing.T) {
 			if got := forwarded.Get("x-faas-wake-id"); got != target.WakeID {
 				t.Errorf("forwarded x-faas-wake-id = %q, want %q", got, target.WakeID)
 			}
+			if got := forwarded.Get("X-Forwarded-Proto"); got != "https" {
+				t.Errorf("forwarded X-Forwarded-Proto = %q, want https: an app enforcing HTTPS would redirect the probe", got)
+			}
 		})
 	}
 }

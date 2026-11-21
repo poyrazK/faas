@@ -40,9 +40,14 @@ func (s *server) runtimeFeatureFlagEvents(w http.ResponseWriter, r *http.Request
 	if !decodeJSONLimit(w, r, &req, api.FlagEventsMaxBodyBytes) {
 		return
 	}
-	if len(req.Events) == 0 || len(req.Events) > api.FlagEventsMaxBatch {
+	if len(req.Events) > api.FlagEventsMaxBatch || len(req.Events)+len(req.Exposures) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid event batch",
-			"a batch carries 1 to 100 events").WithLimit(api.FlagEventsMaxBatch, int64(len(req.Events))))
+			"a batch carries 1 to 100 events, or exposures only").WithLimit(api.FlagEventsMaxBatch, int64(len(req.Events))))
+		return
+	}
+	if len(req.Exposures) > api.FlagExposuresPerRequest {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid exposure batch",
+			"a batch carries at most 100 exposures").WithLimit(api.FlagExposuresPerRequest, int64(len(req.Exposures))))
 		return
 	}
 	acct, err := s.store.AccountByID(r.Context(), scope.AccountID)
@@ -63,11 +68,43 @@ func (s *server) runtimeFeatureFlagEvents(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
 		return
 	}
+	exposures, err := s.ingestFlagExposures(r, scope, analytics, req.Exposures, now)
+	if err != nil {
+		s.log.Error("flag exposures ingest", "err", err, "environment", scope.EnvironmentID)
+		api.WriteProblem(w, api.ErrInternal("flag events unavailable"))
+		return
+	}
 	writeJSON(w, http.StatusOK, api.FlagEventsResponse{
-		Accepted: res.Accepted,
-		Dropped:  api.FlagEventsDropped{Quota: res.DroppedQuota, UnknownCustomer: res.DroppedUnknownCustomer, NameLimit: res.DroppedNameLimit, Invalid: invalid},
-		Month:    api.FlagEventsMonth{Limit: quota, Accepted: res.MonthAccepted, Dropped: res.MonthDropped},
+		Accepted: res.Accepted, Exposures: exposures,
+		Dropped: api.FlagEventsDropped{Quota: res.DroppedQuota, UnknownCustomer: res.DroppedUnknownCustomer, NameLimit: res.DroppedNameLimit, Invalid: invalid},
+		Month:   api.FlagEventsMonth{Limit: quota, Accepted: res.MonthAccepted, Dropped: res.MonthDropped},
 	})
+}
+
+// ingestFlagExposures records subject experiment exposures (ADR
+// 20261119173702 §1) when product analytics is on: only it holds the
+// subject events their conversions come from. Invalid exposures, those of
+// unknown customers and those on no running subject experiment are left
+// out of the count.
+func (s *server) ingestFlagExposures(r *http.Request, scope state.FeatureFlagScope, analytics bool, in []api.FlagExposure, now time.Time) (int, error) {
+	store, ok := s.store.(state.FlagExperimentExtrasStore)
+	if !ok || !analytics || len(in) == 0 {
+		return 0, nil
+	}
+	out := make([]state.FlagExperimentExposure, 0, len(in))
+	for _, e := range in {
+		at := e.At
+		if at.IsZero() {
+			at = now
+		}
+		if !flags.ValidKey(e.Flag) || e.RuleID == "" || len(e.RuleID) > 64 || e.Variant == "" || len(e.Variant) > 128 ||
+			!flags.ValidSubjectID(e.Subject) || at.Before(now.Add(-api.FlagEventMaxAge)) || at.After(now.Add(api.FlagEventMaxSkew)) {
+			continue
+		}
+		out = append(out, state.FlagExperimentExposure{Flag: e.Flag, RuleID: e.RuleID, Variant: e.Variant, CustomerID: e.CustomerID,
+			SubjectHash: state.AnalyticsSubjectHash(scope.EnvironmentID, e.Subject), At: at.UTC()})
+	}
+	return store.RecordFlagExperimentExposures(r.Context(), scope.AccountID, scope.EnvironmentID, out)
 }
 
 // validAnalyticsFields checks an event's product analytics fields

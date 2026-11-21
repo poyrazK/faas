@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const buildSourceReferenced = `-- name: BuildSourceReferenced :one
+SELECT EXISTS (
+    SELECT 1 FROM builds WHERE id = $1::uuid AND status IN ('queued', 'running')
+)::boolean AS referenced
+`
+
+// A build's source archive is live while the build is queued or running.
+func (q *Queries) BuildSourceReferenced(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, buildSourceReferenced, id)
+	var referenced bool
+	err := row.Scan(&referenced)
+	return referenced, err
+}
+
 const decideStorageObjectDeletion = `-- name: DecideStorageObjectDeletion :execrows
 UPDATE storage_object_deletions SET state = $1::text, decided_at = clock_timestamp(),
     last_error = $2::text
@@ -86,6 +100,30 @@ func (q *Queries) DueStorageObjectDeletions(ctx context.Context, db DBTX, arg Du
 		return nil, err
 	}
 	return items, nil
+}
+
+const jobArtifactReferenced = `-- name: JobArtifactReferenced :one
+SELECT EXISTS (
+    SELECT 1 FROM jobs j
+     WHERE j.id = $1::uuid AND j.status <> 'deleted'
+       AND (j.image_materialization_status NOT IN ('ready', 'failed')
+            OR j.image_storage_key = $2::text)
+)::boolean AS referenced
+`
+
+type JobArtifactReferencedParams struct {
+	JobID      pgtype.UUID
+	StorageKey string
+}
+
+// ADR-20261117190000: a jobs/ key is live while its job is not deleted and
+// either still materializing (a worker may be writing an unpublished
+// attempt) or publishes exactly this key.
+func (q *Queries) JobArtifactReferenced(ctx context.Context, db DBTX, arg JobArtifactReferencedParams) (bool, error) {
+	row := db.QueryRow(ctx, jobArtifactReferenced, arg.JobID, arg.StorageKey)
+	var referenced bool
+	err := row.Scan(&referenced)
+	return referenced, err
 }
 
 const requestStorageObjectDeletion = `-- name: RequestStorageObjectDeletion :exec

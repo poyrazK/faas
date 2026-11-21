@@ -147,6 +147,41 @@ func TestCustomRoleBatchesRunWindmillStyleRoles(t *testing.T) {
 	if _, err := connect(later).Exec(ctx, "SET ROLE "+admin); err != nil {
 		t.Fatalf("later login cannot SET ROLE: %v", err)
 	}
+	// Amendment 2: read_write logins start as the default role.
+	startsAs := func(m managedpostgres.CredentialMaterial) string {
+		t.Helper()
+		var role string
+		if err := connect(m).QueryRow(ctx, "SELECT current_user::text").Scan(&role); err != nil {
+			t.Fatal(err)
+		}
+		return role
+	}
+	desired[1].DefaultFor = []managedpostgres.CredentialAccess{managedpostgres.CredentialReadWrite}
+	if err := p.ApplyCustomRoles(ctx, resourceID, desired); err != nil {
+		t.Fatalf("apply default: %v", err)
+	}
+	if got := startsAs(rwMaterial); got != admin {
+		t.Fatalf("read_write login starts as %q, want %q", got, admin)
+	}
+	if got := startsAs(migMaterial); got != schemaOwner {
+		t.Fatalf("migration login starts as %q, want the schema owner", got)
+	}
+	defaulted, err := p.IssueCredentials(ctx, managedpostgres.CredentialRequest{ProviderResourceID: resourceID, IdentityKey: "rw-default",
+		Access: managedpostgres.CredentialReadWrite, CustomRoles: managedpostgres.NewCustomRoleGrants(user, admin), CustomRoleDefault: admin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles = append(roles, defaulted.Username)
+	if got := startsAs(defaulted); got != admin {
+		t.Fatalf("login issued with a default starts as %q", got)
+	}
+	desired[1].DefaultFor = nil
+	if err := p.ApplyCustomRoles(ctx, resourceID, desired); err != nil {
+		t.Fatalf("apply without default: %v", err)
+	}
+	if got := startsAs(defaulted); got != defaulted.Username {
+		t.Fatalf("after removing the default the login starts as %q", got)
+	}
 	// Data API logins are refused while a BYPASSRLS role exists, before the
 	// login is created.
 	p.cfg.DataAPI = true

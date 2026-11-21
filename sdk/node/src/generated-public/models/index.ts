@@ -565,6 +565,8 @@ export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
+export type { ManagedPostgresQueryRequest } from './ManagedPostgresQueryRequest.js';
+export type { ManagedPostgresQueryResponse } from './ManagedPostgresQueryResponse.js';
 export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
 export type { ManagedPostgresRestoreRange } from './ManagedPostgresRestoreRange.js';
 export type { ManagedPostgresUsageResponse } from './ManagedPostgresUsageResponse.js';

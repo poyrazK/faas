@@ -459,6 +459,8 @@ type AgentRun struct {
 	WorkflowRunID          pgtype.UUID
 	WorkflowStep           pgtype.Text
 	WorkflowEvent          pgtype.Text
+	// ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.
+	DeadlineCreditMaxSec int32
 }
 
 type AgentRunAiReservation struct {
@@ -478,6 +480,30 @@ type AgentRunAiSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.
+type AgentRunApproval struct {
+	ID               pgtype.UUID
+	RunID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	// ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.
+	ReleasedAt pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 2: the seller's decision on an agent run approval, written once by apid; outboundd reads it.
+type AgentRunApprovalDecision struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	Decision   string
+	Note       string
+	DecidedBy  string
+	DecidedAt  pgtype.Timestamptz
+}
+
 // ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.
 type AgentRunCallback struct {
 	RunID          pgtype.UUID
@@ -489,6 +515,26 @@ type AgentRunCallback struct {
 	IssuedAt       pgtype.Timestamptz
 	DeliveredAt    pgtype.Timestamptz
 	CreatedAt      pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 1: capability calls outboundd refused, by policy (denied), exhausted budget (budget) or a tool switched off (disabled).
+type AgentRunCapabilityDecision struct {
+	ID        pgtype.UUID
+	RunID     pgtype.UUID
+	AccountID pgtype.UUID
+	Tool      string
+	Decision  string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 1: per-run capability counts written by outboundd. tool_calls are the calls admitted against the run's tool-call budget.
+type AgentRunCapabilitySummary struct {
+	RunID        pgtype.UUID
+	AccountID    pgtype.UUID
+	ToolCalls    int32
+	RefusedCalls int32
+	FirstCallAt  pgtype.Timestamptz
+	LastCallAt   pgtype.Timestamptz
 }
 
 // ADR-20261027090010 agent run outputs written by agentd: inline result.json, the output file manifest and the log tail.
@@ -566,6 +612,8 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	// ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.
+	CapabilityPolicy []byte
 }
 
 type AlertChannelResolveRetry struct {
@@ -707,6 +755,26 @@ type AlertTestSend struct {
 	Result       []byte
 	CreatedAt    pgtype.Timestamptz
 	CompletedAt  pgtype.Timestamptz
+}
+
+type AnalyticsCohort struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	EnvironmentID      pgtype.UUID
+	Key                string
+	Definition         []byte
+	Members            int32
+	Truncated          bool
+	RefreshedAt        pgtype.Timestamptz
+	RefreshRequestedAt pgtype.Timestamptz
+	RefreshError       string
+	CreatedBy          string
+	CreatedAt          pgtype.Timestamptz
+}
+
+type AnalyticsCohortMember struct {
+	CohortID   pgtype.UUID
+	CustomerID pgtype.UUID
 }
 
 type AnalyticsEvent struct {
@@ -6767,6 +6835,19 @@ type FlagExperiment struct {
 	StopReason         string
 	Breach             []byte
 	ValueThroughDay    pgtype.Date
+	MetricDefinition   []byte
+	Cuped              bool
+	MinCupedPValues    []byte
+	Unit               string
+	Layer              string
+	Traffic            int32
+	LayerFrom          int32
+	LayerTo            int32
+	Allocation         string
+	Bandit             []byte
+	BanditWeightedAt   pgtype.Timestamptz
+	DenominatorEvent   string
+	Percentile         int32
 }
 
 type FlagExperimentLatency struct {
@@ -6788,6 +6869,10 @@ type FlagExperimentUnit struct {
 	LatencyRequests int64
 	SlowRequests    int64
 	ValueSum        int64
+	PreValue        pgtype.Float8
+	UnitCustomerID  pgtype.UUID
+	SubjectHash     []byte
+	DenSum          int64
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -7045,6 +7130,15 @@ type HostedTaskRehearsalPlan struct {
 	ID        string
 	Payload   []byte
 	ExpiresAt pgtype.Timestamptz
+}
+
+type HostedTaskRehearsalRun struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
 }
 
 type HostedTaskSourceIntent struct {
@@ -8933,6 +9027,7 @@ type ManagedPostgresCustomRole struct {
 	RetryAt      pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	DefaultFor   []string
 }
 
 type ManagedPostgresCutover struct {
@@ -10018,6 +10113,14 @@ type ManagedRealtimeWorkerHeartbeat struct {
 	StatusCode   string
 	LastSeenAt   pgtype.Timestamptz
 	Lost         bool
+}
+
+type ManagedValkeyCach struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	MemoryMb       int32
+	EvictionPolicy string
+	CreatedAt      pgtype.Timestamptz
 }
 
 type McpBridgeLease struct {
@@ -14730,6 +14833,20 @@ type ReferralAttribution struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	AttributionSource   string
+	SubjectKind         string
+	SelectedBy          pgtype.UUID
+}
+
+type ReferralCreditChange struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	ChangedBy         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ReferralLink struct {
@@ -15802,6 +15919,32 @@ type SalesActivity struct {
 	TaskID        pgtype.UUID
 }
 
+type SalesCommissionAgreement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	EffectiveFrom pgtype.Timestamptz
+	Note          string
+	CreatedBy     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type SalesCommissionPayout struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OwnerID     pgtype.UUID
+	AmountCents int64
+	Currency    string
+	PaidOn      pgtype.Date
+	Reference   string
+	Note        string
+	RecordedBy  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	VoidedAt    pgtype.Timestamptz
+	VoidedBy    pgtype.UUID
+	VoidReason  string
+}
+
 type SalesInquiry struct {
 	ID             pgtype.UUID
 	Name           string
@@ -15906,6 +16049,12 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         interface{}
 	ReferredRewardCents int64
+	SubjectKind         string
+	OrgName             string
+	CommissionBps       int32
+	PayoutID            pgtype.UUID
+	PayoutCents         int64
+	PayoutPaidOn        pgtype.Date
 }
 
 type SalesTask struct {
@@ -15919,6 +16068,16 @@ type SalesTask struct {
 	UpdatedBy   pgtype.UUID
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type SalesTeamMember struct {
+	AccountID pgtype.UUID
+	Role      string
+	Active    bool
+	UpdatedBy pgtype.UUID
+	Version   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 // ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.
@@ -16000,9 +16159,10 @@ type SandboxSession struct {
 	TaskMaxChars pgtype.Int4
 	TaskExitCode pgtype.Int4
 	// ADR-20261116182615: the task command's standard output, capped at SandboxTaskOutputMaxBytes.
-	TaskOutput  []byte
-	EgressAllow []string
-	EgressDeny  []string
+	TaskOutput   []byte
+	EgressAllow  []string
+	EgressDeny   []string
+	PlacedNodeID pgtype.Text
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.
@@ -16576,6 +16736,17 @@ type StatusObservationBucket struct {
 	BucketAt     pgtype.Timestamptz
 	Status       string
 	HasTelemetry bool
+}
+
+type StorageGrantAudit struct {
+	ID           int64
+	NodeID       pgtype.UUID
+	SubjectClass string
+	SubjectID    pgtype.UUID
+	AppID        pgtype.UUID
+	Access       string
+	Objects      int32
+	GrantedAt    pgtype.Timestamptz
 }
 
 type StorageObjectDeletion struct {

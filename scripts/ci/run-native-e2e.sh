@@ -489,6 +489,8 @@ if [[ -n "${phase}" ]]; then
     exclusive-operations-only) phase_timeout=20m ;;
     # A source build plus one managed workflow guest recovery round trip.
     managed-operation-only) phase_timeout=35m ;;
+    # Three cache deployments (create, resize) plus park and restart.
+    managed-redis-only) phase_timeout=45m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
     # Eight native source builds plus real minute-spaced verification rounds.

@@ -20,7 +20,7 @@ import (
 // Conversion events for experiments (ADR 20261115163113).
 
 // flagSDKCapabilities is what this SDK advertises to the runtime endpoints.
-const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2"
+const flagSDKCapabilities = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1"
 
 const (
 	flagEventBatch         = 100
@@ -64,6 +64,10 @@ type flagEventQueue struct {
 	events  []flagEvent
 	dropped int64
 	sendMu  sync.Mutex
+	// exposures are subject experiment exposures, exposed the times they
+	// were last queued (ADR 20261119173702 §1).
+	exposures []flagExposure
+	exposed   map[string]time.Time
 }
 
 func (q *flagEventQueue) drop(n int) {
@@ -177,11 +181,14 @@ func (f *GregaleFlags) Flush(ctx context.Context) error {
 		n := min(len(q.events), flagEventBatch)
 		batch := append([]flagEvent(nil), q.events[:n]...)
 		q.events = q.events[n:]
+		m := min(len(q.exposures), flagExposureBatch)
+		exposures := append([]flagExposure(nil), q.exposures[:m]...)
+		q.exposures = q.exposures[m:]
 		q.mu.Unlock()
-		if len(batch) == 0 {
+		if len(batch) == 0 && len(exposures) == 0 {
 			return firstErr
 		}
-		accepted, err := f.sendEvents(ctx, batch)
+		accepted, err := f.sendEvents(ctx, batch, exposures)
 		if err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -191,14 +198,21 @@ func (f *GregaleFlags) Flush(ctx context.Context) error {
 	}
 }
 
-func (f *GregaleFlags) sendEvents(parent context.Context, batch []flagEvent) (int, error) {
+func (f *GregaleFlags) sendEvents(parent context.Context, batch []flagEvent, exposures []flagExposure) (int, error) {
 	ctx, cancel := context.WithTimeout(parent, f.timeout)
 	defer cancel()
 	token, err := f.identityToken(ctx)
 	if err != nil {
 		return 0, err
 	}
-	body, err := json.Marshal(map[string]any{"events": batch})
+	payload := map[string]any{"events": batch}
+	if len(exposures) > 0 {
+		payload["exposures"] = exposures
+	}
+	if batch == nil {
+		payload["events"] = []flagEvent{}
+	}
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("faas: encode Flags events: %w", err)
 	}

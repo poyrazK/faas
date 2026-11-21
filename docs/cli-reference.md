@@ -125,7 +125,7 @@ gregale init --agents --name my-api
 
 Deploy an app, function, or project
 
-`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
+`gregale deploy [<subcommand>] [--atomic] [--add-services] [--verify] [--workers] [--stabilize] [--progressive] [--worker-health] [--migrate] [--release-secrets-file <PATH>] [--release-secrets-request-id <ID>] [--config-file <PATH>] [--image <REF>] [--tarball <PATH>] [--path <DIR>] [--source <auto|head|worktree>] [--worktree] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--ref <REF>] [--source-branch <BRANCH>] [--github] [--pinned-sha <SHA>] [--pin-action] [--template <NAME>] [--dockerfile] [--issue-source-maps <PATH>] [--issue-source-map-directory <PATH>] [--runtime <RUNTIME>] [--handler <HANDLER>] [--name <SLUG>] [--size <SIZE>] [--profile <SIZE>] [--vcpu <N>] [--execution-mode <MODE>] [--restart-policy <POLICY>] [--startup-deadline-s <SECONDS>] [--max-retries <N>] [--function] [--app] [--only <SLUGS>] [--project] [--env <SLUG>] [--reason <text>] [--tag <TAG>] [--deployed-by <NAME>] [--pr-number <N>] [--exclude <SLUGS>] [--show-affected] [--persist-exclude] [--project-slug <SLUG>] [--prefix <PREFIX>] [--rollout <MODE>] [--override-freeze <REASON>] [--at <WHEN>] [--release-notify <CHANNEL,...>] [--canary-preset <PRESET>] [--canary-stages <STAGES>] [--safe] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--app-protocol <PROTOCOL>] [--traffic-percent <PERCENT>] [--no-traffic] [--rollback-on-5xx] [--queue-canary-binding <NAME>]... [--healthcheck-path <PATH>] [--readiness-path <PATH>] [--healthcheck-grpc] [--healthcheck-grpc-service <SERVICE>] [--disable-startup-cpu-boost] [--mcp-task-migration-override] [--no-triggers] [--wait] [--no-wait] [--create-only] [--timeout <DURATION>] [--idempotency-key <KEY>] [--resume-upload-id <ID>] [--secrets-file <PATH>] [--secret-scan <on|off>] [--diff] [--preview] [--plan] [--dry-run] [--explain-files] [--yes] [--strict] [--lenient] [--server-diff] [--doctor-strict] [--no-doctor]`
 
 Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.
 
@@ -214,6 +214,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--create-only` | create or reserve the app without uploading a deployment |  |
 | `--timeout <DURATION>` | readiness wait limit; seconds or duration, e.g. 10m (default: 1200s; maximum: 24h) |  |
 | `--idempotency-key <KEY>` | stable logical retry key for this deployment |  |
+| `--resume-upload-id <ID>` | require this existing resumable upload on retry |  |
 | `--secrets-file <PATH>` | seal KEY=VALUE pairs before the first deployment |  |
 | `--secret-scan <on|off>` | scan .env files before packing (default: on) | one of `on` · `off` |
 | `--diff` | alias of --dry-run |  |
@@ -1970,7 +1971,7 @@ Inspect and recover repository projects
 
 ### project preview
 
-secret
+Set or remove a pull request preview value on every service
 
 #### project preview secret
 
@@ -2511,7 +2512,7 @@ gregale app binding call public-api billing --caller-deployment v12 --target-dep
 
 #### app binding probe-policy
 
-set
+Configure or remove an outbound integration probe
 
 `gregale app binding probe-policy <set>`
 
@@ -3707,7 +3708,7 @@ Manage custom domains
 
 ### domain default
 
-set
+Set a verified domain as the app default
 
 #### domain default set
 
@@ -6331,7 +6332,7 @@ Register webhooks and deliver events to them
 
 ### webhook secret
 
-rotate
+Rotate the webhook signing secret
 
 #### webhook secret rotate
 
@@ -6351,7 +6352,7 @@ Manage one release receiver across all account apps
 
 #### webhook account secret
 
-rotate
+Replace the signing secret
 
 `gregale webhook account secret <rotate>`
 
@@ -6729,7 +6730,7 @@ Manage alert rules, channels, incidents, SLOs and checks
 
 ### alert secret
 
-rotate
+Rotate the alert&#39;s webhook secret
 
 #### alert secret rotate
 
@@ -7192,7 +7193,7 @@ Manage orgs, members and invitations
 
 ### org agent
 
-policy
+Show or set whether agents may act in the org
 
 #### org agent policy
 
@@ -7390,7 +7391,7 @@ Remove a member
 
 ### org owner
 
-set
+Transfer org ownership
 
 #### org owner set
 
@@ -7585,10 +7586,11 @@ List API keys
 
 Mint a new API key
 
-`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
+`gregale key create [--agent] [--scopes <SCOPE,...>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--agent` | a key for a coding agent: adds the agent scope so risky requests ask a person and always-on cost is held to an agent budget (default scopes agent,apps:read,deploy:write) |  |
 | `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
 | `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 | `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
@@ -7596,6 +7598,7 @@ Mint a new API key
 Examples:
 
 ```sh
+gregale key create coding-agent --agent
 gregale key create agent-runner --scopes runs:write
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
 gregale key create sandbox-agent --scopes agent,deploy:write --approvals none

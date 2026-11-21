@@ -34,7 +34,24 @@ type HostedTaskRehearsalChange struct {
 
 type HostedTaskRehearsalResult struct {
 	Plan          api.HostedTaskRehearsalPlan
-	ClaimAcquired bool // private, returned only once, never serialized by the API
+	ClaimAcquired bool                    // private, returned only once, never serialized by the API
+	Run           *HostedTaskRehearsalRun // private reservation; a replay can read it
+	ReadyToClaim  bool                    // private; the supplied owner holds this unconsumed approval
+}
+
+// HostedTaskRehearsalRun is a reserved identity for the exact approved plan.
+type HostedTaskRehearsalRun struct {
+	ID                string
+	PlanSHA256        string
+	ReservedAt        time.Time
+	ApprovalExpiresAt time.Time
+}
+
+func rehearsalRunForClaim(plan api.HostedTaskRehearsalPlan) HostedTaskRehearsalRun {
+	return HostedTaskRehearsalRun{
+		ID: plan.TargetID, PlanSHA256: plan.PlanSHA256,
+		ReservedAt: plan.ClaimedAt.UTC(), ApprovalExpiresAt: plan.ExpiresAt.UTC(),
+	}
 }
 
 type hostedTaskRehearsalRecord = tasktoolrehearsal.Record
@@ -132,6 +149,26 @@ func (m *MemStore) ChangeHostedTaskRehearsal(ctx context.Context, account, id st
 	if m.hostedTaskRehearsals == nil {
 		m.hostedTaskRehearsals = make(map[string]hostedTaskRehearsalRecord)
 	}
+	var run *HostedTaskRehearsalRun
+	if action == ClaimHostedTaskRehearsal && record.Plan.Status == tasktoolrehearsal.Claimed {
+		reservation, exists := m.hostedTaskRehearsalRuns[key]
+		expected := rehearsalRunForClaim(record.Plan)
+		if acquired {
+			if exists || !time.Now().Before(record.Plan.ExpiresAt) {
+				return zero, ErrConflict
+			}
+			if m.hostedTaskRehearsalRuns == nil {
+				m.hostedTaskRehearsalRuns = make(map[string]HostedTaskRehearsalRun)
+			}
+			m.hostedTaskRehearsalRuns[key] = expected
+			run = &expected
+		} else if exists {
+			if reservation != expected {
+				return zero, ErrConflict
+			}
+			run = &reservation
+		}
+	}
 	m.hostedTaskRehearsals[key] = record
 	plan := record.Plan
 	if plan.ApprovedAt != nil {
@@ -142,5 +179,8 @@ func (m *MemStore) ChangeHostedTaskRehearsal(ctx context.Context, account, id st
 		stamp := *plan.ClaimedAt
 		plan.ClaimedAt = &stamp
 	}
-	return HostedTaskRehearsalResult{Plan: plan, ClaimAcquired: acquired}, nil
+	return HostedTaskRehearsalResult{
+		Plan: plan, ClaimAcquired: acquired, Run: run,
+		ReadyToClaim: plan.Status == tasktoolrehearsal.Approved && record.ApprovalKeyID == in.OwnerKeyID,
+	}, nil
 }

@@ -2176,6 +2176,7 @@ from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
+from .feature_flag_kill_response import FeatureFlagKillResponse
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
 from .feature_hint import FeatureHint
@@ -2263,10 +2264,19 @@ from .flag_events_response_month import FlagEventsResponseMonth
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_experiment import FlagExperiment
+from .flag_experiment_allocation import FlagExperimentAllocation
 from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_bandit import FlagExperimentBandit
+from .flag_experiment_bandit_arm import FlagExperimentBanditArm
 from .flag_experiment_breach import FlagExperimentBreach
+from .flag_experiment_comparison import FlagExperimentComparison
 from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_create_request_allocation import FlagExperimentCreateRequestAllocation
 from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_create_request_unit import FlagExperimentCreateRequestUnit
+from .flag_experiment_cuped import FlagExperimentCuped
+from .flag_experiment_cuped_reason import FlagExperimentCupedReason
+from .flag_experiment_funnel import FlagExperimentFunnel
 from .flag_experiment_guardrail import FlagExperimentGuardrail
 from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
 from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
@@ -2276,19 +2286,32 @@ from .flag_experiment_guardrail_status import FlagExperimentGuardrailStatus
 from .flag_experiment_guardrail_variant import FlagExperimentGuardrailVariant
 from .flag_experiment_guardrail_variant_status import FlagExperimentGuardrailVariantStatus
 from .flag_experiment_guardrails_request import FlagExperimentGuardrailsRequest
+from .flag_experiment_holdout import FlagExperimentHoldout
+from .flag_experiment_holdout_report import FlagExperimentHoldoutReport
 from .flag_experiment_latency import FlagExperimentLatency
+from .flag_experiment_layer import FlagExperimentLayer
+from .flag_experiment_layer_list import FlagExperimentLayerList
+from .flag_experiment_layer_request import FlagExperimentLayerRequest
+from .flag_experiment_layer_slice import FlagExperimentLayerSlice
 from .flag_experiment_list import FlagExperimentList
 from .flag_experiment_metric_kind import FlagExperimentMetricKind
 from .flag_experiment_recommendation import FlagExperimentRecommendation
 from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
 from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_retention import FlagExperimentRetention
+from .flag_experiment_retention_period import FlagExperimentRetentionPeriod
+from .flag_experiment_segment import FlagExperimentSegment
 from .flag_experiment_ship_request import FlagExperimentShipRequest
 from .flag_experiment_ship_response import FlagExperimentShipResponse
 from .flag_experiment_status import FlagExperimentStatus
 from .flag_experiment_stop_reason import FlagExperimentStopReason
+from .flag_experiment_unit import FlagExperimentUnit
 from .flag_experiment_variant_result import FlagExperimentVariantResult
 from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
 from .flag_experiment_weights import FlagExperimentWeights
+from .flag_exposure import FlagExposure
+from .flag_holdout import FlagHoldout
+from .flag_layer import FlagLayer
 from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
@@ -2297,11 +2320,14 @@ from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
 from .flag_request_evidence import FlagRequestEvidence
+from .flag_rollout_metric import FlagRolloutMetric
 from .flag_rollout_promotion import FlagRolloutPromotion
 from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
 from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
 from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
+from .flag_rule_experiment import FlagRuleExperiment
+from .flag_rule_experiment_unit import FlagRuleExperimentUnit
 from .flag_rule_rollout_unit import FlagRuleRolloutUnit
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
@@ -2476,6 +2502,11 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .insight_cohort import InsightCohort
+from .insight_cohort_list import InsightCohortList
+from .insight_cohort_request import InsightCohortRequest
+from .insight_cohort_request_kind import InsightCohortRequestKind
+from .insight_cohort_request_where import InsightCohortRequestWhere
 from .insight_event_point import InsightEventPoint
 from .insight_event_series import InsightEventSeries
 from .insight_event_series_interval import InsightEventSeriesInterval
@@ -2904,6 +2935,9 @@ from .managed_postgres_health_provider_status import ManagedPostgresHealthProvid
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_overage import ManagedPostgresOverage
 from .managed_postgres_overage_request import ManagedPostgresOverageRequest
+from .managed_postgres_query_request import ManagedPostgresQueryRequest
+from .managed_postgres_query_response import ManagedPostgresQueryResponse
+from .managed_postgres_query_response_columns_item import ManagedPostgresQueryResponseColumnsItem
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -9196,6 +9230,7 @@ __all__ = (
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
     "FeatureFlag",
+    "FeatureFlagKillResponse",
     "FeatureFlagType",
     "FeatureFlagVersion",
     "FeatureHint",
@@ -9283,10 +9318,19 @@ __all__ = (
     "FlagEvidence",
     "FlagEvidencePage",
     "FlagExperiment",
+    "FlagExperimentAllocation",
     "FlagExperimentArm",
+    "FlagExperimentBandit",
+    "FlagExperimentBanditArm",
     "FlagExperimentBreach",
+    "FlagExperimentComparison",
     "FlagExperimentCreateRequest",
+    "FlagExperimentCreateRequestAllocation",
     "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentCreateRequestUnit",
+    "FlagExperimentCuped",
+    "FlagExperimentCupedReason",
+    "FlagExperimentFunnel",
     "FlagExperimentGuardrail",
     "FlagExperimentGuardrailName",
     "FlagExperimentGuardrailRequest",
@@ -9296,19 +9340,32 @@ __all__ = (
     "FlagExperimentGuardrailStatus",
     "FlagExperimentGuardrailVariant",
     "FlagExperimentGuardrailVariantStatus",
+    "FlagExperimentHoldout",
+    "FlagExperimentHoldoutReport",
     "FlagExperimentLatency",
+    "FlagExperimentLayer",
+    "FlagExperimentLayerList",
+    "FlagExperimentLayerRequest",
+    "FlagExperimentLayerSlice",
     "FlagExperimentList",
     "FlagExperimentMetricKind",
     "FlagExperimentRecommendation",
     "FlagExperimentRecommendationAction",
     "FlagExperimentResults",
+    "FlagExperimentRetention",
+    "FlagExperimentRetentionPeriod",
+    "FlagExperimentSegment",
     "FlagExperimentShipRequest",
     "FlagExperimentShipResponse",
     "FlagExperimentStatus",
     "FlagExperimentStopReason",
+    "FlagExperimentUnit",
     "FlagExperimentVariantResult",
     "FlagExperimentVariantResultStatus",
     "FlagExperimentWeights",
+    "FlagExposure",
+    "FlagHoldout",
+    "FlagLayer",
     "FlagLifecycle",
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
@@ -9317,11 +9374,14 @@ __all__ = (
     "FlagOutcomesResponse",
     "FlagOutcomeType",
     "FlagRequestEvidence",
+    "FlagRolloutMetric",
     "FlagRolloutPromotion",
     "FlagRolloutPromotionReason",
     "FlagRolloutPromotionRequest",
     "FlagRolloutPromotionStatus",
     "FlagRule",
+    "FlagRuleExperiment",
+    "FlagRuleExperimentUnit",
     "FlagRuleRolloutUnit",
     "FlagsBundle",
     "FlagsConfig",
@@ -9492,6 +9552,11 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InsightCohort",
+    "InsightCohortList",
+    "InsightCohortRequest",
+    "InsightCohortRequestKind",
+    "InsightCohortRequestWhere",
     "InsightEventPoint",
     "InsightEventSeries",
     "InsightEventSeriesInterval",
@@ -9880,6 +9945,9 @@ __all__ = (
     "ManagedPostgresHealthStatus",
     "ManagedPostgresOverage",
     "ManagedPostgresOverageRequest",
+    "ManagedPostgresQueryRequest",
+    "ManagedPostgresQueryResponse",
+    "ManagedPostgresQueryResponseColumnsItem",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",

@@ -39,6 +39,7 @@ func runtimeBuildTargetKey(labels map[string]string) (string, bool) {
 }
 
 func readRuntimeBuildIdentityJob(ctx context.Context, client *promql.Client, spec runtimeBuildJobSpec, nodes []state.ComputeNode, inventoryOK bool, selected RuntimeBuildSelection, now time.Time) runtimeBuildJobResult {
+	ctx = runtimeQueryContext(ctx, "identity")
 	job := api.ObsRuntimeBuildJob{Job: spec.job, Daemon: spec.daemon, InventorySource: "scrape_targets_minimum", Expected: 1, State: "available"}
 	if spec.discovery {
 		job.InventorySource, job.Expected = "active_configured_compute_registry", len(nodes)

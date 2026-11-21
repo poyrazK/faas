@@ -28,9 +28,11 @@
 
 # Resolve the provider's private transport address once for every host before
 # either role-specific play starts. The overlay role then uses these facts to
-# render the same private endpoint map on every box. Providers with a public
-# default route can set `faas_private_address` in generated inventory; the
-# manifest and daemon configuration remain hostname-only.
+# render the same private endpoint map on every box. On a host whose default
+# route is public, the manifest names the private card (overlay.interface) or
+# the provider inventory sets `faas_private_address`
+# (tasks/resolve_private_address.yml); the manifest and daemon configuration
+# remain hostname-only.
 - name: Discover provider-neutral private transport addresses
   hosts: control_plane:compute_nodes
   gather_facts: false
@@ -47,19 +49,11 @@
     - name: Gather facts for hosts requiring bootstrap convergence
       ansible.builtin.setup:
   tasks:
-    - name: Require a usable private transport address
-      ansible.builtin.assert:
-        that:
-          - (faas_private_address | default(ansible_facts.default_ipv4.address, true) | default('')) | length > 0
-        fail_msg: >-
-          No private transport address was discovered for {{ inventory_hostname }}.
-          Set faas_private_address in the provider inventory or ensure the
-          host has a default IPv4 address.
-      tags: [private-endpoints]
-
     - name: Publish private transport address to later plays
-      ansible.builtin.set_fact:
-        faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
+      ansible.builtin.include_tasks:
+        file: tasks/resolve_private_address.yml
+        apply:
+          tags: [private-endpoints]
       tags: [private-endpoints]
 
 # ADR-20261109120000: every host's Tang key server comes up before any host's
@@ -214,6 +208,11 @@
     # before control_plane_service so apid's first start finds them.
     - role: geoip
       when: faas_cp_converge_roles | default(none) is none or 'geoip' in faas_cp_converge_roles
+    # apid's managed PostgreSQL provider registry, before control_plane_service
+    # so apid's first start finds it. A no-op while
+    # faas_managed_postgres_config is empty.
+    - role: managed_postgres_config
+      when: faas_cp_converge_roles | default(none) is none or 'managed_postgres_config' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: seal_domains

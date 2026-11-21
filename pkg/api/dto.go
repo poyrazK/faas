@@ -6746,6 +6746,12 @@ type DeadLetterEvent struct {
 	LastFailedAt  time.Time       `json:"last_failed_at"`
 	ReplayedAt    *time.Time      `json:"replayed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// ReplayCount and LastReplayedAt report earlier replays of an invocation
+	// entry. A replay that fails again reopens the same entry (replayed_at
+	// clears so it can be replayed again); these keep the history visible.
+	// Set by the single-entry read only.
+	ReplayCount    int64      `json:"replay_count,omitempty"`
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type DeadLetterEventsResponse struct {
@@ -7228,9 +7234,10 @@ type AppRoutesResponse struct {
 	Source             string     `json:"source"`
 	CollectorsExpected int        `json:"collectors_expected"`
 	CollectorsHealthy  int        `json:"collectors_healthy"`
-	// CapHit is true when a collector emitted __route_other__ or the fleet
-	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
-	// unavailable, where cap state is unknown.
+	// CapHit is true when the fleet union reaches RouteMetricsPerAppCap. A
+	// __route_other__ series alone does not set it: that bucket also counts
+	// requests that ended without a route label. It is encoded false when
+	// Source is unavailable, where cap state is unknown.
 	CapHit bool `json:"cap_hit"`
 }
 

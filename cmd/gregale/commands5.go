@@ -461,7 +461,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -487,7 +487,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -526,10 +526,7 @@ func envPush(args []string) int {
 	// input path or "<stdin>" so the warning says `File: <stdin>` for
 	// pipe input (matches how envPush surfaces other parse errors).
 	if secretScanMode.isScanEnabled() {
-		origin := *in
-		if *fromStdin {
-			origin = "<stdin>"
-		}
+		origin := envPushOrigin(*in, *fromStdin)
 		scanPairs := make([]secretscan.Pair, len(pairs))
 		for i, p := range pairs {
 			scanPairs[i] = secretscan.Pair{Key: p.k, Value: p.v}
@@ -561,6 +558,7 @@ func envPush(args []string) int {
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
+			PrintWarn(osStderr, "%s", envPushSecretHint(*app, origin))
 			// Build a drop set keyed by (key, value) so a duplicate
 			// KEY with a different VALUE pair is treated distinctly —
 			// the pair table is small (handful of entries per .env
@@ -581,9 +579,25 @@ func envPush(args []string) int {
 		}
 	}
 	if len(pairs) == 0 {
-		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. Use --secret-scan=off to override")
+		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
+	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
+	// keys before it were saved, so the push half-applied and --restart
+	// never ran. Empty values are skipped up front instead.
+	nonEmpty := make([]pair, 0, len(pairs))
+	for _, p := range pairs {
+		if p.v == "" {
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale env unset %s %s`", p.k, *app, p.k)
+			continue
+		}
+		nonEmpty = append(nonEmpty, p)
+	}
+	if len(nonEmpty) == 0 {
+		PrintFail(os.Stderr, "every KEY=VALUE pair has an empty value; nothing was pushed")
+		return 1
+	}
+	pairs = nonEmpty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -639,6 +653,35 @@ func envPush(args []string) int {
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	printSecretUpdateNextSteps(*app, *scope, "", receipt.UpdatedKeys...)
 	return 0
+}
+
+// envPushOrigin names the push input the way scan findings and hints show it.
+func envPushOrigin(path string, fromStdin bool) string {
+	if fromStdin {
+		return "<stdin>"
+	}
+	return path
+}
+
+// envPushSecretHint tells the caller where detected secrets belong. env push
+// drops them; `gregale env set` seals a value deliberately and does not scan
+// it, which is the path the strict-mode rejection already names. Pointing
+// only at --secret-scan=off taught coding agents to turn the scan off for
+// real credentials (agent eval rc.357, Django task).
+func envPushSecretHint(app, origin string) string {
+	appFlag := ""
+	if app != "" {
+		appFlag = " --app " + app
+	}
+	input := " KEY=VALUE"
+	switch {
+	case origin == "<stdin>":
+		input = " --from-stdin"
+	case origin != "":
+		input = " --file " + origin
+	}
+	return "Set detected secrets deliberately with `gregale env set" + appFlag + input +
+		"`; use --secret-scan=off only for test keys the scan misreads"
 }
 
 // renderEnvPushScanWarnings is the envPush-side twin of
@@ -1099,7 +1142,33 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
+		PrintOK(osStdout, "Updated %s to the new name", path)
+	}
 	return 0
+}
+
+// followRenameInSavedContext points the saved context that covers dir at the
+// renamed app. A context still naming the old slug made the next plain
+// `gregale deploy` create a new app under the old name, without the renamed
+// app's database, bucket or crons (prod 2026-11-19). A committed gregale.yaml
+// is the customer's file and is left alone.
+func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.App != oldSlug || newSlug == "" {
+		return "", false
+	}
+	link.App = newSlug
+	root := filepath.Dir(filepath.Dir(path))
+	if projectContextPath(root) != path {
+		return "", false
+	}
+	saved, err := saveProjectContext(root, link)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "warning: renamed %s but could not update %s: %v; run `gregale link --app %s` there\n", oldSlug, path, err, newSlug)
+		return "", false
+	}
+	return saved, true
 }
 
 // cmdAppRestart requests a fresh snapshot restart for an app. The server
@@ -2359,6 +2428,34 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// dotenvValue reads a .env value the way dotenv and Docker Compose do: a
+// value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
+// one in single quotes loses them and stays literal. prod 2026-11-20:
+// API_URL="https://…" reached the app with the quotes, so every quoted URL
+// or token in a pushed .env was wrong. Other values are unchanged.
+func dotenvValue(v string) string {
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return v[1 : len(v)-1]
+	}
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+	}
+	return v
+}
+
+// parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an
+// optional `export ` prefix, then KEY=VALUE with dotenv quoting. Every file and
+// stdin input reads values this way, so a .env pushes, deploys and runs under
+// `gregale dev` alike; KEY=VALUE arguments are left as the shell passed them.
+func parseDotenvLine(line string) (secretsPair, error) {
+	p, err := parseSecretsPair(stripDotenvExport(line))
+	if err != nil {
+		return p, err
+	}
+	p.Value = dotenvValue(p.Value)
+	return p, nil
 }
 
 // stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can

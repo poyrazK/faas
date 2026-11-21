@@ -52,6 +52,14 @@ func TestAPIKeyScopeSchemaParityAndQueueConsumeUpgrade(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// v5 (ADR-20261117232109) adds data:read on top of v4.
+	constraintFailure(insert(ScopeDataRead))
+	upV5, downV5 := read("20261119170402100_api_key_data_read_scope.sql")
+	for range 2 {
+		if _, err := pool.Exec(ctx, upV5); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for scope := range validScopes {
 		if err := insert(scope); err != nil {
 			t.Errorf("API accepts %s but migrated DB rejects it: %v", scope, err)
@@ -61,6 +69,16 @@ func TestAPIKeyScopeSchemaParityAndQueueConsumeUpgrade(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO api_keys(scopes) VALUES('{}')`); err == nil {
 		t.Fatal("empty scope set accepted")
 	}
+	if _, err := pool.Exec(ctx, downV5); err == nil {
+		t.Fatal("rollback allowed active data:read keys")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM api_keys WHERE scopes && ARRAY['data:read']`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, downV5); err != nil {
+		t.Fatal(err)
+	}
+	constraintFailure(insert(ScopeDataRead))
 	if _, err := pool.Exec(ctx, down); err == nil {
 		t.Fatal("rollback allowed active consume keys")
 	}

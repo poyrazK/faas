@@ -233,6 +233,9 @@ func writeObsDeploymentRuntimeBuilds(w io.Writer, builds *obsDeploymentRuntimeBu
 		_, _ = fmt.Fprintf(w, " source_http_status=%d", *builds.SourceHTTPStatus)
 	}
 	_, _ = fmt.Fprintln(w)
+	if builds.Reason == "source_"+obsFetchRuntimeBusyReason {
+		_, _ = fmt.Fprintln(w, "  Check for overlapping verifiers and review capacity in Gregale Runtime Diagnostics.")
+	}
 	writeObsDeploymentDiagnostics(w, builds)
 	writeObsDeploymentBuildHistory(w, builds)
 	writeObsDeploymentLoopHealth(w, builds.LoopHealth)

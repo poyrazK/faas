@@ -78,6 +78,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 	if _, err := os.Stat("/dev/kvm"); err != nil {
 		t.Fatal(err)
 	}
+	startBuilderDNSStub(t)
 	buildTimeoutSeconds := api.BuildTimeoutSeconds
 	if raw := os.Getenv("FAAS_METAL_BUILD_TIMEOUT_SECONDS"); raw != "" {
 		value, err := strconv.Atoi(raw)
@@ -107,7 +108,7 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			if tc.goFunction && os.Getenv("FAAS_METAL_GO_ACCEPTANCE") != "1" {
 				t.Skip("set FAAS_METAL_GO_ACCEPTANCE=1 for the full cold Go toolchain gate")
 			}
-			m := fcvm.NewAcceptanceManager(t)
+			m := newBuilderAcceptanceManager(t)
 			tmp := t.TempDir()
 			sock := filepath.Join(tmp, "v.sock")
 			listener, err := net.Listen("unix", sock)
@@ -183,12 +184,17 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 				}
 				t.Logf("cancel plus export/cleanup: %s", time.Since(start))
 			} else {
+				steps := followLiveSteps(ctx, driver, handle)
 				result, err := driver.WaitForCompletion(ctx, handle)
+				finished := time.Now()
 				mustAcceptance(t, err)
 				data, err := os.ReadFile(filepath.Join(handle.ExportDir, "build-done.json"))
 				mustAcceptance(t, err)
 				var done api.BuildDone
 				mustAcceptance(t, json.Unmarshal(data, &done))
+				// Steps are required when the build succeeded; every build,
+				// even one that stops before BuildKit, must stream its console.
+				steps.assertLive(t, finished, !tc.fail && done.ExitCode == 0)
 				t.Logf("guest build result: exit=%d\n%s", done.ExitCode, done.LogTail)
 				if tc.fail {
 					if result.ExitCode == 0 || done.ExitCode == 0 || !strings.Contains(done.LogTail, "exit code: 42") {
@@ -260,7 +266,7 @@ func (n *acceptanceNotifier) Notify(_ context.Context, channel, payload string) 
 // continues to cover the PostgreSQL scheduler wiring.
 func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 	t.Helper()
-	m := fcvm.NewAcceptanceManager(t)
+	m := newBuilderAcceptanceManager(t)
 	tmp := t.TempDir()
 	sock := filepath.Join(tmp, "v.sock")
 	listener, err := net.Listen("unix", sock)
@@ -349,7 +355,7 @@ func runBuilderdOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 // ten seconds of the guest's halt marker.
 func runBuilderdFailureOrchestratorAcceptance(t *testing.T, buildTimeoutSeconds int) {
 	t.Helper()
-	m := fcvm.NewAcceptanceManager(t)
+	m := newBuilderAcceptanceManager(t)
 	tmp := t.TempDir()
 	sock := filepath.Join(tmp, "v.sock")
 	listener, err := net.Listen("unix", sock)

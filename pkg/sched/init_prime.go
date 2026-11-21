@@ -94,6 +94,16 @@ func initPrimePath(dep state.Deployment, app state.App) string {
 	if app.Manifest.Warmup != nil && app.Manifest.Warmup.Path != "" {
 		return app.Manifest.Warmup.Path
 	}
+	// Every path of a function is its handler, so an undeclared burst would
+	// run customer code 20 times per deploy with a synthetic event and no
+	// invocation ID, and capture the state it left (prod 2026-11-19). A
+	// function primes only the path it declares in lifecycle.warmup. A
+	// function discovered from config in code deploys with no Handler, so the
+	// app type decides too (prod 2026-11-20: a queue function ran up to ~150
+	// synthetic GET / events per new instance).
+	if dep.Handler != "" || app.Type == state.AppTypeFunction {
+		return ""
+	}
 	path, grpc, _ := startupProbeForApp(dep, app)
 	switch {
 	case path != "":
