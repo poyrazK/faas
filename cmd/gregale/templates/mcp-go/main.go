@@ -109,8 +109,7 @@ func main() {
 				http.Error(w, "MCP server is draining", http.StatusServiceUnavailable)
 				return
 			}
-			_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(15 * time.Second))
-			handleHTTP(config, auth, tasks, w, r)
+			handleHTTP(config, auth, tasks, newPerWriteDeadline(w), r)
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
@@ -984,6 +983,35 @@ func validRPCID(raw json.RawMessage) bool {
 		return false
 	}
 }
+
+// writeStallTimeout bounds one write to a client that stopped reading. It is
+// renewed on every write, so a tool may run as long as the app's request
+// timeout allows; a deadline fixed at request start (the former 15 s) cut
+// every tool slower than that off before its result was written.
+var writeStallTimeout = 15 * time.Second
+
+type perWriteDeadline struct {
+	http.ResponseWriter
+	controller *http.ResponseController
+}
+
+func newPerWriteDeadline(w http.ResponseWriter) http.ResponseWriter {
+	return perWriteDeadline{ResponseWriter: w, controller: http.NewResponseController(w)}
+}
+
+func (d perWriteDeadline) Write(p []byte) (int, error) {
+	_ = d.controller.SetWriteDeadline(time.Now().Add(writeStallTimeout))
+	return d.ResponseWriter.Write(p)
+}
+
+func (d perWriteDeadline) Flush() {
+	_ = d.controller.SetWriteDeadline(time.Now().Add(writeStallTimeout))
+	_ = d.controller.Flush()
+}
+
+// Unwrap lets http.ResponseController reach the connection (subscriptions
+// manage their own idle deadlines through it).
+func (d perWriteDeadline) Unwrap() http.ResponseWriter { return d.ResponseWriter }
 
 func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: id, Result: protocolResult(w, result)})
