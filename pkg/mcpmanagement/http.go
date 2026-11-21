@@ -69,6 +69,10 @@ type HTTPOptions struct {
 	// AgentKeyToolsetSelection lets agent-key requests select a subset of the
 	// operator maximum with Gregale-MCP-Toolsets; omitted selects the default.
 	AgentKeyToolsetSelection bool
+	// LogsAPIBase is the public API origin app log streams use. The compute
+	// gateway serves them behind the public edge and apid's loopback
+	// listener does not, so the hosted bridge defaults it to its own origin.
+	LogsAPIBase string
 }
 
 type remoteServer struct {
@@ -171,6 +175,9 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	issuer := origin
 	if opts.Hosted {
 		issuer = opts.ResourceURL
+		if opts.LogsAPIBase == "" {
+			opts.LogsAPIBase = origin
+		}
 	}
 	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {

@@ -36,10 +36,14 @@ const (
 // Options configures one connection and its release plan store.
 // Token is used only to redact reflected credentials from API responses.
 type Options struct {
-	Lifecycle   *Lifecycle
-	Telemetry   *Telemetry
-	Profile     string
-	APIBase     string
+	Lifecycle *Lifecycle
+	Telemetry *Telemetry
+	Profile   string
+	APIBase   string
+	// LogsAPIBase, when set, is the API origin for app log streams. They are
+	// served by the compute gateway behind the public edge, not by apid, so
+	// the hosted bridge's loopback APIBase answers them 404.
+	LogsAPIBase string
 	Version     string
 	Token       string
 	Timeout     time.Duration
@@ -93,22 +97,24 @@ type Options struct {
 type management struct {
 	// channelTests holds each notification channel's last test send time,
 	// for gregale_test_notification_channel's rate limit.
-	channelTests                 sync.Map
-	grantLifecycle               *Lifecycle
-	lifecycle                    *Lifecycle
-	toolWrites                   map[string]bool
-	toolNames                    map[string]bool
-	admission                    *requestAdmission
-	resourceServer               *mcp.Server
-	subscriptions                *resourceSubscriptions
-	client                       *api.Client
-	opts                         Options
-	mu                           sync.Mutex
-	plans                        map[string]*releasePlan
-	environmentPlans             map[string]*environmentPlan
-	flagPlans                    map[string]*flagPlan
-	budgetPlans                  map[string]*budgetPlan
-	reviewedPlans                map[string]*reviewedPlan
+	channelTests     sync.Map
+	grantLifecycle   *Lifecycle
+	lifecycle        *Lifecycle
+	toolWrites       map[string]bool
+	toolNames        map[string]bool
+	admission        *requestAdmission
+	resourceServer   *mcp.Server
+	subscriptions    *resourceSubscriptions
+	client           *api.Client
+	opts             Options
+	mu               sync.Mutex
+	plans            map[string]*releasePlan
+	environmentPlans map[string]*environmentPlan
+	flagPlans        map[string]*flagPlan
+	budgetPlans      map[string]*budgetPlan
+	reviewedPlans    map[string]*reviewedPlan
+	// logs is the client for LogsAPIBase, built on first use.
+	logs                         *api.Client
 	actions                      map[string]actionRecord
 	environmentActions           map[string]environmentActionRecord
 	environmentRollbackOutcomes  map[string]environmentRollbackLookup

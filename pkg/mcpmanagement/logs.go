@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -68,7 +69,7 @@ func (m *management) getLogs(ctx context.Context, args logsArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, err := m.client.StreamAppLogs(ctx, args.App, args.DeploymentID, false, api.LogFilter{Level: args.Level, Grep: args.Grep, Since: args.Since})
+	body, err := m.logsClient().StreamAppLogs(ctx, args.App, args.DeploymentID, false, api.LogFilter{Level: args.Level, Grep: args.Grep, Since: args.Since})
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +84,25 @@ func (m *management) getLogs(ctx context.Context, args logsArgs) (any, error) {
 		result.Truncated = true
 	}
 	return result, err
+}
+
+// logsClient returns the client for app log streams: the connection's own
+// client, or one for LogsAPIBase with the same credential. App logs are served
+// by the compute gateway behind the public edge; apid's loopback listener,
+// which the hosted bridge uses for everything else, answers them 404.
+func (m *management) logsClient() *api.Client {
+	if m.opts.LogsAPIBase == "" || m.opts.LogsAPIBase == m.opts.APIBase {
+		return m.client
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.logs == nil {
+		c := api.NewClient(m.opts.LogsAPIBase, m.client.Token())
+		c.SetCompletionCache(nil)
+		c.HTTPClient().CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		m.logs = c
+	}
+	return m.logs
 }
 
 // countingReader counts the bytes read through it.
