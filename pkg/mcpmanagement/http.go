@@ -44,6 +44,8 @@ type HTTPOptions struct {
 	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
+	// MaxListedTools caps each grant's listed catalog (Options.MaxListedTools).
+	MaxListedTools int
 	// Onboarding is browser (default) or the explicit api-key fallback.
 	Onboarding  string
 	StateStore  *StateStore
