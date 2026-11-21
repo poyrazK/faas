@@ -405,6 +405,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil && !req.Borrowed,
+		SliceShared:                 req.SliceShared,
 		Borrowed:                    req.Borrowed,
 		HostSeedDrive:               seedDrive,
 		SeedOnly:                    req.BuildKitSeedOnly,
@@ -528,6 +529,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 		WarmScopeKey:                req.WarmScopeKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+		SliceShared:                 req.SliceShared,
 	}
 	resp, err := d.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance: instance,
@@ -957,6 +959,7 @@ func (d *VMMDriver) ExportDeferredCache(ctx context.Context, h BuildHandle) (Bui
 		DependencyCacheSeedKey:      h.DependencyCacheSeedKey,
 		BuilderSliceOOMKillsAtStart: oomKillsAtStart,
 		BuilderSliceOOMCounterValid: oomCounterErr == nil,
+		SliceShared:                 h.SliceShared,
 		HostSeedDrive:               seedDrive,
 	}
 	// The second VM gets no build secrets or registry credentials: builderd
