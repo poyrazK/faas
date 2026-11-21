@@ -261,13 +261,16 @@ type ObsAttentionContactDraft struct {
 // what support did and how long it took to act. FalsePositivePercent is -1
 // when nobody acted on any; MedianActSeconds is absent then too.
 type ObsAttentionKindSummary struct {
-	Kind                 string   `json:"kind"`
-	Total                int64    `json:"total"`
-	Open                 int64    `json:"open"`
-	Contacted            int64    `json:"contacted"`
-	FalsePositive        int64    `json:"false_positive"`
-	OtherDismissed       int64    `json:"other_dismissed"`
-	ResolvedOnOwn        int64    `json:"resolved_on_own"`
+	Kind           string `json:"kind"`
+	Total          int64  `json:"total"`
+	Open           int64  `json:"open"`
+	Contacted      int64  `json:"contacted"`
+	FalsePositive  int64  `json:"false_positive"`
+	OtherDismissed int64  `json:"other_dismissed"`
+	ResolvedOnOwn  int64  `json:"resolved_on_own"`
+	// NoOutcome counts closed signals with no recorded outcome (closed
+	// before outcomes existed); the counts above plus this one sum to Total.
+	NoOutcome            int64    `json:"no_outcome,omitempty"`
 	FalsePositivePercent int64    `json:"false_positive_percent"`
 	MedianActSeconds     *float64 `json:"median_act_seconds,omitempty"`
 }

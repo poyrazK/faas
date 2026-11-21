@@ -333,6 +333,8 @@ jobs:
         run: make cli-install-check
       - name: coding-agent eval harness (parsers, commands, checks; no agents run)
         run: make agent-eval-test
+      - name: portable rehearsal fixture and evidence tests
+        run: python3 scripts/ci/rehearsal-native_test.py
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
