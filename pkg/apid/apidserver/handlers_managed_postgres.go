@@ -71,6 +71,11 @@ func managedPostgresProblem(w http.ResponseWriter, err error) {
 	// Without a server hint the CLI fell back to its generic 403 advice to
 	// check credentials, which cannot help with a plan entitlement or quota.
 	switch {
+	case errors.Is(err, managedpostgres.ErrProvisioningClosed):
+		// Without a hint the CLI's *_not_enabled fallback said "ask its
+		// operator to enable it", beside a detail saying "retry later or
+		// contact support" (prod hunt 2026-11-21).
+		problem = problem.WithHint("Existing databases keep working. Provisioning is opened per account; contact support to ask for it, and `gregale postgres capabilities` shows provisioning_enabled once it is open.")
 	case errors.Is(err, managedpostgres.ErrNotInPlan):
 		problem = problem.WithHint("Choose what your plan includes (gregale postgres capabilities) or upgrade the plan.").WithDocs("https://gregale.dev/docs/plans")
 	case errors.Is(err, managedpostgres.ErrBranchLimit):
