@@ -1115,12 +1115,19 @@
       # the edge keeps working with an operator binary that predates it.
       # ADR-20261031122757: a node that also runs the S3 gateway holds back
       # the gateway's too (--object-gateway, only with --edge).
+      # ADR-20261118154632 amendment 1: a node provisioned with more than one
+      # reserved builder slot (manifest builder_reserved_slots) holds back
+      # BuilderSlotReserveMB per slot, and the report carries the build and
+      # control-plane slice fences for them. Passed only above one, like
+      # --edge.
       ansible.builtin.command:
         argv: >-
           {{ ['/usr/local/bin/gregalectl', 'compute-nodes', 'sizing',
               '--role', faas_box_role | default('compute-only', true), '--json']
              + (['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])
-             + (['--object-gateway'] if (faas_object_gateway_on_compute_nodes | default(false) | bool) else []) }}
+             + (['--object-gateway'] if (faas_object_gateway_on_compute_nodes | default(false) | bool) else [])
+             + (['--builder-reserved-slots', faas_builder_reserved_slots | string]
+                if (faas_builder_reserved_slots | default(1) | int) > 1 else []) }}
       changed_when: false
       register: faas_node_sizing_raw
 
@@ -1210,6 +1217,66 @@
           MemoryMax={{ faas_node_sizing.tenant_slice_max_mb }}M
           CPUQuota={{ faas_join_tenant_cpu_quota_pct }}%
 
+    # ADR-20261118154632 amendment 1: faas-cp-build.slice holds exactly the
+    # reserved builders the node is provisioned for, under a faas-cp.slice
+    # grown to keep the daemons' room beside it. Drop-ins win over both the
+    # systemd_slices role's units and the renderer's faas-cp.slice, and are
+    # rewritten on every rollout like the tenant fence above. With one slot
+    # (the default) they are removed and the role's values apply.
+    - name: Require the builder slice fences in the capacity report
+      ansible.builtin.assert:
+        that:
+          - (faas_node_sizing.builder_reserved_slots | default(1) | int) == (faas_builder_reserved_slots | int)
+          - (faas_node_sizing.build_slice_memory_max_mb | default(0) | int) > 0
+          - (faas_node_sizing.build_slice_cpu_quota_pct | default(0) | int) > 0
+          - (faas_node_sizing.cp_slice_memory_max_mb | default(0) | int) > (faas_node_sizing.build_slice_memory_max_mb | default(0) | int)
+        fail_msg: >-
+          gregalectl compute-nodes sizing did not size this host for
+          {{ faas_builder_reserved_slots }} reserved builder slots
+          (report={{ faas_node_sizing }}); the operator binary may predate
+          --builder-reserved-slots.
+      when: (faas_builder_reserved_slots | default(1) | int) > 1
+
+    - name: Ensure the builder slice drop-in directories exist
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.d"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [faas-cp.slice, faas-cp-build.slice]
+      when: (faas_builder_reserved_slots | default(1) | int) > 1
+
+    - name: Fence faas-cp-build.slice for the reserved builder slots
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-cp-build.slice.d/90-builder-slots.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Slice]
+          MemoryMax={{ faas_node_sizing.build_slice_memory_max_mb }}M
+          CPUQuota={{ faas_node_sizing.build_slice_cpu_quota_pct }}%
+      when: (faas_builder_reserved_slots | default(1) | int) > 1
+
+    - name: Grow faas-cp.slice around the reserved builder slots
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-cp.slice.d/90-builder-slots.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Slice]
+          MemoryMax={{ faas_node_sizing.cp_slice_memory_max_mb }}M
+      when: (faas_builder_reserved_slots | default(1) | int) > 1
+
+    - name: Remove the builder slice fences from a one-slot node
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ item }}.d/90-builder-slots.conf"
+        state: absent
+      loop: [faas-cp.slice, faas-cp-build.slice]
+      when: (faas_builder_reserved_slots | default(1) | int) <= 1
+
     - name: Reload systemd so the re-fenced tenant slice takes effect
       # Unconditional rather than a handler: handlers flush at the end of
       # the play, and the tenant fence must already be live before this play
@@ -1232,6 +1299,7 @@
           Environment=FAAS_COMPUTE_MAX_CONCURRENCY={{ faas_join_max_concurrency | default((faas_join_tenant_vcpus | int) * 5, true) }}
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((faas_join_tenant_vcpus | int) * 8, true) }}
+          Environment=FAAS_BUILDER_RESERVED_SLOTS={{ faas_builder_reserved_slots | default(1) | int }}
 
     # vmmd restart adoption switches (roles/vmmd_service/defaults/main.yml).
     # Rendered on every run, not only on bootstrap convergence, so a host var
@@ -1384,6 +1452,18 @@
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
+
+    # ADR-20261118154632 amendment 1: the guaranteed builds builderd runs,
+    # the count the build slice and tenant fence above are sized for.
+    - name: Install builderd's reserved builder slot count
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-builder-slots.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_BUILDER_RESERVED_SLOTS={{ faas_builder_reserved_slots | default(1) | int }}
 
     # ADR-20261023171905: this node's schedd records its quiet pauses in the
     # billing pause ledger (group_vars/compute_nodes/quiet_pause_billing.yml).

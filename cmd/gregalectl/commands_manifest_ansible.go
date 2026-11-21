@@ -633,6 +633,11 @@ func renderManifestHostVars(host manifest.Host, ansibleHost, targetURL, gatewayS
 	if host.StorageDevice != "" {
 		fmt.Fprintf(&b, "faas_storage_device: %q\n", host.StorageDevice)
 	}
+	// ADR-20261118154632 amendment 1: node_join sizes the build slice,
+	// control-plane slice and tenant fence for this many reserved builders.
+	if host.BuilderReservedSlots > 0 && host.Role == roleComputeOnly {
+		fmt.Fprintf(&b, "faas_builder_reserved_slots: %d\n", host.BuilderReservedSlots)
+	}
 	if storageMountpoint != "" {
 		fmt.Fprintf(&b, "faas_storage_mountpoint: %q\n", storageMountpoint)
 	}
