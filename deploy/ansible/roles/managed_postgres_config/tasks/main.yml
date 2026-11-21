@@ -55,9 +55,64 @@
       {{ out }}
   when: faas_managed_postgres_config | length > 0
 
-- name: managed_postgres_config — check sealed.env holds each backend secret (and no key neond brokers)
+# GCP prod set the config path and the key file in a hand-made
+# zzzz-managed-postgres-canary.conf; a later-sorting drop-in would silently
+# win over what this role renders.
+- name: managed_postgres_config — look for another apid drop-in setting the config or key file
+  ansible.builtin.shell: |
+    for f in /etc/systemd/system/faas-apid.service.d/*.conf; do
+      [ -e "$f" ] && [ "$(basename "$f")" != zz-faas-managed-postgres.conf ] || continue
+      grep -HE 'FAAS_MANAGED_POSTGRES_CONFIG=|managed-postgres/provider\.env' "$f" | sed -E 's/=.*/=…/'
+    done; true
+  args:
+    executable: /bin/bash
+  register: faas_mpg_foreign_settings
+  changed_when: false
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — refuse a drop-in that would override the role's
+  ansible.builtin.assert:
+    that:
+      - faas_mpg_foreign_settings.stdout | length == 0
+    fail_msg: >-
+      Another apid drop-in sets the managed PostgreSQL config or key file and
+      would override zz-faas-managed-postgres.conf:
+      {{ faas_mpg_foreign_settings.stdout_lines | join('; ') }}. Delete it and
+      converge again.
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — check the extra env files
+  ansible.builtin.assert:
+    that:
+      - faas_managed_postgres_env_files is sequence and faas_managed_postgres_env_files is not string
+      - faas_managed_postgres_env_files | reject('match', '^/etc/faas/secrets/[A-Za-z0-9._/-]+$') | list | length == 0
+    fail_msg: faas_managed_postgres_env_files must list files under /etc/faas/secrets.
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — stat the extra env files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ faas_managed_postgres_env_files }}"
+  register: faas_mpg_env_file_stat
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — require each extra env file (restore it from the cp-state bundle)
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists and item.stat.isreg
+      - not (item.stat.roth | bool)
+    fail_msg: >-
+      {{ item.item }} is missing or world-readable. It holds a backend secret;
+      restore it from the control-plane state bundle
+      (docs/runbooks/ControlPlaneStateBackup.md) with mode 0600 or 0640.
+  loop: "{{ faas_mpg_env_file_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — check apid's env holds each backend secret (and no key neond brokers)
   ansible.builtin.command:
-    argv: [grep, -c, "^{{ item.env }}=.", /etc/faas/sealed.env]
+    argv: "{{ ['grep', '-c', '-E', '^(export )?' + item.env + '=.', '/etc/faas/sealed.env'] + faas_managed_postgres_env_files }}"
   loop: "{{ faas_mpg_secret_checks }}"
   loop_control:
     label: "{{ item.backend }} {{ item.env }} {{ 'set' if item.present else 'absent (neond holds it)' }}"
