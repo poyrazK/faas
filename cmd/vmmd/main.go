@@ -2214,6 +2214,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
+		WithExecutionFileStorage(storageBackend).
 		WithSandboxWorkspaces(storageBackend)
 	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
 	// give-back of their memory to tenants.

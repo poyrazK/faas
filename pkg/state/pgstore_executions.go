@@ -87,11 +87,17 @@ func executionNullableTime(value interface{}) (*time.Time, error) {
 }
 
 func executionFromSQL(row sqlc.Execution) Execution {
+	var validation *api.ExecutionResultValidation
+	if len(row.ResultValidation) != 0 {
+		_ = json.Unmarshal(row.ResultValidation, &validation)
+	}
 	var artifacts []api.ExecutionArtifact
 	if len(row.Artifacts) != 0 {
 		_ = json.Unmarshal(row.Artifacts, &artifacts)
 	}
 	return Execution{
+		EnvironmentID:      pgUUIDStringOrEmpty(row.EnvironmentID),
+		ResultValidation:   validation,
 		Profile:            api.ExecutionProfile(row.Profile),
 		RuntimeImageDigest: row.RuntimeImageDigest.String,
 		WorkflowID:         row.WorkflowID.String,
@@ -103,13 +109,16 @@ func executionFromSQL(row sqlc.Execution) Execution {
 		Runtime:            api.ExecutionRuntime(row.Runtime),
 		Status:             api.ExecutionStatus(row.Status),
 		NetworkMode:        api.ExecutionNetworkMode(row.NetworkMode),
+		InputFileBytes:     row.InputFileBytes.Int64,
 		Limits: api.ResolvedExecutionLimits{
-			TimeoutMS:       int(row.TimeoutMs),
-			MemoryMB:        int(row.MemoryMb),
-			CPUMillicores:   int(row.CpuMillicores),
-			EphemeralDiskMB: int(row.EphemeralDiskMb),
-			MaxOutputBytes:  int(row.MaxOutputBytes),
-			PIDsMax:         int(row.PidsMax),
+			Class:            executionClassFromSQL(row.ExecutionClass),
+			MaxArtifactBytes: row.MaxArtifactBytes.Int64,
+			TimeoutMS:        int(row.TimeoutMs),
+			MemoryMB:         int(row.MemoryMb),
+			CPUMillicores:    int(row.CpuMillicores),
+			EphemeralDiskMB:  int(row.EphemeralDiskMb),
+			MaxOutputBytes:   int(row.MaxOutputBytes),
+			PIDsMax:          int(row.PidsMax),
 		},
 		SourceBytes:     int(row.SourceBytes),
 		InputBytes:      int(row.InputBytes),
@@ -153,6 +162,22 @@ func recordExecutionUsage(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, ex
 }
 
 func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionParams) (Execution, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Execution{}, fmt.Errorf("create execution: begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	row, err := createExecutionInTx(ctx, tx, params)
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Execution{}, fmt.Errorf("create execution: commit: %w", err)
+	}
+	return row, nil
+}
+
+func createExecutionInTx(ctx context.Context, tx pgx.Tx, params CreateExecutionParams) (Execution, error) {
 	normalizedIntegrationIDs, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs)
 	if err != nil {
 		return Execution{}, fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
@@ -161,12 +186,6 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	if err := validateCreateExecution(params); err != nil {
 		return Execution{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return Execution{}, fmt.Errorf("create execution: begin: %w", err)
-	}
-	defer tx.Rollback(ctx) //nolint:errcheck
-
 	q := sqlc.New()
 	accountID := mustPgUUID(params.AccountID)
 	var runsPrincipalID pgtype.UUID
@@ -179,6 +198,13 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	account, err := q.ExecutionLockAccount(ctx, tx, accountID)
 	if err != nil {
 		return Execution{}, mapErr(err)
+	}
+	if err := validatePipelineAdmissionTx(ctx, tx, params); err != nil {
+		return Execution{}, err
+	}
+	taskVersion, err := validateTaskAdmissionTx(ctx, tx, params)
+	if err != nil {
+		return Execution{}, err
 	}
 	if isAgentWorkflowStep(params) {
 		var exists bool
@@ -199,6 +225,15 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	}
 	if err := validateExecutionPlan(params, planLimits); err != nil {
 		return Execution{}, err
+	}
+	if params.Request.Limits.Class == api.ExecutionClassExtended {
+		extended, err := q.ExecutionCountExtendedActive(ctx, tx, accountID)
+		if err != nil {
+			return Execution{}, fmt.Errorf("create execution: count extended: %w", err)
+		}
+		if extended >= int64(planLimits.MaxExtendedConcurrent) {
+			return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxExtendedConcurrent, Observed: int(extended) + 1}
+		}
 	}
 	active, err := q.ExecutionCountActive(ctx, tx, accountID)
 	if err != nil {
@@ -262,9 +297,37 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 		}
 	}
 
+	var environmentID pgtype.UUID
+	if params.Request.EnvironmentID != "" {
+		if !validEnvironmentID(params.Request.EnvironmentID) {
+			return Execution{}, ErrExecutionEnvironmentUnavailable
+		}
+		environmentID = mustPgUUID(params.Request.EnvironmentID)
+		env, err := q.ExecutionEnvironmentAdmission(ctx, tx, sqlc.ExecutionEnvironmentAdmissionParams{AccountID: accountID, ID: environmentID})
+		principal := ""
+		if params.RunsPrincipalID != nil {
+			principal = *params.RunsPrincipalID
+		}
+		if err != nil || !environmentUsable(environmentFromSQL(env), params.AccountID, principal, params.FilesAccountWide || params.Task != nil, params.Request.Runtime) {
+			return Execution{}, ErrExecutionEnvironmentUnavailable
+		}
+	}
+	if err := validateExecutionFilesTx(ctx, tx, params, api.Plan(account.Plan)); err != nil {
+		return Execution{}, err
+	}
+	reservation, policies, err := prepareRunControlsTx(ctx, tx, params, taskVersion)
+	if err != nil {
+		return Execution{}, err
+	}
+	if err := q.RunControlWriterProtocol(ctx, tx); err != nil {
+		return Execution{}, err
+	}
 	row, err := q.ExecutionInsert(ctx, tx, sqlc.ExecutionInsertParams{
+		MaxArtifactBytes: pgtype.Int8{Int64: params.Request.Limits.MaxArtifactBytes, Valid: true}, InputFileBytes: pgtype.Int8{Int64: storedInputBytes(params.Request.StoredInputs), Valid: true},
 		AccountID:       accountID,
 		Runtime:         string(params.Request.Runtime),
+		ExecutionClass:  string(params.Request.Limits.Class.Normalized()),
+		EnvironmentID:   environmentID,
 		Profile:         string(params.Request.Profile.Normalized()),
 		NetworkMode:     string(params.Request.Network.Mode),
 		TimeoutMs:       int32(params.Request.Limits.TimeoutMS),
@@ -288,6 +351,9 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 			return Execution{}, ErrExecutionWorkflowStepExists
 		}
 		return Execution{}, mapErr(err)
+	}
+	if err := addExecutionFilesTx(ctx, tx, params, pgUUIDString(row.ID)); err != nil {
+		return Execution{}, err
 	}
 	for _, integrationID := range integrationIDs {
 		if _, err := tx.Exec(ctx, `INSERT INTO execution_outbound_integrations (execution_id, integration_id) VALUES ($1, $2)`, row.ID, integrationID); err != nil {
@@ -318,10 +384,14 @@ func (s *PgStore) CreateExecution(ctx context.Context, params CreateExecutionPar
 	if _, err := appendExecutionEvent(ctx, tx, params.AccountID, pgUUIDString(row.ID), ExecutionEventStatus, executionStatusPayload(api.ExecutionStatusQueued), params.AdmittedAt); err != nil {
 		return Execution{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return Execution{}, fmt.Errorf("create execution: commit: %w", err)
+	out := executionFromSQL(row)
+	if err := addTaskInvocationTx(ctx, tx, params, &out, taskVersion); err != nil {
+		return Execution{}, err
 	}
-	return executionFromSQL(row), nil
+	if err := addRunControlsTx(ctx, tx, &out, reservation, policies); err != nil {
+		return Execution{}, err
+	}
+	return out, nil
 }
 
 func (s *PgStore) ExecutionByID(ctx context.Context, accountID, executionID string) (Execution, error) {
@@ -331,7 +401,11 @@ func (s *PgStore) ExecutionByID(ctx context.Context, accountID, executionID stri
 	if err != nil {
 		return Execution{}, mapErr(err)
 	}
-	return executionFromSQL(row), nil
+	out := executionFromSQL(row)
+	if err := attachTaskRef(ctx, s.pool, &out); err != nil {
+		return Execution{}, err
+	}
+	return out, nil
 }
 
 func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, offset int) ([]Execution, error) {
@@ -345,7 +419,7 @@ func (s *PgStore) ListExecutions(ctx context.Context, accountID string, limit, o
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return executionRowsFromSQL(rows), nil
+	return s.attachTaskRefs(ctx, executionRowsFromSQL(rows))
 }
 
 func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
@@ -359,7 +433,7 @@ func (s *PgStore) ListExecutionsByStatus(ctx context.Context, accountID string, 
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return executionRowsFromSQL(rows), nil
+	return s.attachTaskRefs(ctx, executionRowsFromSQL(rows))
 }
 
 func (s *PgStore) ListExecutionsByPrincipal(ctx context.Context, accountID, principalID string, limit, offset int) ([]Execution, error) {
@@ -374,7 +448,7 @@ func (s *PgStore) ListExecutionsByPrincipal(ctx context.Context, accountID, prin
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return executionRowsFromSQL(rows), nil
+	return s.attachTaskRefs(ctx, executionRowsFromSQL(rows))
 }
 
 func (s *PgStore) ListExecutionsByPrincipalStatus(ctx context.Context, accountID, principalID string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
@@ -389,7 +463,7 @@ func (s *PgStore) ListExecutionsByPrincipalStatus(ctx context.Context, accountID
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return executionRowsFromSQL(rows), nil
+	return s.attachTaskRefs(ctx, executionRowsFromSQL(rows))
 }
 
 func (s *PgStore) ListExecutionsByWorkflow(ctx context.Context, accountID, workflowID string, principalID *string, status api.ExecutionStatus, limit, offset int) ([]Execution, error) {
@@ -415,7 +489,7 @@ func (s *PgStore) ListExecutionsByWorkflow(ctx context.Context, accountID, workf
 	if err != nil {
 		return nil, mapErr(err)
 	}
-	return executionRowsFromSQL(rows), nil
+	return s.attachTaskRefs(ctx, executionRowsFromSQL(rows))
 }
 
 func (s *PgStore) ExecutionWorkflowStepByLabel(ctx context.Context, accountID, workflowID string, principalID *string, stepLabel string) (Execution, error) {
@@ -427,26 +501,19 @@ func (s *PgStore) ExecutionWorkflowStepByLabel(ctx context.Context, accountID, w
 	if err != nil {
 		return Execution{}, err
 	}
-	var id pgtype.UUID
-	var label, status string
-	var result []byte
 	principalUUID, err := parsePgUUID(*principalID)
 	if err != nil {
 		return Execution{}, err
 	}
-	row := s.pool.QueryRow(ctx, `SELECT id, step_label, status, result FROM executions
-		WHERE account_id = $1 AND runs_principal_id = $2 AND workflow_id = $3
-		  AND step_label = $4 AND step_label LIKE 'gwf:%'
-		ORDER BY created_at DESC LIMIT 1`, accountUUID, principalUUID, workflowID, stepLabel)
-	if err := row.Scan(&id, &label, &status, &result); errors.Is(err, pgx.ErrNoRows) {
-		return Execution{}, ErrNotFound
-	} else if err != nil {
-		return Execution{}, fmt.Errorf("get execution workflow step: %w", err)
+	row, err := sqlc.New().PipelineRunByLabel(ctx, s.pool, sqlc.PipelineRunByLabelParams{AccountID: accountUUID, RunsPrincipalID: principalUUID, WorkflowID: pgtype.Text{String: workflowID, Valid: true}, StepLabel: pgtype.Text{String: stepLabel, Valid: true}})
+	if err != nil {
+		return Execution{}, fmt.Errorf("get execution workflow step: %w", mapErr(err))
 	}
-	return Execution{
-		ID: pgUUIDString(id), StepLabel: label, Status: api.ExecutionStatus(status),
-		Result: append([]byte(nil), result...),
-	}, nil
+	out := executionFromSQL(row)
+	if err = attachTaskRef(ctx, s.pool, &out); err != nil {
+		return Execution{}, fmt.Errorf("attach workflow receipt metadata: %w", err)
+	}
+	return out, nil
 }
 
 func (s *PgStore) ExecutionWorkflowSummary(ctx context.Context, accountID, workflowID string, principalID *string) (ExecutionWorkflowResponse, error) {
@@ -550,7 +617,7 @@ func (s *PgStore) ListExecutionQueueAccountsAfter(ctx context.Context, at time.T
 }
 
 func (s *PgStore) ClaimExecution(ctx context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
-	return s.claimExecution(ctx, "", owner, claimedAt, leaseDuration)
+	return s.claimExecution(ctx, "", owner, claimedAt, leaseDuration, "")
 }
 
 func (s *PgStore) ClaimExecutionForAccount(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
@@ -558,10 +625,10 @@ func (s *PgStore) ClaimExecutionForAccount(ctx context.Context, accountID, owner
 	if accountID == "" {
 		return ExecutionClaim{}, fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
 	}
-	return s.claimExecution(ctx, accountID, owner, claimedAt, leaseDuration)
+	return s.claimExecution(ctx, accountID, owner, claimedAt, leaseDuration, "")
 }
 
-func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration, class api.ExecutionClass) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -576,7 +643,13 @@ func (s *PgStore) claimExecution(ctx context.Context, accountID, owner string, c
 	tokenPG := pgtype.UUID{Bytes: token, Valid: true}
 	q := sqlc.New()
 	var row sqlc.Execution
-	if accountID == "" {
+	if class != "" {
+		var account pgtype.UUID
+		if accountID != "" {
+			account = mustPgUUID(accountID)
+		}
+		row, err = q.ExecutionClaimNextForClass(ctx, tx, sqlc.ExecutionClaimNextForClassParams{AccountID: account, ExecutionClass: string(class.Normalized()), LeaseToken: tokenPG, LeaseOwner: pgtype.Text{String: owner, Valid: true}, LeaseExpiresAt: executionTime(claimedAt.Add(leaseDuration)), ClaimedAt: executionTime(claimedAt)})
+	} else if accountID == "" {
 		row, err = q.ExecutionClaimNext(ctx, tx, sqlc.ExecutionClaimNextParams{
 			LeaseToken:     tokenPG,
 			LeaseOwner:     pgtype.Text{String: owner, Valid: true},
@@ -707,6 +780,9 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 		return Execution{}, fmt.Errorf("%w: execution cannot succeed after its deadline", ErrExecutionInvalidTerminal)
 	}
 
+	if err := completeExecutionFilesTx(ctx, tx, executionFromSQL(locked), params); err != nil {
+		return Execution{}, err
+	}
 	var exitCode pgtype.Int4
 	if params.ExitCode != nil {
 		exitCode = pgtype.Int4{Int32: int32(*params.ExitCode), Valid: true}
@@ -722,8 +798,13 @@ func (s *PgStore) CompleteExecution(ctx context.Context, params CompleteExecutio
 	if len(params.Artifacts) != 0 {
 		artifacts, _ = json.Marshal(params.Artifacts)
 	}
+	var validation []byte
+	if params.ResultValidation != nil {
+		validation, _ = json.Marshal(params.ResultValidation)
+	}
 	row, err := q.ExecutionMarkTerminal(ctx, tx, sqlc.ExecutionMarkTerminalParams{
-		Artifacts: artifacts, TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
+		ResultValidation: validation,
+		Artifacts:        artifacts, TerminalStatus: string(params.Status), ResultJson: string(params.Result), ResultBytes: int32(len(params.Result)),
 		Stdout: params.Stdout, Stderr: params.Stderr, OutputTruncated: params.OutputTruncated,
 		ExitCode: exitCode, FailureCode: failureCode, FailureMessage: failureMessage,
 		WallTimeMs: params.Usage.WallTimeMS, CpuTimeMs: params.Usage.CPUTimeMS,
@@ -792,7 +873,9 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 		if err := tx.Commit(ctx); err != nil {
 			return Execution{}, fmt.Errorf("cancel execution: commit terminal read: %w", err)
 		}
-		return executionFromSQL(locked), nil
+		out := executionFromSQL(locked)
+		err := attachTaskRef(ctx, s.pool, &out)
+		return out, err
 	}
 	if requestedAt.Before(locked.CreatedAt.Time) {
 		return Execution{}, fmt.Errorf("%w: cancellation predates admission", ErrExecutionInvalid)
@@ -818,7 +901,9 @@ func (s *PgStore) RequestExecutionCancellation(ctx context.Context, accountID, e
 	if err := tx.Commit(ctx); err != nil {
 		return Execution{}, fmt.Errorf("cancel execution: commit: %w", err)
 	}
-	return executionFromSQL(row), nil
+	out := executionFromSQL(row)
+	err = attachTaskRef(ctx, s.pool, &out)
+	return out, err
 }
 
 func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) (ExecutionSweepResult, error) {
@@ -901,6 +986,9 @@ func (s *PgStore) SweepExecutions(ctx context.Context, at time.Time, limit int) 
 	if err != nil {
 		return ExecutionSweepResult{}, fmt.Errorf("sweep executions: delete terminal payloads: %w", err)
 	}
+	if err := q.ExecutionAdmissionSweep(ctx, tx, sqlc.ExecutionAdmissionSweepParams{SweepAt: sweepAt, BatchLimit: batch}); err != nil {
+		return ExecutionSweepResult{}, fmt.Errorf("sweep executions: delete expired admissions: %w", err)
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return ExecutionSweepResult{}, fmt.Errorf("sweep executions: commit: %w", err)
 	}
@@ -933,4 +1021,18 @@ func (s *PgStore) ExecutionUsageByAccount(ctx context.Context, accountID string,
 		Succeeded: row.Succeeded, Failed: row.Failed, TimedOut: row.TimedOut,
 		OutOfMemory: row.OutOfMemory, Cancelled: row.Cancelled,
 	}, nil
+}
+
+func executionClassFromSQL(class string) api.ExecutionClass {
+	if class == "standard" {
+		return ""
+	}
+	return api.ExecutionClass(class)
+}
+
+func (s *PgStore) ClaimExecutionForClass(ctx context.Context, account, owner string, class api.ExecutionClass, at time.Time, ttl time.Duration) (ExecutionClaim, error) {
+	if class == "" || !class.Valid() {
+		return ExecutionClaim{}, ErrExecutionInvalid
+	}
+	return s.claimExecution(ctx, strings.TrimSpace(account), owner, at, ttl, class)
 }

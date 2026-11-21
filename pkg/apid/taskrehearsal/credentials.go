@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,7 +18,7 @@ func (p *Prepared) BindRuntime(ctx context.Context) error {
 	}
 	bind, stop := context.WithDeadline(ctx, p.expiresAt)
 	defer stop()
-	if err := p.bindRuntime(bind, nil); err != nil {
+	if err := p.bindRuntime(bind, nil, nil); err != nil {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
 		return errors.Join(err, p.cleanup(cleanup))
@@ -25,7 +26,7 @@ func (p *Prepared) BindRuntime(ctx context.Context) error {
 	return nil
 }
 
-func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment) error {
+func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment, observer *pgruntime.TaskClaimObserver) error {
 	for _, role := range workloads {
 		if role.name == Migration {
 			continue
@@ -49,6 +50,12 @@ func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment) erro
 		connection, err := p.provisioner.Postgres.BindParticipant(ctx, p.account.ID, member.RunID, app.ID, role.name+".svc.gregale")
 		if err != nil {
 			return fmt.Errorf("bind rehearsal %s credential: %w", role.name, err)
+		}
+		if observer != nil && role.name == Observer {
+			*observer, err = p.provisioner.Postgres.TaskObserver(ctx, p.account.ID, member.RunID, app.ID, connection)
+			if err != nil {
+				return fmt.Errorf("open contained Task observer: %w", err)
+			}
 		}
 		if err := p.persistConnection(ctx, app, role.name, connection, env); err != nil {
 			return fmt.Errorf("persist rehearsal %s credential", role.name)

@@ -1,0 +1,61 @@
+{
+  "attempts": [
+    {
+      "attempt": "preview6",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "961619e145b457c99e297d870dc3e271d94cbf3f4120c35e6ebc76f0a3f6a5ff",
+        "build.log": "fd188aa515f669a0cff1d82e22a1f442cade4f9ecbe32a892e54958047bebf5f",
+        "extended-environments.jsonl": "7fef362245685874534652d04f95197415de8f618d67c57bef834b8b3312a25e",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "80e801adbce46a3195bf7d2d739f3fe3ac665ad1da67d4a6e1cbc3a87a5ff472"
+      },
+      "reason": "Linux test fixture used a general recipient interface instead of the required X25519 recipient type; corrected before retry.",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55406,
+        "source_manifest_sha256": "961070350bf1ed1c5d7a4cea699dab17655219c90671c71fdea6e5e59eac5e3e"
+      }
+    },
+    {
+      "attempt": "preview7",
+      "functional_pass": false,
+      "process_exits": {
+        "extended_environments": 1,
+        "leakcheck_after": 0,
+        "leakcheck_before": 0
+      },
+      "raw_evidence_sha256": {
+        "artifacts.sha256": "59d2eeb8e41b05146a632f4c62760f45c9cb2f6e74ac2065f238bb69afa091d4",
+        "build.log": "fd188aa515f669a0cff1d82e22a1f442cade4f9ecbe32a892e54958047bebf5f",
+        "extended-environments.jsonl": "ffb28aedfe7d6a8358e3350799718018bd7b7fa5c18cd8bcbab6b1829d4474d5",
+        "extended-environments.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+        "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+        "process-exits.json": "a8076427c87ab8ed050cec66d0d62aa4e6b42eddcbc1066ea3fa4865902664ed",
+        "source.json": "92c8b3961f35391805f41cd9014622aa35429cc9e554d32c72aecb2de8abe122"
+      },
+      "reason": "Builder refused startup because free space was below its unchanged 20 GiB guard; completed source copies were archived with exhaustive byte and mode verification before retry.",
+      "source": {
+        "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+        "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+        "go_version": "go version go1.26.11 linux/amd64",
+        "source_files": 55406,
+        "source_manifest_sha256": "be07b967aa22ce8d5205c1087e1eaeab3c122ad8ed8b8de63d831a5b80bd2b6d"
+      }
+    }
+  ],
+  "schema": "gregale.run-diagnostics-completion-attempts/v1"
+}

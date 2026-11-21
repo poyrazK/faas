@@ -860,6 +860,7 @@
     - /srv/fc/snap
     - /srv/fc/base
     - /srv/fc/base-staging
+    - /srv/fc/run-environments
     - /srv/fc/sigs
     - /srv/fc/scans
     - /var/log/faas
