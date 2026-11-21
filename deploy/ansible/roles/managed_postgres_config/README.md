@@ -77,6 +77,32 @@ FROM managed_postgres_databases WHERE state <> 'deleted' GROUP BY 1, 2;
 `files/managed-postgres-config-check.py CONFIG --fingerprints` prints a
 candidate's fingerprints for comparison.
 
+## Keys outside sealed.env
+
+`faas_managed_postgres_env_files` adds `EnvironmentFile=` lines to the same
+drop-in. Production's Neon key is in
+`/etc/faas/secrets/managed-postgres/provider.env` (part of the cp-state
+bundle). Each file must exist under `/etc/faas/secrets` and not be
+world-readable; `secret_env` variables may be set there or in `sealed.env`.
+Another apid drop-in that sets the config path or that file would override
+the role, so the converge refuses until it is removed.
+
+## Limits and the production approval are not here
+
+The provisioning switch, per-account limit, fleet, usage ceilings and rates,
+and the production approval are hot runtime config,
+`gregalectl config set -key managed_postgres_policy`
+(ADR-20261121120000), and override the file. Keep the file to what needs a
+restart: backends, usage metering on/off and its timing, health. With
+metering on the file must still hold monthly ceilings; production's are the
+strictest values (1), so a missing live policy fails closed.
+
+A converge rewrites `zz-faas-managed-postgres.conf`. If an approval was
+hand-set there (`FAAS_MANAGED_POSTGRES_PRODUCTION_*`), put it in
+`managed_postgres_policy` first, or new databases close.
+
+Production's file is `group_vars/control_plane/managed_postgres.yml`.
+
 ## Turning it off
 
 Leaving `faas_managed_postgres_config` empty, the default, touches nothing:
