@@ -540,6 +540,7 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-node-tasks",
 	"mcp-go",
 	"mcp-python",
 	"customer-operation-export",

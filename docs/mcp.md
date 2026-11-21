@@ -4936,6 +4936,13 @@ Choose another starter language with `gregale mcp server init --language go --pa
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
 
+The Node starter answers every tool call in its response and carries no durable
+Task code. For Node tools that return durable MCP Task handles, start from
+`gregale init --template mcp-node-tasks --path ./my-mcp` (Tasks off until you
+bind PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Tasks starter's
+`tasks-release.js`.
+
 In another terminal:
 
 ```sh

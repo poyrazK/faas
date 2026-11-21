@@ -152,12 +152,12 @@ stage; URLs, response content and tool results are not written to the receipt.
 Qualify task recovery across separate worker processes and two replacement
 replicas with a disposable PostgreSQL database. This creates and drops one
 randomly named schema; it does not alter the starter's configured database
-schema or any app deployment. Materialize the Node starter and install its
-dependencies first:
+schema or any app deployment. Materialize the Node Tasks starter and install
+its dependencies first:
 
 ```sh
-gregale mcp init --runtime node --path /tmp/mcp-node
-cd /tmp/mcp-node && npm ci
+gregale init --template mcp-node-tasks --path /tmp/mcp-node-tasks
+cd /tmp/mcp-node-tasks && npm ci
 ```
 
 Then run the task qualification with the disposable database URL in the
@@ -167,8 +167,8 @@ the receipt):
 ```sh
 MCP_TASKS_TEST_DATABASE_URL='<disposable PostgreSQL URL>' \
   python3 scripts/ops/mcp-qualification.py tasks-restart --dir <evidence> \
-  --starter-dir /tmp/mcp-node --confirm-disposable-database \
-  --target '<reviewed commit / Node starter / disposable PostgreSQL>'
+  --starter-dir /tmp/mcp-node-tasks --confirm-disposable-database \
+  --target '<reviewed commit / Node Tasks starter / disposable PostgreSQL>'
 ```
 
 The runner kills a worker during a task, starts two replacement processes,
@@ -317,7 +317,7 @@ Build the Gregale binary from the reviewed commit. Prepare disposable fixtures:
 
 ```sh
 python3 scripts/ops/mcp-hosting-rollout-qualification.py prepare \
-  --starter cmd/gregale/templates/mcp-node --dir /tmp/mcp-qualification-fixtures
+  --starter cmd/gregale/templates/mcp-node-tasks --dir /tmp/mcp-qualification-fixtures
 ```
 
 Install each fixture's locked npm dependencies before running. Provision separate `mcp-qual-` web, previous-worker, candidate-worker, and observer apps in a dedicated qualification account. The candidate app must have no instances or deployments; worker and observer scaling must have minimum one. Configure remote `DATABASE_URL` secrets with the runtime account for web/workers and the observer account for the observer. All apps share the disposable namespace and owner key. Follow the migration and role-grant instructions above to establish four distinct database accounts in the same schema; grant them their runtime, observer, operator, and migration profiles. The three service accounts must not have schema CREATE.

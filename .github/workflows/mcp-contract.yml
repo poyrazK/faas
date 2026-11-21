@@ -11,6 +11,7 @@ on:
       - 'cmd/gregale/task_execution_bindings.mjs'
       - 'scripts/ci/task-execution-bindings-check.sh'
       - 'cmd/gregale/templates/mcp-node/**'
+      - 'cmd/gregale/templates/mcp-node-tasks/**'
       - 'cmd/gregale/templates/mcp-go/**'
       - 'cmd/gregale/templates/mcp-python/**'
       - 'pkg/mcphosting/**'
@@ -319,6 +320,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             cmd/gregale/templates/mcp-node/package-lock.json
+            cmd/gregale/templates/mcp-node-tasks/package-lock.json
             scripts/ops/mcp-sdk-client/package-lock.json
       - name: Portable MCP and secret-scanner contracts
         env:
@@ -380,6 +382,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             cmd/gregale/templates/mcp-node/package-lock.json
+            cmd/gregale/templates/mcp-node-tasks/package-lock.json
             scripts/ops/mcp-sdk-client/package-lock.json
       - name: Build CLI and materialize starter outside the embed tree
         env:
@@ -387,7 +390,8 @@ jobs:
           MCP_TASKS_REQUIRE_POSTGRES: "1"
         run: |
           go build -o "$RUNNER_TEMP/gregale" ./cmd/gregale
-          "$RUNNER_TEMP/gregale" mcp init --path "$RUNNER_TEMP/mcp-starter"
+          "$RUNNER_TEMP/gregale" init --template mcp-node-tasks --path "$RUNNER_TEMP/mcp-starter"
+          "$RUNNER_TEMP/gregale" mcp init --path "$RUNNER_TEMP/mcp-node-plain"
           "$RUNNER_TEMP/gregale" mcp init --runtime go --path "$RUNNER_TEMP/mcp-go"
           "$RUNNER_TEMP/gregale" mcp init --runtime python --path "$RUNNER_TEMP/mcp-python"
           python3 -m venv "$RUNNER_TEMP/mcp-python-venv"
@@ -396,6 +400,9 @@ jobs:
           go test ./...
           cd "$RUNNER_TEMP/mcp-python"
           "$RUNNER_TEMP/mcp-python-venv/bin/python" -m unittest discover -s . -p 'test_*.py'
+          cd "$RUNNER_TEMP/mcp-node-plain"
+          npm ci --ignore-scripts
+          npm test
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
           MCP_TASKS_TEST_DATABASE_URL='postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp' MCP_TASKS_REQUIRE_POSTGRES=1 npm test
