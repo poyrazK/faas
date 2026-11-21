@@ -31,10 +31,16 @@ invocation. Both archives use the pinned Node starter and dependency lockfile.
 The web process accepts Tasks and the dedicated worker executes them. The
 contained worker archive also carries the stock Task migration command.
 
-The native coordinator needs to submit the fixture through the owner-approved
-path, observe the first running lease, stop that worker, and observe a second
-lease on the replacement. Collect the following in `hosted-task-receipt.json`
-in the same private evidence directory.
+The private smoke entry in `pkg/apid/toolregistry` checks the host through
+its in-process adapter before consuming the owner's approval. It scopes the
+smoke run to the exact contained deployments and their original lease, and
+cleans up an owned run even if the smoke is cancelled. Claim replay returns
+the reserved run identity.
+
+The native adapter needs to start the pinned workloads, submit the report,
+observe the first running lease, request that the scheduler stop that
+worker, and observe the replacement lease. Collect the following in
+`hosted-task-receipt.json` in the same private evidence directory.
 
 | Field | Source and expected value |
 | --- | --- |
