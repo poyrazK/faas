@@ -78,6 +78,9 @@ fleet:
       entry_ipv4: 51.222.39.227
       # Samsung PM9A3 960 GB, the disk the OS is not on.
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104409
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
     - name: bhs-3
       role: compute-only
       address: bhs-3.gregale.dev:50051
@@ -87,6 +90,9 @@ fleet:
       # Additional IP routed to ns5012238, as on bhs-2.
       entry_ipv4: 51.222.39.228
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104422
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
 
 daemons:
   schedd:
