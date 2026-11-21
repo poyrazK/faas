@@ -2,6 +2,9 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF to_regprocedure('enqueue_execution_finished_webhooks()') IS NULL THEN
 CREATE FUNCTION enqueue_execution_finished_webhooks() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.status IN ('succeeded','failed','timed_out','out_of_memory','cancelled') AND OLD.status IS DISTINCT FROM NEW.status THEN
@@ -17,7 +20,16 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-CREATE TRIGGER execution_finished_webhooks AFTER UPDATE OF status ON executions FOR EACH ROW EXECUTE FUNCTION enqueue_execution_finished_webhooks();
+ END IF;
+END $guard$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'executions'::regclass AND tgname = 'execution_finished_webhooks') THEN
+  CREATE TRIGGER execution_finished_webhooks AFTER UPDATE OF status ON executions FOR EACH ROW EXECUTE FUNCTION enqueue_execution_finished_webhooks();
+ END IF;
+END $$;
 -- +goose StatementEnd
 -- +goose Down
 SELECT 1;
