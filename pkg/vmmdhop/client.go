@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -82,6 +83,39 @@ type clientConn struct {
 	r        *bufio.Reader
 	w        *bufio.Writer
 	idleFrom time.Time
+
+	// While the connection is idle a watcher blocks reading it: nothing may
+	// arrive between exchanges, so any return but our own deadline means
+	// vmmd closed it (or broke the protocol).
+	watchDone chan struct{}
+	stopping  atomic.Bool
+	dead      atomic.Bool
+}
+
+// watch starts the idle watcher.
+func (cc *clientConn) watch() {
+	cc.watchDone = make(chan struct{})
+	cc.stopping.Store(false)
+	go func() {
+		defer close(cc.watchDone)
+		_, err := cc.r.Peek(1)
+		if !cc.stopping.Load() || !errors.Is(err, os.ErrDeadlineExceeded) {
+			cc.dead.Store(true)
+		}
+	}()
+}
+
+// claim stops the idle watcher without waiting on the network and reports
+// whether the connection is still usable.
+func (cc *clientConn) claim() bool {
+	if cc.watchDone != nil {
+		cc.stopping.Store(true)
+		_ = cc.conn.SetReadDeadline(time.Now())
+		<-cc.watchDone
+		_ = cc.conn.SetReadDeadline(time.Time{})
+		cc.watchDone = nil
+	}
+	return !cc.dead.Load() && cc.r.Buffered() == 0
 }
 
 // get returns an idle connection that is still open, or dials one.
@@ -96,11 +130,13 @@ func (c *Client) get(ctx context.Context) (*clientConn, error) {
 	for len(c.idle) > 0 {
 		cc := c.idle[len(c.idle)-1]
 		c.idle = c.idle[:len(c.idle)-1]
-		if c.now().Sub(cc.idleFrom) < clientIdleTimeout && cc.alive() {
-			c.mu.Unlock()
+		fresh := c.now().Sub(cc.idleFrom) < clientIdleTimeout
+		c.mu.Unlock()
+		if fresh && cc.claim() {
 			return cc, nil
 		}
 		_ = cc.conn.Close()
+		c.mu.Lock()
 	}
 	c.mu.Unlock()
 
@@ -130,19 +166,6 @@ func (c *Client) get(ctx context.Context) (*clientConn, error) {
 	return &clientConn{conn: conn, r: bufio.NewReaderSize(conn, 32<<10), w: bufio.NewWriterSize(conn, 32<<10)}, nil
 }
 
-// alive reports whether an idle connection is still open: nothing may arrive
-// on it between exchanges, so a read that does not time out at once means
-// vmmd closed it (or broke the protocol).
-func (cc *clientConn) alive() bool {
-	if cc.r.Buffered() > 0 {
-		return false
-	}
-	_ = cc.conn.SetReadDeadline(time.Now().Add(time.Millisecond))
-	_, err := cc.r.Peek(1)
-	_ = cc.conn.SetReadDeadline(time.Time{})
-	return errors.Is(err, os.ErrDeadlineExceeded)
-}
-
 func (c *Client) put(cc *clientConn) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -151,6 +174,7 @@ func (c *Client) put(cc *clientConn) {
 		return
 	}
 	cc.idleFrom = c.now()
+	cc.watch()
 	c.idle = append(c.idle, cc)
 }
 
@@ -281,7 +305,8 @@ func (s *clientStream[Req, Resp]) RecvMsg(m any) error {
 			return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode message: %v", err), false)
 		}
 		return nil
-	case frameStatus:
+	case frameStatus, frameStatusClose:
+		keep := typ == frameStatus
 		if len(payload) > maxStatusBytes {
 			return s.finish(status.Error(codes.Internal, "vmmdhop: status over its limit"), false)
 		}
@@ -290,9 +315,9 @@ func (s *clientStream[Req, Resp]) RecvMsg(m any) error {
 			return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode status: %v", err), false)
 		}
 		if st.Code() == codes.OK {
-			return s.finish(io.EOF, true)
+			return s.finish(io.EOF, keep)
 		}
-		return s.finish(st.Err(), true)
+		return s.finish(st.Err(), keep)
 	default:
 		return s.finish(status.Error(codes.Internal, "vmmdhop: unexpected frame from vmmd"), false)
 	}
@@ -306,7 +331,7 @@ func (s *clientStream[Req, Resp]) transportErr(err error) error {
 }
 
 // finish records the call's end and returns the connection to the pool
-// after a clean exchange, closing it otherwise.
+// after a clean exchange that vmmd keeps open, closing it otherwise.
 func (s *clientStream[Req, Resp]) finish(err error, statusRead bool) error {
 	s.mu.Lock()
 	if s.finished {

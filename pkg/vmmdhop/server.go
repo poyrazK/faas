@@ -416,14 +416,16 @@ func (c *serverConn) exchange(parent context.Context, method string, md metadata
 		span.SetStatus(otelcodes.Error, appStatus.Message())
 	}
 
-	reusable := st.writeStatus(appStatus) == nil
-	// Stop the reader: after a clean close-send it is only watching, so an
-	// expired deadline ends it without consuming anything.
+	// Stop the reader before answering: after a clean close-send it is only
+	// watching, so an expired deadline ends it without consuming anything.
+	// The status then tells the client whether the connection stays open, so
+	// it never pools one this side is about to close.
 	stopping.Store(true)
 	_ = c.conn.SetReadDeadline(time.Now())
 	clean := <-readerDone
 	_ = c.conn.SetReadDeadline(time.Time{})
-	return reusable && clean && ctx.Err() == nil
+	reusable := clean && ctx.Err() == nil
+	return st.writeStatus(appStatus, reusable) == nil && reusable
 }
 
 // metadataCarrier lets the W3C propagator read trace context from metadata.
@@ -541,8 +543,8 @@ func (st *serverStream) SendMsg(m any) error {
 	return status.Error(codes.Unavailable, "vmmdhop: write to gateway failed")
 }
 
-// writeStatus ends the exchange.
-func (st *serverStream) writeStatus(s *status.Status) error {
+// writeStatus ends the exchange; keep says whether the connection stays open.
+func (st *serverStream) writeStatus(s *status.Status, keep bool) error {
 	b, err := proto.Marshal(s.Proto())
 	if err != nil || len(b) > maxStatusBytes {
 		b, _ = proto.Marshal(status.New(s.Code(), "vmmdhop: status too large to send").Proto())
@@ -552,7 +554,11 @@ func (st *serverStream) writeStatus(s *status.Status) error {
 	if st.failed {
 		return errors.New("vmmdhop: connection failed")
 	}
-	if err := writeFrame(st.c.w, frameStatus, b); err != nil {
+	typ := byte(frameStatusClose)
+	if keep {
+		typ = frameStatus
+	}
+	if err := writeFrame(st.c.w, typ, b); err != nil {
 		return err
 	}
 	return st.c.w.Flush()

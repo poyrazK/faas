@@ -40,7 +40,7 @@ type testPKI struct {
 	pool  *x509.CertPool
 }
 
-func newTestPKI(t *testing.T) *testPKI {
+func newTestPKI(t testing.TB) *testPKI {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -63,7 +63,7 @@ func newTestPKI(t *testing.T) *testPKI {
 
 var serial atomic.Int64
 
-func (p *testPKI) leaf(t *testing.T, cn string, usage x509.ExtKeyUsage) tls.Certificate {
+func (p *testPKI) leaf(t testing.TB, cn string, usage x509.ExtKeyUsage) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -84,7 +84,7 @@ func (p *testPKI) leaf(t *testing.T, cn string, usage x509.ExtKeyUsage) tls.Cert
 
 // serverTLS mirrors wire's vmmd server config, reload hook included: the
 // hook returns a config offering only h2, as production's does.
-func (p *testPKI) serverTLS(t *testing.T) *tls.Config {
+func (p *testPKI) serverTLS(t testing.TB) *tls.Config {
 	cfg := &tls.Config{
 		Certificates: []tls.Certificate{p.leaf(t, "vmmd.test", x509.ExtKeyUsageServerAuth)},
 		ClientCAs:    p.pool,
@@ -97,7 +97,7 @@ func (p *testPKI) serverTLS(t *testing.T) *tls.Config {
 	return cfg
 }
 
-func (p *testPKI) clientTLS(t *testing.T, cn string) *tls.Config {
+func (p *testPKI) clientTLS(t testing.TB, cn string) *tls.Config {
 	cfg := &tls.Config{RootCAs: p.pool, ServerName: "vmmd.test", MinVersion: tls.VersionTLS13}
 	if cn != "" {
 		cfg.Certificates = []tls.Certificate{p.leaf(t, cn, x509.ExtKeyUsageClientAuth)}
@@ -176,7 +176,7 @@ type testVmmd struct {
 
 // startVmmd serves fake on one TCP listener the way vmmd does: gRPC with the
 // caller policy, and, with hop, the hop in front of it.
-func startVmmd(t *testing.T, fake *fakeVmmd, hop bool) *testVmmd {
+func startVmmd(t testing.TB, fake *fakeVmmd, hop bool) *testVmmd {
 	t.Helper()
 	pki := newTestPKI(t)
 	serverCfg := pki.serverTLS(t)
@@ -204,7 +204,7 @@ func startVmmd(t *testing.T, fake *fakeVmmd, hop bool) *testVmmd {
 	return &testVmmd{hop: hopLis, addr: lis.Addr().String(), fake: fake, pki: pki}
 }
 
-func (v *testVmmd) client(t *testing.T, cn string) *Client {
+func (v *testVmmd) client(t testing.TB, cn string) *Client {
 	t.Helper()
 	c, err := NewClient(v.addr, v.pki.clientTLS(t, cn))
 	if err != nil {
@@ -476,7 +476,7 @@ func TestListenerCloseDrains(t *testing.T) {
 	idle := append([]*clientConn(nil), c.idle...)
 	c.mu.Unlock()
 	for _, cc := range idle {
-		if cc.alive() {
+		if cc.claim() {
 			t.Fatal("an idle connection survived the drain")
 		}
 	}

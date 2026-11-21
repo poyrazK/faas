@@ -8,7 +8,7 @@
 //
 //	client: preamble (version, full method, metadata)
 //	        frameMessage* frameCloseSend
-//	server: frameMessage* frameStatus (a google.rpc.Status)
+//	server: frameMessage* (frameStatus | frameStatusClose), a google.rpc.Status
 //
 // A frame is a type byte, a varint length and the payload. One exchange runs
 // on a connection at a time; a connection is reused only after a clean one.
@@ -38,7 +38,11 @@ const protocolVersion = 1
 const (
 	frameMessage   = 1 // a marshaled protobuf message, either direction
 	frameCloseSend = 2 // client: no more messages in this exchange
-	frameStatus    = 3 // server: the exchange's final google.rpc.Status
+	frameStatus    = 3 // server: the final google.rpc.Status; the connection stays open
+	// frameStatusClose is frameStatus after which the server closes the
+	// connection: the exchange did not end cleanly on its side (the handler
+	// returned before the client's close-send, or the client broke framing).
+	frameStatusClose = 4
 )
 
 // Limits (ADR-20261121202814, security requirement 3).
