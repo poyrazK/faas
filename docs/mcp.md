@@ -383,6 +383,19 @@ both default to `core`; hosted connections also select their catalog during
 onboarding. Existing connections without a saved selection use `core` when the
 operator permits it, or the operator's narrower selection. An explicitly empty
 selection stays empty.
+
+A selection larger than 128 tools (for example `all` with writes) lists the
+core tools and `gregale_find_tools` instead, because some clients refuse more
+than 128 tools. Call `gregale_find_tools` with words for the task, such as
+`postgres schema` or `cron`. It adds up to 20 matching tools to the
+connection's list and sends `notifications/tools/list_changed`. If your client
+does not refresh its list, reconnect with the toolsets the result names.
+Found tools have the same checks as listed ones (ADR-20261121140000).
+
+Log search, incidents and product analytics tools are listed only while the
+capability is enabled for your account (`gregale capabilities`). The server
+reads this when it starts, so a capability released later appears on the next
+connection.
 Plan receipt and verification tools accompany `core`, `release`, `provision`
 and `operate`. Core includes saved-plan review, checks and retained action
 history and outcome lookups, as well as `gregale_get_restart` for configuration
@@ -459,6 +472,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_plan_source_deploy` | Connected GitHub source review: exact commit, repository/install identities and target configuration. |
 | `gregale_plan_deploy` | Preview a digest-pinned image release; creates no deployment. |
 | `gregale_plan_rollback` | Preview rollback to an exact retained release; changes no traffic. |
+| `gregale_plan_promotion` | Preview sending 100% traffic to a deployment already staged at 0%; changes no traffic. |
+| `gregale_find_tools` | Listed only above 128 tools: find unlisted tools and add them to the connection. |
 | `gregale_plan_workload_rollout` | Review native service/worker activation, retained image redeployment or retained GitHub commit rebuild. |
 | `gregale_plan_service_abort` | Review exact service reverse handoff to its pinned predecessor. |
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
@@ -3991,6 +4006,13 @@ The image release workflow is:
    the staged revision. Gregale atomically sends 100% traffic to it only if the
    original serving release still owns production traffic. A concurrent release
    returns `traffic_serving_changed`; the adapter never retries without the guard.
+
+To promote a revision staged by the CLI, another session, or a client that has
+since restarted, call `gregale_plan_promotion` with the app, the staged
+`deployment_id` and a reason. The deployment must be live at 0% traffic and
+be the app's latest revision. Then call `gregale_promote_deployment` with the
+returned `plan_id`; it applies the same guards, and production still asks a
+person.
 
 For rollback, call `gregale_plan_rollback` with the app, exact
 `target_deployment_id`, and reason, then review and apply its `plan_id` through
