@@ -3,6 +3,7 @@ package mcpmanagement
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -149,5 +150,33 @@ func TestGetLogsExplainsMissingParkedLogs(t *testing.T) {
 				t.Fatalf("parked app still reported a degraded backend: %v", err)
 			}
 		})
+	}
+}
+
+// gregale_context returned the full capability registry, 95 KB (about 49k
+// tokens with the text copy) on production. It now lists keys, and a hosted
+// connection reports the public API origin instead of apid's loopback.
+func TestContextSummarizesCapabilities(t *testing.T) {
+	var registry api.CapabilitiesResponse
+	registry.Plan, registry.RegistryVersion, registry.HiddenCapabilities = "scale", 3, []string{"managed-redis"}
+	for i := range 237 {
+		registry.Capabilities = append(registry.Capabilities, api.CapabilityStatus{Key: fmt.Sprintf("cap-%03d", i), Name: strings.Repeat("n", 40), Description: strings.Repeat("d", 300), Enabled: i%10 != 0, Maturity: api.CapabilityMaturityGA})
+	}
+	registry.Capabilities[1].Maturity = api.CapabilityMaturityPreview
+	sum := summarizeCapabilities(registry)
+	raw, _ := json.Marshal(sum)
+	if len(raw) > 8<<10 {
+		t.Fatalf("summary is %d bytes", len(raw))
+	}
+	if len(sum.Enabled) != 213 || len(sum.Disabled) != 24 || len(sum.NotGA) != 1 || sum.NotGA[0] != "cap-001" || sum.Hidden[0] != "managed-redis" {
+		t.Fatalf("summary = %+v", sum)
+	}
+	hosted := &management{opts: Options{APIBase: "http://127.0.0.1:8081", LogsAPIBase: "https://api.example.test"}}
+	if hosted.publicAPIBase() != "https://api.example.test" {
+		t.Fatalf("hosted api_base = %q", hosted.publicAPIBase())
+	}
+	local := &management{opts: Options{APIBase: "https://api.example.test"}}
+	if local.publicAPIBase() != "https://api.example.test" {
+		t.Fatalf("local api_base = %q", local.publicAPIBase())
 	}
 }
