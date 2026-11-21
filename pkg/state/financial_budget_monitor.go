@@ -72,7 +72,7 @@ type FinancialBudgetProjectionStore interface {
 // known usage is still below it.
 func financialBudgetProjectionAlert(p FinancialBudget, e financial.BudgetEvaluation) (FinancialBudgetAlertDelivery, bool) {
 	limit := p.Spec.LimitMillicents
-	if !e.EvaluatedAt.Before(e.PeriodEnd) || e.KnownMillicents == nil || e.ProjectedMillicents == nil || !e.Fresh || !e.CoverageComplete || limit <= 0 || *e.KnownMillicents >= limit || *e.ProjectedMillicents < limit {
+	if !e.EvaluatedAt.Before(e.PeriodEnd) || e.KnownMillicents == nil || e.ProjectedMillicents == nil || !e.Fresh || !e.CoverageComplete && !e.Projectable || limit <= 0 || *e.KnownMillicents >= limit || *e.ProjectedMillicents < limit {
 		return FinancialBudgetAlertDelivery{}, false
 	}
 	key := fmt.Sprintf("financial-budget-projection\n%s\n%s\n%d\n%s", p.AccountID, p.ID, p.Revision, e.PeriodStart.UTC().Format("2006-01"))
