@@ -43,6 +43,9 @@ type ElasticSlots struct {
 	log     *slog.Logger
 	enabled atomic.Bool
 	cfg     atomic.Pointer[builderslots.Config]
+	// provisioned is the node's reserved slots (FAAS_BUILDER_RESERVED_SLOTS);
+	// zero means one.
+	provisioned atomic.Int32
 
 	mu           sync.Mutex
 	lastGiveBack time.Time
@@ -65,17 +68,44 @@ func NewElasticSlots(node string, cpus int, read func() (builderslots.Memory, er
 // SetEnabled applies builder_elastic_slots.
 func (e *ElasticSlots) SetEnabled(on bool) { e.enabled.Store(on) }
 
+// SetProvisioned sets the reserved slots this node is provisioned with
+// (ADR-20261118154632 amendment 1). builder_slots cannot change that count;
+// Applied always reports it as Reserved.
+func (e *ElasticSlots) SetProvisioned(reserved int) {
+	e.provisioned.Store(int32(api.ClampBuilderReservedSlots(reserved))) //nolint:gosec // bounded by api.BuilderReservedSlotsMax
+}
+
+func (e *ElasticSlots) provisionedReserved() int {
+	if n := int(e.provisioned.Load()); n > 0 {
+		return n
+	}
+	return api.BuilderSlotsDefaultReserved
+}
+
+// resolve is cfg's entry for this node with the node's provisioned reserved
+// slots, clamped to its CPUs. It reports whether provisioning or the CPU
+// clamp changed what builder_slots asked for.
+func (e *ElasticSlots) resolve(cfg *builderslots.Config) (requested, applied builderslots.Slots, provisioned, clamped bool) {
+	requested = cfg.For(e.node)
+	withProvision, provisioned := builderslots.Provisioned(requested, e.provisionedReserved())
+	applied, clamped = builderslots.Clamp(withProvision, e.cpus)
+	return requested, applied, provisioned, clamped
+}
+
 // SetConfig applies builder_slots and logs what this node now runs.
 func (e *ElasticSlots) SetConfig(cfg builderslots.Config) {
 	e.cfg.Store(&cfg)
-	requested := cfg.For(e.node)
-	applied, clamped := builderslots.Clamp(requested, e.cpus)
+	requested, applied, provisioned, clamped := e.resolve(&cfg)
 	e.mu.Lock()
 	changed := applied != e.lastApplied
 	e.lastApplied = applied
 	e.mu.Unlock()
 	if !changed {
 		return
+	}
+	if provisioned {
+		e.log.Warn("builderd: builder_slots' reserved differs from the slots this node is provisioned with; the node runs its provisioned count",
+			"node", e.node, "requested_reserved", requested.Reserved, "provisioned_reserved", applied.Reserved)
 	}
 	if clamped {
 		e.log.Warn("builderd: builder_slots asks for more builds than this node's CPUs run; clamped",
@@ -87,9 +117,10 @@ func (e *ElasticSlots) SetConfig(cfg builderslots.Config) {
 // Enabled reports builder_elastic_slots.
 func (e *ElasticSlots) Enabled() bool { return e != nil && e.enabled.Load() }
 
-// Applied is this node's slots: its builder_slots entry, clamped to its CPUs.
+// Applied is this node's slots: its builder_slots entry with the node's
+// provisioned reserved slots, clamped to its CPUs.
 func (e *ElasticSlots) Applied() builderslots.Slots {
-	slots, _ := builderslots.Clamp(e.cfg.Load().For(e.node), e.cpus)
+	_, slots, _, _ := e.resolve(e.cfg.Load())
 	return slots
 }
 
@@ -119,9 +150,13 @@ type borrowedBuild struct {
 	preempting bool
 }
 
-// WithElasticSlots wires elastic builder slots.
+// WithElasticSlots wires elastic builder slots. They run the node's
+// provisioned reserved slots (WithReservedSlots).
 func (b *Builderd) WithElasticSlots(e *ElasticSlots) *Builderd {
 	b.elastic = e
+	if e != nil {
+		e.SetProvisioned(b.reservedSlots())
+	}
 	return b
 }
 
@@ -130,16 +165,32 @@ func (b *Builderd) slotLimit() int {
 	if b.elastic.Enabled() {
 		return b.elastic.Applied().Max
 	}
-	return maxBuilderSlots
+	return b.fixedSlotLimit()
 }
 
 // acquireBuildSlot takes a builder slot for build: elastic slots while
-// builder_elastic_slots is on, else the fixed allocator.
+// builder_elastic_slots is on, else the fixed allocator. A slot in
+// faas-cp-build.slice also records whether build shares that slice with
+// another builder (sliceSharedProbe).
 func (b *Builderd) acquireBuildSlot(ctx context.Context, build state.Build) (SlotDecision, func(), bool) {
+	var (
+		slot    SlotDecision
+		release func()
+		ok      bool
+	)
 	if !b.elastic.Enabled() {
-		return b.acquireSlot()
+		slot, release, ok = b.acquireSlot()
+	} else {
+		slot, release, ok = b.acquireElasticSlot(ctx, build)
 	}
-	return b.acquireElasticSlot(ctx, build)
+	if !ok || slot.Label == slotLabelBorrowed {
+		return slot, release, ok
+	}
+	b.joinBuildSlice(build.ID)
+	return slot, func() {
+		release()
+		b.leaveBuildSlice(build.ID)
+	}, true
 }
 
 func (b *Builderd) acquireElasticSlot(ctx context.Context, build state.Build) (SlotDecision, func(), bool) {

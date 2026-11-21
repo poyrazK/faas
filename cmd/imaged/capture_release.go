@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 
@@ -27,14 +28,16 @@ type platformReleases struct {
 // runtime-config watcher and returns imaged's per-account decisions: the
 // profile-captures capability, so on-demand collectors are stamped only into
 // deployments of accounts the preview is released to (ADR-1155), and the
-// postgres_pool_sizing flag (ADR-20261104141122).
+// postgres_pool_sizing flag (ADR-20261104141122). The same watcher applies the
+// request-concurrency keys (ADR-20261101215228), so the pool size imaged
+// stamps follows the per-instance limit the gateways and schedd enforce.
 func startPlatformReleases(ctx context.Context, getenv func(string) string, store state.Store, pool *pgxpool.Pool, log *slog.Logger) (platformReleases, error) {
 	flags := platformflags.NewSet(capflags.Bootstrap(getenv))
 	decider, err := capflags.Load(flags.Snapshot)
 	if err != nil {
 		return platformReleases{}, fmt.Errorf("imaged: load capability catalog: %w", err)
 	}
-	keys, apply := runtimeconfig.WithPlatformFlags(nil, nil, flags)
+	keys, apply := runtimeKeys(flags, &runtimeconfig.RequestConcurrency{}, log)
 	watcher := runtimeconfig.New(store, pool, keys, apply, log)
 	watcher.Daemon = "imaged" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(ctx); err != nil {
@@ -53,4 +56,19 @@ func startPlatformReleases(ctx context.Context, getenv func(string) string, stor
 			return flags.Enabled(platformflags.PostgresPoolSizing, subject)
 		},
 	}, nil
+}
+
+// runtimeKeys are the runtime-config keys imaged's watcher applies: the
+// platform flags and the request-concurrency keys (ADR-20261101215228), which
+// set the per-instance limit api.Limits.PostgresPoolMax resolves for the pool
+// size imaged stamps (ADR-20261104141122).
+func runtimeKeys(flags *platformflags.Set, requestConcurrency *runtimeconfig.RequestConcurrency, log *slog.Logger) ([]string, runtimeconfig.ApplyFunc) {
+	return runtimeconfig.WithPlatformFlags(runtimeconfig.RequestConcurrencyKeys,
+		func(_ context.Context, key string, value json.RawMessage, _ int64) error {
+			handled, err := requestConcurrency.Apply(key, value)
+			if handled && err == nil {
+				log.Info("imaged: applied request limit setting (ADR-20261101215228)", "key", key, "value", string(value))
+			}
+			return err
+		}, flags)
 }

@@ -17,8 +17,14 @@ need it.
 - A node uses its own entry under `nodes` (its `FAAS_NODE_NAME`), else
   `default`.
 - `reserved` slots run in `faas-cp-build.slice`, are funded out of tenant
-  sizing (ADR-203) and never give a build back. `reserved` must be 1 until
-  nodes re-derive their sizing live (ADR step 7).
+  sizing (ADR-203) and never give a build back. A node runs the reserved slots
+  it is provisioned with: the deploy manifest's `builder_reserved_slots`
+  (default 1), which node_join turns into `FAAS_BUILDER_RESERVED_SLOTS` and
+  the build slice, control-plane slice and tenant fence sized for that count
+  (ADR amendment 1). `builder_slots`' `reserved` (1 to 4) cannot add or remove
+  one; builderd logs a mismatch and runs its provisioned count. With the flag
+  `off` the fixed allocator runs the same provisioned count as guaranteed
+  slots.
 - `max` counts every slot. The `max - reserved` slots above are **borrowed**:
   they run in `faas-borrowed.slice` and use memory the tenant slice is allowed
   but not using.
