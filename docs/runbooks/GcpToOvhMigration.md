@@ -748,6 +748,15 @@ After the checks in phase 1 step 9, stop it
   bucket.
 - **Billing**: the egress allowance numbers were set for GCP egress costs
   (billing review R8-1); revisit them now.
+- **Managed PostgreSQL**: the provider registry (`FAAS_MANAGED_POSTGRES_CONFIG`)
+  was hand-installed on the GCP control plane and did not move: after the
+  2026-11 cutover every `gregale postgres` command answered "Managed
+  PostgreSQL is not configured for this environment". Set
+  `faas_managed_postgres_config` with the backends the databases were created
+  on and converge the control plane; the `managed_postgres_config` role
+  refuses a config under which existing databases would not resolve
+  (`deploy/ansible/roles/managed_postgres_config/README.md`). Check
+  `gregale postgres list` afterwards.
 
 ## Record
 

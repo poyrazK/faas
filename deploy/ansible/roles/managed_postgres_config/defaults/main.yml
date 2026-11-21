@@ -1,0 +1,23 @@
+---
+# managed_postgres_config: the managed PostgreSQL provider registry apid
+# loads from FAAS_MANAGED_POSTGRES_CONFIG (pkg/managedpostgres/registry.go).
+#
+# Empty (the default) leaves the host as it is: a hand-installed config and
+# its sealed.env line keep working, and nothing is removed. Set it to the
+# registry's JSON shape (deploy/managed-postgres.example.json) as YAML and the
+# role renders it, points apid at it with a drop-in and restarts apid.
+#
+# It holds no secrets: a backend names the sealed.env variables that hold
+# its keys in secret_env (for Neon, "api-key": FAAS_NEON_API_KEY). The role
+# refuses settings that look like secrets.
+faas_managed_postgres_config: {}
+
+faas_managed_postgres_config_path: /etc/faas/managed-postgres.json
+
+# Before installing a config, check that every database the catalog holds
+# still resolves to its backend (same driver, region, namespace and settings
+# as at placement, or listed in previous_settings). A mismatch would make
+# every existing database unavailable. Turn off only on a host whose
+# catalog is not this host's local `faas` database.
+faas_managed_postgres_config_verify_catalog: true
+faas_managed_postgres_config_catalog_dsn: "postgres:///faas?host=/run/postgresql"
