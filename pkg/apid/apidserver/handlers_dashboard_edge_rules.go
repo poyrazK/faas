@@ -166,7 +166,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
 			apiRules = append(apiRules, s.dashboardPreviewInheritedRules(ctx, log, acct, app)...)
-			apiRules = append(apiRules, s.dashboardCoveringRules(r, log, acct, app)...)
+			apiRules = append(apiRules, edgeruletrace.CoveringRulesForHost(s.dashboardCoveringRules(r, log, acct, app), app.ID, traceContext.Host)...)
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
 					lists, listErr := store.EdgeRuleListsByName(ctx, acct.ID, names)

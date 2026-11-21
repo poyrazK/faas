@@ -71,8 +71,8 @@ overrides:
   - At most `BuilderSlotsNodeEntriesMax` node entries.
   - The value must give at least one reserved slot, in `default` or in some
     node entry.
-  - Until step 7, `reserved` must be 1, because changing it resizes tenant
-    capacity.
+  - `reserved` is 1 to `BuilderReservedSlotsMax` (4). A node runs the reserved
+    slots it is provisioned with, not this value (amendment 1).
 - **Clamping on the node:** each node clamps `max` to
   `floor(online CPUs / BuildVMVCPU)`. It reports both the requested and the
   applied values in its runtime config apply receipt and in metrics.
@@ -259,11 +259,8 @@ refused admission or evicted.
 6. Canary: turn the flag on and set one node to `max: 3`. Observe for at least
    48 h. Tenant OOM kills must stay at 0 and wake p95 must not change. Track
    preemptions per hour and build queue wait.
-7. Allow `reserved ≠ 1`.
-   - vmmd re-derives node sizing live with `reserved × BuilderSlotReserveMB`,
-     re-registers `compute_nodes` and resizes faas-tenant.slice.
-   - It refuses a cut below the node's current measured tenant memory and
-     reports the applied value.
+7. Allow `reserved ≠ 1`. Replaced by amendment 1: a node's reserved slots are
+   provisioned at deploy time, not resized live.
 8. A `gregalectl` command to read and set the setting, a runbook, and a
    `docs/` section.
 
@@ -285,3 +282,55 @@ refused admission or evicted.
   2 s and goes stale while schedd is unreachable, which is too slow and too far
   away for a give-back loop. The node's own cgroup reads replace it under the
   flag.
+
+## Amendment 1 (2026-11-21): reserved slots are provisioned per node at deploy time
+
+The owner asked for two guaranteed builds on each OVH compute node (16 threads,
+128 GB). Step 7 planned that as a live change in vmmd. Three fences have to move
+together for it, and only one of them is vmmd's to derive:
+
+- the tenant slice and admission ceiling (`BuilderSlotReserveMB` per slot);
+- `faas-cp-build.slice`, whose `MemoryMax` (5120M) holds one builder and whose
+  `CPUQuota` (200%) is two CPUs;
+- its parent `faas-cp.slice` (6G), which on a compute node both the
+  systemd_slices role and `gregalectl manifest render` write.
+
+vmmd writes no slice limits, and a direct cgroupfs write is undone by the next
+daemon-reload. node_join already rewrites the tenant fence and vmmd's capacity
+environment on every rollout from `gregalectl compute-nodes sizing`. So:
+
+- **Decision.** A compute node's reserved builder slots are a deploy-time,
+  per-node value: the manifest's `fleet.hosts[].builder_reserved_slots` (1 to
+  `BuilderReservedSlotsMax` = 4, default 1). node_join passes it to
+  `gregalectl compute-nodes sizing --builder-reserved-slots N` and writes, from
+  the report:
+  - the tenant fence and admission ceiling, holding back
+    `ComputeNodeDaemonReserveMB + N × BuilderSlotReserveMB`;
+  - `faas-cp-build.slice.d/90-builder-slots.conf`: `MemoryMax` =
+    `api.BuilderSliceMemoryMaxMB(N)` (N × 2,816 MiB + 2,048 MiB for the one
+    warm snapshot a node captures at a time + 256 MiB; 5,120 for N = 1 and
+    7,936 for N = 2) and `CPUQuota` = N × 200%;
+  - `faas-cp.slice.d/90-builder-slots.conf`: `MemoryMax` =
+    `api.ComputeCPSliceMemoryMaxMB(N)` (6,144 MiB + 2,816 MiB per slot past the
+    first), so the daemons keep today's 1,024 MiB beside the build slice;
+  - `FAAS_BUILDER_RESERVED_SLOTS=N` for builderd and vmmd.
+- **builderd** runs exactly N guaranteed slots. With the flag `off`, the fixed
+  allocator's first N slots are guaranteed (no residency or memory gate) and
+  slot N+1 stays opportunistic under the existing gates; N = 1 is today's
+  allocator. With the flag `on`, `Applied().Reserved` is N whatever
+  `builder_slots` asks for; a mismatch is logged. `max` is raised to at least N.
+- **OOM attribution.** The slice-wide `oom_kill` delta is attributed to a build
+  only while it is the slice's only builder. A build that shared the slice
+  relies on its VM's exit status (137) through the failure-class table, so one
+  builder's OOM no longer fails its sibling. The BuildKit seed run still reads
+  the slice counter; a misattributed seed failure retries on its own schedule.
+- **vmmd** funds the same N in its compute-only sizing derivation. It gains no
+  runtime resize and no new cgroup writes.
+- **Applying a change** takes a rollout of the node (node_join plus a daemon
+  restart), never a hand restart: the slices, the tenant fence and vmmd's
+  registered ceiling must change together.
+- **Consequences.** Each slot past the first costs tenants
+  `BuilderSlotReserveMB` (about 1.7 GB of admission ceiling) and lets
+  `faas-cp.slice` hold 2,816 MiB more, which a control-plane daemon leak could
+  also grow into, bounded by the slice. Builds still never outrank tenant
+  wakes: the slots are funded before tenants are admitted.

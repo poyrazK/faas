@@ -110,6 +110,12 @@ func TestGetCapabilitiesReturnsPlanResolvedRegistry(t *testing.T) {
 	if got := capabilityByKey(t, response, "object-storage"); got.Enabled {
 		t.Fatalf("object storage advertised enabled without provider configuration: %+v", got)
 	}
+	// prod hunt 2026-11-21: object-storage's children stayed "available".
+	for _, child := range []string{"bucket-cors", "object-versioning", "object-lifecycle"} {
+		if got := capabilityByKey(t, response, child); got.Enabled || got.UnavailableReason != api.CapabilityUnavailableRuntime {
+			t.Fatalf("%s advertised while object storage is off: %+v", child, got)
+		}
+	}
 	if got := capabilityByKey(t, response, "github-deploys"); got.Enabled {
 		t.Fatalf("GitHub deploys advertised without a healthy githubd runtime: %+v", got)
 	}

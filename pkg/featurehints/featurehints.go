@@ -184,7 +184,7 @@ func privateServices(in Input, ws []api.PlanWorkload) *api.FeatureHint {
 	return &api.FeatureHint{
 		ID:        IDPrivateServices,
 		Workloads: names(hit),
-		Applied: fmt.Sprintf("%s get no public URL: Compose publishes no ports for them. Services in the project reach them through "+
+		Applied: fmt.Sprintf("No public URL for %s: Compose publishes no ports for them. Services in the project reach them through "+
 			"service bindings named in depends_on.", list(names(hit))),
 		Change: "Read their logs with the first command. To call them from a service running on your machine, use `gregale dev bridge` " +
 			"with them as --dependencies.",

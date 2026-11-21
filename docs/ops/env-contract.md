@@ -136,6 +136,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_REF` | imaged | `dropin` |  |  | `` |  |
+| `FAAS_BUILDER_RESERVED_SLOTS` | builderd, shared, vmmd | `default` |  |  | `` | guaranteed builder slots the compute node is provisioned with (ADR-20261118154632 amendment 1): builderd runs that many guaranteed builds and vmmd funds them in its compute-only sizing; must match the build slice and tenant fence node_join sized; default 1 |
 | `FAAS_BUILDER_SLOT_CPUS` | builderd | `dev-only` |  |  | `` | acceptance-host override of the online CPU count that caps builder_slots max (ADR-20261118154632); production leaves it unset |
 | `FAAS_BUILDER_WARM_BUILDERS` | builderd | `default` |  |  | `` | opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline |
 | `FAAS_BUILDER_WARM_IDLE_MS` | builderd | `default` |  |  | `` | optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes |
