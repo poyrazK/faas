@@ -344,11 +344,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if branchRef != "" {
 		sourceInstallationID = installID
 	}
-	r, scheduleResult, ok := s.attachDeploymentSchedule(w, r, acct, app, sched)
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
 	if !ok {
 		return
 	}
-	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+	res, err := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 		ExpectedReview:            rolloutReq.ExpectedReview,
 		ReviewedRolloutMode:       req.NativeRollout,
 		ReviewedSettings:          reviewedSettings,

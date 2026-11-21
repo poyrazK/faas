@@ -945,7 +945,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
 	}
-	r, scheduleResult, ok := s.attachDeploymentSchedule(w, r, acct, app, sched)
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
 	if !ok {
 		return
 	}
@@ -957,12 +957,12 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	var err error
 	if activity != nil {
 		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
-			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
+			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(deployCtx, dep, *activity)
 		} else {
-			d, err = s.store.CreateDeployment(r.Context(), dep)
+			d, err = s.store.CreateDeployment(deployCtx, dep)
 		}
 	} else {
-		d, err = s.store.CreateDeployment(r.Context(), dep)
+		d, err = s.store.CreateDeployment(deployCtx, dep)
 	}
 	if err != nil {
 		if writeReleaseReviewError(w, err) {

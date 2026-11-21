@@ -171,16 +171,16 @@ func (sched *releaseSchedule) input(r *http.Request, acct state.Account, app sta
 	}
 }
 
-// attachDeploymentSchedule commits any schedule with the parked deployment.
-func (s *server) attachDeploymentSchedule(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, sched *releaseSchedule) (*http.Request, *state.DeploymentScheduleResult, bool) {
+// withDeploymentSchedule commits any schedule with the parked deployment.
+func (s *server) withDeploymentSchedule(ctx context.Context, w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, sched *releaseSchedule) (context.Context, *state.DeploymentScheduleResult, bool) {
 	if sched == nil {
-		return r, nil, true
+		return ctx, nil, true
 	}
 	if _, ok := s.scheduledReleaseStore(w); !ok {
-		return r, nil, false
+		return ctx, nil, false
 	}
-	ctx, result := state.ContextWithDeploymentSchedule(r.Context(), sched.input(r, acct, app), schedule.CodeReplaced, "a newer schedule replaced it")
-	return r.WithContext(ctx), result, true
+	ctx, result := state.ContextWithDeploymentSchedule(ctx, sched.input(r, acct, app), schedule.CodeReplaced, "a newer schedule replaced it")
+	return ctx, result, true
 }
 
 func (s *server) auditDeploymentSchedule(r *http.Request, acct state.Account, app state.App, d state.Deployment, result *state.DeploymentScheduleResult) {
