@@ -6,19 +6,21 @@ Gregale CLI and API, short-lived signed URLs, or any S3 SDK pointed at
 `https://s3.gregale.dev`. Buckets are separate from your app's instances, which
 stay stateless: a bucket is not a disk mounted into the VM.
 
-> **Preview.** Object storage and every feature on this page are preview
-> capabilities, released per account. Ask support to enable them. Behavior and
-> limits can change before general availability.
-
-Operators running Gregale themselves should read the
-[object storage operator notes](ops/object-storage-operator-notes.md).
+> **Generally available:** buckets (private and public), uploads and
+> downloads, signed URLs and upload routes, S3 credentials and the S3 endpoint,
+> multipart uploads, app bindings (including key-scoped ones), and bucket
+> notifications.
+>
+> **Preview, released per account:** versioning, Object Lock, lifecycle rules,
+> bucket encryption settings, CORS rules and bucket grants for API keys. The
+> sections below mark them. Gregale's storage region does not support
+> versioning or Object Lock yet.
 
 ## Plans and pricing
 
 Object storage is available on every plan. Each plan includes an amount of
 storage, measured as the average bytes you keep over the billing month, and
-has a ceiling on what you can store
-([ADR-20261101214152](adr/20261101214152-object-storage-ceiling-follows-spend-cap.md)):
+has a ceiling on what you can store:
 
 | Plan | Included storage | Storage ceiling |
 |---|---|---|
@@ -42,6 +44,16 @@ spend cap), downloads are refused with `402 account_bytes`; listing, `HEAD` and
 When your account reaches its spend cap, existing buckets keep working within
 your plan's limits. Retained object versions count toward stored bytes until
 they are deleted.
+
+## Region and durability
+
+Buckets live in one region, served at `https://s3.gregale.dev` as region
+`us-east-1`. Gregale stores objects on OVHcloud Object Storage and relies on
+the provider's durability. There is no second region, and Gregale keeps no copy
+of your objects outside the provider.
+
+This region does not support versioning, so an overwrite or a delete cannot be
+undone. Keep your own copy of data you cannot recreate.
 
 ## Create a bucket
 
@@ -328,7 +340,7 @@ the old one is retired. Your app must be allowed to reach `s3.gregale.dev` under
 its egress rules. See [object storage from compute workloads](object-storage-compute.md)
 for SDK helpers.
 
-### Limit a binding to part of a bucket (preview)
+### Limit a binding to part of a bucket
 
 A binding can be limited to object keys under one prefix. Give each service
 only the keys it needs, with its own secret-name prefix:
@@ -369,7 +381,9 @@ Or `gregale add bucket segments --app store --permission write --key-prefix v1/L
 
 Bucket management needs an API key with the `storage:manage` scope. Reading and
 writing objects need `storage:read` and `storage:write`, and a key without the
-`admin` scope also needs a grant on each bucket it uses:
+`admin` scope also needs a grant on each bucket it uses. Bucket grants are in
+preview: until they are released to your account, use an `admin` key, S3
+credentials or an app binding.
 
 ```http
 PUT /v1/apps/{app}/buckets/{bucket-id}/access-grants/{key-id}
@@ -380,7 +394,9 @@ PUT /v1/apps/{app}/buckets/{bucket-id}/access-grants/{key-id}
 `permission` is `read`, `write` or `read_write`. `storage:manage` alone does not
 read or write objects.
 
-## Versioning
+## Versioning (preview)
+
+Versioning is in preview, and Gregale's storage region does not support it yet.
 
 With versioning on, overwriting or deleting an object keeps the previous
 version, and you can read or restore it:
@@ -396,7 +412,9 @@ until it is ready. Suspending it keeps the versions you have. Retained versions
 count toward your stored bytes. S3 SDKs can also list versions
 (`ListObjectVersions`) and read or delete a specific version.
 
-## Lifecycle rules
+## Lifecycle rules (preview)
+
+Lifecycle rules are in preview.
 
 Lifecycle rules delete objects for you: current objects after a number of days
 or on a date, older versions, expired delete markers, and abandoned multipart
@@ -427,7 +445,9 @@ Older-version rules continue to apply after the last live object is deleted.
 Current-object age starts when the upload completes; changing tags does not
 restart its expiration clock.
 
-## Object Lock, retention and legal holds
+## Object Lock, retention and legal holds (preview)
+
+Object Lock is in preview, and Gregale's storage region does not support it yet.
 
 Where your region's storage supports it, Object Lock keeps chosen object versions
 from being deleted or overwritten:
@@ -437,8 +457,7 @@ from being deleted or overwritten:
   `COMPLIANCE` cannot be changed to `GOVERNANCE`.
 - **A legal hold** protects a version until you turn it off.
 
-Object Lock is included on paid plans, and retention is capped by plan
-([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)):
+Object Lock is included on paid plans, and retention is capped by plan:
 
 | Plan | Longest retention | Legal holds |
 |---|---|---|
@@ -464,15 +483,16 @@ gregale bucket protection retention my-api BUCKET_ID notes.txt VERSION_ID GOVERN
 
 A bucket or account holding protected versions cannot be deleted until the
 protection ends. Run `gregale bucket object-lock set --help` for the bucket
-defaults. (Object storage is in preview, so the public CLI reference does not
+defaults. (Object Lock is in preview, so the public CLI reference does not
 list its commands.)
 
 ## Encryption
 
-Objects are encrypted at rest by the storage provider. You can also choose a
-bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`) or, where
-enabled for your account, your own enrolled keys. Run
-`gregale bucket encryption set --help` for the options.
+Objects are encrypted at rest by the storage provider. Bucket encryption
+settings are in preview. Where they are released to your account, you can also
+choose a bucket default (`gregale bucket encryption set AES256 my-api BUCKET_ID`)
+or your own enrolled keys. Run `gregale bucket encryption set --help` for the
+options.
 
 Public asset GET and HEAD responses also validate provider encryption metadata.
 An unknown or another account's KMS key, customer-supplied encryption, or ambiguous
@@ -519,7 +539,9 @@ Queue destinations must have a unique enabled queue name across the app's
 environments. Notifications enter the captured queue's environment and retain
 that destination if the queue is renamed.
 
-## Browser access (CORS)
+## Browser access (CORS) (preview)
+
+CORS rules are in preview.
 
 To let your own sites use signed URLs and upload routes from the browser, set
 CORS rules on the bucket:
@@ -588,7 +610,6 @@ current values are in `GET /v1/account/object-storage-usage` under `policy`.
   read or write its buckets. After the grace period, every bucket it owns is
   emptied and deleted. Gregale releases legal and event holds and deletes
   `GOVERNANCE` versions too; versions under `COMPLIANCE` retention, which no
-  one can remove early, are kept until their retention ends and then deleted
-  ([ADR-20261111123000](adr/20261111123000-object-storage-over-ceiling-retention.md)).
+  one can remove early, are kept until their retention ends and then deleted.
 - A bucket created for an organization belongs to the organization, not to the
   member who created it.

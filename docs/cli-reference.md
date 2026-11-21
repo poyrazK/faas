@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`bucket`](#bucket) | Manage object storage buckets |
 | [`export`](#export) | Verify and compare saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
@@ -874,6 +875,26 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
 | `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--wait-timeout <DURATION>` | readiness timeout |  |
+
+### add bucket
+
+Provision or attach object storage and inject sealed S3 settings
+
+`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
+| `--scope <SCOPE>` | environment scope (alias for --env) |  |
+| `--region <REGION>` | object-storage region |  |
+| `--public` | serve objects publicly from the app host |  |
+| `--serve-at <PATH>` | public mount path |  |
+| `--permission <MODE>` | compute binding permission | one of `read` · `write` · `read_write` |
+| `--label <LABEL>` | bucket-scoped compute credential label |  |
+| `--prefix <PREFIX>` | injected storage secret prefix |  |
+| `--key-prefix <KEYS/>` | limit the binding to object keys under this prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add ai
@@ -2484,7 +2505,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|object-storage|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2735,6 +2756,54 @@ gregale app binding check my-api --max-verification-age 10m --json
 gregale app binding check my-api --scope production
 gregale app binding check my-api --release v12 --release-policy --wait --json
 gregale app binding check my-api --release v12 --max-verification-age 10m --json
+```
+
+#### app binding object-storage
+
+Manage app-to-bucket compute bindings
+
+`gregale app binding object-storage <list|rotate|revoke>`
+
+##### app binding object-storage list
+
+List safe binding metadata
+
+`gregale app binding object-storage list <app> <bucket>`
+
+Examples:
+
+```sh
+gregale app binding object-storage list my-api assets
+```
+
+##### app binding object-storage rotate
+
+Rotate a binding credential and optionally wait for retirement
+
+`gregale app binding object-storage rotate [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket> <binding-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
+
+Examples:
+
+```sh
+gregale app binding object-storage rotate my-api assets BINDING_ID --wait
+```
+
+##### app binding object-storage revoke
+
+Revoke a binding credential
+
+`gregale app binding object-storage revoke <app> <bucket> <binding-id>`
+
+Examples:
+
+```sh
+gregale app binding object-storage revoke my-api assets BINDING_ID
 ```
 
 #### app binding verify
@@ -4926,6 +4995,258 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+
+## bucket
+
+Manage object storage buckets
+
+`gregale bucket [<subcommand>]`
+
+### bucket multipart
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket multipart get
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket multipart get <app> <bucket-id> <upload-id>`
+
+#### bucket multipart cancel
+
+Abort an unfinished multipart session, freeing the bucket it holds
+
+`gregale bucket multipart cancel <app> <bucket-id> <upload-id>`
+
+#### bucket multipart list
+
+List multipart sessions
+
+`gregale bucket multipart list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket multipart parts
+
+List uploaded multipart parts
+
+`gregale bucket multipart parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket deletion
+
+Create or inspect durable object deletions
+
+#### bucket deletion create
+
+Delete current data or an owned version; retry with the same UUID
+
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
+
+#### bucket deletion get
+
+Show a persisted deletion receipt
+
+`gregale bucket deletion get <app> <bucket-id> <request-id>`
+
+### bucket inventory
+
+Start, inspect or cancel a fenced capacity inventory
+
+#### bucket inventory get
+
+Show reconciliation progress and reclaimed capacity
+
+`gregale bucket inventory get <app> <bucket-id> <job-id>`
+
+#### bucket inventory start
+
+Pause writes and request capacity reconciliation
+
+`gregale bucket inventory start <app> <bucket-id>`
+
+#### bucket inventory cancel
+
+Cancel reconciliation and resume writes
+
+`gregale bucket inventory cancel <app> <bucket-id> <job-id>`
+
+### bucket copy-source
+
+Manage copy-only owned source grants
+
+#### bucket copy-source list
+
+List source grants for a destination credential
+
+`gregale bucket copy-source list <app> <bucket-id> <credential-id>`
+
+#### bucket copy-source grant
+
+Allow copying an owned source bucket or prefix
+
+`gregale bucket copy-source grant <app> <bucket-id> <credential-id> <source-bucket-id> [prefix]`
+
+#### bucket copy-source revoke
+
+Prevent new copy dispatch from a source
+
+`gregale bucket copy-source revoke <app> <bucket-id> <credential-id> <source-bucket-id>`
+
+### bucket usage
+
+Account object storage observations, safety policy and billing state
+
+### bucket list
+
+List an app&#39;s object-storage buckets and their IDs
+
+`gregale bucket list <app>`
+
+### bucket delete
+
+Delete an empty bucket (including retained versions)
+
+`gregale bucket delete [--yes] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+### bucket upload
+
+Upload a file with resumable multipart transfers
+
+`gregale bucket upload [--content-type <TYPE>] [--if-match <ETAG>] [--if-none-match <*>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--if-match <ETAG>` | replace a matching object (single PUT only) |  |
+| `--if-none-match <*>` | create only if absent (single PUT only) |  |
+| `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket sign
+
+Mint a short-lived signed URL to download or upload one object
+
+`gregale bucket sign [--method <METHOD>] [--expires <DURATION>] [--size-bytes <N>] [--content-type <TYPE>] <app> <bucket-id> <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--method <METHOD>` | GET to download (default), PUT to upload | one of `GET` · `PUT` |
+| `--expires <DURATION>` | URL lifetime, at most 15m (default 5m) |  |
+| `--size-bytes <N>` | exact upload size; required with --method PUT |  |
+| `--content-type <TYPE>` | upload content type |  |
+
+Examples:
+
+```sh
+gregale bucket sign my-api 4f2c… v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api 4f2c… avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+Send the URL with exactly the printed headers and no Gregale credentials; it needs no S3 SDK.
+
+A PUT URL writes once, and each URL reserves storage when issued, so do not retry signing automatically.
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--version-id <VERSION>] [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--version-id <VERSION>` | download this owned immutable version |  |
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket writes
+
+Inspect tracked writes and await recovery
+
+#### bucket writes list
+
+List pending writes or recent completed and failed receipts
+
+`gregale bucket writes list [--status <STATUS>] [--limit <N>] [--cursor <TOKEN>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | pending (default), completed, failed or all |  |
+| `--limit <N>` | page size (default 50, maximum 100) |  |
+| `--cursor <TOKEN>` | next page cursor |  |
+
+#### bucket writes status
+
+Read a tracked write receipt
+
+`gregale bucket writes status <app> <bucket-id> <receipt-id>`
+
+#### bucket writes wait
+
+Poll until completed or failed; pending timeout retains the receipt
+
+`gregale bucket writes wait [--timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket-id> <receipt-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum wait (default 5m) |  |
+| `--poll-interval <DURATION>` | time between reads (default 5s, minimum 1s) |  |
+
+### bucket tags
+
+Read, replace or clear tags on current or selected data
+
+#### bucket tags get
+
+Read object tags
+
+`gregale bucket tags get <app> <bucket-id> <key> [version-id|null]`
+
+#### bucket tags set
+
+Replace the complete tag set
+
+`gregale bucket tags set <app> <bucket-id> <key> <URL-encoded-tags> [version-id|null]`
+
+#### bucket tags clear
+
+Remove all object tags
+
+`gregale bucket tags clear <app> <bucket-id> <key> [version-id|null]`
+
+### bucket notifications
+
+Manage bucket event notifications
+
+#### bucket notifications get
+
+Read notification rules
+
+`gregale bucket notifications get <app> <bucket-id>`
+
+#### bucket notifications set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket notifications set <app> <bucket-id> <JSON-file|->`
+
+#### bucket notifications clear
+
+Remove notification rules
+
+`gregale bucket notifications clear <app> <bucket-id>`
 
 
 ## export

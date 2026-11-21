@@ -4144,8 +4144,8 @@ and its `plan_id`.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
 
-Object storage and managed PostgreSQL are preview capabilities; when one is
-off for the account, apply returns the API's error. Jobs and `gregale run`
+Object storage and managed PostgreSQL are released per account during their
+rollout; when one is off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
 
 ## Configure, inspect and recover

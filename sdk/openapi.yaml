@@ -439,6 +439,46 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/apps/{slug}/bindings/release-policy-with-object-storage:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: scope
+        in: query
+        description: Deployment scope whose object-storage release policy will be replaced. Omit for default.
+        schema: {type: string, default: default, maxLength: 40, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
+    put:
+      tags: [apps]
+      operationId: setObjectStorageBindingReleasePolicy
+      summary: Replace release policy including required object-storage operations.
+      description: |
+        Requires deploy:write or admin and completed MFA. Uses the same revision
+        compare-and-set and traffic fences as release-policy. Explicit
+        object_storage_requirements is required; an empty object clears it.
+        Keys are managed environment prefixes in this scope (at most 32), values
+        are read, write or read_write. Missing bindings, insufficient permissions,
+        stale evidence, incomplete stages and mismatched operations block traffic.
+        Read accepts the legacy listing canary; write requires upload and cleanup;
+        read_write also requires byte-for-byte download. Current application ACKs
+        are independently required when configured. This call only records policy;
+        neither policy updates nor promotion initiate storage writes. Old servers
+        return 404 on this route rather than silently dropping the requirements.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetObjectStorageBindingReleasePolicyRequest'}
+      responses:
+        '200':
+          description: Updated object-storage release requirements and the new policy revision.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BindingReleasePolicy'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/bindings/services/{service}/explanation:
     get:
       tags: [apps]
@@ -1129,6 +1169,875 @@ paths:
               schema: {$ref: '#/components/schemas/ManagedPostgresBinding'}
         default:
           description: Authentication or binding rotation error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets:
+    parameters:
+      - {name: slug, description: App whose bucket catalog is being managed., in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listObjectBuckets
+      summary: List private object buckets and configured creation capabilities
+      description: storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
+      tags: [storage]
+      responses:
+        '200':
+          description: Buckets across this app's environment scopes; backend credentials are never exposed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucketList'}
+        default:
+          description: Authentication, authorization, or storage error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createObjectBucket
+      summary: Create a bucket on the region's current default backend
+      description: |
+        Requires storage:manage or admin. Idempotent by app, scope and name, not
+        by Idempotency-Key. Retry provisioning by submitting the same name and
+        scope. Existing buckets retain their backend when the default changes.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name]
+              properties:
+                name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+                scope: {type: string, default: default}
+                region: {type: string, description: 'Gregale region, not upstream signing region. Omit to use the configured default.'}
+                public: {type: boolean, default: false, description: 'Serve objects anonymously on the app hostname.'}
+                serve_at: {type: string, pattern: '^/[A-Za-z0-9][A-Za-z0-9._~/-]*$', description: 'Immutable app path mounted when public is true.'}
+      responses:
+        '201':
+          description: Bucket created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucket'}
+        '200':
+          description: Existing ready bucket
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucket'}
+        default:
+          description: Invalid request, access denied, bucket limit/conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/upload-routes:
+    parameters:
+      - {name: slug, description: App whose edge upload routes are being managed., in: path, required: true, schema: {type: string}}
+    get:
+      operationId: listObjectUploadRoutes
+      summary: List policy-controlled upload routes
+      description: Routes are served by Gregale's public edge and do not wake the application. Requires storage:read, storage:write, storage:manage, or admin.
+      tags: [storage]
+      responses:
+        '200':
+          description: Upload route policies without provider credentials.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectUploadRouteList'}
+        default:
+          description: Unable to list upload routes because of an authentication, authorization, or storage failure.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createObjectUploadRoute
+      summary: Create or update an authenticated upload route
+      description: Declares POST /uploads/{name}. Gregale authenticates an API key, generates an owner-scoped object key, enforces the byte/content-type policy, streams directly to the selected provider, and records a completion receipt. The public upload endpoint accepts an optional Idempotency-Key header (up to 128 bytes) to replay a completed or failed attempt without repeating provider work; conflicting request metadata returns 409.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateObjectUploadRouteRequest'}
+      responses:
+        '201':
+          description: Upload route created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectUploadRoute'}
+        '200':
+          description: Existing upload route updated
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectUploadRoute'}
+        default:
+          description: Invalid policy, bucket unavailable, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/upload-routes/{route}:
+    parameters:
+      - {name: slug, description: 'App owning the edge upload route.', in: path, required: true, schema: {type: string}}
+      - {name: route, description: 'Stable upload route name used at /uploads/{route}.', in: path, required: true, schema: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}}
+    delete:
+      operationId: deleteObjectUploadRoute
+      summary: Delete an authenticated upload route
+      description: Stops new uploads immediately. Existing objects are not deleted.
+      tags: [storage]
+      responses:
+        '204': {description: Upload route deleted}
+        default:
+          description: Route missing, access denied, or storage unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}:
+    parameters:
+      - {name: slug, description: App that owns the bucket to remove., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Identifier of the empty bucket to delete., in: path, required: true, schema: {type: string, format: uuid}}
+    delete:
+      operationId: deleteObjectBucket
+      summary: Delete an empty bucket
+      description: Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      tags: [storage]
+      responses:
+        '204': {description: Bucket deleted}
+        default:
+          description: Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials:
+    parameters:
+      - {name: slug, description: App whose new S3 credential will be bucket-scoped., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket receiving the S3 credential., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listObjectS3Credentials
+      summary: List active Gregale S3 credentials for a bucket
+      description: Requires storage:manage or admin. Secret access keys are never returned by this endpoint.
+      tags: [storage]
+      responses:
+        '200':
+          description: Active bucket-scoped S3 credentials; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectS3CredentialList'}
+        default:
+          description: S3 credential listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createObjectS3Credential
+      summary: Create a bucket-scoped credential for s3.gregale.dev
+      description: The secret access key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active credentials may exist per bucket.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateObjectS3CredentialRequest'}
+      responses:
+        '201':
+          description: One-time S3 credential response; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectS3CredentialSecret'}
+        default:
+          description: Invalid request, credential limit, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}:
+    parameters:
+      - {name: slug, description: App whose S3 credential is being revoked., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket whose credential is being revoked., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: credential, description: Gregale S3 credential identifier., in: path, required: true, schema: {type: string, format: uuid}}
+    delete:
+      operationId: revokeObjectS3Credential
+      summary: Revoke a Gregale S3 credential
+      description: Revocation is immediate for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+      tags: [storage]
+      responses:
+        '204': {description: Credential revoked}
+        default:
+          description: Credential or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources:
+    parameters:
+      - {name: slug, description: Destination app slug., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Destination bucket UUID., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: credential, description: Owned destination writer credential UUID., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listObjectS3CopySources
+      summary: List copy-only source grants
+      description: Requires storage:manage and destination write authority. Grants never permit ordinary source reads or listing with the destination S3 key. At most 32 source buckets may be granted per credential.
+      tags: [storage]
+      responses:
+        '200':
+          description: Owned source grants without private grant identities
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectS3CopySourceList'}
+        default:
+          description: Copy source listing unavailable or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}:
+    parameters:
+      - {name: slug, description: App containing the destination bucket., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket receiving copied objects., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: credential, description: Destination S3 credential receiving source authority., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: source, description: "Owned source bucket UUID, including across apps.", in: path, required: true, schema: {type: string, format: uuid}}
+    put:
+      operationId: setObjectS3CopySource
+      summary: Grant an owned bucket as a copy source
+      description: Requires storage:manage, destination write and source read authority. Both buckets must be ready on the same native S3 placement. The prefix is literal and at most 1024 UTF-8 bytes. Identical retries preserve authority; changing or recreating a grant invalidates prepared copies. Signed URL credentials and rotation stages cannot acquire grants. CopySource uses the source bucket UUID followed by the encoded object key.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/SetObjectS3CopySourceRequest'}
+      responses:
+        '200':
+          description: Persisted copy source grant
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectS3CopySource'}
+        default:
+          description: Copy source grant invalid, unsupported, at limit, or denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteObjectS3CopySource
+      summary: Revoke a copy-only source grant
+      description: Requires storage:manage and destination write authority. Prevents new copy dispatch while preserving already dispatched completion and recovery. Cleanup remains available for revoked destination credentials and disabled S3 ingress.
+      tags: [storage]
+      responses:
+        '204': {description: Copy source grant revoked}
+        default:
+          description: Copy source revocation denied or grant missing
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings:
+    parameters:
+      - {name: slug, description: App receiving the sealed storage connection settings., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket exposed to the compute workload., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listObjectStorageComputeBindings
+      summary: List compute bindings for a bucket
+      description: Requires storage:read, storage:manage or admin. Secret values are never returned; only the sealed app-secret names are listed.
+      tags: [storage]
+      responses:
+        '200':
+          description: Active compute bindings; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectStorageComputeBindingList'}
+        default:
+          description: Binding listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createObjectStorageComputeBinding
+      summary: Bind a bucket to an app's compute environment
+      description: Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateObjectStorageComputeBindingRequest'}
+      responses:
+        '201':
+          description: Compute binding created; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectStorageComputeBinding'}
+        default:
+          description: Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}:
+    parameters:
+      - {name: slug, description: App owning the compute binding., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket attached to the compute binding., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: binding, description: Opaque compute binding identifier., in: path, required: true, schema: {type: string, format: uuid}}
+    delete:
+      operationId: deleteObjectStorageComputeBinding
+      summary: Revoke a compute binding
+      description: Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+      tags: [storage]
+      responses:
+        '204': {description: Binding revoked and its managed secrets removed}
+        default:
+          description: Binding or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate:
+    parameters:
+      - {name: slug, description: App whose workload receives the rotated credential., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Logical bucket whose access key is being rotated., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: binding, description: Binding identifier retained across credential rotations., in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: rotateObjectStorageComputeBinding
+      summary: Rotate a compute binding credential
+      description: Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Binding rotated; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectStorageComputeBinding'}
+        default:
+          description: Binding unavailable, sealing key unavailable, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/objects:
+    parameters:
+      - {name: slug, description: App containing the objects being managed., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Identifier of the bucket whose objects are being managed., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listBucketObjects
+      summary: List objects with opaque cursor pagination
+      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent bucket's, keys it deleted hidden; each parent object has from_parent.
+      tags: [storage]
+      parameters:
+        - {name: prefix, description: Only return keys starting with this prefix., in: query, schema: {type: string, maxLength: 1024}}
+        - {name: cursor, description: Opaque next_cursor from the preceding page., in: query, schema: {type: string, maxLength: 8192}}
+        - {name: limit, description: Maximum objects in this page., in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
+      responses:
+        '200':
+          description: One page, not a bucket-wide usage or billing total
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, size_bytes, last_modified]
+                      properties:
+                        key: {type: string}
+                        size_bytes: {type: integer, format: int64}
+                        last_modified: {type: string, format: date-time}
+                        from_parent: {type: boolean, description: "In an environment branch's bucket, the object is read from the parent environment's bucket."}
+                  next_cursor: {type: string}
+        default:
+          description: Invalid request, access denied, bucket unavailable, or provider error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteBucketObject
+      summary: Delete one object by exact key
+      description: Requires storage:write or admin and a bucket write grant. Current-object deletion is declined when retained versions, native inventories or a versioning transition require marker admission. Use permanent immutable version deletion for retained data or markers.
+      tags: [storage]
+      parameters:
+        - {name: key, description: Exact object key to delete; URL-encode it., in: query, required: true, schema: {type: string, minLength: 1, maxLength: 1024}}
+      responses:
+        '204': {description: Object deleted}
+        default:
+          description: Invalid request, access denied, or provider error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/objects/tags:
+    parameters:
+      - {name: slug, in: path, required: true, description: Application containing the object whose tags are requested., schema: {type: string}}
+      - {name: bucket, in: path, required: true, description: Logical bucket used for this object tag operation., schema: {type: string, format: uuid}}
+      - {name: key, in: query, required: true, description: Exact object key; URL-encode it., schema: {type: string, minLength: 1, maxLength: 1024}}
+      - {name: version_id, in: query, required: false, description: Omit for the current object; use null or an owned public version UUID for a selected version., schema: {type: string, pattern: '^(null|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$'}}
+    get:
+      operationId: getObjectBucketTags
+      summary: Read the tags of a current or selected object
+      description: Requires storage read scope and a bucket read grant. Public version IDs remain stable after restart. Native provider version IDs are never exposed.
+      tags: [storage]
+      responses:
+        '200':
+          description: Stored object tags and public version identity; response is never cached
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectTaggingResult'}
+        default:
+          description: Tag read rejected for invalid ownership, permission, capability, input, budget or provider response
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    put:
+      operationId: putObjectBucketTags
+      summary: Replace the complete tag set of a current or selected object
+      description: Requires storage write scope and a bucket write grant. Tags change in place and preserve private write-completion metadata. S3 dispatches once per request; after an uncertain acknowledgment, read the selected version or explicitly retry the desired tag set. No data version or storage reservation is created.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectTaggingRequest'}
+      responses:
+        '200':
+          description: Replacement tag set acknowledged by the provider; public identity is retained
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectTaggingResult'}
+        default:
+          description: Tag replacement failed validation, authorization or admission, or has an uncertain provider acknowledgment
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteObjectBucketTags
+      summary: Remove all tags from a current or selected object
+      description: Requires storage write scope and a bucket write grant. Returns an empty tag set after acknowledgment. An uncertain response does not trigger automatic mutation replay. Tags change in place; storage capacity is unchanged.
+      tags: [storage]
+      responses:
+        '200':
+          description: Empty tag set after acknowledged removal; public version identity is retained
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectTaggingResult'}
+        default:
+          description: Tag removal denied or unsupported, safety budget exhausted, or provider acknowledgment unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/objects/deletions:
+    parameters:
+      - {name: slug, in: path, required: true, description: Application whose object deletion will be journaled., schema: {type: string}}
+      - {name: bucket, in: path, required: true, description: Logical bucket owning the deletion., schema: {type: string, format: uuid}}
+    post:
+      operationId: createObjectDeletion
+      summary: Delete the current object or an owned version with a durable receipt
+      description: Requires storage write scope and the bucket write grant. Reuse the request ID with the same key and selector for retries. Mutable intents dispatch at most once; recovery may retry only the exact owned immutable version. Ordinary deletes in Enabled buckets create an accounted marker. Pending attempts fence writes, configuration and inventories until positive acknowledgment or unique completion proof; elapsed time and absence never settle a dispatched mutation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectDeletionRequest'}
+      responses:
+        '200':
+          description: Completed or failed receipt replay
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectDeletion'}
+        '202':
+          description: Persisted deletion awaiting positive completion proof
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectDeletion'}
+        default:
+          description: Invalid request, access denied, unavailable accounting or conflicting mutation
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}:
+    parameters:
+      - {name: slug, in: path, required: true, description: Application associated with the requested deletion receipt., schema: {type: string}}
+      - {name: bucket, in: path, required: true, description: Bucket to which the durable deletion receipt belongs., schema: {type: string, format: uuid}}
+      - {name: deletion, in: path, required: true, description: Durable deletion request ID., schema: {type: string, format: uuid}}
+    get:
+      operationId: getObjectDeletion
+      summary: Read a durable deletion receipt
+      description: Requires storage write scope and the bucket write grant. Returns only the bucket-owned receipt and public identities. Cache-Control no-store.
+      tags: [storage]
+      responses:
+        '200':
+          description: Persisted deletion state
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectDeletion'}
+        default:
+          description: Access denied or receipt does not belong to this bucket
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/compute-triggers:
+    parameters:
+      - {name: slug, in: path, required: true, description: App owning the bucket and trigger destination., schema: {type: string}}
+      - {name: bucket, in: path, required: true, description: Bucket whose managed triggers are reconciled., schema: {type: string, format: uuid}}
+    put:
+      tags: [storage]
+      operationId: reconcileObjectStorageComputeTriggers
+      summary: Reconcile managed ObjectCreated triggers for the bucket's owning app
+      description: |
+        Requires MFA, storage manage scope and bucket write access. The destination
+        is always this bucket's owning app in its region. expected_revision is
+        mandatory and stale revisions return 409, including unchanged requests.
+        Replaces only managed rules, preserving manual notification rules.
+        Explicit triggers: [] clears managed ownership. Manual ID collisions
+        return 409; overlapping filters return 400. Nonempty configuration
+        requires object storage enabled and an async-invocation eligible plan.
+        Accepted deliveries retain their original destination snapshots.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReconcileObjectStorageComputeTriggersRequest'}
+      responses:
+        '200':
+          description: Complete notification configuration including managed rule identities; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucketNotifications'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        default:
+          description: Missing owned bucket, storage disabled, or invalid request
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/notifications:
+    parameters:
+      - {name: slug, in: path, required: true, description: App whose notification policy is inspected., schema: {type: string}}
+      - {name: bucket, in: path, required: true, description: Bucket whose notification configuration is managed., schema: {type: string, format: uuid}}
+    get:
+      operationId: getObjectBucketNotifications
+      summary: Read durable bucket notification rules
+      description: Requires storage manage scope and bucket write access. Reads owned notification intent without a provider call, including when ingress is disabled. Initial configuration has revision zero and no notification rules.
+      tags: [storage]
+      responses:
+        '200':
+          description: Persisted notification configuration; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucketNotifications'}
+        default:
+          description: Notification policy access denied or the owned bucket was not found
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    put:
+      operationId: putObjectBucketNotifications
+      summary: Replace durable bucket notification rules
+      description: Requires storage manage scope and the bucket write grant. Atomically replaces notification rules and validates Gregale-owned function or queue ARNs in this account and region. Empty rules clear intent. Full replacement clears managed compute-trigger ownership, including identical rules. Accepted events retain captured destinations. Nonempty configuration requires storage ingress to be enabled.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectBucketNotificationsRequest'}
+      responses:
+        '200':
+          description: Normalized notification destinations, filters and configuration revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucketNotifications'}
+        default:
+          description: Invalid rule replacement, unavailable destination or unsupported event
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: deleteObjectBucketNotifications
+      summary: Remove bucket notification rules
+      description: Requires storage manage scope and the bucket write grant. Clears future routing while accepted events retain captured destinations. Available while storage ingress is disabled.
+      tags: [storage]
+      responses:
+        '200':
+          description: Cleared notification intent with its retained revision
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectBucketNotifications'}
+        default:
+          description: Policy removal denied or invalid ownership
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations:
+    parameters:
+      - {name: slug, description: App requesting a fenced bucket inventory., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket whose reserved capacity should be reconciled., in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: createObjectCapacityReconciliation
+      summary: Request safe capacity reconciliation
+      description: Requires storage write scope and the bucket write grant. Returns the existing active job on repeat requests. Pauses new bucket writes until cancellation or a terminal outcome. Pending or untracked writes cannot be force-refunded; only a complete fenced inventory can reclaim capacity. Available with storage disabled or spent budgets.
+      tags: [storage]
+      responses:
+        '202':
+          description: Durable reconciliation requested; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectCapacityReconciliation'}
+        default:
+          description: Missing bucket, live multipart sessions, or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}:
+    parameters:
+      - {name: slug, description: App owning the reconciliation job., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket associated with the reconciliation., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: reconciliation, description: Durable capacity reconciliation identifier., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getObjectCapacityReconciliation
+      summary: Inspect capacity reconciliation
+      description: Returns progress, pending-write count and reclaimed capacity under storage write scope and the bucket write grant. Reads remain available with storage disabled or spent budgets. Billing and monthly authorization counts are unchanged.
+      tags: [storage]
+      responses:
+        '200':
+          description: Reconciliation status; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectCapacityReconciliation'}
+        default:
+          description: Reconciliation missing or access denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: cancelObjectCapacityReconciliation
+      summary: Cancel capacity reconciliation
+      description: Requires storage write scope and the bucket write grant. Immediately releases the active job's write pause without changing reserved capacity. Returns the job, including an existing terminal outcome. Cleanup remains available with storage disabled or spent budgets.
+      tags: [storage]
+      responses:
+        '200':
+          description: Cancelled or previously terminal reconciliation; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectCapacityReconciliation'}
+        default:
+          description: Reconciliation missing or cancellation denied
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/signed-url:
+    parameters:
+      - {name: slug, description: App authorizing the requested object capability., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Identifier of the bucket containing the authorized object., in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: signBucketObject
+      summary: Issue a short-lived direct upload or download URL
+      description: |
+        GET requires storage:read or admin; PUT requires storage:write or admin.
+        Non-admin keys also require a matching per-bucket grant.
+        PUT must declare size_bytes, enforced by signed length (or an empty-body
+        digest for zero bytes). These reusable bearer URLs expire within 15
+        minutes and are not retained by the API idempotency cache. Send only
+        returned headers to the URL, never Gregale credentials. In browsers,
+        Content-Length is set by fetch from the File body, not manually.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectSignRequest'}
+      responses:
+        '200':
+          description: Temporary capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectSignedRequest'}
+        default:
+          description: Invalid request, access denied, or provider unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads:
+    parameters:
+      - {name: slug, description: App containing the multipart upload target., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Identifier of the bucket receiving the multipart object., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listObjectMultipartUploads
+      summary: List durable resumable upload sessions
+      description: Requires storage:write or admin and a matching bucket grant. The provider upload ID is never returned. Use cursor to recover sessions after a client loses its local session identifier.
+      tags: [storage]
+      parameters:
+        - {name: limit, description: Maximum number of sessions to return., in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 100}}
+        - {name: cursor, description: UUID cursor returned by the previous page., in: query, required: false, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Durable upload sessions; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartUploadList'}
+        default:
+          description: Invalid cursor, access denial, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    post:
+      operationId: createObjectMultipartUpload
+      summary: Start or recover a resumable multipart upload
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Gregale
+        reserves the complete declared size before creating billable provider
+        parts. A retry with the same live bucket/key, size, and content type
+        returns the existing session; conflicting parameters return 409. The
+        provider upload ID remains private. Sessions expire after 24 hours.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateObjectMultipartUploadRequest'}
+      responses:
+        '201':
+          description: Multipart upload initiated; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartUpload'}
+        '200':
+          description: Existing compatible live session returned
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartUpload'}
+        default:
+          description: Invalid request, stale accounting, capacity limit, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts:
+    parameters:
+      - {name: slug, description: App authorizing multipart recovery., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket containing the provider-confirmed parts., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: upload, description: Gregale session whose provider parts are being recovered., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: listObjectMultipartParts
+      summary: List parts confirmed by the storage provider
+      description: Requires storage:write or admin and a matching bucket grant. Returns provider-confirmed ETags so an interrupted client can resume completion without exposing provider credentials or upload IDs.
+      tags: [storage]
+      parameters:
+        - {name: part_number_marker, description: Return parts after this part number., in: query, required: false, schema: {type: integer, minimum: 0, maximum: 10000, default: 0}}
+        - {name: limit, description: Maximum number of provider parts to return., in: query, required: false, schema: {type: integer, minimum: 1, maximum: 1000, default: 1000}}
+      responses:
+        '200':
+          description: Provider-confirmed uploaded parts; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartPartList'}
+        default:
+          description: Session missing, not recoverable, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}:
+    parameters:
+      - {name: slug, description: App containing the durable upload session., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket containing the multipart session., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: upload, description: Gregale multipart session identifier; this is not the provider upload ID., in: path, required: true, schema: {type: string, format: uuid}}
+    get:
+      operationId: getObjectMultipartUpload
+      summary: Read resumable upload state and part layout
+      description: Requires storage:write or admin and a matching bucket grant. Provider credentials and upload IDs are never returned.
+      tags: [storage]
+      responses:
+        '200':
+          description: Durable session state; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartUpload'}
+        default:
+          description: Session missing, access denied, or backend placement unavailable
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    delete:
+      operationId: abortObjectMultipartUpload
+      summary: Abort a multipart upload and release provider-side parts
+      description: Requires storage:write or admin and a matching bucket grant. Repeating an already-finished abort is safe. Failed aborts are retried by the recovery worker.
+      tags: [storage]
+      responses:
+        '204': {description: Upload aborted or was already aborted}
+        default:
+          description: Session busy/completed, access denied, or provider failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url:
+    parameters:
+      - {name: slug, description: App authorizing the multipart part capability., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket receiving this upload part., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: upload, description: Gregale multipart session identifier., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: part, description: One-based part number from the session layout., in: path, required: true, schema: {type: integer, minimum: 1, maximum: 10000}}
+    post:
+      operationId: signObjectMultipartPart
+      summary: Issue a branded upload URL for one exact-length part
+      description: |
+        Requires storage:write or admin and a matching bucket grant. The URL
+        uses the branded S3 endpoint and binds the owned session, part and exact
+        byte length. It expires within 15 minutes and before the session deadline.
+        Upload without Gregale credentials and retain the ETag response header.
+        Current issuer grants and the active session are checked at dispatch.
+        Sequential retries may replace a settled part; overlapping or uncertain
+        native attempts remain fenced. Issuance and redemption consume the
+        authorization safety budget.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectMultipartPartSignRequest'}
+      responses:
+        '200':
+          description: Temporary provider capability; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectSignedRequest'}
+        default:
+          description: Invalid part, expired session, stale accounting, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete:
+    parameters:
+      - {name: slug, description: App finalizing the multipart upload., in: path, required: true, schema: {type: string}}
+      - {name: bucket, description: Bucket receiving the completed object., in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: upload, description: Gregale multipart session identifier to complete., in: path, required: true, schema: {type: string, format: uuid}}
+    post:
+      operationId: completeObjectMultipartUpload
+      summary: Assemble all uploaded parts into the final object
+      description: |
+        Requires storage:write or admin and a matching bucket grant. Supply one
+        ETag for every part in ascending order. Completion intent is persisted
+        before contacting the provider and recovered after crashes. An identical
+        retry after completion returns the completed session without repeating
+        the provider operation.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CompleteObjectMultipartUploadRequest'}
+      responses:
+        '200':
+          description: Object completed; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectMultipartUpload'}
+        default:
+          description: Invalid/missing parts, expired or conflicting session, access denial, or provider failure
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/account/object-storage-usage:
+    get:
+      operationId: getObjectStorageUsage
+      summary: Read object storage accounting and safety limits
+      description: Requires usage read scope. Reservations are capacity commitments, not billed usage. Fresh false blocks new signed URLs.
+      tags: [storage]
+      responses:
+        '200':
+          description: Current account usage; Cache-Control no-store
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectStorageUsageResponse'}
+        default:
+          description: Access denied or accounting unavailable
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -21686,6 +22595,506 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/apps/{slug}/buckets:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company bucket catalog: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company bucket catalog: App whose bucket catalog is being managed.'
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: listOrgObjectBuckets
+      summary: List organization buckets and creation capabilities
+      description: Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
+      tags:
+        - storage
+      responses:
+        '200':
+          description: List organization buckets and creation capabilities. Buckets across this app's environment scopes; backend credentials are never exposed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucketList'
+        default:
+          description: List organization buckets and creation capabilities. Authentication, authorization, or storage error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectBucket
+      summary: Create a bucket for an organization application
+      description: 'Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Idempotent by app, scope and name, not
+
+        by Idempotency-Key. Retry provisioning by submitting the same name and
+
+        scope. Existing buckets retain their backend when the default changes.
+
+'
+      tags:
+        - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  pattern: ^[a-z][a-z0-9-]{0,62}$
+                scope:
+                  type: string
+                  default: default
+                region:
+                  type: string
+                  description: Create a bucket for an organization application. Gregale region, not upstream signing region. Omit to use the configured default.
+                public:
+                  type: boolean
+                  default: false
+                  description: Create a bucket for an organization application. Serve objects anonymously on the app hostname.
+                serve_at:
+                  type: string
+                  pattern: ^/[A-Za-z0-9][A-Za-z0-9._~/-]*$
+                  description: Create a bucket for an organization application. Immutable app path mounted when public is true.
+      responses:
+        '201':
+          description: Create a bucket for an organization application. Bucket created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucket'
+        '200':
+          description: Create a bucket for an organization application. Existing ready bucket
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectBucket'
+        default:
+          description: Create a bucket for an organization application. Invalid request, access denied, bucket limit/conflict, or provider unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}: App that owns the bucket to remove.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}: Identifier of the empty bucket to delete.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteOrgObjectBucket
+      summary: Delete an empty organization bucket
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Never recursively deletes data. Nonempty buckets return 409. Repeat after successful deletion returns 404.
+      tags:
+        - storage
+      responses:
+        '204':
+          description: Delete an empty organization bucket. Bucket deleted
+        default:
+          description: Delete an empty organization bucket. Access denied, bucket missing/nonempty/busy, or provider unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/s3-credentials: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/s3-credentials: App whose new S3 credential will be bucket-scoped.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/s3-credentials: Bucket receiving the S3 credential.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listOrgObjectS3Credentials
+      summary: List organization user S3 credentials
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:manage or admin. Secret access keys are never returned by this endpoint.
+      tags:
+        - storage
+      responses:
+        '200':
+          description: List organization user S3 credentials. Active bucket-scoped S3 credentials; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectS3CredentialList'
+        default:
+          description: List organization user S3 credentials. S3 credential listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectS3Credential
+      summary: Create a user S3 key for an organization bucket
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. The secret access key is returned exactly once, sealed at rest, and never recoverable through the control-plane API. At most ten active credentials may exist per bucket.
+      tags:
+        - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateObjectS3CredentialRequest'
+      responses:
+        '201':
+          description: Create a user S3 key for an organization bucket. One-time S3 credential response; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectS3CredentialSecret'
+        default:
+          description: Create a user S3 key for an organization bucket. Invalid request, credential limit, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/s3-credentials/{credential}: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/s3-credentials/{credential}: App whose S3 credential is being revoked.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/s3-credentials/{credential}: Bucket whose credential is being revoked.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: credential
+        description: 'Company /{bucket}/s3-credentials/{credential}: Gregale S3 credential identifier.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: revokeOrgObjectS3Credential
+      summary: Revoke an organization user S3 key
+      description: Owners and admins manage bucket credentials, access grants and bucket lifecycle. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Revocation is immediate for new requests at s3.gregale.dev. Existing provider-signed internal requests are never exposed to the customer.
+      tags:
+        - storage
+      responses:
+        '204':
+          description: Revoke an organization user S3 key. Credential revoked
+        default:
+          description: Revoke an organization user S3 key. Credential or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/compute-bindings: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/compute-bindings: App receiving the sealed storage connection settings.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/compute-bindings: Bucket exposed to the compute workload.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listOrgObjectStorageComputeBindings
+      summary: List organization application bucket bindings
+      description: Owners, admins, developers and viewers can inspect application bindings. Requires storage:manage or admin and current organization membership. Secret values are never returned; only the sealed app-secret names are listed.
+      tags:
+        - storage
+      responses:
+        '200':
+          description: List organization application bucket bindings. Active compute bindings; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBindingList'
+        default:
+          description: List organization application bucket bindings. Binding listing denied or its bucket is unavailable
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      operationId: createOrgObjectStorageComputeBinding
+      summary: Bind an organization bucket to its application environment
+      description: Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Creates a bucket-scoped Gregale S3 credential and injects endpoint, region, bucket, access-key, secret-key, and addressing settings as sealed app secrets. The secret values are never returned.
+      tags:
+        - storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateObjectStorageComputeBindingRequest'
+      responses:
+        '201':
+          description: Bind an organization bucket to its application environment. Compute binding created; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBinding'
+        default:
+          description: Bind an organization bucket to its application environment. Invalid request, secret quota/conflict, unavailable sealing key, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/compute-bindings/{binding}: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/compute-bindings/{binding}: App owning the compute binding.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/compute-bindings/{binding}: Bucket attached to the compute binding.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: binding
+        description: 'Company /{bucket}/compute-bindings/{binding}: Opaque compute binding identifier.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: deleteOrgObjectStorageComputeBinding
+      summary: Revoke an organization application bucket binding
+      description: Owners, admins and developers can manage application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Revokes the bucket-scoped S3 credential before removing its sealed app secrets. The operation is idempotent after revocation.
+      tags:
+        - storage
+      responses:
+        '204':
+          description: Revoke an organization application bucket binding. Binding revoked and its managed secrets removed
+        default:
+          description: Revoke an organization application bucket binding. Binding or bucket missing, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/compute-bindings/{binding}/rotate: App whose workload receives the rotated credential.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Logical bucket whose access key is being rotated.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: binding
+        description: 'Company /{bucket}/compute-bindings/{binding}/rotate: Binding identifier retained across credential rotations.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: rotateOrgObjectStorageComputeBinding
+      summary: Rotate an organization application bucket binding
+      description: Owners and admins can rotate application bindings. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Atomically replaces the bucket-scoped access key and two sealed app secrets while keeping the binding and environment variable names stable. For a live app, the previous key remains valid until the rolling runtime refresh drains old instances; rotation_pending is true in the response. Retrying during a pending rotation requeues the same refresh. Secret values are never returned.
+      tags:
+        - storage
+      responses:
+        '200':
+          description: Rotate an organization application bucket binding. Binding rotated; Cache-Control no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageComputeBinding'
+        default:
+          description: Rotate an organization application bucket binding. Binding unavailable, sealing key unavailable, or access denied
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/objects:
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: 'Company /{bucket}/objects: Organization owning this application and its storage catalog.'
+        schema:
+          type: string
+      - name: slug
+        description: 'Company /{bucket}/objects: App containing the objects being managed.'
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: bucket
+        description: 'Company /{bucket}/objects: Identifier of the bucket whose objects are being managed.'
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: listOrgBucketObjects
+      summary: List objects in an organization bucket
+      description: Owners, admins, developers and viewers can inspect bucket metadata. Requires the corresponding storage scope and current organization membership. Mutations require organization billing adoption. Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+      tags:
+        - storage
+      parameters:
+        - name: prefix
+          description: List objects in an organization bucket. Only return keys starting with this prefix.
+          in: query
+          schema:
+            type: string
+            maxLength: 1024
+        - name: cursor
+          description: List objects in an organization bucket. Opaque next_cursor from the preceding page.
+          in: query
+          schema:
+            type: string
+            maxLength: 8192
+        - name: limit
+          description: List objects in an organization bucket. Maximum objects in this page.
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: List objects in an organization bucket. One page, not a bucket-wide usage or billing total
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - items
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - key
+                        - size_bytes
+                        - last_modified
+                      properties:
+                        key:
+                          type: string
+                        size_bytes:
+                          type: integer
+                          format: int64
+                        last_modified:
+                          type: string
+                          format: date-time
+                  next_cursor:
+                    type: string
+        default:
+          description: List objects in an organization bucket. Invalid request, access denied, bucket unavailable, or provider error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/orgs/{organization}/object-storage-usage:
+    get:
+      operationId: getOrgObjectStorageUsage
+      summary: Read aggregate organization object storage usage
+      description: Owners, admins, developers, viewers and billing seats can read usage with usage:read or admin. Requires billing adoption. Aggregates company buckets across their retained storage namespaces; excludes personal buckets. Reservations are capacity commitments. Fresh false blocks further admission until allocated provider evidence arrives.
+      tags:
+        - storage
+      responses:
+        '200':
+          description: 'Read aggregate organization object storage usage. Organization storage accounting: Current account usage; Cache-Control no-store'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ObjectStorageUsageResponse'
+        default:
+          description: 'Read aggregate organization object storage usage. Organization storage accounting: Access denied or accounting unavailable'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    parameters:
+      - name: organization
+        in: path
+        required: true
+        description: Company whose aggregate object storage accounting is requested.
+        schema:
+          type: string
 components:
   securitySchemes:
     consumerKey:
@@ -24198,6 +25607,53 @@ components:
         - resource
         - path
         - action
+    ObjectDeletionRequest:
+      type: object
+      description: One durable mutation; reuse the ID for retries of the same key and selector.
+      required: [id, key]
+      properties:
+        id: {type: string, format: uuid}
+        key: {type: string, minLength: 1, maxLength: 1024}
+        version_id: {type: string, pattern: '^(null|[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$', description: Omit for ordinary deletion; use null or an owned public version UUID for permanent deletion.}
+    ObjectDeletion:
+      type: object
+      description: Durable deletion receipt; uncertain attempts retain their bucket fence.
+      required: [id, bucket_id, key, selector, state, delete_marker, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        bucket_id: {type: string, format: uuid}
+        key: {type: string}
+        selector: {type: string, description: Empty for ordinary deletion; null or the selected owned public version UUID otherwise.}
+        state: {type: string, enum: [prepared, dispatched, completed, failed]}
+        version_id: {type: string, description: Selected public version UUID or new public marker UUID or null when acknowledged; private provider IDs are never exposed.}
+        delete_marker: {type: boolean}
+        last_error_code: {type: string, enum: [provider_uncertain, configuration, preparation_failed, preparation_expired, provider_rejected, object_protected], description: object_protected defers a lifecycle target under retention or a hold until a later scan.}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ObjectTaggingRequest:
+      type: object
+      description: Complete replacement object tag set, including an empty set to clear all tags.
+      additionalProperties: false
+      required: [tags]
+      properties:
+        tags:
+          type: object
+          description: Complete replacement set. Empty removes all tags. Keys and values use the portable UTF-8 byte limits.
+          maxProperties: 10
+          propertyNames: {minLength: 1, maxLength: 128}
+          additionalProperties: {type: string, maxLength: 256}
+    ObjectTaggingResult:
+      type: object
+      description: Acknowledged object tags and optional owned public version identity.
+      additionalProperties: false
+      required: [tags]
+      properties:
+        version_id: {type: string, description: Public version UUID or null. Omitted for unversioned or legacy current-object providers.}
+        tags:
+          type: object
+          description: Acknowledged complete tag set; native provider IDs and private completion metadata are never exposed.
+          maxProperties: 10
+          additionalProperties: {type: string}
     WorkerRolloutObservation:
       description: Passive deployment-attributed observations of the selected worker generation.
       type: object
@@ -24631,6 +26087,14 @@ components:
       maxProperties: 32
       description: 'Managed environment prefix to required canary mode in the selected scope. Prefixes match ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require successful cleanup. No implicit probes or writes.'
       additionalProperties: {type: string, enum: [read, write, read_write]}
+    SetObjectStorageBindingReleasePolicyRequest:
+      description: Revision-guarded release policy replacement with explicit required object-storage canary modes.
+      allOf:
+        - $ref: '#/components/schemas/SetBindingReleasePolicyRequest'
+        - type: object
+          required: [object_storage_requirements]
+          properties:
+            object_storage_requirements: {$ref: '#/components/schemas/ObjectStorageReleaseRequirements'}
     BindingReleasePolicy:
       type: object
       description: Stored binding verification requirements and revision for an app deployment scope; unconfigured scopes default to off.
@@ -25888,6 +27352,185 @@ components:
         scope: {type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'}
         environment_key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$'}
         access: {type: string, enum: [read_write, read_only, migration, data_api, auth, session], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved.}
+    ObjectBucket:
+      description: Logical bucket metadata without upstream credentials or placement details.
+      type: object
+      required: [id, name, scope, region, state, public, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        scope: {type: string}
+        region: {type: string}
+        state: {type: string, enum: [provisioning, ready, deleting]}
+        public: {type: boolean}
+        serve_at: {type: string}
+        created_at: {type: string, format: date-time}
+        retry: {$ref: '#/components/schemas/ObjectBucketRetry'}
+    ObjectBucketRetry:
+      description: Set while a bucket create or delete has failed and Gregale is retrying it. Reason is a bounded code, never a provider message.
+      type: object
+      required: [reason, detail, attempts, retry_at]
+      properties:
+        reason: {type: string, enum: [temporary, conflict, configuration, invalid, protected, cleanup_pending]}
+        detail: {type: string, description: Customer-facing explanation of the reason.}
+        attempts: {type: integer, format: int32}
+        retry_at: {type: string, format: date-time, description: When Gregale next tries the operation.}
+    ObjectBucketList:
+      description: App bucket catalog and operator-configured preview capabilities.
+      type: object
+      required: [items, enabled, regions, default_region, max_upload_bytes, max_buckets_per_app]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ObjectBucket'}}
+        enabled: {type: boolean}
+        regions: {type: array, items: {type: string}}
+        default_region: {type: string}
+        max_upload_bytes: {type: integer, format: int64}
+        max_buckets_per_app: {type: integer}
+        max_single_put_bytes: {type: integer, format: int64, description: Largest single PUT accepted by the configured upload profile.}
+        max_part_bytes: {type: integer, format: int64, description: Largest multipart part accepted by the configured upload profile.}
+        transfer_timeout_seconds: {type: integer, format: int64, description: Combined request staging and forwarding deadline in seconds.}
+        upload_profile: {type: string, enum: [proxied, direct], description: Configured body size contract for the branded storage origin.}
+    ObjectUploadRoute:
+      description: Policy-controlled edge upload route. The edge generates the final object key and never exposes provider placement.
+      type: object
+      required: [id, name, bucket_id, max_bytes, enabled, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        bucket_id: {type: string, format: uuid}
+        key_prefix: {type: string, maxLength: 256}
+        max_bytes: {type: integer, format: int64, minimum: 1}
+        allowed_content_types: {type: array, items: {type: string}, maxItems: 32}
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        encryption: {$ref: '#/components/schemas/ObjectEncryption'}
+    ObjectUploadRouteList:
+      description: Policy-controlled edge upload routes for one app.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ObjectUploadRoute'}}
+    CreateObjectUploadRouteRequest:
+      description: Upload policy declaration for POST /uploads/{name}. Optional owned encryption is captured per receipt; encrypted routes require a tracked capable provider and use the configured single PUT limit.
+      type: object
+      additionalProperties: false
+      required: [name, bucket_id]
+      properties:
+        name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
+        bucket_id: {type: string, format: uuid}
+        key_prefix: {type: string, maxLength: 256}
+        max_bytes: {type: integer, format: int64, minimum: 1}
+        allowed_content_types: {type: array, items: {type: string}, maxItems: 32}
+        enabled: {type: boolean, default: true}
+        encryption: {$ref: '#/components/schemas/ObjectEncryption'}
+    ObjectS3CopySource:
+      type: object
+      description: Public copy-only authority for an owned source bucket. Placement and grant epoch are private.
+      required: [source_bucket_id, prefix, created_at, updated_at]
+      properties:
+        source_bucket_id: {type: string, format: uuid}
+        prefix: {type: string, maxLength: 1024, description: "Literal allowed source key prefix, bounded to 1024 UTF-8 bytes."}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    ObjectS3CopySourceList:
+      type: object
+      description: Copy source grants for one owned destination credential.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 32
+          items: {$ref: '#/components/schemas/ObjectS3CopySource'}
+    SetObjectS3CopySourceRequest:
+      type: object
+      description: Exact source key prefix. Empty or omitted prefix grants all keys in the owned source bucket solely for copy.
+      additionalProperties: false
+      properties:
+        prefix: {type: string, default: '', maxLength: 1024}
+    ObjectS3Credential:
+      description: Bucket-scoped Gregale S3 credential metadata. The secret access key is never included in this shape.
+      type: object
+      required: [id, bucket_id, access_key_id, label, permission, status, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        bucket_id: {type: string, format: uuid}
+        access_key_id: {type: string, pattern: '^GRGA[A-Z2-7]{16}$'}
+        label: {type: string, minLength: 1, maxLength: 64}
+        permission: {type: string, enum: [read, write, read_write]}
+        status: {type: string, enum: [active, revoked]}
+        created_at: {type: string, format: date-time}
+        last_used_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    ObjectS3CredentialList:
+      description: Active Gregale S3 credentials for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ObjectS3Credential'}}
+    CreateObjectS3CredentialRequest:
+      description: Label and least-privilege access level for a new bucket-scoped S3 credential.
+      type: object
+      additionalProperties: false
+      required: [label, permission]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 64}
+        permission: {type: string, enum: [read, write, read_write]}
+    ObjectS3CredentialSecret:
+      description: One-time S3 credential creation response. Configure AWS clients for the returned endpoint, region, and path-style addressing.
+      allOf:
+        - $ref: '#/components/schemas/ObjectS3Credential'
+        - type: object
+          required: [secret_access_key, endpoint, region, addressing_style]
+          properties:
+            secret_access_key: {type: string, minLength: 40, maxLength: 40, readOnly: true}
+            endpoint: {type: string, format: uri, example: 'https://s3.gregale.dev'}
+            region: {type: string, example: 'us-east-1'}
+            addressing_style: {type: string, enum: [path]}
+    CreateObjectStorageComputeBindingRequest:
+      description: Least-privilege S3 access and the environment-variable prefix for an app-to-bucket binding.
+      type: object
+      additionalProperties: false
+      required: [permission]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 64, default: compute}
+        permission: {type: string, enum: [read, write, read_write]}
+        prefix: {type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$', maxLength: 48}
+        key_prefix:
+          type: string
+          minLength: 2
+          maxLength: 512
+          description: "Limit the binding's key to object keys under this literal prefix, such as segments/L0/. It must end in / and may not contain *, ? or [, empty segments, or . and .. segments. Requests outside it, unscoped listings and bucket-wide settings are denied. 403 object_storage_key_scopes_unavailable until key-scoped bindings are released to the account."
+    ObjectStorageComputeBindingSecretKeys:
+      description: Names of sealed app secrets written for a compute binding; values are never returned.
+      type: object
+      required: [endpoint, region, bucket, access_key_id, secret_access_key, addressing_style]
+      properties:
+        endpoint: {type: string}
+        region: {type: string}
+        bucket: {type: string}
+        access_key_id: {type: string}
+        secret_access_key: {type: string}
+        addressing_style: {type: string}
+    ObjectStorageComputeBinding:
+      description: Provider-neutral app-to-bucket compute binding. Rotation responses and binding lists set rotation_pending while the previous key remains valid during a rolling runtime refresh.
+      type: object
+      required: [id, bucket_id, scope, prefix, credential, secret_keys]
+      properties:
+        id: {type: string, format: uuid}
+        bucket_id: {type: string, format: uuid}
+        scope: {type: string}
+        prefix: {type: string, pattern: '^[A-Z][A-Z0-9_]{0,47}$'}
+        key_prefix: {type: string, description: Object keys this binding is limited to; absent for a whole-bucket binding.}
+        credential: {$ref: '#/components/schemas/ObjectS3Credential'}
+        secret_keys: {$ref: '#/components/schemas/ObjectStorageComputeBindingSecretKeys'}
+        rotation_pending: {type: boolean, description: Previous key is still valid until the rolling refresh has drained old instances.}
+    ObjectStorageComputeBindingList:
+      description: Active compute bindings for one logical bucket.
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/ObjectStorageComputeBinding'}}
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
@@ -25965,6 +27608,39 @@ components:
         over_ceiling_since: {type: string, format: date-time}
         deletion_scheduled_at: {type: string, format: date-time}
         excess_bytes: {type: integer, format: int64, minimum: 1, description: Bytes stored above the ceiling at the last check.}
+    ObjectEncryption:
+      type: object
+      additionalProperties: false
+      required: [algorithm]
+      description: Owned encryption selection for object writes and upload policies. KMS requires an enrolled Gregale key reference; bucket keys apply only to aws:kms. Context is canonical base64 of a bounded JSON object with unique string entries.
+      properties:
+        algorithm: {type: string, enum: [AES256, 'aws:kms', 'aws:kms:dsse']}
+        key_id: {type: string, maxLength: 512, description: 'Owned arn:gregale:kms reference; required for KMS and forbidden for AES256.'}
+        bucket_key_enabled: {type: boolean}
+        context: {type: string, maxLength: 10924}
+    ObjectSignRequest:
+      description: Exact object operation to authorize at the branded S3 gateway. PUT binds one durable receipt and supports an explicit owned encryption selection.
+      type: object
+      additionalProperties: false
+      required: [method, key]
+      properties:
+        method: {type: string, enum: [GET, HEAD, PUT]}
+        key: {type: string, minLength: 1, maxLength: 1024}
+        version_id: {type: string, format: uuid, description: GET/HEAD only. Exact owned immutable public version UUID. Mutable null and native provider selectors are rejected. Omit for the current object.}
+        if_match: {type: string, minLength: 1, maxLength: 256, description: 'PUT only. Mutually exclusive with if_none_match. GCS accepts one strong quoted XML ETag or * and binds the observed content generation; a concurrent replacement is rejected even if it has the same ETag. Conditions are fixed in the signed capability.'}
+        if_none_match: {type: string, enum: ['*'], description: PUT only. Create only if no live object exists. Mutually exclusive with if_match.}
+        expires_in: {type: integer, minimum: 0, maximum: 900, default: 300}
+        size_bytes: {type: integer, format: int64, minimum: 0, description: Required for PUT; forbidden for GET.}
+        content_type: {type: string, maxLength: 255, description: PUT only.}
+        cache_control: {type: string, maxLength: 255, description: Cache-Control value for PUT.}
+        content_disposition: {type: string, maxLength: 255, description: Content-Disposition value for PUT.}
+        content_encoding: {type: string, maxLength: 255, description: Content-Encoding value for PUT.}
+        content_language: {type: string, maxLength: 255, description: Content-Language value for PUT.}
+        metadata: {type: object, additionalProperties: {type: string, maxLength: 2048}, maxProperties: 90, description: PUT-only x-amz-meta-* values.}
+        tags: {type: object, additionalProperties: {type: string, maxLength: 256}, maxProperties: 10, description: PUT-only S3 object tags.}
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
+        encryption: {$ref: '#/components/schemas/ObjectEncryption'}
     ObjectSignedRequest:
       description: Temporary bearer capability. Bucket object GET/HEAD/PUT URLs use the branded S3 gateway; a PUT URL dispatches at most one write. Multipart part URLs retain their separate contract. Do not log or persist URLs.
       type: object
@@ -25975,6 +27651,222 @@ components:
         headers: {type: object, additionalProperties: {type: string}}
         expires_at: {type: string, format: date-time}
         upload_id: {type: string, format: uuid, description: Durable write receipt for an object PUT URL. Omitted for reads and multipart part URLs.}
+    ObjectBucketNotificationsRequest:
+      type: object
+      description: Complete atomic replacement; an empty array clears notification intent.
+      additionalProperties: false
+      required: [rules]
+      properties:
+        rules:
+          type: array
+          maxItems: 1000
+          items: {$ref: '#/components/schemas/ObjectNotificationRule'}
+    ObjectBucketNotifications:
+      type: object
+      description: Durable normalized bucket notification configuration.
+      additionalProperties: false
+      required: [bucket_id, revision, rules]
+      properties:
+        bucket_id: {type: string, format: uuid}
+        revision: {type: integer, format: int64, minimum: 0}
+        managed_rule_ids:
+          type: array
+          maxItems: 1000
+          items: {type: string}
+          description: Rules owned by declarative compute reconciliation. Full manual replacement clears ownership.
+        rules:
+          type: array
+          maxItems: 1000
+          items: {$ref: '#/components/schemas/ObjectNotificationRule'}
+    ObjectStorageComputeTrigger:
+      type: object
+      description: Stable ObjectCreated filter targeting only the bucket's owning app.
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 255, description: Stable manifest identity scoped to the bucket.}
+        events:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Defaults to s3:ObjectCreated:* when omitted or empty.
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload']
+        prefix: {type: string, maxLength: 1024}
+        suffix: {type: string, maxLength: 1024}
+    ReconcileObjectStorageComputeTriggersRequest:
+      type: object
+      description: Revision-checked replacement of only the bucket's declarative compute triggers.
+      additionalProperties: false
+      required: [expected_revision, triggers]
+      properties:
+        expected_revision: {type: integer, format: int64, minimum: 0, maximum: 1152921504606846976}
+        triggers:
+          type: array
+          maxItems: 1000
+          items: {$ref: '#/components/schemas/ObjectStorageComputeTrigger'}
+    ObjectNotificationRule:
+      type: object
+      description: Proven mutation routing to a Gregale function or existing enabled queue binding. Prefix and suffix are decoded strings; overlapping filters for the same event are rejected. IDs are generated when omitted.
+      additionalProperties: false
+      required: [destination, events]
+      properties:
+        id: {type: string, maxLength: 255}
+        destination: {type: string, description: 'arn:gregale:lambda:REGION:ACCOUNT:function:APP_UUID or arn:gregale:sqs:REGION:ACCOUNT:APP_UUID/QUEUE_NAME'}
+        events:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+            enum: ['s3:ObjectCreated:*', 's3:ObjectCreated:Put', 's3:ObjectCreated:Copy', 's3:ObjectCreated:CompleteMultipartUpload', 's3:ObjectRemoved:*', 's3:ObjectRemoved:Delete', 's3:ObjectRemoved:DeleteMarkerCreated', 's3:LifecycleExpiration:*', 's3:LifecycleExpiration:Delete', 's3:LifecycleExpiration:DeleteMarkerCreated']
+        prefix: {type: string, maxLength: 1024}
+        suffix: {type: string, maxLength: 1024}
+    ObjectWriteProtection:
+      type: object
+      additionalProperties: false
+      description: Fixed or enrolled event retention and an independent legal hold for a new object version. Omitted retention inherits the immutable admitted bucket default. Event hold ON requires one days or years duration and permits an optional minimum date. Event hold OFF on creation requires an explicit fixed date and no duration. Governance bypass is unsupported.
+      properties:
+        retention:
+          $ref: '#/components/schemas/ObjectVersionRetention'
+        legal_hold:
+          $ref: '#/components/schemas/ObjectVersionLegalHold'
+    ObjectVersionRetention:
+      type: object
+      additionalProperties: false
+      description: Verified native retention or a retention intent. An empty object requests a clear. Active fixed retention cannot be shortened and active COMPLIANCE cannot be downgraded. Enrolled event hold ON requires one duration; OFF omits duration and lets the provider fix the final date from the existing hold. Observed dates and requested minimum dates are preserved. Governance bypass is unsupported. For new writes, OFF requires a fixed date; an undated OFF is reserved for releasing an existing hold.
+      properties:
+        mode: {type: string, enum: [GOVERNANCE, COMPLIANCE]}
+        retain_until_date: {type: string, format: date-time}
+        event_hold: {type: string, enum: [ON, OFF]}
+        event_hold_duration: {$ref: '#/components/schemas/ObjectRetentionPeriod'}
+    ObjectVersionLegalHold:
+      type: object
+      description: Independent exact-version legal hold status.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status: {type: string, enum: [ON, OFF]}
+    ObjectRetentionPeriod:
+      type: object
+      description: Exactly one positive days or years duration must be present. Null values are rejected.
+      additionalProperties: false
+      properties:
+        days: {type: integer, format: int32, minimum: 1, maximum: 36500}
+        years: {type: integer, format: int32, minimum: 1, maximum: 100}
+      oneOf:
+        - required: [days]
+          not: {required: [years]}
+        - required: [years]
+          not: {required: [days]}
+    ObjectCapacityReconciliation:
+      type: object
+      description: Durable fenced capacity inventory and quota rebase. Failed or blocked jobs retain reservations; billing is unaffected.
+      required: [id, bucket_id, state, inventory_scope, scanned_pages, scanned_bytes, scanned_versions, before_bytes, before_keys, after_bytes, after_keys, reclaimed_bytes, reclaimed_keys, pending_writes, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        bucket_id: {type: string, format: uuid}
+        state: {type: string, enum: [waiting, scanning, completed, blocked, failed, cancelled]}
+        inventory_scope: {type: string, enum: [current, all_versions], description: Verified inventory scope; retained versions require all_versions.}
+        scanned_pages: {type: integer, format: int64, minimum: 0}
+        scanned_bytes: {type: integer, format: int64, minimum: 0}
+        scanned_versions: {type: integer, format: int64, minimum: 0}
+        before_bytes: {type: integer, format: int64, minimum: 0}
+        before_keys: {type: integer, format: int64, minimum: 0}
+        after_bytes: {type: integer, format: int64, minimum: 0}
+        after_keys: {type: integer, format: int64, minimum: 0}
+        reclaimed_bytes: {type: integer, format: int64, minimum: 0}
+        reclaimed_keys: {type: integer, format: int64, minimum: 0}
+        pending_writes: {type: integer, format: int64, minimum: 0}
+        last_error_code: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        finished_at: {type: string, format: date-time}
+    ObjectMultipartUpload:
+      description: Durable provider-neutral resumable upload session. The provider upload ID is private.
+      type: object
+      required: [id, key, size_bytes, part_size_bytes, part_count, content_type, state, expires_at, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        key: {type: string, minLength: 1, maxLength: 1024}
+        size_bytes: {type: integer, format: int64, minimum: 1, maximum: 5497558138880}
+        part_size_bytes: {type: integer, format: int64, minimum: 1, maximum: 5368709120}
+        part_count: {type: integer, minimum: 1, maximum: 10000}
+        content_type: {type: string, maxLength: 255}
+        state: {type: string, enum: [initiating, active, completing, completing_conditional, aborting, completed, aborted]}
+        completion_error_code: {type: string, description: Persisted conditional completion rejection; retries retain the outcome.}
+        etag: {type: string, description: Actual committed ETag when completion is confirmed.}
+        version_id: {type: string, description: Owned public version ID when completion is confirmed; null denotes a mutable provider version.}
+        encryption: {$ref: '#/components/schemas/ObjectEncryption'}
+        expires_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+    ObjectMultipartUploadList:
+      description: A page of durable provider-neutral resumable upload sessions.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ObjectMultipartUpload'}
+        next_cursor: {type: string, format: uuid}
+    CreateObjectMultipartUploadRequest:
+      description: Final object identity, total size and optional owned encryption frozen at initiation for a resumable upload.
+      type: object
+      additionalProperties: false
+      required: [key, size_bytes]
+      properties:
+        key: {type: string, minLength: 1, maxLength: 1024}
+        size_bytes: {type: integer, format: int64, minimum: 1, maximum: 5497558138880}
+        content_type: {type: string, maxLength: 255}
+        protection:
+          $ref: '#/components/schemas/ObjectWriteProtection'
+        encryption: {$ref: '#/components/schemas/ObjectEncryption'}
+    ObjectMultipartPartSignRequest:
+      description: Requested lifetime for one exact-length part capability.
+      type: object
+      additionalProperties: false
+      properties:
+        expires_in: {type: integer, minimum: 0, maximum: 900, default: 300}
+    ObjectMultipartCompletedPart:
+      description: Provider ETag returned after uploading one numbered part.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag]
+      properties:
+        part_number: {type: integer, minimum: 1, maximum: 10000}
+        etag: {type: string, minLength: 1, maxLength: 256}
+    ObjectMultipartPart:
+      description: A part confirmed by the upstream object storage provider.
+      type: object
+      additionalProperties: false
+      required: [part_number, etag, size_bytes, last_modified]
+      properties:
+        part_number: {type: integer, minimum: 1, maximum: 10000}
+        etag: {type: string, minLength: 1, maxLength: 256}
+        size_bytes: {type: integer, format: int64, minimum: 1}
+        last_modified: {type: string, format: date-time}
+    ObjectMultipartPartList:
+      description: A page of provider-confirmed parts for an active upload.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/ObjectMultipartPart'}
+        next_part_number_marker: {type: integer, minimum: 1, maximum: 10000}
+    CompleteObjectMultipartUploadRequest:
+      description: Complete ordered ETag manifest for every part in the session.
+      type: object
+      additionalProperties: false
+      required: [parts]
+      properties:
+        parts:
+          type: array
+          minItems: 1
+          maxItems: 10000
+          items: {$ref: '#/components/schemas/ObjectMultipartCompletedPart'}
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
     Preview:
       description: "One self-serve platform preview."

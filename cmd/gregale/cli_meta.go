@@ -734,7 +734,7 @@ var cliCommands = []cliCommand{
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
 				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
-				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix (preview)", Value: "KEYS/"},
+				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix", Value: "KEYS/"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog", Examples: []string{
@@ -772,7 +772,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets: encryption, versioning and lifecycle",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets, objects, signed URLs and uploads",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"<app>"}},
 			{Name: "delete", Short: "Delete an empty bucket (including retained versions)", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
