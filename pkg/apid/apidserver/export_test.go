@@ -2682,3 +2682,6 @@ var (
 func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
 	return &s.runtimeBuildAdmission
 }
+
+// OwnDomainHolderHint explains a domain conflict held by the caller's app.
+var OwnDomainHolderHint = ownDomainHolderHint

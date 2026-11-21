@@ -89,9 +89,13 @@ func runProjectLogs(ctx context.Context, client projectLogsClient, project strin
 		return printErr("No services to read", fmt.Errorf("project %s has no running services named %s", project, strings.Join(only, ", ")))
 	}
 	var mu sync.Mutex
+	lines := 0
 	write := func(w io.Writer, service, line string) {
 		mu.Lock()
 		defer mu.Unlock()
+		if w == out {
+			lines++
+		}
 		if jsonOutput {
 			_, _ = fmt.Fprintln(w, projectLogJSON(service, line))
 			return
@@ -110,6 +114,15 @@ func runProjectLogs(ctx context.Context, client projectLogsClient, project strin
 	wg.Wait()
 	if ctx.Err() != nil {
 		return 130
+	}
+	if lines == 0 && !follow && !jsonOutput {
+		// `logs <app>` explains an empty read; the project form printed
+		// nothing at all and exited 0 (prod hunt 2026-11-21).
+		names := make([]string, 0, len(members))
+		for _, member := range members {
+			names = append(names, member.WorkloadName)
+		}
+		_, _ = fmt.Fprintf(out, "No log lines from %s in project %s. That does not establish the services emitted none; filters and retention may limit the result.\n", strings.Join(names, ", "), project)
 	}
 	return 0
 }

@@ -6004,7 +6004,7 @@ func ErrPlanLimitEnvVars(l Limits, observed int) *Problem {
 func ErrAPIKeyExpired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
 		"API key expired",
-		"the bearer key has expired; rotate it and use the new plaintext").
+		"this API key has expired; create a new one with `gregale key create`, or rotate keys before they expire with `gregale key rotate`").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
@@ -6016,7 +6016,7 @@ func ErrAPIKeyExpired() *Problem {
 func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
-		"the bearer key has been revoked; mint a new one via POST /v1/keys").
+		"this API key has been revoked; create a new one with `gregale key create`").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 

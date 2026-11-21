@@ -2994,3 +2994,15 @@ func BucketUploadContentType(args []string) (string, error) {
 	o, err := parseBucketTransfer(args)
 	return o.contentType, err
 }
+
+// RenderInspectFailureDetails renders inspect's failure section for one
+// failed deployment of app slug.
+func RenderInspectFailureDetails(w io.Writer, slug string, failed api.DeploymentResponse) {
+	renderInspectFailureDetails(w, inspectSummary{App: inspectAppSummary{Slug: slug}, Failure: inspectPersistedFailure(&failed, nil)})
+}
+
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
+var AppScalePlanWarnings = appScalePlanWarnings
+
+// FormatObserved renders a measured alert value.
+var FormatObserved = formatObserved
