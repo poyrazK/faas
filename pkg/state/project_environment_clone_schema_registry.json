@@ -13078,12 +13078,16 @@
     "table": "object_bucket_notifications",
     "columns": [
       "bucket_id",
+      "clone_paused",
       "managed_rules",
       "revision",
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "via": [
@@ -13092,8 +13096,7 @@
           "object_buckets",
           "id"
         ]
-      ],
-      "unavailable": "object_bucket_setting_unavailable"
+      ]
     }
   },
   {

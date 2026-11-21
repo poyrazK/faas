@@ -10697,6 +10697,7 @@ type ObjectBucketNotification struct {
 	Revision     int64
 	Rules        []byte
 	ManagedRules []byte
+	ClonePaused  bool
 }
 
 type ObjectBucketObjectLock struct {
