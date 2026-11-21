@@ -1,4 +1,4 @@
--- filename: 20261120044459691_agent_budget_standing.sql
+-- filename: 20261121080548100_agent_budget_standing.sql
 -- migration-compat: expand
 
 -- +goose Up

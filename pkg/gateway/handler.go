@@ -7164,7 +7164,8 @@ haveApp:
 		return
 	}
 	// A preview runs unreviewed code: the credential a platform gate just
-	// verified does not reach it (ADR-20261102100001).
+	// verified does not reach it (ADR-20261102100001), and no app receives
+	// a verified Gregale API key (ADR-20261120060000).
 	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
@@ -8266,7 +8267,13 @@ haveApp:
 			}
 		}
 		if recovery, ok := h.backend.(staleTargetRecovery); ok {
-			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
+			recoveryCtx := staleContext
+			if !frozen {
+				// Name the dead target so schedd can ask its vmmd and fail
+				// a row whose VM is gone instead of answering at capacity.
+				recoveryCtx = sched.WithStaleInstanceHint(staleContext, failed.InstanceID)
+			}
+			recovery.RecoverStaleTarget(recoveryCtx, app.ID, app.Scope, limits.MaxConcurrency)
 		}
 	}
 	staleSignal := &staleTargetSignal{}
@@ -9996,6 +10003,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		config = configs[0]
 	}
 	policy := WakeAdmissionPolicyForAppWithWakeLimits(plan, config.overflow, config.maxQueueWaitMS, config.wakeMaxQueueDepth, config.wakeMaxQueueWaitSecs)
+	if h.log != nil {
+		// A request that joins a wake already in flight waits on that wake's
+		// leader, which may have started before a schedd restart.
+		h.log.Debug("gateway: wake gate enter", "app_id", appID, "joins_inflight", h.gate.WakeInProgress(appID), "trigger", trigger)
+	}
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
 			// max_concurrency is a ceiling for scheduler-driven scale-up,
@@ -10004,6 +10016,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			return h.backend.HealthyCount(appID) == 0
 		},
 		func(ctx context.Context) error {
+			if h.log != nil {
+				leaderStart := time.Now()
+				h.log.Debug("gateway: wake leader ensure start", "app_id", appID)
+				defer func() {
+					h.log.Debug("gateway: wake leader ensure end", "app_id", appID, "took", time.Since(leaderStart).String())
+				}()
+			}
 			_, hasCapacityEnsurer := h.backend.(capacityWarmEnsurer)
 			_, hasWarmEnsurer := h.backend.(warmEnsurer)
 			if scope == "" && (hasCapacityEnsurer || hasWarmEnsurer) && h.burstPressure != nil {

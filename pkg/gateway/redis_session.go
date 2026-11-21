@@ -73,13 +73,18 @@ type redisSession struct {
 
 	clientMu sync.Mutex // serializes writes to client
 
-	mu       sync.Mutex
-	up       net.Conn // nil while detached
-	upDone   chan struct{}
-	busy     bool // the client goroutine is writing upstream
-	lastData time.Time
-	woke     bool
-	attaches int
+	mu     sync.Mutex
+	up     net.Conn // nil while detached
+	upDone chan struct{}
+	busy   bool // the client goroutine is writing upstream
+	// sending is set while a command's head is being written to the leg;
+	// a leg that ends meanwhile sets lostWhileSending and leaves the
+	// verdict to the writer, which knows whether the command got through.
+	sending          bool
+	lostWhileSending bool
+	lastData         time.Time
+	woke             bool
+	attaches         int
 
 	// Replayed state.
 	hello  []byte
@@ -188,7 +193,22 @@ func (s *redisSession) handle(ctx context.Context, r *bufio.Reader, cmd respComm
 		return false, errors.New("redis session: detached during command")
 	}
 	s.pending.Add(1)
-	if _, err := up.Write(cmd.raw); err != nil {
+	s.mu.Lock()
+	s.sending = true
+	s.mu.Unlock()
+	_, writeErr := up.Write(cmd.raw)
+	s.mu.Lock()
+	s.sending = false
+	lost := s.lostWhileSending
+	s.lostWhileSending = false
+	stateful := s.pinned || s.multi || s.watch
+	s.mu.Unlock()
+	if writeErr == nil && lost && (s.pending.Load() != 0 || stateful) {
+		// The command reached a leg that then ended before answering.
+		_ = s.client.Close()
+		return false, errors.New("redis session: cache leg ended before answering")
+	}
+	if writeErr != nil {
 		// The leg died before the command reached the cache: answer it and
 		// let the next command attach again.
 		s.pending.Add(-1)
@@ -358,8 +378,17 @@ func (s *redisSession) legEnded(up net.Conn) {
 		s.up = nil
 		s.upDone = nil
 	}
+	// A leg that fails while a command is being written to it (a cache that
+	// cannot be woken ends the leg at once) owes no reply yet: the writer
+	// answers the command itself, or closes the client if it got through.
+	// Closing here left the client with EOF instead of the unavailable
+	// error (flaky TestRedisSessionUnavailableCacheAnswersAnError).
+	deferToWriter := current && s.sending
+	if deferToWriter {
+		s.lostWhileSending = true
+	}
 	s.mu.Unlock()
-	if current && (s.pending.Load() != 0 || stateful) {
+	if current && !deferToWriter && (s.pending.Load() != 0 || stateful) {
 		_ = s.client.Close()
 	}
 	s.signalDrained()

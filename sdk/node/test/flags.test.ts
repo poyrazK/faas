@@ -51,7 +51,7 @@ test('request snapshots, explicit exposure, and restore freshness', async () => 
  const fakeFetch: typeof fetch = async (input, init) => {
    calls++; if (unavailable) throw new Error('offline');
    if (String(input).includes('127.0.0.1')) return new Response(JSON.stringify({access_token:'token'}));
-   assert.equal(new Headers(init?.headers).get('X-Faas-Flags-Capabilities'),'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1');
+   assert.equal(new Headers(init?.headers).get('X-Faas-Flags-Capabilities'),'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1');
    return new Response(JSON.stringify(config));
  };
  const flags = new GregaleFlags({apiURL:'https://api.example.com',identityEndpoint:'http://127.0.0.1:8082/token',fetch:fakeFetch,now:()=>now});

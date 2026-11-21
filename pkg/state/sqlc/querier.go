@@ -98,6 +98,10 @@ type Querier interface {
 	// Adds the experiment rule's requests in (from, until] to each variant's
 	// latency histogram (5% log buckets, flags.LatencyBucket).
 	AddFlagExperimentLatency(ctx context.Context, db DBTX, arg AddFlagExperimentLatencyParams) error
+	// Subject units keyed by a UUID derived from the customer and subject hash;
+	// a unit seen with another variant than its first is crossed. The arrays
+	// are parallel.
+	AddFlagExperimentSubjectUnits(ctx context.Context, db DBTX, arg AddFlagExperimentSubjectUnitsParams) error
 	// A customer seen with another variant than its first is marked crossed and
 	// left out of results.
 	// The arrays are parallel: the select list unnests them in step.
@@ -2044,6 +2048,11 @@ type Querier interface {
 	// Keep a sentinel row so the API can report when a busy flag has more than
 	// the bounded response can display. Most flags have at most 16 live variants.
 	FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg FeatureFlagRequestOutcomesParams) ([]FeatureFlagRequestOutcomesRow, error)
+	// A metric-driven rollout stage (ADR 20261119173702 §5): customers whose
+	// requests since since evaluated the flag, treated when any decision
+	// matched the rule, and how many of each group sent the metric event at or
+	// after their first exposure.
+	FeatureFlagRolloutMetricArms(ctx context.Context, db DBTX, arg FeatureFlagRolloutMetricArmsParams) ([]FeatureFlagRolloutMetricArmsRow, error)
 	FenceFunctionMigrationSource(ctx context.Context, db DBTX, arg FenceFunctionMigrationSourceParams) (int64, error)
 	FenceManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg FenceManagedPostgresCutoverAdmissionParams) (pgtype.Timestamptz, error)
 	FenceMigrationSourceResume(ctx context.Context, db DBTX, arg FenceMigrationSourceResumeParams) error
@@ -2354,6 +2363,7 @@ type Querier interface {
 	// Unconverted units of a funnel or retention metric whose window has
 	// started (first exposure plus start offset is at or before now) and whose
 	// deadline is after not_before, in customer order after after_customer.
+	// Subject units also return their customer and subject hash.
 	FlagExperimentConversionCandidates(ctx context.Context, db DBTX, arg FlagExperimentConversionCandidatesParams) ([]FlagExperimentConversionCandidatesRow, error)
 	FlagExperimentCrossedUnits(ctx context.Context, db DBTX, experimentID pgtype.UUID) (int64, error)
 	// First exposure and guardrail request counts per verified customer and
@@ -2379,7 +2389,20 @@ type Querier interface {
 	// FlagExperimentMeanArms' winsorized unit values with each unit's
 	// pre-period value, summed per variant for CUPED.
 	FlagExperimentMeanCupedArms(ctx context.Context, db DBTX, arg FlagExperimentMeanCupedArmsParams) ([]FlagExperimentMeanCupedArmsRow, error)
-	FlagExperimentUnitsWithoutPreValue(ctx context.Context, db DBTX, arg FlagExperimentUnitsWithoutPreValueParams) ([]pgtype.UUID, error)
+	// Per-variant sums a ratio metric's delta method needs: the numerator and
+	// denominator value of each unit (folded plus open days), with their
+	// squares and cross products (ADR 20261119173702 §3).
+	FlagExperimentRatioArms(ctx context.Context, db DBTX, arg FlagExperimentRatioArmsParams) ([]FlagExperimentRatioArmsRow, error)
+	// Exposed and converted counted units by variant and cohort membership
+	// (the unit's customer is a current member). A horizon of 0 counts every
+	// unit; otherwise units whose deadline is at or before until.
+	FlagExperimentSegmentArms(ctx context.Context, db DBTX, arg FlagExperimentSegmentArmsParams) ([]FlagExperimentSegmentArmsRow, error)
+	// Each unit's metric value (folded plus open days) for a percentile
+	// metric, at most max_rows per variant.
+	FlagExperimentUnitValues(ctx context.Context, db DBTX, arg FlagExperimentUnitValuesParams) ([]FlagExperimentUnitValuesRow, error)
+	FlagExperimentUnitsWithoutPreValue(ctx context.Context, db DBTX, arg FlagExperimentUnitsWithoutPreValueParams) ([]FlagExperimentUnitsWithoutPreValueRow, error)
+	// A ratio metric's denominator: like FoldFlagExperimentValues into den_sum.
+	FoldFlagExperimentDenominators(ctx context.Context, db DBTX, arg FoldFlagExperimentDenominatorsParams) (int64, error)
 	// Adds the metric event's values of closed days (from_day..through_day) to
 	// each unit, counting a day when it ends at or after the unit's first
 	// exposure.
@@ -4034,6 +4057,10 @@ type Querier interface {
 	// default-scope canary and a serving predecessor. apid probes the default
 	// path on both so a quiet canary is judged on evidence. An app with several
 	// serving predecessors returns several rows and is skipped by the caller.
+	// A function is probed only on paths it declares in release_probe_paths:
+	// every path of a function is its handler, so a default GET / ran a queue or
+	// cron handler with a synthetic event about 20 times a minute for the whole
+	// canary (prod 2026-11-20, ADR-1446 amendment).
 	ListDefaultRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListDefaultRouteProbeTargetsRow, error)
 	// Stable per-app revision names. Join deployments for the human-readable
 	// revision while retaining aliases whose targets later become superseded;
@@ -8030,6 +8057,9 @@ type Querier interface {
 	// it missed the cache, is running, is not stale, and was claimed before the
 	// asking build, so two identical builds never wait for each other.
 	RunningIdenticalBuild(ctx context.Context, db DBTX, arg RunningIdenticalBuildParams) (pgtype.UUID, error)
+	// The running subject experiments of an environment, which take SDK
+	// exposures (ADR 20261119173702 §1).
+	RunningSubjectExperiments(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]RunningSubjectExperimentsRow, error)
 	// One statement snapshot, including an explicit empty result for every requested
 	// app. A per-app sentinel row detects truncation; incomplete apps cannot evict.
 	// Project routing identity, durable provenance and canonical runtime-port inputs.
@@ -8281,6 +8311,9 @@ type Querier interface {
 	// longer declares; rolling the deploy back enables them again.
 	SetEventSubscriptionEnabled(ctx context.Context, db DBTX, arg SetEventSubscriptionEnabledParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
+	// A bandit pass: its posterior, and the weights it published when it
+	// re-weighted (weighted_at set).
+	SetFlagExperimentBandit(ctx context.Context, db DBTX, arg SetFlagExperimentBanditParams) error
 	SetFlagExperimentLatencyThreshold(ctx context.Context, db DBTX, arg SetFlagExperimentLatencyThresholdParams) error
 	// The arrays are parallel.
 	SetFlagExperimentPreValues(ctx context.Context, db DBTX, arg SetFlagExperimentPreValuesParams) (int64, error)

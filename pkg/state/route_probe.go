@@ -291,7 +291,8 @@ func (m *MemStore) ListDefaultRouteProbeTargets(_ context.Context) ([]RouteProbe
 	out := []RouteProbeTarget{}
 	for appID, app := range m.apps {
 		if app.Status == AppDeleted || app.PreviewOfSlug != "" || app.Manifest.ReleasePolicy == api.ReleasePolicyImmediate ||
-			(app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest) {
+			(app.Manifest.ExecutionMode != "" && app.Manifest.ExecutionMode != api.ExecutionModeRequest) ||
+			app.Type == AppTypeFunction && len(app.Manifest.ReleaseProbePaths) == 0 {
 			continue
 		}
 		for _, d := range m.deployments {

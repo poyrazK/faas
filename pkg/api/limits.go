@@ -457,13 +457,18 @@ const (
 // admission queue one account may hold at most
 // GatewayWakeAdmissionQueuedPerAccount waiting and
 // GatewayWakeAdmissionRunningPerAccount running admissions, so one account's
-// burst cannot take every slot.
+// burst cannot take every slot. The running share is a third of
+// GatewayWakeAdmissionParallelism, so two other accounts always find a free
+// slot. On the OVHcloud fleet a snapshot restore holds a slot for ~0.2 s, and
+// a share of 2 queued a single account's 11-app burst for up to 1 s
+// (2026-11-20 restore test); a microservice app that wakes several services
+// at once needs more than two at a time.
 const (
 	GatewayColdWakeAppsPerClient          = 20
 	GatewayColdWakeClientWindow           = time.Minute
 	GatewayColdWakeClientsTrackedMax      = 100_000
-	GatewayWakeAdmissionQueuedPerAccount  = 8
-	GatewayWakeAdmissionRunningPerAccount = 2
+	GatewayWakeAdmissionQueuedPerAccount  = 16
+	GatewayWakeAdmissionRunningPerAccount = 4
 )
 
 // PasswordResetMailInFlightMax caps the forgot-password requests one apid
@@ -2921,6 +2926,50 @@ const (
 	AnalyticsCohortRefreshInterval = time.Hour
 )
 
+// Subject units, layers and the holdout, richer metrics, bandits and
+// metric-driven rollouts (ADR 20261119173702).
+const (
+	// FlagLayersMaxPerEnvironment bounds an environment's experiment layers.
+	FlagLayersMaxPerEnvironment = 10
+	// FlagHoldoutMaxBasisPoints bounds the environment holdout (20%).
+	FlagHoldoutMaxBasisPoints = 2000
+	// FlagExposuresPerRequest bounds the exposures one runtime events
+	// request may carry.
+	FlagExposuresPerRequest = 100
+	// FlagExposureDedupe is how long an SDK keeps an exposure it reported,
+	// so it reports one per flag, customer, subject and variant at most
+	// this often; FlagExposureDedupeEntries bounds that set.
+	FlagExposureDedupe        = time.Hour
+	FlagExposureDedupeEntries = 10_000
+	// ExperimentBanditFloorBasisPoints is the least share a bandit arm keeps.
+	ExperimentBanditFloorBasisPoints = 1000
+	// ExperimentBanditMinShiftBasisPoints is the least weight change that
+	// republishes a bandit's weights; ExperimentBanditInterval the least
+	// time between republishes.
+	ExperimentBanditMinShiftBasisPoints = 500
+	ExperimentBanditInterval            = time.Hour
+	// ExperimentBanditSamples is the posterior draws per arm and pass.
+	ExperimentBanditSamples = 10_000
+	// ExperimentPercentileResamples is the bootstrap resamples of a
+	// percentile metric.
+	ExperimentPercentileResamples = 1000
+	// ExperimentPercentileMaxUnits bounds the per-unit values a percentile
+	// metric reads per arm.
+	ExperimentPercentileMaxUnits = 50_000
+	// ExperimentSegmentFDR is the Benjamini–Hochberg false discovery rate
+	// of segment results.
+	ExperimentSegmentFDR = 0.05
+	// ExperimentBanditShipProbability and ExperimentBanditShipLoss are when
+	// a bandit recommends shipping an arm: best with at least this
+	// probability, giving up less than this conversion rate by choosing it.
+	ExperimentBanditShipProbability = 0.95
+	ExperimentBanditShipLoss        = 0.001
+	// RolloutMetricDefaultMaxDecrease and RolloutMetricDefaultMinUnits are
+	// a metric-driven rollout's defaults.
+	RolloutMetricDefaultMaxDecrease = 0.01
+	RolloutMetricDefaultMinUnits    = 100
+)
+
 // Flag experiment bounds (ADR 20261115163113). The monthly conversion event
 // quota is per plan: Limits.FlagEventsPerMonth.
 const (
@@ -3109,7 +3158,11 @@ const (
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
-	OutboundAIReserveBytesPerToken       int64 = 4
+	// A generation call that names no output ceiling reserves its model's
+	// longest response from the price catalog for its cost, or this for a
+	// model the catalog does not know (cost-control review 2026-11-19, N17).
+	OutboundAIUnknownModelOutputReserveTokens int64 = 32_768
+	OutboundAIReserveBytesPerToken            int64 = 4
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000
@@ -9415,8 +9468,11 @@ const (
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
 	// requests per app; this cap protects the control plane when many
-	// different apps become cold at the same time.
-	GatewayWakeAdmissionParallelism = 4
+	// different apps become cold at the same time. Each admission costs
+	// the control-plane database a few short reads (~10-100 ms); 12 per
+	// gateway was sized for the OVHcloud control plane (12 threads, local
+	// NVMe Postgres) after 4 queued restore bursts behind one another.
+	GatewayWakeAdmissionParallelism = 12
 	// GatewayWakeAdmissionQueueCap bounds distinct app leaders waiting
 	// for a gateway admission slot. Per-app waiter caps are enforced by
 	// WakeAdmissionPolicyForPlan in pkg/gateway; this is the cross-app bound.

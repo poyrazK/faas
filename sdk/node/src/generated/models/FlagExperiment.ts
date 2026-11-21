@@ -14,7 +14,21 @@ export type FlagExperiment = {
   rule_id: string;
   control: string;
   metric_event: string;
-  metric_kind: 'conversion' | 'mean' | 'funnel' | 'retention';
+  metric_kind: 'conversion' | 'mean' | 'funnel' | 'retention' | 'ratio' | 'percentile';
+  unit: 'customer' | 'subject';
+  allocation: 'fixed' | 'bandit';
+  layer?: string;
+  traffic?: number;
+  /**
+   * Start of the layer slice held while running.
+   */
+  layer_from?: number;
+  /**
+   * End (exclusive) of the layer slice held while running.
+   */
+  layer_to?: number;
+  denominator_event?: string;
+  percentile?: number;
   funnel?: FlagExperimentFunnel;
   retention?: FlagExperimentRetention;
   /**

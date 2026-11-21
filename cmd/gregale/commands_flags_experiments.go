@@ -15,7 +15,7 @@ import (
 // `gregale flag experiment ...` (ADR 20261115163113 §6, ADR 20261116190208).
 // The tree names alias `gregale flags experiments <verb>`.
 
-const flagsExperimentVerbs = "list|create|get|start|stop|ship|delete|results"
+const flagsExperimentVerbs = "list|create|get|start|stop|ship|delete|results|layers|holdout"
 
 func cmdFlagsExperiments(args []string) int {
 	if len(args) == 0 {
@@ -23,6 +23,12 @@ func cmdFlagsExperiments(args []string) int {
 		return 1
 	}
 	verb, args := args[0], args[1:]
+	switch verb {
+	case "layers":
+		return cmdFlagsExperimentLayers(args)
+	case "holdout":
+		return cmdFlagsExperimentHoldout(args)
+	}
 	fs := newFlagSet("flags-experiments-"+verb, flag.ContinueOnError)
 	project := fs.String("project", "", "project slug")
 	environment := fs.String("environment", "production", "named project environment")
@@ -30,7 +36,14 @@ func cmdFlagsExperiments(args []string) int {
 	rule := fs.String("rule", "", "create: the flag's weighted rule ID")
 	control := fs.String("control", "", "create: the baseline variant")
 	metric := fs.String("metric", "", "create: the metric event name")
-	kind := fs.String("metric-kind", "", "create: conversion (default), mean (mean event value per customer), funnel or retention")
+	kind := fs.String("metric-kind", "", "create: conversion (default), mean (mean event value per customer), funnel, retention, ratio or percentile")
+	unit := fs.String("unit", "", "create: customer (default) or subject (end users of a rule with rollout_unit subject)")
+	layer := fs.String("layer", "", "create: exclusive layer the experiment joins")
+	traffic := fs.String("traffic", "", "create: percent of the layer the experiment holds")
+	allocation := fs.String("allocation", "", "create: fixed (default) or bandit")
+	denominator := fs.String("denominator-event", "", "create: a ratio metric's denominator event")
+	percentile := fs.Int("percentile", 0, "create: a percentile metric's percentile, 50 to 99")
+	segment := fs.String("segment", "", "results: split the results by a cohort's members")
 	var steps repeatedFlag
 	fs.Var(&steps, "step", "create: funnel step event (repeatable, 2 to 6)")
 	window := fs.String("window", "", "create: funnel window after first exposure, 1h to 720h")
@@ -72,7 +85,15 @@ func cmdFlagsExperiments(args []string) int {
 		return flagsExperimentsList(ctx, client, *project, *environment)
 	case "create":
 		req := api.FlagExperimentCreateRequest{Key: key, Flag: *flagKey, RuleID: *rule, Control: *control, MetricEvent: *metric,
-			MetricKind: *kind, Start: *start}
+			MetricKind: *kind, Start: *start, Unit: *unit, Layer: *layer, Allocation: *allocation, DenominatorEvent: *denominator, Percentile: *percentile}
+		if *traffic != "" {
+			pct, err := strconv.ParseFloat(*traffic, 64)
+			if err != nil || pct <= 0 || pct > 100 {
+				printCommandValidation(os.Stderr, "gregale %s: --traffic is a percent of the layer, above 0 and up to 100\n", cliTreeSpellPath("flags experiments create"))
+				return 1
+			}
+			req.Traffic = int(pct*100 + 0.5)
+		}
 		flagsExperimentMetric(&req, steps, *window, *returnEvent, *period, *periodNumber, *noCuped)
 		guardrails := &api.FlagExperimentGuardrailsRequest{ServerErrorRate: &api.FlagExperimentGuardrailRequest{Disabled: *noGuardrails},
 			P95Latency: &api.FlagExperimentGuardrailRequest{Disabled: *noGuardrails}}
@@ -130,6 +151,9 @@ func cmdFlagsExperiments(args []string) int {
 		return 0
 	case "results":
 		res, err := client.ProjectFlagExperimentResults(ctx, *project, *environment, key)
+		if *segment != "" {
+			res, err = client.ProjectFlagExperimentResultsBySegment(ctx, *project, *environment, key, *segment)
+		}
 		if err != nil {
 			return printErr("Experiment operation failed", err)
 		}
@@ -209,6 +233,12 @@ func flagsExperimentMetricText(x api.FlagExperiment) string {
 	case x.Retention != nil:
 		return fmt.Sprintf("retention %s in %s %d", x.Retention.Return.Event, x.Retention.Period, x.Retention.PeriodNumber)
 	}
+	switch x.MetricKind {
+	case "ratio":
+		return fmt.Sprintf("ratio %s per %s", x.MetricEvent, x.DenominatorEvent)
+	case "percentile":
+		return fmt.Sprintf("p%d of %s", x.Percentile, x.MetricEvent)
+	}
 	return x.MetricKind + " " + x.MetricEvent
 }
 
@@ -274,7 +304,12 @@ func printFlagsExperimentResults(res api.FlagExperimentResults) {
 	if res.CrossedUnits > 0 {
 		_, _ = fmt.Fprintf(osStdout, "%d customers saw more than one variant and are left out.\n", res.CrossedUnits)
 	}
+	if res.FixedHorizon {
+		_, _ = fmt.Fprintln(osStdout, "Percentile results are fixed-horizon: read them once, at the planned end.")
+	}
 	printFlagsExperimentCuped(res)
+	printFlagsExperimentBandit(res)
+	printFlagsExperimentSegments(res)
 	printFlagsExperimentGuardrails(res)
 	r := res.Recommendation
 	if r.Action == "" {

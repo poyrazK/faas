@@ -849,6 +849,13 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		return "", WakeMethodUnspecified, false, err
 	}
 	markWakeAdmissionStarted(ctx)
+	if b.log != nil {
+		rpcStart := time.Now()
+		b.log.Debug("gateway: ensure wake rpc start", "app_id", appID, "trigger", trigger)
+		defer func() {
+			b.log.Debug("gateway: ensure wake rpc end", "app_id", appID, "took", time.Since(rpcStart).String(), "err", err)
+		}()
+	}
 	var identity api.PlatformIdentity
 	var instanceID, nodeID, deploymentID, wakeID string
 	var rawMethod int32

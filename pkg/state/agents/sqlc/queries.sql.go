@@ -2387,6 +2387,51 @@ func (q *Queries) ListAgentModelIntegrations(ctx context.Context, db DBTX, arg L
 	return items, nil
 }
 
+const listAgentRunApprovalWaits = `-- name: ListAgentRunApprovalWaits :many
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = $1::text::uuid AND r.lease_token = $2::text
+ ORDER BY p.created_at
+ LIMIT $3::integer
+`
+
+type ListAgentRunApprovalWaitsParams struct {
+	RunID      string
+	LeaseToken string
+	MaxRows    int32
+}
+
+type ListAgentRunApprovalWaitsRow struct {
+	CreatedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 3: each approval waits from its request
+// until its decision, its expiry or outboundd's release, whichever is
+// first; one still held waits until now. Fenced by the run's lease.
+func (q *Queries) ListAgentRunApprovalWaits(ctx context.Context, db DBTX, arg ListAgentRunApprovalWaitsParams) ([]ListAgentRunApprovalWaitsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovalWaits, arg.RunID, arg.LeaseToken, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalWaitsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalWaitsRow
+		if err := rows.Scan(&i.CreatedAt, &i.EndedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAgentRunApprovals = `-- name: ListAgentRunApprovals :many
 SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
   coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
@@ -3465,16 +3510,18 @@ func (q *Queries) MarkAgentRunCallbackDelivered(ctx context.Context, db DBTX, ru
 
 const markAgentRunRunning = `-- name: MarkAgentRunRunning :execrows
 UPDATE agent_runs SET state='running', running_at=now(), node_id=$1::text, instance_id=$2::text,
-  ai_budget_millicents=$3::bigint, updated_at=now()
- WHERE id=$4::text::uuid AND lease_token=$5::text AND state='starting'
+  ai_budget_millicents=$3::bigint,
+  deadline_credit_max_sec=$4::integer, updated_at=now()
+ WHERE id=$5::text::uuid AND lease_token=$6::text AND state='starting'
 `
 
 type MarkAgentRunRunningParams struct {
-	NodeID             string
-	InstanceID         string
-	AiBudgetMillicents int64
-	RunID              string
-	LeaseToken         string
+	NodeID               string
+	InstanceID           string
+	AiBudgetMillicents   int64
+	DeadlineCreditMaxSec int32
+	RunID                string
+	LeaseToken           string
 }
 
 // The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
@@ -3483,6 +3530,7 @@ func (q *Queries) MarkAgentRunRunning(ctx context.Context, db DBTX, arg MarkAgen
 		arg.NodeID,
 		arg.InstanceID,
 		arg.AiBudgetMillicents,
+		arg.DeadlineCreditMaxSec,
 		arg.RunID,
 		arg.LeaseToken,
 	)

@@ -369,6 +369,8 @@ jobs:
           bash scripts/unit-release-verify_test.sh
           bash scripts/reuse-release-guest-init_test.sh
           bash scripts/ci/unit_deploy_test.sh
+          bash scripts/ci/observe_rollout_availability_test.sh
+          bash scripts/ci/observe_remote_rollout_test.sh
           bash scripts/ci/check_edge_store_test.sh
           bash scripts/ci/seal_domain_vars_test.sh
           bash scripts/ci/key_escrow_test.sh

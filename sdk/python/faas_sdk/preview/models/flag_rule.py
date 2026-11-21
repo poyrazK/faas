@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.flag_condition import FlagCondition
+    from ..models.flag_rule_experiment import FlagRuleExperiment
     from ..models.progressive_rollout import ProgressiveRollout
 
 
@@ -46,6 +47,10 @@ class FlagRule:
     managed promotion after a full healthy evidence window. The rule rollout must equal stages[current_stage];
     stages must strictly increase and end at 10000 basis points."""
     value: bool | str | Unset = UNSET
+    experiment: FlagRuleExperiment | Unset = UNSET
+    """The running experiment of a weighted rule, set when the experiment starts and cleared when it stops. Apid
+    writes it; a configuration update must carry it unchanged. Runtime SDKs need capabilities experiment-layers-v1
+    and subject-exposures-v1."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -86,6 +91,10 @@ class FlagRule:
         else:
             value = self.value
 
+        experiment: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.experiment, Unset):
+            experiment = self.experiment.to_dict()
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -109,12 +118,15 @@ class FlagRule:
             field_dict["progression"] = progression
         if value is not UNSET:
             field_dict["value"] = value
+        if experiment is not UNSET:
+            field_dict["experiment"] = experiment
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.flag_condition import FlagCondition
+        from ..models.flag_rule_experiment import FlagRuleExperiment
         from ..models.progressive_rollout import ProgressiveRollout
 
         d = dict(src_dict)
@@ -165,6 +177,13 @@ class FlagRule:
 
         value = _parse_value(d.pop("value", UNSET))
 
+        _experiment = d.pop("experiment", UNSET)
+        experiment: FlagRuleExperiment | Unset
+        if isinstance(_experiment, Unset):
+            experiment = UNSET
+        else:
+            experiment = FlagRuleExperiment.from_dict(_experiment)
+
         flag_rule = cls(
             id=id,
             customers=customers,
@@ -175,6 +194,7 @@ class FlagRule:
             attributes=attributes,
             progression=progression,
             value=value,
+            experiment=experiment,
         )
 
         return flag_rule

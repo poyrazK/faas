@@ -67,12 +67,14 @@ func (s *Service) Reports(w http.ResponseWriter, r *http.Request, acct state.Acc
 		pipelineError(w, errors.New("reporting store unavailable"))
 		return
 	}
-	emails := make([]string, 0, len(s.Config.Members))
-	for email := range s.Config.Members {
-		emails = append(emails, email)
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)
 	defer cancel()
+	team, err := s.roster(ctx)
+	if err != nil {
+		pipelineError(w, err)
+		return
+	}
+	emails := team.emails()
 	report, err := store.ManagerReport(ctx, scope, referrals.ReportFilter{From: window.From, To: window.To, Timezone: window.Timezone, Owner: window.Owner, MemberEmails: emails})
 	if err != nil {
 		pipelineError(w, err)
