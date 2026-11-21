@@ -1,3 +1,5 @@
+// spec: §6.3 — a failed cold boot's serial console survives cleanup (bounded).
+
 package fcvm
 
 import (
