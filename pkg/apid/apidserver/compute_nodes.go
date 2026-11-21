@@ -160,7 +160,9 @@ func (s *server) getComputeNode(w http.ResponseWriter, r *http.Request, acct sta
 		api.WriteProblem(w, api.ErrCapacity("could not read compute node"))
 		return
 	}
-	instances, err := s.store.ListInstancesOnNodeID(r.Context(), row.ID)
+	// Resident VMs only: the node's history (tens of thousands of parked rows)
+	// never counts toward live_instance_count.
+	instances, err := s.store.ListResidentInstancesOnNodeID(r.Context(), row.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list node instances"))
 		return

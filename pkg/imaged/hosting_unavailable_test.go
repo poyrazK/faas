@@ -248,7 +248,7 @@ func TestHostingUnavailableNamesACrashLoopingCandidate(t *testing.T) {
 			}
 			if dep.Status != state.DeployFailed || dep.ErrorCode != api.CodeAppStartupCrash ||
 				receipt.Smoke.ErrorCode != apihostingreceipt.SmokeErrorCandidateCrashLoop ||
-				!strings.Contains(dep.Error, "exited 3 times") || !strings.Contains(dep.Error, "gregale logs hosting-replay --deployment "+f.candidate.ID) ||
+				!strings.Contains(dep.Error, "exited 3 times") || !strings.Contains(dep.Error, "gregale logs hosting-replay --since ") ||
 				probes != wantProbes || f.notif.failed != 1 {
 				t.Fatalf("wrong verdict: status=%s code=%s smoke=%s error=%q probes=%d events=%d", dep.Status, dep.ErrorCode, receipt.Smoke.ErrorCode, dep.Error, probes, f.notif.failed)
 			}

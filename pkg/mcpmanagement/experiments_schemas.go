@@ -99,6 +99,10 @@ func (m *management) saveReviewedPlan(p *reviewedPlan) (any, error) {
 	p.ID = hex.EncodeToString(id)
 	p.ExpiresAt = now.Add(reviewedPlanTTL)
 	m.reviewedPlans[p.ID] = p
+	if err := m.persistMemoryPlansLocked(); err != nil {
+		delete(m.reviewedPlans, p.ID)
+		return nil, err
+	}
 	return *p, nil
 }
 
@@ -256,7 +260,7 @@ func (m *management) applyReviewedChange(ctx context.Context, a applyArgs) (any,
 	defer m.mu.Unlock()
 	p := m.reviewedPlans[a.PlanID]
 	if p == nil {
-		return nil, invalid("invalid_plan", "unknown plan; plans end with the connection, so review a new one")
+		return nil, invalid("invalid_plan", "unknown or expired plan; review a new one")
 	}
 	if p.receipt != nil {
 		return p.receipt, nil
@@ -289,6 +293,9 @@ func (m *management) applyReviewedChange(ctx context.Context, a applyArgs) (any,
 		return nil, err
 	}
 	p.receipt = map[string]any{"plan_id": p.ID, "kind": p.Kind, "result": out}
+	// The write succeeded under its idempotency key; a failed journal only
+	// costs the replayed receipt.
+	_ = m.persistMemoryPlansLocked()
 	return p.receipt, nil
 }
 

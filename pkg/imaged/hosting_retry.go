@@ -106,7 +106,10 @@ func (h *Handler) candidateCrashLoop(ctx context.Context, app state.App, dep sta
 	if current.LivenessRestartCount > 0 {
 		detail = fmt.Sprintf("the app's process exited %d times after it started, so the platform stopped restarting it", current.LivenessRestartCount)
 	}
-	detail += fmt.Sprintf("; read why with: gregale logs %s --deployment %s", app.Slug, dep.ID)
+	// The crash output is in the app's runtime logs. `logs --deployment`
+	// reads the build and deploy log, which ends with this same message
+	// and never shows it (prod hunt 2026-11-21: a Flask import error).
+	detail += "; read why with: " + crashLogsCommand(app.Slug, dep.CreatedAt)
 	smoke := apihostingreceipt.SmokeResult{Status: apihostingreceipt.SmokeFailed, Path: HostingHealthPath(app, dep),
 		Authentication: apihostingreceipt.AuthenticationPlatformChallenge, ErrorCode: apihostingreceipt.SmokeErrorCandidateCrashLoop, Error: detail}
 	if routeChecks != nil {
@@ -115,4 +118,13 @@ func (h *Handler) candidateCrashLoop(ctx context.Context, app state.App, dep sta
 		smoke.RouteChecks = &copied
 	}
 	return smoke, true
+}
+
+// crashLogsCommand is the command that shows a crashed candidate's own
+// output: the app's runtime logs from the moment its release was created.
+func crashLogsCommand(slug string, created time.Time) string {
+	if created.IsZero() {
+		return fmt.Sprintf("gregale logs %s --since 30m", slug)
+	}
+	return fmt.Sprintf("gregale logs %s --since %s", slug, created.UTC().Truncate(time.Second).Format(time.RFC3339))
 }

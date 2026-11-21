@@ -193,8 +193,8 @@ var catalog = map[string]Render{
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",
 		Hint:  "your app crashed before it became ready",
-		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows; the last lines it printed are in the error detail",
-		Fix:   "• read the error in the detail (`gregale logs <slug>` has the full startup log)\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
+		Why:   "your app's process exited before it accepted traffic, after any restarts its restart policy allows",
+		Fix:   "• read what it printed with the logs command in the detail (`gregale logs <slug> --since 30m`); the build log does not have it\n• run the start command locally with the same environment to reproduce\n• check that every required env var and secret is set (`gregale secrets list --app <slug>`)",
 	},
 	api.CodeFunctionInitFailed: {
 		Title: "Function init failed",

@@ -34,6 +34,6 @@ func (s *Service) DiscoverCapabilities(ctx context.Context, accountID, region st
 	c.Availability = append([]Availability(nil), c.Availability...)
 	c.CredentialAccess = append([]CredentialAccess(nil), c.CredentialAccess...)
 	c.UsageMeters = nil
-	return CapabilityDiscovery{Region: region, Capabilities: c, DatabaseLimit: s.registry.MaxDatabasesPerAccount,
+	return CapabilityDiscovery{Region: region, Capabilities: c, DatabaseLimit: s.registry.MaxDatabasesPerAccount(),
 		ProvisioningEnabled: s.provisioningEnabled() && s.provisioningAllowed(ctx, accountID)}, nil
 }

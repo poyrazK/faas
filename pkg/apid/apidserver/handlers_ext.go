@@ -3791,6 +3791,8 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			var pending *claimPendingError
 			if errors.As(err, &pending) {
 				problem.Hint = pending.hint()
+			} else if hint := ownDomainHolderHint(r.Context(), s.store, acct.ID, domain); hint != "" {
+				problem.Detail, problem.Hint = hint, hint
 			}
 			api.WriteProblem(w, problem)
 			return
@@ -4434,6 +4436,16 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	}
 	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
 		tlsDetail, tlsRem = detail, rem
+	}
+	// No certificate is issued, on demand or otherwise, until the
+	// _faas-verify TXT record has been seen. The doctor checked only the
+	// CNAME and promised a certificate "once the domain resolves", so a
+	// customer who skipped the TXT record waited forever (prod hunt
+	// 2026-11-21).
+	if !d.Verified() && d.ChallengeToken != "" && (obs.CertState == "" || obs.CertState == "none" || obs.CertState == certStatusPending) {
+		tlsStatus, report.Healthy = probePending, false
+		tlsDetail = "ownership not verified: the _faas-verify TXT record has not been seen, and no certificate is issued until it is"
+		tlsRem = fmt.Sprintf("Publish TXT _faas-verify.%s with the value %s.", d.Domain, d.ChallengeToken)
 	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
