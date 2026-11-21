@@ -74,3 +74,36 @@ existing buckets.
 - **Normalize IDs at each call site.** About fifteen read sites and their
   response validators would each need the rule; one transport and three
   listings keep it in one place.
+
+## Amendment 2026-11-21: the S3 gateway's own dispatches
+
+The transport covers every request the SDK sends, but the S3 gateway sends
+presigned requests with its own HTTP client (tracked and legacy PUTs, reads,
+multipart part uploads, mutations and branch overlays) and reads the
+provider's response headers directly. On OVH after the rc.364 rollout, a
+gateway PUT still recorded the provider's `X-Amz-Version-Id`, latched
+`recovery_versions_observed`, returned the ID to the client, and the next
+delete was refused with `OperationAborted`.
+
+`objectstorage.NormalizeProviderResponse` applies the transport's rule to
+those responses: a provider that reports `Versionless()` (an `S3` provider
+on a `"versioning": "unsupported"` backend) has its version-ID headers
+dropped right after each gateway `Do`. `VerifyProviderObjectWriteAcknowledgment`
+also drops them for a versionless provider, so a new dispatch path that
+forgets the call still records no version. The rule stays in one helper; the
+gateway's five dispatch sites each call it once.
+
+## Amendment 2026-11-21: OVH's final ListParts page
+
+A live run of every launch capability against OVH also found that OVH ends
+every `ListParts` page with `NextPartNumberMarker` set to the last part it
+returned, even when `IsTruncated` is false. That is the marker's documented
+meaning on AWS. Gregale treated any non-zero marker on a final page as
+contradictory provider evidence, so gateway `ListParts` and every gateway
+`CompleteMultipartUpload` (which lists parts first) answered 503.
+
+A final page may now name its own last part (or, when empty, the request's
+marker). A marker past the last returned part still claims parts the page did
+not return and is still refused, so the provider-evidence rule of #6670 keeps
+its intent. The other S3 listings Gregale reads end without next markers on
+OVH (captured the same day) and are unchanged.
