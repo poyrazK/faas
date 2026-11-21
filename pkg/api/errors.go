@@ -6492,6 +6492,23 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		WithDocs(docsBase + "/rollouts#how-a-rollout-proceeds")
 }
 
+// ErrTrafficChangeDuringCanaryFor is ErrTrafficChangeDuringCanary naming the
+// running canary and the exact commands that move it on. The refusal pointed
+// only at `release traffic status`, so a caller replacing a broken baseline
+// needed a second call to learn the step (boa multi-service deploy,
+// 2026-11-21). An empty deploymentID returns the generic refusal.
+func ErrTrafficChangeDuringCanaryFor(appSlug, deploymentID string, step int) *Problem {
+	problem := ErrTrafficChangeDuringCanary()
+	if deploymentID == "" {
+		return problem
+	}
+	hint := fmt.Sprintf("Advance canary %s one step: gregale deployment advance %s --expected-step %d.", deploymentID, deploymentID, step)
+	if appSlug != "" {
+		hint += fmt.Sprintf(" Or send it all traffic now: gregale rollouts recover %s --action promote --expected-step %d.", appSlug, step)
+	}
+	return problem.WithHint(hint)
+}
+
 // ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
 // operators can see which task handler version blocks promotion.
 func ErrMCPTaskCompatibilityGate(detail string) *Problem {
