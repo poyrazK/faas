@@ -7344,6 +7344,65 @@ Revoke a pending invitation
 | `--org <SLUG>` | organization slug | required |
 | `--invitation <ID>` | invitation ID | required |
 
+### org key
+
+Manage org API keys
+
+#### org key list
+
+List org API keys
+
+`gregale org key list --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key create
+
+Create an org API key; the plaintext is shown once
+
+`gregale org key create --org <SLUG> [--label <TEXT>] [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | key label (same as the positional label; kept for scripts) |  |
+| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
+| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
+
+#### org key get
+
+Show one org API key
+
+`gregale org key get --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key delete
+
+Revoke an org API key
+
+`gregale org key delete --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key rotate
+
+Rotate an org API key; the new plaintext is shown once
+
+`gregale org key rotate --org <SLUG> [--label <TEXT>] <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | new label (empty keeps the current one) |  |
+
 ### org members
 
 Manage org members
@@ -7461,65 +7520,6 @@ Delete one org
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the confirmation prompt (aliases: -q, --quiet) |  |
-
-### org keys
-
-Manage org API keys
-
-#### org keys list
-
-List org API keys
-
-`gregale org keys list --org <SLUG>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys add
-
-Create an org API key; the plaintext is shown once
-
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | key label | required |
-| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
-| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
-| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
-
-#### org keys info
-
-Show one org API key
-
-`gregale org keys info --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rm
-
-Revoke an org API key
-
-`gregale org keys rm --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rotate
-
-Rotate an org API key; the new plaintext is shown once
-
-`gregale org keys rotate --org <SLUG> [--label <TEXT>] <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | new label (empty keeps the current one) |  |
 
 ### org leave
 

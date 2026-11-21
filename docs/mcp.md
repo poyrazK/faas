@@ -245,7 +245,7 @@ key takes the same limit:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
-gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+gregale org key create ci-agent --org acme --scopes agent --projects api
 ```
 
 A limited agent reaches the apps of those projects, including apps added to

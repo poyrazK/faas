@@ -823,6 +823,8 @@ func cmdOrgsKeysList(args []string) int {
 // returned ONCE on the create call — the CLI prints it to stdout
 // immediately and never persists it (consistent with the
 // cmdKeysAdd contract).
+const orgKeyCreateUsage = "usage: gregale org key create <label> --org <slug> [--scopes admin,apps:read,...] [--projects slug,...] [--approvals category,...|none]"
+
 func cmdOrgsKeysAdd(args []string) int {
 	fs := newFlagSet("orgs keys add", flag.ContinueOnError)
 	slug := fs.String("org", "", "org slug (required)")
@@ -830,15 +832,21 @@ func cmdOrgsKeysAdd(args []string) int {
 	scopesCSV := fs.String("scopes", "", "comma-separated scopes (default: [admin])")
 	projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
 	approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	// The label is positional, as in `gregale key create <label>`; --label
+	// remains for existing scripts. Naming it both ways must agree.
+	if fs.NArg() > 1 || fs.NArg() == 1 && *label != "" && *label != fs.Arg(0) {
+		PrintUsage(os.Stderr, orgKeyCreateUsage, "orgs")
 		return 1
+	}
+	if fs.NArg() == 1 {
+		*label = fs.Arg(0)
 	}
 	projects := splitList(*projectsCSV)
 	if *slug == "" || *label == "" || flagWasSet(fs, "projects") && len(projects) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale org keys add --org <slug> --label <text> [--scopes admin,apps:read,...] [--projects slug,...] [--approvals category,...|none]", "orgs")
+		PrintUsage(os.Stderr, orgKeyCreateUsage, "orgs")
 		return 1
 	}
 	var scopes []string
