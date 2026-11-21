@@ -198,14 +198,18 @@ egress:
     - 10.20.0.0/24
 
 # Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
-# s3-gatewayd on the control-plane node from these operator-local files; leave
-# it unset only when no backend is configured. Strict `verify-fleet` fails when
-# the gateway runs without this.
-# object_storage:
-#   gateway: managed
-#   config_src: /operator/config/object-storage.json
-#   # S3/R2/OVH only; GCS with attached ADC has no provider env file.
-#   provider_env_src: /operator/secrets/object-storage.env
+# s3-gatewayd on the control-plane node from these operator-local files on the
+# CD runner host (bhs-1). Strict `verify-fleet` fails when the gateway runs
+# without this. Customer buckets live in their own OVH Public Cloud project
+# (gregale-customer-storage-us-1, ADR-20261029174627), backend
+# ovh-bhs-prod-v1; its users and policies are in
+# deploy/ovh/customer-object-storage-policies/. The gateway stays on the
+# control plane behind Cloudflare: `public_edge.entry: direct` runs no tunnel,
+# so the compute variant (ADR-20261031122757) cannot run here.
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  provider_env_src: /operator/secrets/object-storage.env
 
 # ADR-1343: every compute node runs the app edge (faas-gatewayd-public-edge
 # and the faas-cloudflared tunnel connector) and holds back 1,000 millicores
