@@ -275,7 +275,9 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 	s.wg.Add(1)
 	defer s.wg.Done()
 	defer func() { _ = raw.Close() }()
-	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+	// The connection outlives vmmd's run context on purpose: shutdown drains it
+	// through Listener.Close, as gRPC's GracefulStop lets streams finish.
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent)) //nolint:contextcheck // see above
 	defer cancel()
 	stopServer := context.AfterFunc(s.ctx, cancel)
 	defer stopServer()
@@ -359,44 +361,49 @@ func (c *serverConn) exchange(parent context.Context, method string, md metadata
 
 	// The reader feeds RecvMsg, then watches the connection after the
 	// client's close-send: anything but our own deadline cancels the call.
+	// It starts on the handler's first RecvMsg, which the caller-policy
+	// interceptor allows only after authorizing the caller, so nothing a
+	// refused caller sends is read (gRPC refuses on stream open too).
 	var stopping atomic.Bool
 	readerDone := make(chan bool, 1) // true: stopped cleanly after close-send
-	go func() {
-		closeSendSeen := false
-		for {
-			typ, payload, err := readFrame(c.r, MaxMessageBytes)
-			if err != nil {
-				if closeSendSeen && stopping.Load() && errors.Is(err, os.ErrDeadlineExceeded) {
-					readerDone <- true
-					return
-				}
-				cancel()
-				if !closeSendSeen {
-					st.deliver(ctx, recvItem{err: err})
-				}
-				readerDone <- false
-				return
-			}
-			switch {
-			case typ == frameMessage && !closeSendSeen:
-				if !st.deliver(ctx, recvItem{msg: payload}) {
+	st.startReader = func() {
+		go func() {
+			closeSendSeen := false
+			for {
+				typ, payload, err := readFrame(c.r, MaxMessageBytes)
+				if err != nil {
+					if closeSendSeen && stopping.Load() && errors.Is(err, os.ErrDeadlineExceeded) {
+						readerDone <- true
+						return
+					}
+					cancel()
+					if !closeSendSeen {
+						st.deliver(ctx, recvItem{err: err})
+					}
 					readerDone <- false
 					return
 				}
-			case typ == frameCloseSend && !closeSendSeen && len(payload) == 0:
-				closeSendSeen = true
-				st.deliver(ctx, recvItem{err: io.EOF})
-			default:
-				// A frame the client may not send now: end the call.
-				cancel()
-				if !closeSendSeen {
-					st.deliver(ctx, recvItem{err: errMalformed})
+				switch {
+				case typ == frameMessage && !closeSendSeen:
+					if !st.deliver(ctx, recvItem{msg: payload}) {
+						readerDone <- false
+						return
+					}
+				case typ == frameCloseSend && !closeSendSeen && len(payload) == 0:
+					closeSendSeen = true
+					st.deliver(ctx, recvItem{err: io.EOF})
+				default:
+					// A frame the client may not send now: end the call.
+					cancel()
+					if !closeSendSeen {
+						st.deliver(ctx, recvItem{err: errMalformed})
+					}
+					readerDone <- false
+					return
 				}
-				readerDone <- false
-				return
 			}
-		}
-	}()
+		}()
+	}
 
 	handler, ok := c.s.cfg.Streams[method]
 	var err error
@@ -420,10 +427,16 @@ func (c *serverConn) exchange(parent context.Context, method string, md metadata
 	// watching, so an expired deadline ends it without consuming anything.
 	// The status then tells the client whether the connection stays open, so
 	// it never pools one this side is about to close.
-	stopping.Store(true)
-	_ = c.conn.SetReadDeadline(time.Now())
-	clean := <-readerDone
-	_ = c.conn.SetReadDeadline(time.Time{})
+	// A reader that never started read nothing after the preamble: the
+	// client's frames are still unread, so the connection cannot be reused.
+	// Claiming the flag here also keeps a late RecvMsg from starting it.
+	clean := false
+	if !st.readerStarted.CompareAndSwap(false, true) {
+		stopping.Store(true)
+		_ = c.conn.SetReadDeadline(time.Now())
+		clean = <-readerDone
+		_ = c.conn.SetReadDeadline(time.Time{})
+	}
 	reusable := clean && ctx.Err() == nil
 	return st.writeStatus(appStatus, reusable) == nil && reusable
 }
@@ -468,6 +481,11 @@ type serverStream struct {
 	handlerDone chan struct{}
 	sendMu      sync.Mutex
 	failed      bool
+
+	// startReader launches the frame reader; readerStarted makes it run
+	// once, on the first RecvMsg.
+	startReader   func()
+	readerStarted atomic.Bool
 }
 
 // deliver hands the handler a message or the end of the client's side. It
@@ -491,6 +509,9 @@ func (st *serverStream) SetTrailer(metadata.MD)       {}
 // RecvMsg returns the next message, io.EOF after the client's close-send, or
 // the call's cancellation, as grpc-go's server stream does.
 func (st *serverStream) RecvMsg(m any) error {
+	if st.readerStarted.CompareAndSwap(false, true) {
+		st.startReader()
+	}
 	select {
 	case item := <-st.recv:
 		if item.err != nil {
