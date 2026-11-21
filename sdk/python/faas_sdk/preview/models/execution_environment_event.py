@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ExecutionEnvironmentEvent")
 
 @_attrs_define
 class ExecutionEnvironmentEvent:
+    """A numbered lifecycle or build diagnostic record for a dependency environment."""
+
     sequence: int
     stage: str
     message: str

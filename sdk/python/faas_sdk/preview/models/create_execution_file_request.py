@@ -10,6 +10,8 @@ T = TypeVar("T", bound="CreateExecutionFileRequest")
 
 @_attrs_define
 class CreateExecutionFileRequest:
+    """Declared byte length and checksum for a prepared immutable Run input file."""
+
     size_bytes: int
     sha256: str
 

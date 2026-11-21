@@ -19,12 +19,17 @@ T = TypeVar("T", bound="RunBudgetPolicy")
 
 @_attrs_define
 class RunBudgetPolicy:
+    """Current revision, limits and usage for one budget."""
+
     kind: RunBudgetKind
+    """Whether a budget applies to one customer or a named task."""
     ref: str
     revision: int
     enabled: bool
     limits: RunBudgetLimits
+    """Optional concurrency, invocation and compute caps for a customer or task."""
     usage: RunBudgetUsage
+    """Active reservations and metered usage in the current UTC-day window."""
     alerts: list[RunBudgetAlert]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

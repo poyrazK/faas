@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RunBudgetKind } from './RunBudgetKind.js';
+/**
+ * Recorded customer or task budget threshold event.
+ */
 export type RunBudgetAlert = {
   event_id: string;
   kind: RunBudgetKind;

@@ -103,7 +103,8 @@ def sync_detailed(
     """Publish an immutable account-owned task version. Requires deploy write authority.
 
     Args:
-        body (PublishExecutionTaskRequest):
+        body (PublishExecutionTaskRequest): Source, execution configuration and contracts for a
+            new immutable task version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -132,7 +133,8 @@ def sync(
     """Publish an immutable account-owned task version. Requires deploy write authority.
 
     Args:
-        body (PublishExecutionTaskRequest):
+        body (PublishExecutionTaskRequest): Source, execution configuration and contracts for a
+            new immutable task version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,7 +158,8 @@ async def asyncio_detailed(
     """Publish an immutable account-owned task version. Requires deploy write authority.
 
     Args:
-        body (PublishExecutionTaskRequest):
+        body (PublishExecutionTaskRequest): Source, execution configuration and contracts for a
+            new immutable task version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -183,7 +186,8 @@ async def asyncio(
     """Publish an immutable account-owned task version. Requires deploy write authority.
 
     Args:
-        body (PublishExecutionTaskRequest):
+        body (PublishExecutionTaskRequest): Source, execution configuration and contracts for a
+            new immutable task version.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

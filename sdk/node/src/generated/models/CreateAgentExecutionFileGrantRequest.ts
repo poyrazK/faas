@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Scoped Agent endpoint, thread, call, task version and input path for staging a file.
+ */
 export type CreateAgentExecutionFileGrantRequest = {
   endpoint_id: string;
   thread_id: string;

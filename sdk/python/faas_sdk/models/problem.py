@@ -57,6 +57,7 @@ class Problem:
     code: str
     """Stable machine-readable error code. See StatusForCode."""
     run_budget: RunBudgetRefusal | Unset = UNSET
+    """Budget limit that prevented admission and the current usage against it."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     agent_approval: AgentApprovalPendingInfo | Unset = UNSET

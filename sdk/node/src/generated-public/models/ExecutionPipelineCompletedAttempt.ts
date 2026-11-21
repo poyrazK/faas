@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ExecutionPipelineArtifactRef } from './ExecutionPipelineArtifactRef.js';
 import type { ExecutionUsage } from './ExecutionUsage.js';
+/**
+ * Recorded final status and timing for one attempt in a completed pipeline.
+ */
 export type ExecutionPipelineCompletedAttempt = {
   run_id: string;
   attempt: number;

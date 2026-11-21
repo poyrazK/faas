@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ExecutionPipelineArtifactRef")
 
 @_attrs_define
 class ExecutionPipelineArtifactRef:
+    """Checksum and locator for a retained file written by a completed step."""
+
     name: str
     size_bytes: int
     sha256: str

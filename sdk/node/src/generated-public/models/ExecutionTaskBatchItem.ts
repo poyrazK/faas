@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ExecutionFileInput } from './ExecutionFileInput.js';
+/**
+ * A labeled invocation input submitted as part of a task batch.
+ */
 export type ExecutionTaskBatchItem = {
   label: string;
   /**

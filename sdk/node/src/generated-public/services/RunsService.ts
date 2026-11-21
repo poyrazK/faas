@@ -107,6 +107,9 @@ export class RunsService {
   public static cancelExecutionPipeline({
     workflowId,
   }: {
+    /**
+     * Caller-supplied workflow identifier for the pipeline to cancel.
+     */
     workflowId: string,
   }): CancelablePromise<ExecutionWorkflowResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {

@@ -6,6 +6,9 @@ import type { RunBudgetAlert } from './RunBudgetAlert.js';
 import type { RunBudgetKind } from './RunBudgetKind.js';
 import type { RunBudgetLimits } from './RunBudgetLimits.js';
 import type { RunBudgetUsage } from './RunBudgetUsage.js';
+/**
+ * Current revision, limits and usage for one budget.
+ */
 export type RunBudgetPolicy = {
   kind: RunBudgetKind;
   ref: string;

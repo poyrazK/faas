@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ExecutionClassCapability")
 
 @_attrs_define
 class ExecutionClassCapability:
+    """Availability and admission limits for one execution class."""
+
     execution_class: ExecutionClassCapabilityExecutionClass
     default_timeout_ms: int
     max_timeout_ms: int

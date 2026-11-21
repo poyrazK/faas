@@ -107,7 +107,7 @@ def sync_detailed(
     """Disable a binding while retaining its revision tombstone.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
         expected_revision (int):
 
@@ -142,7 +142,7 @@ def sync(
     """Disable a binding while retaining its revision tombstone.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
         expected_revision (int):
 
@@ -172,7 +172,7 @@ async def asyncio_detailed(
     """Disable a binding while retaining its revision tombstone.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
         expected_revision (int):
 
@@ -205,7 +205,7 @@ async def asyncio(
     """Disable a binding while retaining its revision tombstone.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
         expected_revision (int):
 

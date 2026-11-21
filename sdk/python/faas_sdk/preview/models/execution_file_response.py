@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ExecutionFileResponse")
 
 @_attrs_define
 class ExecutionFileResponse:
+    """File locator, publication status and integrity metadata visible to the caller."""
+
     id: UUID
     status: ExecutionFileResponseStatus
     size_bytes: int

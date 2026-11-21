@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ExecutionPipelineAttemptResponse")
 
 @_attrs_define
 class ExecutionPipelineAttemptResponse:
+    """Runtime state and linked Run receipt for a pipeline attempt."""
+
     run_id: UUID
     attempt: int
     status: ExecutionPipelineAttemptResponseStatus

@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RunBindingKind } from './RunBindingKind.js';
+/**
+ * Saved attribution binding and its current revision.
+ */
 export type RunAttributionBinding = {
   enabled: boolean;
   subject_kind: RunBindingKind;

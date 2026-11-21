@@ -851,7 +851,7 @@ An account administrator can subscribe an existing account receiver to
 `execution.finished` while the Run API and V2 preview writers are enabled:
 
 ```sh
-gregale webhooks account add \
+gregale webhook account add \
   --target-url https://agents.example.com/gregale/completions \
   --event execution.finished --delivery-format cloudevents
 ```

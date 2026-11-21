@@ -102,7 +102,7 @@ def sync_detailed(
     """Read an account-owned customer or task budget and current UTC-day usage.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
 
     Raises:
@@ -134,7 +134,7 @@ def sync(
     """Read an account-owned customer or task budget and current UTC-day usage.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
 
     Raises:
@@ -161,7 +161,7 @@ async def asyncio_detailed(
     """Read an account-owned customer or task budget and current UTC-day usage.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
 
     Raises:
@@ -191,7 +191,7 @@ async def asyncio(
     """Read an account-owned customer or task budget and current UTC-day usage.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
 
     Raises:

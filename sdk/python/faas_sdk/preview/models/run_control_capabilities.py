@@ -11,6 +11,8 @@ T = TypeVar("T", bound="RunControlCapabilities")
 
 @_attrs_define
 class RunControlCapabilities:
+    """Available budget, attribution and history controls for this account."""
+
     configuration_available: bool
     max_customers: int
     max_bindings: int

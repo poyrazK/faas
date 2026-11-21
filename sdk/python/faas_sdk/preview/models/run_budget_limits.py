@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RunBudgetLimits")
 
 @_attrs_define
 class RunBudgetLimits:
+    """Optional concurrency, invocation and compute caps for a customer or task."""
+
     max_concurrent: int | Unset = UNSET
     max_invocations_per_day: int | Unset = UNSET
     max_compute_mb_ms_per_day: int | Unset = UNSET

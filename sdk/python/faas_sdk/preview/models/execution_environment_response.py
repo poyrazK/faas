@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ExecutionEnvironmentResponse")
 
 @_attrs_define
 class ExecutionEnvironmentResponse:
+    """Dependency environment identity, build status and available image metadata."""
+
     id: UUID
     runtime: ExecutionEnvironmentResponseRuntime
     status: ExecutionEnvironmentResponseStatus

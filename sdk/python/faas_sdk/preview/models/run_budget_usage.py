@@ -12,6 +12,8 @@ T = TypeVar("T", bound="RunBudgetUsage")
 
 @_attrs_define
 class RunBudgetUsage:
+    """Active reservations and metered usage in the current UTC-day window."""
+
     day: datetime.date
     active: int
     invocations: int

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Account webhook payload emitted when a disposable Run reaches a terminal status.
+ */
 export type ExecutionFinishedWebhookPayload = {
   event_id: string;
   execution_id: string;

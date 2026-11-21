@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Short-lived opaque token for staging one private input in the authorized Agent call.
+ */
 export type AgentExecutionFileGrant = {
   /**
    * Opaque private staging token for the authorized logical call.

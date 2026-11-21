@@ -26,8 +26,7 @@ class ResolvedExecutionLimits:
     max_output_bytes: int
     pids_max: int
     execution_class: ResolvedExecutionLimitsExecutionClass | Unset = UNSET
-    """Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms
-    and a smaller shared concurrency cap."""
+    """Execution class assigned when this Run was admitted."""
     max_artifact_bytes: int | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

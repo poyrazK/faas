@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Availability and admission limits for one execution class.
+ */
 export type ExecutionClassCapability = {
   execution_class: 'standard' | 'extended';
   default_timeout_ms: number;

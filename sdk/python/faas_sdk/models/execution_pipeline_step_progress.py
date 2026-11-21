@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ExecutionPipelineStepProgress")
 
 @_attrs_define
 class ExecutionPipelineStepProgress:
+    """Current state of a named step and its latest attempt metadata."""
+
     label: str
     state: ExecutionPipelineStepProgressState
     reason: ExecutionPipelineStepProgressReason | Unset = UNSET

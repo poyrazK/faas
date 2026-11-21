@@ -45,9 +45,11 @@ class ExecutionResponse:
     output_truncated: bool
     created_at: datetime.datetime
     attribution: RunAttribution | Unset = UNSET
+    """Verified customer and Agent references recorded with a Run."""
     task: ExecutionTaskRef | Unset = UNSET
+    """Identity of a published executable task version."""
     environment_id: UUID | Unset = UNSET
-    """Immutable ready dependency environment; requires v2 admission and the standard profile."""
+    """Dependency environment used for this Run, when the request selected one."""
     result_validation: ExecutionResultValidation | Unset = UNSET
     """Host validation of a successful result. Invalid contracts preserve execution status, original result,
     artifacts, and usage; dependent workflows fail and CLI waits return nonzero."""

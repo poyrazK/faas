@@ -372,11 +372,12 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_ENVIRONMENTS_ENABLED` | apid, builderd, imaged | `default` |  | 0 | `` | dependency environment preview: new intents, isolated builds and imaging; retained readers and physical GC remain live when disabled |
 | `FAAS_EXECUTION_ENVIRONMENT_` | apid | `default` |  |  | `` | per-runtime digest-pinned installer image refs for new immutable dependency environment recipes |
 | `FAAS_EXECUTION_EXTENDED_ENABLED` | apid | `default` |  | 0 | `` | new five-minute class admissions; requires compatible schema, scheduler, vmmd and protocol v5 guests; disabling preserves replay |
+| `FAAS_EXECUTION_PIPELINES_ENABLED` | apid | `default` |  | 0 | `` | new durable Run pipeline admissions; requires the execution API, V2 and task gates; disabling preserves observation, cancellation and cleanup |
 | `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-383 native acceptance |
+| `FAAS_EXECUTION_TASKS_ENABLED` | apid | `default` |  | 0 | `` | new versioned Run task publication and invocation; requires execution API and V2; disabling preserves catalog reads, retirement, replay and durable agent completion delivery |
 | `FAAS_EXECUTION_TEMPLATE_ACCOUNT_ID` | schedd | `default` |  |  | `` | dedicated platform owner for source Run pristine template capture |
 | `FAAS_EXECUTION_TEMPLATE_CAPTURE` | schedd | `default` |  |  | `` | opt-in source Run template capture; source dispatch and qualified image artifacts remain required |
 | `FAAS_EXECUTION_TEMPLATE_SHAPES` | schedd | `default` |  |  | `` | bounded runtime, RAM and scratch shapes for pristine Run templates |
-| `FAAS_EXECUTION_TASKS_ENABLED` | apid | `default` |  | 0 | `` | new versioned Run task publication and invocation; requires execution API and V2; disabling preserves catalog reads, retirement, replay and durable agent completion delivery |
 | `FAAS_EXECUTION_V2_ENABLED` | apid | `default` |  | 0 | `` | new stored-file and standalone-schema admissions; enable after compatible schema, schedd, vmmd and guest rollout; disabling preserves retained readers and GC |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
 | `FAAS_FINANCIAL_SYSTEM_ACCEPTANCE` | shared | `dev-only` |  |  | `` | opt-in dedicated financial full-system test harness; never set by ordinary production units |

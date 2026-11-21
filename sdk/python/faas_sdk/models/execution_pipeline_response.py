@@ -21,10 +21,14 @@ T = TypeVar("T", bound="ExecutionPipelineResponse")
 
 @_attrs_define
 class ExecutionPipelineResponse:
+    """Managed task pipeline state, steps and available completion details."""
+
     deadline_at: datetime.datetime
     steps: list[ExecutionPipelineStepResponse]
     progress: ExecutionPipelineProgress | Unset = UNSET
+    """Current pipeline sequence and observed progress for each step."""
     rerun: ExecutionPipelineRerun | Unset = UNSET
+    """Rerun receipt linking the replacement pipeline to its original job and reused outputs."""
     completion: ExecutionPipelineCompletion | Unset = UNSET
     """Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their
     ordinary Run receipt permissions and expiry. Completion identity is stable across delivery retries and redrive.

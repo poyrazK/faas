@@ -5,6 +5,9 @@
 import type { ExecutionTaskRef } from './ExecutionTaskRef.js';
 import type { ExecutionUsage } from './ExecutionUsage.js';
 import type { RunAttribution } from './RunAttribution.js';
+/**
+ * One invocation's attribution, status and usage without its payload.
+ */
 export type RunHistoryEntry = {
   result_validation_status?: 'valid' | 'invalid';
   id: string;
