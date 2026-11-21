@@ -241,6 +241,14 @@ func ManagedValkeyHandoffCommand(source string, memoryMB int, policy string, han
 	return []string{"/bin/sh", "-c", script}
 }
 
+// IsManagedValkeyHandoffCommand reports whether entrypoint is a handoff
+// deployment's command (ManagedValkeyHandoffCommand): it copies from the
+// running cache instead of starting one.
+func IsManagedValkeyHandoffCommand(entrypoint []string) bool {
+	return len(entrypoint) == 3 && entrypoint[0] == "/bin/sh" && entrypoint[1] == "-c" &&
+		strings.Contains(entrypoint[2], " --replicaof ")
+}
+
 // ErrManagedValkeyNotInPlan is the plan refusal for managed caches.
 func ErrManagedValkeyNotInPlan(plan Plan) *Problem {
 	return NewProblem(403, CodeManagedRedisNotInPlan, "Managed Redis is not included in this plan",
