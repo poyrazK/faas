@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -72,6 +73,28 @@ func TestCgroupLimitReaders(t *testing.T) {
 	got, err := readCgroupCPUUsec(write("cpu.stat", "usage_usec 4242\nuser_usec 4000\nsystem_usec 242\n"))
 	if err != nil || got != 4242 {
 		t.Fatalf("cpu.stat = %d %v", got, err)
+	}
+}
+
+// A single-process app's leaf carries no limits of its own: the VM's memory
+// and vCPUs are the limit.
+func TestResourceSlotLimitsFallBackToTheVM(t *testing.T) {
+	leaf := t.TempDir()
+	meminfo := filepath.Join(t.TempDir(), "meminfo")
+	if err := os.WriteFile(meminfo, []byte("MemTotal:        1015808 kB\nMemFree:  1 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	old := resourceSlotMeminfo
+	resourceSlotMeminfo = meminfo
+	t.Cleanup(func() { resourceSlotMeminfo = old })
+	for name, body := range map[string]string{"memory.max": "max\n", "cpu.max": "max 100000\n"} {
+		if err := os.WriteFile(filepath.Join(leaf, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mem, cpu := resourceSlotLimits(leaf)
+	if mem != 992 || cpu != runtime.NumCPU()*1000 {
+		t.Fatalf("limits = %d MB, %d millicores", mem, cpu)
 	}
 }
 

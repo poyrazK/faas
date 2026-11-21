@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -129,8 +130,7 @@ func runResourceSlots(ctx context.Context, leaf string, sampleEvery, slotEvery t
 		if !ok {
 			continue
 		}
-		w.MemLimitMB = readCgroupMemoryLimitMB(filepath.Join(leaf, "memory.max"))
-		w.CPULimitMillis = readCgroupCPULimitMillicores(filepath.Join(leaf, "cpu.max"))
+		w.MemLimitMB, w.CPULimitMillis = resourceSlotLimits(leaf)
 		if err := emit(w); err != nil {
 			failures++
 			// One line per hundred failures: a guest whose host does not
@@ -140,6 +140,27 @@ func runResourceSlots(ctx context.Context, leaf string, sampleEvery, slotEvery t
 			}
 		}
 	}
+}
+
+// resourceSlotMeminfo is a variable so tests can point it at a fixture.
+var resourceSlotMeminfo = "/proc/meminfo"
+
+// resourceSlotLimits is the app's memory and CPU limit: the leaf's own
+// memory.max and cpu.max when set (a partitioned VM with sidecars), else the
+// VM itself, whose memory and vCPUs are the plan's (native acceptance
+// 2026-11-21: a single-process app's leaf has neither).
+func resourceSlotLimits(leaf string) (memMB, cpuMillicores int) {
+	memMB = readCgroupMemoryLimitMB(filepath.Join(leaf, "memory.max"))
+	if memMB == 0 {
+		if stats, err := readMeminfo(resourceSlotMeminfo); err == nil {
+			memMB = int(stats.MemTotal >> 20)
+		}
+	}
+	cpuMillicores = readCgroupCPULimitMillicores(filepath.Join(leaf, "cpu.max"))
+	if cpuMillicores == 0 {
+		cpuMillicores = runtime.NumCPU() * 1000
+	}
+	return memMB, cpuMillicores
 }
 
 // EmitResourceSlot sends one slot over the guest event stream.

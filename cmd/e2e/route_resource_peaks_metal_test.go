@@ -145,7 +145,9 @@ func TestRouteResourcePeaksMetal(t *testing.T) {
 		}
 		time.Sleep(time.Second)
 	}
-	light(heavyMinute.Add(50 * time.Second))
+	// /release goes in the next minute, so it shares no peak with /grow
+	// (the first acceptance run sent it inside the heavy minute).
+	light(heavyMinute.Add(70 * time.Second))
 	if s, b := get("/release"); s != http.StatusNoContent && s != http.StatusOK {
 		t.Fatalf("release: status=%d body=%q", s, b)
 	}
@@ -182,8 +184,11 @@ func TestRouteResourcePeaksMetal(t *testing.T) {
 	if grow.PresenceShare >= 0.5 {
 		t.Fatalf("/grow ran in %.0f%% of minutes; the fixture sends it in one", grow.PresenceShare*100)
 	}
-	if report.MemPeakMaxMB < 256 || report.MemLimitMB == 0 {
-		t.Fatalf("app peak %d MB of limit %d MB; want >= 256 MB and a known limit", report.MemPeakMaxMB, report.MemLimitMB)
+	if report.MemPeakMaxMB < 256 || report.MemLimitMB < 512 || report.CPULimitMillicores == 0 {
+		t.Fatalf("app peak %d MB of limit %d MB, CPU limit %d; want >= 256 MB of a known limit", report.MemPeakMaxMB, report.MemLimitMB, report.CPULimitMillicores)
+	}
+	if release := findRoute(report.Routes, "/release"); release != nil && release.HighMemoryMinutes > 0 {
+		t.Fatalf("/release shares a peak it ran after: %+v", *release)
 	}
 	// Quiet minutes after the heavy one start high (Go keeps the heap) but do
 	// not rise, so the light route owns no peak they did not share.
