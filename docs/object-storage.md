@@ -539,9 +539,9 @@ Queue destinations must have a unique enabled queue name across the app's
 environments. Notifications enter the captured queue's environment and retain
 that destination if the queue is renamed.
 
-## Browser access (CORS) (preview)
+## Uploads from your own sites (preview)
 
-CORS rules are in preview.
+Cross-origin bucket rules are in preview.
 
 To let your own sites use signed URLs and upload routes from the browser, set
 CORS rules on the bucket:
