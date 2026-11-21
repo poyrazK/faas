@@ -110,16 +110,30 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
-// ErrorRatePctQuery is the app error rate: 5xx over the eligible 2xx and 5xx
-// responses, as a percentage. Client-caused 3xx/4xx are excluded from the
+// ErrorRatePctQuery is the app error rate: failed requests (5xx and capacity
+// refusals) over the eligible 2xx, 5xx and refused requests, as a percentage. Client-caused 3xx/4xx are excluded from the
 // population, so a window whose traffic is all 4xx (404s, edge-rule 429s) has
 // requests but no eligible denominator. That is a 0% error rate, not missing
 // telemetry: production-us hunt #4 found `gregale canary simulate` and
 // `gregale metrics` reporting such an app as "degraded".
 func ErrorRatePctQuery(appID, rng string) string {
-	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(FailedRequestsQuery("rate", appID, rng), EligibleRequestsQuery("rate", appID, rng)))
+}
+
+// FailedRequestsQuery sums an app's failed requests over rng with fn (rate or
+// increase): the 5xx responses plus the 429s the gateway answered because the
+// app had no capacity (gateway_capacity_refusals_total). Those visitors were
+// turned away as surely as by a 5xx, and counting only 5xx kept error rates,
+// SLOs and outage alerts green while an app refused its traffic (Observe audit
+// 2026-11-21, finding 8; ADR-20261121190000).
+func FailedRequestsQuery(fn, appID, rng string) string {
+	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class="5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
+}
+
+// EligibleRequestsQuery sums the requests an app's error rate is measured
+// over: 2xx, 5xx and capacity refusals. Client-caused 3xx/4xx stay outside.
+func EligibleRequestsQuery(fn, appID, rng string) string {
+	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class=~"2xx|5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
 }
 
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.

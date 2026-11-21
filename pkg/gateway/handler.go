@@ -6337,6 +6337,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
 	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
+	r = r.WithContext(withCapacityRefusalMark(r.Context()))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
@@ -7892,7 +7893,7 @@ haveApp:
 			if reason, ok := wakeNotDispatchedReason(err); ok {
 				markNotDispatched(w, r, reason)
 			}
-			writeWakeError(w, err)
+			writeRequestWakeError(w, r, err)
 			h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 			return
 		}
@@ -8755,6 +8756,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		if platformErrorForSLO(r, status) {
 			h.metrics.ObservePlatformError(appID, plan)
 			ObservedRouteCarrierFrom(r.Context()).MarkUnanswered5xx()
+		}
+		if capacityRefusalForSLO(r, status) {
+			h.metrics.ObserveCapacityRefusal(appID)
 		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
@@ -10182,6 +10186,33 @@ func (h *Handler) pinnedDeploymentNotServing(ctx context.Context, app App, deplo
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeConflict, "Deployment not serving",
 		fmt.Sprintf("deployment %s is %s and no longer serves traffic; point the alias at a live revision with `gregale deployments alias set`", label, status))
+}
+
+// writeRequestWakeError is writeWakeError for a request Handler.observe will
+// count: it marks a capacity refusal first.
+func writeRequestWakeError(w http.ResponseWriter, r *http.Request, err error) {
+	if wakeCapacityRefusal(err) {
+		markCapacityRefused(r)
+	}
+	writeWakeError(w, err)
+}
+
+// wakeCapacityRefusal reports a wake error writeWakeError answers with 429
+// because the app had no capacity: the drop overflow mode, a full
+// concurrency queue, or the plan's concurrency reached.
+func wakeCapacityRefusal(err error) bool {
+	if isWakeConcurrencyDrop(err) || errors.Is(err, ErrConcurrencyQueueFull) {
+		return true
+	}
+	var prob *api.Problem
+	if !errors.As(err, &prob) || prob.Status != http.StatusTooManyRequests {
+		return false
+	}
+	switch prob.Code {
+	case api.CodeAppConcurReached, api.CodeConcurrencyThrottled, api.CodeConcurrencyQueueFull:
+		return true
+	}
+	return false
 }
 
 func writeWakeError(w http.ResponseWriter, err error) {

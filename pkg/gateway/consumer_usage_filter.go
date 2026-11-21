@@ -57,6 +57,21 @@ func platformErrorForSLO(r *http.Request, status int) bool {
 	return platformFailureUnbillable(r, status) && !appBudgetExpiredFrom(r)
 }
 
+// capacityRefusalForSLO reports whether a response counts in
+// gateway_capacity_refusals_total: a 429 the gateway answered, before the
+// guest sent any byte, because the app had no capacity (markCapacityRefused).
+// The app's visitors were turned away, so customer SLO availability and
+// outage detection count it as a failed request. The platform availability
+// SLO and the status page do not: the app reached its own plan limits
+// (ADR-20261121190000).
+func capacityRefusalForSLO(r *http.Request, status int) bool {
+	if status != http.StatusTooManyRequests || !capacityRefusedFrom(r) {
+		return false
+	}
+	_, guestResponded := FirstByteFrom(r)
+	return !guestResponded
+}
+
 // unattributedUsage reports whether a consumer-usage event carries nothing any
 // reader uses (ADR-234 amendment). That means no consumer, no platform tenant,
 // no request-audit evidence, and no discovered route.

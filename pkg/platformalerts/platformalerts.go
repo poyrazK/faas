@@ -53,15 +53,18 @@ const (
 
 // The fleet-wide queries the detector runs: one round trip each, whatever
 // the number of apps. The error rate matches appmetrics.ErrorRatePctQuery
-// (5xx over 2xx and 5xx; client 3xx/4xx are not evidence of an outage).
+// (5xx and capacity refusals over 2xx, 5xx and refusals; client 3xx/4xx are
+// not evidence of an outage). An app refusing all its traffic for lack of
+// capacity answered 429s the detector never saw (Observe audit 2026-11-21,
+// finding 8).
 var (
 	outageErrorRateQuery = fmt.Sprintf(
 		// "> 0" drops an idle app instead of answering 0/0 = NaN for it
 		// (prod rc.347: one idle app failed every detection pass).
-		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s])) / (sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s])) > 0) * 100`,
+		`sum by (app) (rate(gateway_request_duration_seconds_count{class="5xx"}[%[1]s]) or rate(gateway_capacity_refusals_total[%[1]s])) / (sum by (app) (rate(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s]) or rate(gateway_capacity_refusals_total[%[1]s])) > 0) * 100`,
 		api.AppOutageWindow)
 	outageRequestsQuery = fmt.Sprintf(
-		`sum by (app) (increase(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%s]))`, api.AppOutageWindow)
+		`sum by (app) (increase(gateway_request_duration_seconds_count{class=~"2xx|5xx"}[%[1]s]) or increase(gateway_capacity_refusals_total[%[1]s]))`, api.AppOutageWindow)
 )
 
 // Worker detects outages and delivers platform alert notices.
@@ -391,7 +394,7 @@ func message(n state.PlatformAlertNotice, app state.App, dashboardURL string) (s
 		var d outageDetail
 		_ = json.Unmarshal(n.Detail, &d)
 		subject = fmt.Sprintf("Gregale: %s is failing (%.0f%% of requests return errors)", app.Slug, d.ErrorRatePct)
-		fmt.Fprintf(&b, "Your app %s answered %.1f%% of its last %d requests with a server error (5xx) over the past %s.\n\n",
+		fmt.Fprintf(&b, "Your app %s answered %.1f%% of its last %d requests with a server error (5xx) or a capacity refusal (429) over the past %s.\n\n",
 			app.Slug, d.ErrorRatePct, d.Requests, d.Window)
 		b.WriteString("Find out why:\n")
 		fmt.Fprintf(&b, "  gregale debug status %s\n  gregale logs %s --since 30m\n\n", app.Slug, app.Slug)
