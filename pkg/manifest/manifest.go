@@ -216,6 +216,10 @@ type Manifest struct {
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
 	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
+
+	// OutboundRelay turns on the ADR-989 app outbound relay
+	// (outbound_relay.go). Absent keeps GREGALE_OUTBOUND_URL closed in apps.
+	OutboundRelay OutboundRelay `yaml:"outbound_relay,omitempty"`
 }
 
 // ObjectStorage is the s3-gatewayd deployment contract for the control plane.
