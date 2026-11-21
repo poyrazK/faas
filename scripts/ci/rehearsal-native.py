@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ADR-20261018000100: native running-import journey; never enables rollout gates."""
+"""Native rehearsal acceptance and portable fixture validation."""
 import argparse
 import fcntl
 import hashlib
@@ -17,6 +17,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+import rehearsal_hosted_task
 
 FIXTURE = "tests/scenario-acceptance/rehearsal-running-job"
 FILES = ("package.json", "package-lock.json", "server.mjs", "commands.mjs", "input.json",
@@ -211,9 +213,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--check-runner", action="store_true")
-    parser.add_argument("--prepare-only", action="store_true", help="offline fixture preparation; never qualifies native support")
-    parser.add_argument("--journey", choices=("running-job", "postgres-recovery"), default="running-job")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check-runner", action="store_true")
+    mode.add_argument("--prepare-only", action="store_true", help="offline fixture preparation; never qualifies native support")
+    mode.add_argument("--verify-hosted-task", type=Path, metavar="EVIDENCE_DIR",
+                      help="offline verification of a hosted Task receipt and its prepared archives")
+    parser.add_argument("--journey", choices=("running-job", "postgres-recovery", "hosted-task"), default="running-job")
     args = parser.parse_args()
     repo = args.repo.resolve()
     os.umask(0o077)
@@ -222,12 +227,21 @@ def main():
     if args.check_runner:
         runner_configuration(repo)
         return
+    if args.verify_hosted_task:
+        rehearsal_hosted_task.verify(args.verify_hosted_task)
+        print(json.dumps({"journey": "hosted-task", "receipt_verified": True, "native_qualified": False}))
+        return
+    require(args.journey != "hosted-task" or args.prepare_only, "the hosted-task journey currently supports offline preparation and receipt verification")
     require(args.out is not None, "--out must name a new private evidence directory")
     out = args.out.absolute()
     out.mkdir(mode=0o700)  # Exclusive: do not overwrite or adopt an old run.
     if args.prepare_only:
-        pins = prepare_fixture(repo, out / "fixture", args.journey)
-        write_json(out / "preparation.json", {"version": 1, "status": "prepared", "journey": args.journey, "native_qualified": False, **pins})
+        if args.journey == "hosted-task":
+            prepared = rehearsal_hosted_task.prepare(repo, out / "fixture")
+        else:
+            pins = prepare_fixture(repo, out / "fixture", args.journey)
+            prepared = {"version": 1, "status": "prepared", "journey": args.journey, "native_qualified": False, **pins}
+        write_json(out / "preparation.json", prepared)
         return
     native_run(repo, out, args.journey)
 

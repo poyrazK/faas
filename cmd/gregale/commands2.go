@@ -241,7 +241,7 @@ func cmdApp(args []string) int {
 	// out of help, completions, man pages and the generated reference until
 	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
 	// answers an unlisted account as for an unknown field.
-	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = the platform default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
@@ -1752,9 +1752,9 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 
 // errNegativePerInstanceConcurrency rejects --per-instance-concurrency
 // below zero before any request (ADR-20261022203523). The upper bound is the
-// plan's concurrency per VM, which the API enforces.
+// app's concurrency_per_vm, which the API enforces (ADR-20261101215228).
 func errNegativePerInstanceConcurrency(value int) error {
-	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the platform default); got %d", value)
 }
 
 // explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
@@ -1764,7 +1764,7 @@ func errNegativePerInstanceConcurrency(value int) error {
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
 		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
-		const hint = "leave it unset to use the plan's concurrency per VM"
+		const hint = "leave it unset to use the platform default"
 		// printErr renders the APIError it finds in the chain, so a wrapped
 		// explanation never reached the screen (prod 2026-11-19 showed the
 		// raw "unknown field(s)"). Rewrite the problem itself.

@@ -76,9 +76,14 @@ WHERE environment_id = sqlc.arg(environment_id)::uuid
 ORDER BY created_at DESC, key;
 
 -- name: StartFlagExperiment :one
--- Starts a draft while the environment runs fewer than max_running.
+-- Starts a draft while the environment runs fewer than max_running. The
+-- telemetry cursor starts just before the start minute: gateways collapse
+-- request telemetry into rows stamped at their minute's start, so a cursor at
+-- the start instant would skip every exposure in that minute
+-- (FlagExperimentStartCursor).
 UPDATE flag_experiments x
-SET status = 'running', started_at = sqlc.arg(now)::timestamptz, telemetry_cursor = sqlc.arg(now)::timestamptz,
+SET status = 'running', started_at = sqlc.arg(now)::timestamptz,
+    telemetry_cursor = date_trunc('minute', sqlc.arg(now)::timestamptz) - interval '1 microsecond',
     weights = sqlc.arg(weights)::jsonb, layer_from = sqlc.arg(layer_from)::int, layer_to = sqlc.arg(layer_to)::int
 WHERE x.environment_id = sqlc.arg(environment_id)::uuid AND x.key = sqlc.arg(key)::text AND x.status = 'draft'
   AND (SELECT count(*) FROM flag_experiments r WHERE r.environment_id = sqlc.arg(environment_id)::uuid AND r.status = 'running') < sqlc.arg(max_running)::bigint
