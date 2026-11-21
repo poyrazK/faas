@@ -81,12 +81,12 @@
   },
   {
     "step": "TestFlagsAndExperiments/sdk_matches_inspector",
-    "bug": "production vmmd answers the guest workload-identity endpoint with 503 identity_not_configured, so the Flags SDK in an app never loads its configuration (configuration_stale) and drops its events; the cluster workload-identity key (ADR-1141) is missing on the node serving the app. Operator access to the nodes is blocked while GCP billing is disabled on gregale-prod",
+    "bug": "on the OVH fleet the Flags SDK in an app never loads its configuration (configuration_stale) and drops its events: the compute nodes now mint workload-identity tokens (key installed 2026-11-21), but the control plane has no workload-identity JWKS (ADR-1141), so apid rejects them and then answers 429 auth_rate_limited. The OVH manifest leaves workload_identity commented out",
     "since": "2026-11-21"
   },
   {
     "step": "TestFlagsAndExperiments/traffic_and_conversions",
-    "bug": "production vmmd answers the guest workload-identity endpoint with 503 identity_not_configured, so the Flags SDK in an app never loads its configuration (configuration_stale) and drops its events; the cluster workload-identity key (ADR-1141) is missing on the node serving the app. Operator access to the nodes is blocked while GCP billing is disabled on gregale-prod",
+    "bug": "on the OVH fleet the Flags SDK in an app never loads its configuration (configuration_stale) and drops its events: the compute nodes now mint workload-identity tokens (key installed 2026-11-21), but the control plane has no workload-identity JWKS (ADR-1141), so apid rejects them and then answers 429 auth_rate_limited. The OVH manifest leaves workload_identity commented out",
     "since": "2026-11-21"
   }
 ]
