@@ -13,3 +13,12 @@ test('snapshot CSV validates tenant scope and escapes spreadsheet formulas',()=>
   assert.throws(()=>snapshotCsv({...job,tenant_id:'other'}),/scope/)
   assert.throws(()=>snapshotCsv({...job,state:'running'}),/unavailable/)
 })
+
+test('DAPI003 quarantined jobs retain diagnostics and resume under the current user',async()=>{
+ const calls=[]
+ const job={id,tenant_id:'a',actor:'alice',kind:'import',state:'blocked',processed:20,total:25,attempts:8,next_attempt_at:new Date().toISOString(),last_error_code:'request_uncertain'}
+ const client=teamsClient({url:'https://data.example',accessToken:'token',fetch:async(url,init)=>{calls.push({url:String(url),body:init.body});return Response.json([{...job,...(String(url).includes('resume_team_order_job')?{state:'queued'}:{})}])}},'a')
+ assert.equal((await backgroundDataJobs(client).list())[0].state,'blocked')
+ assert.equal((await backgroundDataJobs(client).resume(id)).state,'queued')
+ assert.deepEqual(JSON.parse(calls[1].body),{job_id:id})
+})

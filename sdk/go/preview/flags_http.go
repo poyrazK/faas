@@ -76,8 +76,26 @@ func (f *GregaleFlags) newRequestState(headers http.Header) *flagRequestState {
 	if inherited == nil {
 		inherited = map[string]flagPropagatedDecision{}
 	}
+	attributes := map[string]string{}
+	if country := singleFlagHeader(headers, GregaleClientCountryHeader); flagCountryPattern.MatchString(country) {
+		attributes[flagAttributeCountry] = country
+	}
+	if family := singleFlagHeader(headers, GregaleClientUAFamilyHeader); validFlagKey(family) {
+		attributes[flagAttributeUAFamily] = family
+	}
+	if cohorts := singleFlagHeader(headers, GregaleFlagCohortsHeader); cohorts != "" {
+		if _, ok := parseFlagCohorts(cohorts); ok {
+			attributes[flagAttributeCohort] = cohorts
+		}
+	}
+	kills := map[string]struct{}{}
+	for _, part := range strings.Split(singleFlagHeader(headers, GregaleFlagKillsHeader), ",") {
+		if key := strings.TrimSpace(part); validFlagKey(key) && len(kills) < 100 {
+			kills[key] = struct{}{}
+		}
+	}
 	return &flagRequestState{
-		owner: f, customer: customer, bundle: bundle, fresh: fresh,
+		owner: f, customer: customer, attributes: attributes, kills: kills, bundle: bundle, fresh: fresh,
 		evidence: make(map[string]FlagEvidence), inherit: inherited,
 	}
 }
@@ -160,7 +178,12 @@ func validPropagatedDecision(decision *FlagDecision, origin FlagDecisionOrigin) 
 		if decision.RuleID == "" {
 			return false
 		}
-	} else if decision.Reason != "flag_missing" && decision.Reason != "default" && decision.Reason != "disabled" && decision.Reason != "customer_missing" && decision.Reason != "subject_missing" && decision.Reason != "configuration_stale" && decision.Reason != "type_mismatch" {
+	} else if decision.Reason == "holdout" {
+		// A held-out customer's control names its rule (ADR 20261119173702 §2).
+		if decision.RuleID == "" || decision.Bucket != nil || decision.RolloutBucket != nil {
+			return false
+		}
+	} else if decision.Reason != "flag_missing" && decision.Reason != "default" && decision.Reason != "disabled" && decision.Reason != "customer_missing" && decision.Reason != "subject_missing" && decision.Reason != "configuration_stale" && decision.Reason != "type_mismatch" && decision.Reason != "killed" {
 		return false
 	} else if decision.RuleID != "" || decision.Bucket != nil || decision.RolloutBucket != nil {
 		return false

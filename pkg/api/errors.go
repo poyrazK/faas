@@ -222,6 +222,9 @@ type Problem struct {
 	// exactly the spec; WriteProblem flushes these onto the wire
 	// before WriteHeader. nil = no extras.
 	extraHeaders map[string][]string `json:"-"`
+	// clientRequestID is error correlation metadata retained by SDK decoders.
+	// It is neither part of the problem body nor a forwarded response header.
+	clientRequestID string
 }
 
 // LogExcerpt is one entry of Problem.RelevantLogs — a small,
@@ -740,6 +743,8 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeObsRuntimeBusy refuses a runtime collection before any source work.
+	CodeObsRuntimeBusy = "obs_runtime_busy"
 	// CodeColdWakeRateLimited is the 429 a client gets past the number of
 	// different parked apps it may wake through one gateway a minute (H75).
 	CodeColdWakeRateLimited = "cold_wake_rate_limited"
@@ -867,6 +872,10 @@ const (
 	// only proof is the browser session comes from a session older than
 	// RecentSignInWindow (ADR 20261110100000): sign in again, then retry.
 	CodeRecentSignInRequired = "recent_sign_in_required"
+	// CodeBrowserSessionRequired refuses an API key on an action only a
+	// person in a signed-in browser may take, such as transferring an
+	// organization's ownership (ADR 20261114170352).
+	CodeBrowserSessionRequired = "browser_session_required"
 	// CodeMFAInvalidCode is returned when /confirm, /verify, or
 	// /recover validate a presented TOTP code / recovery code and
 	// the comparison fails. The audit Emit fires regardless.
@@ -937,6 +946,10 @@ const (
 	// unauthenticated developer app, a Dockerfile build, or a build plan the
 	// watch overlay does not understand.
 	CodeDevWatchUnsupported = "dev_watch_unsupported"
+	// CodeDevSessionTearingDown refuses to renew a developer environment
+	// that its lease or `gregale dev --stop` is already tearing down. The
+	// environment comes back on the first start after the teardown finishes.
+	CodeDevSessionTearingDown = "dev_session_tearing_down"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
 	// pool, job, app task, builder, private network member, pending waitUntil
@@ -1472,6 +1485,12 @@ const (
 	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
 	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
 	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
+	// CodePlanAsyncBacklog: the app's pending async invocations are at the
+	// plan's MaxQueueDepth (ADR-20261022105723 amendment 2026-11-13).
+	CodePlanAsyncBacklog = "plan_async_backlog"
+	// CodeFunctionSendRateLimited: a function send() past the target app's
+	// plan request rate.
+	CodeFunctionSendRateLimited = "function_send_rate_limited"
 	// CodePlanWorkerReplicas: a worker asks for more running workers than
 	// the plan's WorkerReplicasMax, or the plan runs none
 	// (ADR-20261018101500 amendment 2026-10-31).
@@ -1834,6 +1853,9 @@ const (
 	CodeAccountDeletionPending = "account_deletion_pending"
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
+	// CodeAppNotPurgeable (409): POST /v1/deleted-apps/{id}/purge refused
+	// before closing the restore window; the detail names what to fix.
+	CodeAppNotPurgeable = "app_not_purgeable"
 
 	// CodeAccountDeletionManagedPostgres (409): the account still owns live
 	// managed PostgreSQL databases, which must be deleted before the account
@@ -1910,6 +1932,13 @@ const (
 	// call whose body does not match the function's input schema
 	// (ADR-20261111150000); the detail names the failing path.
 	CodeFunctionInputInvalid = "function_input_invalid"
+	// CodeWorkflowFunctionNotInvocable is the Node function adapter's 404
+	// for a plain request to a workflow function, which runs only through
+	// workflow runs (pkg/fnadapter builds it in JavaScript).
+	CodeWorkflowFunctionNotInvocable = "workflow_function_not_invocable"
+	// CodeWorkflowSDKMissing is the Node function adapter's 500 when a
+	// workflow function's dependencies lack @gregale/sdk-node.
+	CodeWorkflowSDKMissing = "workflow_sdk_missing"
 	// FunctionInitFailedMarker begins the line the Node and Python function
 	// adapters print to stderr when init fails (pkg/fnadapter).
 	FunctionInitFailedMarker = "gregale: function init failed:"
@@ -1925,6 +1954,10 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodePromotionRolledBack means an environment promotion was rolled back
+	// and this release, the first in its environment, had no earlier release
+	// to restore, so it was retired. The release itself did not fail.
+	CodePromotionRolledBack = "promotion_rolled_back"
 	// CodeReleaseCommandFailed means the deployment's pre-boot release task
 	// failed, timed out, or was cancelled. The previous deployment remains
 	// live; task output is available through the app-task inspection surface.
@@ -1975,6 +2008,10 @@ const (
 	// CodeSecretEntryUnavailable covers an expired, used, unknown or
 	// mismatched secret entry request (ADR-20261026174727).
 	CodeSecretEntryUnavailable = "secret_entry_unavailable"
+	// CodeGitLabCompanyProjectUnavailable refuses a GitLab GitOps source for
+	// a company project, which never uses a member's own GitLab connection
+	// (ADR-20261112230000).
+	CodeGitLabCompanyProjectUnavailable = "gitlab_company_project_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2081,12 +2118,15 @@ const (
 	CodeOrgMemberCapExceeded     = "org_member_cap_exceeded"
 	CodeOrgInvitationCapExceeded = "org_invitation_cap_exceeded"
 	CodeOrgRoleForbidden         = "org_role_forbidden"
-	CodeOrgAlreadyMember         = "org_already_member"
-	CodeOrgInvitationInvalid     = "org_invitation_invalid"
-	CodeOrgInvitationExpired     = "org_invitation_expired"
-	CodeOrgLastOwner             = "org_last_owner"
-	CodeOrgPersonalImmutable     = "org_personal_immutable"
-	CodeOrgAPIKeyRequiresOrg     = "org_api_key_requires_org"
+	// CodeOrgMFARequired refuses a member without two-factor authentication
+	// on an organization that requires it (ADR 20261114170352).
+	CodeOrgMFARequired       = "org_mfa_required"
+	CodeOrgAlreadyMember     = "org_already_member"
+	CodeOrgInvitationInvalid = "org_invitation_invalid"
+	CodeOrgInvitationExpired = "org_invitation_expired"
+	CodeOrgLastOwner         = "org_last_owner"
+	CodeOrgPersonalImmutable = "org_personal_immutable"
+	CodeOrgAPIKeyRequiresOrg = "org_api_key_requires_org"
 	// CodeOrgFreeLimitExceeded: the caller already owns
 	// FreeOrganizationsOwnedMax Free organizations (ADR-20261031090658).
 	CodeOrgFreeLimitExceeded = "org_free_limit_exceeded"
@@ -2265,7 +2305,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeGitHubInstallationNotAccessible, CodeGitHubInstallationOwnerRequired, CodeGitHubOrgAdminRequired, CodeGitHubPermissionPending:
 		return http.StatusForbidden
-	case CodeGitHubAppNotInstalled:
+	case CodeGitHubAppNotInstalled, CodeWorkflowFunctionNotInvocable:
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
@@ -2314,6 +2354,11 @@ func StatusForCode(code string) int {
 		CodeInstanceFrozen:
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
+		return http.StatusServiceUnavailable
+	case CodeApplicationStandardsPending:
+		// A busy runtime-state fence or a policy update in flight; both
+		// details say to retry. Across gRPC it had no status and became a
+		// 500 on a mesh call (prod 2026-11-19).
 		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
@@ -2578,6 +2623,8 @@ func StatusForCode(code string) int {
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
+	case CodePlanAsyncBacklog, CodeFunctionSendRateLimited:
+		return http.StatusTooManyRequests
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
 	case CodePlanFeatureGated:
@@ -2792,7 +2839,7 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 		"App limit reached",
 		fmt.Sprintf("%s plan allows %d deployed app(s); you have %d.", l.Plan, l.DeployedApps, observed)).
 		WithLimit(int64(l.DeployedApps), int64(observed)).
-		WithDocs(docsBase + "/plans#apps")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrPlanLimitDeveloperApps is returned when a developer session would exceed
@@ -2800,7 +2847,7 @@ func ErrPlanLimitApps(l Limits, observed int) *Problem {
 func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLimitDeveloperApps,
 		"Developer environment limit reached",
-		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Stop an unused environment with `gregale dev --stop`.", l.Plan, l.DeveloperApps, observed)).
+		fmt.Sprintf("%s plan allows %d developer environment(s); you have %d. Find them with `gregale dev list` and stop an unused one with `gregale dev --stop --name PROJECT --app APP` from any directory.", l.Plan, l.DeveloperApps, observed)).
 		WithLimit(int64(l.DeveloperApps), int64(observed)).
 		WithDocs(docsBase + "/plans#developer-environments")
 }
@@ -2813,7 +2860,7 @@ func ErrPlanLimitPreviewEnvironments(l Limits, observed int) *Problem {
 		"PR preview limit reached",
 		fmt.Sprintf("%s plan allows %d open PR preview environment(s); you have %d. Close a pull request or run `gregale preview destroy` on one of its previews.", l.Plan, l.PreviewApps, observed)).
 		WithLimit(int64(l.PreviewApps), int64(observed)).
-		WithDocs(docsBase + "/plans#apps")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrPlanLimitPreviewWorkloads is returned when one PR preview environment
@@ -2823,7 +2870,7 @@ func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
 		"PR preview environment too large",
 		fmt.Sprintf("%s plan allows %d workload(s) in one PR preview environment; this one already has %d.", l.Plan, l.DeployedApps, observed)).
 		WithLimit(int64(l.DeployedApps), int64(observed)).
-		WithDocs(docsBase + "/plans#apps")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
@@ -2831,9 +2878,19 @@ func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
 func ErrDevWatchRAM(ramMB int) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDevWatchUnsupported,
 		"Watch mode needs more memory",
-		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB. Upgrade the plan or use gregale dev without --watch.", DevWatchMinRAMMB, ramMB)).
+		fmt.Sprintf("watch mode runs your development server, which needs at least %d MB; this developer environment has %d MB on your plan. A production-shaped developer build (gregale dev --watch=false) works on every plan.", DevWatchMinRAMMB, ramMB)).
 		WithLimit(int64(DevWatchMinRAMMB), int64(ramMB)).
-		WithDocs(docsBase + "/cli#dev")
+		WithDocs(docsBase + "/dev")
+}
+
+// ErrDevSessionTearingDown is returned when a developer environment cannot
+// be renewed because its teardown has started. Starting it again after the
+// teardown finishes restores it.
+func ErrDevSessionTearingDown() *Problem {
+	return NewProblem(http.StatusConflict, CodeDevSessionTearingDown,
+		"Developer environment is being removed",
+		"its lease ended or it was stopped, and its database and buckets are being cleaned up; run gregale dev again in a minute to start it fresh").
+		WithDocs(docsBase + "/dev")
 }
 
 // ErrPlanLimitDeveloperLease is returned when a developer session requests a
@@ -2858,7 +2915,7 @@ func ErrPlanLimitRAM(l Limits, requestedMB int) *Problem {
 		"RAM over plan limit",
 		fmt.Sprintf("%s plan caps %d MB/app; requested %d MB.", l.Plan, l.RAMMB, requestedMB)).
 		WithLimit(int64(l.RAMMB), int64(requestedMB)).
-		WithDocs(docsBase + "/plans#ram")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrBillingEmailInUse refuses a billing email that another Gregale account or
@@ -2929,7 +2986,7 @@ func ErrInvalidCPURAMPair(l Limits, ramMB, guestVCPU int) *Problem {
 		"Invalid CPU/RAM pair",
 		fmt.Sprintf("invalid (ram_mb, vcpu) pair on plan %s: an instance of %d MB has %d vCPU (one per GB), received %d. Omit vcpu to use the size's.",
 			l.Plan, ramMB, SizeVCPUs(ramMB), guestVCPU)).
-		WithDocs(docsBase + "/plans#resources")
+		WithDocs(docsBase + "/plans#what-each-limit-means")
 }
 
 // ErrAppLayerTooLarge is returned when the built app layer (deps + code) would
@@ -2979,7 +3036,7 @@ func ErrPlanLimitConcurrencyAt(l Limits, effectiveMax, observed int) *Problem {
 		"Concurrency limit reached",
 		detail).
 		WithLimit(int64(effectiveMax), int64(observed)).
-		WithDocs(docsBase + "/plans#concurrency")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 // ErrCapacity is returned when admission is refused for lack of box capacity
@@ -3010,7 +3067,7 @@ func ErrAppConcurrencyReachedAt(l Limits, effectiveMax, observed int) *Problem {
 		"App concurrency reached",
 		detail).
 		WithLimit(int64(effectiveMax), int64(observed)).
-		WithDocs(docsBase + "/plans#concurrency")
+		WithDocs(docsBase + "/plans#at-a-glance")
 }
 
 func ErrCapacity(detail string) *Problem {
@@ -3081,7 +3138,7 @@ func ErrWaitForWarm(cooldownS int, l Limits, observed int) *Problem {
 				"Plan %s allows %d concurrent instance(s); %d live.",
 			cooldownS, l.Plan, l.MaxConcurrency, observed)).
 		WithLimit(int64(cooldownS), int64(observed)).
-		WithDocs(docsBase+"/scaling-policy#cooldown").
+		WithDocs(docsBase+"/scaling-policy").
 		WithHeader("Retry-After", strconv.Itoa(cooldownS))
 }
 
@@ -3185,7 +3242,7 @@ func ErrAccountAbuseHold() *Problem {
 	return NewProblem(http.StatusForbidden, CodeAccountAbuseHold,
 		"Account on hold",
 		"outbound traffic from this account's workloads matched a scanning or abuse pattern; the account is held for review. Contact support to have it released.").
-		WithDocs(docsBase + "/apps#egress-limits")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrDeploysBlocked is returned when an account that may not deploy (spec
@@ -3216,7 +3273,7 @@ func ErrExportRateLimited(retryAfterS int) *Problem {
 		"Export rate limited",
 		"Only one account export is allowed per 24h window; retry after the indicated back-off.").
 		WithHeader("Retry-After", fmt.Sprintf("%d", retryAfterS)).
-		WithDocs("https://gregale.dev/docs/gdpr#export-rate-limit")
+		WithDocs("https://gregale.dev/docs/gdpr#export-and-deletion")
 }
 
 // ErrPlanLimitBuildMinutes refuses a build once the paying account used its
@@ -3240,7 +3297,7 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account has used all %d deploys in its current one-hour window.", limit)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
+		WithDocs("https://gregale.dev/docs/deploys#limits")
 }
 
 // ErrNotificationChannelTestRateLimited refuses a channel test send beyond
@@ -3354,8 +3411,18 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		"Too many failed authentication attempts",
 		fmt.Sprintf("The failed-authentication limit was reached. Retry after %d seconds with valid credentials.", retryAfterS)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithHint("Wait for the retry window, then sign in again with valid credentials.").
+		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrObsRuntimeBusy describes process-wide runtime collection saturation.
+// The retry interval is a hint; it does not reserve capacity or cause a retry.
+func ErrObsRuntimeBusy(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeObsRuntimeBusy,
+		"Runtime collection busy", "The runtime collector is at capacity. Retry after the indicated delay.").
+		WithLimit(ObsRuntimeBuildCollectionsMax, observed).
+		WithHeader("Retry-After", strconv.Itoa(int(ObsRuntimeBuildBusyRetryAfter/time.Second))).
+		WithDocs("https://github.com/poyrazK/faas/blob/main/docs/ops/post-deployment-monitoring.md#runtime-collector-overload")
 }
 
 // ErrAPIRateLimited refuses an authenticated API request past the account's
@@ -3369,7 +3436,22 @@ func ErrAPIRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This account's plan allows %d API requests a minute. Retry after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/errors#api_rate_limited")
+		WithDocs(docsBase + "/error-codes#api_rate_limited")
+}
+
+// ErrFunctionSendRateLimited refuses a function send() past the target app's
+// plan request rate (ADR-20261022105723 amendment 2026-11-13).
+func ErrFunctionSendRateLimited(perSecond int, retryAfter time.Duration) *Problem {
+	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeFunctionSendRateLimited,
+		"Function send rate limited",
+		fmt.Sprintf("The target app's plan accepts at most %d sends per second; retry after %d seconds.", perSecond, retryAfterS)).
+		WithLimit(int64(perSecond), int64(perSecond)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs(docsBase + "/event-driven#async-backlog")
 }
 
 // ErrColdWakeRateLimited refuses a request that would wake one more parked
@@ -3383,7 +3465,7 @@ func ErrColdWakeRateLimited(limit, retryAfterS int) *Problem {
 		fmt.Sprintf("This network may wake %d different parked apps a minute. Retry after %d seconds.", limit, retryAfterS)).
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
-		WithDocs(docsBase + "/errors#cold_wake_rate_limited")
+		WithDocs(docsBase + "/error-codes#cold_wake_rate_limited")
 }
 
 // DetailServerFailure is the detail of a 5xx problem whose cause is an
@@ -3432,7 +3514,7 @@ func ErrRecentSignInRequired() *Problem {
 func ErrBillingNotImplemented(detail string) *Problem {
 	return NewProblem(http.StatusNotImplemented, CodeBillingNotImplemented,
 		"Billing provider does not support this surface", detail).
-		WithDocs(docsBase + "/billing#providers")
+		WithDocs(docsBase + "/billing")
 }
 
 // ErrSourceTooLarge is returned when an uploaded tarball exceeds the plan cap.
@@ -3454,7 +3536,7 @@ func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
 		"Request body too large",
 		fmt.Sprintf("request body is %d bytes, above the %d-byte cap", observed, limit)).
 		WithByteLimit(limit, observed).
-		WithDocs(docsBase + "/storage#signed-uploads").
+		WithDocs(docsBase + "/storage").
 		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
 }
 
@@ -3464,7 +3546,7 @@ func ErrTrafficPolicyTooLarge(scope string, limit, observed int64) *Problem {
 		"Traffic policy too large",
 		fmt.Sprintf("%s runtime projection is %d bytes, above the %d-byte cap; no policy was changed", scope, observed, limit)).
 		WithByteLimit(limit, observed).
-		WithDocs(docsBase + "/plans#edge-rules").
+		WithDocs(docsBase + "/edge-rules#limits").
 		WithHint("Reduce policy values and replace the policy. Clear an environment overlay or disable and clear its scoped route contract to recover it.")
 }
 
@@ -3475,7 +3557,7 @@ func ErrTrafficPolicyAggregateTooLarge(scope, unit string, limit, observed int64
 		"Traffic policy too large",
 		fmt.Sprintf("%s host aggregate is %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
 		WithLimit(limit, observed).
-		WithDocs(docsBase + "/plans#edge-rules").
+		WithDocs(docsBase + "/edge-rules#limits").
 		WithHint("Reduce rules or preset values that match the same host. Size-reducing repairs to an existing oversized host remain allowed.")
 	if unit == "bytes" {
 		problem = problem.WithByteLimit(limit, observed)
@@ -3490,7 +3572,7 @@ func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Prob
 		"Traffic policy analysis limit reached",
 		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
 		WithLimit(limit, observed).
-		WithDocs(docsBase + "/plans#edge-rules").
+		WithDocs(docsBase + "/edge-rules#limits").
 		WithHint(trafficPolicyTooComplexHint(unit))
 	switch unit {
 	case "bytes":
@@ -3531,7 +3613,7 @@ func ErrRequestUploadTimeout(timeout time.Duration) *Problem {
 	return NewProblem(http.StatusRequestTimeout, CodeRequestUploadTimeout,
 		"Request upload timed out",
 		fmt.Sprintf("request body was not received within the %s upload allowance", timeout)).
-		WithDocs(docsBase + "/functions#limits").
+		WithDocs(docsBase + "/functions").
 		WithHint("Retry on a stable connection, or use a bucket signed URL for large uploads.")
 }
 
@@ -3539,7 +3621,7 @@ func ErrRequestUploadTimeout(timeout time.Duration) *Problem {
 func ErrRequestBodyReadFailed() *Problem {
 	return NewProblem(http.StatusBadRequest, CodeRequestBodyReadFailed,
 		"Request body could not be read", "the request body ended before it could be admitted").
-		WithDocs(docsBase + "/functions#limits")
+		WithDocs(docsBase + "/functions")
 }
 
 // ErrSourceInvalid is returned when a tarball fails shape validation
@@ -3559,7 +3641,7 @@ func ErrUploadSessionNotFound(uploadID string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeUploadSessionNotFound,
 		"Upload session not found",
 		fmt.Sprintf("No open upload session with id %q; it may have been committed, cancelled, or reaped.", uploadID)).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrUploadSessionOffsetConflict is returned when the atomic CAS in
@@ -3571,7 +3653,7 @@ func ErrUploadSessionOffsetConflict(uploadID string, expected, current int64) *P
 	return NewProblem(http.StatusConflict, CodeUploadSessionOffsetConflict,
 		"Upload session offset conflict",
 		fmt.Sprintf("Upload session %q expected offset %d but server is at %d; resume from current offset.", uploadID, expected, current)).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrUploadChecksumMismatch is returned by commit when the received bytes do
@@ -3582,7 +3664,7 @@ func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
 		"Uploaded archive does not match its checksum",
 		fmt.Sprintf("Upload session %q declared sha256 %s but the received bytes hash to %s; the session was cancelled.", uploadID, declared, got)).
 		WithHint("Start the upload again; gregale deploy does this automatically.").
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrUploadSessionExpired is returned when the reaper has marked the
@@ -3590,11 +3672,19 @@ func ErrUploadChecksumMismatch(uploadID, declared, got string) *Problem {
 // sweep). The CLI auto-rolls to a fresh POST /v1/uploads on receipt of
 // this code (cmd/gregale/upload_session.go, PR-2). 410 Gone so the
 // CLI can distinguish from 404 NotFound (id never existed).
+// ErrAppDeleted is the 410 a read of a deleted app's deployment answers, so
+// a client polling it stops instead of waiting on a 503.
+func ErrAppDeleted(slug string) *Problem {
+	return NewProblem(http.StatusGone, CodeAppDeleted,
+		"App deleted",
+		fmt.Sprintf("App %q was deleted, so its deployments no longer run. Restore it with `gregale app restore %s` during the deletion grace period, or deploy again.", slug, slug))
+}
+
 func ErrUploadSessionExpired(uploadID string) *Problem {
 	return NewProblem(http.StatusGone, CodeUploadSessionExpired,
 		"Upload session expired",
 		fmt.Sprintf("Upload session %q expired (24h TTL) and was reaped.", uploadID)).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrUploadSessionTooMany is returned by POST /v1/uploads when the
@@ -3607,7 +3697,7 @@ func ErrUploadSessionTooMany(detail string, limitBytes, observedBytes int64) *Pr
 		"Too many upload sessions",
 		detail).
 		WithLimit(limitBytes, observedBytes).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrQueueReceiveBusy refuses a queue receive long-poll past the concurrent
@@ -3618,7 +3708,7 @@ func ErrQueueReceiveBusy(limit, observed int) *Problem {
 		fmt.Sprintf("At most %d queue receive long-polls may wait at once; %d are waiting. Retry after one returns.", limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
 		WithHeader("Retry-After", "1").
-		WithDocs(docsBase + "/errors#queue_receive_busy")
+		WithDocs(docsBase + "/error-codes#queue_receive_busy")
 }
 
 // ErrUploadSessionAlreadyCommitted is returned by POST /v1/uploads/{id}/commit
@@ -3629,7 +3719,7 @@ func ErrUploadSessionAlreadyCommitted(uploadID, deploymentID string) *Problem {
 	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCommitted,
 		"Upload session already committed",
 		fmt.Sprintf("Upload session %q was already committed as deployment %s.", uploadID, deploymentID)).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrUploadSessionAlreadyCancelled is returned by DELETE on a session
@@ -3639,7 +3729,7 @@ func ErrUploadSessionAlreadyCancelled(uploadID string) *Problem {
 	return NewProblem(http.StatusConflict, CodeUploadSessionAlreadyCancelled,
 		"Upload session not open",
 		fmt.Sprintf("Upload session %q is not in 'open' status; the .part file is gone.", uploadID)).
-		WithDocs(docsBase + "/deploy-from-source#uploads")
+		WithDocs(docsBase + "/deploys#what-gets-uploaded")
 }
 
 // ErrDevSourceBaseMissing tells an incremental-sync client to retry the same
@@ -3648,7 +3738,7 @@ func ErrDevSourceBaseMissing() *Problem {
 	return NewProblem(http.StatusConflict, CodeDevSourceBaseMissing,
 		"Developer source base unavailable",
 		"the cached source revision is unavailable; retry with a complete source snapshot").
-		WithDocs(docsBase + "/cli#dev")
+		WithDocs(docsBase + "/dev")
 }
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
@@ -3702,7 +3792,7 @@ func ErrAppNotListening(observedPort string) *Problem {
 		"No process listening on $PORT",
 		fmt.Sprintf("readiness probe found no listener on port %s after the wake timeout.",
 			observedPort)).
-		WithDocs(docsBase + "/errors#app_not_listening")
+		WithDocs(docsBase + "/error-codes#app_not_listening")
 }
 
 // ErrAppLoopbackBound is returned when the customer's app binds its
@@ -3716,7 +3806,7 @@ func ErrAppLoopbackBound(observedBind string) *Problem {
 		"Application bound to loopback",
 		fmt.Sprintf("app is listening on %s; the per-VM bridge proxies requests to 10.0.0.2, "+
 			"so loopback-only binds never receive traffic.", observedBind)).
-		WithDocs(docsBase + "/errors#app_loopback_bound")
+		WithDocs(docsBase + "/error-codes#app_loopback_bound")
 }
 
 // ErrAppArchMismatch is returned when the build VM cannot execute the
@@ -3730,7 +3820,7 @@ func ErrAppArchMismatch(observedArch, requiredArch string) *Problem {
 		fmt.Sprintf("binary is %s; this control plane runs %s. "+
 			"rebuild with the matching target.",
 			observedArch, requiredArch)).
-		WithDocs(docsBase + "/errors#app_arch_mismatch")
+		WithDocs(docsBase + "/error-codes#app_arch_mismatch")
 }
 
 // ErrEnvVarMissing is returned when a deploy-time preflight detects
@@ -3745,7 +3835,7 @@ func ErrEnvVarMissing(envVar string) *Problem {
 		"Missing environment variable",
 		fmt.Sprintf("source references $%s but it is not declared in the app's env config.",
 			envVar)).
-		WithDocs(docsBase + "/errors#env_var_missing")
+		WithDocs(docsBase + "/error-codes#env_var_missing")
 }
 
 // ErrAppHealthzUnauthorized is returned when the customer's health
@@ -3759,7 +3849,7 @@ func ErrAppHealthzUnauthorized(observedStatus int) *Problem {
 		"Health endpoint returning 401",
 		fmt.Sprintf("/healthz returned %d; consecutive 401s flip the deployment to failed.",
 			observedStatus)).
-		WithDocs(docsBase + "/errors#app_healthz_unauthorized")
+		WithDocs(docsBase + "/error-codes#app_healthz_unauthorized")
 }
 
 // ErrAppRuntimeOOM is returned when the cgroup OOM-killer terminates
@@ -3792,7 +3882,7 @@ func ErrAppRuntimeOOM(observedPeakMB, planMB int) *Problem {
 		"Container out of memory",
 		fmt.Sprintf("cgroup OOM-kill fired at %d MB (plan cap %d MB); upgrade plan or trim in-memory state.",
 			observedPeakMB, planMB)).
-		WithDocs(docsBase + "/errors#app_runtime_oom")
+		WithDocs(docsBase + "/error-codes#app_runtime_oom")
 }
 
 // ErrDepInstallFailed is returned when the build VM's dependency
@@ -3807,7 +3897,7 @@ func ErrDepInstallFailed(pkgManager, observedCmd string) *Problem {
 		"Dependency installation failure",
 		fmt.Sprintf("%s install failed: %s — see build log for the failing command.",
 			pkgManager, observedCmd)).
-		WithDocs(docsBase + "/errors#dep_install_failed")
+		WithDocs(docsBase + "/error-codes#dep_install_failed")
 }
 
 // ErrAppStartupTimeout is returned when the customer's app does not
@@ -3821,7 +3911,7 @@ func ErrAppStartupTimeout(stuckReason, observedDuration string) *Problem {
 		"Application startup timeout",
 		fmt.Sprintf("app did not become ready after %s (stuck_reason=%s).",
 			observedDuration, stuckReason)).
-		WithDocs(docsBase + "/errors#app_startup_timeout")
+		WithDocs(docsBase + "/error-codes#app_startup_timeout")
 }
 
 // ErrDomainNotVerified is returned when a customer tries to bind a domain
@@ -3830,7 +3920,7 @@ func ErrDomainNotVerified(domain string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDomainNotVerified,
 		"Domain not verified",
 		fmt.Sprintf("TXT challenge for %q not yet satisfied; publish the required TXT record and retry.", domain)).
-		WithDocs(docsBase + "/domains#verify")
+		WithDocs(docsBase + "/domains#verification")
 }
 
 // ErrDomainVerificationFailed (issue #961 / Mega-A PR-3) is the 422
@@ -3842,7 +3932,7 @@ func ErrDomainVerificationFailed(domain, reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDomainVerificationFailed,
 		"Domain verification failed",
 		fmt.Sprintf("%s: %s — fix the DNS record and retry.", domain, reason)).
-		WithDocs(docsBase + "/domains#verify")
+		WithDocs(docsBase + "/domains#verification")
 }
 
 // ErrDomainCertNotIssued (issue #961 / Mega-A PR-3) is the 422
@@ -3855,7 +3945,7 @@ func ErrDomainCertNotIssued(domain, reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeDomainCertNotIssued,
 		"Domain cert not issued",
 		fmt.Sprintf("port-443 cert for %q is not Gregale-issued: %s", domain, reason)).
-		WithDocs(docsBase + "/domains#verify")
+		WithDocs(docsBase + "/domains#verification")
 }
 
 // ErrDoctorDisabled (ADR-120) is the 503 returned by
@@ -3869,7 +3959,7 @@ func ErrDoctorDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorDisabled,
 		"Domain doctor is dark-launched",
 		"the domain doctor is not available on this Gregale installation right now; use `gregale domains verify` for a one-shot check or contact support").
-		WithDocs(docsBase + "/domains#doctor")
+		WithDocs(docsBase + "/domains")
 }
 
 // ErrDoctorUnavailable (ADR-120) is the 503 returned when
@@ -3881,7 +3971,7 @@ func ErrDoctorUnavailable(domain, reason string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDoctorUnavailable,
 		"Domain doctor unavailable",
 		fmt.Sprintf("doctor probes for %s failed: %s", domain, reason)).
-		WithDocs(docsBase + "/domains#doctor")
+		WithDocs(docsBase + "/domains")
 }
 
 // ErrAPIContractDiffDisabled is the deterministic dark-launch response for
@@ -4058,7 +4148,7 @@ func ErrPlanCorsPresetsNotAllowed(p Plan) *Problem {
 		"CORS presets unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include CORS presets; upgrade to Hobby or above to manage reusable CORS configurations.", p)).
 		WithLimit(0, 0).
-		WithDocs(docsBase + "/plans#cors-presets")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanCorsPresetQuotaReached (issue #975 #4 PR-B / ADR-129)
@@ -4072,7 +4162,7 @@ func ErrPlanCorsPresetQuotaReached(plan Plan, scope string, limit, observed int)
 		fmt.Sprintf("%s plan caps CORS presets at %d per %s; you have %d. Delete one to add another.",
 			plan, limit, scope, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#cors-presets")
+		WithDocs(docsBase + "/plans")
 }
 
 // CodeCorsPresetTooLarge is returned when a CORS preset lists more
@@ -4088,7 +4178,7 @@ func ErrCorsPresetTooLarge(plan Plan, field string, limit, observed int) *Proble
 		"CORS preset too large",
 		fmt.Sprintf("%s plan allows at most %d %s per CORS preset; this preset has %d.", plan, limit, field, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#cors-presets")
+		WithDocs(docsBase + "/plans")
 }
 
 // CodePlanOpenAPIDocQuotaReached is the RFC 7807 stable code
@@ -4131,7 +4221,7 @@ func ErrPlanOpenAPIDocsNotAllowed(p Plan) *Problem {
 		"Endpoint discovery unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include endpoint discovery; upgrade to Hobby or above to capture OpenAPI documents.", p)).
 		WithLimit(0, 0).
-		WithDocs(docsBase + "/plans#endpoint-discovery")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanOpenAPIDocQuota (ADR-122 / issue #975 item #1) is returned
@@ -4145,7 +4235,7 @@ func ErrPlanOpenAPIDocQuota(plan Plan, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps OpenAPI documents at %d per account; you have %d. Delete one to add another.",
 			plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#endpoint-discovery")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanOpenAPIDocTooLarge (ADR-122 / issue #975 item #1) is
@@ -4160,7 +4250,7 @@ func ErrPlanOpenAPIDocTooLarge(plan Plan, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps OpenAPI documents at %d bytes; yours is %d. Trim paths or split the spec.",
 			plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#endpoint-discovery")
+		WithDocs(docsBase + "/plans")
 }
 
 // PlanQuotaScopeAccount / PlanQuotaScopeApp are the values the
@@ -4427,7 +4517,7 @@ func ErrPlanLogArchiveNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanLogArchiveNotAllowed,
 		"Log archive unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include log archive read-back; upgrade to a plan with archive access to query historical logs from object storage.", p)).
-		WithDocs(docsBase + "/plans#log-archive")
+		WithDocs(docsBase + "/logs#retention")
 }
 
 func ErrAppLogsUnavailable() *Problem {
@@ -4460,7 +4550,7 @@ func ErrLogArchiveRetentionExceeded(plan Plan, day string) *Problem {
 		"Archived log date is outside the retention window",
 		fmt.Sprintf("%s retains archived logs for %d day(s); %s is outside that window.", plan, plan.LogArchiveRetentionDaysMax(), day)).
 		WithHint("Choose a more recent date, or review plans with longer log retention.").
-		WithDocs(docsBase + "/plans#log-archive")
+		WithDocs(docsBase + "/logs#retention")
 }
 
 // CodePlanPerAppMetricsNotAllowed (per-app observability surface)
@@ -4482,7 +4572,7 @@ func ErrPlanPerAppMetricsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPerAppMetricsNotAllowed,
 		"Per-app metrics unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include per-app metrics; upgrade to Hobby or above to see latency, error rate, cold-boot ratio and the wake-narrative.", p)).
-		WithDocs(docsBase + "/plans#per-app-metrics")
+		WithDocs(docsBase + "/plans")
 }
 
 // CodePlanAppUsageSummaryNotAllowed (per-app billing-usage read)
@@ -4502,7 +4592,7 @@ func ErrPlanAppUsageSummaryNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanAppUsageSummaryNotAllowed,
 		"App usage summary unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include per-app billing-usage read-back; upgrade to Hobby or above to see this-month GB-hours and the plan-included vs overage split.", p)).
-		WithDocs(docsBase + "/plans#app-usage-summary")
+		WithDocs(docsBase + "/plans")
 }
 
 // CodePlanAppErrorsNotAllowed (per-app error-fingerprint read)
@@ -4527,7 +4617,7 @@ func ErrPlanAppErrorsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanAppErrorsNotAllowed,
 		"App error grouping unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include per-app error-fingerprint grouping; upgrade to Hobby or above to see top failing endpoints and drill-down samples.", p)).
-		WithDocs(docsBase + "/plans#app-errors")
+		WithDocs(docsBase + "/plans")
 }
 
 // CodeAppWebhookInvalid is the 400 the customer sees for any
@@ -4690,6 +4780,9 @@ const (
 	// CLI auto-rolls to a fresh POST /v1/uploads and restarts
 	// from byte 0 (cmd/gregale/upload_session.go, PR-2).
 	CodeUploadSessionExpired = "upload_session_expired"
+	// CodeAppDeleted is the 410 a read of a deleted app's deployment
+	// answers (ErrAppDeleted). Deploy waits treat it as final.
+	CodeAppDeleted = "app_deleted"
 	// CodeUploadSessionTooMany is the 429 emitted by POST
 	// /v1/uploads when the per-(account_id, app_slug) open-
 	// session cap (5) or the per-account open-spool budget
@@ -4728,7 +4821,7 @@ func ErrPlanCronsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanCronsNotAllowed,
 		"Crons unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include cron; upgrade to Hobby or above to schedule synthetic requests.", p)).
-		WithDocs(docsBase + "/plans#crons")
+		WithDocs(docsBase + "/crons")
 }
 
 // ErrPlanCronQuota is returned when CreateCronIfUnderQuota surfaces
@@ -4743,7 +4836,7 @@ func ErrPlanCronQuota(plan Plan, scope string, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps crons at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#crons")
+		WithDocs(docsBase + "/crons")
 }
 
 // ErrCronRunOverPlan is the 403 for a manual run of a cron that the owner's
@@ -4755,7 +4848,7 @@ func ErrCronRunOverPlan(plan Plan, scope string, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan runs at most %d crons for %s; %d of your enabled crons count toward it and this cron is not among the oldest %d, so it does not run. Disable or delete a cron, or upgrade.",
 			plan, limit, PlanQuotaScopeDisplayName(scope), observed, limit)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#crons")
+		WithDocs(docsBase + "/crons")
 }
 
 // ErrPlanEventSubscriptionQuota refuses a deploy whose gregale.yaml would
@@ -4842,7 +4935,7 @@ func ErrPlanJobsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeJobsNotAllowed,
 		"Jobs unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include jobs; upgrade to Hobby or above to run batch / one-shot workloads.", p)).
-		WithDocs(docsBase + "/plans#jobs")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrJobQuota is returned when the JobCreateIfUnderQuota /
@@ -4860,7 +4953,7 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps jobs at %d for %s; you have %d. Cancel a task or delete a job to free capacity.",
 			plan, limit, quotaName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#jobs")
+		WithDocs(docsBase + "/plans")
 }
 
 // ValidateJobRAMMB refuses a job or image run whose memory cannot boot a
@@ -4872,7 +4965,7 @@ func ValidateJobRAMMB(ramMB int) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid ram_mb",
 		fmt.Sprintf("ram_mb must be at least %d MB; requested %d MB.", JobMinRAMMB, ramMB)).
 		WithLimit(int64(JobMinRAMMB), int64(ramMB)).
-		WithDocs(docsBase + "/plans#jobs")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanWorkflowsNotAllowed is returned by apid workflow endpoints
@@ -4881,7 +4974,7 @@ func ErrPlanWorkflowsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanWorkflowsNotAllowed,
 		"Workflows unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include durable workflows; upgrade to Hobby or above to orchestrate multi-step processes.", p)).
-		WithDocs(docsBase + "/plans#workflows")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanWorkflowsQuota is returned when an app exceeds its concurrent
@@ -4891,7 +4984,7 @@ func ErrPlanWorkflowsQuota(plan Plan, limit, observed int) *Problem {
 		"Workflow run quota exceeded",
 		fmt.Sprintf("concurrent workflow run quota reached (%d/%d) for the %s plan.", observed, limit, plan)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#workflows")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrWorkflowDeploymentUnavailable reports that definitions may be deployed,
@@ -4970,7 +5063,7 @@ func ErrJobTaskNotFound(runID, taskIndex string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeJobTaskNotFound,
 		"Job task not found",
 		fmt.Sprintf("no job task at run %s / task %s on this account.", runID, taskIndex)).
-		WithDocs(docsBase + "/jobs#tasks")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobTaskNotRetriable marks an explicit retry against a task whose current
@@ -4979,7 +5072,7 @@ func ErrJobTaskNotRetriable(runID, taskIndex, status string) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobTaskNotRetriable,
 		"Job task cannot be retried",
 		fmt.Sprintf("task %s in run %s is in status %s; only failed, timeout, oom, or cancelled tasks can be retried.", taskIndex, runID, status)).
-		WithDocs(docsBase + "/jobs#retry")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobTaskMaxRetriesReached marks an explicit retry after the configured
@@ -4988,7 +5081,7 @@ func ErrJobTaskMaxRetriesReached(runID, taskIndex string, attempts, maxRetries i
 	return NewProblem(http.StatusConflict, CodeJobTaskMaxRetriesReached,
 		"Job task retry budget exhausted",
 		fmt.Sprintf("task %s in run %s has used %d attempts; retry_max is %d. Re-run its input in a linked run with `gregale jobs replay-failed <job> %s`.", taskIndex, runID, attempts, maxRetries, runID)).
-		WithDocs(docsBase + "/jobs#retry")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobRunCancelled marks POST /v1/jobs/{name}/runs/{id}/cancel
@@ -4997,7 +5090,7 @@ func ErrJobRunCancelled(runID, currentStatus string) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobRunCancelled,
 		"Job run is already terminal",
 		fmt.Sprintf("run %s is in status %s and cannot be cancelled; only queued / dispatched / running runs accept cancel.", runID, currentStatus)).
-		WithDocs(docsBase + "/jobs#cancel")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobDeadlineExceeded marks GET /v1/jobs/{name}/runs/{id} on
@@ -5009,7 +5102,7 @@ func ErrJobDeadlineExceeded(runID string, deadlineRFC3339 string) *Problem {
 	return NewProblem(http.StatusGone, CodeJobDeadlineExceeded,
 		"Job run deadline exceeded",
 		fmt.Sprintf("run %s did not complete all tasks before its deadline_at of %s.", runID, deadlineRFC3339)).
-		WithDocs(docsBase + "/jobs#deadlines")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobHasLiveInstances is the soft-delete sentinel. Returned
@@ -5022,7 +5115,7 @@ func ErrJobHasLiveInstances(jobName string, liveCount int) *Problem {
 	return NewProblem(http.StatusConflict, CodeJobHasLiveInstances,
 		"Job has live instances",
 		fmt.Sprintf("job %s has %d live task instance(s); cancel them and wait for termination before deleting.", jobName, liveCount)).
-		WithDocs(docsBase + "/jobs#delete")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobImageMissing marks POST /v1/jobs when the referenced
@@ -5037,7 +5130,7 @@ func ErrJobImageMissing(imageID string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeJobImageMissing,
 		"Job image not found",
 		fmt.Sprintf("image %s does not exist or is not a job-runnable kind.", imageID)).
-		WithDocs(docsBase + "/jobs#image")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrJobCommandInvalid marks a command[] violation:
@@ -5049,7 +5142,7 @@ func ErrJobCommandInvalid(reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeJobCommandInvalid,
 		"Job command invalid",
 		reason).
-		WithDocs(docsBase + "/jobs#command")
+		WithDocs(docsBase + "/jobs")
 }
 
 // ErrPlanEvictionPriorityReservedNotAllowed is the 403 apid returns
@@ -5062,7 +5155,7 @@ func ErrPlanEvictionPriorityReservedNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanEvictionPriorityReservedNotAllowed,
 		"Reserved eviction priority is not available on this plan",
 		fmt.Sprintf("the %s plan does not include the reserved eviction tier; upgrade to Hobby or above to opt in. The 'best_effort' tier is available on every plan.", p)).
-		WithDocs(docsBase + "/plans#eviction-priority")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanPublicAuthBearerNotAllowed is the 402 apid returns when a
@@ -5078,7 +5171,7 @@ func ErrPlanPublicAuthBearerNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthBearerNotAllowed,
 		"Bearer public-URL auth is not available on this plan",
 		fmt.Sprintf("the %s plan does not include bearer-mode public auth; upgrade to Hobby or above to opt in. The 'open' mode is available on every plan.", p)).
-		WithDocs(docsBase + "/plans#public-auth")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanPublicAuthBasicNotAllowed is the 402 apid returns when a
@@ -5093,7 +5186,7 @@ func ErrPlanPublicAuthBasicNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanPublicAuthBasicNotAllowed,
 		"Basic public-URL auth is not available on this plan",
 		fmt.Sprintf("the %s plan does not include basic-mode public auth; upgrade to Pro or above to opt in. The 'open' and 'bearer' modes are available on lower plans.", p)).
-		WithDocs(docsBase + "/plans#public-auth")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanEvictionPriorityReservedQuota is the 422 apid returns when
@@ -5110,7 +5203,7 @@ func ErrPlanEvictionPriorityReservedQuota(p Plan, observed, limit int) *Problem 
 		fmt.Sprintf("%s plan caps the reserved eviction tier at %d app(s) per account; you have %d. Flip an existing reserved app to best_effort to add another.",
 			p, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#eviction-priority")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrAlertRuleInvalid is returned for malformed alert-rule bodies:
@@ -5135,7 +5228,7 @@ func ErrPlanAlertRulesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanAlertRulesNotAllowed,
 		"Alert rules unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include alert rules; upgrade to Hobby or above to fire alerts.", p)).
-		WithDocs(docsBase + "/plans#alerts")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanAlertRuleQuota is returned when
@@ -5151,7 +5244,7 @@ func ErrPlanAlertRuleQuota(plan Plan, scope string, limit, observed int) *Proble
 		fmt.Sprintf("%s plan caps alert rules at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#alerts")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrAlertPresetInvalid is the closed-set + shape error for
@@ -5161,7 +5254,7 @@ func ErrPlanAlertRuleQuota(plan Plan, scope string, limit, observed int) *Proble
 func ErrAlertPresetInvalid(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAlertPresetInvalid,
 		"Invalid alert preset", reason).
-		WithDocs(docsBase + "/alerts#presets")
+		WithDocs(docsBase + "/alerts#configure-an-alert")
 }
 
 // ErrAlertPresetDisabled is returned when the customer POSTs to
@@ -5173,7 +5266,7 @@ func ErrAlertPresetDisabled(presetName string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAlertPresetDisabled,
 		"Alert preset not yet available",
 		fmt.Sprintf("the %q preset is staged for a future release; check the catalog for available presets.", presetName)).
-		WithDocs(docsBase + "/alerts#presets")
+		WithDocs(docsBase + "/alerts#configure-an-alert")
 }
 
 // ErrPlanAlertPresetsNotAllowed is returned when the customer's
@@ -5185,7 +5278,7 @@ func ErrPlanAlertPresetsNotAllowed(plan Plan, presetName, minimumPlan string) *P
 		"Alert preset not available on this plan",
 		fmt.Sprintf("the %q preset requires the %s plan or higher; the %s plan does not include it.",
 			presetName, minimumPlan, plan)).
-		WithDocs(docsBase + "/plans#alerts")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanWebhooksNotAllowed is returned by apid's createAppWebhook
@@ -5199,7 +5292,7 @@ func ErrPlanWebhooksNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanWebhooksNotAllowed,
 		"Outbound webhooks unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include outbound webhooks; upgrade to Hobby or above to subscribe.", p)).
-		WithDocs(docsBase + "/plans#webhooks")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanWebhookQuota is returned when
@@ -5215,7 +5308,7 @@ func ErrPlanWebhookQuota(plan Plan, scope string, limit, observed int) *Problem 
 		fmt.Sprintf("%s plan caps webhooks at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#webhooks")
+		WithDocs(docsBase + "/plans")
 }
 
 func ErrPlanInboundWebhooksNotAllowed(p Plan) *Problem {
@@ -5239,7 +5332,7 @@ func ErrPlanRealtimeNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanRealtimeNotAllowed,
 		"Managed realtime unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include managed realtime endpoints; upgrade to Hobby or above to keep WebSocket clients connected while your app sleeps.", p)).
-		WithDocs(docsBase + "/plans#realtime")
+		WithDocs(docsBase + "/plans#managed-realtime")
 }
 
 func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem {
@@ -5249,7 +5342,7 @@ func ErrPlanRealtimeQuota(plan Plan, scope string, limit, observed int) *Problem
 		fmt.Sprintf("%s plan caps managed realtime endpoints at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#realtime")
+		WithDocs(docsBase + "/plans#managed-realtime")
 }
 
 func ErrRealtimeInvalid(reason string) *Problem {
@@ -5283,7 +5376,7 @@ func ErrRealtimeUnavailable() *Problem {
 		"Gregale could not reach the managed realtime service.").
 		WithHeader("Retry-After", "5").
 		WithHint("Retry the connection in a few seconds.").
-		WithDocs(docsBase + "/plans#realtime")
+		WithDocs(docsBase + "/plans#managed-realtime")
 }
 
 // ErrPlanTriggersNotAllowed is returned by apid's createTrigger /
@@ -5298,7 +5391,7 @@ func ErrPlanTriggersNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanTriggersNotAllowed,
 		"Triggers unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include event-source mappings (Kafka, NATS, Redis Streams, SQS-compatible, in-platform queue); upgrade to Hobby or above to subscribe.", p)).
-		WithDocs(docsBase + "/plans#triggers")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTriggerKindNotAllowed is returned when the plan includes triggers but
@@ -5307,7 +5400,7 @@ func ErrTriggerKindNotAllowed(plan Plan, kind TriggerKind) *Problem {
 	return NewProblem(http.StatusForbidden, CodeTriggerKindNotAllowed,
 		"Trigger kind not available",
 		fmt.Sprintf("%s triggers are not available on the %s plan", kind, plan)).
-		WithDocs(docsBase + "/plans#triggers")
+		WithDocs(docsBase + "/plans")
 }
 
 func ErrSecretStoreUnavailable() *Problem {
@@ -5329,7 +5422,7 @@ func ErrPlanTriggerQuota(plan Plan, scope string, limit, observed int) *Problem 
 		fmt.Sprintf("%s plan caps triggers at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#triggers")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTriggerBatchWindowTooLarge is returned by createTrigger /
@@ -5343,7 +5436,7 @@ func ErrTriggerBatchWindowTooLarge(plan Plan, limitSec, observedSec int) *Proble
 		fmt.Sprintf("%s plan caps trigger batch_window at %d s; you requested %d s. Lower the value or upgrade to Scale.",
 			plan, limitSec, observedSec)).
 		WithLimit(int64(limitSec), int64(observedSec)).
-		WithDocs(docsBase + "/plans#triggers")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTriggerTLSSkipVerifyNotAllowed is returned by createTrigger /
@@ -5357,7 +5450,7 @@ func ErrTriggerTLSSkipVerifyNotAllowed(plan Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodeTriggerTLSSkipVerifyNotAllowed,
 		"tls.skip_verify unavailable on this plan",
 		fmt.Sprintf("the %s plan does not allow tls.skip_verify on a trigger (the certificate-skip knob is reserved for plans that have signed off on the operational risk). Drop tls.skip_verify or upgrade to Pro.", plan)).
-		WithDocs(docsBase + "/plans#triggers")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrAppWebhookInvalid is returned for malformed webhook bodies:
@@ -5378,6 +5471,14 @@ func ErrInboundWebhookBadSignature() *Problem {
 		"Invalid webhook signature", "the Stripe-Signature header did not verify")
 }
 
+// ErrInboundWebhookBadGenericSignature is the generic provider's refusal; it
+// used the Stripe wording and named the Stripe-Signature header (prod
+// 2026-11-20).
+func ErrInboundWebhookBadGenericSignature() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
+		"Invalid webhook signature", "the X-Gregale-Signature header did not verify; send sha256= and the hex HMAC-SHA256, keyed with the signing secret, of X-Gregale-Timestamp, X-Gregale-Event-ID and X-Gregale-Event-Type each followed by a newline, then the raw body; the timestamp must be within 5 minutes")
+}
+
 func ErrInboundWebhookTooLarge() *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeInboundWebhookTooLarge,
 		"Webhook body too large", "the webhook body exceeds 1 MiB")
@@ -5387,7 +5488,7 @@ func ErrPlanLogDrainsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanLogDrainsNotAllowed,
 		"Log drains unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include customer log drains; upgrade to Hobby or above to export runtime logs.", p)).
-		WithDocs(docsBase + "/plans#observability")
+		WithDocs(docsBase + "/logs#log-drains")
 }
 
 func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem {
@@ -5397,7 +5498,7 @@ func ErrPlanLogDrainQuota(plan Plan, scope string, limit, observed int) *Problem
 		fmt.Sprintf("%s plan caps log drains at %d for %s; you have %d. Delete one to add another.",
 			plan, limit, scopeName, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#observability")
+		WithDocs(docsBase + "/logs#log-drains")
 }
 
 func ErrAppLogDrainInvalid(reason string) *Problem {
@@ -5414,7 +5515,7 @@ func ErrTenantSurfacesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeTenantSurfacesNotAllowed,
 		"Tenant surfaces unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include tenant surfaces; upgrade to Hobby or above to expose one app to many customer hostnames under a single cert.", p)).
-		WithDocs(docsBase + "/plans#tenant-surfaces")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTenantSurfacesNotEnabled is returned when the cluster-level tenant
@@ -5425,7 +5526,7 @@ func ErrTenantSurfacesNotEnabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeTenantSurfacesNotEnabled,
 		"Tenant surfaces are not enabled",
 		"tenant surfaces are not available on this Gregale installation right now; contact support for availability").
-		WithDocs(docsBase + "/plans#tenant-surfaces")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrStaticEgressIPNotEnabled is the dark-launch 402 — the
@@ -5462,7 +5563,7 @@ func ErrTenantSurfaceQuota(p Plan, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps tenant surfaces at %d per account; you have %d. Delete one to add another.",
 			p, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#tenant-surfaces")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTenantHostnameQuota is returned when
@@ -5476,7 +5577,7 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 		fmt.Sprintf("%s plan caps tenant hostnames at %d per surface; you have %d on surface %s. Remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#tenant-surfaces")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
@@ -5487,7 +5588,7 @@ func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int
 		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#tenant-surfaces")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrTenantHostnameAlreadyClaimed is returned when the global UQ on
@@ -5518,7 +5619,7 @@ func ErrWildcardDomainsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodeWildcardDomainsNotAllowed,
 		"Wildcard domains unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include wildcard custom domains; upgrade to Pro or Scale.", p)).
-		WithDocs(docsBase + "/domains#wildcard-domains")
+		WithDocs(docsBase + "/domains#serve-several-apps-on-one-domain")
 }
 
 // ErrCustomDomainHostsTooMany is a 422: a wildcard custom domain's host
@@ -5550,7 +5651,7 @@ func ErrPlanDataUpstreamsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanDataUpstreamsNotAllowed,
 		"Data-placement hints unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include data-placement hints; upgrade to Hobby or above to capture upstreams.", p)).
-		WithDocs(docsBase + "/plans#data-placement")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrDataUpstreamsDisabled reports cluster configuration independently of
@@ -5563,14 +5664,14 @@ func ErrEgressCircuitNotEnforced() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeEgressCircuitDisabled,
 		"Egress circuit breakers are not enforced",
 		"this platform does not enforce egress circuit breakers yet, so enabling one would not reject any connection; contact the platform operator").
-		WithDocs(docsBase + "/plans#data-placement")
+		WithDocs(docsBase + "/plans")
 }
 
 func ErrDataUpstreamsDisabled() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeDataUpstreamsDisabled,
 		"Data placement is disabled",
 		"data-placement APIs are not enabled on this cluster; contact the platform operator").
-		WithDocs(docsBase + "/plans#data-placement")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanLimitDataUpstreams (ADR-098 §D5) is the 403 returned when
@@ -5585,7 +5686,7 @@ func ErrPlanLimitDataUpstreams(plan Plan, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps data upstreams at %d per app; you have %d. Delete one to add another.",
 			plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#data-placement")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrUpstreamInvalidKind (ADR-098 §D4) is the 400 returned when
@@ -5658,7 +5759,7 @@ func ErrDeployFailed(detail string) *Problem {
 func ErrDeploySignatureInvalid(detail string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeDeploySignatureInvalid,
 		"Signed-image enforcement rejected the deploy", detail).
-		WithDocs(docsBase + "/deploys#signed-images")
+		WithDocs(docsBase + "/security#app-deploy-guard")
 }
 
 // ErrSecurityPostureBlocked is returned when the app's explicit security
@@ -5670,7 +5771,7 @@ func ErrSecurityPostureBlocked(slug, codes string) *Problem {
 		"Security posture blocks this deploy",
 		"security_policy=enforce and high-severity findings remain: "+codes+"; review GET /v1/apps/{slug}/security and remediate the findings").
 		WithHint("Run gregale app " + slug + " security to see the findings.").
-		WithDocs(docsBase + "/security#deploy-enforcement")
+		WithDocs(docsBase + "/security#app-deploy-guard")
 }
 
 // ErrSecurityQuarantineRecoveryBlocked is returned when a quarantined app
@@ -5688,7 +5789,7 @@ func ErrSecurityQuarantineRecoveryBlocked(detail string) *Problem {
 func ErrTrustedSignerInvalid(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeTrustedSignerInvalid,
 		"Trusted signer invalid", detail).
-		WithDocs(docsBase + "/deploys#trusted-signers")
+		WithDocs(docsBase + "/security#app-deploy-guard")
 }
 
 // ErrTrustedSignerNotFound is the 404 mirror of ErrSecretNotFound
@@ -5708,7 +5809,7 @@ func ErrNoRollbackTarget() *Problem {
 	return NewProblem(http.StatusConflict, CodeNoRollbackTarget,
 		"No previous deployment",
 		"there's no superseded deployment to roll back to; deploy at least twice.").
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 // ErrNoRollbackTargetWithCandidates is ErrNoRollbackTarget for an app whose
@@ -5725,7 +5826,7 @@ func ErrNoRollbackTargetWithCandidates(appSlug string, revisions []string) *Prob
 		"Choose a rollback target",
 		fmt.Sprintf("no deployment was superseded, but these deployments are live at 0%% traffic: %s. Roll back to one explicitly: gregale rollback %s --to %s",
 			strings.Join(revisions, ", "), appSlug, revisions[0])).
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 // ErrRollbackTargetNotFound is returned by POST /v1/apps/{slug}/rollback when
@@ -5738,7 +5839,7 @@ func ErrRollbackTargetNotFound(detail string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeRollbackTargetNotFound,
 		"Rollback target not found",
 		detail).
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 // ErrRollbackTargetAlreadyLive is returned when the caller passes an
@@ -5751,21 +5852,21 @@ func ErrRollbackTargetAlreadyLive(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetAlreadyLive,
 		"Rollback target is already live",
 		detail).
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 func ErrRollbackTargetIneligible(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetIneligible,
 		"Rollback target is not eligible",
 		detail).
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 func ErrRollbackTargetUnavailable(detail string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRollbackTargetUnavailable,
 		"Rollback target is unavailable",
 		detail).
-		WithDocs(docsBase + "/deploys#rollback")
+		WithDocs(docsBase + "/deploys#revisions")
 }
 
 // ErrPlanLimitSecrets is returned when a secret PUT would exceed the plan's
@@ -5775,7 +5876,7 @@ func ErrPlanLimitSecrets(l Limits, observed int) *Problem {
 		"Secret count limit reached",
 		fmt.Sprintf("%s plan allows %d secret(s) per app; you have %d.", l.Plan, l.SecretCountMax, observed)).
 		WithLimit(int64(l.SecretCountMax), int64(observed)).
-		WithDocs(docsBase + "/secrets#limits")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretInvalidKey is returned when a secret key fails the
@@ -5785,7 +5886,7 @@ func ErrSecretInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeSecretInvalidKey,
 		"Invalid secret key",
 		fmt.Sprintf("secret keys must match %s; %s", SecretKeyPattern, detail)).
-		WithDocs(docsBase + "/secrets#keys")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretValueTooLarge is returned when a PUT value exceeds
@@ -5807,7 +5908,7 @@ func ErrSecretValueTooLarge(l Limits, observedBytes int) *Problem {
 		"Secret value too large",
 		secretValueTooLargeDetail(l, observedBytes)).
 		WithLimit(int64(l.SecretValueMaxBytes), int64(observedBytes)).
-		WithDocs(docsBase + "/secrets#limits")
+		WithDocs(docsBase + "/secrets")
 }
 
 // ErrSecretNotFound is returned by DELETE /v1/apps/{slug}/secrets/{key} when
@@ -5836,7 +5937,7 @@ func ErrManagedSecretConflict() *Problem {
 	return NewProblem(http.StatusConflict, CodeConflict,
 		"Secret is managed",
 		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
-		WithDocs(docsBase + "/postgres#bindings")
+		WithDocs(docsBase + "/postgres#connect-an-app")
 }
 
 // ErrAccountDeletionManagedPostgres refuses to schedule an account deletion
@@ -5875,7 +5976,7 @@ func ErrPlanLimitEnvVars(l Limits, observed int) *Problem {
 		"Env var count limit reached",
 		fmt.Sprintf("%s plan allows %d env var(s) per app; you have %d.", l.Plan, l.EnvVarsMax, observed)).
 		WithLimit(int64(l.EnvVarsMax), int64(observed)).
-		WithDocs(docsBase + "/env#limits")
+		WithDocs(docsBase + "/env")
 }
 
 // ErrAPIKeyExpired is returned by the auth middleware when the
@@ -5889,7 +5990,7 @@ func ErrAPIKeyExpired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
 		"API key expired",
 		"the bearer key has expired; rotate it and use the new plaintext").
-		WithDocs(docsBase + "/auth#expiry")
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
 // ErrAPIKeyRevoked is returned by the auth middleware when the
@@ -5901,7 +6002,7 @@ func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
 		"the bearer key has been revoked; mint a new one via POST /v1/keys").
-		WithDocs(docsBase + "/auth#revocation")
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
 // ErrAPIKeyLimitExceeded is returned when a POST /v1/keys would
@@ -5916,7 +6017,7 @@ func ErrAPIKeyLimitExceeded(l Limits, observed int) *Problem {
 		fmt.Sprintf("%s plan allows %d API key(s) per account; you have %d active or in grace. Revoke a key before minting a new one.",
 			l.Plan, l.KeysMax, observed)).
 		WithLimit(int64(l.KeysMax), int64(observed)).
-		WithDocs(docsBase + "/auth#quotas")
+		WithDocs(docsBase + "/auth#api-keys")
 }
 
 // ErrPlanLimitTrustedSigners is returned when a trusted-signer PUT
@@ -5940,20 +6041,17 @@ func ErrPlanLimitTrustedSigners(l Limits, observed int) *Problem {
 		"Trusted signer count limit reached",
 		fmt.Sprintf("%s plan allows %d trusted signer(s) per app; you have %d.", l.Plan, l.TrustedSignerCountMax, observed)).
 		WithLimit(int64(l.TrustedSignerCountMax), int64(observed)).
-		WithDocs(docsBase + "/deploys#trusted-signers")
+		WithDocs(docsBase + "/security#app-deploy-guard")
 }
 
-// ErrEnvVarInvalidKey is returned when an env key fails the
-// ^[A-Z][A-Z0-9_]*$ pattern. Detail names the specific failure so the CLI
-// can render an actionable message. The regex intentionally reuses the
-// SecretKeyPattern constant because POSIX env-var naming and the secrets
-// naming surface share the same ASCII identifier grammar — keeping one
-// pattern avoids the drift where two regexes diverge over time.
+// ErrEnvVarInvalidKey is returned when an env key fails EnvKeyPattern or
+// spells a platform-provided key in another case. Detail names the specific
+// failure so the CLI can render an actionable message.
 func ErrEnvVarInvalidKey(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvVarInvalidKey,
 		"Invalid env var key",
-		fmt.Sprintf("env var keys must match %s; %s", SecretKeyPattern, detail)).
-		WithDocs(docsBase + "/env#keys")
+		fmt.Sprintf("env var keys must match %s; %s", EnvKeyPattern, detail)).
+		WithDocs(docsBase + "/env")
 }
 
 // ErrEnvVarValueTooLarge is returned when a PUT value exceeds
@@ -5965,7 +6063,7 @@ func ErrEnvVarValueTooLarge(l Limits, observedBytes int) *Problem {
 		"Env var value too large",
 		fmt.Sprintf("%s plan caps env values at %d bytes; got %d.", l.Plan, l.EnvValueMaxBytes, observedBytes)).
 		WithLimit(int64(l.EnvValueMaxBytes), int64(observedBytes)).
-		WithDocs(docsBase + "/env#limits")
+		WithDocs(docsBase + "/env")
 }
 
 // ErrEnvVarNotFound is returned by DELETE /v1/apps/{slug}/env/{key} when
@@ -5992,7 +6090,7 @@ func ErrEnvScopeInvalid(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvScopeInvalid,
 		"Invalid env scope",
 		fmt.Sprintf("env scope must match %s; %s", EnvScopePattern, detail)).
-		WithDocs(docsBase + "/env#scopes")
+		WithDocs(docsBase + "/env")
 }
 
 // ErrEnvScopeReserved is returned when the scope query param is the
@@ -6006,7 +6104,7 @@ func ErrEnvScopeReserved(sentinel string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeEnvScopeReserved,
 		"Env scope reserved",
 		fmt.Sprintf("scope %q is reserved for the read path; omit ?scope= on writes.", sentinel)).
-		WithDocs(docsBase + "/env#scopes")
+		WithDocs(docsBase + "/env")
 }
 
 // ErrPlanRegistryCredentialsNotAllowed is returned when the customer's
@@ -6033,7 +6131,7 @@ func ErrPlanRegistryCredentialQuota(l Limits, observed int) *Problem {
 		"Per-app registry credential quota reached",
 		fmt.Sprintf("the %s plan caps private-registry credentials at %d per app; got %d. Delete one before adding another.", l.Plan, l.RegistryCredentialMax, observed)).
 		WithLimit(int64(l.RegistryCredentialMax), int64(observed)).
-		WithDocs(docsBase + "/registry-credentials#quota")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 // ErrInvalidRegistryHost is returned when the request body's registry
@@ -6044,7 +6142,7 @@ func ErrInvalidRegistryHost(detail error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidRegistryHost,
 		"Invalid registry host",
 		detail.Error()).
-		WithDocs(docsBase + "/registry-credentials#registry-format")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 // ErrRegistryCredentialNotFound is returned by DELETE
@@ -6065,7 +6163,7 @@ func ErrPlanJobRegistryCredentialsNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanJobRegistryCredentialNotAllowed,
 		"Plan doesn't allow private-registry credentials for jobs",
 		fmt.Sprintf("the %s plan cannot store private-registry credentials for jobs; upgrade to Hobby or higher.", p)).
-		WithDocs(docsBase + "/jobs#registry-credentials")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 // ErrPlanJobRegistryCredentialQuota reports the per-job credential cap.
@@ -6074,7 +6172,7 @@ func ErrPlanJobRegistryCredentialQuota(l Limits, observed int) *Problem {
 		"Per-job registry credential quota reached",
 		fmt.Sprintf("the %s plan caps private-registry credentials at %d per job; got %d. Delete one before adding another.", l.Plan, l.RegistryCredentialMax, observed)).
 		WithLimit(int64(l.RegistryCredentialMax), int64(observed)).
-		WithDocs(docsBase + "/jobs#registry-credentials")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 // ErrJobRegistryCredentialNotFound is returned when a job credential delete
@@ -6083,7 +6181,7 @@ func ErrJobRegistryCredentialNotFound(host, job string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeJobRegistryCredentialNotFound,
 		"Job registry credential not set",
 		fmt.Sprintf("no credential stored for registry %q on job %q.", host, job)).
-		WithDocs(docsBase + "/jobs#registry-credentials")
+		WithDocs(docsBase + "/registry-credentials")
 }
 
 // ErrPlanMinInstancesNotAllowed is returned when a Free account tries
@@ -6098,7 +6196,7 @@ func ErrPlanMinInstancesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMinInstancesNotAllowed,
 		"Plan doesn't allow a min-instances floor",
 		fmt.Sprintf("the %s plan always scales to zero; upgrade to Hobby, Pro, or Scale to keep instances warm.", p)).
-		WithDocs(docsBase + "/plans#min-instances")
+		WithDocs(docsBase + "/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 // ErrDeploymentCancelLiveForbidden (ADR-124) is returned when
@@ -6110,8 +6208,8 @@ func ErrDeploymentCancelLiveForbidden(id string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentCancelLiveForbidden,
 		"Cannot cancel a live deployment",
 		fmt.Sprintf("deployment %s is live; cancelling a live deploy would orphan the §6.2 INV 3 'always-live-snapshot-OR-rootfs' guarantee.", id)).
-		WithHint("Use 'gregale deploys rollback <id>' to swap to a previous deployment.").
-		WithFix("Run: gregale deploys rollback --app <slug> --to <previous-deployment-id>").
+		WithHint("Use 'gregale release rollback <id>' to swap to a previous deployment.").
+		WithFix("Run: gregale release rollback --app <slug> --to <previous-deployment-id>").
 		WithWhy("Cancelling a live deployment has no well-defined semantics: it would either scale the app to zero (kills §6.2 INV 4) or park the app (kills INV 3). The deploys-rollback path is the user-correct escape.").
 		WithDocs(docsBase + "/deploys#cancel")
 }
@@ -6148,7 +6246,7 @@ func ErrDeploymentReorderNotPending(id string) *Problem {
 		"Reorder only valid for pending deployments",
 		fmt.Sprintf("deployment %s is no longer pending; reorder is a planning-queue operation and cannot affect a row that has been claimed by builderd.", id)).
 		WithHint("Cancel this deployment and re-deploy with --priority if you need queue control.").
-		WithDocs(docsBase + "/deploys#reorder")
+		WithDocs(docsBase + "/deploys")
 }
 
 // ErrDeploymentReorderPriorityInvalid (ADR-124) is the range
@@ -6159,7 +6257,7 @@ func ErrDeploymentReorderPriorityInvalid(got int) *Problem {
 		"priority must be in [0, 1000]",
 		fmt.Sprintf("priority=%d; valid range is [0, 1000] (0 = deploy immediately, 100 = FIFO default, 1000 = background rebuild).", got)).
 		WithLimit(1000, int64(got)).
-		WithDocs(docsBase + "/deploys#reorder")
+		WithDocs(docsBase + "/deploys")
 }
 
 // ErrPlanReorderDisabled (ADR-124) is the plan-tier gate for
@@ -6171,7 +6269,7 @@ func ErrPlanReorderDisabled(p Plan) *Problem {
 		"Plan doesn't allow reorder or deploy-immediately",
 		fmt.Sprintf("the %s plan locks the deploy queue (no reorder, no deploy-immediately); cancel and clear-obsolete remain available. Upgrade to Hobby, Pro, or Scale to unlock the queue controls.", p)).
 		WithHint("Cancel + clear-obsolete remain available on Free; upgrade to unlock reorder/deploy-immediately.").
-		WithDocs(docsBase + "/plans#queue-controls")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrInvalidMinInstances is returned when the requested min_instances
@@ -6182,7 +6280,7 @@ func ErrInvalidMinInstances(got, maxConcur int) *Problem {
 		"Invalid min_instances",
 		fmt.Sprintf("min_instances must be in [0, %d] (plan max_concurrency); got %d.", maxConcur, got)).
 		WithLimit(int64(maxConcur), int64(got)).
-		WithDocs(docsBase + "/apps#min-instances")
+		WithDocs(docsBase + "/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 // ErrMaxMinInstancesExceeded (issue #557 / ADR-071 §Decision 5) is
@@ -6227,7 +6325,7 @@ func ErrMaxMinInstancesExceeded(got, planMax int) *Problem {
 		"min_instances exceeds plan cap",
 		fmt.Sprintf("min_instances must be in [0, %d] for this plan; got %d.", planMax, got)).
 		WithLimit(int64(planMax), int64(got)).
-		WithDocs(docsBase + "/apps#min-instances")
+		WithDocs(docsBase + "/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 // ErrPlanTrafficSplitNotAllowed (issue #556 / traffic splitting
@@ -6244,7 +6342,7 @@ func ErrPlanTrafficSplitNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanTrafficSplitNotAllowed,
 		"Plan doesn't allow traffic splitting",
 		fmt.Sprintf("the %s plan routes 100%% to the most recent deployment; upgrade to Pro or Scale to keep N canary deployments warm.", p)).
-		WithDocs("https://gregale.dev/docs/plans#traffic-split")
+		WithDocs("https://gregale.dev/docs/plans")
 }
 
 // ErrPlanRollbackOn5xxNotAllowed is returned when a Free/Hobby customer
@@ -6255,7 +6353,7 @@ func ErrPlanRollbackOn5xxNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanRollbackOn5xxNotAllowed,
 		"Plan doesn't allow 5xx auto-rollback",
 		fmt.Sprintf("the %s plan cannot opt deployments into automatic rollback after repeated 5xx responses; upgrade to Pro or Scale.", p)).
-		WithDocs(docsBase + "/plans#rollback-on-5xx")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrInvalidTrafficPercent (issue #556) is returned when the
@@ -6270,7 +6368,7 @@ func ErrInvalidTrafficPercent(got int) *Problem {
 		"Invalid traffic_percent",
 		fmt.Sprintf("traffic_percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrDeploymentNotLive distinguishes lifecycle conflict from percentage
@@ -6283,7 +6381,7 @@ func ErrDeploymentNotLive(status string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDeploymentNotLive,
 		"Deployment is not live",
 		fmt.Sprintf("traffic can only be changed on a live deployment; current state is %s. Select the current live deployment, roll back, or redeploy.", status)).
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrInvalidCanaryPreset (issue #976 / ADR-122 / SAFE-RELEASES-A)
@@ -6297,7 +6395,7 @@ func ErrInvalidCanaryPreset(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidCanaryPreset,
 		"Invalid canary preset",
 		fmt.Sprintf("canary preset %q is not in the closed-set catalog (%v); see --canary-preset in `gregale deploy --help`.", got, canary.AllowedCanaryPresets)).
-		WithDocs("https://gregale.dev/docs/deployments#canary-presets")
+		WithDocs("https://gregale.dev/docs/rollouts#canary-ladders")
 }
 
 // ErrCanaryStepConflict is the expected concurrency response for the
@@ -6308,7 +6406,7 @@ func ErrCanaryStepConflict(expected, actual int) *Problem {
 	return NewProblem(http.StatusConflict, CodeCanaryStepConflict,
 		"Canary step changed",
 		fmt.Sprintf("expected canary_step=%d, but the deployment is already at canary_step=%d; refresh and continue from the current step.", expected, actual)).
-		WithDocs(docsBase + "/deployments#canary")
+		WithDocs(docsBase + "/rollouts#how-a-rollout-proceeds")
 }
 
 // ErrTrafficPercentSumInvalid (issue #556) is the defensive
@@ -6325,7 +6423,7 @@ func ErrTrafficPercentSumInvalid(observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"traffic_percent sum invariant violated",
 		fmt.Sprintf("sum of traffic_percent across live deployments must be 100; observed %d.", observed)).
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrTrafficResidualUnassigned is the same 409 for a manual traffic change
@@ -6336,7 +6434,7 @@ func ErrTrafficResidualUnassigned(remaining int) *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficPercentSumInvalid,
 		"No deployment can take the remaining traffic",
 		fmt.Sprintf("the other live deployments in this environment are aborted canaries or releases that have not served yet (staged with no traffic), which receive traffic only when named; set the remaining %d%% on a deployment explicitly, or keep this one at 100%%.", remaining)).
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrTrafficSplitReleaseLimit refuses a split that gives traffic to more
@@ -6348,7 +6446,7 @@ func ErrTrafficSplitReleaseLimit(limit, requested int) *Problem {
 		"Too many releases in the traffic split",
 		fmt.Sprintf("this change would send traffic to %d releases, but the app runs at most %d instances at once (max_concurrency plus one during a rollout), so one release could never start; take a release out of the split first, or raise max_concurrency with gregale app --max-concurrency.", requested, limit)).
 		WithLimit(int64(limit), int64(requested)).
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrTrafficServingChanged makes a stale promotion actionable without
@@ -6360,14 +6458,14 @@ func ErrTrafficSplitChanged() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
 		"Traffic split changed",
 		"the environment's traffic split no longer matches expected_traffic; run gregale release traffic status and plan the change again.").
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 func ErrTrafficServingChanged() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficServingChanged,
 		"Production revision changed",
 		"the expected revision is no longer the sole 100% serving deployment; run gregale traffic status before promoting again.").
-		WithDocs("https://gregale.dev/docs/deployments#traffic-percent")
+		WithDocs("https://gregale.dev/docs/rollouts")
 }
 
 // ErrTrafficChangeDuringCanary explains why the generic traffic-split route
@@ -6375,8 +6473,8 @@ func ErrTrafficServingChanged() *Problem {
 func ErrTrafficChangeDuringCanary() *Problem {
 	return NewProblem(http.StatusConflict, CodeTrafficChangeDuringCanary,
 		"Canary rollout controls traffic",
-		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale rollouts recover <app> --action abort`.").
-		WithDocs(docsBase + "/deployments#canary")
+		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale release traffic rollback <app>`.").
+		WithDocs(docsBase + "/rollouts#how-a-rollout-proceeds")
 }
 
 // ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so
@@ -6403,7 +6501,7 @@ func ErrPlanMirrorNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMirrorNotAllowed,
 		"Plan doesn't allow traffic mirroring",
 		fmt.Sprintf("the %s plan wakes a mirror VM on every request (billed per running second); upgrade to Pro or Scale to mirror traffic in the background.", p)).
-		WithDocs("https://gregale.dev/docs/plans#traffic-mirror")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorRuleQuotaExceeded (issue #72 / ADR-125 PR-A2) is
@@ -6418,7 +6516,7 @@ func ErrMirrorRuleQuotaExceeded(l Limits, observed int) *Problem {
 		"mirror rule quota exceeded",
 		fmt.Sprintf("this app already has %d mirror rule(s); the plan cap is %d.", observed, l.MirrorTargetsPerApp)).
 		WithLimit(int64(l.MirrorTargetsPerApp), int64(observed)).
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrInvalidMirrorPercent (issue #72 / ADR-125 PR-A2) is
@@ -6433,7 +6531,7 @@ func ErrInvalidMirrorPercent(got int) *Problem {
 		"Invalid mirror percent",
 		fmt.Sprintf("mirror percent must be in [0, %d]; got %d.", cap, got)).
 		WithLimit(int64(cap), int64(got)).
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorSourceTargetSame (issue #72 / ADR-125 PR-A2) is
@@ -6445,7 +6543,7 @@ func ErrMirrorSourceTargetSame() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorSourceTargetSame,
 		"source and mirror deployments must differ",
 		"source_deployment_id and mirror_deployment_id cannot reference the same deployment.").
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorDeploymentNotLive (issue #72 / ADR-125 PR-A2) is
@@ -6460,7 +6558,7 @@ func ErrMirrorDeploymentNotLive() *Problem {
 	return NewProblem(http.StatusConflict, CodeMirrorDeploymentNotLive,
 		"referenced deployment is not live",
 		"one or both of source_deployment_id / mirror_deployment_id points at a deployment that is not 'live'; mirror targets must both be live.").
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorCrossAppMismatch (issue #72 / ADR-125 PR-A2) is
@@ -6473,7 +6571,7 @@ func ErrMirrorCrossAppMismatch() *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeMirrorCrossAppMismatch,
 		"source and mirror deployments must belong to the same app",
 		"source_deployment_id and mirror_deployment_id must reference deployments of the same app (slug in the URL path).").
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrMirrorRuleNotFound (issue #72 / ADR-125 PR-A2) is the
@@ -6486,7 +6584,7 @@ func ErrMirrorRuleNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeMirrorRuleNotFound,
 		"mirror rule not found",
 		fmt.Sprintf("no mirror rule with id %q on this app.", id)).
-		WithDocs("https://gregale.dev/docs/apps#mirror-rules")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrInvalidMirrorWindow (issue #72 / ADR-125 PR-A2) is the
@@ -6498,7 +6596,7 @@ func ErrInvalidMirrorWindow(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidMirrorWindow,
 		"Invalid mirror window",
 		fmt.Sprintf("window must be one of: 1h, 24h, 7d; got %q.", got)).
-		WithDocs("https://gregale.dev/docs/apps#mirror-summary")
+		WithDocs("https://gregale.dev/docs/rollouts#traffic-mirroring")
 }
 
 // ErrSidecarCapExceeded is returned when the request carries more
@@ -6512,7 +6610,7 @@ func ErrSidecarCapExceeded(seen, cap int) *Problem {
 		"Too many sidecars",
 		fmt.Sprintf("request carried %d helpers; the cap is %d (issue #463 / ADR-068 §Decision 1).", seen, cap)).
 		WithLimit(int64(cap), int64(seen)).
-		WithDocs(docsBase + "/sidecars#cap")
+		WithDocs(docsBase + "/sidecars#limits-and-lifecycle")
 }
 
 // ErrSidecarInvalidType is returned when a sidecar carries a `type`
@@ -6556,7 +6654,7 @@ func ErrSidecarStatefulDenied(name, image string) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSidecarStatefulDenied,
 		"Stateful sidecar image is not allowed",
 		fmt.Sprintf("sidecar %q image %q is on the stateful denylist; stateless sidecars only (issue #463 / ADR-068 §Decision 4).", name, image)).
-		WithDocs(docsBase + "/sidecars#stateless")
+		WithDocs(docsBase + "/sidecars#writable-paths")
 }
 
 // ErrSidecarStatefulDeniedWithHint is the API-gate sidecar variant
@@ -6577,7 +6675,7 @@ func ErrSidecarStatefulDeniedWithHint(name, image, hint string) *Problem {
 	}
 	return NewProblem(http.StatusForbidden, CodeSidecarStatefulDenied,
 		"Stateful sidecar image is not allowed", detail).
-		WithDocs(docsBase + "/sidecars#stateless")
+		WithDocs(docsBase + "/sidecars#writable-paths")
 }
 
 // ErrSidecarInvalidName is returned when the sidecar name does
@@ -6643,7 +6741,7 @@ func ErrSidecarNotAllowedOnPlan(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodeSidecarNotAllowedOnPlan,
 		"Plan doesn't allow sidecars",
 		fmt.Sprintf("the %s plan doesn't allow sidecars (issue #463 / ADR-068).", p)).
-		WithDocs(docsBase + "/plans#sidecars")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrCompanionPresetUnavailable means the declaration is valid, but this
@@ -6654,7 +6752,7 @@ func ErrCompanionPresetUnavailable(preset string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCompanionPresetUnavailable,
 		"Companion preset unavailable",
 		fmt.Sprintf("managed companion preset %q is not configured on this installation; provide a digest-pinned image or contact the platform operator.", preset)).
-		WithDocs(docsBase + "/companions#managed-presets")
+		WithDocs(docsBase + "/companions")
 }
 
 // ErrPlanMaxInstancesNotAllowed (issue #462 / ADR-058) is the
@@ -6666,7 +6764,7 @@ func ErrPlanMaxInstancesNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanMaxInstancesNotAllowed,
 		"Plan doesn't allow a max_instances ceiling",
 		fmt.Sprintf("the %s plan does not expose a per-app max_instances; upgrade to Hobby or higher to set it.", p)).
-		WithDocs(docsBase + "/apps#max-instances")
+		WithDocs(docsBase + "/scaling-policy#manifest-form")
 }
 
 // ErrInvalidMaxInstances (issue #462 / ADR-058) is the 422
@@ -6680,7 +6778,7 @@ func ErrInvalidMaxInstances(got, minInstances, maxConcur int) *Problem {
 		"Invalid max_instances",
 		fmt.Sprintf("max_instances must be in [%d, %d] (plan max_concurrency); got %d.", minInstances, maxConcur, got)).
 		WithLimit(int64(maxConcur), int64(got)).
-		WithDocs(docsBase + "/apps#max-instances")
+		WithDocs(docsBase + "/scaling-policy#manifest-form")
 }
 
 // ErrInvalidCooldown (issue #462 / ADR-058) is the 422 bounds
@@ -6694,7 +6792,7 @@ func ErrInvalidCooldown(field string, got, minSeconds, maxSeconds int) *Problem 
 		"Invalid cooldown",
 		fmt.Sprintf("%s must be in [%d, %d]; got %d.", field, minSeconds, maxSeconds, got)).
 		WithLimit(int64(maxSeconds), int64(got)).
-		WithDocs(docsBase + "/apps#scaling-policy")
+		WithDocs(docsBase + "/scaling-policy")
 }
 
 // ErrScalingTargetIncompatibleWithWorkloadClass (issue #462 /
@@ -6713,7 +6811,7 @@ func ErrScalingTargetIncompatibleWithWorkloadClass(metric string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeScalingTargetIncompatibleWithWorkloadClass,
 		"Target metric is not compatible with this app's workload class",
 		detail).
-		WithDocs(docsBase + "/apps#scaling-policy")
+		WithDocs(docsBase + "/scaling-policy")
 }
 
 // ErrPlanEgressAllowlistNotAllowed (ADR-031) is returned when a Free or Hobby
@@ -6726,7 +6824,7 @@ func ErrPlanEgressAllowlistNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanEgressAllowlistNotAllowed,
 		"Plan doesn't allow an egress allowlist",
 		fmt.Sprintf("the %s plan cannot pin an egress IP allowlist; upgrade to Pro or Scale to unlock this operator surface.", p)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrPlanPublicAuthIPAllowlistNotAllowed (ADR-118) is returned when a
@@ -6740,7 +6838,7 @@ func ErrPlanPublicAuthIPAllowlistNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanPublicAuthIPAllowlistNotAllowed,
 		"Plan doesn't allow a public-auth IP allowlist",
 		fmt.Sprintf("the %s plan cannot pin a public-auth IP allowlist; upgrade to Pro or Scale to unlock this operator surface.", p)).
-		WithDocs(docsBase + "/apps#public-auth-ip-allowlist")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrPlanLivenessProbeNotAllowed (issue #554 / ADR-078) is returned when a
@@ -6756,7 +6854,7 @@ func ErrPlanLivenessProbeNotAllowed(p Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanLivenessProbeNotAllowed,
 		"Plan doesn't allow a liveness probe",
 		fmt.Sprintf("the %s plan cannot pin a liveness probe; upgrade to Hobby or above to unlock the Cloud-Run-parity primitive.", p)).
-		WithDocs(docsBase + "/deploy-overrides#liveness-probe")
+		WithDocs(docsBase + "/deploy-overrides")
 }
 
 // ErrEgressAllowlistTooLong (ADR-031) is returned when the PATCH carries more
@@ -6768,7 +6866,7 @@ func ErrEgressAllowlistTooLong(got, maxSize int) *Problem {
 		"Egress allowlist too long",
 		fmt.Sprintf("egress_allowlist has %d entries; plan caps it at %d.", got, maxSize)).
 		WithLimit(int64(maxSize), int64(got)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrPublicAuthIPAllowlistTooLong (ADR-118) is returned when the
@@ -6781,7 +6879,7 @@ func ErrPublicAuthIPAllowlistTooLong(got, maxEntries int) *Problem {
 		"Public-auth IP allowlist too long",
 		fmt.Sprintf("public_auth_ip_allowlist has %d entries; plan caps it at %d.", got, maxEntries)).
 		WithLimit(int64(maxEntries), int64(got)).
-		WithDocs(docsBase + "/apps#public-auth-ip-allowlist")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrAccountEgressAllowlistExtraOutOfRange (issue #679 / PR-B /
@@ -6798,7 +6896,7 @@ func ErrAccountEgressAllowlistExtraOutOfRange(got, maxExtra int) *Problem {
 		"Account egress allowlist extra out of range",
 		fmt.Sprintf("egress_allowlist_extra=%d; max is %d.", got, maxExtra)).
 		WithLimit(int64(maxExtra), int64(got)).
-		WithDocs(docsBase + "/account#egress-allowlist-extra")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrInvalidEgressAllowlist (ADR-031 + ADR-032) is a 400 for
@@ -6811,7 +6909,7 @@ func ErrInvalidEgressAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidEgressAllowlist,
 		"Invalid egress allowlist entry",
 		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
-		WithDocs(docsBase + "/apps#egress-allowlist")
+		WithDocs(docsBase + "/networking#outbound-connections")
 }
 
 // ErrPlanStaticEgressIPNotAllowed (ADR-119) is returned when a
@@ -6826,7 +6924,7 @@ func ErrPlanStaticEgressIPNotAllowed(p Plan) *Problem {
 		"Plan does not unlock static egress IP",
 		fmt.Sprintf("plan %q does not unlock static egress IP; upgrade to Scale.", p)).
 		WithLimit(int64(0), int64(0)).
-		WithDocs(docsBase + "/apps#static-egress-ip")
+		WithDocs(docsBase + "/static-egress-ip")
 }
 
 // ErrPlanPrivateNetworkNotAllowed is returned when an account's plan does not
@@ -6878,7 +6976,7 @@ func ErrPlanStaticEgressIPQuota(p Plan, limit int, observed int, detail string) 
 		"Static egress IP quota reached",
 		fmt.Sprintf("plan %q caps static egress IP at %d per app (observed=%d): %s.", p, limit, observed, detail)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/apps#static-egress-ip")
+		WithDocs(docsBase + "/static-egress-ip")
 }
 
 // ErrAppStaticEgressIPInvalid (ADR-119) is a 400 for shape
@@ -6896,7 +6994,7 @@ func ErrAppStaticEgressIPInvalid(ip string, reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeAppStaticEgressIPInvalid,
 		"Invalid static egress IP",
 		fmt.Sprintf("static_egress_ip=%q is not accepted: %s.", ip, reason)).
-		WithDocs(docsBase + "/apps#static-egress-ip")
+		WithDocs(docsBase + "/static-egress-ip")
 }
 
 // ErrStaticEgressIPNotProvisioned (ADR-119 redesign) is the 404
@@ -6922,7 +7020,7 @@ func ErrStaticEgressIPNotProvisioned(ip string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeStaticEgressIPNotProvisioned,
 		"Static egress IP not provisioned on this host",
 		fmt.Sprintf("static_egress_ip=%q is not in the operator bundle; ask the host operator to provision it on the host's AS before pinning.", ip)).
-		WithDocs(docsBase + "/apps#static-egress-ip")
+		WithDocs(docsBase + "/static-egress-ip")
 }
 
 // ErrInvalidPublicAuthIPAllowlist (ADR-118) is a 400 for ingress
@@ -6937,7 +7035,7 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInvalidPublicAuthIPAllowlist,
 		"Invalid public-auth IP allowlist entry",
 		fmt.Sprintf("entry %q is not a valid v4 or v6 CIDR (non-/0): %v.", entry, reason)).
-		WithDocs(docsBase + "/apps#public-auth-ip-allowlist")
+		WithDocs(docsBase + "/auth#app-access-control")
 }
 
 // ErrValidation is a 400 fallback for malformed request bodies. Used by
@@ -6995,7 +7093,7 @@ func ErrPlanLimitEdgeRuleLists(plan Plan, limit, observed int) *Problem {
 		"Edge rule list limit reached",
 		fmt.Sprintf("%s plan caps edge rule lists at %d per account; you have %d.", plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#edge-rules")
+		WithDocs(docsBase + "/edge-rules#limits")
 }
 
 // ErrPlanLimitEdgeRuleListItems is the 403 for a list over its item cap.
@@ -7004,7 +7102,7 @@ func ErrPlanLimitEdgeRuleListItems(plan Plan, limit, observed int) *Problem {
 		"Edge rule list too large",
 		fmt.Sprintf("%s plan caps an edge rule list at %d items; this list would have %d.", plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#edge-rules")
+		WithDocs(docsBase + "/edge-rules#limits")
 }
 
 // EdgeRuleSetETag renders an app's edge-rule set version as an ETag value.
@@ -7026,6 +7124,19 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanAsyncBacklog is returned when an async invocation (API async
+// invoke, async route or function send) finds its app's pending async
+// invocations at the plan's MaxQueueDepth (ADR-20261022105723 amendment
+// 2026-11-13). The backlog drains, so it is a 429 with Retry-After.
+func ErrPlanAsyncBacklog(limit, observed int) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodePlanAsyncBacklog,
+		"Per-app async backlog full",
+		fmt.Sprintf("the plan caps this app at %d pending async invocations; observed %d. Retry after the backlog drains.", limit, observed)).
+		WithLimit(int64(limit), int64(observed)).
+		WithHeader("Retry-After", "60").
+		WithDocs(docsBase + "/event-driven#async-backlog")
+}
+
 // ErrPlanQueueBacklogBytes is returned on a queue send when the account's
 // pending queue messages already hold the plan's
 // MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
@@ -7033,7 +7144,7 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
 	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
 		"Account queue backlog full",
-		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		fmt.Sprintf("the plan caps this account's pending queue messages, async invocations and delayed tasks at %d bytes; observed %d.", limit, observed)).
 		WithLimit(limit, observed).
 		WithDocs(docsBase + "/event-driven#queue-backlog")
 }
@@ -7046,7 +7157,7 @@ func ErrPlanSourceBytes(limit int, observed int64) *Problem {
 		"Invocation payload too large",
 		fmt.Sprintf("this plan caps each invocation at %d bytes; observed %d.", limit, observed)).
 		WithLimit(int64(limit), observed).
-		WithDocs(docsBase + "/event-driven#payload-size")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrPlanFeatureGated is returned when the customer's plan does not
@@ -7059,13 +7170,19 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include analytics",
 			fmt.Sprintf("the %s plan doesn't include request analytics; upgrade to Hobby or higher for historical observability.", p)).
-			WithDocs(docsBase + "/plans#analytics")
+			WithDocs(docsBase + "/plans")
 	}
 	if feature == "ai_gateway" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
-			WithDocs(docsBase + "/cli#ai")
+			WithDocs(docsBase + "/plans")
+	}
+	if feature == "ai_semantic_cache" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include the AI semantic cache",
+			fmt.Sprintf("the %s plan doesn't include the AI gateway's semantic cache; upgrade to Pro or Scale to answer calls that mean the same as a cached one.", p)).
+			WithDocs(docsBase + "/plans")
 	}
 	if feature == "route_controls" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
@@ -7077,12 +7194,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 			"Plan doesn't include synchronous invocation",
 			fmt.Sprintf("the %s plan doesn't include synchronous invocation; use the app's public HTTPS endpoint or upgrade to Hobby or higher.", p)).
-			WithDocs(docsBase + "/plans#synchronous-invocation")
+			WithDocs(docsBase + "/plans")
 	}
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
 		"Plan doesn't include this feature",
 		fmt.Sprintf("the %s plan doesn't unlock %s; upgrade to Hobby or higher to use event-driven features.", p, feature)).
-		WithDocs(docsBase + "/plans#event-driven")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrPlanWorkerReplicas refuses a worker that the plan cannot run: Free runs
@@ -7117,7 +7234,7 @@ func ErrInvocationNotFound(id string) *Problem {
 	return NewProblem(http.StatusNotFound, CodeInvocationNotFound,
 		"Invocation not found",
 		fmt.Sprintf("no invocation with id %q on this account.", id)).
-		WithDocs(docsBase + "/event-driven#invocations")
+		WithDocs(docsBase + "/event-driven#invocation-history-retention")
 }
 
 // ErrDeadLetterNotReplayable refuses replay of an event_route dead-letter
@@ -7150,7 +7267,7 @@ func ErrInvocationNotReplayable(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeInvocationNotReplayable,
 		"Invocation is not in a replayable state",
 		fmt.Sprintf("only invocations in state 'failed' or 'dead_letter' can be replayed; current state is %q.", state)).
-		WithDocs("https://gregale.dev/docs/event-driven#invocations")
+		WithDocs("https://gregale.dev/docs/event-driven#invocation-history-retention")
 }
 
 // ErrInvocationWorkloadClass rejects the HTTP-style invoke primitive for
@@ -7160,7 +7277,7 @@ func ErrInvocationWorkloadClass(workloadClass, executionMode string) *Problem {
 	detail := fmt.Sprintf("this app cannot accept request invocations (workload_class=%q, execution_mode=%q); use a queue binding for workers or the jobs API for run-to-completion work.", workloadClass, executionMode)
 	return NewProblem(http.StatusUnprocessableEntity, CodeValidation,
 		"Invocation is incompatible with this workload", detail).
-		WithDocs(docsBase + "/event-driven#invocations")
+		WithDocs(docsBase + "/event-driven#invocation-history-retention")
 }
 
 // ErrBuildProvenanceNotFound is the ADR-038 surface for a build
@@ -7174,7 +7291,7 @@ func ErrBuildProvenanceNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeBuildProvenanceNotFound,
 		"Build provenance not found",
 		"the build succeeded but no provenance row exists; builderd logged a warning when the populator failed").
-		WithDocs(docsBase + "/builds#provenance")
+		WithDocs(docsBase + "/builds")
 }
 
 // ErrBuildNotFound is the DEPLOY-PROV-6 / ADR-089 (issue #741)
@@ -7187,7 +7304,7 @@ func ErrBuildNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeBuildNotFound,
 		"No such build",
 		"the build id does not exist, or belongs to another account").
-		WithDocs(docsBase + "/builds#status")
+		WithDocs(docsBase + "/builds")
 }
 
 // ErrInvalidRef is the DEPLOY-PROV-4 / ADR-092 (issue #739)
@@ -7216,7 +7333,7 @@ func ErrGitHubInstallNotFound() *Problem {
 	return NewProblem(http.StatusNotFound, CodeGitHubInstallNotFound,
 		"No GitHub installation",
 		"this account has no GitHub App installation row; complete `gregale connect` once before retrying from CI").
-		WithDocs(docsBase + "/build/source-ref#prereq")
+		WithDocs(docsBase + "/deploy-from-source#prerequisites")
 }
 
 // ErrSourceRefUnavailable is the DEPLOY-PROV-4 / ADR-092 (issue
@@ -7232,7 +7349,7 @@ func ErrSourceRefUnavailable(reason string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeSourceRefUnavailable,
 		"Source-ref fetch unavailable",
 		reason).
-		WithDocs(docsBase + "/build/source-ref#errors")
+		WithDocs(docsBase + "/deploy-from-source#failure-modes")
 }
 
 // PreviewDatabaseRetryAfter is the Retry-After of
@@ -7270,7 +7387,7 @@ func ErrBuildSBOMUnavailable() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeBuildSBOMUnavailable,
 		"Build SBOM unavailable",
 		"no SBOM has been generated for this build; imaged's syft populator did not run or did not persist the artefact").
-		WithDocs(docsBase + "/builds#sbom")
+		WithDocs(docsBase + "/builds")
 }
 
 // ErrLongPollTimeout is returned by the long-poll handlers (sync
@@ -7283,7 +7400,7 @@ func ErrLongPollTimeout() *Problem {
 	return NewProblem(http.StatusGatewayTimeout, "long_poll_timeout",
 		"Long-poll wait budget ran out",
 		"the server waited for the configured long-poll window and the event did not arrive; retry.").
-		WithDocs(docsBase + "/event-driven#long-poll")
+		WithDocs(docsBase + "/event-driven")
 }
 
 // ErrInvalidScheduledAt is returned when a delayed-task POST carries a
@@ -7315,7 +7432,7 @@ func ErrInvalidCredentials() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeInvalidCredentials,
 		"Sign in failed",
 		"email or password is incorrect.").
-		WithDocs(docsBase + "/auth#sign-in")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrEmailNotVerified is the 401 returned by the Google / GitHub OAuth
@@ -7327,7 +7444,7 @@ func ErrEmailNotVerified(provider string) *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeEmailNotVerified,
 		"Email not verified",
 		fmt.Sprintf("the %s account's primary email is not verified; verify it on the provider and retry.", provider)).
-		WithDocs(docsBase + "/auth#oauth")
+		WithDocs(docsBase + "/auth#email-verification")
 }
 
 // ErrEmailVerificationRequired is the authenticated 403 gate for deploy and
@@ -7367,7 +7484,7 @@ func ErrVerificationLinkInvalid() *Problem {
 func ErrPasswordTooWeak(reason string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodePasswordTooWeak,
 		"Password too weak", reason).
-		WithDocs(docsBase + "/auth#password")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrResetTokenInvalid is the 410 returned by GET / POST /auth/reset
@@ -7378,7 +7495,7 @@ func ErrResetTokenInvalid() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenInvalid,
 		"Reset link invalid",
 		"this password-reset link is unknown or has already been used.").
-		WithDocs(docsBase + "/auth#reset")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // ErrResetTokenExpired is the 410 returned by GET / POST /auth/reset
@@ -7389,7 +7506,7 @@ func ErrResetTokenExpired() *Problem {
 	return NewProblem(http.StatusGone, CodeResetTokenExpired,
 		"Reset link expired",
 		"this password-reset link has expired; request a new one.").
-		WithDocs(docsBase + "/auth#reset")
+		WithDocs(docsBase + "/account#profile-sign-in-and-sessions")
 }
 
 // --- Organizations (issue #190 / IAM-6 / ADR-061) --------------------------
@@ -7423,7 +7540,7 @@ func ErrOrgSlugInvalid(reason string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeOrgSlugInvalid,
 		"Invalid organization slug",
 		fmt.Sprintf("org slugs must match %s; %s", OrgSlugPattern, reason)).
-		WithDocs(docsBase + "/orgs#slugs")
+		WithDocs(docsBase + "/orgs")
 }
 
 // ErrOrgSlugTaken is the 409 returned when the slug is already in
@@ -7434,7 +7551,7 @@ func ErrOrgSlugTaken(slug string) *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgSlugTaken,
 		"Organization slug in use",
 		fmt.Sprintf("slug %q is already taken; pick another.", slug)).
-		WithDocs(docsBase + "/orgs#slugs")
+		WithDocs(docsBase + "/orgs")
 }
 
 // ErrOrgMemberCapExceeded is the 403 returned when the plan's
@@ -7446,7 +7563,7 @@ func ErrOrgMemberCapExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("the plan caps this organization at %d member(s); you have %d.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs#member-cap")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgFreeLimitExceeded is the 403 returned when the caller already owns
@@ -7458,7 +7575,7 @@ func ErrOrgFreeLimitExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("an account may own %d organization(s) on the Free plan; you own %d. Upgrade one to create another; a Free organization deleted this month counts until the month ends.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs#free-organizations")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgFreeTransferLimitExceeded reports the recipient's ownership count.
@@ -7478,7 +7595,7 @@ func ErrOrgInvitationCapExceeded(limit, observed int) *Problem {
 		fmt.Sprintf("the plan caps this organization at %d pending invitation(s); you have %d.",
 			limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/orgs#invitation-cap")
+		WithDocs(docsBase + "/orgs#member-limits")
 }
 
 // ErrOrgRoleForbidden is the 403 returned when the authenticated
@@ -7492,6 +7609,15 @@ func ErrOrgRoleForbidden(action string) *Problem {
 		WithDocs(docsBase + "/orgs#roles")
 }
 
+// ErrOrgMFARequired is the 403 a member without two-factor authentication
+// gets on an organization that requires it (ADR 20261114170352).
+func ErrOrgMFARequired() *Problem {
+	return NewProblem(http.StatusForbidden, CodeOrgMFARequired,
+		"Two-factor authentication required",
+		"this organization requires two-factor authentication; turn it on for your account and try again.").
+		WithDocs(docsBase + "/orgs#require-two-factor-authentication")
+}
+
 // ErrOrgAlreadyMember is the 409 returned when the accepting
 // account already has a membership in the org. Detail names the
 // existing role so the dashboard can offer a "switch to this
@@ -7500,7 +7626,7 @@ func ErrOrgAlreadyMember(role string) *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgAlreadyMember,
 		"Already a member of this organization",
 		fmt.Sprintf("this account is already a member of the organization with role %q.", role)).
-		WithDocs(docsBase + "/orgs#members")
+		WithDocs(docsBase + "/orgs#invitations")
 }
 
 // ErrOrgInvitationInvalid is the 410 returned when the invitation
@@ -7532,7 +7658,7 @@ func ErrOrgLastOwner() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgLastOwner,
 		"Cannot remove the last owner",
 		"transfer ownership to another member before removing or demoting this role.").
-		WithDocs(docsBase + "/orgs#ownership")
+		WithDocs(docsBase + "/orgs#changing-roles-removing-members-and-ownership")
 }
 
 // ErrOrgPersonalImmutable is the 409 returned when a caller
@@ -7543,7 +7669,7 @@ func ErrOrgPersonalImmutable() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgPersonalImmutable,
 		"Personal organizations are immutable",
 		"this organization is the personal organization of one account; it cannot accept members or be deleted independently.").
-		WithDocs(docsBase + "/orgs#personal-orgs")
+		WithDocs(docsBase + "/orgs#members-roles-and-invitations")
 }
 
 // ErrOrgAPIKeyRequiresOrg is the 409 returned when a legacy API
@@ -7554,7 +7680,7 @@ func ErrOrgAPIKeyRequiresOrg() *Problem {
 	return NewProblem(http.StatusConflict, CodeOrgAPIKeyRequiresOrg,
 		"API key must be bound to an organization",
 		"this legacy API key has no organization binding; create a new key via /v1/orgs/{slug}/keys.").
-		WithDocs(docsBase + "/orgs#api-keys")
+		WithDocs(docsBase + "/orgs#organization-api-keys")
 }
 
 // ErrInvalidOverflowNode is the 422 returned when the
@@ -7566,7 +7692,7 @@ func ErrInvalidOverflowNode(name string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidOverflowNode,
 		"Invalid overflow_node",
 		fmt.Sprintf("no active compute_node named %q; check the operator-supplied spill target name and try again.", name)).
-		WithDocs(docsBase + "/apps#overflow_node")
+		WithDocs(docsBase + "/apps")
 }
 
 // ----------------------------------------------------------------------------
@@ -7610,7 +7736,7 @@ func ErrPlanLimitEdgeRules(plan Plan, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps edge rules at %d per app; you have %d. Delete one to add another.",
 			plan, limit, observed)).
 		WithLimit(int64(limit), int64(observed)).
-		WithDocs(docsBase + "/plans#edge-rules")
+		WithDocs(docsBase + "/edge-rules#limits")
 }
 
 // ErrPlanEdgeRuleKindNotAllowed is the 402 returned when a Free
@@ -7619,7 +7745,7 @@ func ErrPlanEdgeRuleKindNotAllowed(plan Plan, kind string) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanEdgeRuleKindNotAllowed,
 		"Edge rule kind unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include edge rule kind %q; upgrade to Hobby or above to use it.", plan, kind)).
-		WithDocs(docsBase + "/plans#edge-rules")
+		WithDocs(docsBase + "/edge-rules#limits")
 }
 
 // ErrCapabilityNotReleased refuses a request field or declaration whose
@@ -7644,7 +7770,7 @@ func ErrPlanEdgeRuleKindQuotaReached(plan Plan, kind string, observed, limit int
 		"Edge rule kind quota reached",
 		fmt.Sprintf("the %s plan allows %d %s edge rule(s) per app; you have used %d. Upgrade to a higher tier for a larger quota.",
 			plan, limit, kind, observed)).
-		WithDocs(docsBase + "/plans#edge-rules")
+		WithDocs(docsBase + "/edge-rules#limits")
 }
 
 // ErrCORSOriginNotAllowed is the 403 returned when a CORS rule's
@@ -7771,7 +7897,7 @@ func ErrInvalidRecoverAction(got string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeInvalidRecoverAction,
 		"Invalid recover_rollout action",
 		fmt.Sprintf("recover_rollout.action must be one of {advance, promote, abort}; got %q.", got)).
-		WithDocs(docsBase + "/deploys#recover-rollout")
+		WithDocs(docsBase + "/rollouts#why-a-rollout-advanced-waits-or-stopped")
 }
 
 // ErrRolloutNotStuck (issue #976 / ADR-122 / SAFE-RELEASES-R) is
@@ -7785,7 +7911,7 @@ func ErrRolloutNotStuck() *Problem {
 	return NewProblem(http.StatusConflict, CodeRolloutNotStuck,
 		"Rollout is not stuck",
 		"canary_step_started_at is within the stuck-after window; wait for the rollout to age, or use --action promote to force-step.").
-		WithDocs(docsBase + "/deploys#recover-rollout")
+		WithDocs(docsBase + "/rollouts#why-a-rollout-advanced-waits-or-stopped")
 }
 
 // ErrRolloutStateInvalid (issue #976 / ADR-122 / SAFE-RELEASES-R)
@@ -7798,7 +7924,7 @@ func ErrRolloutStateInvalid(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
 		"Rollout state does not permit recovery",
 		fmt.Sprintf("rollout_state=%q; recovery requires rollout_state in {pending, rolling_out}.", state)).
-		WithDocs(docsBase + "/deploys#recover-rollout")
+		WithDocs(docsBase + "/rollouts#why-a-rollout-advanced-waits-or-stopped")
 }
 
 // ErrRolloutAmbiguous is the 409 for an app-level rollout recovery while
@@ -7807,7 +7933,7 @@ func ErrRolloutAmbiguous() *Problem {
 	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
 		"Rollouts are in progress in more than one environment",
 		"More than one environment of this app has a rollout in progress, so an app-level recovery cannot tell which one to change. Wait for one rollout to finish, or abort a specific rollout with deployment_id and expected_predecessor_deployment_id.").
-		WithDocs(docsBase + "/deploys#recover-rollout")
+		WithDocs(docsBase + "/rollouts#why-a-rollout-advanced-waits-or-stopped")
 }
 
 // ErrNodeDraining (Workstream B / issue #1184 / ADR-137) is the
@@ -7876,7 +8002,7 @@ const CodeUDPListenerLimit = "udp_listener_limit"
 func ErrUDPListenerLimit(limit, observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodeUDPListenerLimit,
 		"UDP listener reservation limit reached", "Delete an existing UDP listener before reserving another public port. Disabled listeners still reserve their ports.").
-		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/deploys#containers")
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/networking#private-tcp-between-services")
 }
 
 // CodeProfileInvestigationLimit is the per-app saved metadata quota.

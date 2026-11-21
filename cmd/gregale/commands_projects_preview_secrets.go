@@ -127,7 +127,7 @@ func previewSecretPairs(unset, fromStdin bool, positional []string) ([]secretsPa
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			pair, err := parseSecretsPair(line)
+			pair, err := parseDotenvLine(line)
 			if err != nil {
 				return nil, err
 			}

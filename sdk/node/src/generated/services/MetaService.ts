@@ -6,6 +6,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class MetaService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * This spec, as YAML.
    * Machine-readable API description. Same bytes as
@@ -16,7 +17,7 @@ export class MetaService {
    * @throws ApiError
    */
   public static getOpenApiSpec(): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/openapi.yaml',
     });
@@ -30,7 +31,7 @@ export class MetaService {
    * @throws ApiError
    */
   public static getOpenApiSpecJson(): CancelablePromise<Record<string, any>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/openapi.json',
     });
@@ -44,7 +45,7 @@ export class MetaService {
    * @throws ApiError
    */
   public static getDocs(): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/docs',
     });

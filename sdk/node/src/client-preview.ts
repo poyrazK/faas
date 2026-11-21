@@ -39,6 +39,7 @@ import { watchExecutionPipeline, type WatchPipelineOptions } from './execution-p
 
 import { Task } from './task.js';
 
+/** @deprecated Use createClient from '@gregale/sdk-node/preview' and its service namespaces. */
 export class FaaSClient extends BaseFaaSClient {
   task<Input, Output>(name: string, version: number, decodeResult: (value: unknown) => Output): Task<Input, Output> { return new Task(name, version, decodeResult); }
   deliverRunArtifact(slug: string, route: string, requestBody: DeliverRunArtifactRequest) { return RunsService.deliverRunArtifact({ slug, route, requestBody }); }

@@ -123,6 +123,10 @@ type projectCloneWorkloadSnapshot struct {
 	// Crons are the workload's crons in the source environment, copied into
 	// the stage paused (ADR-20261104120000 amendment 2026-11-12).
 	Crons *projectCloneCrons `json:"crons,omitempty"`
+	// EventSubscriptions are the workload's event subscriptions in the source
+	// environment, copied into the stage paused (ADR-20261104120000
+	// amendment 2026-11-14).
+	EventSubscriptions *projectCloneEventSubscriptions `json:"event_subscriptions,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {

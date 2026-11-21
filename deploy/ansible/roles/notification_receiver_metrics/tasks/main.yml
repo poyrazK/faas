@@ -1,0 +1,41 @@
+---
+- name: notification_receiver_metrics — validate the collection interval
+  ansible.builtin.assert:
+    that:
+      - faas_notification_receiver_metrics_interval is match('^([1-9]|[1-5][0-9]|60)s$')
+    fail_msg: The receiver metrics interval must be 1–60 seconds to fit the 120-second freshness budget.
+
+- name: notification_receiver_metrics — publish configured receiver expectations
+  ansible.builtin.template:
+    src: notification-receiver-inventory.prom.j2
+    dest: /var/lib/node_exporter/textfile_collector/notification-receiver-inventory.prom
+    owner: root
+    group: node_exporter
+    mode: "0644"
+
+- name: notification_receiver_metrics — install the read-only receiver collector
+  ansible.builtin.copy:
+    src: faas-notification-receiver-metrics
+    dest: /usr/local/sbin/faas-notification-receiver-metrics
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: notification_receiver_metrics — install service and timer
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-notification-receiver-metrics.service
+    - faas-notification-receiver-metrics.timer
+  notify: daemon-reload notification receiver metrics
+
+- name: notification_receiver_metrics — enable the receiver collector timer
+  ansible.builtin.systemd:
+    name: faas-notification-receiver-metrics.timer
+    enabled: true
+    state: started
+    daemon_reload: true

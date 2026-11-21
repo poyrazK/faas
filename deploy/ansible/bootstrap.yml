@@ -28,9 +28,11 @@
 
 # Resolve the provider's private transport address once for every host before
 # either role-specific play starts. The overlay role then uses these facts to
-# render the same private endpoint map on every box. Providers with a public
-# default route can set `faas_private_address` in generated inventory; the
-# manifest and daemon configuration remain hostname-only.
+# render the same private endpoint map on every box. On a host whose default
+# route is public, the manifest names the private card (overlay.interface) or
+# the provider inventory sets `faas_private_address`
+# (tasks/resolve_private_address.yml); the manifest and daemon configuration
+# remain hostname-only.
 - name: Discover provider-neutral private transport addresses
   hosts: control_plane:compute_nodes
   gather_facts: false
@@ -47,19 +49,11 @@
     - name: Gather facts for hosts requiring bootstrap convergence
       ansible.builtin.setup:
   tasks:
-    - name: Require a usable private transport address
-      ansible.builtin.assert:
-        that:
-          - (faas_private_address | default(ansible_facts.default_ipv4.address, true) | default('')) | length > 0
-        fail_msg: >-
-          No private transport address was discovered for {{ inventory_hostname }}.
-          Set faas_private_address in the provider inventory or ensure the
-          host has a default IPv4 address.
-      tags: [private-endpoints]
-
     - name: Publish private transport address to later plays
-      ansible.builtin.set_fact:
-        faas_private_dns_address: "{{ faas_private_address | default(ansible_facts.default_ipv4.address, true) }}"
+      ansible.builtin.include_tasks:
+        file: tasks/resolve_private_address.yml
+        apply:
+          tags: [private-endpoints]
       tags: [private-endpoints]
 
 # ADR-20261109120000: every host's Tang key server comes up before any host's
@@ -209,6 +203,16 @@
       when:
         - not (faas_image_seed | default(false) | bool)
         - faas_cp_converge_roles | default(none) is none or 'audit_anchor' in faas_cp_converge_roles
+    # ADR-20261113160000: apid resolves the signup country and network
+    # owner from the same DB-IP databases as gatewayd-internal; stage them
+    # before control_plane_service so apid's first start finds them.
+    - role: geoip
+      when: faas_cp_converge_roles | default(none) is none or 'geoip' in faas_cp_converge_roles
+    # apid's managed PostgreSQL provider registry, before control_plane_service
+    # so apid's first start finds it. A no-op while
+    # faas_managed_postgres_config is empty.
+    - role: managed_postgres_config
+      when: faas_cp_converge_roles | default(none) is none or 'managed_postgres_config' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: seal_domains
@@ -247,6 +251,11 @@
     # faas_signd_listen is empty.
     - role: signd_service
       when: faas_cp_converge_roles | default(none) is none or 'signd_service' in faas_cp_converge_roles
+    # ADR-20261110210000 §3: the secret opener. Off (and removed) while
+    # faas_secretd_listen is empty. After seal_domains, which stages the
+    # runtime identity it opens with.
+    - role: secretd_service
+      when: faas_cp_converge_roles | default(none) is none or 'secretd_service' in faas_cp_converge_roles
     # ADR-20261112160000: the Neon key holder. Off (and removed) while
     # faas_neond_enabled is false.
     - role: neond_service
@@ -295,82 +304,128 @@
     # the Firecracker kernel build. node_join stages the env + manifest before
     # importing this play; image-seed builds opt out explicitly.
     - role: compute_admission
+      when: faas_join_converge_roles | default(none) is none or 'compute_admission' in faas_join_converge_roles
     # Shared host preconditions. Control-plane monitoring and notification
     # services stay on the control-plane role; a compute box must not require
     # production paging credentials or run a second Alertmanager instance.
     - role: cgroups_v2
+      when: faas_join_converge_roles | default(none) is none or 'cgroups_v2' in faas_join_converge_roles
     - role: grub
+      when: faas_join_converge_roles | default(none) is none or 'grub' in faas_join_converge_roles
     # ADR-143: spec §11 OS posture, same as the control-plane play.
     - role: host_hardening
+      when: faas_join_converge_roles | default(none) is none or 'host_hardening' in faas_join_converge_roles
     - role: storage
       tags: [storage]
+      when: faas_join_converge_roles | default(none) is none or 'storage' in faas_join_converge_roles
     - role: lvm
+      when: faas_join_converge_roles | default(none) is none or 'lvm' in faas_join_converge_roles
     - role: xfs
+      when: faas_join_converge_roles | default(none) is none or 'xfs' in faas_join_converge_roles
     - role: firecracker
+      when: faas_join_converge_roles | default(none) is none or 'firecracker' in faas_join_converge_roles
     - role: supply_chain_scanners
+      when: faas_join_converge_roles | default(none) is none or 'supply_chain_scanners' in faas_join_converge_roles
     - role: systemd_slices
+      when: faas_join_converge_roles | default(none) is none or 'systemd_slices' in faas_join_converge_roles
     # ADR-906 decision 6: memory-only compressed swap for frozen VMs; a no-op
     # unless faas_zswap_enabled is set for the host.
     - role: zswap
+      when: faas_join_converge_roles | default(none) is none or 'zswap' in faas_join_converge_roles
     # Keep the optional OTLP configuration tripwire consistent on compute nodes.
     - role: otlp_exporter
+      when: faas_join_converge_roles | default(none) is none or 'otlp_exporter' in faas_join_converge_roles
     - role: nftables
+      when: faas_join_converge_roles | default(none) is none or 'nftables' in faas_join_converge_roles
     - role: overlay
+      when: faas_join_converge_roles | default(none) is none or 'overlay' in faas_join_converge_roles
     # ADR-372: after the overlay so its routes exist before the tenant
     # policy rules exempt them from the gateway tunnel.
     - role: tenant_egress_client
+      when: faas_join_converge_roles | default(none) is none or 'tenant_egress_client' in faas_join_converge_roles
+    # ADR-20261117185346: the agent tunnel beside the tenant one; a no-op
+    # without egress.agent_gateway.
+    - role: agent_egress_client
+      when: faas_join_converge_roles | default(none) is none or 'agent_egress_client' in faas_join_converge_roles
     - role: node_exporter
+      when: faas_join_converge_roles | default(none) is none or 'node_exporter' in faas_join_converge_roles
     - role: gcp_ops_agent
+      when: faas_join_converge_roles | default(none) is none or 'gcp_ops_agent' in faas_join_converge_roles
     - role: internal_pki_renewal
+      when: faas_join_converge_roles | default(none) is none or 'internal_pki_renewal' in faas_join_converge_roles
     - role: canary_artifact_retention
+      when: faas_join_converge_roles | default(none) is none or 'canary_artifact_retention' in faas_join_converge_roles
     - role: cgroup_metrics
+      when: faas_join_converge_roles | default(none) is none or 'cgroup_metrics' in faas_join_converge_roles
     # ADR-20261023124955 §5: alerts on the public serving path without the
     # control plane. Removes its timer while no probe URL is configured.
     - role: serving_probe
+      when: faas_join_converge_roles | default(none) is none or 'serving_probe' in faas_join_converge_roles
     # Compute-only:
     # ADR 20261022111812: stage the runtime seal-domain identity before
     # vmmd_service so a vmmd (re)start in this run loads it.
     - role: seal_domains
-      when: faas_seal_domains_managed | default(false) | bool
+      when:
+        - faas_seal_domains_managed | default(false) | bool
+        - faas_join_converge_roles | default(none) is none or 'seal_domains' in faas_join_converge_roles
     - role: vmmd_service
+      when: faas_join_converge_roles | default(none) is none or 'vmmd_service' in faas_join_converge_roles
     # M9: every compute node owns a node-local schedd for heartbeat and
     # recovery decisions. The shared database is remote on this host.
     # ADR-143: stage the GeoIP database BEFORE gatewayd-internal so its
     # first start finds the file at the FAAS_GEOIP_DB_PATH default.
     - role: geoip
+      when: faas_join_converge_roles | default(none) is none or 'geoip' in faas_join_converge_roles
     - role: gatewayd_internal_service
+      when: faas_join_converge_roles | default(none) is none or 'gatewayd_internal_service' in faas_join_converge_roles
     # ADR-1343: the app edge (Cloudflare Tunnel connector + gatewayd-public in
     # compute edge mode); removes itself unless the manifest turns it on.
     - role: gatewayd_public_edge_service
+      when: faas_join_converge_roles | default(none) is none or 'gatewayd_public_edge_service' in faas_join_converge_roles
     # ADR-20261031122757: the S3 gateway beside the app edge; removes itself
     # unless the manifest's object_storage.compute_nodes turns it on.
     - role: s3_gateway_compute_service
+      when: faas_join_converge_roles | default(none) is none or 's3_gateway_compute_service' in faas_join_converge_roles
     - role: builderd_service
+      when: faas_join_converge_roles | default(none) is none or 'builderd_service' in faas_join_converge_roles
     - role: compute_only_service
+      when: faas_join_converge_roles | default(none) is none or 'compute_only_service' in faas_join_converge_roles
     - role: profiled_service
+      when: faas_join_converge_roles | default(none) is none or 'profiled_service' in faas_join_converge_roles
     # ADR-20261110183000: observe-only runtime detection; off until
     # faas_tetragon_enabled. Before alloy, so its export directory exists.
     - role: tetragon
+      when: faas_join_converge_roles | default(none) is none or 'tetragon' in faas_join_converge_roles
     # ADR-20261023124955 §2: ship this node's platform journal to Loki on the
     # control plane, with a Promtail leaf issued by the control plane's CA.
     - role: platform_logs_pki
-      when: faas_obs_logs_enabled | default(false) | bool
+      when:
+        - faas_obs_logs_enabled | default(false) | bool
+        - faas_join_converge_roles | default(none) is none or 'platform_logs_pki' in faas_join_converge_roles
     - role: alloy
       when:
         - faas_obs_logs_enabled | default(false) | bool
         - faas_obs_log_shipper | default('alloy') == 'alloy'
+        - faas_join_converge_roles | default(none) is none or 'alloy' in faas_join_converge_roles
     - role: promtail
       when:
         - faas_obs_logs_enabled | default(false) | bool
         - faas_obs_log_shipper | default('alloy') == 'promtail'
+        - faas_join_converge_roles | default(none) is none or 'promtail' in faas_join_converge_roles
     - role: log_archive
+      when: faas_join_converge_roles | default(none) is none or 'log_archive' in faas_join_converge_roles
     - role: optional_credentials
+      when: faas_join_converge_roles | default(none) is none or 'optional_credentials' in faas_join_converge_roles
     - role: role_convergence
+      when: faas_join_converge_roles | default(none) is none or 'role_convergence' in faas_join_converge_roles
     # ADR-20261110183000: hourly check that this host runs the signed release.
     - role: release_integrity
+      when: faas_join_converge_roles | default(none) is none or 'release_integrity' in faas_join_converge_roles
     - role: fleet_verify
       # node_join imports this bootstrap before it installs the requested
       # release. Existing enabled daemons may still execute an older binary
       # against already-staged new config and trust material, so their
       # readiness is intentionally proved by node_join after installation.
-      when: not (faas_join_defer_service_handlers | default(false) | bool)
+      when:
+        - not (faas_join_defer_service_handlers | default(false) | bool)
+        - faas_join_converge_roles | default(none) is none or 'fleet_verify' in faas_join_converge_roles

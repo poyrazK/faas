@@ -1,0 +1,54 @@
+# ADR-20261118062934 · Owner-approved hosted Task rehearsal plans
+
+- **Status:** Accepted for preview planning
+- **Related:** [Hosted Task binding qualification](20261117135916-hosted-task-binding-qualification.md), [Contained release commands](20261020150000-rehearsal-contained-release-commands.md), [Isolated PostgreSQL fixtures](20261017201009-rehearsal-postgres-fixtures.md)
+
+Hosted Task source review approves retained bytes. Binding qualification is a short-lived observation of the reviewed native setup. A rehearsal needs its own approval, scoped to an isolated run and independent of release authority.
+
+## Decision
+
+With rehearsal planning, source retention and binding verification enabled, an unscoped personal administrator API key can prepare one immutable plan per qualified source identity. The plan pins the intent, review and binding digests, the observation time and original evidence deadline, and a server-assigned disposable target identity with its own queue namespace. The target identity is reserved metadata. A future executor must allocate fresh contained resources under that identity, including a disposable database. The plan accepts no caller-selected database, namespace, app or secret reference. It has zero traffic authority.
+
+An owner approves or revokes the exact plan digest in a separate request. Approval pins the native administrator key privately so its authority can be rechecked later. Approval and revoke replay the original receipt. Metadata inspection and revocation remain accessible while admission is disabled. The plan never outlives the passing observation, which expires within one minute and cannot extend the retained source lifetime.
+
+A private store operation consumes the approval once. The caller must present the approving personal key and exact plan digest. PostgreSQL checks retained source, binding selection and completed evidence, app and credential pins, and native key authority under the same transaction as the one-time claim. It checks the real clock after lock waits and in the write predicate. Expiry, drift and revocation permanently invalidate unconsumed plans. The native claim transaction also inserts one private run reservation keyed by the retained intent. It pins the plan digest, target identity, claim time and original approval deadline. A reservation failure rolls back the claim. Replays return the same reservation without acquiring execution ownership. Historical claims made before reservations can return their plan status without creating a run. The API and CLI expose planning, inspection and owner decisions. They return closed metadata without source, credentials or binding references.
+
+The plan and run journals follow the binding identity lifetime and are kept outside environment clones. Keeping them separate preserves reservations during rolling upgrades with older plan writers. Plan creation, approval and private claim do not provision capacity, open retained source, run probes or migrations, deploy workloads, or alter traffic. Connecting the claim to a contained runner requires a separate change with execution and cleanup evidence.
+
+## Validation
+
+Native memory and PostgreSQL tests exercise owner authorization, immutable replays, credential or authority drift, and concurrent claims. The OpenAPI and CLI contracts expose the preview owner operations.
+
+## Candidate handoff
+
+The private launch entry checks that the authenticated key holds the exact
+unconsumed approval. It opens the account-encrypted source under the original
+namespace and verifies both reviewed trees before packing deterministic build
+archives in memory. The native claim rechecks the original authority, evidence
+and deadline. Only the call that acquires the reservation receives the archives.
+Retries receive the same run identity. An unavailable or changed source cannot
+spend the approval.
+
+The archive handoff is private to the control plane. Contained workload
+provisioning and execution evidence are separate from this handoff.
+
+## Contained resource preparation
+
+The private provisioner takes the winning claim and derives workload IDs,
+scenario membership and the queue namespace from the reserved target. It
+creates four internal-only preview workloads for migration, web, worker and
+observation. The workloads enter the existing contained-network and webhook
+capture policy before the PostgreSQL fixture is created. Only the migration
+workload receives a credential during initial preparation. The native fixture
+starts with a platform-owned capture marker. The release runner must install
+the Task schema in containment before it can request separate restricted
+web, worker and observer logins.
+
+Preparation must complete within the original approval window. The existing
+preview and PostgreSQL cleanup services expire these resources fifteen minutes
+from reservation. The PostgreSQL fixture journal records the backend, database,
+migration owner and membership needed to remove the database and logins.
+Failure cleanup also removes the app-local credentials and tombstones the
+workloads. A restarted executor can clean the same account and run without
+recovering archives or credentials. Claim replay never allocates resources
+or takes ownership of an existing run.

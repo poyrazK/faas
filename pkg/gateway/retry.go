@@ -563,6 +563,23 @@ func (h *Handler) proxyAttempt(
 		recordTrafficAttempt(ctx)
 		unguarded(dst, req, selected)
 	}
+	// A node capacity refusal is the app's warm saturation: queue it like
+	// the gateway's own saturation instead of answering 429 at once.
+	if queue := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth); queue.MaxWaiters > 0 {
+		busyRouting, busyHasRouting := publicRoutingSnapshot(r.Context())
+		forward = waitOutNodeBusy(queue.MaxWait, forward, func(prev Target) (Target, bool) {
+			var pick PickResult
+			if busyHasRouting {
+				pick = pickPublicDeployment(h.backend, app.ID, busyRouting.SelectedDeploymentID, "")
+			} else {
+				pick = h.backend.Pick(app.ID)
+			}
+			if !pick.OK || pick.Target.InstanceID == prev.InstanceID {
+				return Target{}, false
+			}
+			return pick.Target, true
+		})
+	}
 	// An authenticated candidate smoke owns its retry loop in imaged. The
 	// generic picker can select the currently serving sibling revision and
 	// must never replay a candidate probe there under the original identity.

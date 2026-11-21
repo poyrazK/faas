@@ -22,17 +22,19 @@ remains available for existing clients.
 gregale init --template durable-entity-node --path my-entities
 ```
 
-The internal SDK is not published for public installation. In a Gregale checkout,
-build and pack the SDK, then copy the resulting tarball into your generated project:
+The Node SDK is not on npm yet. Build it from its public repository,
+[gregale-dev/gregale-js](https://github.com/gregale-dev/gregale-js), then copy
+the package into your generated project:
 
 ```sh
-cd /path/to/faas/sdk/node
+git clone --depth 1 https://github.com/gregale-dev/gregale-js
+cd gregale-js/packages/sdk-node
 npm ci --ignore-scripts
 npm run build
 npm pack --ignore-scripts
 cd /path/to/my-entities
 mkdir -p packages
-cp /path/to/faas/sdk/node/gregale-sdk-node-0.1.0.tgz packages/gregale-sdk.tgz
+cp /path/to/gregale-js/packages/sdk-node/gregale-sdk-node-*.tgz packages/gregale-sdk.tgz
 npm install --ignore-scripts
 npm run generate:client
 npm run prepare:validator

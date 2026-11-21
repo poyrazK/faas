@@ -449,3 +449,30 @@ func TestQueryScalar_UnexpectedValueShape(t *testing.T) {
 // silence the `errors` linter on the import block (errors is brought
 // in for the unused-imports edge case in future additions).
 var _ = errors.Is
+
+// An idle app's 0/0 ratio is NaN; it is dropped, and the other apps' samples
+// still come back. Rejecting the whole map made platform alerts' outage
+// detection fail every pass on prod (rc.347).
+func TestQueryMap_DropsNonFiniteSamples(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "success",
+			"data": map[string]any{
+				"resultType": "vector",
+				"result": []map[string]any{
+					{"metric": map[string]string{"app": "idle"}, "value": []any{1.7e9, "NaN"}},
+					{"metric": map[string]string{"app": "inf"}, "value": []any{1.7e9, "+Inf"}},
+					{"metric": map[string]string{"app": "down"}, "value": []any{1.7e9, "62.5"}},
+				},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	got, err := NewClient(srv.URL, srv.Client()).QueryMap(context.Background(), "error rate")
+	if err != nil {
+		t.Fatalf("QueryMap: %v", err)
+	}
+	if len(got) != 1 || got["down"] != 62.5 {
+		t.Fatalf("QueryMap = %v, want only down=62.5", got)
+	}
+}

@@ -9,6 +9,11 @@ import (
 )
 
 func cmdBucket(args []string) int {
+	resolved, err := resolveBucketArgs(context.Background(), args, func() (bucketLister, error) { return authedClient() })
+	if err != nil {
+		return printErr("Unknown bucket", err)
+	}
+	args = resolved
 	if len(args) > 0 && args[0] == "list" {
 		return cmdBucketList(args[1:])
 	}

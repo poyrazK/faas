@@ -27,6 +27,8 @@ export function createHealth(config, upstreamPort, readyPort, { monotonic = () =
   const runtimeVersion = config.runtimeVersion ?? readRuntimeVersion()
   const pool = config.poolObservation ?? createPoolObservation(readyPort, enginePool(config))
   const pending = new Map()
+  const cancellations = new Map()
+  let generation = 0
   const bounded = (work, fallback) => new Promise(resolve => {
     const timer = setTimeout(() => resolve(fallback), limits.healthProbeMs)
     work.then(value => { clearTimeout(timer); resolve(value) })
@@ -48,8 +50,9 @@ export function createHealth(config, upstreamPort, readyPort, { monotonic = () =
       // A caller's shorter deadline does not open another engine pool waiter.
       // Retain at most one admin request until it finishes or this hard cap.
       const timer = setTimeout(() => { finish('unknown'); request.destroy() }, limits.queryMs)
+      cancellations.set(path, () => { finish('unknown'); request.destroy() })
       request.on('error', () => finish('unknown'))
-    }).finally(() => pending.delete(path))
+    }).finally(() => { if (pending.get(path) === result) { pending.delete(path); cancellations.delete(path) } })
     pending.set(path, result)
     return bounded(result, 'unknown')
   }
@@ -66,9 +69,10 @@ export function createHealth(config, upstreamPort, readyPort, { monotonic = () =
         resolve(state)
       }
       const timer = setTimeout(() => finish('unreachable'), limits.healthProbeMs)
+      cancellations.set('engine', () => finish('unreachable'))
       socket.once('connect', () => finish('reachable'))
       socket.once('error', () => finish('unreachable'))
-    }).finally(() => pending.delete('engine'))
+    }).finally(() => { if (pending.get('engine') === result) { pending.delete('engine'); cancellations.delete('engine') } })
     pending.set('engine', result)
     return result
   }
@@ -79,12 +83,16 @@ export function createHealth(config, upstreamPort, readyPort, { monotonic = () =
     if (!reading) {
       // Keep the reader shared until it actually settles, even after a probe
       // deadline, so repeated health checks cannot queue more SQL reads.
-      reading = Promise.resolve().then(() => config.refreshStatus()).then(gate => {
+      const epoch = generation
+      const promise = Promise.resolve().then(() => config.refreshStatus()).then(gate => {
+        if (epoch !== generation) return 'unavailable'
         if (typeof gate?.paused !== 'boolean') return 'unavailable'
         return gate.paused ? 'paused' : 'active'
       }, () => 'unavailable').finally(() => { reading = undefined })
+      reading = { promise, generation: epoch }
     }
-    return bounded(reading, 'unavailable')
+    if (reading.generation !== generation) return Promise.resolve('unavailable')
+    return bounded(reading.promise, 'unavailable')
   }
   // /healthz is public and its checks reach the database (PostgREST's /ready
   // and the refresh reader). Concurrent checks share one running set. A
@@ -116,11 +124,24 @@ export function createHealth(config, upstreamPort, readyPort, { monotonic = () =
     sql: () => probe('/ready'),
     // invalidate drops completed and running check sets: neither describes an
     // engine that stopped, started, reloaded or was restored since.
-    invalidate() { checked = null },
+    invalidate() {
+      generation++
+      checked = null
+      for (const cancel of cancellations.values()) cancel()
+      cancellations.clear()
+      pending.clear()
+      pool.invalidate?.()
+    },
     async snapshot(admission) {
+      const epoch = generation
       // PostgREST 14.3's admin /live also checks SQL with listeners disabled.
       // A TCP check observes only the engine listener, never pool availability.
-      const [sql, listener, gate, poolObservation] = await checks()
+      let [sql, listener, gate, poolObservation] = await checks()
+      if (epoch !== generation) {
+        sql = 'unknown'; listener = 'unreachable'
+        gate = config.coordinatedRefresh ? 'unavailable' : 'disabled'
+        poolObservation = { state: 'unknown', checked_at: new Date().toISOString(), reason: 'unavailable' }
+      }
       return { version: 1, runtime_version: runtimeVersion, live: true, ready: isReady(sql, gate),
         checks: { engine: listener,
           sql, database: sql === 'ready' || gate === 'active' || gate === 'paused' ? 'reachable' : 'unknown', refresh: gate },

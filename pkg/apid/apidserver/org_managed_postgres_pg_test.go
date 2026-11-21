@@ -208,7 +208,7 @@ func TestOrgManagedPostgresPostgresHTTP(t *testing.T) {
 	if image.Code != 202 {
 		t.Fatalf("teammate deploy with retained binding: %d %s", image.Code, image.Body)
 	}
-	if rec := e.Do(t, "DELETE", "/v1/orgs/"+org.Slug, nil, adminHeaders); rec.Code != 409 {
+	if rec := e.Do(t, "DELETE", "/v1/orgs/"+org.Slug, nil, browserSessionHeaders(t, *e.S(), store, admin.ID, adminHeaders)); rec.Code != 409 {
 		t.Fatalf("organization deletion orphaned a live database: %d %s", rec.Code, rec.Body)
 	}
 	rotation := e.Do(t, "POST", base+"/bindings/"+crossBinding.ID+"/rotate", nil, adminHeaders)

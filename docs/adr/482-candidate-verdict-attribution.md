@@ -88,3 +88,29 @@ and terminal persistence. TestPgHostingGatewayOutboxRecoversAfterRestart and
 TestPgHostingTransportOutboxRecoversAfterRestart exercise the production outbox
 against PostgreSQL. TestHostingVerificationRecoveryReasonsShareDeadline pins
 PostgreSQL/memory parity across changing outage reasons.
+
+## Amendment 1 (2026-11-18): a crash-looping candidate is the app's verdict
+
+A candidate whose process keeps exiting after readiness never produces
+proven evidence: the gateway answers the probe with a bare 502 or the
+connection fails, both unavailable evidence under this ADR. The deploy then
+waited out the recovery window and failed as `deployment_verification_unavailable`,
+"inspect deployment and gateway diagnostics". That sent its owner to the
+platform instead of the app's logs. In the 2026-11-18 coding-agent eval, a Flask
+app whose gunicorn workers could not import their module failed this way.
+The agent concluded the platform's challenge was blocked by the app's auth.
+
+Schedd's liveness evidence is independent of the public route. When a probe
+is unavailable, imaged rereads the candidate. If schedd has parked it for
+liveness exhaustion (`deployments.parked_reason = liveness_exhausted`, set
+after confirmed restarts of the candidate's own process), the verification
+ends at once:
+- The deployment fails with `app_startup_crash`, the existing customer-caused
+  code.
+- Its message gives the restart count and the `gregale logs` command for the
+  candidate.
+- The receipt records `smoke_candidate_crash_loop`.
+
+The same check runs when the recovery window expires. A failed read keeps the
+outage path. Infrastructure-correlated restarts never count toward the park
+(schedd excludes them), so a platform outage still ends as unavailable.

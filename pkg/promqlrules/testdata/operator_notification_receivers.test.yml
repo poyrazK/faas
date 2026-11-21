@@ -1,0 +1,110 @@
+# Production receiver queries are pinned by TestNotificationReceiverQueriesHaveSemanticFixtures.
+evaluation_interval: 30s
+tests:
+- name: fresh quiet counters retain source and closed group labels
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: '0x10'
+  - series: faas_notification_receiver_failures_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: '0x10'
+  promql_expr_test:
+  - expr: label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 5m
+    exp_samples:
+    - labels: faas_notification_receiver_requests_total{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+      value: 0
+    - labels: faas_notification_receiver_failures_total{evidence_metric="faas_notification_receiver_failures_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+      value: 0
+  - expr: timestamp(label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 5m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 300
+    - labels: '{evidence_metric="faas_notification_receiver_failures_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 300
+  - expr: label_replace(increase(faas_notification_receiver_requests_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_requests_total","__name__",".*")
+    eval_time: 5m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 0
+  - expr: label_replace(increase(faas_notification_receiver_failures_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_failures_total","__name__",".*")
+    eval_time: 5m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_failures_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 0
+- name: single counter sample is unknown rather than a quiet zero
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: _ _ _ _ _ _ _ _ _ _ 0
+  promql_expr_test:
+  - expr: label_replace(increase(faas_notification_receiver_requests_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_requests_total","__name__",".*")
+    eval_time: 5m
+    exp_samples: []
+- name: completed counter resets remain nonnegative increases
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: 10 11 12 0+1x17
+  - series: faas_notification_receiver_failures_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: '0x20'
+  promql_expr_test:
+  - expr: label_replace(increase(faas_notification_receiver_requests_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_requests_total","__name__",".*") > bool 0
+    eval_time: 10m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 1
+  - expr: label_replace(increase(faas_notification_receiver_failures_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_failures_total","__name__",".*")
+    eval_time: 10m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_failures_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 0
+- name: one source cannot be aggregated into another
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: '0x20'
+  - series: faas_notification_receiver_requests_total{job="node",instance="other:9100",receiver="faas-page",integration="slack"}
+    values: 10+1x20
+  promql_expr_test:
+  - expr: label_replace(increase(faas_notification_receiver_requests_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_requests_total","__name__",".*") > bool 0
+    eval_time: 10m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 0
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="other:9100",receiver="faas-page",integration="slack"}'
+      value: 1
+- name: fresh scrapes do not advance the collectors own frozen clock
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_collector_last_run_timestamp_seconds{job="node",instance="cp:9100"}
+    values: 1x10
+  promql_expr_test:
+  - expr: label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 5m
+    exp_samples:
+    - labels: faas_notification_receiver_collector_last_run_timestamp_seconds{evidence_metric="faas_notification_receiver_collector_last_run_timestamp_seconds",job="node",instance="cp:9100"}
+      value: 1
+  - expr: timestamp(label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 5m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_collector_last_run_timestamp_seconds",job="node",instance="cp:9100"}'
+      value: 300
+- name: retired counters may remain in range results without current evidence
+  interval: 30s
+  input_series:
+  - series: faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}
+    values: 0x4 stale
+  promql_expr_test:
+  - expr: label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)")
+    eval_time: 5m
+    exp_samples: []
+  - expr: timestamp(label_replace({__name__=~"up|faas_notification_receiver_(expected|collector_up|collector_last_run_timestamp_seconds|requests_total|failures_total|last_success_observed_timestamp_seconds)",job="node"},"evidence_metric","$1","__name__","(.+)"))
+    eval_time: 5m
+    exp_samples: []
+  - expr: label_replace(increase(faas_notification_receiver_requests_total{job="node"}[600s]),"evidence_metric","faas_notification_receiver_requests_total","__name__",".*")
+    eval_time: 5m
+    exp_samples:
+    - labels: '{evidence_metric="faas_notification_receiver_requests_total",job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+      value: 0

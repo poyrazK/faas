@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/pkg/objectoverlay"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -19,7 +20,10 @@ import (
 // never wrote, and has not deleted, is read through from the source; a
 // DELETE records a tombstone that hides the source's key; ListObjectsV2
 // merges both buckets. The branch's writes land in the branch bucket only.
-// Version, tagging, attribute and copy requests see the branch's own objects.
+// Version, tagging and attribute requests see the branch's own objects; a
+// copy whose source key only the parent holds copies from the parent
+// (copy-through). An as_of overlay reads each source key as it was at the
+// branch point (overlay_as_of.go).
 
 const (
 	overlayCacheTTL     = 30 * time.Second
@@ -93,15 +97,19 @@ func (h *Handler) bucketOverlay(ctx context.Context, bucket state.ObjectBucket) 
 // overlaySource is the request context that reads the overlay's source
 // bucket. It reports false when the bucket overlays nothing it can read:
 // no overlay, a deleted or unready source, or a consistency this gateway
-// does not serve.
+// does not serve. An as_of overlay whose source provider cannot list or
+// read versions is unavailable rather than read live, so a branch never
+// serves data newer than its branch point.
 func (h *Handler) overlaySource(ctx context.Context, req requestContext) (requestContext, bool, error) {
 	overlay, ok, err := h.bucketOverlay(ctx, req.bucket)
 	if err != nil || !ok {
 		return requestContext{}, false, err
 	}
 	source := overlay.Source
-	if source.ID == "" || source.State != "ready" || source.AccountID != req.bucket.AccountID ||
-		overlay.Consistency != state.ObjectBucketOverlayLiveParent {
+	if source.ID == "" || source.State != "ready" || source.AccountID != req.bucket.AccountID {
+		return requestContext{}, false, nil
+	}
+	if overlay.Consistency != state.ObjectBucketOverlayLiveParent && overlay.Consistency != state.ObjectBucketOverlayAsOf {
 		return requestContext{}, false, nil
 	}
 	backend, err := h.registry.Resolve(source.BackendID, source.BackendFingerprint)
@@ -111,7 +119,37 @@ func (h *Handler) overlaySource(ctx context.Context, req requestContext) (reques
 	through := req
 	through.bucket, through.provider = source, backend.Provider
 	through.encryptionConfig, through.objectLockConfig = backend.Encryption, backend.ObjectLock
+	through.copySource, through.copyGrantID = nil, ""
+	if overlay.Consistency == state.ObjectBucketOverlayAsOf {
+		_, lists := backend.Provider.(objectstorage.ObjectVersionLister)
+		_, reads := backend.Provider.(objectstorage.VersionReadPresigner)
+		if !lists || !reads || overlay.AsOf.IsZero() {
+			return requestContext{}, false, objectstorage.ErrUnavailable
+		}
+		through.overlayAsOf = overlay.AsOf
+	}
 	return through, true, nil
+}
+
+// overlayVersion is the source version an overlay reads for key: "" for a
+// live_parent overlay, the version current at the branch point for an
+// as_of one. found is false when an as_of source held no data for key then.
+// answered means the response is already written.
+func (h *Handler) overlayVersion(w http.ResponseWriter, r *http.Request, req, through requestContext, key string) (native string, found, answered bool) {
+	if through.overlayAsOf.IsZero() {
+		return "", true, false
+	}
+	lister := through.provider.(objectstorage.ObjectVersionLister)
+	version, live, err := asOfVersion(r.Context(), lister, through.bucket.PhysicalName, key, through.overlayAsOf,
+		func() bool { return h.recordProviderRequest(w, r, req) })
+	switch {
+	case errors.Is(err, errOverlayListAnswered):
+		return "", false, true
+	case err != nil:
+		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
+		return "", false, true
+	}
+	return version.ProviderVersionID, live, false
 }
 
 // readThroughOverlay serves a GET or HEAD the branch bucket answered 404 from
@@ -136,7 +174,14 @@ func (h *Handler) readThroughOverlay(w http.ResponseWriter, r *http.Request, req
 	if hidden[key] {
 		return false
 	}
-	upstream, err := h.prepareGatewayRead(r, through, key, "")
+	native, found, answered := h.overlayVersion(w, r, req, through, key)
+	if answered {
+		return true
+	}
+	if !found {
+		return false
+	}
+	upstream, err := h.prepareGatewayRead(r, through, key, native)
 	if err != nil {
 		h.providerError(w, r, req, err, key)
 		return true
@@ -195,128 +240,53 @@ func decodeOverlayListCursor(token string) (string, bool) {
 	return string(raw), true
 }
 
-// overlayListEntry is one key or common prefix of a listing page, in the
-// single lexicographic order S3 lists them in.
-type overlayListEntry struct {
-	key    string
-	prefix bool
-	object objectstorage.Object
-}
-
-// after is the start-after boundary past this entry. Past a common prefix
-// it is the largest key the prefix can hold, so the next page does not roll
-// the same prefix up again.
-func (e overlayListEntry) after() string {
-	if e.prefix {
-		return e.key + string(utf8.MaxRune)
-	}
-	return e.key
-}
-
-func overlayListEntries(page objectstorage.ObjectPage) []overlayListEntry {
-	out := make([]overlayListEntry, 0, len(page.Items)+len(page.CommonPrefixes))
-	i, j := 0, 0
-	for i < len(page.Items) || j < len(page.CommonPrefixes) {
-		if j >= len(page.CommonPrefixes) || i < len(page.Items) && page.Items[i].Key < page.CommonPrefixes[j] {
-			out = append(out, overlayListEntry{key: page.Items[i].Key, object: page.Items[i]})
-			i++
-			continue
+// overlayCounter counts each provider request against the branch bucket; a
+// refused request has already written its response.
+func overlayCounter(countRequest func() bool) objectoverlay.Counter {
+	return func() error {
+		if !countRequest() {
+			return errOverlayListAnswered
 		}
-		out = append(out, overlayListEntry{key: page.CommonPrefixes[j], prefix: true})
-		j++
+		return nil
 	}
-	return out
 }
 
-// listOverlayObjects lists one merged page of a branch bucket and its
-// source. Both lists start after the same boundary; the branch's entry wins
-// a key both hold, a tombstoned source key is skipped, and the page stops at
-// the first truncated list's last entry so that no key is skipped. A source
-// common prefix whose keys the branch all deleted still lists.
+// listOverlayObjects lists one merged page of a branch bucket and its source
+// (objectoverlay.List). Its continuation token is the gateway's own: the
+// start-after boundary of the next page.
 func (h *Handler) listOverlayObjects(w http.ResponseWriter, r *http.Request, req, through requestContext, list objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
-	list.Cursor = ""
-	if !h.recordProviderRequest(w, r, req) {
-		return objectstorage.ObjectPage{}, errOverlayListAnswered
-	}
-	branchPage, err := listProviderObjects(r.Context(), req.provider, req.bucket.PhysicalName, list)
-	if err != nil {
-		return objectstorage.ObjectPage{}, err
-	}
-	if !h.recordProviderRequest(w, r, req) {
-		return objectstorage.ObjectPage{}, errOverlayListAnswered
-	}
-	sourcePage, err := listProviderObjects(r.Context(), through.provider, through.bucket.PhysicalName, list)
-	if err != nil {
-		return objectstorage.ObjectPage{}, err
-	}
-	branch, source := overlayListEntries(branchPage), overlayListEntries(sourcePage)
-	var keys []string
-	for _, e := range source {
-		if !e.prefix {
-			keys = append(keys, e.key)
+	count := overlayCounter(func() bool { return h.recordProviderRequest(w, r, req) })
+	lister := func(p objectstorage.Provider, bucket string) objectoverlay.Lister {
+		return func(ctx context.Context, l objectstorage.ObjectListRequest) (objectstorage.ObjectPage, error) {
+			if err := count(); err != nil {
+				return objectstorage.ObjectPage{}, err
+			}
+			return listProviderObjects(ctx, p, bucket, l)
 		}
+	}
+	source := objectoverlay.Source{List: lister(through.provider, through.bucket.PhysicalName),
+		Bucket: through.bucket.PhysicalName, At: through.overlayAsOf, Count: count}
+	if !through.overlayAsOf.IsZero() {
+		source.Versions = through.provider.(objectstorage.ObjectVersionLister)
 	}
 	store, _ := h.store.(state.ObjectBucketOverlayStore)
-	hidden, err := store.ObjectBucketOverlayTombstones(r.Context(), req.bucket.ID, keys)
+	merged, err := objectoverlay.List(r.Context(), objectoverlay.Listing{
+		Branch: lister(req.provider, req.bucket.PhysicalName), Source: source,
+		Store: store, BucketID: req.bucket.ID, Request: list,
+	})
 	if err != nil {
-		return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
-	}
-	var horizon *overlayListEntry
-	for _, l := range []struct {
-		entries   []overlayListEntry
-		truncated bool
-	}{{branch, branchPage.NextCursor != ""}, {source, sourcePage.NextCursor != ""}} {
-		if !l.truncated {
-			continue
-		}
-		if len(l.entries) == 0 {
-			return objectstorage.ObjectPage{}, objectstorage.ErrUnavailable
-		}
-		if last := l.entries[len(l.entries)-1]; horizon == nil || last.key < horizon.key {
-			horizon = &last
-		}
-	}
-	var out []overlayListEntry
-	i, j, full := 0, 0, false
-	for i < len(branch) || j < len(source) {
-		var e overlayListEntry
-		if j >= len(source) || i < len(branch) && branch[i].key <= source[j].key {
-			e = branch[i]
-			if j < len(source) && source[j].key == e.key {
-				j++
-			}
-			i++
-		} else {
-			e = source[j]
-			j++
-			if !e.prefix && hidden[e.key] {
-				continue
-			}
-		}
-		if horizon != nil && e.key > horizon.key {
-			break
-		}
-		if len(out) == int(list.Limit) {
-			full = true
-			break
-		}
-		out = append(out, e)
+		return objectstorage.ObjectPage{}, err
 	}
 	page := objectstorage.ObjectPage{}
-	for _, e := range out {
-		if e.prefix {
-			page.CommonPrefixes = append(page.CommonPrefixes, e.key)
+	for _, e := range merged.Entries {
+		if e.Prefix {
+			page.CommonPrefixes = append(page.CommonPrefixes, e.Key)
 		} else {
-			page.Items = append(page.Items, e.object)
+			page.Items = append(page.Items, e.Object)
 		}
 	}
-	// A full page resumes after its last entry; a page cut at the horizon has
-	// considered every entry up to it, emitted or tombstoned.
-	switch {
-	case full:
-		page.NextCursor = encodeOverlayListCursor(out[len(out)-1].after())
-	case horizon != nil:
-		page.NextCursor = encodeOverlayListCursor(horizon.after())
+	if merged.Next != "" {
+		page.NextCursor = encodeOverlayListCursor(merged.Next)
 	}
 	return page, nil
 }

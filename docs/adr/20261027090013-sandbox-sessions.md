@@ -151,7 +151,7 @@ Control-plane routes are served by apid and gated. Data-plane routes are served 
 |---|---|
 | `none` | None. The ADR-989 relay is available only if the agent version grants integrations |
 | `registries` (default) | Package registries and git hosts (npm, PyPI, crates.io, GitHub) on TCP 443, through a DNS-pinned name allowlist on ADR-373's DNS-gated egress under ADR-361 (step 6) |
-| `web` | General web, through the agent egress gateway and politeness proxy under the acceptable-use policy (ADR-20261027090014 §4). Tier 1 managed fetch and search is reachable through the relay in every mode |
+| `web` | General web, through the agent egress gateway and politeness proxy under the acceptable-use policy (ADR-20261027090014 §4). Until those exist, it ships on the tenant egress gateway with app egress controls: TCP 80 and 443, a public-names resolver, and a per-session distinct-domain budget (ADR-20261112121456). Tier 1 managed fetch and search is reachable through the relay in every mode |
 
 Model credentials never enter a session. The harness that calls the model runs outside it. Commands inside that need a model use the relay (ADR-20261027090010 §7).
 

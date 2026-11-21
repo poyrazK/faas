@@ -1,0 +1,136 @@
+package storage
+
+// adr: 20261114182830
+//
+// Node cache retention. The cache budget now comes from the disk, so the
+// budget rarely forces an eviction; what the node no longer needs has to be
+// removed on purpose (snapshothipd's sweep), and when the disk does fill, the
+// entries nothing needs go first and the snapshots of live deployments last.
+
+import (
+	"time"
+)
+
+// Eviction tiers order what enforceBudgetLocked evicts first. Within a tier
+// the oldest entry goes first.
+const (
+	// EvictFirst marks an entry nothing references any more: a capture of a
+	// deleted or stale snapshot, a runtime release no deployment uses.
+	EvictFirst = 0
+	// EvictNormal is every other entry (app layers, bases, kernels).
+	EvictNormal = 1
+	// EvictLast marks the snapshot captures of live deployments: evicting
+	// one turns the app's next wake into a remote fetch of its drive and
+	// memory (2026-11-13, a 6.2 s wake and a 503 on production-us).
+	EvictLast = 2
+	// EvictOwned marks the live snapshot captures and layers of apps this
+	// node owns: their wakes are placed here, so they outlast the copies of
+	// apps other nodes own (ADR-20261118160000).
+	EvictOwned = 3
+)
+
+// CachedEntry is one blob in the node cache.
+type CachedEntry struct {
+	Key            string
+	ModTime        time.Time
+	AllocatedBytes int64
+}
+
+// setMaxBytes replaces the byte budget; wrapWithCache sets it once the cache
+// directory exists and its filesystem can be measured.
+func (c *LocalCacheBackend) setMaxBytes(n int64) {
+	if n <= 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxBytes = n
+}
+
+// MaxBytes reports the byte budget.
+func (c *LocalCacheBackend) MaxBytes() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.maxBytes
+}
+
+// SetEvictionTier makes eviction take entries in tier order (EvictFirst,
+// EvictNormal, EvictLast, EvictOwned), oldest first within a tier. nil restores plain
+// oldest-first eviction.
+func (c *LocalCacheBackend) SetEvictionTier(tier func(key string) int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.evictionTier = tier
+}
+
+// tierLocked is the eviction tier of key. Caller holds c.mu.
+func (c *LocalCacheBackend) tierLocked(key string) int {
+	if c.evictionTier == nil {
+		return EvictNormal
+	}
+	return c.evictionTier(key)
+}
+
+// LocalEntries lists the blobs this node holds in its cache, without asking
+// the parent: what is on this disk, not what shared storage has.
+func (c *LocalCacheBackend) LocalEntries() ([]CachedEntry, error) {
+	c.mu.Lock()
+	entries, err := c.snapshotCacheLocked()
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CachedEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, CachedEntry{Key: e.key, ModTime: e.modTime, AllocatedBytes: e.size})
+	}
+	return out, nil
+}
+
+// EvictLocal removes key from this node's cache only; the parent keeps its
+// copy, so a later read fetches it again.
+func (c *LocalCacheBackend) EvictLocal(key string) error {
+	if err := validateKey(key); err != nil {
+		return err
+	}
+	c.evictCache(key)
+	return nil
+}
+
+// RoomToRefetch reports whether the cache can take back an evicted entry
+// without evicting anything for it (ADR-20261115140000): its footprint stays
+// at least margin under the byte budget and its filesystem keeps at least
+// margin above the free-space floor. margin is the larger of minMargin and a
+// tenth of the budget. A full cache, where a re-fetch would only evict
+// another entry (the ADR-063 loop), never has room.
+func (c *LocalCacheBackend) RoomToRefetch(minMargin int64) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	margin := max(minMargin, c.maxBytes/10)
+	entries, err := c.snapshotCacheLocked()
+	if err != nil {
+		return false, err
+	}
+	if newCacheFootprint(entries).total()+margin > c.maxBytes {
+		return false, nil
+	}
+	if c.minFreeBytes > 0 {
+		free, total, err := c.diskSpace(c.root)
+		if err != nil || total <= 0 || free < c.minFreeBytes+margin {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// RoomToRefetch runs (*LocalCacheBackend).RoomToRefetch on the cache that
+// holds key under root. known is false for a root without a read-through
+// cache.
+func RoomToRefetch(root StorageBackend, key string, minMargin int64) (room, known bool, err error) {
+	cache, _, err := CacheBackendForKey(root, key)
+	if err != nil || cache == nil {
+		return false, false, err
+	}
+	room, err = cache.RoomToRefetch(minMargin)
+	return room, true, err
+}

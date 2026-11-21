@@ -1,0 +1,15 @@
+# {{ ansible_managed }}
+[Unit]
+Description=faas agent egress gateway firewall (ADR-20261117185346)
+Before=wg-quick@{{ faas_agent_egress_iface }}.service
+Wants=network-pre.target
+After=network-pre.target nftables.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/faas/agent-egress/agent-egress-gw.nft
+ExecStop=/usr/sbin/nft delete table inet faas_agent_gw
+
+[Install]
+WantedBy=multi-user.target

@@ -14,6 +14,7 @@ type fakeQueueConsumerClient struct {
 	bindings    []api.QueueBindingResponse
 	triggers    []api.Trigger
 	bindingsErr error
+	app         api.AppResponse
 }
 
 func (f *fakeQueueConsumerClient) ListQueueBindings(context.Context, string) ([]api.QueueBindingResponse, error) {
@@ -21,7 +22,12 @@ func (f *fakeQueueConsumerClient) ListQueueBindings(context.Context, string) ([]
 }
 
 func (f *fakeQueueConsumerClient) GetApp(_ context.Context, slug string) (api.AppResponse, error) {
-	return api.AppResponse{ID: "app-" + slug}, nil
+	app := f.app
+	app.ID = "app-" + slug
+	if app.WorkloadClass == "" {
+		app.WorkloadClass = "worker"
+	}
+	return app, nil
 }
 
 func (f *fakeQueueConsumerClient) GetTriggers(context.Context, string, api.TriggerKind) ([]api.Trigger, error) {
@@ -56,5 +62,15 @@ func TestUnconsumedQueueWarning(t *testing.T) {
 				t.Fatalf("warning %q does not name the fix", got)
 			}
 		})
+	}
+}
+
+// prod 2026-11-20: for an HTTP app the bindings suggestion is refused (push
+// needs a function, pull needs a worker), so the warning names what works.
+func TestUnconsumedQueueWarningForHTTPApp(t *testing.T) {
+	client := &fakeQueueConsumerClient{app: api.AppResponse{Type: "app", WorkloadClass: "http"}}
+	got := main.UnconsumedQueueWarning(context.Background(), client, "web", "jobs")
+	if !strings.Contains(got, "an HTTP app cannot consume a queue") || strings.Contains(got, "queue bindings create") {
+		t.Fatalf("warning = %q", got)
 	}
 }

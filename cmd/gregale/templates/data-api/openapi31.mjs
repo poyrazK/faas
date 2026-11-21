@@ -8,7 +8,11 @@ export function openAPI31(swagger) {
     const result = {}
     for (const [key, item] of Object.entries(value)) {
       if (key === 'x-nullable' || key === 'x-gregale-bulk-schema') continue
-      result[key] = key === '$ref' ? rewriteRef(item) : schema(item)
+      // Property names and literal JSON values are data, not schema keywords.
+      if (key === 'properties' || key === 'patternProperties' || key === '$defs' || key === 'definitions') result[key] = Object.fromEntries(Object.entries(item).map(([name, shape]) => [name, schema(shape)]))
+      else if (['items', 'additionalProperties', 'not', 'contains', 'propertyNames', 'if', 'then', 'else'].includes(key)) result[key] = schema(item)
+      else if (['allOf', 'anyOf', 'oneOf', 'prefixItems'].includes(key)) result[key] = item.map(schema)
+      else result[key] = key === '$ref' && typeof item === 'string' ? rewriteRef(item) : item
     }
     if (result.type === 'file') { result.type = 'string'; result.format = 'binary' }
     if (value['x-gregale-bulk-schema']) return { anyOf: [schema({ ...value, 'x-gregale-bulk-schema': undefined }), schema(value['x-gregale-bulk-schema'])] }

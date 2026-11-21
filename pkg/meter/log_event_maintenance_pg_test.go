@@ -76,7 +76,7 @@ VALUES ($1,now()-interval '20 days',$3,$4,'http','retained'),($2,now()-interval 
 
 func TestLogEventRetentionUsesAccountPlanAndOneDayOrphanFloor(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestLogEventRetentionUsesAccountPlanAndOneDayOrphanFloor(t *testing.T) {
 
 func TestEnsureLogEventPartitionsMovesDefaultRowsAndDropsOldMonths(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}

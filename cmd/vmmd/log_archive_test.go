@@ -214,3 +214,37 @@ func TestVMMDLogArchiveSink_RetireAfterCloseCountsDroppedLines(t *testing.T) {
 		t.Fatalf("dropped = %v, want 2", dropped)
 	}
 }
+
+// A retired ring is reported once its lines are in the spool, so the shipper
+// can upload a parked instance's logs before its next tick; single evicted
+// lines are not reported (prod 2026-11-16 archive gaps after park).
+func TestVMMDLogArchiveSink_RetireNotifiesAfterSpooling(t *testing.T) {
+	spool := logarchive.NewSpool(filepath.Join(t.TempDir(), "archive"), 1<<20)
+	notified := make(chan string, 4)
+	sink := newVMMDLogArchiveSinkNotifying(spool, logarchive.NewMetrics(nil), slog.New(slog.NewTextHandler(io.Discard, nil)),
+		func(instance string) {
+			if len(spool.FilesSnapshot()) == 0 {
+				t.Errorf("notified before %s's lines were spooled", instance)
+			}
+			notified <- instance
+		})
+	at := time.Date(2026, 11, 16, 7, 46, 0, 0, time.UTC)
+	sink.Enqueue("instance-running", logbuf.Line{Seq: 1, Stream: "stdout", Line: "evicted", WrittenAt: at})
+	sink.Retire("instance-parked", retiredTestLines(at, 1, 3))
+	select {
+	case got := <-notified:
+		if got != "instance-parked" {
+			t.Fatalf("notified %q, want instance-parked", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("retired ring was never reported")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := sink.Close(ctx); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(notified) != 0 {
+		t.Fatalf("extra notifications: %d", len(notified))
+	}
+}

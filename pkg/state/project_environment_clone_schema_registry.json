@@ -10,6 +10,46 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_abuse_strikes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "id",
+      "reason",
+      "struck_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "account_signup_facts",
+    "columns": [
+      "account_id",
+      "asn",
+      "asn_org",
+      "country",
+      "created_at",
+      "disposable_email",
+      "email_domain",
+      "method",
+      "reduced_at",
+      "signup_ip",
+      "user_agent"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_held_links",
+    "columns": [
+      "account_id",
+      "detected_at",
+      "held_account_id",
+      "held_org_id",
+      "held_reason",
+      "signal"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "account_billing_connections",
     "columns": [
       "account_id",
@@ -27,70 +67,6 @@
     "kind": "account_identity"
   },
   {
-    "table": "account_credits",
-    "columns": [
-      "account_id",
-      "cents_remaining",
-      "created_at",
-      "expires_at",
-      "id",
-      "reason"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "account_deploy_rate_limits",
-    "columns": [
-      "account_id",
-      "deploys_used",
-      "deploys_window_start",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "account_email_changes",
-    "columns": [
-      "account_id",
-      "consumed_at",
-      "created_at",
-      "expires_at",
-      "new_email",
-      "old_email",
-      "token_hash"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "account_mail_throttle",
-    "columns": [
-      "account_id",
-      "kind",
-      "last_sent_at",
-      "sent_in_window",
-      "window_started_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "account_oauth_unlinks",
-    "columns": [
-      "account_id",
-      "provider",
-      "unlinked_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "account_passwords",
-    "columns": [
-      "account_id",
-      "hash",
-      "updated_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "account_spend_cap_holds",
     "columns": [
       "account_id",
@@ -98,78 +74,6 @@
       "cap_cents",
       "observed_cents",
       "reached_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "account_spend_snapshot",
-    "columns": [
-      "account_id",
-      "created_at",
-      "eur_cents",
-      "gb_seconds",
-      "id",
-      "period_end",
-      "period_start",
-      "source"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "accounts",
-    "columns": [
-      "abuse_hold_at",
-      "abuse_hold_reason",
-      "billing_address",
-      "billing_mail_revision",
-      "business_name",
-      "created_at",
-      "deletion_includes_managed_postgres",
-      "deletion_requested_at",
-      "deployment_mail_revision",
-      "display_name",
-      "egress_allowlist_extra",
-      "egress_overage_disabled_at",
-      "egress_overage_enabled_at",
-      "email",
-      "email_verified_at",
-      "id",
-      "key_grace_window_days",
-      "last_quota_warning_at",
-      "mfa_enrolled_at",
-      "mfa_recovery_codes_hash",
-      "mfa_required",
-      "mfa_revision",
-      "mfa_secret_encrypted",
-      "mfa_totp_last_step",
-      "overage_cap_cents",
-      "password_reset_revision",
-      "past_due_at",
-      "plan",
-      "plan_changed_at",
-      "provider_customer_id",
-      "quota_mail_revision",
-      "status",
-      "stripe_subscription_item",
-      "subscription_mail_revision",
-      "suspended_reason",
-      "tax_id"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "agent_activity",
-    "columns": [
-      "account_id",
-      "approval_id",
-      "created_at",
-      "id",
-      "key_id",
-      "method",
-      "org_id",
-      "path",
-      "reason",
-      "status"
     ],
     "kind": "operational"
   },
@@ -194,6 +98,22 @@
       "key_id",
       "last_sent_at",
       "recipient_account_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_activity",
+    "columns": [
+      "account_id",
+      "approval_id",
+      "created_at",
+      "id",
+      "key_id",
+      "method",
+      "org_id",
+      "path",
+      "reason",
+      "status"
     ],
     "kind": "operational"
   },
@@ -251,47 +171,513 @@
     "kind": "operational"
   },
   {
-    "table": "agent_callback_revocations",
+    "table": "agent_budget_standing",
     "columns": [
-      "account_id",
-      "endpoint_id",
-      "revoked_at",
-      "thread_id"
+      "key_id",
+      "standing_millicents",
+      "updated_at"
     ],
     "kind": "operational"
   },
   {
-    "table": "agent_deliveries",
+    "table": "agent_key_budgets",
+    "columns": [
+      "key_id",
+      "monthly_cents",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_undo_records",
+    "columns": [
+      "account_id",
+      "activity_id",
+      "created_at",
+      "guard",
+      "id",
+      "inverse",
+      "key_id",
+      "kind",
+      "method",
+      "not_undoable_reason",
+      "org_id",
+      "path",
+      "summary",
+      "undone_at",
+      "undone_by"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "alert_test_sends",
+    "columns": [
+      "id",
+      "account_id",
+      "kind",
+      "subject_id",
+      "event",
+      "state",
+      "claim_token",
+      "claimed_until",
+      "result",
+      "created_at",
+      "completed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_key_approval_categories",
+    "columns": [
+      "categories",
+      "created_at",
+      "key_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "api_key_project_limits",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_ids"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_plan_activations",
+    "columns": [
+      "effective_at",
+      "from_plan",
+      "sequence",
+      "subject_id",
+      "to_plan"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "billing_usage_intents",
+    "columns": [
+      "account_id",
+      "created_at",
+      "meter",
+      "provider",
+      "quantity",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "complimentary_accounts",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "granted_at",
+      "granted_by",
+      "plan",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_budget_alert_channel_deliveries",
+    "columns": [
+      "account_id",
+      "alert_id",
+      "attempts",
+      "channel_id",
+      "delivered_at",
+      "kind",
+      "last_error",
+      "lease_token",
+      "next_attempt_at",
+      "policy_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_alerts",
     "columns": [
       "account_id",
       "attempts",
-      "body",
-      "body_truncated",
-      "bucket_app_id",
-      "bucket_id",
-      "created_at",
-      "deadline_at",
-      "destination",
-      "external_id",
-      "external_url",
-      "finished_at",
+      "delivered_at",
       "id",
-      "idempotency_key",
-      "installation_id",
-      "lease_expires_at",
+      "last_error",
       "lease_token",
       "next_attempt_at",
-      "number",
-      "object_prefix",
-      "ordinal",
-      "outcome_code",
-      "outcome_message",
-      "repository",
-      "run_id",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
       "state",
+      "threshold_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_object_storage_estimates",
+    "columns": [
+      "account_id",
+      "currency",
+      "egress_bytes",
+      "egress_millicents_per_gib",
+      "fresh",
+      "included_byte_hours",
+      "included_egress_bytes",
+      "included_requests",
+      "observed_at",
+      "period_start",
+      "request_count",
+      "requests_millicents_per_million",
+      "storage_millicents_per_gib_month",
+      "stored_byte_hours",
+      "usage_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_projection_alerts",
+    "columns": [
+      "account_id",
+      "attempts",
+      "delivered_at",
+      "id",
+      "last_error",
+      "lease_token",
+      "limit_millicents",
+      "next_attempt_at",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_channels",
+    "columns": [
+      "account_id",
+      "channel_id",
+      "policy_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "financial_budget_evaluations",
+    "columns": [
+      "account_id",
+      "evaluated_at",
+      "evidence_through_id",
+      "observation",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stop_targets",
+    "columns": [
+      "app_id",
+      "environment_id",
+      "last_error",
+      "observed_at",
+      "resident_count",
+      "state",
+      "stop_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stops",
+    "columns": [
+      "account_id",
+      "drain_deadline",
+      "id",
+      "payload",
+      "period_end",
+      "period_start",
+      "policy_id",
+      "requested_at",
+      "resume_rule",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_account_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_books",
+    "columns": [
+      "account_id",
+      "app_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_scope_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start",
+      "scope_id",
+      "scope_kind"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_holds",
+    "columns": [
+      "account_id",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_attempts",
+    "columns": [
+      "account_id",
+      "claimed_at",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "lease_token",
+      "node_id",
+      "ram_mb",
+      "run_id",
+      "task_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_books",
+    "columns": [
+      "account_id",
+      "job_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_leases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "funded_until",
+      "id",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "job_run_id",
+      "job_task_index",
+      "node_id",
+      "payload",
+      "period_start",
+      "settled_at",
+      "started_at",
+      "strict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_owners",
+    "columns": [
+      "account_compute_incarnation",
+      "egress_budget_incarnation",
+      "incarnation",
+      "job_compute_incarnation",
+      "node_id",
+      "observed_at",
+      "protocol",
+      "scope_compute_incarnation"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_funding_currency",
+    "columns": [
+      "currency",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "financial_preview_command_runtimes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cpu_millicores",
+      "deployment_id",
+      "environment_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "prepare_until",
+      "ram_mb",
+      "recorded_at",
+      "retired_at",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "account_credits",
+    "columns": [
+      "account_id",
+      "cents_remaining",
+      "created_at",
+      "expires_at",
+      "id",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_deploy_rate_limits",
+    "columns": [
+      "account_id",
+      "deploys_used",
+      "deploys_window_start",
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "account_passwords",
+    "columns": [
+      "account_id",
+      "hash",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_spend_snapshot",
+    "columns": [
+      "account_id",
+      "created_at",
+      "eur_cents",
+      "gb_seconds",
+      "id",
+      "period_end",
+      "period_start",
+      "source"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_email_changes",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "created_at",
+      "expires_at",
+      "new_email",
+      "old_email",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_oauth_unlinks",
+    "columns": [
+      "account_id",
+      "provider",
+      "unlinked_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "account_mail_throttle",
+    "columns": [
+      "account_id",
+      "kind",
+      "last_sent_at",
+      "sent_in_window",
+      "window_started_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "mfa_trusted_browsers",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_ip",
+      "expires_at",
+      "id",
+      "last_used_at",
+      "revoked_at",
+      "token_hash",
+      "ua_family"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "accounts",
+    "columns": [
+      "abuse_hold_at",
+      "abuse_hold_reason",
+      "billing_address",
+      "billing_mail_revision",
+      "business_name",
+      "created_at",
+      "deletion_includes_managed_postgres",
+      "deletion_requested_at",
+      "deployment_mail_revision",
+      "display_name",
+      "egress_allowlist_extra",
+      "egress_overage_disabled_at",
+      "egress_overage_enabled_at",
+      "email",
+      "email_verified_at",
+      "id",
+      "key_grace_window_days",
+      "last_quota_warning_at",
+      "mfa_enrolled_at",
+      "mfa_recovery_codes_hash",
+      "mfa_required",
+      "mfa_revision",
+      "mfa_secret_encrypted",
+      "mfa_totp_last_step",
+      "overage_cap_cents",
+      "password_reset_revision",
+      "past_due_at",
+      "plan",
+      "plan_changed_at",
+      "provider_customer_id",
+      "quota_mail_revision",
+      "status",
+      "stripe_subscription_item",
+      "subscription_mail_revision",
+      "suspended_reason",
+      "tax_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "agent_execution_workflows",
@@ -316,203 +702,6 @@
       "workflow_id"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "agent_github_subscriptions",
-    "columns": [
-      "account_id",
-      "created_at",
-      "endpoint_id",
-      "event_types",
-      "expires_at",
-      "id",
-      "issued_at",
-      "repository",
-      "thread_id",
-      "tool_call_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_key_budgets",
-    "columns": [
-      "key_id",
-      "monthly_cents",
-      "updated_at",
-      "updated_by"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "agent_run_ai_reservations",
-    "columns": [
-      "created_at",
-      "expires_at",
-      "lease_id",
-      "reserved_millicents",
-      "run_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_run_ai_spend",
-    "columns": [
-      "account_id",
-      "calls",
-      "run_id",
-      "spent_millicents",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_run_callbacks",
-    "columns": [
-      "account_id",
-      "created_at",
-      "delivered_at",
-      "endpoint_id",
-      "issued_at",
-      "provider_call_id",
-      "run_id",
-      "thread_id",
-      "tool_call_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_run_outputs",
-    "columns": [
-      "account_id",
-      "created_at",
-      "files",
-      "log_tail",
-      "log_truncated",
-      "result",
-      "run_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_run_usage",
-    "columns": [
-      "account_id",
-      "billable_mb_ms",
-      "cold_boot",
-      "expected_samples",
-      "measured_ms",
-      "method",
-      "paused_ms",
-      "peak_private_mb",
-      "private_mb_ms",
-      "recorded_at",
-      "run_id",
-      "samples",
-      "unpaused_private_mb_ms"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_runs",
-    "columns": [
-      "account_id",
-      "agent_id",
-      "agent_version",
-      "ai_budget_millicents",
-      "attempt",
-      "boot_ms",
-      "cancel_requested_at",
-      "checkout_commit",
-      "checkout_installation_id",
-      "checkout_repository",
-      "dedupe_key",
-      "exit_code",
-      "finished_at",
-      "github_installation_id",
-      "github_number",
-      "github_repository",
-      "id",
-      "inputs",
-      "instance_id",
-      "lease_expires_at",
-      "lease_owner",
-      "lease_token",
-      "node_id",
-      "outcome_code",
-      "outcome_message",
-      "prompt",
-      "queued_at",
-      "ram_mb",
-      "running_at",
-      "signal",
-      "started_at",
-      "state",
-      "tenant_id",
-      "timeout_sec",
-      "trigger",
-      "updated_at",
-      "workflow_event",
-      "workflow_run_id",
-      "workflow_step"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_undo_records",
-    "columns": [
-      "account_id",
-      "activity_id",
-      "created_at",
-      "guard",
-      "id",
-      "inverse",
-      "key_id",
-      "kind",
-      "method",
-      "not_undoable_reason",
-      "org_id",
-      "path",
-      "summary",
-      "undone_at",
-      "undone_by"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "agent_versions",
-    "columns": [
-      "account_id",
-      "agent_id",
-      "ai_budget_millicents",
-      "created_at",
-      "deliveries",
-      "harness_image",
-      "harness_models",
-      "harness_preset",
-      "harness_run",
-      "model_integrations",
-      "pause_during_model_calls",
-      "prompt_template",
-      "ram_mb",
-      "timeout_sec",
-      "version"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "agents",
-    "columns": [
-      "account_id",
-      "created_at",
-      "deleted_at",
-      "description",
-      "id",
-      "latest_version",
-      "name",
-      "state",
-      "updated_at"
-    ],
-    "kind": "account_identity"
   },
   {
     "table": "alert_channel_resolve_retries",
@@ -683,23 +872,6 @@
     }
   },
   {
-    "table": "alert_test_sends",
-    "columns": [
-      "id",
-      "account_id",
-      "kind",
-      "subject_id",
-      "event",
-      "state",
-      "claim_token",
-      "claimed_until",
-      "result",
-      "created_at",
-      "completed_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "api_consumer_billing_policies",
     "columns": [
       "account_id",
@@ -855,6 +1027,37 @@
     "kind": "operational"
   },
   {
+    "table": "api_consumer_spend_caps",
+    "columns": [
+      "account_id",
+      "amount_due_millicents",
+      "app_id",
+      "capped",
+      "checked_at",
+      "consumer_id",
+      "created_at",
+      "currency",
+      "month_start",
+      "monthly_cap_millicents",
+      "next_check_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "api_consumer_trials",
+    "columns": [
+      "account_id",
+      "app_id",
+      "consumer_id",
+      "created_at",
+      "ends_at",
+      "starts_at",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "api_consumer_signup_settings",
     "columns": [
       "account_id",
@@ -899,37 +1102,6 @@
       "provider",
       "provider_customer_id",
       "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "api_consumer_spend_caps",
-    "columns": [
-      "account_id",
-      "amount_due_millicents",
-      "app_id",
-      "capped",
-      "checked_at",
-      "consumer_id",
-      "created_at",
-      "currency",
-      "month_start",
-      "monthly_cap_millicents",
-      "next_check_at",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "api_consumer_trials",
-    "columns": [
-      "account_id",
-      "app_id",
-      "consumer_id",
-      "created_at",
-      "ends_at",
-      "starts_at",
-      "updated_at"
     ],
     "kind": "operational"
   },
@@ -1063,24 +1235,6 @@
     "kind": "account_identity"
   },
   {
-    "table": "api_key_approval_categories",
-    "columns": [
-      "categories",
-      "created_at",
-      "key_id"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "api_key_project_limits",
-    "columns": [
-      "created_at",
-      "key_id",
-      "project_ids"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "api_keys",
     "columns": [
       "account_id",
@@ -1108,6 +1262,19 @@
     "columns": [
       "account_id",
       "app_id",
+      "first_seen",
+      "last_seen",
+      "request_count",
+      "route_template"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_api_routes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "environment_id",
       "first_seen",
       "last_seen",
       "request_count",
@@ -1147,6 +1314,15 @@
       "owner": "app",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "app_basic_auth_verifiers",
+    "columns": [
+      "created_at",
+      "sealed_sha256",
+      "verifier"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_binding_promotion_revisions",
@@ -1322,19 +1498,6 @@
     "kind": "operational"
   },
   {
-    "table": "app_env_batch_receipts",
-    "columns": [
-      "account_id",
-      "app_id",
-      "created_at",
-      "receipt",
-      "request_id",
-      "request_sha256",
-      "scope"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "app_environment_route_budgets",
     "columns": [
       "account_id",
@@ -1418,6 +1581,19 @@
       "owner": "environment",
       "column": "environment_id"
     }
+  },
+  {
+    "table": "app_env_batch_receipts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "receipt",
+      "request_id",
+      "request_sha256",
+      "scope"
+    ],
+    "kind": "operational"
   },
   {
     "table": "app_envs",
@@ -1848,6 +2024,39 @@
     }
   },
   {
+    "table": "app_owner_authority",
+    "columns": [
+      "mode",
+      "singleton",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_release_requests",
+    "columns": [
+      "app_id",
+      "from_node_id",
+      "reason",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_owner_writes",
+    "columns": [
+      "app_id",
+      "authorized",
+      "from_node_id",
+      "id",
+      "login_role",
+      "mode",
+      "to_node_id",
+      "written_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "app_park_transitions",
     "columns": [
       "app_id",
@@ -1906,27 +2115,6 @@
       "registry",
       "updated_at",
       "username"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "app"
-    }
-  },
-  {
-    "table": "app_release_approval_policies",
-    "columns": [
-      "account_id",
-      "after_stage",
-      "allow_self_approval",
-      "app_id",
-      "approvers",
-      "created_at",
-      "notify_channel_ids",
-      "required_approvals",
-      "timeout_minutes",
-      "updated_at",
-      "updated_by"
     ],
     "kind": "configuration",
     "capabilities": [],
@@ -2904,19 +3092,6 @@
     }
   },
   {
-    "table": "artifact_signatures",
-    "columns": [
-      "bytes",
-      "deployment_id",
-      "digest",
-      "node_name",
-      "signature_format",
-      "signed_at",
-      "storage_key"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "audit_event_outbox",
     "columns": [
       "actor",
@@ -3108,17 +3283,6 @@
     "kind": "operational"
   },
   {
-    "table": "billing_plan_activations",
-    "columns": [
-      "effective_at",
-      "from_plan",
-      "sequence",
-      "subject_id",
-      "to_plan"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "billing_quota_warnings",
     "columns": [
       "account_id",
@@ -3256,18 +3420,6 @@
     "kind": "operational"
   },
   {
-    "table": "billing_usage_intents",
-    "columns": [
-      "account_id",
-      "created_at",
-      "meter",
-      "provider",
-      "quantity",
-      "window_start"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "binding_verification_run_steps",
     "columns": [
       "resource_id",
@@ -3363,6 +3515,7 @@
   {
     "table": "builds",
     "columns": [
+      "builder_node_name",
       "cache_key_sha256",
       "cache_status",
       "cancelled_at",
@@ -3375,6 +3528,8 @@
       "id",
       "kind",
       "log_path",
+      "not_before",
+      "preemptions",
       "source_bytes",
       "started_at",
       "status"
@@ -3813,8 +3968,10 @@
       "expires_at",
       "org_id",
       "project_ids",
+      "requester_ip",
       "status",
-      "token_hash"
+      "token_hash",
+      "verifier_hash"
     ],
     "kind": "account_identity"
   },
@@ -3893,6 +4050,7 @@
       "allow_tenant_selection",
       "app_id",
       "blocked_events",
+      "changes_feeds",
       "contract_version",
       "created_at",
       "credential_revision",
@@ -3900,10 +4058,13 @@
       "enabled",
       "id",
       "last_checked_at",
+      "managed_database_id",
       "name",
       "oldest_pending_at",
       "operation_policy",
       "pending_events",
+      "poll_interval_ms",
+      "queue_name",
       "relay_status",
       "sealed_connection"
     ],
@@ -3914,16 +4075,13 @@
     }
   },
   {
-    "table": "complimentary_accounts",
+    "table": "compute_node_db_logins",
     "columns": [
-      "account_id",
-      "expires_at",
-      "granted_at",
-      "granted_by",
-      "plan",
-      "reason"
+      "created_at",
+      "login",
+      "node_name"
     ],
-    "kind": "account_identity"
+    "kind": "operational"
   },
   {
     "table": "compute_node_heartbeat_hourly",
@@ -4150,24 +4308,6 @@
     }
   },
   {
-    "table": "credit_discounts",
-    "columns": [
-      "amount_cents",
-      "created_at",
-      "currency",
-      "id",
-      "provider",
-      "provider_discount_id",
-      "provider_invoice_id",
-      "provider_subscription_id",
-      "redeemed_cents",
-      "state",
-      "subject_id",
-      "updated_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "credit_ledger",
     "columns": [
       "account_id",
@@ -4302,6 +4442,41 @@
       "owner": "app",
       "strategy": "target_identity"
     }
+  },
+  {
+    "table": "customer_api_errors",
+    "columns": [
+      "id",
+      "account_id",
+      "occurred_at",
+      "route",
+      "code",
+      "app_slug",
+      "request_id",
+      "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "customer_attention_signals",
+    "columns": [
+      "id",
+      "account_id",
+      "kind",
+      "subject",
+      "detail",
+      "state",
+      "observed",
+      "first_seen_at",
+      "last_seen_at",
+      "resolved_at",
+      "dismissed_at",
+      "dismissed_by",
+      "dismiss_reason",
+      "outcome",
+      "ticket_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "customer_operation_approval_forms",
@@ -4770,30 +4945,6 @@
     }
   },
   {
-    "table": "data_api_access_configs",
-    "columns": [
-      "app_id",
-      "config",
-      "reported_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "data_api_change_hook_reports",
-    "columns": [
-      "app_id",
-      "reported_at",
-      "pending",
-      "failed",
-      "oldest_pending_at",
-      "last_published_at",
-      "last_failure_code",
-      "publishing",
-      "last_dropped_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "data_api_runtime_connection_observations",
     "columns": [
       "account_id",
@@ -4818,6 +4969,15 @@
     "kind": "operational"
   },
   {
+    "table": "data_api_access_configs",
+    "columns": [
+      "app_id",
+      "config",
+      "reported_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "data_api_shared_budgets",
     "columns": [
       "app_id",
@@ -4825,6 +4985,21 @@
       "requests",
       "window_end",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_api_change_hook_reports",
+    "columns": [
+      "app_id",
+      "reported_at",
+      "pending",
+      "failed",
+      "oldest_pending_at",
+      "last_published_at",
+      "last_failure_code",
+      "publishing",
+      "last_dropped_at"
     ],
     "kind": "operational"
   },
@@ -4937,6 +5112,7 @@
       "change_id",
       "created_at",
       "pipeline_id",
+      "read_gate",
       "wake_id"
     ],
     "kind": "operational"
@@ -4974,8 +5150,11 @@
       "created_at",
       "database_id",
       "desired_state",
+      "freshness_target_seconds",
       "generation",
       "id",
+      "evolution_change",
+      "index_change",
       "initialized",
       "lease_token",
       "lease_until",
@@ -4990,6 +5169,7 @@
       "revision",
       "schema_approval",
       "schema_change",
+      "serving_config",
       "source_connection_id",
       "state",
       "tables",
@@ -4997,7 +5177,10 @@
       "verification",
       "verification_progress",
       "verified_at",
-      "verify_requested"
+      "verify_requested",
+      "wal_retention",
+      "work_config",
+      "work_status"
     ],
     "kind": "configuration",
     "capabilities": [],
@@ -5064,99 +5247,6 @@
     "clone": {
       "owner": "app"
     }
-  },
-  {
-    "table": "database_nodes",
-    "columns": [
-      "admission_ceiling_mb",
-      "boot_slots",
-      "created_at",
-      "id",
-      "lifecycle",
-      "postgres_majors",
-      "target_url",
-      "updated_at",
-      "volume_capacity_bytes"
-    ],
-    "kind": "platform_configuration"
-  },
-  {
-    "table": "database_restore_drills",
-    "columns": [
-      "drill_id",
-      "error_code",
-      "finished_at",
-      "node_id",
-      "recovered_to",
-      "result",
-      "source_id",
-      "started_at",
-      "target_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "database_role_verifiers",
-    "columns": [
-      "database_id",
-      "role_name",
-      "updated_at",
-      "verifier"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "database_usage",
-    "columns": [
-      "database_id",
-      "ended_at",
-      "meter",
-      "rate",
-      "started_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "database_vms",
-    "columns": [
-      "always_on",
-      "bootstrapped",
-      "compute_quota_unit_seconds",
-      "created_at",
-      "database_id",
-      "drop_standby_slot",
-      "held",
-      "last_active_at",
-      "last_backup_at",
-      "last_error",
-      "major_history",
-      "mem_mib",
-      "move_lease_until",
-      "move_node",
-      "node_id",
-      "postgres_major",
-      "promote_pending",
-      "replicated",
-      "resize_pending",
-      "restore_lease_until",
-      "restore_recovered_to",
-      "restore_source",
-      "restore_target",
-      "restore_window_seconds",
-      "standby_node",
-      "standby_running",
-      "standby_synced",
-      "state",
-      "state_changed_at",
-      "upgrade_from",
-      "upgrade_lease_until",
-      "upgrade_major",
-      "upgrade_operation",
-      "upgrade_result",
-      "vcpu_count",
-      "volume_bytes"
-    ],
-    "kind": "operational"
   },
   {
     "table": "dead_letter_events",
@@ -5303,6 +5393,30 @@
     ]
   },
   {
+    "table": "environment_deployment_cron_activations",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "fingerprint",
+      "intent",
+      "revision",
+      "session_id",
+      "status",
+      "updated_at",
+      "upload_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_deployment_cron_states",
+    "columns": [
+      "app_id",
+      "deployment_scope",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_cron_outcomes",
     "kind": "operational",
     "columns": [
@@ -5310,6 +5424,19 @@
       "reason",
       "revision",
       "session_id",
+      "status",
+      "updated_at"
+    ]
+  },
+  {
+    "table": "deployment_event_subscription_intents",
+    "kind": "operational",
+    "columns": [
+      "app_id",
+      "created_at",
+      "declared_subscription_ids",
+      "deployment_id",
+      "reason",
       "status",
       "updated_at"
     ]
@@ -5325,19 +5452,6 @@
       "status"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "deployment_event_subscription_intents",
-    "kind": "operational",
-    "columns": [
-      "app_id",
-      "created_at",
-      "declared_subscription_ids",
-      "deployment_id",
-      "reason",
-      "status",
-      "updated_at"
-    ]
   },
   {
     "table": "deployment_image_preparations",
@@ -5484,21 +5598,6 @@
     ]
   },
   {
-    "table": "deployment_promotion_receipts",
-    "kind": "operational",
-    "columns": [
-      "accepted_at",
-      "app_id",
-      "attempt_id",
-      "deployment_id",
-      "environment_id",
-      "expected_serving_deployment_id",
-      "project_id",
-      "request_hash",
-      "scope"
-    ]
-  },
-  {
     "table": "deployment_public_build_urls",
     "columns": [
       "deployment_id",
@@ -5555,22 +5654,6 @@
       "signature",
       "verified_at",
       "workload_name"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "deployment_release_approvals",
-    "columns": [
-      "account_id",
-      "app_id",
-      "approver",
-      "approver_account_id",
-      "approver_role",
-      "comment",
-      "created_at",
-      "decision",
-      "deployment_id",
-      "id"
     ],
     "kind": "operational"
   },
@@ -5817,6 +5900,21 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
+  },
+  {
     "table": "deployment_submission_receipts",
     "kind": "operational",
     "columns": [
@@ -5833,6 +5931,7 @@
       "app_id",
       "before_checkpoint_hook",
       "build_id",
+      "build_registry_scope",
       "canary_preset",
       "canary_stages",
       "canary_step",
@@ -6062,17 +6161,6 @@
     "kind": "operational"
   },
   {
-    "table": "edge_crawler_ip_ranges",
-    "columns": [
-      "crawler",
-      "fetched_at",
-      "prefixes",
-      "source_created_at",
-      "source_url"
-    ],
-    "kind": "platform_configuration"
-  },
-  {
     "table": "edge_penalty_boxes",
     "columns": [
       "app_id",
@@ -6119,6 +6207,17 @@
     "kind": "operational"
   },
   {
+    "table": "edge_rule_hit_counts",
+    "columns": [
+      "app_id",
+      "bucket_start",
+      "hits",
+      "outcome",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "edge_rule_header_secrets",
     "columns": [
       "account_id",
@@ -6132,17 +6231,6 @@
     "clone": {
       "owner": "app"
     }
-  },
-  {
-    "table": "edge_rule_hit_counts",
-    "columns": [
-      "app_id",
-      "bucket_start",
-      "hits",
-      "outcome",
-      "rule_id"
-    ],
-    "kind": "operational"
   },
   {
     "table": "edge_rule_lists",
@@ -6163,6 +6251,59 @@
       "owner": "account",
       "strategy": "shared"
     }
+  },
+  {
+    "table": "artifact_signatures",
+    "columns": [
+      "bytes",
+      "deployment_id",
+      "digest",
+      "node_name",
+      "signature_format",
+      "signed_at",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "neon_project_keys",
+    "columns": [
+      "created_at",
+      "key_id",
+      "project_id",
+      "revoked_at",
+      "sealed_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "edge_tls_certificates",
+    "columns": [
+      "account_uri",
+      "ca",
+      "chain_pem",
+      "id",
+      "issued_at",
+      "key_kid",
+      "key_sealed",
+      "names",
+      "not_after",
+      "not_before",
+      "serial",
+      "sha256"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "edge_crawler_ip_ranges",
+    "columns": [
+      "crawler",
+      "fetched_at",
+      "prefixes",
+      "source_created_at",
+      "source_url"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_rule_set_versions",
@@ -6214,24 +6355,6 @@
     }
   },
   {
-    "table": "edge_tls_certificates",
-    "columns": [
-      "account_uri",
-      "ca",
-      "chain_pem",
-      "id",
-      "issued_at",
-      "key_kid",
-      "key_sealed",
-      "names",
-      "not_after",
-      "not_before",
-      "serial",
-      "sha256"
-    ],
-    "kind": "platform_configuration"
-  },
-  {
     "table": "egress_flow_log",
     "columns": [
       "account_id",
@@ -6244,6 +6367,24 @@
       "remote_port"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "credit_discounts",
+    "columns": [
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "provider",
+      "provider_discount_id",
+      "provider_invoice_id",
+      "provider_subscription_id",
+      "redeemed_cents",
+      "state",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "egress_policy",
@@ -6309,15 +6450,6 @@
     "kind": "operational"
   },
   {
-    "table": "environment_branch_capture_objects",
-    "columns": [
-      "created_at",
-      "deployment_id",
-      "storage_key"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "environment_branch_captures",
     "columns": [
       "attempts",
@@ -6347,30 +6479,6 @@
       "artifact_id",
       "candidate_id",
       "source_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "environment_deployment_cron_activations",
-    "columns": [
-      "app_id",
-      "deployment_scope",
-      "fingerprint",
-      "intent",
-      "revision",
-      "session_id",
-      "status",
-      "updated_at",
-      "upload_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "environment_deployment_cron_states",
-    "columns": [
-      "app_id",
-      "deployment_scope",
-      "revision"
     ],
     "kind": "operational"
   },
@@ -6691,6 +6799,29 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_restore_receipts",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "instance_id",
+      "recorded_at",
+      "request_id",
+      "runtime_inputs"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_qualification_restore_reservations",
+    "columns": [
+      "attempt",
+      "capture_instance_id",
+      "created_at",
+      "instance_id",
+      "request_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_object_storage_receipts",
     "columns": [
       "attempt",
@@ -6728,29 +6859,6 @@
       "delivery_version",
       "environment_key",
       "recorded_at",
-      "request_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "environment_qualification_restore_receipts",
-    "columns": [
-      "attempt",
-      "capture_instance_id",
-      "instance_id",
-      "recorded_at",
-      "request_id",
-      "runtime_inputs"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "environment_qualification_restore_reservations",
-    "columns": [
-      "attempt",
-      "capture_instance_id",
-      "created_at",
-      "instance_id",
       "request_id"
     ],
     "kind": "operational"
@@ -7566,8 +7674,11 @@
       "account_id",
       "acknowledgment_lease_seconds",
       "app_id",
+      "clone_paused",
       "created_at",
+      "deployment_scope",
       "enabled",
+      "environment_id",
       "filter",
       "id",
       "routing_retry_policy",
@@ -7577,9 +7688,18 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "live": [
+        {
+          "column": "deployment_scope",
+          "source_scope": true
+        }
+      ]
     }
   },
   {
@@ -7710,19 +7830,6 @@
     }
   },
   {
-    "table": "execution_admissions",
-    "columns": [
-      "account_id",
-      "created_at",
-      "execution_id",
-      "expires_at",
-      "key_hash",
-      "request_digest",
-      "scope_hash"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "execution_artifact_grants",
     "columns": [
       "account_id",
@@ -7736,42 +7843,6 @@
       "revoked_at",
       "source_execution_id",
       "token_hash"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_environment_diagnostics",
-    "columns": [
-      "diagnostic_sequence",
-      "diagnostics",
-      "environment_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_environments",
-    "columns": [
-      "account_id",
-      "artifact_bytes",
-      "artifact_keys",
-      "base_key",
-      "base_ref",
-      "build_attempts",
-      "created_at",
-      "export_digest",
-      "export_key",
-      "failure_code",
-      "guest_executor_digest",
-      "id",
-      "image_attempts",
-      "image_digest",
-      "lease",
-      "lease_expires_at",
-      "principal_id",
-      "recipe",
-      "recipe_digest",
-      "runtime",
-      "status"
     ],
     "kind": "operational"
   },
@@ -7797,36 +7868,6 @@
     "kind": "operational"
   },
   {
-    "table": "execution_file_links",
-    "columns": [
-      "execution_id",
-      "file_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_files",
-    "columns": [
-      "account_id",
-      "created_at",
-      "execution_id",
-      "expires_at",
-      "id",
-      "kind",
-      "lease_expires_at",
-      "name",
-      "principal_id",
-      "sealed_key",
-      "sha256",
-      "size_bytes",
-      "status",
-      "storage_key",
-      "token",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "execution_outbound_integrations",
     "columns": [
       "execution_id",
@@ -7845,95 +7886,6 @@
     "kind": "operational"
   },
   {
-    "table": "execution_run_bindings",
-    "columns": [
-      "account_id",
-      "agent_ref",
-      "customer_ref",
-      "enabled",
-      "revision",
-      "subject_id",
-      "subject_kind"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "execution_run_budget_alerts",
-    "columns": [
-      "account_id",
-      "created_at",
-      "day",
-      "event_id",
-      "kind",
-      "maximum",
-      "metric",
-      "observed",
-      "ref",
-      "threshold_percent"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_run_budgets",
-    "columns": [
-      "account_id",
-      "enabled",
-      "kind",
-      "max_compute_mb_ms",
-      "max_concurrent",
-      "max_invocations",
-      "ref",
-      "revision"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "execution_run_reservations",
-    "columns": [
-      "account_id",
-      "admitted_at",
-      "agent_ref",
-      "customer_ref",
-      "execution_id",
-      "reserved_mb_ms",
-      "task_name"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_task_invocations",
-    "columns": [
-      "account_id",
-      "callback",
-      "callback_key",
-      "created_at",
-      "delivered_at",
-      "execution_id",
-      "request_digest",
-      "version_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "execution_task_versions",
-    "columns": [
-      "account_id",
-      "agent_endpoint_ids",
-      "created_at",
-      "digest",
-      "environment_id",
-      "id",
-      "kid",
-      "metadata",
-      "name",
-      "runtime",
-      "sealed_definition",
-      "status",
-      "version"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "execution_usage_ledger",
     "columns": [
       "account_id",
@@ -7948,6 +7900,20 @@
       "started_at",
       "status",
       "wall_time_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_workflow_pipelines",
+    "columns": [
+      "cancel_requested",
+      "completion",
+      "deadline_at",
+      "delivered_at",
+      "due_at",
+      "job_id",
+      "journal",
+      "policy"
     ],
     "kind": "operational"
   },
@@ -8027,69 +7993,6 @@
     }
   },
   {
-    "table": "financial_budget_alert_channel_deliveries",
-    "columns": [
-      "account_id",
-      "alert_id",
-      "attempts",
-      "channel_id",
-      "delivered_at",
-      "kind",
-      "last_error",
-      "lease_token",
-      "next_attempt_at",
-      "policy_id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_budget_alerts",
-    "columns": [
-      "account_id",
-      "attempts",
-      "delivered_at",
-      "id",
-      "last_error",
-      "lease_token",
-      "next_attempt_at",
-      "payload",
-      "period_start",
-      "policy_id",
-      "revision",
-      "state",
-      "threshold_millicents"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_budget_channels",
-    "columns": [
-      "account_id",
-      "channel_id",
-      "policy_id"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "account",
-      "strategy": "shared"
-    }
-  },
-  {
-    "table": "financial_budget_evaluations",
-    "columns": [
-      "account_id",
-      "evaluated_at",
-      "evidence_through_id",
-      "observation",
-      "period_start",
-      "policy_id",
-      "revision"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "financial_budget_policies",
     "columns": [
       "account_id",
@@ -8106,25 +8009,6 @@
       "owner": "account",
       "strategy": "shared"
     }
-  },
-  {
-    "table": "financial_budget_projection_alerts",
-    "columns": [
-      "account_id",
-      "attempts",
-      "delivered_at",
-      "id",
-      "last_error",
-      "lease_token",
-      "limit_millicents",
-      "next_attempt_at",
-      "payload",
-      "period_start",
-      "policy_id",
-      "revision",
-      "state"
-    ],
-    "kind": "operational"
   },
   {
     "table": "financial_budget_revisions",
@@ -8145,192 +8029,10 @@
     }
   },
   {
-    "table": "financial_budget_stop_targets",
-    "columns": [
-      "app_id",
-      "environment_id",
-      "last_error",
-      "observed_at",
-      "resident_count",
-      "state",
-      "stop_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_budget_stops",
-    "columns": [
-      "account_id",
-      "drain_deadline",
-      "id",
-      "payload",
-      "period_end",
-      "period_start",
-      "policy_id",
-      "requested_at",
-      "resume_rule",
-      "revision"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_compute_account_books",
-    "columns": [
-      "account_id",
-      "payload",
-      "period_end",
-      "period_start"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "financial_compute_books",
-    "columns": [
-      "account_id",
-      "app_id",
-      "payload",
-      "period_end",
-      "period_start"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "financial_compute_holds",
-    "columns": [
-      "account_id",
-      "period_start",
-      "policy_id",
-      "revision"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_compute_job_attempts",
-    "columns": [
-      "account_id",
-      "claimed_at",
-      "incarnation",
-      "instance_id",
-      "job_id",
-      "lease_token",
-      "node_id",
-      "ram_mb",
-      "run_id",
-      "task_index"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_compute_job_books",
-    "columns": [
-      "account_id",
-      "job_id",
-      "payload",
-      "period_end",
-      "period_start"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "financial_compute_leases",
-    "columns": [
-      "account_id",
-      "app_id",
-      "funded_until",
-      "id",
-      "incarnation",
-      "instance_id",
-      "job_id",
-      "job_run_id",
-      "job_task_index",
-      "node_id",
-      "payload",
-      "period_start",
-      "settled_at",
-      "started_at",
-      "strict"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_compute_owners",
-    "columns": [
-      "account_compute_incarnation",
-      "egress_budget_incarnation",
-      "incarnation",
-      "job_compute_incarnation",
-      "node_id",
-      "observed_at",
-      "protocol",
-      "scope_compute_incarnation"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_compute_scope_books",
-    "columns": [
-      "account_id",
-      "payload",
-      "period_end",
-      "period_start",
-      "scope_id",
-      "scope_kind"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "financial_evidence_coverage",
     "columns": [
       "retained_from",
       "singleton"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_funding_currency",
-    "columns": [
-      "currency",
-      "singleton"
-    ],
-    "kind": "platform_configuration"
-  },
-  {
-    "table": "financial_object_storage_estimates",
-    "columns": [
-      "account_id",
-      "currency",
-      "egress_bytes",
-      "egress_millicents_per_gib",
-      "fresh",
-      "included_byte_hours",
-      "included_egress_bytes",
-      "included_requests",
-      "observed_at",
-      "period_start",
-      "request_count",
-      "requests_millicents_per_million",
-      "storage_millicents_per_gib_month",
-      "stored_byte_hours",
-      "usage_through"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "financial_preview_command_runtimes",
-    "columns": [
-      "account_id",
-      "app_id",
-      "cpu_millicores",
-      "deployment_id",
-      "environment_id",
-      "lease_token",
-      "node_id",
-      "phase",
-      "prepare_until",
-      "ram_mb",
-      "recorded_at",
-      "retired_at",
-      "task_id"
     ],
     "kind": "operational"
   },
@@ -8585,6 +8287,7 @@
       "preview_bot_prs",
       "preview_draft_prs",
       "preview_enabled",
+      "preview_mode",
       "preview_service_policy",
       "preview_ttl_hours",
       "production_trigger",
@@ -8979,6 +8682,19 @@
     "kind": "operational"
   },
   {
+    "table": "instance_application_standard_rebinds",
+    "columns": [
+      "created_at",
+      "from_incarnation",
+      "instance_id",
+      "node_id",
+      "observed",
+      "to_incarnation",
+      "vmmd_epoch"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "instance_application_standard_boots",
     "columns": [
       "binding",
@@ -9005,19 +8721,6 @@
     "kind": "operational"
   },
   {
-    "table": "instance_application_standard_rebinds",
-    "columns": [
-      "created_at",
-      "from_incarnation",
-      "instance_id",
-      "node_id",
-      "observed",
-      "to_incarnation",
-      "vmmd_epoch"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "instance_billing_intervals",
     "columns": [
       "ended_at",
@@ -9035,6 +8738,39 @@
       "node_id",
       "recorded_at",
       "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "legal_acceptances",
+    "columns": [
+      "accepted_at",
+      "account_id",
+      "document",
+      "method",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "object_storage_over_ceiling",
+    "columns": [
+      "ceiling_bytes",
+      "deletion_scheduled_at",
+      "notices_sent",
+      "observed_at",
+      "over_ceiling_since",
+      "stored_bytes",
+      "subject_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "quiet_pause_watermarks",
+    "columns": [
+      "covered_until",
+      "node_id",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -10677,35 +10413,6 @@
     "kind": "operational"
   },
   {
-    "table": "legal_acceptances",
-    "columns": [
-      "accepted_at",
-      "account_id",
-      "document",
-      "method",
-      "version"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "log_archive_erasure_instances",
-    "columns": [
-      "account_id",
-      "erased_at",
-      "instance_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "log_archive_erasures",
-    "columns": [
-      "account_id",
-      "deletion_requested_at",
-      "snapshotted_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "log_events",
     "columns": [
       "account_id",
@@ -10732,6 +10439,24 @@
     "kind": "operational"
   },
   {
+    "table": "log_archive_erasure_instances",
+    "columns": [
+      "account_id",
+      "erased_at",
+      "instance_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "log_archive_erasures",
+    "columns": [
+      "account_id",
+      "deletion_requested_at",
+      "snapshotted_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "log_saved_searches",
     "columns": [
       "account_id",
@@ -10750,16 +10475,6 @@
     }
   },
   {
-    "table": "login_failure_budgets",
-    "columns": [
-      "email_hash",
-      "failures",
-      "notified_at",
-      "window_started_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "login_tokens",
     "columns": [
       "account_id",
@@ -10768,6 +10483,16 @@
       "token_hash"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "login_failure_budgets",
+    "columns": [
+      "email_hash",
+      "failures",
+      "notified_at",
+      "window_started_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "magic_link_tokens",
@@ -10800,15 +10525,6 @@
     "kind": "account_identity"
   },
   {
-    "table": "managed_postgres_account_overage",
-    "columns": [
-      "enabled",
-      "subject_id",
-      "updated_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "managed_postgres_accounting_reconciliations",
     "columns": [
       "account_id",
@@ -10830,6 +10546,70 @@
       "request",
       "request_sha256",
       "result"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_account_overage",
+    "columns": [
+      "enabled",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_cap_events",
+    "columns": [
+      "allowance_unit_seconds",
+      "ceiling_unit_seconds",
+      "mail_intent_id",
+      "overage_enabled",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "threshold",
+      "used_unit_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_deliveries",
+    "columns": [
+      "billed_egress_bytes",
+      "billed_storage_byte_seconds",
+      "billed_unit_seconds",
+      "delivered_millicents",
+      "live",
+      "period_start",
+      "provider",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "managed_postgres_overage_pending",
+    "columns": [
+      "allowance_unit_seconds",
+      "app_egress_bytes",
+      "billed_egress_bytes",
+      "billed_storage_byte_seconds",
+      "billed_unit_seconds",
+      "egress_allowance_bytes",
+      "from_millicents",
+      "live",
+      "period_start",
+      "previous_live",
+      "previous_millicents",
+      "provider",
+      "step_at",
+      "storage_pool_bytes",
+      "subject_id",
+      "target_millicents",
+      "used_egress_bytes",
+      "used_storage_byte_seconds",
+      "used_unit_seconds"
     ],
     "kind": "account_identity"
   },
@@ -10886,19 +10666,29 @@
     }
   },
   {
-    "table": "managed_postgres_cap_events",
+    "table": "managed_postgres_custom_roles",
     "columns": [
-      "allowance_unit_seconds",
-      "ceiling_unit_seconds",
-      "mail_intent_id",
-      "overage_enabled",
-      "period_start",
-      "reached_at",
-      "subject_id",
-      "threshold",
-      "used_unit_seconds"
+      "account_id",
+      "attempt_count",
+      "bypass_rls",
+      "created_at",
+      "database_id",
+      "default_for",
+      "granted_to",
+      "last_error",
+      "member_of",
+      "name",
+      "retry_at",
+      "revision",
+      "state",
+      "updated_at"
     ],
-    "kind": "account_identity"
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "managed_postgres_checkpoint_maintenance",
@@ -11190,6 +10980,21 @@
     }
   },
   {
+    "table": "managed_postgres_egress_hold_notices",
+    "columns": [
+      "allowance_bytes",
+      "ceiling_bytes",
+      "database_id",
+      "mail_intent_id",
+      "overage_billed",
+      "period_start",
+      "reached_at",
+      "subject_id",
+      "used_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "managed_postgres_health",
     "columns": [
       "account_id",
@@ -11250,58 +11055,6 @@
     "kind": "operational"
   },
   {
-    "table": "managed_postgres_overage_deliveries",
-    "columns": [
-      "billed_egress_bytes",
-      "billed_storage_byte_seconds",
-      "billed_unit_seconds",
-      "delivered_millicents",
-      "live",
-      "period_start",
-      "provider",
-      "subject_id",
-      "updated_at"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "managed_postgres_overage_pending",
-    "columns": [
-      "allowance_unit_seconds",
-      "app_egress_bytes",
-      "billed_egress_bytes",
-      "billed_storage_byte_seconds",
-      "billed_unit_seconds",
-      "egress_allowance_bytes",
-      "from_millicents",
-      "live",
-      "period_start",
-      "previous_live",
-      "previous_millicents",
-      "provider",
-      "step_at",
-      "storage_pool_bytes",
-      "subject_id",
-      "target_millicents",
-      "used_egress_bytes",
-      "used_storage_byte_seconds",
-      "used_unit_seconds"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "managed_postgres_plan_excess_notices",
-    "columns": [
-      "database_id",
-      "delete_at",
-      "mail_intent_id",
-      "reason",
-      "recorded_at",
-      "reminder_mail_intent_id"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "managed_postgres_resizes",
     "columns": [
       "account_id",
@@ -11344,18 +11097,6 @@
     "kind": "operational"
   },
   {
-    "table": "managed_postgres_restore_slot_notices",
-    "columns": [
-      "database_id",
-      "kind",
-      "mail_intent_id",
-      "recorded_at",
-      "restorable_until",
-      "slot_until"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "managed_postgres_restore_verifications",
     "columns": [
       "account_id",
@@ -11368,6 +11109,30 @@
       "provider_resource_id",
       "source_resource_id",
       "verified_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_plan_excess_notices",
+    "columns": [
+      "database_id",
+      "delete_at",
+      "mail_intent_id",
+      "reason",
+      "recorded_at",
+      "reminder_mail_intent_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_restore_slot_notices",
+    "columns": [
+      "database_id",
+      "kind",
+      "mail_intent_id",
+      "recorded_at",
+      "restorable_until",
+      "slot_until"
     ],
     "kind": "operational"
   },
@@ -12871,11 +12636,15 @@
     "table": "meter_network_checkpoints",
     "columns": [
       "instance_id",
+      "internal_tx_bytes",
+      "internal_tx_pending",
+      "internal_tx_valid",
       "net_rx_bytes",
       "net_rx_valid",
       "net_tx_bytes",
       "net_tx_valid",
       "observed_at",
+      "service_reply_pending",
       "updated_at"
     ],
     "kind": "operational"
@@ -12918,21 +12687,6 @@
       "recovery_id",
       "requested_at",
       "token_hash"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "mfa_trusted_browsers",
-    "columns": [
-      "account_id",
-      "created_at",
-      "created_ip",
-      "expires_at",
-      "id",
-      "last_used_at",
-      "revoked_at",
-      "token_hash",
-      "ua_family"
     ],
     "kind": "account_identity"
   },
@@ -13244,6 +12998,18 @@
     "kind": "operational"
   },
   {
+    "table": "object_inventory_schedule",
+    "columns": [
+      "active_since",
+      "attempt_at",
+      "bucket_id",
+      "mutated_at",
+      "observed_at",
+      "quiet_after"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_bucket_cors",
     "columns": [
       "bucket_id",
@@ -13519,17 +13285,6 @@
     "kind": "operational"
   },
   {
-    "table": "object_inventory_schedule",
-    "columns": [
-      "attempt_at",
-      "bucket_id",
-      "mutated_at",
-      "observed_at",
-      "quiet_after"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "object_lifecycle_scans",
     "columns": [
       "bucket_id",
@@ -13739,6 +13494,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_ceiling_grants",
+    "columns": [
+      "granted_at",
+      "granted_by",
+      "max_bytes",
+      "owner_id",
+      "reason"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "object_storage_capacity_reconciliations",
     "columns": [
       "after_bytes",
@@ -13769,17 +13535,6 @@
     "kind": "operational"
   },
   {
-    "table": "object_storage_ceiling_grants",
-    "columns": [
-      "granted_at",
-      "granted_by",
-      "max_bytes",
-      "owner_id",
-      "reason"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "object_storage_customer_usage_reports_v2",
     "columns": [
       "account_id",
@@ -13795,17 +13550,6 @@
       "stored_byte_hours",
       "version",
       "write_operations"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "object_storage_gateway_storage",
-    "columns": [
-      "accrued_from",
-      "accrued_through",
-      "bucket_id",
-      "period_start",
-      "stored_byte_hours"
     ],
     "kind": "operational"
   },
@@ -13924,17 +13668,15 @@
     "kind": "operational"
   },
   {
-    "table": "object_storage_over_ceiling",
+    "table": "object_storage_gateway_storage",
     "columns": [
-      "ceiling_bytes",
-      "deletion_scheduled_at",
-      "notices_sent",
-      "observed_at",
-      "over_ceiling_since",
-      "stored_bytes",
-      "subject_id"
+      "accrued_from",
+      "accrued_through",
+      "bucket_id",
+      "period_start",
+      "stored_byte_hours"
     ],
-    "kind": "account_identity"
+    "kind": "operational"
   },
   {
     "table": "object_storage_request_metrics",
@@ -14414,19 +14156,6 @@
     "kind": "operational"
   },
   {
-    "table": "org_agent_policies",
-    "columns": [
-      "agents_allowed",
-      "allowed_scopes",
-      "approval_categories",
-      "max_agent_budget_cents",
-      "org_id",
-      "updated_at",
-      "updated_by"
-    ],
-    "kind": "account_identity"
-  },
-  {
     "table": "org_app_quota_fences",
     "columns": [
       "generation",
@@ -14448,6 +14177,64 @@
       "revoked_at",
       "role",
       "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "org_agent_policies",
+    "columns": [
+      "agents_allowed",
+      "allowed_scopes",
+      "approval_categories",
+      "max_agent_budget_cents",
+      "org_id",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "support_grant_requests",
+    "columns": [
+      "app_ids",
+      "created_at",
+      "decided_at",
+      "decided_by_account_id",
+      "expires_at",
+      "extends_grant_id",
+      "id",
+      "operator_account_id",
+      "org_id",
+      "reason",
+      "status",
+      "ttl_seconds"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "support_grants",
+    "columns": [
+      "app_ids",
+      "created_at",
+      "created_by_account_id",
+      "expires_at",
+      "id",
+      "org_id",
+      "reason",
+      "request_id",
+      "revoked_at",
+      "revoked_by_account_id",
+      "summary_sent_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "org_security_policies",
+    "columns": [
+      "org_id",
+      "require_mfa",
+      "updated_at",
+      "updated_by_account_id"
     ],
     "kind": "account_identity"
   },
@@ -14683,23 +14470,18 @@
     "kind": "operational"
   },
   {
-    "table": "outbound_ai_online_evaluation_days",
-    "columns": [
-      "evaluations",
-      "integration_id",
-      "usage_date"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "outbound_ai_price_entries",
     "columns": [
+      "cache_write_1h_millicents_per_mtok",
       "cache_write_millicents_per_mtok",
       "cached_input_audio_millicents_per_mtok",
       "cached_input_millicents_per_mtok",
       "input_audio_millicents_per_mtok",
       "input_image_millicents_per_mtok",
       "input_millicents_per_mtok",
+      "long_context_above_input_tokens",
+      "long_context_input_percent",
+      "long_context_output_percent",
       "millicents_per_audio_minute",
       "millicents_per_code_session_gb",
       "millicents_per_file_search",
@@ -14742,6 +14524,46 @@
       "prefix_hash",
       "previous_seen_at",
       "seen_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_traces",
+    "columns": [
+      "caller",
+      "calls",
+      "cost_millicents",
+      "end_user",
+      "error_calls",
+      "first_at",
+      "input_tokens",
+      "integration_id",
+      "last_at",
+      "models",
+      "output_tokens",
+      "repeated_tool_calls",
+      "tool_calls",
+      "tool_signature",
+      "trace_id",
+      "usage_unknown_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_trace_days",
+    "columns": [
+      "integration_id",
+      "traces",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_online_evaluation_days",
+    "columns": [
+      "evaluations",
+      "integration_id",
+      "usage_date"
     ],
     "kind": "operational"
   },
@@ -14840,6 +14662,8 @@
       "model",
       "outcome",
       "output_tokens",
+      "prompt_id",
+      "prompt_version",
       "quality_flags",
       "route_id",
       "status",
@@ -14917,6 +14741,130 @@
     }
   },
   {
+    "table": "outbound_ai_prompts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "description",
+      "id",
+      "latest_version",
+      "live_version",
+      "name",
+      "previous_live_version",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_versions",
+    "columns": [
+      "created_at",
+      "defaults",
+      "integration_id",
+      "messages",
+      "model",
+      "note",
+      "params",
+      "prompt_id",
+      "route_id",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
+    "table": "outbound_ai_prompt_canaries",
+    "columns": [
+      "decided_at",
+      "max_error_rate_increase",
+      "max_latency_increase_percent",
+      "min_calls",
+      "percent",
+      "prompt_id",
+      "reason",
+      "started_at",
+      "state",
+      "version",
+      "window_minutes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_version_minutes",
+    "columns": [
+      "calls",
+      "cost_millicents",
+      "errors",
+      "minute",
+      "prompt_id",
+      "ttfb_calls",
+      "ttfb_ms_total",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluations",
+    "columns": [
+      "account_id",
+      "baseline_cost_millicents",
+      "baseline_ttfb_calls",
+      "baseline_ttfb_ms_total",
+      "baseline_version",
+      "canary",
+      "canary_started",
+      "candidate_cost_millicents",
+      "candidate_errors",
+      "candidate_ttfb_calls",
+      "candidate_ttfb_ms_total",
+      "candidate_version",
+      "case_count",
+      "cases",
+      "created_at",
+      "error_code",
+      "finished_at",
+      "id",
+      "judge_errors",
+      "judge_integration_id",
+      "judge_model",
+      "losses",
+      "max_loss_rate",
+      "prompt_id",
+      "started_at",
+      "state",
+      "ties",
+      "verdict",
+      "wins"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_prompt_evaluation_items",
+    "columns": [
+      "baseline_cost_millicents",
+      "baseline_output_text",
+      "baseline_status",
+      "baseline_ttfb_ms",
+      "candidate_cost_millicents",
+      "candidate_output_text",
+      "candidate_status",
+      "candidate_ttfb_ms",
+      "case_index",
+      "evaluation_id",
+      "verdict"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_settlements",
     "columns": [
       "integration_id",
@@ -14952,37 +14900,6 @@
       "tag",
       "updated_at",
       "usage_date"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "outbound_ai_trace_days",
-    "columns": [
-      "integration_id",
-      "traces",
-      "usage_date"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "outbound_ai_traces",
-    "columns": [
-      "caller",
-      "calls",
-      "cost_millicents",
-      "end_user",
-      "error_calls",
-      "first_at",
-      "input_tokens",
-      "integration_id",
-      "last_at",
-      "models",
-      "output_tokens",
-      "repeated_tool_calls",
-      "tool_calls",
-      "tool_signature",
-      "trace_id",
-      "usage_unknown_calls"
     ],
     "kind": "operational"
   },
@@ -15174,6 +15091,7 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_semantic_cache",
       "ai_trace_max_calls",
       "ai_trace_max_cost_millicents",
       "ai_trace_max_repeated_tool_calls",
@@ -15262,23 +15180,12 @@
     "kind": "operational"
   },
   {
-    "table": "platform_mail_agent_run_capture",
+    "table": "plan_fit_notices",
     "columns": [
-      "namespace",
-      "producer_id",
-      "recovery_id",
-      "started_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "platform_mail_agent_run_observations",
-    "columns": [
-      "account_id",
-      "delivery_id",
-      "disposition",
-      "intent_id",
-      "observed_at"
+      "subject_id",
+      "plan",
+      "apps_digest",
+      "noticed_at"
     ],
     "kind": "operational"
   },
@@ -15335,6 +15242,24 @@
     "kind": "operational"
   },
   {
+    "table": "platform_release_activations",
+    "columns": [
+      "actor",
+      "commit_sha",
+      "detail",
+      "finished_at",
+      "host",
+      "id",
+      "kind",
+      "previous_release_id",
+      "release_id",
+      "services",
+      "started_at",
+      "status"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "platform_mail_producer_outbox",
     "columns": [
       "account_id",
@@ -15386,24 +15311,6 @@
       "verification_token_hash"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "platform_release_activations",
-    "columns": [
-      "actor",
-      "commit_sha",
-      "detail",
-      "finished_at",
-      "host",
-      "id",
-      "kind",
-      "previous_release_id",
-      "release_id",
-      "services",
-      "started_at",
-      "status"
-    ],
-    "kind": "platform_configuration"
   },
   {
     "table": "platform_tenant_access_tokens",
@@ -16376,32 +16283,6 @@
     "kind": "operational"
   },
   {
-    "table": "profile_capture_data",
-    "columns": [
-      "capture_id",
-      "kind",
-      "process_id",
-      "profile",
-      "seq"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "profile_captures",
-    "columns": [
-      "account_id",
-      "app_id",
-      "capture",
-      "claimed_at",
-      "completed_at",
-      "created_at",
-      "expires_at",
-      "id",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "profile_deployment_checks",
     "columns": [
       "account_id",
@@ -16480,15 +16361,6 @@
       "updated_at"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "project_app_stage_admissions",
-    "columns": [
-      "app_id",
-      "created_at",
-      "project_id"
-    ],
-    "kind": "account_identity"
   },
   {
     "table": "project_binding_verification_runs",
@@ -16586,7 +16458,9 @@
       "expires_at",
       "parent_environment_id",
       "private_networks",
-      "project_id"
+      "project_id",
+      "pull_request_number",
+      "slot_id"
     ],
     "kind": "operational"
   },
@@ -17679,6 +17553,30 @@
     }
   },
   {
+    "table": "project_environment_secrets",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "environment_slug",
+      "key",
+      "kid",
+      "project_id",
+      "secret_version",
+      "updated_at",
+      "value_hash"
+    ],
+    "kind": "configuration",
+    "capabilities": [
+      "materialize",
+      "qualify"
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
+  },
+  {
     "table": "project_environment_edge_policies",
     "columns": [
       "account_id",
@@ -17954,30 +17852,6 @@
     }
   },
   {
-    "table": "project_environment_secrets",
-    "columns": [
-      "account_id",
-      "ciphertext",
-      "created_at",
-      "environment_slug",
-      "key",
-      "kid",
-      "project_id",
-      "secret_version",
-      "updated_at",
-      "value_hash"
-    ],
-    "kind": "configuration",
-    "capabilities": [
-      "materialize",
-      "qualify"
-    ],
-    "clone": {
-      "owner": "environment",
-      "slug_column": "environment_slug"
-    }
-  },
-  {
     "table": "project_environment_workload_deployment_specs",
     "columns": [
       "deployment_id",
@@ -18041,6 +17915,15 @@
       "owner": "environment",
       "column": "environment_id"
     }
+  },
+  {
+    "table": "project_app_stage_admissions",
+    "columns": [
+      "app_id",
+      "created_at",
+      "project_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "project_environments",
@@ -18305,6 +18188,165 @@
     }
   },
   {
+    "table": "sandbox_ports",
+    "columns": [
+      "account_id",
+      "created_at",
+      "port",
+      "sandbox_id",
+      "visibility"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_session_domains",
+    "columns": [
+      "domain",
+      "first_seen",
+      "refused",
+      "sandbox_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_session_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "final",
+      "frozen_ms",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "samples",
+      "sandbox_id",
+      "unpaused_private_mb_ms",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_sessions",
+    "columns": [
+      "account_id",
+      "browser",
+      "close_requested_at",
+      "closed_at",
+      "created_at",
+      "egress_allow",
+      "egress_deny",
+      "expires_at",
+      "id",
+      "idle_timeout_sec",
+      "image_job_id",
+      "image_ref",
+      "instance_id",
+      "kind",
+      "labels",
+      "last_activity_at",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "network_mode",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "placed_node_id",
+      "preset",
+      "ram_mb",
+      "state",
+      "task_exit_code",
+      "task_kind",
+      "task_max_chars",
+      "task_output",
+      "task_url",
+      "template_id",
+      "tenant_id",
+      "updated_at",
+      "workspace_snapshot_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_egress_policies",
+    "columns": [
+      "account_id",
+      "allow_rules",
+      "deny_rules",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_templates",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "ready_cmd",
+      "ready_timeout_s",
+      "start_cmd",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_workspace_snapshots",
+    "columns": [
+      "account_id",
+      "bytes",
+      "created_at",
+      "delete_requested_at",
+      "expires_at",
+      "id",
+      "ready_at",
+      "reserved_bytes",
+      "sandbox_id",
+      "sha256",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "spend_cap_notice_outbox",
+    "columns": [
+      "account_id",
+      "cap_cents",
+      "delivered_at",
+      "id",
+      "lease_token",
+      "month",
+      "next_attempt_at",
+      "observed_cents",
+      "reached_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "static_egress_provisioning_grants",
+    "columns": [
+      "account_id",
+      "created_at",
+      "customer_ip",
+      "source_id"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
+  },
+  {
     "table": "provisioned_static_egress_ips",
     "columns": [
       "account_id",
@@ -18374,15 +18416,6 @@
     }
   },
   {
-    "table": "quiet_pause_watermarks",
-    "columns": [
-      "covered_until",
-      "node_id",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "realtime_node_connection_syncs",
     "columns": [
       "node_name",
@@ -18438,25 +18471,6 @@
     "kind": "operational"
   },
   {
-    "table": "release_approval_events",
-    "columns": [
-      "account_id",
-      "app_id",
-      "attempts",
-      "channel_ids",
-      "created_at",
-      "delivered_at",
-      "deployment_id",
-      "event",
-      "id",
-      "last_error",
-      "next_attempt_at",
-      "payload",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "release_bundles",
     "columns": [
       "applied_at",
@@ -18467,46 +18481,6 @@
       "manifest_hash"
     ],
     "kind": "platform_configuration"
-  },
-  {
-    "table": "release_database_switches",
-    "columns": [
-      "account_id",
-      "activated_at",
-      "app_id",
-      "attempt_count",
-      "cancel_requested_at",
-      "created_at",
-      "cutover_id",
-      "drain_blocked",
-      "drain_parked",
-      "drain_pending",
-      "drain_requested_at",
-      "drain_retired",
-      "failure_code",
-      "failure_detail",
-      "fenced_at",
-      "finished_at",
-      "from_deployment_id",
-      "id",
-      "last_error_code",
-      "lease_token",
-      "lease_until",
-      "phase",
-      "phase_started_at",
-      "release_switched_at",
-      "requested_by",
-      "restore_point",
-      "retry_at",
-      "scope",
-      "source_database_id",
-      "target_database_id",
-      "target_deployment_id",
-      "target_name",
-      "undone_deployment_ids",
-      "updated_at"
-    ],
-    "kind": "operational"
   },
   {
     "table": "release_freezes",
@@ -18546,19 +18520,6 @@
     "kind": "operational"
   },
   {
-    "table": "release_outcome_checks",
-    "columns": [
-      "account_id",
-      "app_id",
-      "checked_at",
-      "checked_by",
-      "deployment_id",
-      "note",
-      "task_id"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "release_secret_key_retirement_fence",
     "columns": [
       "generation",
@@ -18575,6 +18536,28 @@
     "kind": "platform_configuration"
   },
   {
+    "table": "request_audit_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "commit_sha",
+      "consumer_key",
+      "deployment_id",
+      "event_id",
+      "http_status",
+      "latency_ms",
+      "method",
+      "occurred_at",
+      "platform_tenant_id",
+      "received_at",
+      "request_id",
+      "route_template",
+      "source_ip",
+      "trace_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "request_analytics_app_gaps",
     "columns": [
       "app_id",
@@ -18582,39 +18565,6 @@
       "node_name",
       "pending_count",
       "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_analytics_coverage_gaps",
-    "columns": [
-      "app_id",
-      "gap_from",
-      "gap_until",
-      "history_incomplete",
-      "node_name",
-      "source_kind"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_analytics_coverage_intervals",
-    "columns": [
-      "covered_since",
-      "covered_until",
-      "node_name",
-      "source_kind"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_analytics_coverage_watermarks",
-    "columns": [
-      "node_name",
-      "previous_source_at",
-      "registered_at",
-      "source_at",
-      "source_kind"
     ],
     "kind": "operational"
   },
@@ -18672,10 +18622,10 @@
     "kind": "operational"
   },
   {
-    "table": "request_analytics_rollup_audit",
+    "table": "request_analytics_rollup_gaps",
     "columns": [
       "app_id",
-      "audited_since"
+      "bucket_start"
     ],
     "kind": "operational"
   },
@@ -18694,46 +18644,6 @@
       "app_id",
       "covered_since",
       "hours_covered_since"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_analytics_rollup_gaps",
-    "columns": [
-      "app_id",
-      "bucket_start"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_analytics_rollup_windows",
-    "columns": [
-      "app_id",
-      "bucket_start",
-      "id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "request_audit_events",
-    "columns": [
-      "account_id",
-      "app_id",
-      "commit_sha",
-      "consumer_key",
-      "deployment_id",
-      "event_id",
-      "http_status",
-      "latency_ms",
-      "method",
-      "occurred_at",
-      "platform_tenant_id",
-      "received_at",
-      "request_id",
-      "route_template",
-      "source_ip",
-      "trace_id"
     ],
     "kind": "operational"
   },
@@ -19258,15 +19168,6 @@
     "kind": "platform_configuration"
   },
   {
-    "table": "runtime_secret_signatures",
-    "columns": [
-      "ciphertext_sha256",
-      "created_at",
-      "signature"
-    ],
-    "kind": "platform_configuration"
-  },
-  {
     "table": "runtime_snapshots",
     "columns": [
       "architecture",
@@ -19548,105 +19449,6 @@
     "kind": "operational"
   },
   {
-    "table": "sandbox_ports",
-    "columns": [
-      "account_id",
-      "created_at",
-      "port",
-      "sandbox_id",
-      "visibility"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "sandbox_session_usage",
-    "columns": [
-      "account_id",
-      "billable_mb_ms",
-      "cold_boot",
-      "expected_samples",
-      "final",
-      "frozen_ms",
-      "measured_ms",
-      "method",
-      "paused_ms",
-      "peak_private_mb",
-      "private_mb_ms",
-      "recorded_at",
-      "samples",
-      "sandbox_id",
-      "unpaused_private_mb_ms",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "sandbox_sessions",
-    "columns": [
-      "account_id",
-      "close_requested_at",
-      "closed_at",
-      "created_at",
-      "expires_at",
-      "id",
-      "idle_timeout_sec",
-      "image_job_id",
-      "image_ref",
-      "instance_id",
-      "kind",
-      "labels",
-      "last_activity_at",
-      "lease_expires_at",
-      "lease_owner",
-      "lease_token",
-      "network_mode",
-      "node_id",
-      "outcome_code",
-      "outcome_message",
-      "preset",
-      "ram_mb",
-      "state",
-      "template_id",
-      "tenant_id",
-      "updated_at",
-      "workspace_snapshot_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "sandbox_templates",
-    "columns": [
-      "account_id",
-      "app_id",
-      "created_at",
-      "id",
-      "name",
-      "ready_cmd",
-      "ready_timeout_s",
-      "start_cmd",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "sandbox_workspace_snapshots",
-    "columns": [
-      "account_id",
-      "bytes",
-      "created_at",
-      "delete_requested_at",
-      "expires_at",
-      "id",
-      "ready_at",
-      "reserved_bytes",
-      "sandbox_id",
-      "sha256",
-      "state",
-      "storage_key"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "saved_route_requirements",
     "columns": [
       "account_id",
@@ -19732,6 +19534,17 @@
       "startup_ms",
       "state",
       "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_task_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
     ],
     "kind": "operational"
   },
@@ -19953,30 +19766,6 @@
     "kind": "operational"
   },
   {
-    "table": "scheduled_releases",
-    "columns": [
-      "account_id",
-      "app_id",
-      "canary",
-      "created_at",
-      "deployment_id",
-      "id",
-      "notify_channel_ids",
-      "outcome_code",
-      "outcome_detail",
-      "override_freeze",
-      "override_freeze_ids",
-      "release_at",
-      "scheduled_by",
-      "scheduled_by_account_id",
-      "scheduled_by_key_id",
-      "started_at",
-      "state",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "seal_domain_probe",
     "columns": [
       "domain",
@@ -19985,6 +19774,42 @@
       "updated_at"
     ],
     "kind": "platform_configuration"
+  },
+  {
+    "table": "secret_grants",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "granted_at",
+      "granted_by_node_id",
+      "node_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_open_audit",
+    "columns": [
+      "app_id",
+      "entries",
+      "id",
+      "job_id",
+      "node_id",
+      "opened_at",
+      "via"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "secret_verification_audit",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credential_id",
+      "cutover_id",
+      "id",
+      "verified_at"
+    ],
+    "kind": "operational"
   },
   {
     "table": "service_caller_key_history",
@@ -20144,6 +19969,8 @@
       "id",
       "mem_bytes",
       "recovery_generation",
+      "sealed_capture_id",
+      "sealed_key",
       "stale",
       "stale_at",
       "storage_key",
@@ -20172,37 +19999,6 @@
       "deployment_id"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "spend_cap_notice_outbox",
-    "columns": [
-      "account_id",
-      "cap_cents",
-      "delivered_at",
-      "id",
-      "lease_token",
-      "month",
-      "next_attempt_at",
-      "observed_cents",
-      "reached_at",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "static_egress_provisioning_grants",
-    "columns": [
-      "account_id",
-      "created_at",
-      "customer_ip",
-      "source_id"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "account",
-      "strategy": "shared"
-    }
   },
   {
     "table": "status_incident_updates",
@@ -20256,356 +20052,12 @@
     "kind": "operational"
   },
   {
-    "table": "stored_workflow_failure_guards",
-    "columns": [
-      "app_id",
-      "generation",
-      "monitoring_since",
-      "name",
-      "paused_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_failure_history",
-    "columns": [
-      "actor_account_id",
-      "app_id",
-      "completed_runs",
-      "failures",
-      "generation",
-      "id",
-      "name",
-      "policy_version",
-      "reason",
-      "recorded_at",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_failure_policies",
-    "columns": [
-      "app_id",
-      "enabled",
-      "failure_threshold",
-      "min_completed_runs",
-      "name",
-      "version",
-      "window_seconds"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "app"
-    }
-  },
-  {
-    "table": "stored_workflow_live_baseline_promotions",
-    "columns": [
-      "app_id",
-      "baseline_name",
-      "name",
-      "promoted_at",
-      "promotion_id",
-      "receipt",
-      "revision",
-      "suite_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_live_baseline_retirements",
-    "columns": [
-      "app_id",
-      "baseline_name",
-      "name",
-      "receipt",
-      "retirement_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_live_suites",
-    "columns": [
-      "app_id",
-      "workflow_version",
-      "cases",
-      "created_at",
-      "deployment_id",
-      "id",
-      "managed",
-      "name",
-      "published_version",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_live_verifications",
-    "columns": [
-      "app_id",
-      "workflow_version",
-      "case_name",
-      "created_at",
-      "deployment_id",
-      "idempotency_key",
-      "inputs_hash",
-      "live_test",
-      "name",
-      "published_version",
-      "report",
-      "request_fingerprint",
-      "run_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_publish_policies",
-    "columns": [
-      "app_id",
-      "mode",
-      "version"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "app"
-    }
-  },
-  {
-    "table": "stored_workflow_publish_receipts",
-    "columns": [
-      "account_id",
-      "api_key_id",
-      "app_id",
-      "evidence",
-      "expires_at",
-      "name",
-      "policy_version",
-      "token_hash"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "stored_workflow_revisions",
-    "columns": [
-      "app_id",
-      "check_evidence",
-      "definition",
-      "legacy_snapshot",
-      "name",
-      "published_by_account_id",
-      "published_by_api_key_id",
-      "recorded_at",
-      "version"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "app"
-    }
-  },
-  {
-    "table": "stored_workflows",
-    "columns": [
-      "app_id",
-      "draft",
-      "enabled",
-      "name",
-      "published",
-      "published_version",
-      "test_report",
-      "test_suite",
-      "updated_at",
-      "version"
-    ],
-    "kind": "configuration",
-    "capabilities": [],
-    "clone": {
-      "owner": "app"
-    }
-  },
-  {
     "table": "stripe_push_dedupe",
     "columns": [
       "account_id",
       "hour",
       "org_id",
       "pushed_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_admin_events",
-    "columns": [
-      "id",
-      "sequence",
-      "actor_id",
-      "kind",
-      "resource_id",
-      "data",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_engineering",
-    "columns": [
-      "ticket_id",
-      "revision",
-      "data"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_episodes",
-    "columns": [
-      "id",
-      "ticket_id",
-      "started_at",
-      "data"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_events",
-    "columns": [
-      "id",
-      "sequence",
-      "ticket_id",
-      "actor_id",
-      "kind",
-      "data",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_messages",
-    "columns": [
-      "id",
-      "sequence",
-      "ticket_id",
-      "actor_id",
-      "author",
-      "body",
-      "redacted",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_notifications",
-    "columns": [
-      "id",
-      "sequence",
-      "event_id",
-      "ticket_id",
-      "recipient_id",
-      "audience",
-      "kind",
-      "created_at",
-      "read_at",
-      "email_state",
-      "attempts",
-      "lease_id",
-      "lease_until",
-      "available_at",
-      "destination_hash"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_outbox",
-    "columns": [
-      "id",
-      "ticket_id",
-      "state",
-      "attempts",
-      "lease_id",
-      "available_at",
-      "lease_until",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_previews",
-    "columns": [
-      "id",
-      "ticket_id",
-      "actor_id",
-      "kind",
-      "snapshot",
-      "expires_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_receipts",
-    "columns": [
-      "id",
-      "actor_id",
-      "ticket_id",
-      "operation",
-      "resource_id",
-      "request_hash",
-      "result",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_resources",
-    "columns": [
-      "id",
-      "kind",
-      "revision",
-      "data",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_satisfaction",
-    "columns": [
-      "episode_id",
-      "actor_id",
-      "rating",
-      "created_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_staff",
-    "columns": [
-      "account_id",
-      "revision",
-      "role",
-      "profile"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "support_tickets",
-    "columns": [
-      "id",
-      "scope_key",
-      "account_id",
-      "org_id",
-      "created_by",
-      "subject",
-      "category",
-      "status",
-      "revision",
-      "priority",
-      "team_id",
-      "assignee_id",
-      "state",
-      "created_at",
-      "updated_at",
-      "resolved_at"
     ],
     "kind": "operational"
   },
@@ -20993,6 +20445,207 @@
       "updated_at"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "storage_grant_audit",
+    "columns": [
+      "access",
+      "app_id",
+      "granted_at",
+      "id",
+      "node_id",
+      "objects",
+      "subject_class",
+      "subject_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "storage_object_deletions",
+    "columns": [
+      "attempts",
+      "decided_at",
+      "generation",
+      "last_error",
+      "next_attempt_at",
+      "reason",
+      "requested_at",
+      "requested_by",
+      "state",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflows",
+    "columns": [
+      "app_id",
+      "draft",
+      "enabled",
+      "name",
+      "published",
+      "published_version",
+      "test_report",
+      "test_suite",
+      "updated_at",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "stored_workflow_failure_guards",
+    "columns": [
+      "app_id",
+      "generation",
+      "monitoring_since",
+      "name",
+      "paused_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_failure_history",
+    "columns": [
+      "actor_account_id",
+      "app_id",
+      "completed_runs",
+      "failures",
+      "generation",
+      "id",
+      "name",
+      "policy_version",
+      "reason",
+      "recorded_at",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_failure_policies",
+    "columns": [
+      "app_id",
+      "enabled",
+      "failure_threshold",
+      "min_completed_runs",
+      "name",
+      "version",
+      "window_seconds"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "stored_workflow_live_baseline_promotions",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "promoted_at",
+      "promotion_id",
+      "receipt",
+      "revision",
+      "suite_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_live_baseline_retirements",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "receipt",
+      "retirement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_live_suites",
+    "columns": [
+      "app_id",
+      "workflow_version",
+      "cases",
+      "created_at",
+      "deployment_id",
+      "id",
+      "managed",
+      "name",
+      "published_version",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_live_verifications",
+    "columns": [
+      "app_id",
+      "workflow_version",
+      "case_name",
+      "created_at",
+      "deployment_id",
+      "idempotency_key",
+      "inputs_hash",
+      "live_test",
+      "name",
+      "published_version",
+      "report",
+      "request_fingerprint",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_publish_policies",
+    "columns": [
+      "app_id",
+      "mode",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "stored_workflow_publish_receipts",
+    "columns": [
+      "account_id",
+      "api_key_id",
+      "app_id",
+      "evidence",
+      "expires_at",
+      "name",
+      "policy_version",
+      "token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "stored_workflow_revisions",
+    "columns": [
+      "app_id",
+      "check_evidence",
+      "definition",
+      "legacy_snapshot",
+      "name",
+      "published_by_account_id",
+      "published_by_api_key_id",
+      "recorded_at",
+      "version"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -21443,6 +21096,1601 @@
       "recipient_id",
       "status",
       "workflow_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_release_approval_policies",
+    "columns": [
+      "account_id",
+      "after_stage",
+      "allow_self_approval",
+      "app_id",
+      "approvers",
+      "created_at",
+      "notify_channel_ids",
+      "required_approvals",
+      "timeout_minutes",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
+    "table": "deployment_release_approvals",
+    "columns": [
+      "account_id",
+      "app_id",
+      "approver",
+      "approver_account_id",
+      "approver_role",
+      "comment",
+      "created_at",
+      "decision",
+      "deployment_id",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_outcome_checks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checked_at",
+      "checked_by",
+      "deployment_id",
+      "note",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_approval_events",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "channel_ids",
+      "created_at",
+      "delivered_at",
+      "deployment_id",
+      "event",
+      "id",
+      "last_error",
+      "next_attempt_at",
+      "payload",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scheduled_releases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "canary",
+      "created_at",
+      "deployment_id",
+      "id",
+      "notify_channel_ids",
+      "outcome_code",
+      "outcome_detail",
+      "override_freeze",
+      "override_freeze_ids",
+      "release_at",
+      "scheduled_by",
+      "scheduled_by_account_id",
+      "scheduled_by_key_id",
+      "started_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_database_switches",
+    "columns": [
+      "account_id",
+      "activated_at",
+      "app_id",
+      "attempt_count",
+      "cancel_requested_at",
+      "created_at",
+      "cutover_id",
+      "drain_blocked",
+      "drain_parked",
+      "drain_pending",
+      "drain_requested_at",
+      "drain_retired",
+      "failure_code",
+      "failure_detail",
+      "fenced_at",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "phase",
+      "phase_started_at",
+      "release_switched_at",
+      "requested_by",
+      "restore_point",
+      "retry_at",
+      "scope",
+      "source_database_id",
+      "target_database_id",
+      "target_deployment_id",
+      "target_name",
+      "undone_deployment_ids",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_capture_data",
+    "columns": [
+      "capture_id",
+      "kind",
+      "process_id",
+      "profile",
+      "seq"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capture",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agents",
+    "columns": [
+      "account_id",
+      "created_at",
+      "deleted_at",
+      "description",
+      "id",
+      "latest_version",
+      "name",
+      "state",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_versions",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "ai_budget_millicents",
+      "capability_policy",
+      "created_at",
+      "deliveries",
+      "harness_image",
+      "harness_models",
+      "harness_preset",
+      "harness_run",
+      "model_integrations",
+      "pause_during_model_calls",
+      "prompt_template",
+      "ram_mb",
+      "timeout_sec",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "agent_runs",
+    "columns": [
+      "account_id",
+      "agent_id",
+      "agent_version",
+      "ai_budget_millicents",
+      "attempt",
+      "boot_ms",
+      "cancel_requested_at",
+      "checkout_commit",
+      "checkout_installation_id",
+      "checkout_repository",
+      "deadline_credit_max_sec",
+      "dedupe_key",
+      "exit_code",
+      "finished_at",
+      "github_installation_id",
+      "github_number",
+      "github_repository",
+      "id",
+      "inputs",
+      "instance_id",
+      "lease_expires_at",
+      "lease_owner",
+      "lease_token",
+      "node_id",
+      "outcome_code",
+      "outcome_message",
+      "prompt",
+      "queued_at",
+      "ram_mb",
+      "running_at",
+      "signal",
+      "started_at",
+      "state",
+      "tenant_id",
+      "timeout_sec",
+      "trigger",
+      "updated_at",
+      "workflow_event",
+      "workflow_run_id",
+      "workflow_step"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_outputs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "files",
+      "log_tail",
+      "log_truncated",
+      "result",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_usage",
+    "columns": [
+      "account_id",
+      "billable_mb_ms",
+      "cold_boot",
+      "expected_samples",
+      "measured_ms",
+      "method",
+      "paused_ms",
+      "peak_private_mb",
+      "private_mb_ms",
+      "recorded_at",
+      "run_id",
+      "samples",
+      "unpaused_private_mb_ms"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_callback_revocations",
+    "columns": [
+      "account_id",
+      "endpoint_id",
+      "revoked_at",
+      "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_github_subscriptions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "endpoint_id",
+      "event_types",
+      "expires_at",
+      "id",
+      "issued_at",
+      "repository",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_callbacks",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "provider_call_id",
+      "run_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_sandbox_task_calls",
+    "columns": [
+      "account_id",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "issued_at",
+      "sandbox_id",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "sandbox_actions",
+    "columns": [
+      "account_id",
+      "args",
+      "created_at",
+      "delivered_at",
+      "endpoint_id",
+      "exit_code",
+      "finished_at",
+      "id",
+      "issued_at",
+      "kind",
+      "output",
+      "screenshot_bytes",
+      "screenshot_key",
+      "seq",
+      "session_id",
+      "started_at",
+      "state",
+      "thread_id",
+      "tool_call_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_spend",
+    "columns": [
+      "account_id",
+      "calls",
+      "run_id",
+      "spent_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_ai_reservations",
+    "columns": [
+      "created_at",
+      "expires_at",
+      "lease_id",
+      "reserved_millicents",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_summaries",
+    "columns": [
+      "account_id",
+      "first_call_at",
+      "last_call_at",
+      "refused_calls",
+      "run_id",
+      "tool_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_capability_decisions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "decision",
+      "id",
+      "run_id",
+      "tool"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_approvals",
+    "columns": [
+      "account_id",
+      "arguments_sha256",
+      "arguments_summary",
+      "created_at",
+      "expires_at",
+      "id",
+      "released_at",
+      "run_id",
+      "tool"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_run_approval_decisions",
+    "columns": [
+      "account_id",
+      "approval_id",
+      "decided_at",
+      "decided_by",
+      "decision",
+      "note"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "agent_deliveries",
+    "columns": [
+      "account_id",
+      "attempts",
+      "body",
+      "body_truncated",
+      "bucket_app_id",
+      "bucket_id",
+      "created_at",
+      "deadline_at",
+      "destination",
+      "external_id",
+      "external_url",
+      "finished_at",
+      "id",
+      "idempotency_key",
+      "installation_id",
+      "lease_expires_at",
+      "lease_token",
+      "next_attempt_at",
+      "number",
+      "object_prefix",
+      "ordinal",
+      "outcome_code",
+      "outcome_message",
+      "repository",
+      "run_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_capture",
+    "columns": [
+      "namespace",
+      "producer_id",
+      "recovery_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_agent_run_observations",
+    "columns": [
+      "account_id",
+      "delivery_id",
+      "disposition",
+      "intent_id",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "runtime_secret_signatures",
+    "columns": [
+      "ciphertext_sha256",
+      "created_at",
+      "signature"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_nodes",
+    "columns": [
+      "admission_ceiling_mb",
+      "boot_slots",
+      "created_at",
+      "id",
+      "lifecycle",
+      "postgres_majors",
+      "target_url",
+      "updated_at",
+      "volume_capacity_bytes"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "database_restore_drills",
+    "columns": [
+      "drill_id",
+      "error_code",
+      "finished_at",
+      "node_id",
+      "recovered_to",
+      "result",
+      "source_id",
+      "started_at",
+      "target_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_role_verifiers",
+    "columns": [
+      "database_id",
+      "role_name",
+      "updated_at",
+      "verifier"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_usage",
+    "columns": [
+      "database_id",
+      "ended_at",
+      "meter",
+      "rate",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "database_vms",
+    "columns": [
+      "always_on",
+      "bootstrapped",
+      "compute_quota_unit_seconds",
+      "created_at",
+      "database_id",
+      "drop_standby_slot",
+      "held",
+      "last_active_at",
+      "last_backup_at",
+      "last_error",
+      "major_history",
+      "mem_mib",
+      "move_lease_until",
+      "move_node",
+      "node_id",
+      "postgres_major",
+      "promote_pending",
+      "replicated",
+      "resize_pending",
+      "restore_lease_until",
+      "restore_recovered_to",
+      "restore_source",
+      "restore_target",
+      "restore_window_seconds",
+      "standby_node",
+      "standby_running",
+      "standby_synced",
+      "state",
+      "state_changed_at",
+      "upgrade_from",
+      "upgrade_lease_until",
+      "upgrade_major",
+      "upgrade_operation",
+      "upgrade_result",
+      "vcpu_count",
+      "volume_bytes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "referral_links",
+    "columns": [
+      "active",
+      "code",
+      "created_at",
+      "kind",
+      "owner_id",
+      "share_code"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_attributions",
+    "columns": [
+      "account_id",
+      "attribution_source",
+      "code",
+      "commission_bps",
+      "conversion_days",
+      "created_at",
+      "currency",
+      "customer_reward_cents",
+      "first_paid_at",
+      "first_paid_invoice_id",
+      "follow_up",
+      "hold_days",
+      "note",
+      "referred_reward_cents",
+      "selected_by",
+      "stage",
+      "subject_kind",
+      "updated_at",
+      "updated_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_leads",
+    "columns": [
+      "company",
+      "created_at",
+      "created_by",
+      "email",
+      "id",
+      "name",
+      "note",
+      "owner_id",
+      "stage",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_tasks",
+    "columns": [
+      "completed_at",
+      "created_at",
+      "created_by",
+      "due_on",
+      "id",
+      "lead_id",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_routing",
+    "columns": [
+      "id",
+      "last_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_inquiries",
+    "columns": [
+      "company",
+      "created_at",
+      "email",
+      "id",
+      "intent",
+      "last_received_at",
+      "latest_message",
+      "lead_id",
+      "message",
+      "name",
+      "reason",
+      "repeat_count",
+      "requested_code",
+      "status",
+      "task_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_intake_receipts",
+    "columns": [
+      "expires_at",
+      "nonce"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_activities",
+    "columns": [
+      "actor_id",
+      "follow_up_on",
+      "follow_up_title",
+      "id",
+      "kind",
+      "lead_id",
+      "next_step",
+      "occurred_at",
+      "outcome",
+      "recorded_at",
+      "summary",
+      "task_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_qualifications",
+    "columns": [
+      "blocker",
+      "buying_timeline",
+      "decision_maker",
+      "decision_on",
+      "lead_id",
+      "priority",
+      "product_fit",
+      "updated_at",
+      "updated_by",
+      "use_case",
+      "version",
+      "workload"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_outcomes",
+    "columns": [
+      "actor_id",
+      "id",
+      "lead_id",
+      "lead_version",
+      "note",
+      "owner_id",
+      "reason",
+      "recorded_at",
+      "stage"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_message_templates",
+    "columns": [
+      "body",
+      "category",
+      "id",
+      "stage",
+      "status",
+      "subject",
+      "title",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_team_members",
+    "columns": [
+      "account_id",
+      "active",
+      "created_at",
+      "role",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_agreements",
+    "columns": [
+      "account_id",
+      "commission_bps",
+      "created_at",
+      "created_by",
+      "effective_from",
+      "id",
+      "note"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_credit_changes",
+    "columns": [
+      "account_id",
+      "changed_by",
+      "created_at",
+      "from_commission_bps",
+      "from_owner_id",
+      "id",
+      "reason",
+      "to_commission_bps",
+      "to_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_payouts",
+    "columns": [
+      "account_id",
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "note",
+      "owner_id",
+      "paid_on",
+      "recorded_by",
+      "reference",
+      "void_reason",
+      "voided_at",
+      "voided_by"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "environment_branch_capture_objects",
+    "columns": [
+      "created_at",
+      "deployment_id",
+      "storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_admin_events",
+    "columns": [
+      "id",
+      "sequence",
+      "actor_id",
+      "kind",
+      "resource_id",
+      "data",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_engineering",
+    "columns": [
+      "ticket_id",
+      "revision",
+      "data"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_episodes",
+    "columns": [
+      "id",
+      "ticket_id",
+      "started_at",
+      "data"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_events",
+    "columns": [
+      "id",
+      "sequence",
+      "ticket_id",
+      "actor_id",
+      "kind",
+      "data",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_messages",
+    "columns": [
+      "id",
+      "sequence",
+      "ticket_id",
+      "actor_id",
+      "author",
+      "body",
+      "redacted",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_notifications",
+    "columns": [
+      "id",
+      "sequence",
+      "event_id",
+      "ticket_id",
+      "recipient_id",
+      "audience",
+      "kind",
+      "created_at",
+      "read_at",
+      "email_state",
+      "attempts",
+      "lease_id",
+      "lease_until",
+      "available_at",
+      "destination_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_outbox",
+    "columns": [
+      "id",
+      "ticket_id",
+      "state",
+      "attempts",
+      "lease_id",
+      "available_at",
+      "lease_until",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_previews",
+    "columns": [
+      "id",
+      "ticket_id",
+      "actor_id",
+      "kind",
+      "snapshot",
+      "expires_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_receipts",
+    "columns": [
+      "id",
+      "actor_id",
+      "ticket_id",
+      "operation",
+      "resource_id",
+      "request_hash",
+      "result",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_resources",
+    "columns": [
+      "id",
+      "kind",
+      "revision",
+      "data",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_satisfaction",
+    "columns": [
+      "episode_id",
+      "actor_id",
+      "rating",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_staff",
+    "columns": [
+      "account_id",
+      "revision",
+      "role",
+      "profile"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_ticket_snapshots",
+    "columns": [
+      "ticket_id",
+      "captured_at",
+      "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "support_tickets",
+    "columns": [
+      "id",
+      "scope_key",
+      "account_id",
+      "org_id",
+      "created_by",
+      "subject",
+      "category",
+      "status",
+      "revision",
+      "priority",
+      "team_id",
+      "assignee_id",
+      "state",
+      "created_at",
+      "updated_at",
+      "resolved_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_audit",
+    "columns": [
+      "app_id",
+      "audited_since"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_rollup_windows",
+    "columns": [
+      "app_id",
+      "bucket_start",
+      "id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_watermarks",
+    "columns": [
+      "node_name",
+      "previous_source_at",
+      "registered_at",
+      "source_at",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_intervals",
+    "columns": [
+      "covered_since",
+      "covered_until",
+      "node_name",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "request_analytics_coverage_gaps",
+    "columns": [
+      "app_id",
+      "gap_from",
+      "gap_until",
+      "history_incomplete",
+      "node_name",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_sends",
+    "columns": [
+      "invocation_id",
+      "sender_app_id",
+      "on_complete_app_id",
+      "created_at",
+      "workflow_run_id",
+      "workflow_op"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_run_starts",
+    "columns": [
+      "run_id",
+      "starter_app_id",
+      "created_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_grants",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "key_id",
+      "payload",
+      "revoked_at",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_invocations",
+    "columns": [
+      "account_id",
+      "deadline",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_oauth_authorizations",
+    "columns": [
+      "account_id",
+      "connection_id",
+      "expires_at",
+      "flow_ciphertext",
+      "phase",
+      "state_sha256"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "tool_oauth_connections",
+    "columns": [
+      "account_id",
+      "app_id",
+      "credentials_ciphertext",
+      "expires_at",
+      "generation",
+      "id",
+      "lease_id",
+      "lease_until",
+      "payload",
+      "revoked_at",
+      "state"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "task_tool_release_intents",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_source_intents",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_binding_qualifications",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_plans",
+    "columns": [
+      "account_id",
+      "expires_at",
+      "id",
+      "payload"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "hosted_task_rehearsal_runs",
+    "columns": [
+      "account_id",
+      "approval_expires_at",
+      "id",
+      "plan_sha256",
+      "reserved_at",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "tool_publications",
+    "columns": [
+      "account_id",
+      "id",
+      "payload",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_alert_notices",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "created_at",
+      "detail",
+      "finished_at",
+      "id",
+      "kind",
+      "last_error",
+      "lease_expires_at",
+      "next_attempt_at",
+      "status",
+      "subject_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_conversion_daily",
+    "columns": [
+      "account_id",
+      "count",
+      "customer_id",
+      "day",
+      "environment_id",
+      "event_name",
+      "first_at",
+      "last_at",
+      "value_sum"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_event_names",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_id",
+      "name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_event_usage",
+    "columns": [
+      "accepted",
+      "account_id",
+      "dropped",
+      "month"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiment_units",
+    "columns": [
+      "converted_at",
+      "crossed",
+      "customer_id",
+      "den_sum",
+      "errors",
+      "experiment_id",
+      "first_exposed_at",
+      "latency_requests",
+      "pre_value",
+      "requests",
+      "slow_requests",
+      "subject_hash",
+      "unit_customer_id",
+      "value_sum",
+      "variant"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiments",
+    "columns": [
+      "account_id",
+      "allocation",
+      "bandit",
+      "bandit_weighted_at",
+      "breach",
+      "control",
+      "created_at",
+      "created_by",
+      "cuped",
+      "denominator_event",
+      "environment_id",
+      "flag_key",
+      "guardrails",
+      "id",
+      "key",
+      "latency_threshold_ms",
+      "layer",
+      "layer_from",
+      "layer_to",
+      "metric_definition",
+      "metric_event",
+      "metric_kind",
+      "min_cuped_p_values",
+      "min_p_values",
+      "mixing_lift",
+      "percentile",
+      "project_id",
+      "rule_id",
+      "started_at",
+      "status",
+      "stop_reason",
+      "stopped_at",
+      "telemetry_cursor",
+      "traffic",
+      "unit",
+      "value_through_day",
+      "weights"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "flag_experiment_latency",
+    "columns": [
+      "bucket",
+      "experiment_id",
+      "requests",
+      "variant"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "health_probe_at",
+      "lease_until",
+      "next_reconcile_at",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "app_protection_objects",
+    "columns": [
+      "app_id",
+      "created_at",
+      "item",
+      "object_id",
+      "reason",
+      "status",
+      "written"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_probe_wakes",
+    "columns": [
+      "app_id",
+      "created_at",
+      "instance_id",
+      "probe_done_at",
+      "woke_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohorts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "created_by",
+      "definition",
+      "environment_id",
+      "id",
+      "key",
+      "members",
+      "refresh_error",
+      "refresh_requested_at",
+      "refreshed_at",
+      "truncated"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_cohort_members",
+    "columns": [
+      "cohort_id",
+      "customer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_events",
+    "columns": [
+      "account_id",
+      "at",
+      "customer_id",
+      "environment_id",
+      "flags",
+      "id",
+      "name",
+      "properties",
+      "subject_hash",
+      "value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "analytics_property_keys",
+    "columns": [
+      "created_at",
+      "environment_id",
+      "key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_valkey_caches",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "eviction_policy",
+      "memory_mb"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_admissions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "execution_id",
+      "expires_at",
+      "key_hash",
+      "request_digest",
+      "scope_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_environment_diagnostics",
+    "columns": [
+      "diagnostic_sequence",
+      "diagnostics",
+      "environment_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_environments",
+    "columns": [
+      "account_id",
+      "artifact_bytes",
+      "artifact_keys",
+      "base_key",
+      "base_ref",
+      "build_attempts",
+      "created_at",
+      "export_digest",
+      "export_key",
+      "failure_code",
+      "guest_executor_digest",
+      "id",
+      "image_attempts",
+      "image_digest",
+      "lease",
+      "lease_expires_at",
+      "principal_id",
+      "recipe",
+      "recipe_digest",
+      "runtime",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_file_links",
+    "columns": [
+      "execution_id",
+      "file_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_files",
+    "columns": [
+      "account_id",
+      "created_at",
+      "execution_id",
+      "expires_at",
+      "id",
+      "kind",
+      "lease_expires_at",
+      "name",
+      "principal_id",
+      "sealed_key",
+      "sha256",
+      "size_bytes",
+      "status",
+      "storage_key",
+      "token",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_run_bindings",
+    "columns": [
+      "account_id",
+      "agent_ref",
+      "customer_ref",
+      "enabled",
+      "revision",
+      "subject_id",
+      "subject_kind"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "execution_run_budget_alerts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "day",
+      "event_id",
+      "kind",
+      "maximum",
+      "metric",
+      "observed",
+      "ref",
+      "threshold_percent"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_run_budgets",
+    "columns": [
+      "account_id",
+      "enabled",
+      "kind",
+      "max_compute_mb_ms",
+      "max_concurrent",
+      "max_invocations",
+      "ref",
+      "revision"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "execution_run_reservations",
+    "columns": [
+      "account_id",
+      "admitted_at",
+      "agent_ref",
+      "customer_ref",
+      "execution_id",
+      "reserved_mb_ms",
+      "task_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_task_invocations",
+    "columns": [
+      "account_id",
+      "callback",
+      "callback_key",
+      "created_at",
+      "delivered_at",
+      "execution_id",
+      "request_digest",
+      "version_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_task_versions",
+    "columns": [
+      "account_id",
+      "agent_endpoint_ids",
+      "created_at",
+      "digest",
+      "environment_id",
+      "id",
+      "kid",
+      "metadata",
+      "name",
+      "runtime",
+      "sealed_definition",
+      "status",
+      "version"
     ],
     "kind": "operational"
   }

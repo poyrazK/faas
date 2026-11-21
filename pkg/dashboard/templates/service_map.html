@@ -38,7 +38,8 @@
     <td><a href="/dashboard/apps/{{.TargetAppSlug}}">{{.TargetAppSlug}}</a></td>
     <td class="num">{{.Calls}}</td>
     <td class="num{{if ge .ErrorRatePct $.Data.HighErrorRatePct}} bad{{end}}">{{.Errors}} ({{printf "%.2f" .ErrorRatePct}}%)</td>
-    {{if .Calls}}<td class="num">{{printf "%.1f" .LatencyP50MS}} ms</td>
+    {{/* Latency covers successful calls: an edge whose every call failed has none to show, not 0.0 ms. */}}
+    {{if gt .Calls .Errors}}<td class="num">{{printf "%.1f" .LatencyP50MS}} ms</td>
     <td class="num">{{printf "%.1f" .LatencyP95MS}} ms</td>{{else}}<td class="num"><span class="muted">—</span></td>
     <td class="num"><span class="muted">—</span></td>{{end}}
     <td class="num">{{.ColdCalls}} ({{printf "%.0f" .ColdCallPct}}%)</td>

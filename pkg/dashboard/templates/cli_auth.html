@@ -4,20 +4,26 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} — Gregale</title>
+  {{with index .Data "MCPContinueURL"}}
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="refresh" content="0;url={{.}}">
+  {{end}}
   <style nonce="{{.Nonce}}">
-    /* The CLI handshake page. Nothing decorative: the page exists to show
-       one code and one button, and to get out of the way. Follows the OS
-       polarity; no animation, no external origins. */
+    /* Native CLI and MCP approval. No external assets or browser scripts
+       are needed for the hosted MCP return. */
     :root {
       color-scheme: light dark;
       --fg: #111;
       --muted: #6b6b6b;
       --line: #e4e4e4;
       --bg: #fff;
+      --surface: #f5f6f8;
+      --accent: #224da8;
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
     @media (prefers-color-scheme: dark) {
-      :root { --fg: #ededed; --muted: #979797; --line: #2a2a2a; --bg: #0d0d0d; }
+      :root { --fg: #ededed; --muted: #979797; --line: #2a2a2a; --bg: #0d0d0d; --surface: #101318; --accent: #8eb5ff; }
+      body.mcp { --fg: #eef1f5; --muted: #b8c0cc; --line: #343e4c; --bg: #171c24; }
     }
     * { box-sizing: border-box; }
     body {
@@ -33,7 +39,8 @@
     main { width: min(22rem, calc(100vw - 3rem)); padding: 3rem 0; }
     .brand { font-size: 0.9rem; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 2.5rem; }
     h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 0.75rem; }
-    p { margin: 0 0 1.5rem; color: var(--muted); }
+    p, ol { margin: 0 0 1.5rem; color: var(--muted); }
+    ol { padding-left: 1.25rem; }
     p strong { color: var(--fg); font-weight: 600; }
     code { font-family: var(--mono); font-size: 0.9em; }
 
@@ -61,6 +68,8 @@
     }
     button:hover { opacity: 0.85; }
     button:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+    a { color: var(--accent); }
+    :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 
     .fine { font-size: 0.8rem; margin: 0; }
 
@@ -71,9 +80,35 @@
     }
     .errorbox { color: #b3261e; border-color: #b3261e; }
     @media (prefers-color-scheme: dark) { .errorbox { color: #ff8f88; border-color: #7a3733; } }
+    body.mcp { background: var(--surface); }
+    .mcp main { width: min(42rem, calc(100% - 2rem)); margin: 2rem 0; padding: 2rem; background: var(--bg); border: 1px solid var(--line); border-radius: 14px; }
+    .mcp .brand { margin-bottom: 1.25rem; }
+    .mcp h1 { font-size: 1.7rem; line-height: 1.25; letter-spacing: -0.025em; margin-bottom: 1rem; }
+    .mcp p { margin-bottom: 1rem; }
+    .mcp .fine { font-size: 0.85rem; }
+    .identity { overflow-wrap: anywhere; }
+    .permission { padding: 1rem; margin-bottom: 1.25rem; border: 1px solid var(--line); border-radius: 8px; }
+    .permission h2 { margin: 0 0 0.35rem; font-size: 1rem; }
+    .permission p:last-child { margin-bottom: 0; }
+    .permission ul { padding-left: 1.25rem; margin: 0.5rem 0 1rem; }
+    .mcp select { width: 100%; font: inherit; color: var(--fg); background: var(--bg); padding: 0.6rem; border: 1px solid var(--line); border-radius: 6px; margin: 0.35rem 0 0.75rem; }
+    .mcp details { border: 1px solid var(--line); border-radius: 8px; padding: 0.85rem 1rem; margin: 0 0 1.25rem; }
+    .mcp summary { cursor: pointer; font-weight: 600; }
+    .mcp details[open] > summary { margin-bottom: 0.75rem; }
+    .mcp fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+    .mcp legend { padding: 0; font-weight: 600; margin-bottom: 0.4rem; }
+    .project-list { max-height: 16rem; overflow-y: auto; overscroll-behavior: contain; margin: 0.75rem 0; border: 1px solid var(--line); border-radius: 6px; }
+    .project { display: flex; align-items: flex-start; gap: 0.65rem; padding: 0.65rem 0.75rem; cursor: pointer; overflow-wrap: anywhere; }
+    .project + .project { border-top: 1px solid var(--line); }
+    .project input { flex-shrink: 0; width: 1rem; height: 1rem; margin: 0.25rem 0 0; accent-color: var(--accent); }
+    .project .fine { display: block; color: var(--muted); }
+    .mcp button, .mcp .button { display: block; width: 100%; padding: 0.7rem 1rem; color: #fff; background: #224da8; border: 1px solid #224da8; border-radius: 7px; font-weight: 600; text-align: center; text-decoration: none; }
+    .mcp .connection-details { margin-top: 1.25rem; font-size: 0.85rem; }
+    .mcp .connection-details .code { font-size: 0.8rem; margin-bottom: 0; }
+    @media (max-width: 480px) { .mcp main { margin: 1rem 0; padding: 1.25rem; } .mcp h1 { font-size: 1.45rem; } }
   </style>
 </head>
-<body>
+<body{{if index .Data "MCP"}} class="mcp"{{end}}>
   <main>
     {{template "email-verification-banner" .}}
     <p class="brand">Gregale</p>
@@ -91,38 +126,78 @@
       <p>Approved. Handing the sign-in to your terminal…</p>
       <p class="fine">If nothing happens, <a href="{{$loopback}}">continue to your terminal</a>.</p>
       <script nonce="{{.Nonce}}">window.location.replace({{$loopback}});</script>
+    {{else if index .Data "MCPContinueURL"}}
+      <p>Access approved. Continue to review your agent and finish connecting.</p>
+      <a class="button" href="{{index .Data "MCPContinueURL"}}">Continue to agent review</a>
+      <p class="fine">Your browser will continue automatically. If it does not, use the button above.</p>
     {{else if index .Data "Refused"}}
       <p>{{index .Data "Detail"}}</p>
       <p class="fine">Nothing was authorized. Start the connection again from your agent.</p>
+    {{else if index .Data "EmailVerificationRequired"}}
+      <p class="identity">Verify <strong>{{index .Data "AccountEmail"}}</strong> before authorizing this connection.</p>
+      <ol>
+        <li>Open Gregale’s verification email in this signed-in browser.</li>
+        <li>Click <strong>Verify email</strong> and wait for the <strong>Email verified</strong> page.</li>
+        <li>{{if index .Data "MCP"}}Start the connection again from your agent.{{else}}Return to your terminal and run <code>gregale login</code> again.{{end}}</li>
+      </ol>
+      {{with index .Data "ResendToken"}}
+      <form method="post" action="/v1/auth/verify-email/resend">
+        <input type="hidden" name="csrf_token" value="{{.}}">
+        <button type="submit">Send a new verification link</button>
+      </form>
+      {{end}}
+      {{if not (index .Data "MCP")}}<p><a href="{{index .Data "SignInURL"}}">Sign in with a different account</a></p>{{end}}
+    {{else if index .Data "CLIRetry"}}
+      <p>This approval code expired or was already used.</p>
+      {{with index .Data "AccountEmail"}}<p class="identity">This browser is signed in as <strong>{{.}}</strong>.</p>{{end}}
+      <ol>
+        <li>Keep this browser open.</li>
+        <li>In the same terminal, run <code>gregale login</code> to get a fresh approval link.</li>
+        <li>Open the new link in this browser and approve the request from your terminal.</li>
+      </ol>
+      <p class="fine">If your terminal is already signed in, you can continue there. If you started with <code>gregale start</code>, run it again after signing in.</p>
     {{else if index .Data "Error"}}
-      <p>
-        This code was already used or has expired. Codes work exactly once.
-        Run <code>gregale login</code> again for a new one.
-      </p>
-      <p class="fine">Nothing was authorized. You can close this tab.</p>
+      {{if index .Data "MCP"}}
+      <p>Start the connection again from your agent to get a fresh approval page.</p>
+      <p class="fine">Signing in to Gregale does not finish the MCP connection. Return to your agent after completing approval.</p>
+      {{end}}
     {{else}}
+      {{if index .Data "MCP"}}
+      <p class="identity">Signed in as <strong>{{index .Data "AccountEmail"}}</strong></p>
+      <div class="permission">
+        <h2>Requested access</h2>
+        <p>Inspect apps, logs, metrics and deployments.</p>
+        {{with index .Data "MCPCapabilities"}}<p>This connection also lets the agent:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}
+        <p class="fine">Access expires after 7 days unused, or 30 days after approval at the latest. Revoke it any time with <code>gregale mcp connection revoke</code>.</p>
+      </div>
+      <p>{{if index .Data "ReturnMCP"}}Next, review the agent and select its apps to finish connecting.{{else}}After approval, return to the bridge to review the agent and select its apps.{{end}}</p>
+      {{else}}
       <p>
-        {{if index .Data "MCP"}}
-        A Gregale MCP bridge requested a connection as <strong>{{index .Data "AccountEmail"}}</strong>.
-        Authorizing issues a credential to inspect apps, logs, metrics and deployments. It stays valid while the agent uses it: it ends after a week unused, and 30 days after you authorize at the latest.
-        {{with index .Data "MCPCapabilities"}}It also lets the agent:</p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul><p>{{end}}
-        {{if index .Data "ReturnMCP"}}Next you review the agent and select its apps before connecting.{{else}}Return to the bridge to review the agent and select its apps before connecting.{{end}}
-        You can revoke it any time with <code>gregale mcp connection revoke</code>.
-        {{else}}
         <code>gregale login</code> opened this page. Authorizing gives that
         terminal access as <strong>{{index .Data "AccountEmail"}}</strong> — this
         account only.
-        {{end}}
       </p>
+      {{with index .Data "SignInURL"}}<p><a href="{{.}}">Sign in with a different account</a>{{if not (index $.Data "LoopbackPort")}}, then run <code>gregale login</code> again.{{end}}</p>{{end}}
+      {{end}}
 
-      {{if index .Data "MCP"}}
-      <p class="code-label">Authorization code</p>
+      {{if and (not (index .Data "MCP")) (index .Data "LoopbackPort")}}
+      {{/* F10-3 (ADR-20261115160000): approving hands a 30-day sign-in to
+          whatever listens on this port, so a link naming another program's
+          port could leak it. The person checks the code and port first. */}}
+      <p class="code-label">Code shown in your terminal</p>
       <div class="code">{{index .Data "Code"}}</div>
-      {{else if index .Data "LoopbackPort"}}
-      <p class="fine">Only continue if you ran <code>gregale login</code> yourself, just now, on this computer.</p>
-      {{else}}
+      <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on this computer, and your terminal shows this code. Authorizing hands a 30-day sign-in to the program listening on port {{index .Data "LoopbackPort"}} of this computer.</p>
+      {{else if not (index .Data "MCP")}}
       <p class="errorbox">Only continue if you ran <code>gregale login</code> yourself, just now, on a computer you control. Anyone who sent you this link gets access to your account if you approve it.</p>
       {{end}}
+
+      {{/* Account audit F10: where the code came from, beside this
+          browser's address, so a code someone else sent looks foreign. */}}
+      {{with index .Data "Request"}}{{if not (index $.Data "MCP")}}
+      <p class="fine" id="cli-auth-request">
+        Requested {{.At}}{{if .IP}} from <code>{{.IP}}</code>{{if .SameIP}} (this network){{else if .BrowserIP}}; this browser is at <code>{{.BrowserIP}}</code>{{end}}{{else}}, from an unrecorded address{{end}}.
+      </p>
+      {{end}}{{end}}
 
       <form method="POST" action="/cli-auth">
         {{if index .Data "MCP"}}
@@ -130,7 +205,7 @@
         {{if index .Data "ReturnMCP"}}<input type="hidden" name="return" value="mcp">{{end}}
         {{with index .Data "MCPOrgs"}}
         {{/* ADR-20261101225122: the connection acts in one organization. */}}
-        <label class="code-label" for="org">The agent acts in</label>
+        <label for="org">Account for this connection</label>
         <select id="org" name="org">
           <option value="">Your personal account</option>
           {{range .}}<option value="{{.ID}}">{{.Name}} (your role: {{.Role}})</option>{{end}}
@@ -139,12 +214,18 @@
         {{end}}
         {{with index .Data "MCPProjects"}}
         {{/* ADR-20261104085712: a connection can be limited to projects. */}}
-        <fieldset>
-          <legend class="code-label">Limit the agent to projects (optional)</legend>
-          {{range .}}<label><input type="checkbox" name="project" value="{{.ID}}"> {{.Slug}} <span class="fine">({{.Owner}})</span></label>
+        <p class="fine">By default, the agent can access all projects in the selected account. Select projects below to limit access.</p>
+        <details>
+          <summary>Choose specific projects (optional)</summary>
+          <fieldset>
+          <legend>Projects the agent can access</legend>
+          <div class="project-list">
+          {{range .}}<label class="project"><input type="checkbox" name="project" value="{{.ID}}"><span>{{.Slug}} <span class="fine">{{.Owner}}</span></span></label>
           {{end}}
-          <p class="fine">Leave every box clear to give the agent all projects. Choose only projects of the account or organization the agent acts in; a limited agent can't manage databases.</p>
-        </fieldset>
+          </div>
+          <p class="fine">Leave every box clear for all projects. Choose only projects of the account selected above. A connection limited to projects can't manage databases.</p>
+          </fieldset>
+        </details>
         {{end}}
         {{else if index .Data "LoopbackPort"}}
         {{/* One-click login: approval sends a new device code to this
@@ -163,10 +244,17 @@
             carries the same value, and postCliAuthPage verifies both after
             sessionAuth has established the account. */}}
         <input type="hidden" name="csrf_token" value="{{index .Data "CSRFToken"}}">
-        <button type="submit">Authorize</button>
+        <button type="submit">{{if index .Data "MCP"}}Authorize and continue{{else}}Authorize{{end}}</button>
       </form>
 
-      <p class="fine">Didn't run this? Close the tab — nothing happens without the button.</p>
+      <p class="fine">{{if index .Data "MCP"}}Only approve a connection you started from your agent.{{else}}Didn't run this? Close the tab — nothing happens without the button.{{end}}</p>
+      {{if index .Data "MCP"}}
+      <details class="connection-details">
+        <summary>Connection details</summary>
+        <p class="code-label">Gregale approval code · no need to copy this</p>
+        <div class="code">{{index .Data "Code"}}</div>
+      </details>
+      {{end}}
     {{end}}
   </main>
 </body>

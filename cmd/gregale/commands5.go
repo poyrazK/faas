@@ -261,15 +261,17 @@ func cmdStatus(args []string) int {
 		// in pkg/api/dto.go are the single source of truth.
 		return jsonOut(writeJSON(page))
 	}
-	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%%\n", page.APIAvailabilityPct)
+	// Each indicator names its target, so "degraded" says how far off it is
+	// (retail-store feedback B8, 2026-11-17).
+	_, _ = fmt.Fprintf(osStdout, "availability: %.2f%% (target ≥ %g%%)\n", page.APIAvailabilityPct, api.StatusTargetAPIAvailabilityPct)
 	if page.WakeP95MS == nil {
 		// The status query reports a p95 only from 20 platform wakes in 30
 		// minutes, and omits it when Prometheus is unreachable (H10-46).
 		_, _ = fmt.Fprintln(osStdout, "wake p95:     — (fewer than 20 wakes in the last 30 min, or wake metrics unavailable)")
 	} else {
-		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms\n", *page.WakeP95MS)
+		_, _ = fmt.Fprintf(osStdout, "wake p95:     %.0f ms (target ≤ %d ms, platform wakes, last 30 min)\n", *page.WakeP95MS, api.StatusTargetWakeP95MS)
 	}
-	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%%\n", page.BuildSuccessPct)
+	_, _ = fmt.Fprintf(osStdout, "deployments ok: %.2f%% (target ≥ %d%%, last 24 h; failures caused by customer code are not counted)\n", page.BuildSuccessPct, api.StatusTargetDeploymentSuccessPct)
 	_, _ = fmt.Fprintf(osStdout, "as of:        %s\n", page.AsOf.Format("2006-01-02 15:04:05 UTC"))
 	// A healthy page's source names the telemetry backend, which is noise for
 	// customers; a degraded one carries the reason the numbers are partial.
@@ -288,10 +290,16 @@ func cmdStatus(args []string) int {
 // flow as `gregale secrets set`; `--restart` opts into an immediate
 // park-and-wake after every requested key has been persisted.
 func cmdEnv(args []string) int {
-	if len(args) == 0 || (args[0] == "clone-status" || args[0] == "resume-automation") && !fullEnvironmentCloneCLI() {
+	if len(args) == 0 || args[0] == "clone-status" && !fullEnvironmentCloneCLI() ||
+		args[0] == "resume-automation" && !fullEnvironmentCloneCLI() && !environmentBranchCLI() {
 		usage := "usage: gregale env <create|pull|push|diff|history|rollback>"
-		if fullEnvironmentCloneCLI() {
+		switch {
+		case fullEnvironmentCloneCLI():
 			usage = "usage: gregale env <create|clone-status|resume-automation|pull|push|diff|history|rollback>"
+		case environmentBranchCLI():
+			// Branches copy their parent's automation paused too
+			// (ADR-20261031193635 amendment 2026-11-17).
+			usage = "usage: gregale env <create|resume-automation|pull|push|diff|history|rollback>"
 		}
 		PrintUsage(os.Stderr, usage, "env")
 		return 1
@@ -326,91 +334,6 @@ func cmdEnv(args []string) int {
 	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
-func envPull(args []string) int {
-	fs := newFlagSet("env pull", flag.ContinueOnError)
-	app := fs.String("app", "", "app slug")
-	scope := fs.String("scope", "", "env scope (defaults to linked project environment)")
-	out := fs.String("o", ".env", "output file (default .env)")
-	if err := fs.Parse(args); err != nil {
-		return 1
-	}
-	if rejectUnexpectedFlagArgs(fs) {
-		return 1
-	}
-	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
-	if resolveErr == nil {
-		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
-		return printErr("Could not read local project context", resolveErr)
-	}
-	if *app == "" {
-		PrintUsage(os.Stderr, "usage: gregale env pull --app <slug> [--env <name>] [-o .env] (or run `gregale link <project-slug>`)", "env")
-		return 1
-	}
-	resolvedScope, scopeErr := resolveEnvironmentFlagOrContext(*scope)
-	if scopeErr != nil {
-		return printErr("Could not read local project context", scopeErr)
-	}
-	*scope = resolvedScope
-	client, err := authedClient()
-	if err != nil {
-		return printErr("Not logged in", err)
-	}
-	resp, err := client.ListSecretsWithScope(context.Background(), *app, *scope)
-	if err != nil {
-		return printErr("List failed", err)
-	}
-	existing, readErr := os.ReadFile(*out)
-	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-		return printErr("Could not read existing .env", readErr)
-	}
-	present := envAssignmentKeys(existing)
-	var b strings.Builder
-	if len(existing) > 0 {
-		b.Write(existing)
-		if existing[len(existing)-1] != '\n' {
-			b.WriteByte('\n')
-		}
-	}
-	added := 0
-	for _, s := range resp.Secrets {
-		if _, ok := present[s.Key]; ok {
-			continue
-		}
-		// KEY-only template: the G2 boundary (§11) means the server
-		// never returns plaintext, so we intentionally write an empty
-		// value. The customer fills values by hand before `env push`.
-		fmt.Fprintf(&b, "%s=\n", s.Key)
-		added++
-	}
-	if err := os.WriteFile(*out, []byte(b.String()), 0o600); err != nil {
-		return printErr("Could not write .env", err)
-	}
-	if jsonOutput {
-		return jsonOut(writeJSON(struct {
-			AppSlug       string `json:"app_slug"`
-			Scope         string `json:"scope"`
-			OutputPath    string `json:"output_path"`
-			RemoteKeys    int    `json:"remote_key_count"`
-			AddedKeys     int    `json:"added_key_count"`
-			PreservedKeys int    `json:"preserved_key_count"`
-			KeyOnly       bool   `json:"key_only"`
-		}{*app, scopeOrDefault(*scope), *out, len(resp.Secrets), added, len(present), true}))
-	}
-	if len(resp.Secrets) == 0 && len(existing) == 0 {
-		PrintOK(osStdout, "Wrote empty %s (%s has no secrets)", *out, *app)
-		return 0
-	}
-	if len(existing) == 0 {
-		PrintOK(osStdout, "Wrote %d key(s) to %s (values intentionally blank — fill by hand)",
-			len(resp.Secrets), *out)
-	} else {
-		PrintOK(osStdout, "Added %d missing key(s) to %s; existing values and local keys were preserved",
-			added, *out)
-	}
-	return 0
-}
-
 func envAssignmentKeys(data []byte) map[string]struct{} {
 	keys := make(map[string]struct{})
 	for _, raw := range strings.Split(string(data), "\n") {
@@ -418,8 +341,11 @@ func envAssignmentKeys(data []byte) map[string]struct{} {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if pair, err := parseSecretsPair(line); err == nil {
-			keys[pair.Key] = struct{}{}
+		if pair, err := parseSecretsPair(stripDotenvExport(line)); err == nil {
+			key := strings.TrimSpace(pair.Key)
+			if api.ValidateSecretKey(key) == nil {
+				keys[key] = struct{}{}
+			}
 		}
 	}
 	return keys
@@ -535,7 +461,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -561,7 +487,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -600,10 +526,7 @@ func envPush(args []string) int {
 	// input path or "<stdin>" so the warning says `File: <stdin>` for
 	// pipe input (matches how envPush surfaces other parse errors).
 	if secretScanMode.isScanEnabled() {
-		origin := *in
-		if *fromStdin {
-			origin = "<stdin>"
-		}
+		origin := envPushOrigin(*in, *fromStdin)
 		scanPairs := make([]secretscan.Pair, len(pairs))
 		for i, p := range pairs {
 			scanPairs[i] = secretscan.Pair{Key: p.k, Value: p.v}
@@ -635,6 +558,7 @@ func envPush(args []string) int {
 		}
 		if len(findings) > 0 {
 			renderEnvPushScanWarnings(findings, osStderr)
+			PrintWarn(osStderr, "%s", envPushSecretHint(*app, origin))
 			// Build a drop set keyed by (key, value) so a duplicate
 			// KEY with a different VALUE pair is treated distinctly —
 			// the pair table is small (handful of entries per .env
@@ -655,9 +579,25 @@ func envPush(args []string) int {
 		}
 	}
 	if len(pairs) == 0 {
-		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. Use --secret-scan=off to override")
+		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
+	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
+	// keys before it were saved, so the push half-applied and --restart
+	// never ran. Empty values are skipped up front instead.
+	nonEmpty := make([]pair, 0, len(pairs))
+	for _, p := range pairs {
+		if p.v == "" {
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale env unset %s %s`", p.k, *app, p.k)
+			continue
+		}
+		nonEmpty = append(nonEmpty, p)
+	}
+	if len(nonEmpty) == 0 {
+		PrintFail(os.Stderr, "every KEY=VALUE pair has an empty value; nothing was pushed")
+		return 1
+	}
+	pairs = nonEmpty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -713,6 +653,35 @@ func envPush(args []string) int {
 	PrintWarn(osStdout, "Updated env values apply on the next cold wake; running instances keep their current environment. Use --restart to apply now.")
 	printSecretUpdateNextSteps(*app, *scope, "", receipt.UpdatedKeys...)
 	return 0
+}
+
+// envPushOrigin names the push input the way scan findings and hints show it.
+func envPushOrigin(path string, fromStdin bool) string {
+	if fromStdin {
+		return "<stdin>"
+	}
+	return path
+}
+
+// envPushSecretHint tells the caller where detected secrets belong. env push
+// drops them; `gregale env set` seals a value deliberately and does not scan
+// it, which is the path the strict-mode rejection already names. Pointing
+// only at --secret-scan=off taught coding agents to turn the scan off for
+// real credentials (agent eval rc.357, Django task).
+func envPushSecretHint(app, origin string) string {
+	appFlag := ""
+	if app != "" {
+		appFlag = " --app " + app
+	}
+	input := " KEY=VALUE"
+	switch {
+	case origin == "<stdin>":
+		input = " --from-stdin"
+	case origin != "":
+		input = " --file " + origin
+	}
+	return "Set detected secrets deliberately with `gregale env set" + appFlag + input +
+		"`; use --secret-scan=off only for test keys the scan misreads"
 }
 
 // renderEnvPushScanWarnings is the envPush-side twin of
@@ -825,7 +794,7 @@ func openCustomerFile(path string) (*os.File, error) {
 
 // --- app scale / rename (called from cmdAppDispatch) ------------------------
 
-const appScaleUsage = "usage: gregale app <slug> scale [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
+const appScaleUsage = "usage: gregale app scale <slug> [--interactive | --plan [--out PATH] | --apply PLAN.json --confirm] [--environment SLUG] [--size micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--require-authn] [--no-require-authn] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol http1|http2|grpc]"
 
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
@@ -841,6 +810,9 @@ func cmdAppScale(slug string, args []string) int {
 	planOutput := fs.String("out", "", "write a reusable reviewed plan to a new JSON file (requires --plan)")
 	applyPlan := fs.String("apply", "", "apply a saved scale plan JSON file")
 	confirmPlan := fs.Bool("confirm", false, "confirm applying the saved plan (requires --apply)")
+	// app scale applies without a prompt; --yes is accepted so scripts that
+	// pass it to every mutating command do not fail (prod 2026-11-15).
+	_ = fs.Bool("yes", false, "accepted for scripts; app scale applies without a prompt")
 	environment := fs.String("environment", "", "edit this project environment's workload settings")
 	workloadRevision := int64(-1)
 	ram := fs.Int("ram", 0, "update RAM (MB)")
@@ -1058,6 +1030,7 @@ func cmdAppScale(slug string, args []string) int {
 	if explicit["health-path"] {
 		v := *healthPath
 		req.HealthPath = &v
+		warnRootHealthPath(v)
 	}
 	if explicit["health-path-wakes"] {
 		v := true
@@ -1106,7 +1079,7 @@ func cmdAppScale(slug string, args []string) int {
 	printAppSettingsTarget(slug, *environment, "explicit --environment", req)
 	updated, err := appClient.UpdateApp(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Scale failed", err)
+		return printErr("Scale failed", explainPerInstanceConcurrencyRefusal(err, explicit["per-instance-concurrency"]))
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(updated))
@@ -1169,7 +1142,33 @@ func cmdAppRename(slug, newSlug string) int {
 	// "old" from "new". The leading glyph goes through PrintOK so the
 	// §3.2 NO_COLOR rule still applies to the status-indicator half.
 	PrintOK(osStdout, "Renamed %s → %s", slug, updated.Slug)
+	if path, ok := followRenameInSavedContext(".", slug, updated.Slug); ok {
+		PrintOK(osStdout, "Updated %s to the new name", path)
+	}
 	return 0
+}
+
+// followRenameInSavedContext points the saved context that covers dir at the
+// renamed app. A context still naming the old slug made the next plain
+// `gregale deploy` create a new app under the old name, without the renamed
+// app's database, bucket or crons (prod 2026-11-19). A committed gregale.yaml
+// is the customer's file and is left alone.
+func followRenameInSavedContext(dir, oldSlug, newSlug string) (string, bool) {
+	link, path, err := findProjectContext(dir)
+	if err != nil || link.App != oldSlug || newSlug == "" {
+		return "", false
+	}
+	link.App = newSlug
+	root := filepath.Dir(filepath.Dir(path))
+	if projectContextPath(root) != path {
+		return "", false
+	}
+	saved, err := saveProjectContext(root, link)
+	if err != nil {
+		_, _ = fmt.Fprintf(osStderr, "warning: renamed %s but could not update %s: %v; run `gregale link --app %s` there\n", oldSlug, path, err, newSlug)
+		return "", false
+	}
+	return saved, true
 }
 
 // cmdAppRestart requests a fresh snapshot restart for an app. The server
@@ -1186,6 +1185,9 @@ func cmdAppDispatch(args []string) int {
 	}
 	if args[0] == subWait && hasSelectorFlag(args[1:]) {
 		return cmdAppWaitSelected(args[1:])
+	}
+	if isAppProjectCommand(args) {
+		return cmdAppProject(args)
 	}
 	slug := args[0]
 	if code, ok := cmdAppConditions(slug, args[1:]); ok {
@@ -1239,6 +1241,8 @@ func cmdAppDispatch(args []string) int {
 			return cmdAppsUDP(slug, commandArgs)
 		case subStreamingCap:
 			return cmdAppsStreamingCap(slug, commandArgs)
+		case subProtection:
+			return cmdAppProtection(slug, commandArgs)
 		case subStaticEgressIP:
 			return cmdAppStaticEgressIP(slug, commandArgs)
 		}
@@ -1405,7 +1409,7 @@ func cmdDashboard(args []string) int {
 //	status       queue doctor view (depth, scaling, bindings, and liveness)
 //	peek         inspect up to N rows without draining
 //	dead-letter  rows that exhausted attempts
-//	ack          release a leased row
+//	ack          acknowledge a processed message's result
 //	setup        configure a simple push workload with queue-depth scaling
 //	bindings     manage first-class queue bindings
 func cmdQueueDispatch(args []string) int {
@@ -1419,8 +1423,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		return 1
@@ -1456,8 +1460,8 @@ func cmdQueueDispatch(args []string) int {
 			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
 			"  peek <slug> [--limit N] inspect without draining\n"+
 			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    release a leased row\n"+
-			"  setup <slug>           configure a push workload + queue-depth scaling\n"+
+			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
+			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
 			"  bindings <verb> <slug> manage queue bindings\n",
 			"queue")
 		maybeSuggestSub(sug)
@@ -1530,9 +1534,12 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	mode := fs.String("mode", "", "delivery mode: pull|push")
 	workloadClass := fs.String("workload-class", "", "workload class: worker|job|http (http requires push and a function)")
 	maxConcurrency := fs.Int("max-concurrency", 0, "maximum concurrent deliveries")
+	// queue setup keeps a disabled binding disabled; this turns it back on
+	// (ADR-20261113180000, R5-9).
+	enabled := fs.String("enabled", "", "turn delivery on or off: true|false")
 	flags, pos := splitArgsForFlags(args)
-	if err := fs.Parse(flags); err != nil || len(pos) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N]", "queue")
+	if err := fs.Parse(flags); err != nil || len(pos) != 2 || (*enabled != "" && *enabled != "true" && *enabled != "false") {
+		PrintUsage(os.Stderr, "usage: gregale queue bindings update <slug> <binding-id> [--queue-name QUEUE] [--mode pull|push] [--workload-class worker|job|http] [--max-concurrency N] [--enabled true|false]", "queue")
 		return 1
 	}
 	req := api.UpdateQueueBindingRequest{}
@@ -1553,6 +1560,10 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 	})
 	if maxConcurrencySet {
 		req.MaxConcurrency = maxConcurrency
+	}
+	if *enabled != "" {
+		on := *enabled == "true"
+		req.Enabled = &on
 	}
 	row, err := client.UpdateQueueBinding(context.Background(), pos[0], pos[1], req)
 	if err != nil {
@@ -1576,6 +1587,7 @@ func cmdQueueSend(args []string) int {
 	workPolicy := fs.String("work-policy", "", "named app work policy (requires --work-key and an unnamed queue)")
 	workKey := fs.String("work-key", "", "JSON scalar identifying related work")
 	workFairnessKey := fs.String("work-fairness-key", "", "JSON scalar shared by related work keys")
+	groupKey := fs.String("group-key", "", "deliver messages with this key one at a time, in send order (preview)")
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -1585,12 +1597,15 @@ func cmdQueueSend(args []string) int {
 		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
+		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--group-key KEY | --work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
 		return 1
 	}
 	work, err := queueWorkFromFlags(*workPolicy, *workKey, *workFairnessKey)
 	if err != nil {
 		return printErr("Invalid queue work", err)
+	}
+	if *groupKey != "" && work != nil {
+		return printErr("Invalid queue work", errors.New("--group-key cannot be combined with --work-policy"))
 	}
 	slug := pos[0]
 	body, err := resolveQueuePayload(*payload)
@@ -1605,7 +1620,7 @@ func cmdQueueSend(args []string) int {
 	if *environment == "" {
 		warning = unconsumedQueueWarning(context.Background(), client, slug, *queueName)
 	}
-	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work})
+	resp, err := client.QueueSend(context.Background(), slug, api.QueueSendRequest{Environment: *environment, Payload: body, QueueName: *queueName, Work: work, GroupKey: *groupKey})
 	if err != nil {
 		return printErr("Queue send failed", err)
 	}
@@ -2413,6 +2428,34 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// dotenvValue reads a .env value the way dotenv and Docker Compose do: a
+// value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
+// one in single quotes loses them and stays literal. prod 2026-11-20:
+// API_URL="https://…" reached the app with the quotes, so every quoted URL
+// or token in a pushed .env was wrong. Other values are unchanged.
+func dotenvValue(v string) string {
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return v[1 : len(v)-1]
+	}
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+	}
+	return v
+}
+
+// parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an
+// optional `export ` prefix, then KEY=VALUE with dotenv quoting. Every file and
+// stdin input reads values this way, so a .env pushes, deploys and runs under
+// `gregale dev` alike; KEY=VALUE arguments are left as the shell passed them.
+func parseDotenvLine(line string) (secretsPair, error) {
+	p, err := parseSecretsPair(stripDotenvExport(line))
+	if err != nil {
+		return p, err
+	}
+	p.Value = dotenvValue(p.Value)
+	return p, nil
 }
 
 // stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can

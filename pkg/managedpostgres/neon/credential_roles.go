@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/pipelineread"
 )
 
 const ownerLogin = "gregale_owner"
@@ -25,6 +27,12 @@ type credentialRole struct {
 	// session marks a session login, whose connection limit is enforced on
 	// an existing role too (ADR-20261110120000).
 	session bool
+	// customRoles are the declared custom roles the login receives
+	// (ADR-20261116213000).
+	customRoles []string
+	// defaultCustomRole, one of customRoles, is the role the login starts
+	// every session as; "" for none (amendment 2).
+	defaultCustomRole string
 }
 
 type credentialRoleManager interface {
@@ -64,7 +72,8 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		connectionLimit: connectionLimit, session: request.Access == managedpostgres.CredentialSession,
 		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
-		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID}
+		database: p.databaseName, access: request.Access.Privileges(), legacy: p.roleName(request.ProviderResourceID, request.IdentityKey), bindingID: request.BindingID,
+		customRoles: request.CustomRoles.Names(), defaultCustomRole: request.CustomRoleDefault}
 }
 
 func (m *sqlCredentialRoles) connection(ctx context.Context, material managedpostgres.CredentialMaterial) (*pgx.Conn, error) {
@@ -257,18 +266,26 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 				return err
 			}
 		}
+		if err := revokeCaptureTables(ctx, tx, role.name); err != nil {
+			return err
+		}
 		// GRANT may emit only a warning when an older object's owner differs.
 		// Never deliver a credential that silently lacks its promised data access.
 		var missingPrivileges bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname='public' AND
+ WHERE n.nspname='public' AND NOT (c.relname = ANY($3)) AND
  ((c.relkind IN ('r','p','v','m','f') AND (NOT has_table_privilege($1,c.oid,'SELECT') OR
  (NOT $2 AND (NOT has_table_privilege($1,c.oid,'INSERT') OR NOT has_table_privilege($1,c.oid,'UPDATE') OR NOT has_table_privilege($1,c.oid,'DELETE')))))
- OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly).Scan(&missingPrivileges); err != nil {
+ OR (c.relkind='S' AND (NOT has_sequence_privilege($1,c.oid,'SELECT') OR (NOT $2 AND NOT has_sequence_privilege($1,c.oid,'USAGE'))))))`, role.name, role.access == managedpostgres.CredentialReadOnly, captureTables).Scan(&missingPrivileges); err != nil {
 			return err
 		}
 		if missingPrivileges {
 			return managedpostgres.ErrConflict
+		}
+		if role.access == managedpostgres.CredentialReadOnly {
+			if err := pipelineread.Grant(ctx, tx, role.name); err != nil {
+				return managedpostgres.ErrConflict
+			}
 		}
 	}
 	if role.access == managedpostgres.CredentialDataAPI {
@@ -291,6 +308,9 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	if err := grantLiveMembership(ctx, tx, role); err != nil {
 		return err
 	}
+	if err := ensureLoginCustomRoles(ctx, tx, role); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -310,11 +330,11 @@ func verifyReadOnlyRole(ctx context.Context, tx pgx.Tx, name string) error {
  OR (c.relkind='S' AND has_sequence_privilege($1,c.oid,'USAGE,UPDATE'))))
  OR EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND p.prosecdef AND has_function_privilege($1,p.oid,'EXECUTE')
- AND NOT `+authHelperSQL+`)
+ AND NOT (`+authHelperSQL+` OR `+pipelineread.TrustedReaderSQL+`))
  OR EXISTS (SELECT 1 FROM pg_default_acl d, LATERAL aclexplode(d.defaclacl) a
  WHERE a.grantee IN (0,(SELECT oid FROM pg_roles WHERE rolname=$1))
  AND ((d.defaclobjtype='r' AND a.privilege_type IN ('INSERT','UPDATE','DELETE','TRUNCATE','REFERENCES','TRIGGER'))
- OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name).Scan(&unsafe)
+ OR (d.defaclobjtype='S' AND a.privilege_type IN ('USAGE','UPDATE'))))`, name, pipelineread.ReaderBodySHA256).Scan(&unsafe)
 	if err != nil {
 		return err
 	}
@@ -329,22 +349,39 @@ type sqlRoleInfo struct {
 	inherit, inheritedMembership                                   bool
 	marker                                                         string
 	memberships, configuration                                     []string
+	// customMarkers are the markers of the custom roles (ADR-20261116213000)
+	// the role is a member of; memberships leaves those roles out.
+	customMarkers []string
+	// customNames are those custom roles' names, in the same order.
+	customNames []string
 }
 
 func credentialRoleInfo(ctx context.Context, tx pgx.Tx, name string) (sqlRoleInfo, error) {
 	var info sqlRoleInfo
 	err := tx.QueryRow(ctx, `SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit,
  COALESCE(shobj_description(r.oid, 'pg_authid'), ''), COALESCE(rolconfig, ARRAY[]::text[]),
- ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid ORDER BY parent.rolname),
- EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false))
+ ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') NOT LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
+ EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member=r.oid AND COALESCE((to_jsonb(m)->>'inherit_option')::boolean, false)),
+ ARRAY(SELECT COALESCE(shobj_description(parent.oid, 'pg_authid'), '') FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname),
+ ARRAY(SELECT parent.rolname::text FROM pg_auth_members m JOIN pg_roles parent ON parent.oid = m.roleid WHERE m.member = r.oid
+   AND COALESCE(shobj_description(parent.oid, 'pg_authid'), '') LIKE 'gregale:custom-role:v1:%' ORDER BY parent.rolname)
  FROM pg_roles r WHERE rolname = $1`, name).Scan(&info.login, &info.superuser, &info.createDB, &info.createRole, &info.replication, &info.bypassRLS,
-		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership)
+		&info.inherit, &info.marker, &info.configuration, &info.memberships, &info.inheritedMembership, &info.customMarkers, &info.customNames)
 	return info, err
 }
 
 func (i sqlRoleInfo) matches(role credentialRole) bool {
 	if !i.login || i.superuser || i.createDB || i.createRole || i.replication || i.bypassRLS || i.inherit || i.inheritedMembership || i.marker != role.marker {
 		return false
+	}
+	// Custom roles are SET-only memberships of this database's own roles,
+	// and only for the access modes they can be granted to.
+	for _, marker := range i.customMarkers {
+		if marker != customRoleMarker(role.scope) || (role.access != managedpostgres.CredentialMigration && role.access != managedpostgres.CredentialReadWrite && role.access != managedpostgres.CredentialReadOnly) {
+			return false
+		}
 	}
 	if role.access == managedpostgres.CredentialMigration {
 		return len(i.memberships) == 1 && i.memberships[0] == role.schemaOwner && len(i.configuration) == 1 && i.configuration[0] == "role="+role.schemaOwner
@@ -355,7 +392,44 @@ func (i sqlRoleInfo) matches(role credentialRole) bool {
 	if role.access == managedpostgres.CredentialAuth {
 		return len(i.memberships) == 1 && i.memberships[0] == role.authOwner && sameSettings(i.configuration, authLoginSettings(role))
 	}
-	return len(i.memberships) == 0 && len(i.configuration) == 0
+	// A runtime or read-only login may start as one of its custom roles
+	// (amendment 2); Ensure and the custom-role apply keep that setting.
+	return len(i.memberships) == 0 && (len(i.configuration) == 0 ||
+		len(i.configuration) == 1 && i.defaultCustomRole() != "")
+}
+
+// defaultCustomRole is the custom role a login's only setting starts it as,
+// or "" when that setting is not role=<one of its custom roles>.
+func (i sqlRoleInfo) defaultCustomRole() string {
+	if len(i.configuration) != 1 {
+		return ""
+	}
+	name, ok := strings.CutPrefix(i.configuration[0], "role=")
+	if !ok || !slices.Contains(i.customNames, name) {
+		return ""
+	}
+	return name
+}
+
+// captureTables mirrors commit.CaptureTables: the Postgres change outbox
+// (ADR-20261112140000) is readable and writable only by its owner and its
+// relay, so an app login's "every public table" grant leaves it out.
+var captureTables = []string{"gregale_outbox", "gregale_commit_binding"}
+
+func revokeCaptureTables(ctx context.Context, tx pgx.Tx, name string) error {
+	for _, table := range captureTables {
+		var present bool
+		if err := tx.QueryRow(ctx, `SELECT to_regclass('public.' || quote_ident($1)) IS NOT NULL`, table).Scan(&present); err != nil {
+			return err
+		}
+		if !present {
+			continue
+		}
+		if _, err := tx.Exec(ctx, "REVOKE ALL ON public."+roleIdentifier(table)+" FROM "+roleIdentifier(name)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func initializeCredentialSchema(ctx context.Context, tx pgx.Tx, role credentialRole) error {
@@ -381,7 +455,11 @@ func initializeCredentialSchema(ctx context.Context, tx pgx.Tx, role credentialR
 	}
 	queries := []string{
 		"GRANT " + owner + " TO CURRENT_USER",
-		"GRANT CONNECT, CREATE ON DATABASE " + roleIdentifier(role.database) + " TO " + owner,
+		// TEMPORARY lets migrations use pg_temp helpers (Windmill's
+		// migrations define pg_temp functions). Only the migration login is a
+		// member of the owner; runtime logins stay without it
+		// (ADR-20261116213000, amendment 1).
+		"GRANT CONNECT, CREATE, TEMPORARY ON DATABASE " + roleIdentifier(role.database) + " TO " + owner,
 		"ALTER SCHEMA public OWNER TO " + owner,
 		"REVOKE CREATE ON SCHEMA public FROM PUBLIC",
 		"REVOKE CREATE, TEMPORARY ON DATABASE " + roleIdentifier(role.database) + " FROM PUBLIC",

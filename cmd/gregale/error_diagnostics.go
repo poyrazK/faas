@@ -92,6 +92,11 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			// tasks) or 503 with a *_not_enabled code (tenant surfaces, private
 			// networks); retrying or checking service status cannot help.
 			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
+		case p.Status == 503 && p.RetryAfterSeconds != nil && *p.RetryAfterSeconds > 0:
+			// The server said when to come back: the resource is busy, not
+			// Gregale down. A bucket finishing an inventory read "check service
+			// status … retrying a deploy" (prod 2026-11-19).
+			p.Hint = "The resource is busy for a moment; wait for Retry-After, then run the same command again."
 		case p.Status >= 500:
 			p.Hint = "Check Gregale's service status and run gregale config profile check. Inspect deployment status before retrying a deploy."
 		}
@@ -103,7 +108,19 @@ func diagnosticProblem(p api.Problem) api.Problem {
 
 // Walk all string fields, including nested validation/binding findings. The
 // round trip copies the report, leaving the SDK's original Problem untouched.
-func redactProblem(p api.Problem) api.Problem {
+func redactProblem(p api.Problem) (safe api.Problem) {
+	redact := errorTextRedactor()
+	id := problemRequestID(p)
+	if id != "" && redact(id) != id {
+		id = ""
+	}
+	// The JSON copy intentionally drops private client metadata. Preserve
+	// only the validated, non-secret correlation ID, including on fallback.
+	defer func() {
+		if id != "" {
+			safe = *safe.WithRequestID(id)
+		}
+	}()
 	data, err := json.Marshal(p)
 	if err != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
@@ -114,7 +131,6 @@ func redactProblem(p api.Problem) api.Problem {
 	if decoder.Decode(&value) != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
-	redact := errorTextRedactor()
 	var walk func(any) any
 	walk = func(v any) any {
 		switch node := v.(type) {
@@ -135,11 +151,24 @@ func redactProblem(p api.Problem) api.Problem {
 	if err != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
-	var safe api.Problem
 	if json.Unmarshal(data, &safe) != nil {
 		return api.Problem{Status: p.Status, Code: p.Code, Title: "Request failed"}
 	}
 	return safe
+}
+
+func problemRequestID(p api.Problem) string {
+	return p.RequestID()
+}
+
+// JSON writers can also receive locally assembled problems without passing
+// through diagnosticProblem. Validate and apply credential redaction here too.
+func safeProblemRequestID(p api.Problem) string {
+	id := problemRequestID(p)
+	if id != "" && redactErrorText(id) != id {
+		return ""
+	}
+	return id
 }
 
 // authorizationRefusal reports whether a 403 is about who is asking. Plan

@@ -7,17 +7,23 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func (h *cliAuthHandlers) renderPromotionApprovalPage(w http.ResponseWriter, r *http.Request) {
 	h.promotionReviewHeaders(w)
 	ticket, err := h.srv.openBrowserApprovalTicket(r.URL.Query().Get("approval"))
 	acct, authenticated := AccountFrom(r.Context())
-	if err != nil || !authenticated || ticket.AccountID != acct.ID {
+	var owner state.Account
+	allowed := false
+	if err == nil && authenticated {
+		owner, allowed = h.srv.browserApprovalReviewer(r.Context(), acct, ticket)
+	}
+	if !allowed {
 		h.renderPromotionReview(w, r, map[string]any{"Error": "This review is unavailable for the signed-in account or has expired."})
 		return
 	}
-	plan, problem := h.srv.checkedBrowserApproval(r.Context(), acct, ticket)
+	plan, problem := h.srv.checkedBrowserApproval(r.Context(), owner, ticket)
 	if problem != nil {
 		h.renderPromotionReview(w, r, map[string]any{"Error": "The promotion changed or is blocked. Ask the agent for a new plan."})
 		return
@@ -41,12 +47,17 @@ func (h *cliAuthHandlers) postPromotionApprovalPage(w http.ResponseWriter, r *ht
 	h.promotionReviewHeaders(w)
 	ticket, err := h.srv.openBrowserApprovalTicket(r.PostForm.Get("approval"))
 	acct, authenticated := AccountFrom(r.Context())
-	if err != nil || !authenticated || ticket.AccountID != acct.ID || middleware.VerifyAuthenticated(h.srv.sessions, r, browserApprovalPurpose, acct.ID+":"+ticket.ExchangeHash) != nil {
+	var owner state.Account
+	allowed := false
+	if err == nil && authenticated && middleware.VerifyAuthenticated(h.srv.sessions, r, browserApprovalPurpose, acct.ID+":"+ticket.ExchangeHash) == nil {
+		owner, allowed = h.srv.browserApprovalReviewer(r.Context(), acct, ticket)
+	}
+	if !allowed {
 		w.WriteHeader(http.StatusForbidden)
 		h.renderPromotionReview(w, r, map[string]any{"Error": "The review form is invalid or expired. Reload the review link."})
 		return
 	}
-	if _, problem := h.srv.checkedBrowserApproval(r.Context(), acct, ticket); problem != nil {
+	if _, problem := h.srv.checkedBrowserApproval(r.Context(), owner, ticket); problem != nil {
 		w.WriteHeader(http.StatusConflict)
 		h.renderPromotionReview(w, r, map[string]any{"Error": "The promotion changed or is blocked. Ask the agent for a new plan."})
 		return
@@ -57,7 +68,7 @@ func (h *cliAuthHandlers) postPromotionApprovalPage(w http.ResponseWriter, r *ht
 		h.renderPromotionReview(w, r, map[string]any{"Error": "This review was already approved or has expired."})
 		return
 	}
-	h.srv.audit.Emit(r.Context(), "mcp.promotion.reviewed", &acct.ID, map[string]any{"project_id": ticket.ProjectID, "environment_id": ticket.EnvironmentID})
+	h.srv.audit.Emit(r.Context(), "mcp.promotion.reviewed", &acct.ID, map[string]any{"project_id": ticket.ProjectID, "environment_id": ticket.EnvironmentID, "org_id": ticket.OrgID})
 	h.renderPromotionReview(w, r, map[string]any{"Approved": true})
 }
 

@@ -23,6 +23,7 @@ units=(
   "alloy/templates/alloy.service.j2"
   "serving_probe/templates/faas-serving-probe.service.j2"
   "cgroup_metrics/templates/faas-cgroup-metrics.service.j2"
+  "notification_receiver_metrics/templates/faas-notification-receiver-metrics.service.j2"
 )
 
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)
@@ -128,6 +129,14 @@ for rel in "${units[@]}"; do
   user="$(sed -nE 's/^User=(.*)$/\1/p' "$file" | head -1)"
   if [[ "$rel" != vmmd_service/files/faas-vmmd.service && ( -z "$user" || "$user" == root ) ]]; then
     echo "systemd-hardening-check: ${rel}: User must be non-root" >&2
+    errors=$((errors + 1))
+  fi
+  # systemd refuses user names longer than 31 characters: the unit never
+  # starts ("Failed to spawn 'start' task: Invalid argument"). The 34-character
+  # faas-notification-receiver-metrics user failed every start on
+  # gregale-cp after rc.344.
+  if (( ${#user} > 31 )); then
+    echo "systemd-hardening-check: ${rel}: User=${user} is ${#user} characters; systemd allows at most 31" >&2
     errors=$((errors + 1))
   fi
   unit_required=("${required[@]}")

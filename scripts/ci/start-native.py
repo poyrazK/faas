@@ -270,11 +270,12 @@ def source_multipart(root, project):
 
 class Terminal:
     """Real CLI, terminal stdin, plain bounded output kept only in memory."""
-    def __init__(self, cli, directory, environment):
+    def __init__(self, cli, directory, environment, *, arguments=("start",), token_login=True):
         # gregale start refuses FAAS_TOKEN, which would shadow the login it
         # saves; sign the CLI in to this launch's config directory instead.
         environment = dict(environment)
         token = environment.pop("FAAS_TOKEN", "")
+        require(token_login or not token, "fresh browser login refuses an injected token")
         if token:
             login = subprocess.run([str(cli), "login", "--token-stdin"], env=environment, input=token.encode(),
                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=60, check=False)
@@ -284,7 +285,7 @@ class Terminal:
         settings[3] &= ~termios.ECHO
         termios.tcsetattr(slave, termios.TCSANOW, settings)
         try:
-            self.process = subprocess.Popen([str(cli), "start"], cwd=directory, env=environment, stdin=slave,
+            self.process = subprocess.Popen([str(cli), *arguments], cwd=directory, env=environment, stdin=slave,
                                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
         except BaseException:
             os.close(master)

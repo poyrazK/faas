@@ -13,7 +13,7 @@ import (
 )
 
 // Agent clients whose MCP config is a JSON file Gregale edits: Cursor,
-// VS Code and Windsurf (ADR-20261109121411 §7). Only the gregale entry
+// VS Code, Windsurf and Antigravity (ADR-20261109121411 §7). Only the gregale entry
 // changes; every other key keeps its value and order. A file that is not
 // plain JSON (comments, trailing commas) is refused, never rewritten.
 // Claude Desktop adds remote servers only in its own settings, so connect
@@ -23,6 +23,7 @@ const (
 	mcpConnectCursor        = "cursor"
 	mcpConnectVSCode        = "vscode"
 	mcpConnectWindsurf      = "windsurf"
+	mcpConnectAntigravity   = "antigravity"
 	mcpConnectClaudeDesktop = "claude-desktop"
 )
 
@@ -37,6 +38,12 @@ type mcpJSONClient struct {
 	entry    func(url string) map[string]any
 	// keyRef is how the client reads the agent key from the environment.
 	keyRef string
+	// noKeyRef, when set, says why the client cannot read the agent key
+	// from the environment; --headless then leaves it to the browser.
+	noKeyRef string
+	// signIn is where the client starts its browser sign-in, "" for its
+	// MCP settings.
+	signIn string
 }
 
 // mcpEnvKeyRef is how VS Code and Windsurf read an environment variable
@@ -72,6 +79,19 @@ var mcpJSONClients = map[string]mcpJSONClient{
 		userFile: func(home string) string { return filepath.Join(home, ".codeium", "windsurf", "mcp_config.json") },
 		root:     "mcpServers",
 		entry:    func(url string) map[string]any { return map[string]any{"serverUrl": url} },
+	},
+	// Antigravity (app and agy CLI) replaced Gemini CLI for individual
+	// accounts on 2026-06-18. Its docs describe no environment variable
+	// syntax in mcp_config.json, and the key is never written to a file.
+	mcpConnectAntigravity: {
+		name: "Antigravity", binary: "agy",
+		userDir:  func(home string) string { return filepath.Join(home, ".gemini", "antigravity") },
+		userFile: func(home string) string { return filepath.Join(home, ".gemini", "config", "mcp_config.json") },
+		project:  filepath.Join(".agents", "mcp_config.json"),
+		root:     "mcpServers",
+		entry:    func(url string) map[string]any { return map[string]any{"serverUrl": url} },
+		noKeyRef: "Antigravity's mcp_config.json cannot read the agent key from the environment, and Gregale never writes the key to a file",
+		signIn:   "Authenticate next to gregale under Customizations → Installed → MCP Servers in the Antigravity app, or run /mcp in agy",
 	},
 }
 
@@ -135,6 +155,10 @@ func mcpJSONEntry(c mcpJSONClient, opts mcpConnectOptions) map[string]any {
 
 func connectJSONClient(client string, opts mcpConnectOptions) mcpConnectResult {
 	c := mcpJSONClients[client]
+	if opts.Headless && c.noKeyRef != "" {
+		return mcpConnectResult{Status: "manual", Detail: c.noKeyRef + "; run gregale mcp connect --client " + client + " without --headless and sign in through the browser.",
+			Next: "connect " + c.name + " without --headless"}
+	}
 	path := c.project
 	if opts.Project {
 		if path == "" {
@@ -182,6 +206,9 @@ func connectJSONClient(client string, opts mcpConnectOptions) mcpConnectResult {
 func jsonClientNext(c mcpJSONClient, opts mcpConnectOptions) string {
 	if opts.Headless {
 		return "export " + agentKeyEnv + " before starting " + c.name
+	}
+	if c.signIn != "" {
+		return c.signIn + "; your browser opens to sign in to Gregale"
 	}
 	return "open " + c.name + "'s MCP settings and start gregale; your browser opens to sign in to Gregale"
 }

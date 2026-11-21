@@ -1,0 +1,4 @@
+ok  	github.com/onebox-faas/faas/pkg/datapipeline	5.276s
+{"time":"2026-11-14T16:11:00.121564298Z","level":"INFO","msg":"migrations applied"}
+schema-dump: schema.sql regenerated (111195 lines)
+ok  	github.com/onebox-faas/faas/pkg/managedpostgres	24.796s

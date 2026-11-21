@@ -141,13 +141,16 @@ test('enabled providers get this app\'s callback, and settings report only publi
   assert.deepEqual(config.settings, {
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false, access: 'open', allowed_domains: null, block_disposable: false, blocked_domains: 0 }, providers: ['github', 'google'],
-    password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
+    password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: true },
     mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
     branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, impersonation: false, service_accounts: { enabled: false, token_endpoint: null }, web3: { ethereum: false, solana: false }, sessions: { max_age_minutes: null, idle_minutes: null, single_per_user: false }, organization_domains: { enabled: false, joining: false }, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
-  assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
+  assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 8, required: [], leaked_password_check: true })
+  assert.equal(runtimeConfig(env()).gotrueEnv.GOTRUE_PASSWORD_MIN_LENGTH, '8')
+  assert.equal(runtimeConfig(env()).gotrueEnv.GOTRUE_PASSWORD_HIBP_ENABLED, 'true')
+  assert.equal(runtimeConfig(env({ GOTRUE_PASSWORD_HIBP_ENABLED: 'false' })).settings.password.leaked_password_check, false)
   assert.equal(runtimeConfig(env()).settings.mfa.totp, true)
   const withEmail = runtimeConfig(env({ AUTH_EMAIL_PROVIDER: 'resend', AUTH_EMAIL_FROM: 'Shop <auth@shop.example.com>', AUTH_EMAIL_API_KEY: 're_sealed_key_1' })).settings
   assert.deepEqual(withEmail.email, { configured: true, provider: 'resend', from: 'Shop <auth@shop.example.com>' })
@@ -264,4 +267,31 @@ test('maps session limits onto GoTrue and refuses unsafe ones', () => {
   assert.equal(runtimeConfig(env({ AUTH_SESSION_MAX_AGE_MINUTES: '60', AUTH_SESSION_IDLE_MINUTES: '120' })).gotrueEnv.GOTRUE_SESSIONS_INACTIVITY_TIMEOUT, '120m', 'set separately: kept, not fatal')
   // GoTrue's own session settings are managed here, not passed through.
   assert.throws(() => runtimeConfig(env({ GOTRUE_SESSIONS_TIMEBOX: '1m' })), /managed by Gregale/)
+})
+
+test('a minimum password length below the floor is raised, not refused', () => {
+  const quiet = console.error
+  const logged = []
+  console.error = line => logged.push(line)
+  try {
+    const raised = runtimeConfig(env({ GOTRUE_PASSWORD_MIN_LENGTH: '6' }))
+    assert.equal(raised.gotrueEnv.GOTRUE_PASSWORD_MIN_LENGTH, '8')
+    assert.equal(raised.settings.password.min_length, 8)
+    assert.match(logged.join('\n'), /password_min_length_raised/)
+    assert.equal(runtimeConfig(env({ GOTRUE_PASSWORD_MIN_LENGTH: '12' })).gotrueEnv.GOTRUE_PASSWORD_MIN_LENGTH, '12')
+  } finally {
+    console.error = quiet
+  }
+  assert.throws(() => runtimeConfig(env({ GOTRUE_PASSWORD_MIN_LENGTH: 'six' })), /GOTRUE_PASSWORD_MIN_LENGTH must be a number/)
+})
+
+test('owners may tune GoTrue rate limits but not the client address header or texts', () => {
+  const tuned = runtimeConfig(env({ GOTRUE_RATE_LIMIT_EMAIL_SENT: '60', GOTRUE_RATE_LIMIT_TOKEN_REFRESH: '300/5m', GOTRUE_RATE_LIMIT_VERIFY: '2.5' }))
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_EMAIL_SENT, '60')
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_TOKEN_REFRESH, '300/5m')
+  assert.equal(tuned.gotrueEnv.GOTRUE_RATE_LIMIT_HEADER, 'X-Real-IP')
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_EMAIL_SENT: 'lots' })), /must be events per hour/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_OTP: '10/5 minutes' })), /must be events per hour/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_HEADER: 'X-Forwarded-For' })), /managed by Gregale/)
+  assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
 })

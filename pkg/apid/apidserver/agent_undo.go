@@ -43,7 +43,36 @@ func (s *server) agentUndoHandlers() map[string]accountHandler {
 		"GET /v1/domains/{domain}":                        s.getDomain,
 		"POST /v1/domains":                                s.createDomain,
 		"POST /v1/apps/{slug}/config/rollback":            s.rollbackConfig,
+		"PATCH /v1/deployments/{id}/traffic":              s.updateDeploymentTraffic,
 	}
+}
+
+// agentUndoLookup answers what the routes undo reads through do not show,
+// with the same account checks as those routes.
+type agentUndoLookup struct{ store state.Store }
+
+func (l agentUndoLookup) DeploymentApp(ctx context.Context, acct state.Account, deployment string) (string, error) {
+	d, err := l.store.DeploymentByID(ctx, deployment)
+	if err != nil {
+		return "", err
+	}
+	app, err := l.store.AppByID(ctx, d.AppID)
+	if err != nil || app.AccountID != acct.ID {
+		return "", state.ErrNotFound
+	}
+	return app.Slug, nil
+}
+
+func (l agentUndoLookup) EnvironmentID(ctx context.Context, acct state.Account, slug, environment string) (string, error) {
+	app, err := l.store.AppBySlug(ctx, slug)
+	if err != nil || app.AccountID != acct.ID || app.ProjectID == "" {
+		return "", state.ErrNotFound
+	}
+	env, err := l.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, environment)
+	if err != nil {
+		return "", err
+	}
+	return env.ID, nil
 }
 
 // agentUndoEngine is the engine apid captures and undoes with; nil when the
@@ -54,7 +83,7 @@ func (s *server) agentUndoEngine() *agentundo.Engine {
 		return nil
 	}
 	handlers := s.agentUndoHandlers()
-	return &agentundo.Engine{Store: store, Dispatch: func(ctx context.Context, base *http.Request, acct state.Account, method, target string, body []byte) (int, []byte) {
+	return &agentundo.Engine{Store: store, Lookup: agentUndoLookup{store: s.store}, Dispatch: func(ctx context.Context, base *http.Request, acct state.Account, method, target string, body []byte) (int, []byte) {
 		return agentUndoDispatch(ctx, handlers, base, acct, method, target, body)
 	}}
 }

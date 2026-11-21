@@ -1594,6 +1594,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// PostgresChanges captures Postgres row changes into one of the app's
+	// queue bindings (ADR-20261112140000).
+	PostgresChanges *PostgresChangesSpec `yaml:"postgres_changes,omitempty"`
 	// Realtime declares managed realtime endpoints by slug
 	// (ADR-20261019102657).
 	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
@@ -1601,6 +1604,9 @@ type Manifest struct {
 	// sets these keys and removes none: a key dropped from the manifest stays
 	// until `gregale app label unset` removes it. Labels are not secret.
 	Labels map[string]string `yaml:"labels,omitempty"`
+	// Protection is on or off: a deploy turns the app's production
+	// protection on or off (ADR-20261116120000 §5). Empty leaves it as it is.
+	Protection string `yaml:"protection,omitempty"`
 	// Project holds the repository's project-wide service settings
 	// (ADR-20261107180000). It is meaningful in the repository's root
 	// gregale.yaml, where the scanner applies it; it replaces the
@@ -1763,6 +1769,9 @@ type LifecycleConfig struct {
 	RestartPolicy    *string                   `yaml:"restart_policy,omitempty"`
 	AfterRestore     *api.AfterRestoreHook     `yaml:"after_restore,omitempty"`
 	BeforeCheckpoint *api.BeforeCheckpointHook `yaml:"before_checkpoint,omitempty"`
+	// Warmup names the path init snapshot priming GETs (ADR-20261114153000);
+	// an empty path clears it.
+	Warmup *api.WarmupHook `yaml:"warmup,omitempty"`
 	// Pause declares when the platform may pause the VM (ADR-1151):
 	// between_requests, when_idle or never.
 	Pause            *string              `yaml:"pause,omitempty"`
@@ -1784,6 +1793,7 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		RestartPolicy:    c.RestartPolicy,
 		AfterRestore:     c.AfterRestore,
 		BeforeCheckpoint: c.BeforeCheckpoint,
+		Warmup:           c.Warmup,
 		Pause:            c.Pause,
 		Profiling:        c.Profiling,
 		Tracing:          c.Tracing,
@@ -1824,7 +1834,7 @@ func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
 
 // Empty reports whether the block contains no desired lifecycle changes.
 func (c *LifecycleConfig) Empty() bool {
-	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
+	return c == nil || (c.ExecutionMode == nil && c.RestartPolicy == nil && c.AfterRestore == nil && c.BeforeCheckpoint == nil && c.Warmup == nil && c.Pause == nil && c.Profiling == nil && c.Tracing == nil &&
 		c.StartupDeadlineS == nil && c.MaxRetries == nil && c.RequestTimeoutS == nil &&
 		c.StopGracePeriodS == nil && c.StopSignal == nil && c.ServiceReplicas == nil)
 }
@@ -1847,6 +1857,9 @@ func (c *LifecycleConfig) Validate() error {
 	}
 	if c.BeforeCheckpoint != nil && (c.BeforeCheckpoint.Path != "" || c.BeforeCheckpoint.TimeoutMS != 0) {
 		m.BeforeCheckpoint = c.BeforeCheckpoint
+	}
+	if c.Warmup != nil && c.Warmup.Path != "" {
+		m.Warmup = c.Warmup
 	}
 	if c.Pause != nil {
 		m.Pause = *c.Pause
@@ -2246,6 +2259,7 @@ type tomlManifest struct {
 	MainDependsOn       []ExtensionDependency      `toml:"main_depends_on"`
 	Extensions          []ExtensionSpec            `toml:"extensions"`
 	Labels              map[string]string          `toml:"labels"`
+	Protection          string                     `toml:"protection"`
 }
 
 type tomlTriggers struct {
@@ -2277,6 +2291,7 @@ func parseTOMLManifest(b []byte) (*Manifest, error) {
 		MainDependsOn:       raw.MainDependsOn,
 		Extensions:          raw.Extensions,
 		Labels:              raw.Labels,
+		Protection:          raw.Protection,
 	}, nil
 }
 
@@ -2313,6 +2328,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	}
 	if err := m.validateRealtime(); err != nil {
 		return err
+	}
+	if m.Protection != "" && m.Protection != api.AppProtectionStateOn && m.Protection != api.AppProtectionStateOff {
+		return fmt.Errorf("protection: %q is not on or off", m.Protection)
 	}
 	if m.Project != nil {
 		if err := m.Project.Validate(); err != nil {
@@ -2400,6 +2418,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if err := declaration.ToPolicy().Validate(); err != nil {
 			return fmt.Errorf("work_policies[%d]: %w", i, err)
 		}
+		if err := workpolicy.ValidateDeclaredName(declaration.Name); err != nil {
+			return fmt.Errorf("work_policies[%d]: %w", i, err)
+		}
 		key := declaration.App + "\x00" + declaration.Name
 		if _, duplicate := seenWorkPolicies[key]; duplicate {
 			return fmt.Errorf("work_policies[%d]: duplicate (app, name)", i)
@@ -2442,6 +2463,11 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 	if m.Worker != nil {
 		if err := m.Worker.Validate(); err != nil {
 			return err
+		}
+	}
+	if m.PostgresChanges != nil {
+		if err := m.PostgresChanges.Validate(m.QueueBindings); err != nil {
+			return fmt.Errorf("postgres_changes: %w", err)
 		}
 	}
 	sidecars, err := m.ToSidecars()

@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"math/rand/v2"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -13,9 +15,21 @@ import (
 // lifetime rather than the completed delivery's context. Other replay handlers
 // finish synchronously and use the renewable claim's cancellable context.
 //
-// Every schedd's replay worker claims any app_wake or runtime_config_restart
-// row: the rows name no node. A schedd that does not own the app defers the
-// row instead of failing it (ADR-191 amendment 2026-10-26, follow-up). A
+// peerDeferralDelay is the retry delay plus up to one poll interval of
+// jitter. A fixed delay that is a whole number of poll intervals reopened the
+// row just before the deferring peer's own next tick, so that peer claimed and
+// deferred it again every time and the owner never did (production
+// 2026-11-16: a credential rotation's restart sat pending for over 20 minutes,
+// reopening every 6.000 s). Jitter moves the reopening across the poll period,
+// so whichever schedd ticks first, the owner included, claims it next.
+func peerDeferralDelay() time.Duration {
+	return db.NotificationRetryDelay(1) + rand.N(db.NotificationOutboxPollInterval())
+}
+
+// Each schedd's replay worker claims only the app_wake and
+// runtime_config_restart rows of apps it owns (RunNotificationOutboxForAppOwner).
+// An app that moves between the claim and the handler still reaches a peer, so
+// a schedd that does not own the app defers the row instead of failing it (ADR-191 amendment 2026-10-26, follow-up). A
 // failure spent one of the row's bounded attempts and pushed the owner's next
 // try out on the retry backoff, so peers could dead-letter a wake the owner
 // never saw. A deferral gives the attempt back and keeps the peer's drain
@@ -29,7 +43,7 @@ func durableReplayHandler(daemonCtx context.Context, handler func(context.Contex
 			err = handler(deliveryCtx, n)
 		}
 		if errors.Is(err, sched.ErrAppOwnedByAnotherNode) {
-			return &db.DeferredNotificationError{Cause: err, Delay: db.NotificationRetryDelay(1)}
+			return &db.DeferredNotificationError{Cause: err, Delay: peerDeferralDelay()}
 		}
 		return err
 	}

@@ -6,6 +6,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class DebuggerService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Queue a debugger replay from the dashboard.
    * Accepts the server-rendered dashboard form payload and queues the
@@ -36,7 +37,7 @@ export class DebuggerService {
       route?: string;
     },
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/apps/{slug}/debug/requests/{req_id}/replay',
       path: {

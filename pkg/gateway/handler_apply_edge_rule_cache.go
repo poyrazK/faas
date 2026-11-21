@@ -112,6 +112,10 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// the empty dimension for requests that have no version pin.
 	key := responseCacheKeyForRequest(r, app.ID, versionAffinityDeploymentForRequest(h.backend, app.ID, r), rule)
 	outcome, entry := h.responseCache.Get(key)
+	// Also refuse entries captured before this origin veto was introduced.
+	if entry != nil && responseForbidsSharedCaching(http.Header(entry.header)) {
+		return false, rule
+	}
 	switch outcome {
 	case "fresh":
 		// Hit. Replay the stored response verbatim.
@@ -255,7 +259,10 @@ func hasCacheCredentials(r *http.Request) bool {
 			return true
 		}
 	}
-	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld
+	// A sealed edge-rule header is a credential the instance's vmmd adds
+	// (ADR-20261110210000 slice 3i): the request carries it upstream.
+	return hasSessionCookie(r) || authenticatedFrom(r.Context()).CredentialWithheld ||
+		len(edgeSecretHeadersFrom(r.Context())) != 0
 }
 
 // hasSessionCookie treats any remaining Cookie field as session state. The

@@ -27,7 +27,7 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|update|sessions|email|password|provider|dpa|slo|billing-connection|billing-run|invoices}"), "account")
+		PrintUsage(os.Stderr, releasedUsage("account", "usage: gregale account {export|delete|restore|status|health|update|sessions|email|password|provider|dpa|slo|billing-connection|billing-run|invoices}"), "account")
 		return 1
 	}
 	if hiddenMonetizationVerb("account", args[0]) {
@@ -42,6 +42,9 @@ func cmdAccount(args []string) int {
 		return cmdAccountRestore(args[1:])
 	case statusLiteral:
 		return cmdAccountStatus(args[1:])
+	case "health":
+		// ADR-20261114090000: CLI twin of GET /v1/account/health.
+		return cmdAccountHealth(args[1:])
 	case "dpa":
 		// Tier B audit gap: the Data-Processing-Addendum text (spec
 		// §17 G6) is published at GET /v1/account/dpa (markdown;

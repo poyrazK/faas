@@ -51,16 +51,32 @@ case "$1" in
     # Like the real CLI, deployment wait prints the bare deployment: no app_url.
     printf '{"id":"redeployed","status":"live","rollout_state":"complete","hosting_receipt":{"smoke":{"status":"verified","status_code":200,"path":"/healthz"}}}\n'
     exit 0 ;;
+  init)
+    path=""
+    while (($#)); do
+      case "$1" in
+        --path) path="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    mkdir -p "$path"
+    printf 'export default () => "ok";\n' >"$path/handler.js"
+    exit 0 ;;
   deploy)
-    slug=""; no_wait=false
+    slug=""; no_wait=false; source=""
     while (($#)); do
       case "$1" in
         --name) slug="$2"; shift 2 ;;
         --no-wait) no_wait=true; shift ;;
+        --template) source="template"; shift 2 ;;
+        --path)
+          # A fresh source carries a file no other deployment has.
+          source="path:$(cat "$2/release-canary.txt" 2>/dev/null | tr -d '\n')"; shift 2 ;;
         *) shift ;;
       esac
     done
     printf '%s\n' "$slug" >>"$TEST_DEPLOY_LOG"
+    printf '%s %s\n' "$slug" "$source" >>"$TEST_DEPLOY_LOG.sources"
     if [[ -n "${TEST_INFRA_FAIL_ONCE_SUFFIX:-}" && "$slug" == *"$TEST_INFRA_FAIL_ONCE_SUFFIX" && ! -e "$TEST_DEPLOY_LOG.infra" ]]; then
       : >"$TEST_DEPLOY_LOG.infra"
       printf '{"id":"deployment-%s","status":"failed","rollout_state":"aborted","error":"builderd: vm exit 1","failure_class":"infra"}\n' "$slug"
@@ -505,6 +521,20 @@ fi
 			calls, _ := os.ReadFile(verifies)
 			if got := strings.Count(string(calls), "verify-node"); got != tt.wantVerifies {
 				t.Fatalf("verify-node ran %d times, want %d: %s", got, tt.wantVerifies, calls)
+			}
+			// A cached build needs no builder slot, so the other node could
+			// take the whole pair: every canary deployment builds a source
+			// unique to it (rc.345's fsn-3 canary).
+			sources, _ := os.ReadFile(log + ".sources")
+			lines := strings.Split(strings.TrimSpace(string(sources)), "\n")
+			if len(lines) == 0 || lines[0] == "" {
+				t.Fatal("no canary deployment recorded its source")
+			}
+			for _, line := range lines {
+				slug, source, _ := strings.Cut(line, " ")
+				if want := "path:release " + strings.Repeat("a", 40) + " canary " + slug; source != want {
+					t.Fatalf("canary deployment source = %q, want %q", line, want)
+				}
 			}
 		})
 	}

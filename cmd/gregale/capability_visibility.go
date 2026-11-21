@@ -88,9 +88,13 @@ func cliPathCapability(path string) string {
 // hides nothing; otherwise hidden decides, falling back to tier defaults
 // when tier is set.
 type capabilityView struct {
-	all    bool
-	tier   bool
-	hidden map[string]bool
+	all  bool
+	tier bool
+	// unconfirmed marks tier defaults used for a logged-in CLI whose account
+	// view could not be read (API out of reach, no cache). Such an account
+	// may well have the capabilities the tier hides.
+	unconfirmed bool
+	hidden      map[string]bool
 }
 
 func (v capabilityView) hides(capability string) bool {
@@ -188,7 +192,7 @@ func computeDiscoveryView() capabilityView {
 	if ok {
 		return accountCapabilityView(hidden) // stale beats tier defaults
 	}
-	return capabilityView{tier: true}
+	return capabilityView{tier: true, unconfirmed: true}
 }
 
 func cachedHiddenCapabilities(token string) ([]string, time.Time, bool) {
@@ -246,6 +250,7 @@ func commandCapabilityPath(args []string) string {
 // localCommands never call the platform. A hidden capability leaves them out
 // of help like its other commands but does not refuse to run them.
 var localCommands = map[string]bool{
+	"data-api integrate": true,
 	"data-api dev":       true,
 	"run tasks validate": true,
 	"run tasks generate": true,
@@ -271,7 +276,16 @@ func capabilityHiddenForRun(capability string, helpRequest bool) bool {
 		return false
 	}
 	if helpRequest {
-		return discoveryCapabilityView().hides(capability)
+		// A logged-in CLI that could not read its account's view (API out
+		// of reach, no cache) falls back to the tier defaults, a guess.
+		// Refusing help on that guess answered "unknown command" for
+		// `gregale app exec <app> --help` from an account that could run
+		// it, while `gregale guide` recommended the command (retail-store
+		// GREG-06). Help for a command the user names is then shown;
+		// listings still use the tier defaults, and logged out the tier
+		// defaults decide as before (ADR-20261023115741).
+		view := discoveryCapabilityView()
+		return !view.unconfirmed && view.hides(capability)
 	}
 	token := loadTokenWithDiagnostics(io.Discard)
 	if token == "" {
@@ -397,6 +411,22 @@ func (v capabilityView) discoverableSubcommands(parent string, subs []cliSub) []
 
 // lookupDiscoverableCommand is lookupCliCommand over the discoverable
 // manifest, for help and man pages.
+// lookupNamedHelpCommand is lookupDiscoverableCommand for help on a path the
+// user typed. When a logged-in CLI could not read its account view, the
+// hidden set is an unconfirmed tier-default guess, so the verbs it would
+// prune stay reachable by name (retail-store GREG-06).
+func lookupNamedHelpCommand(name string) (cliCommand, bool) {
+	if !discoveryCapabilityView().unconfirmed {
+		return lookupDiscoverableCommand(name)
+	}
+	for _, command := range visibleCliCommands() {
+		if command.Name == name {
+			return command, true
+		}
+	}
+	return cliCommand{}, false
+}
+
 func lookupDiscoverableCommand(name string) (cliCommand, bool) {
 	for _, command := range discoverableCliCommands() {
 		if command.Name == name {

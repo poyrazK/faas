@@ -696,24 +696,25 @@ func TestMan_PerCommandSourceLabelIsGregale(t *testing.T) {
 // both required and optional flags. Required flags must lose the
 // brackets in SYNOPSIS and gain a `(required)` suffix in FLAGS.
 func TestMan_RequiredFlagRenderedWithoutBrackets(t *testing.T) {
-	c, ok := lookupCliCommand("init")
-	if !ok {
-		t.Fatalf("init not in manifest")
-	}
+	c := cliCommand{Name: "init", Flags: []cliFlag{
+		{Name: "template", Short: "template name", Req: true, Value: "NAME"},
+		{Name: "path", Short: "target directory", Req: true, Value: "DIR"},
+		{Name: "deploy", Short: "deploy after scaffolding"},
+	}}
 	var buf bytes.Buffer
 	renderManCommand(&buf, c)
 	out := buf.String()
-	// --template and --path are Req: true in cli_meta.go.
-	if !strings.Contains(out, "--template") || !strings.Contains(out, "--path") {
-		t.Fatalf("init man: required flags missing entirely:\n%s", out)
+	// roff escapes each dash as `\-`.
+	if !strings.Contains(out, `\-\-template`) || !strings.Contains(out, `\-\-path`) {
+		t.Fatalf("man: required flags missing entirely:\n%s", out)
 	}
 	// The required-flag line must NOT be wrapped in `[ ... ]`.
-	if strings.Contains(out, "[ --template ") || strings.Contains(out, "[ --path ") {
-		t.Errorf("init man: required flag rendered with optional brackets (Req marker dropped):\n%s", out)
+	if strings.Contains(out, `[ \-\-template`) || strings.Contains(out, `[ \-\-path`) {
+		t.Errorf("man: required flag rendered with optional brackets (Req marker dropped):\n%s", out)
 	}
 	// FLAGS section must mark them with `(required)`.
 	if !strings.Contains(out, "(required)") {
-		t.Errorf("init man: FLAGS section missing (required) marker:\n%s", out)
+		t.Errorf("man: FLAGS section missing (required) marker:\n%s", out)
 	}
 }
 

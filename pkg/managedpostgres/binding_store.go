@@ -45,6 +45,10 @@ func (s *MemoryStore) ReserveBinding(ctx context.Context, binding Binding) (Bind
 	if s.databaseCutoverPinned(binding.DatabaseID) {
 		return Binding{}, false, ErrConflict
 	}
+	// Data API and Auth rely on row-level security (ADR-20261116213000).
+	if (binding.Access == CredentialDataAPI || binding.Access == CredentialAuth) && s.hasBypassRLSRoleLocked(binding.DatabaseID) {
+		return Binding{}, false, ErrBypassRLSConflict
+	}
 	if limit := binding.appBindingLimit; limit > 0 {
 		count := 0
 		for _, existing := range s.bindings {

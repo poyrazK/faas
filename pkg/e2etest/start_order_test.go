@@ -9,6 +9,7 @@ import (
 	"context"
 	"os"
 	"regexp"
+	"strconv"
 	"testing"
 	"time"
 
@@ -127,5 +128,62 @@ func TestSessionListens_RequiresALISTEN(t *testing.T) {
 			t.Fatal("a session that issued LISTEN was never detected")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// Every e2e test shares one Postgres cluster, each on its own database. A
+// session on another database (a concurrent test's daemon, or one a killed run
+// left behind) must not satisfy this test's readiness waits.
+func TestSessionProbes_IgnoreOtherDatabases(t *testing.T) {
+	pool := pgtest.Open(t)
+	other := pgtest.OpenDatabase(t)
+	ctx := context.Background()
+	appName := "e2etest-otherdb-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	since := time.Now().Add(-time.Minute)
+
+	cfg := other.Config()
+	cfg.ConnConfig.RuntimeParams["application_name"] = appName
+	named, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer named.Close()
+	conn, err := named.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `LISTEN e2etest_otherdb_channel`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Positive control: the probes see the LISTEN from its own database.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		ok, err := sessionListensSince(ctx, other, appName, since)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("a LISTEN on the probe's own database was never detected")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if ok, err := sessionConnected(ctx, other, appName); err != nil || !ok {
+		t.Fatalf("session on the probe's own database not seen: ok=%v err=%v", ok, err)
+	}
+
+	for name, probe := range map[string]func() (bool, error){
+		"sessionConnected":    func() (bool, error) { return sessionConnected(ctx, pool, appName) },
+		"sessionListens":      func() (bool, error) { return sessionListens(ctx, pool, appName) },
+		"sessionListensSince": func() (bool, error) { return sessionListensSince(ctx, pool, appName, since) },
+	} {
+		if ok, err := probe(); err != nil || ok {
+			t.Errorf("%s counted a session on another database: ok=%v err=%v; another test's "+
+				"imaged would pass this test's wait while its own still stages bases", name, ok, err)
+		}
 	}
 }

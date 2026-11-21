@@ -25,7 +25,16 @@ type nativeDataAPI struct {
 	fingerprint  string
 }
 
-func startNativeDataAPI(t *testing.T, ctx context.Context, targetURL, reader string) nativeDataAPI {
+func startNativeDataAPI(t *testing.T, ctx context.Context, targetURL, reader string, readOnly ...bool) nativeDataAPI {
+	t.Helper()
+	readonly := true
+	if len(readOnly) > 0 {
+		readonly = readOnly[0]
+	}
+	return startNativeDataAPIForIssuer(t, ctx, targetURL, reader, "https://pipeline-test.example", readonly)
+}
+
+func startNativeDataAPIForIssuer(t *testing.T, ctx context.Context, targetURL, reader, issuer string, readonly bool) nativeDataAPI {
 	t.Helper()
 	if os.Getenv("POSTGREST_BINARY") == "" {
 		t.Fatal("native acceptance requires the pinned PostgREST binary")
@@ -44,7 +53,7 @@ func startNativeDataAPI(t *testing.T, ctx context.Context, targetURL, reader str
 	}
 	cmd := exec.CommandContext(ctx, "node", "test/pipeline-gateway.mjs")
 	cmd.Dir = directory
-	cmd.Env = append(os.Environ(), "DATABASE_URL="+u.String(), "DATA_API_SCHEMAS=public", "DATA_API_READ_ONLY=true", "DATA_API_ISSUER=https://pipeline-test.example", "DATA_API_JWKS_URL=https://pipeline-test.example/jwks", "DATA_API_AUDIENCE=pipeline-test")
+	cmd.Env = append(os.Environ(), "DATABASE_URL="+u.String(), "DATA_API_SCHEMAS=public", "DATA_API_READ_ONLY="+strconv.FormatBool(readonly), "DATA_API_ISSUER="+issuer, "DATA_API_JWKS_URL="+issuer+"/jwks", "DATA_API_AUDIENCE=pipeline-test")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +97,11 @@ func startNativeDataAPI(t *testing.T, ctx context.Context, targetURL, reader str
 			token = ready.Bob
 		}
 		t.Helper()
-		req, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1:"+strconv.Itoa(ready.Port)+"/rest/v1/"+url.PathEscape(table)+"?"+query, strings.NewReader(body))
+		path := url.PathEscape(table)
+		if strings.HasPrefix(table, "rpc/") {
+			path = "rpc/" + url.PathEscape(strings.TrimPrefix(table, "rpc/"))
+		}
+		req, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1:"+strconv.Itoa(ready.Port)+"/rest/v1/"+path+"?"+query, strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -18,10 +18,12 @@ type phaseTimer struct {
 	phases []any
 }
 
-// Timeline keys: the per-deploy scan, and image preparation around it.
+// Timeline keys: the per-deploy scan, image preparation around it, and the
+// app layer step inside preparation.
 type (
 	scanTimingKey        struct{}
 	preparationTimingKey struct{}
+	layerTimingKey       struct{}
 )
 
 func withPhaseTimer(ctx context.Context, key any) (context.Context, *phaseTimer) {
@@ -57,6 +59,26 @@ func markScanPhase(ctx context.Context, name string) {
 // name; a no-op without a preparation timeline.
 func markPreparationPhase(ctx context.Context, name string) {
 	markPhase(ctx, preparationTimingKey{}, name)
+}
+
+// withLayerTiming starts the app layer timeline. The layer step was about
+// 27 s of each deploy's preparation at p50 in production (2026-11-17) and
+// logged only its total.
+func withLayerTiming(ctx context.Context) (context.Context, *phaseTimer) {
+	return withPhaseTimer(ctx, layerTimingKey{})
+}
+
+// markLayerPhase closes the current app layer phase under name; a no-op
+// without a layer timeline.
+func markLayerPhase(ctx context.Context, name string) {
+	markPhase(ctx, layerTimingKey{}, name)
+}
+
+// phaseAttrs returns the recorded phases without the total.
+func (t *phaseTimer) phaseAttrs() []any {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return append([]any(nil), t.phases...)
 }
 
 // attrs returns the recorded phases and the total, as slog key/value pairs.

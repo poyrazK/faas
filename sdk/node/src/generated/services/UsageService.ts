@@ -14,6 +14,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class UsageService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the account-wide usage projection
    * Requires usage read scope. Returns the compute usage summary together
@@ -36,7 +37,7 @@ export class UsageService {
      */
     month?: string,
   }): CancelablePromise<AccountUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/usage',
       query: {
@@ -57,7 +58,7 @@ export class UsageService {
      */
     month?: string,
   }): CancelablePromise<Array<UsageResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/usage',
       query: {
@@ -86,7 +87,7 @@ export class UsageService {
      */
     month?: string,
   }): CancelablePromise<UsageSummaryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/usage/summary',
       query: {
@@ -115,7 +116,7 @@ export class UsageService {
      */
     day: string,
   }): CancelablePromise<DailyUsageListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/usage/daily',
       query: {
@@ -145,7 +146,7 @@ export class UsageService {
      */
     day: string,
   }): CancelablePromise<StorageUsageListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/usage/storage',
       query: {
@@ -176,7 +177,7 @@ export class UsageService {
      */
     hours?: number,
   }): CancelablePromise<RealtimeUsageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/usage/realtime',
       query: {
@@ -216,7 +217,7 @@ export class UsageService {
      */
     limit?: number,
   }): CancelablePromise<InvoiceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/invoices',
       query: {

@@ -30,18 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
   sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
-  sqlc.arg(pause_during_model_calls)::boolean)
+  sqlc.arg(pause_during_model_calls)::boolean,sqlc.narg(capability_policy)::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many
@@ -161,7 +161,8 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;
@@ -169,8 +170,22 @@ SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::t
 -- name: MarkAgentRunRunning :execrows
 -- The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
 UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
-  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint, updated_at=now()
+  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint,
+  deadline_credit_max_sec=sqlc.arg(deadline_credit_max_sec)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: ListAgentRunApprovalWaits :many
+-- ADR-20261027090016 amendment 3: each approval waits from its request
+-- until its decision, its expiry or outboundd's release, whichever is
+-- first; one still held waits until now. Fenced by the run's lease.
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = sqlc.arg(run_id)::text::uuid AND r.lease_token = sqlc.arg(lease_token)::text
+ ORDER BY p.created_at
+ LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()
@@ -473,18 +488,20 @@ SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account
 
 -- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
   sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
-  sqlc.narg(template_id)::text::uuid)
+  sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean,sqlc.narg(task_kind)::text,sqlc.narg(task_url)::text,
+  sqlc.narg(task_max_chars)::integer,sqlc.narg(egress_allow)::text[],sqlc.narg(egress_deny)::text[])
 RETURNING id::text AS id;
 
 -- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
@@ -492,7 +509,8 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
@@ -546,7 +564,10 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
     tpl.rootfs_key, '')::text AS image_key,
   (sb.image_ref IS NOT NULL)::boolean AS from_image,
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
-  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s
+  coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
+  coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -555,6 +576,13 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
    WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''
    ORDER BY d.created_at DESC, d.id DESC LIMIT 1) tpl ON true
  WHERE sb.id=sqlc.arg(session_id)::text::uuid;
+
+-- name: MarkSandboxSessionPlaced :execrows
+-- schedd placed the session (ADR-20261117190000): record the node before it
+-- boots the VM, so secretd grants that node the session's image and
+-- snapshot. node_id stays unset until the VM is up.
+UPDATE sandbox_sessions SET placed_node_id=sqlc.arg(node_id)::text, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
 
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.
@@ -760,3 +788,192 @@ LEFT JOIN LATERAL (SELECT d.id, d.rootfs_key, d.created_at FROM deployments d WH
 WHERE t.account_id = sqlc.arg(account_id)::text::uuid
   AND (sqlc.arg(name)::text = '' OR t.name = sqlc.arg(name)::text)
 ORDER BY t.name;
+
+-- name: RecordSandboxTaskResult :execrows
+-- ADR-20261116182615 §3: agentd records a sandbox task's end under its lease,
+-- once.
+UPDATE sandbox_sessions SET task_exit_code=sqlc.arg(exit_code)::integer, task_output=sqlc.arg(output)::bytea, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+ AND task_kind IS NOT NULL AND task_exit_code IS NULL;
+
+-- name: SandboxTaskCallByCall :one
+-- The task a gregale_browse call admitted, if it admitted one.
+SELECT sandbox_id::text AS sandbox_id FROM agent_sandbox_task_calls
+ WHERE endpoint_id=sqlc.arg(endpoint_id)::text::uuid AND thread_id=sqlc.arg(thread_id)::text
+ AND tool_call_id=sqlc.arg(tool_call_id)::text;
+
+-- name: InsertSandboxTaskCall :exec
+INSERT INTO agent_sandbox_task_calls (sandbox_id, account_id, endpoint_id, thread_id, tool_call_id, issued_at)
+VALUES (sqlc.arg(sandbox_id)::text::uuid, sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid,
+  sqlc.arg(thread_id)::text, sqlc.arg(tool_call_id)::text, sqlc.arg(issued_at)::timestamptz);
+
+-- name: ListUndeliveredSandboxTaskCalls :many
+-- Ended gregale_browse tasks whose result apid has not yet published into
+-- their thread. The mark is written after the publish, which is
+-- idempotent, so an interrupted delivery is retried and lands once.
+SELECT c.sandbox_id::text AS sandbox_id, c.account_id::text AS account_id, c.endpoint_id::text AS endpoint_id, c.thread_id,
+  c.tool_call_id, c.issued_at, sb.state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(sb.outcome_message, '')::text AS outcome_message, coalesce(sb.task_kind, '')::text AS task_kind,
+  coalesce(sb.task_url, '')::text AS task_url, sb.task_exit_code, sb.task_output
+ FROM agent_sandbox_task_calls c JOIN sandbox_sessions sb ON sb.id=c.sandbox_id
+ WHERE c.delivered_at IS NULL AND sb.state IN ('closed', 'expired', 'failed')
+ ORDER BY sb.closed_at, c.sandbox_id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxTaskCallDelivered :exec
+UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = sqlc.arg(sandbox_id)::text::uuid AND delivered_at IS NULL;
+
+-- name: GetSandboxTaskResult :one
+-- GET /v1/sandboxes/{id}/task: a task session's arguments and, once it
+-- ended, its exit code and output.
+SELECT state, coalesce(task_kind, '')::text AS task_kind, coalesce(task_url, '')::text AS task_url, task_exit_code, task_output,
+  coalesce(outcome_code, '')::text AS outcome_code, coalesce(outcome_message, '')::text AS outcome_message
+ FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertSandboxAction :one
+-- ADR-20261117065818 §2: apid records a gregale_browser action on a live
+-- session as the session's next, once per tool call.
+INSERT INTO sandbox_actions (session_id, account_id, seq, kind, args, endpoint_id, thread_id, tool_call_id, issued_at)
+SELECT sqlc.arg(session_id)::text::uuid, sqlc.arg(account_id)::text::uuid,
+  coalesce((SELECT max(a.seq) FROM sandbox_actions a WHERE a.session_id = sqlc.arg(session_id)::text::uuid), 0) + 1,
+  sqlc.arg(kind)::text, sqlc.arg(args)::jsonb, sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text,
+  sqlc.arg(tool_call_id)::text, sqlc.arg(issued_at)::timestamptz
+ON CONFLICT (endpoint_id, thread_id, tool_call_id) DO NOTHING
+RETURNING id::text AS id, seq;
+
+-- name: SandboxActionByCall :one
+SELECT id::text AS id, session_id::text AS session_id, seq FROM sandbox_actions
+ WHERE endpoint_id=sqlc.arg(endpoint_id)::text::uuid AND thread_id=sqlc.arg(thread_id)::text
+ AND tool_call_id=sqlc.arg(tool_call_id)::text;
+
+-- name: NextSandboxActions :many
+-- Each listed session's next pending action, for the sessions that run none:
+-- agentd sends a session one action at a time.
+SELECT DISTINCT ON (a.session_id) a.id::text AS id, a.session_id::text AS session_id, a.seq, a.kind, a.args
+ FROM sandbox_actions a
+ WHERE a.session_id = ANY(sqlc.arg(session_ids)::text[]::uuid[]) AND a.state = 'pending'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_actions r WHERE r.session_id = a.session_id AND r.state = 'running')
+ ORDER BY a.session_id, a.seq;
+
+-- name: StartSandboxAction :execrows
+-- agentd starts a pending action under its session's lease.
+UPDATE sandbox_actions a SET state='running', started_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.id=sqlc.arg(id)::text::uuid AND a.state='pending' AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: FinishSandboxAction :execrows
+-- agentd records a running action's end under its session's lease. A nil
+-- exit code is an action that never ran to its end.
+UPDATE sandbox_actions a SET state='done', exit_code=sqlc.narg(exit_code)::integer, output=sqlc.narg(output)::bytea, finished_at=now(),
+  screenshot_key=sqlc.narg(screenshot_key)::text, screenshot_bytes=sqlc.narg(screenshot_bytes)::bigint
+ FROM sandbox_sessions sb
+ WHERE a.id=sqlc.arg(id)::text::uuid AND a.state='running' AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: EndOpenSandboxActions :execrows
+-- Ends a session's actions that will not run to their end: on a fresh
+-- claim (a running action's VM is gone) and as the session ends.
+UPDATE sandbox_actions a SET state='done', finished_at=now()
+ FROM sandbox_sessions sb
+ WHERE a.session_id=sqlc.arg(session_id)::text::uuid AND a.state = ANY(sqlc.arg(states)::text[]) AND sb.id=a.session_id
+ AND sb.lease_token=sqlc.arg(lease_token)::text;
+
+-- name: SandboxActionThread :one
+-- ADR-20261117065818 §3: the thread a gregale_browser session answers (its
+-- first action's), its state, and how many actions it has had.
+SELECT sb.state, a.endpoint_id::text AS endpoint_id, a.thread_id,
+  (SELECT count(*) FROM sandbox_actions c WHERE c.session_id = sb.id)::integer AS actions
+ FROM sandbox_sessions sb JOIN sandbox_actions a ON a.session_id = sb.id AND a.seq = 1
+ WHERE sb.id = sqlc.arg(session_id)::text::uuid AND sb.account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: ListUndeliveredSandboxActions :many
+-- Ended gregale_browser actions whose result apid has not yet published
+-- into their thread. The mark is written after the publish, which is
+-- idempotent, so an interrupted delivery is retried and lands once.
+SELECT a.id::text AS id, a.session_id::text AS session_id, a.account_id::text AS account_id, a.seq, a.kind, a.args,
+  a.endpoint_id::text AS endpoint_id, a.thread_id, a.tool_call_id, a.issued_at, a.exit_code, a.output,
+  sb.state AS session_state, coalesce(sb.outcome_code, '')::text AS outcome_code,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.state = 'done' AND a.delivered_at IS NULL
+ ORDER BY a.finished_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxActionDelivered :exec
+UPDATE sandbox_actions SET delivered_at = now() WHERE id = sqlc.arg(id)::text::uuid AND delivered_at IS NULL;
+
+-- name: GetSandboxAction :one
+-- One action of the account's session, for GET /v1/sandboxes/{id}/actions/{seq}.
+SELECT a.kind, a.args, a.state, a.exit_code, a.output, coalesce(a.screenshot_key, '')::text AS screenshot_key,
+  coalesce(a.screenshot_bytes, 0)::bigint AS screenshot_bytes
+ FROM sandbox_actions a
+ WHERE a.session_id = sqlc.arg(session_id)::text::uuid AND a.account_id = sqlc.arg(account_id)::text::uuid
+ AND a.seq = sqlc.arg(seq)::integer;
+
+-- name: ExpiredSandboxScreenshots :many
+-- ADR-20261117065818 §5: screenshots of sessions that ended at least
+-- retention_s ago, for agentd's sweep to delete.
+SELECT a.id::text AS id, a.screenshot_key::text AS screenshot_key
+ FROM sandbox_actions a JOIN sandbox_sessions sb ON sb.id = a.session_id
+ WHERE a.screenshot_key IS NOT NULL AND sb.closed_at IS NOT NULL
+ AND sb.closed_at < now() - make_interval(secs => sqlc.arg(retention_s)::integer)
+ ORDER BY sb.closed_at LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ClearSandboxScreenshot :exec
+UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = sqlc.arg(id)::text::uuid;
+-- name: GetSandboxEgressPolicy :one
+-- ADR-20261117091026 §2: the account's default web-mode domain policy.
+SELECT allow_rules, deny_rules, updated_at FROM sandbox_egress_policies WHERE account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: PutSandboxEgressPolicy :one
+INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(allow_rules)::text[], sqlc.arg(deny_rules)::text[])
+ON CONFLICT (account_id) DO UPDATE SET allow_rules = EXCLUDED.allow_rules, deny_rules = EXCLUDED.deny_rules, updated_at = now()
+RETURNING allow_rules, deny_rules, updated_at;
+
+-- name: CountSandboxSessionDomains :one
+-- How many grants and refusals a session's domain log holds
+-- (ADR-20261117091026 §4).
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=sqlc.arg(session_id)::text::uuid;
+
+-- name: RecordSandboxSessionDomains :execrows
+-- Adds entries to a session's domain log while the lease is held and the
+-- session has a VM; an entry already there keeps its first sighting.
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest(sqlc.arg(domains)::text[]) AS domain, unnest(sqlc.arg(refused)::text[]) AS refused,
+               unnest(sqlc.arg(first_seen)::timestamptz[]) AS first_seen) x
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING;
+
+-- name: ListSandboxSessionDomains :many
+-- A session's domain log, for its account (ADR-20261117091026 §4).
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=sqlc.arg(session_id)::text::uuid AND s.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain;
+
+-- name: ListAgentRunApprovals :many
+-- ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY a.created_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertAgentRunApprovalDecision :execrows
+-- The decision is written once, and only before the approval expires.
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, sqlc.arg(decision)::text, sqlc.arg(note)::text, sqlc.arg(decided_by)::text
+ FROM agent_run_approvals a
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid
+   AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING;

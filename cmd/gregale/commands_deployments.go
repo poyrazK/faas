@@ -79,6 +79,18 @@ const deploymentRowFmtWide = "%-32s %-6s %-32s %-12s %-10s %-16s %-6s %-24s %-41
 // commands_test.go for the equivalent helper). The Fprintf return is
 // intentionally discarded: writer failures (closed pipe, broken TTY)
 // are unrecoverable here, matching writeStatus / output.go's convention.
+// renderDeploymentHeader names the columns. Only a terminal gets it:
+// scripts scrape the headerless table (prod 2026-11-19: `release list`
+// printed two unlabeled 32-hex columns and no version, so the app ID read as
+// a second deployment ID).
+func renderDeploymentHeader(w io.Writer, wide bool) {
+	if wide {
+		_, _ = fmt.Fprintf(w, deploymentRowFmtWide, "DEPLOYMENT", "REV", "APP ID", "STATUS", "KIND", "BY", "PR", "TAG", "REASON", "CREATED")
+		return
+	}
+	_, _ = fmt.Fprintf(w, deploymentRowFmt, "DEPLOYMENT", "APP ID", "STATUS", "KIND", "CREATED")
+}
+
 func renderDeploymentRow(w io.Writer, d api.DeploymentResponse) {
 	_, _ = fmt.Fprintf(w, deploymentRowFmt, d.ID, d.AppID, d.Status, d.Kind, d.CreatedAt)
 }
@@ -257,7 +269,15 @@ func cmdDeployments(args []string) int {
 		}
 		return 0
 	}
+	parked := parkedAppsForDeployments(ctx, client, *app, page.Items)
+	if stdoutIsTTY() {
+		renderDeploymentHeader(osStdout, *wide)
+	}
 	for _, d := range page.Items {
+		d.Status = listedReleaseStatus(d)
+		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
+			d.Status = parkedReleaseStatus(d.Status)
+		}
 		if *wide {
 			renderDeploymentRowWide(osStdout, d)
 		} else {
@@ -267,7 +287,63 @@ func cmdDeployments(args []string) int {
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(osStdout, "... more — pass --cursor %s\n", page.NextBefore)
 	}
+	for _, parkedApp := range orderedParkedApps(page.Items, parked) {
+		writeParkedNotice(osStdout, parkedApp)
+	}
 	return 0
+}
+
+// parkedAppsForDeployments maps the live deployments in items that their app
+// is parked on to that app. A live release of a parked app was listed as
+// plain "live" while callers got timeouts (2026-11-12 agent feedback). The
+// lookup is best effort: on error the list renders as before.
+func parkedAppsForDeployments(ctx context.Context, client *Client, appSlug string, items []api.DeploymentResponse) map[string]api.AppResponse {
+	hasLive := false
+	for _, d := range items {
+		if d.Status == "live" {
+			hasLive = true
+			break
+		}
+	}
+	if !hasLive {
+		return nil
+	}
+	var apps []api.AppResponse
+	if appSlug != "" {
+		app, err := client.GetApp(ctx, appSlug)
+		if err != nil {
+			return nil
+		}
+		apps = []api.AppResponse{app}
+	} else {
+		listed, err := client.ListApps(ctx)
+		if err != nil {
+			return nil
+		}
+		apps = listed
+	}
+	out := make(map[string]api.AppResponse)
+	for _, app := range apps {
+		if id := parkedDeploymentID(app); id != "" {
+			out[id] = app
+		}
+	}
+	return out
+}
+
+// orderedParkedApps lists each parked app once, in row order.
+func orderedParkedApps(items []api.DeploymentResponse, parked map[string]api.AppResponse) []api.AppResponse {
+	var out []api.AppResponse
+	seen := make(map[string]bool)
+	for _, d := range items {
+		app, ok := parked[d.ID]
+		if !ok || app.ID != d.AppID || d.Status != "live" || seen[app.ID] {
+			continue
+		}
+		seen[app.ID] = true
+		out = append(out, app)
+	}
+	return out
 }
 
 // cmdDeploymentsExclude dispatches the `exclude` verb family.
@@ -356,6 +432,8 @@ func cmdDeployment(args []string) int {
 		return 1
 	}
 	switch args[0] {
+	case "verify":
+		return cmdDeploymentCheckResponse(args[1:])
 	case "retry-hold":
 		return cmdDeploymentRetryHold(args[1:])
 	case "runtime":

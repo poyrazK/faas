@@ -78,6 +78,9 @@ func (w *AlertWorker) CheckTick(ctx context.Context) (bool, error) {
 		return false, storeError(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err = w.Store.q.PipelineWorkerProtocol(ctx, tx); err != nil {
+		return false, storeError(err)
+	}
 	now := w.now()
 	a, err := w.Store.q.PipelineAlertLock(ctx, tx, sqlc.PipelineAlertLockParams{NowAt: alertTime(now), Accounts: accounts})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -126,6 +129,10 @@ func (w *AlertWorker) observe(ctx context.Context, tx pgx.Tx, a sqlc.DataPipelin
 	debounce := api.DataPipelineAlertDebounce
 	if candidate == "recovered" {
 		debounce = api.DataPipelineAlertRecoveryDebounce
+	}
+	if candidate == "retention_pressure" && retentionUrgent(p.DataPipeline) {
+		// A short source WAL runway cannot wait through the ordinary debounce.
+		debounce = 0
 	}
 	if candidate != "" && a.CandidateSince.Valid && now.Sub(a.CandidateSince.Time) >= debounce {
 		pending, err := w.Store.q.PipelineAlertPendingCount(ctx, tx, p.ID)

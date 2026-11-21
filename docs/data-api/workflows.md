@@ -33,7 +33,7 @@ const files = storage.from('uploads')
 const previous = await files.head('report.pdf')
 const saved = await files.uploadResumable('report.pdf', file, {
   expectedVersion: previous.version!,
-  onSession: session => saveUploadId(session.id),
+  onSessionId: id => saveUploadId(id),
   onProgress: ({ uploaded, total }) => showProgress(uploaded, total),
 })
 ```
@@ -42,6 +42,12 @@ Omit `expectedVersion` for unconditional replacement, use `null` for create-only
 or pass the opaque version from `head()` or a prior upload. A conflicting version
 returns `412 storage_version_conflict`. Legacy files without object keys have no
 conditional version until replaced with a versioned upload.
+
+Persist `onSessionId` before any request is sent. If creation loses its reply,
+`UploadSessionStartError.sessionId` also exposes the ID. Call `getUpload(id)` to
+reconcile it; retry creation with `{ id }` only when needed. `sessionId` resumes
+an existing session, while `id` explicitly repeats the original idempotent
+creation. Never generate a replacement ID for an uncertain start.
 
 After a network error or `503 storage_commit_unknown`, read the saved session
 with `getUpload(id)`. Its completed receipt is authoritative. Resume with the
@@ -111,7 +117,7 @@ gregale job create team-data-worker --image IMAGE_REF --schedule '* * * * *' \
 Configure `DATA_API_URL` and a private backend `DATA_API_SERVER_KEY` in the Job's
 environment using your secret-management workflow. Never put this key in the
 browser. An RPC-restricted worker key needs `claim_team_order_job`,
-`advance_team_order_job` and `fail_team_order_job`; the worker acts for the
+`advance_team_order_job`, `retry_team_order_job` and `fail_team_order_job`; the worker acts for the
 recorded subject using the standard server-key subject header. Membership is
 rechecked in every transaction, including after a lease waits or expires.
 
@@ -120,13 +126,20 @@ Resolve that operation before changing context. Queue operations are idempotent
 by caller operation ID. Import batches remain atomic at 20 rows and resume from
 durable offsets. Already committed batches remain after cancellation. Invalid or
 revoked work records a stable error code and affected batch row range. Network
-and 5xx failures leave the lease recoverable instead of assuming rejection.
+and 5xx failures schedule a retry from the saved progress and let newer jobs
+proceed. Apply `0014_job_retry_scheduling.sql`: exponential delays range from
+2 to 300 seconds, with quarantine after eight attempts. The panel shows
+scheduled retries and blocked work, offers its diagnostic report, and allows
+an authorized owner/admin to resume from saved progress or cancel. A lost
+retry reply still leaves a delayed, reclaimable lease; it never proves rollback.
 
 Exports save one PostgreSQL statement snapshot, bounded to 10,000 rows / 10 MiB.
 Later edits do not change the saved artifact. Results and error reports live in
 the customer database under RLS; they are not automatically published as Job
-object-store artifacts. Keep a retention policy for completed history. The
-example allows 16 active jobs per actor and tenant; scheduled capacity and
+object-store artifacts. Apply `0015_job_history_retention.sql` and use owner maintenance below to
+retire completed history and artifacts. Compact retired IDs prevent expired
+operations from being recreated (`410 job_history_retired`). The
+example allows 16 active or quarantined jobs per actor and tenant; scheduled capacity and
 normal Job billing apply.
 
 ## Policy and RPC behavior checks in CI
@@ -185,3 +198,92 @@ Authenticated `GET /openapi-3.1.json` returns OpenAPI 3.1 with components,
 standard nullable schemas and single/bulk request unions. It retains the schema
 fingerprint and profile filtering. Internal relay/session tables and unapproved
 RPCs remain hidden. `/openapi.json` continues to serve the Swagger 2 contract.
+
+
+## Exact numeric round-trips
+
+For editable exact data, generate `--numeric-mode exact` types and pass
+`numericMode: 'exact'` to `createDataClient`. `ExactNumber` distinguishes numeric
+literals from strings and keeps their original decimal text in `source`.
+REST, RPC and `liveRead` share this mode. The default and string-based lossless
+modes remain available; fingerprints describe the same serving schema.
+
+```ts
+import { createDataClient, ExactNumber, stringifyExactJSON } from '@gregale/data'
+const db = createDataClient<Database>({ url, accessToken, numericMode: 'exact' })
+const result = await db.schema('api').from('prices').select()
+// Numeric JSON values remain numbers when sent back, including nested JSON.
+await db.schema('api').from('prices').insert(result.data!)
+const amount = new ExactNumber('12345678901234567890.001')
+const document = stringifyExactJSON({ amount, label: '12345678901234567890.001' })
+```
+
+Use `stringifyExactJSON` for storage or independent transports, and
+`parseExactJSON` to restore exact values. Ordinary `JSON.stringify` also works
+where `JSON.rawJSON` is supported; otherwise it refuses an ExactNumber rather
+than changing its type. Numeric coercion requires an explicit conversion and a
+rounding policy. Runtime numeric input validators remain a separate output.
+Plain CSV import and saved-request replay reject numeric values that ordinary
+JavaScript JSON would round; use a text projection for exact replay captures.
+
+## Owner maintenance
+
+Install cleanup fences after storage and optional upload sessions:
+
+```sh
+gregale data-api storage sql --upgrade --maintenance > migrations/0016_storage_cleanup.sql
+# For a fresh installation: storage sql --sessions --maintenance
+```
+
+Apply the migration with the owner login, then grant only the gateway function
+to the serving login (replace `data_api_login` with its actual role):
+
+```sql
+GRANT EXECUTE ON FUNCTION api.gregale_storage_register_key(text, text) TO data_api_login;
+NOTIFY pgrst, 'reload schema';
+```
+
+Refresh or restart the Data API runtime after installation. It checks this
+permission at startup and registers each new immutable key before uploading.
+The function requires gateway storage claims; the private tables remain owner-only.
+
+Run the runtime's `data-maintenance.mjs` in an owner release task or an
+operator-controlled environment
+with `MIGRATION_DATABASE_URL`, `DATA_API_SCHEMAS`, and the existing bound-bucket
+`GREGALE_S3_*` configuration. Never give the serving process owner credentials
+or grant its login access to the private maintenance schemas. The same worker
+can retire Teams job history without buckets after migration 0015.
+
+```sh
+node data-api-runtime/data-maintenance.mjs --dry-run
+node data-api-runtime/data-maintenance.mjs --execute
+```
+
+Dry-run is the default and changes no rows or objects. Managed migration
+credentials remain release-only: ordinary serving processes and scheduled Jobs
+do not receive them. Invoke maintenance as part of an owner release command,
+or through owner-approved operations automation with explicit credentials. Run
+the preview when changing bindings or retention. The exported `maintainData` API accepts a longer grace period and
+retention, plus inventory/delete adapters for testing or compatible storage.
+
+Inventory covers registered immutable `_gregale/objects/` keys, including
+orphaned PUTs, replaced versions and abandoned parts created after installation.
+Each key must have a matching ownership registration in this database. Unknown
+keys are reported as `foreign` and skipped, protecting other apps sharing the
+physical bucket. Historical unregistered and legacy name-based keys require an
+owner-verified inventory; absence from local metadata never proves ownership.
+Objects must be at least five minutes old, beyond the two-minute transfer
+bound. Metadata and active upload-session references are checked with owner
+visibility and `row_security=off`; inadequate visibility fails the run.
+Per-key SQL locks and durable deletion fences prevent concurrent reference
+creation. Deletes use the observed ETag, retry uncertain outcomes with backoff,
+and retain receipts. A changed object must age through the grace period again.
+
+Each run reads at most ten inventory pages (10,000 keys), saves its continuation,
+and handles at most 100 deletion candidates per schema. One database lease
+prevents overlapping maintenance runs. Expired upload-session history and
+completed/failed/cancelled job history have a default retention of 30 days;
+blocked jobs require review. Full exports disappear with retired jobs. Compact
+job and upload IDs remain to prevent replay; storage delete receipts expire after the
+retention period, beyond every supported transfer/session lifetime. A retired upload ID returns `410 storage_session_history_retired`; use fresh
+upload IDs only for new operations. Retention can be increased to 3,650 days.

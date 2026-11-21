@@ -1,0 +1,756 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "marker package.json",
+      "files": {
+        "package.json": "{}"
+      },
+      "expected": {
+        "shape": "app",
+        "framework": "node",
+        "dockerfile": false,
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "node"
+      },
+      "fingerprint": "89ff82a9c14772a45924c2d5f11609d4ecef83241f44a8eb98431463c9b025b3"
+    },
+    {
+      "name": "marker requirements.txt",
+      "files": {
+        "requirements.txt": ""
+      },
+      "expected": {
+        "shape": "app",
+        "framework": "python",
+        "dockerfile": false,
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "python"
+      },
+      "fingerprint": "7f092dc6b224fdd9f7638fc599578177fabce56ad05623a3ae0a9a160c668dfd"
+    },
+    {
+      "name": "marker pyproject.toml",
+      "files": {
+        "pyproject.toml": ""
+      },
+      "expected": {
+        "shape": "app",
+        "framework": "python",
+        "dockerfile": false,
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "python"
+      },
+      "fingerprint": "fa3fdb90a1a9cd9344226da481a0b26f56c445e98263e006f8ea573565023e95"
+    },
+    {
+      "name": "marker go.mod",
+      "files": {
+        "go.mod": ""
+      },
+      "expected": {
+        "shape": "app",
+        "framework": "go",
+        "dockerfile": false,
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "go"
+      },
+      "fingerprint": "65ac1860dedd961d92bdb0768fa691075a10aa426b6c055ed40b2b039fc4ecbf"
+    },
+    {
+      "name": "marker dockerfile",
+      "files": {
+        "dockerfile": ""
+      },
+      "expected": {
+        "shape": "app",
+        "framework": "docker",
+        "dockerfile": true,
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "docker"
+      },
+      "fingerprint": "a320b7b809e2391c80dc41ddb46ef1684a0820f76ab0e7575e9def142f95e279"
+    },
+    {
+      "name": "marker priority",
+      "files": {
+        "Dockerfile": "FROM scratch",
+        "package.json": "{}",
+        "go.mod": ""
+      },
+      "expected": {
+        "framework": "docker",
+        "shape": "app",
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "cli": {
+        "framework": "docker"
+      },
+      "fingerprint": "13183461f8de2d763d7ebe5c044fc7d8e6bd1ac345d6f577ffb1be5a99dc89b3"
+    },
+    {
+      "name": "function js",
+      "files": {
+        "handler.js": "// source\n"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "node22",
+        "handler": "handler.handler",
+        "errors": [],
+        "generatedPurposes": []
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "8bb6a0fe637f176b17123cab6ff25b2310492ffda0db02804bc857444e97f3c6"
+    },
+    {
+      "name": "function ts",
+      "files": {
+        "handler.ts": "// source\n"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "node22",
+        "handler": "handler.handler",
+        "errors": [],
+        "generatedPurposes": []
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "b4d911935bd64f5a66aa8f49abd1de6d32432b69500b2179ae73f8c6e9377289"
+    },
+    {
+      "name": "function py",
+      "files": {
+        "handler.py": "// source\n"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "python312",
+        "handler": "handler.handler",
+        "errors": [],
+        "generatedPurposes": []
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "321c46d918573e002820710cf98f3189c005810bc96126e61615db0830f2f5c9"
+    },
+    {
+      "name": "function go",
+      "files": {
+        "handler.go": "// source\n"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "go124",
+        "handler": "handler.handler",
+        "errors": [],
+        "generatedPurposes": [
+          "go_module"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "1aa4d17c0951e22c0ba5397b104427ac89bc806f92b1e8ce6c320eebc37bc65b"
+    },
+    {
+      "name": "manifest function before app",
+      "files": {
+        "package.json": "{}",
+        "gregale.yaml": "function:\n  runtime: node24\n  handler: handler.handler\n",
+        "handler.js": "source"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "node24",
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "f3ef075554ec2d9cfe5eae49db0633917799e61f0d6e12e6f163071c0c7e3530"
+    },
+    {
+      "name": "yaml priority",
+      "files": {
+        "gregale.yaml": "function: {runtime: python313, handler: handler.handler}\n",
+        "gregale.yml": "invalid: true",
+        "handler.py": "source"
+      },
+      "expected": {
+        "runtime": "python313",
+        "errors": []
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "01e4a5c5c395eb4a3bac468351f138a179fa51af0396c8c8e9bc56fd299b77fb"
+    },
+    {
+      "name": "runtime override",
+      "files": {
+        "handler.js": "source"
+      },
+      "expected": {
+        "runtime": "node24",
+        "handler": "custom.handler",
+        "appSlug": "api",
+        "errors": []
+      },
+      "options": {
+        "runtime": "node24",
+        "handler": "custom.handler",
+        "appSlug": "api"
+      },
+      "directory": ".",
+      "fingerprint": "ac8c90794f7dee09509cf95f2a05e3719ab458cc78b74965a480e8c4012097ad"
+    },
+    {
+      "name": "ambiguous handlers",
+      "files": {
+        "handler.py": "source",
+        "handler.js": "source"
+      },
+      "expected": {
+        "errors": [
+          "ambiguous_selection",
+          "unknown_project"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "f5f8b130c579a4f6da56b2e6480f04fbd70cd2462f1ea81c2393030608073e60"
+    },
+    {
+      "name": "function selection",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, root: functions/one}\n  - {name: two, root: functions/two}\n",
+        "functions/one/handler.js": "source",
+        "functions/two/handler.py": "source"
+      },
+      "expected": {
+        "shape": "function",
+        "runtime": "python312",
+        "functionName": "two",
+        "sourceRoot": ".",
+        "errors": [],
+        "generatedPurposes": [
+          "function_manifest"
+        ]
+      },
+      "options": {
+        "functionName": "two"
+      },
+      "directory": ".",
+      "fingerprint": "e498b76bb451c69587b4a7420290472d9a26dd3fe9d8b4c140aee0b1101ce63b"
+    },
+    {
+      "name": "ambiguous functions",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, root: one}\n  - {name: two, root: two}\n",
+        "one/handler.js": "source",
+        "two/handler.py": "source"
+      },
+      "expected": {
+        "errors": [
+          "ambiguous_selection",
+          "unknown_project"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "c504329d9dcd0c31bae5ac83c4101de4a1498745c82b33d02d98ac107af8f89f"
+    },
+    {
+      "name": "shared function handler",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, handler: src/main.mjs}\n",
+        "src/main.mjs": "source"
+      },
+      "expected": {
+        "runtime": "node22",
+        "handler": "src/main.mjs",
+        "errors": [],
+        "generatedPurposes": [
+          "function_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "2bd3ab23aa4e19dc71b9ea3f91129db23feab91cf3d632800c7b81d7e7a39351"
+    },
+    {
+      "name": "function resources need reconciliation",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, root: one, memory_mb: 128}\n",
+        "one/handler.js": "source"
+      },
+      "expected": {
+        "errors": [
+          "unsupported_settings"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "903d9f035df19d209cf3db7ad8eb33fed0e1c025457c29248fdba2b4d0c7d74f"
+    },
+    {
+      "name": "function path escape",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, root: ../outside}\n"
+      },
+      "expected": {
+        "errors": [
+          "unsafe_path"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "c4b5b431b273cff3f31900e027d4f25d14ff14f0e435d59792a88e92bba1bc39"
+    },
+    {
+      "name": "source path escape",
+      "files": {
+        "package.json": "{}"
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {
+        "sourceRoot": "../outside"
+      },
+      "directory": ".",
+      "fingerprint": "419fedc2aebe424d1fb8e81742a8ba705b141049be693d3f81ed63f0bcf6232f"
+    },
+    {
+      "name": "missing handler",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, handler: missing.py}\n"
+      },
+      "expected": {
+        "errors": [
+          "missing_input",
+          "missing_input"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "c6bf4a00623fc4465d0e060571c1a491aaaf002b745caf0be17f2590e996ab8b"
+    },
+    {
+      "name": "custom dockerfile",
+      "files": {
+        "gregale.yaml": "project: {app: api}\nbuild:\n  dockerfile: docker/api.Dockerfile\n  target: production\n  args: {REDACTED: private-value}\n  secrets: [{id: token, secret: private-reference}]\n",
+        "docker/api.Dockerfile": "FROM scratch"
+      },
+      "expected": {
+        "appSlug": "api",
+        "framework": "docker",
+        "dockerfile": true,
+        "errors": [],
+        "build": {
+          "dockerfile": "docker/api.Dockerfile",
+          "target": "production",
+          "argumentNames": [
+            "REDACTED"
+          ],
+          "secretIds": [
+            "token"
+          ]
+        }
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "0a7a779b1a70df3c693f62d0d4147eb943ce8ac2f82c6ca0e2aa35905c336993"
+    },
+    {
+      "name": "missing dockerfile",
+      "files": {
+        "gregale.yaml": "build: {dockerfile: missing}\n"
+      },
+      "expected": {
+        "errors": [
+          "missing_input"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "af41257f1f36e9687d9bc51a7ed09f3761e8e9226e0f083b3ff29a9656e29462"
+    },
+    {
+      "name": "unknown key",
+      "files": {
+        "gregale.yaml": "unknown_private: private-value"
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "e2b10d0ac78823b6e3f45374cec45f7c6c9105b91fa878a963fd08926d9696f9"
+    },
+    {
+      "name": "duplicate key",
+      "files": {
+        "gregale.yaml": "function: {}\nfunction: {}"
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "39b2fc7a79e172fcf15a079043ca931c8ee552f8200d6dabd3e0c3d2d200ccde"
+    },
+    {
+      "name": "bad schema",
+      "files": {
+        "gregale.yaml": "schema_version: true"
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "2a5a3a8b4056a489423529f50958976eb22ac655ac8241d85afbb2c54e9954e4"
+    },
+    {
+      "name": "unsafe tag",
+      "files": {
+        "gregale.yaml": "project: !!python/object:thing {}"
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "aedc08354467a6e224ceca30574bb3cbf5d23becc79bb8e1338231e22aad11dd"
+    },
+    {
+      "name": "malformed yaml",
+      "files": {
+        "gregale.yaml": "function: ["
+      },
+      "expected": {
+        "errors": [
+          "invalid_manifest"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "1f2e6f1acd9d5f09486ae135ca3a5c3958ac5963f34354f5ffbb14b129fa426c"
+    },
+    {
+      "name": "deferred settings",
+      "files": {
+        "package.json": "{}",
+        "gregale.yaml": "scaling: {min_replicas: 1}"
+      },
+      "expected": {
+        "errors": [],
+        "warnings": [
+          "validation_deferred"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "0df52ab0e98b92618c633c89282989ec7ba395c3c7dd1ddefc8f4d1997ea3d96"
+    },
+    {
+      "name": "unknown project",
+      "files": {
+        "README.md": "hello"
+      },
+      "expected": {
+        "errors": [
+          "unknown_project"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "2987cb85bb6fa68cc981840787129e474cc3f90a5ddba3a1a9bc55cff2223241"
+    },
+    {
+      "name": "workspace npm",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "package.json": "{\"workspaces\": [\"apps/*\", \"!apps/skip\"]}"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "cli": {
+        "patterns": [
+          "apps/*",
+          "!apps/skip"
+        ],
+        "members": [
+          "apps/api"
+        ]
+      },
+      "fingerprint": "1972f5705b3489196205b0b830d08ccafeff28d9a86b6544dbdb8a904e66090c"
+    },
+    {
+      "name": "workspace pnpm",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "pnpm-workspace.yaml": "packages: [apps/*, \"!apps/skip\"]"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "cli": {
+        "patterns": [
+          "apps/*",
+          "!apps/skip"
+        ],
+        "members": [
+          "apps/api"
+        ]
+      },
+      "fingerprint": "fb6eb43c05eb8cb092d21afeb4140decb2017533f7860a899667e5561fd9b141"
+    },
+    {
+      "name": "workspace go",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "go.work": "go 1.26\nuse (\n ./apps/api\n)\n"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "fingerprint": "4b23367ec38c1acff5131a953edc718fca3dd9ad4f348304f53607ac565cc373"
+    },
+    {
+      "name": "workspace cargo",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "Cargo.toml": "[workspace]\nmembers = [\"apps/*\"]\nexclude = [\"apps/skip\"]\n"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "cli": {
+        "patterns": [
+          "apps/*",
+          "!apps/skip"
+        ],
+        "members": [
+          "apps/api"
+        ]
+      },
+      "fingerprint": "046f91a80d0f4c22c9dd5e9c8d5539b2f432aedfe22e0d496bb88c184107163a"
+    },
+    {
+      "name": "workspace nx",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "nx.json": "{\"projects\": {\"api\": {\"root\": \"apps/api\"}}}"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "fingerprint": "c91ea63deb29c7f13b94db728e709f1568279e1eed782ee7e09f36602a2be884"
+    },
+    {
+      "name": "workspace turbo",
+      "files": {
+        ".git": "gitdir: unused",
+        "apps/api/package.json": "{}",
+        "apps/skip/package.json": "{}",
+        "turbo.json": "{\"pipeline\": {\"apps/api\": {}}}"
+      },
+      "expected": {
+        "sourceRoot": "apps/api",
+        "context": ".",
+        "framework": "node",
+        "errors": [],
+        "workspaceRoots": [
+          "apps/api"
+        ]
+      },
+      "options": {},
+      "directory": "apps/api",
+      "fingerprint": "3e8b3d7c8225f469a84ddbfb2bac88de6169240d17f6d6c1196963fa120597c3"
+    },
+    {
+      "name": "workspace root ambiguity",
+      "files": {
+        "package.json": "{\"workspaces\":[\"apps/*\"]}",
+        "apps/api/package.json": "{}"
+      },
+      "expected": {
+        "errors": [
+          "ambiguous_selection"
+        ]
+      },
+      "options": {},
+      "directory": ".",
+      "fingerprint": "32ed44518683d0ead43e51831d1af10120d38fe5b2bf797f79e9c65be63ae386"
+    },
+    {
+      "name": "workspace explicit root",
+      "files": {
+        "package.json": "{\"workspaces\":[\"apps/*\"]}",
+        "apps/api/package.json": "{}"
+      },
+      "expected": {
+        "sourceRoot": ".",
+        "errors": []
+      },
+      "options": {
+        "sourceRoot": "."
+      },
+      "directory": ".",
+      "fingerprint": "ce4bea2139310278dae0e7f9035e44914238527e3adf2a5087f9fe9f2f45a6c8"
+    },
+    {
+      "name": "workspace recursive glob",
+      "files": {
+        "package.json": "{\"workspaces\":[\"apps/**/api?\"]}",
+        "apps/deep/api1/package.json": "{}",
+        "apps/api2/package.json": "{}",
+        "apps/nope/package.json": "{}"
+      },
+      "expected": {
+        "workspaceRoots": [
+          "apps/api2",
+          "apps/deep/api1"
+        ],
+        "errors": []
+      },
+      "options": {
+        "sourceRoot": "apps/deep/api1"
+      },
+      "directory": ".",
+      "cli": {
+        "patterns": [
+          "apps/**/api?"
+        ],
+        "members": [
+          "apps/api2",
+          "apps/deep/api1"
+        ]
+      },
+      "fingerprint": "636b35029af1df89f0db33d95c5698bdc928e894c0fcd76594a530b80eb27b22"
+    },
+    {
+      "name": "child function manifest",
+      "files": {
+        "gregale.yaml": "functions:\n  - {name: one, root: functions/one}\n",
+        "functions/one/gregale.yml": "function: {runtime: node24, handler: custom.handler}\n",
+        "functions/one/package.json": "{}"
+      },
+      "directory": ".",
+      "options": {},
+      "expected": {
+        "runtime": "node24",
+        "handler": "custom.handler",
+        "errors": [],
+        "generatedPurposes": [
+          "function_manifest"
+        ]
+      },
+      "fingerprint": "bbfaaa66143bf0661ac36a10ee8382f4ee60010dbbdbfdbb1c87ad4c05251c48"
+    },
+    {
+      "name": "function list default app target",
+      "files": {
+        "gregale.yaml": "project: {app: api}\nfunctions:\n  - {name: one, root: one}\n",
+        "one/handler.js": "source"
+      },
+      "directory": ".",
+      "options": {},
+      "expected": {
+        "appSlug": "api",
+        "runtime": "node22",
+        "errors": [],
+        "generatedPurposes": [
+          "function_manifest"
+        ]
+      },
+      "fingerprint": "c805c00813d8a388892342fb684d45db784e6d93f582ef15715ede171c8afcaf"
+    }
+  ],
+  "goBuildToolchain": "1.26.11"
+}

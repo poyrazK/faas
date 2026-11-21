@@ -87,7 +87,7 @@ func TestLogEventRetentionWindowsMatchPlanLimits(t *testing.T) {
 		}
 	}
 	if MaxLogEventRetentionDays != api.PlanScale.LogArchiveRetentionDaysMax() ||
-		!strings.Contains(dropExpiredLogEventPartitionsSQL, "interval '90 days'") {
+		!strings.Contains(partitionMaintenanceMigration(t), "WHEN 'log_events' THEN interval '90 days'") {
 		t.Fatal("partition drop window differs from the longest plan cap")
 	}
 }

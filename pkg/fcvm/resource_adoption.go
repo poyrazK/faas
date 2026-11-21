@@ -116,11 +116,21 @@ type resourceAdoptionInstance struct {
 	DeploymentID    string `json:"deployment_id,omitempty"`
 	Port            int    `json:"port,omitempty"`
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
+	// ProbeHost (ADR-20261119140000) keeps an adopted instance's liveness
+	// and readiness loops naming the app's public host after a vmmd restart.
+	// Records written before it carry none and keep the legacy probe.
+	ProbeHost string `json:"probe_host,omitempty"`
 	// HealthcheckGRPC selects gRPC readiness (main's health.v1 checks); later
 	// readers, such as rehearsal suspend, branch on it.
-	HealthcheckGRPC          bool `json:"healthcheck_grpc,omitempty"`
-	ImageHealthcheckRequired bool `json:"image_healthcheck_required,omitempty"`
-	StartupDeadlineS         int  `json:"startup_deadline_s,omitempty"`
+	HealthcheckGRPC bool `json:"healthcheck_grpc,omitempty"`
+	// HealthcheckGRPCService and RoutedPortRawTCP rebuild the plan-default
+	// liveness probe (ADR-079 amendment 1). Both are omitempty: an older
+	// vmmd refuses to adopt only an instance that carries one, and that
+	// instance is replaced.
+	HealthcheckGRPCService   string `json:"healthcheck_grpc_service,omitempty"`
+	RoutedPortRawTCP         bool   `json:"routed_port_raw_tcp,omitempty"`
+	ImageHealthcheckRequired bool   `json:"image_healthcheck_required,omitempty"`
+	StartupDeadlineS         int    `json:"startup_deadline_s,omitempty"`
 	// RequestConcurrency is the wake's per-instance request limit (0 = the
 	// plan's); without it an adopted guest falls back to the plan cap.
 	RequestConcurrency int             `json:"request_concurrency,omitempty"`
@@ -366,7 +376,7 @@ func (r resourceJournalRecord) validateAdoption() error {
 		return errors.New("invalid adoption memory.max")
 	}
 	in := a.Instance
-	for _, s := range []string{in.AppID, in.AccountID, in.DeploymentID, in.HealthcheckPath, in.ExecutionMode, in.Runtime, in.ObservedClass} {
+	for _, s := range []string{in.AppID, in.AccountID, in.DeploymentID, in.HealthcheckPath, in.ProbeHost, in.ExecutionMode, in.Runtime, in.ObservedClass} {
 		if !adoptionString(s) {
 			return errors.New("invalid adoption instance string")
 		}
@@ -511,7 +521,10 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			DeploymentID:             inst.DeploymentID,
 			Port:                     inst.Port,
 			HealthcheckPath:          inst.HealthcheckPath,
+			ProbeHost:                inst.ProbeHost,
 			HealthcheckGRPC:          inst.HealthcheckGRPC,
+			HealthcheckGRPCService:   inst.HealthcheckGRPCService,
+			RoutedPortRawTCP:         inst.RoutedPortRawTCP,
 			ImageHealthcheckRequired: inst.ImageHealthcheckRequired,
 			StartupDeadlineS:         inst.StartupDeadlineS,
 			RequestConcurrency:       inst.RequestConcurrency,
@@ -687,7 +700,7 @@ func fenceMemoryMaxFor(l Lease) string {
 	if l.IsBuilder {
 		return memoryMaxValue(api.BuilderMemoryMaxMB(l.MemoryMaxMiB))
 	}
-	return memoryMaxValue(api.BillableRAMMB(l.MemoryMaxMiB))
+	return memoryMaxValue(api.AppVMMemoryMaxMB(l.MemoryMaxMiB))
 }
 
 // adoptionWriter commits adoption blocks off the wake critical path. Marks

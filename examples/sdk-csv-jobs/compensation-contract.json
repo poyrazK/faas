@@ -1,0 +1,5 @@
+{
+ "version":1,"name":"csv-cleanup-job",
+ "input":{"type":"object","properties":{"input_id":{"type":"string","maxLength":128},"expected_sha256":{"type":"string","minLength":64,"maxLength":64}},"required":["input_id","expected_sha256"],"additionalProperties":false},
+ "output":{"type":"object","properties":{"deleted":{"type":"boolean"}},"required":["deleted"],"additionalProperties":false}
+}

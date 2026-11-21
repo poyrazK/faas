@@ -78,6 +78,9 @@ type OutboundIntegrationOffer struct {
 	// AIAutoPromptCache adds prompt-cache breakpoints to Claude requests
 	// that carry none (ADR-1437).
 	AIAutoPromptCache bool `json:"ai_auto_prompt_cache"`
+	// AISemanticCache answers calls that mean the same as a cached one
+	// (ADR 20261112194947).
+	AISemanticCache *OutboundAISemanticCache `json:"ai_semantic_cache,omitempty"`
 	// Per-trace limits (ADR 20261020202035).
 	AITraceMaxCalls             *int64 `json:"ai_trace_max_calls,omitempty"`
 	AITraceMaxCostMillicents    *int64 `json:"ai_trace_max_cost_millicents,omitempty"`
@@ -162,6 +165,9 @@ type PutOutboundAIPolicyRequest struct {
 	// (ADR 20261021171712).
 	OnlineEvaluation *OutboundAIOnlineEvaluation `json:"online_evaluation,omitempty"`
 	QualityAlerts    bool                        `json:"quality_alerts,omitempty"`
+	// SemanticCache answers calls that mean the same as a cached one
+	// (ADR 20261112194947).
+	SemanticCache *OutboundAISemanticCache `json:"semantic_cache,omitempty"`
 }
 
 // Valid reports whether the complete AI policy can be stored.
@@ -173,7 +179,7 @@ func (r PutOutboundAIPolicyRequest) Valid() bool {
 		(!r.RequestLogEnabled || r.AIProvider != "") && (!r.RequestLogContent || r.RequestLogEnabled) &&
 		(!r.LogExport || r.AIProvider != "") && (!r.AllowUnmetered || r.AIProvider != "") &&
 		(!r.AutoPromptCache || r.AIProvider != "") && r.OnlineEvaluation.valid(r.AIProvider, r.RequestLogContent) &&
-		(!r.QualityAlerts || r.AIProvider != "")
+		(!r.QualityAlerts || r.AIProvider != "") && r.SemanticCache.Valid(r.AIProvider)
 }
 
 // OutboundAIUsageItem is one UTC-day rollup for a caller and model. Caller is

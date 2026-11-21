@@ -135,3 +135,83 @@ Decision 4 for crons, with the owner's choices of 2026-11-12:
   `cron_limit_exceeded`.
 - **Proof.** Publication checks that the stage holds exactly the captured
   crons, each still disabled.
+
+## Amendment 2026-11-12: event subscriptions per environment
+
+Decision 3 for event subscriptions and custom events. Platform events
+(buckets, deployments, databases) and clone copies follow in the next PR.
+
+- **Subscriptions.** `event_subscriptions` gains `deployment_scope` (`''` is
+  production) and `environment_id`, which a trigger resolves from the app's
+  project and keeps immutable. The identity is per environment
+  (`app_id, deployment_scope, source, type, filter`), so a stage may declare
+  the same trigger as production. Deleting an environment deletes its
+  subscriptions.
+- **Deploys.** A manifest deploy installs `triggers.event` into its own
+  environment. Before this, a stage deploy installed them as production
+  subscriptions. Only production records the declared set that activation
+  reconciles. A stage trigger that names `work_policy` or `ordered` is refused
+  (422) until work policies are per environment.
+- **Events carry their environment.** The envelope's server-stamped
+  `environmentid` extension names it; none is production.
+  - `POST /v1/events:publish` and the batch route take `environmentid`, an
+    environment of the account.
+  - `POST /v1/apps/{slug}/events:publish` takes `environment`, a slug of the
+    app's project.
+  - An in-guest publish always gets the publishing deployment's environment
+    from vmmd (the platform's runtime default). A guest that names an
+    environment must name its own.
+  - Naming production stamps none.
+- **Fan-out.** `enqueue_event_fanout` validates the environment against the
+  account, gives the event only to subscriptions of the same environment, and
+  records each recipient's environment. Workflows are production's: only
+  production events start them. Replay previews and backfills offer a
+  subscription only its environment's events.
+- **Delivery.** A stage recipient's invocation is stage work. It carries the
+  environment and is pinned to the stage's live release through the same
+  ingress resolution as the stage's routes.
+- **Release compatibility.** N-1 apid and vmmd stamp no environment, so their
+  events stay production's, as before. N-1 schedd delivers a stage recipient
+  as production work. Stage subscriptions exist only once N apid installs
+  them, and the deploy order (data, control plane, edge/node, runtime)
+  upgrades schedd with apid.
+
+## Amendment 2026-11-14: platform events and clone copies of subscriptions
+
+The follow-up the previous amendment named.
+
+- **Storage events.** An object event from a bucket a stage owns (an
+  environment branch's copy bucket, a clone's target bucket) carries that
+  stage's environment, so only the stage's subscriptions receive it. When the
+  owning stage no longer exists the event reaches no one rather than
+  production. Production's buckets stamp none, as before.
+- **Route discovery.** The gateway reports the deployment that served each
+  discovered route (`ConsumerUsageEvent.discovered_deployment_id`); an N-1
+  gateway omits it and apid falls back to the audit record's deployment.
+  Routes first served by a stage go into `environment_api_routes`, keyed by
+  environment, and are deleted with it. Their first-seen event carries the
+  stage and has its own event ID, so it never collides with production's.
+  Production's `app_api_routes`, its event and the dashboard's route list are
+  unchanged.
+- **Clones copy event subscriptions paused.** As with crons (amendment
+  2026-11-12), a full clone copies every event subscription of a captured
+  workload in the source environment (source, type, filter, retry policy,
+  schema versions, acknowledgment lease) into the stage disabled.
+  `event_subscriptions.clone_paused` marks the copies the source ran; any
+  explicit change of `enabled` clears it (trigger
+  `clear_event_subscription_clone_pause`), including a stage deploy that
+  reinstalls its manifest's triggers. The clone refuses a source with
+  subscriptions on an app that has no workload in it, and publication checks
+  that the stage holds exactly the captured subscriptions, each disabled.
+- **Resume and limits.** `automation/resume` (`gregale env resume-automation`)
+  also enables the clone-paused subscriptions and reports them
+  (`event_subscriptions_resumed`, `event_subscription_ids`). Only enabled
+  subscriptions count against the plan's event subscription caps
+  (ADR-20261031130000), so paused copies are free and the resume is where the
+  caps apply: it resumes subscriptions first, counts after the write in one
+  transaction, and refuses with `plan_event_subscription_quota` changing
+  nothing (crons included) when the stage would pass a cap.
+- **Not yet.** Bucket notification rules still block a full clone
+  (`object_bucket_setting_unavailable`): their queue destinations resolve
+  through environment-bound queue bindings, so a paused copy needs its own
+  design. Deployment and database events stay production's.

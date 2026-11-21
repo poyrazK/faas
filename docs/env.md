@@ -10,15 +10,60 @@ printf 'LOG_LEVEL=debug\n' | gregale env push --app my-api --from-stdin --restar
 gregale env diff --app my-api
 ```
 
-Keys must be uppercase and begin with a letter (`^[A-Z][A-Z0-9_]*$`). Values
-are bounded by the plan. `gregale env pull` and `gregale env push` support
+Keys begin with a letter and contain letters, digits and underscores
+(`^[A-Za-z][A-Za-z0-9_]*$`). Case is kept, so mixed-case names such as
+`DOTNET_gcServer` reach the app as written. Values are bounded by the plan. `gregale env pull` and `gregale env push` support
 local workflows; pull never returns sealed secret values.
+
+Files and stdin (`env push -f`, `--from-stdin`, `env set --file`,
+`deploy --secrets-file`, `gregale dev`) are read the way dotenv and Docker
+Compose read them: an optional `export ` prefix, `#` comment lines, and a value
+wrapped in double quotes loses them and has `\n`, `\"` and `\\` unescaped,
+while one in single quotes loses them and stays literal. `env push` skips a
+key with an empty value (`KEY=`) with a warning before saving anything; remove
+a value with `gregale env unset`. `KEY=VALUE` arguments are used as your shell passes
+them.
 
 The effective precedence is OS environment, manifest environment, shared
 project configuration, the app's own variables, then sealed secrets. Changes
 invalidate cached snapshots so old configuration cannot return through restore.
 A running process keeps its current environment unless `--restart` requests a
 fresh cold boot.
+
+## Preview and pull missing secret keys
+
+```bash
+gregale env pull --app my-api --env production --dry-run
+gregale env pull --app my-api --env production --dry-run --json
+gregale env pull --app my-api --env production -o .env.production
+```
+
+Pull reads sealed-secret **names**, never their values. `--dry-run` lists `add`
+for a missing empty assignment, `preserve` for a remote key already present
+locally, and `local_only` for a local key absent from the selected remote scope.
+Local-only keys are kept. Preview needs read access to the app's secret metadata;
+it creates neither the output file nor temporary output files.
+
+Preview and apply use the same planner. Existing comments, assignments and
+values remain byte-for-byte intact, including `export` lines and CRLF endings.
+Missing keys are appended in sorted order as empty assignments, using CRLF when
+the original uses it. A pull with no missing keys leaves an existing file
+unchanged, including its timestamp and permissions. A missing output is created
+even when the selected scope has no keys, preserving the empty-skeleton behavior.
+
+New and replacement files have mode `0600`. Apply writes and syncs a temporary
+file in the destination directory before publishing the complete file. Symlink
+and non-regular destinations are refused before the API read. Immediately before
+publication, the command rechecks the original file's identity, metadata and
+contents; edits detected since planning stop the write with a retry message.
+This check does not lock other editors. A new output is published without
+replacing a file another process just created. A failed or cancelled staged
+write leaves the original untouched.
+
+The JSON receipt keeps `app_slug`, `scope`, `output_path`, key counts and
+`key_only`, and adds `dry_run`, `write_required`, `written` and sorted `changes`
+with `key`/`action` pairs. Neither receipts nor previews include local values,
+remote hashes or secret values.
 
 ## Shared project configuration
 
@@ -34,7 +79,7 @@ gregale environment config set shop production --file production.json --yes
 
 `config set` replaces the whole document, so include every key you want to
 keep. A top-level key becomes an environment variable when it is a valid
-variable name (`^[A-Z][A-Z0-9_]*$`) and its value is a string, number or
+variable name (`^[A-Za-z][A-Za-z0-9_]*$`) and its value is a string, number or
 boolean; numbers keep their JSON text and booleans become `true` or `false`.
 Other keys, and objects, arrays and nulls, stay in the document without
 reaching the services. Secret-shaped names such as `*_TOKEN` or `*_PASSWORD`
@@ -96,3 +141,5 @@ served with the new config, and gives up after 24 hours without traffic.
 `gregale env set` and `gregale env push` say when a guard is watching.
 Pass `--no-guard` to change config without one, for example while you fix a
 deliberately broken staging app.
+
+Hosted Task binding checks let owners qualify managed PostgreSQL bindings. Agents receive metadata only. See [hosted Task bindings](mcp.md#owner-qualified-hosted-task-bindings).

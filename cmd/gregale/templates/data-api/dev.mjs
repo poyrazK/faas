@@ -97,7 +97,7 @@ function compatibilityReport(report, json) {
 export async function migrationSource(directory) {
   const hash = createHash('sha256')
   for (const entry of (await readdir(directory, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
-    hash.update(JSON.stringify([entry.name, entry.isDirectory() ? 'directory' : createHash('sha256').update(await readFile(join(directory, entry.name))).digest('hex')]))
+    hash.update(JSON.stringify([entry.name, entry.isDirectory() ? 'directory' : createHash('sha256').update(await readLocalFile(join(directory, entry.name), 16 << 20)).digest('hex')]))
   }
   return hash.digest('hex')
 }
@@ -304,7 +304,7 @@ export async function run(options) {
     const migrationDirectory = project.migrations
     const watchedSource = async () => (await migrationSource(migrationDirectory)) + (options.accepted_contracts ? createHash('sha256').update(await readContract(options.accepted_contracts, true)).digest('hex') : '')
     const initialSource = await watchedSource()
-    const applyMigrations = () => migrate(ownerURL, pathToFileURL(migrationDirectory + '/'))
+    const applyMigrations = () => migrate(ownerURL, pathToFileURL(migrationDirectory + '/'), { signal: controller.signal })
     const readLedger = async () => {
       const ledger = new pg.Client({ connectionString: ownerURL })
       try { await ledger.connect(); return (await ledger.query('SELECT version, name, checksum FROM gregale_migrations.applied ORDER BY version')).rows }
@@ -325,7 +325,7 @@ export async function run(options) {
     }
     if (options.from_version) {
       phase = 'source schema migrations'
-      await migrate(ownerURL, pathToFileURL(migrationDirectory + '/'), { through: options.from_version })
+      await migrate(ownerURL, pathToFileURL(migrationDirectory + '/'), { through: options.from_version, signal: controller.signal })
       preview.migrations = await readLedger()
       preview.upgrade.source_migrations = preview.migrations
       phase = 'source baseline verification'

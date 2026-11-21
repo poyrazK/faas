@@ -196,12 +196,9 @@ func workflowRetryPlan(run *WorkflowRun, stepName string, steps []*WorkflowStep)
 	return reopen, nil
 }
 
-// workflowManualRetryBase grants one dispatch after an exhausted resumed
+// workflowManualRetryBase grants one dispatch after an exhausted
 // generation without resetting the automatic retry budget or attempt history.
 func workflowManualRetryBase(run *WorkflowRun, stepName string, attempt, base int) int {
-	if run.ResumeCount == 0 {
-		return base
-	}
 	var spec api.WorkflowSpec
 	if json.Unmarshal(run.DefinitionSnapshot, &spec) != nil {
 		return base

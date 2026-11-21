@@ -37,6 +37,9 @@ func TestMetalPmemAccountBase(t *testing.T) {
 	if !PmemBaseSupported(fcVersion) {
 		t.Skipf("Firecracker %s has no virtio-pmem", fcVersion)
 	}
+	if bits, ok := pmemHostSupported(); !ok {
+		t.Skipf("host has %d physical address bits; pmem needs %d", bits, PmemMinPhysAddrBits)
+	}
 	snapshotRoot := t.TempDir()
 	if err := os.Mkdir(filepath.Join(snapshotRoot, "snap"), 0o2770); err != nil {
 		t.Fatal(err)
@@ -148,4 +151,12 @@ func firstResponse(url string, within time.Duration) (*http.Response, error) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+// pmemHostSupported reports whether this host can map a pmem device: pmem
+// sits past 2^39, so KVM refuses it with fewer than 40 physical address bits
+// (ADR-908). An unreadable width counts as supported, as in vmmd.
+func pmemHostSupported() (bits int, ok bool) {
+	bits, err := HostPhysAddrBits()
+	return bits, err != nil || PmemPhysAddrSupported(bits)
 }

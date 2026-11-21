@@ -11,7 +11,7 @@ import (
 )
 
 // Generated typed clients for function-to-function calls
-// (ADR-20261111150000 §1). Each Node or Python function in a functions project
+// (ADR-20261111150000 §1, Go in ADR-20261112160000 §4). Each Node, Python or Go function in a functions project
 // gets one file in its root describing the functions it may call: its
 // siblings with the input and output types their schemas declare, and its
 // `calls:` apps with unknown types. The file only adds types; the runtime
@@ -36,6 +36,9 @@ type TypedFunction struct {
 	Input   json.RawMessage
 	Output  json.RawMessage
 	Calls   FunctionCalls
+	// GoPackage is the package clause of a Go function's handler; empty
+	// means main.
+	GoPackage string
 }
 
 // FunctionTypesFile is one generated file.
@@ -47,9 +50,9 @@ type FunctionTypesFile struct {
 	Content string
 }
 
-// GenerateFunctionTypes returns the typed-client file for every Node and
-// Python function in fns, sorted by path. Functions in other runtimes get
-// none; they call siblings through their SDK transport directly.
+// GenerateFunctionTypes returns the typed-client file for every Node, Python
+// and Go function in fns, sorted by path. Functions in other runtimes get
+// none; they call siblings through their binding URLs directly.
 func GenerateFunctionTypes(fns []TypedFunction) ([]FunctionTypesFile, error) {
 	byName := make(map[string]TypedFunction, len(fns))
 	for _, fn := range fns {
@@ -76,6 +79,12 @@ func GenerateFunctionTypes(fns []TypedFunction) ([]FunctionTypesFile, error) {
 			out = append(out, FunctionTypesFile{Function: fn.Name, Path: path.Join(fn.Root, NodeFunctionTypesFile), Content: nodeFunctionTypes(callees)})
 		case strings.HasPrefix(fn.Runtime, "python"):
 			out = append(out, FunctionTypesFile{Function: fn.Name, Path: path.Join(fn.Root, PythonFunctionTypesFile), Content: pythonFunctionTypes(callees)})
+		case strings.HasPrefix(fn.Runtime, "go"):
+			content, err := goFunctionTypes(fn.GoPackage, callees)
+			if err != nil {
+				return nil, fmt.Errorf("function %q: %w", fn.Name, err)
+			}
+			out = append(out, FunctionTypesFile{Function: fn.Name, Path: path.Join(fn.Root, GoFunctionTypesFile), Content: content})
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
@@ -334,7 +343,7 @@ func pythonFunctionTypes(callees []typedCallee) string {
 	b.WriteString("from __future__ import annotations\n\n")
 	b.WriteString("from collections.abc import Mapping\n")
 	b.WriteString("from typing import Any, Literal, NotRequired, Protocol, TypedDict, cast\n\n")
-	b.WriteString("from faas_sdk.functions_runtime import FunctionClient, FunctionInvocation\n")
+	b.WriteString("from faas_sdk.functions_runtime import FunctionClient, FunctionInvocation, WorkflowRun\n")
 	b.WriteString("from faas_sdk.functions_runtime import functions as _functions\n\n")
 	for _, def := range p.defs {
 		b.WriteString(def + "\n")
@@ -355,8 +364,10 @@ func pythonFunctionTypes(callees []typedCallee) string {
 		fmt.Fprintf(&b, "\nclass %sClient(Protocol):\n", a.stem)
 		fmt.Fprintf(&b, "    async def call(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
 		fmt.Fprintf(&b, "    def call_sync(self, input: %sInput, %s) -> %sOutput: ...\n", a.stem, opts, a.stem)
-		fmt.Fprintf(&b, "    async def send(self, input: %sInput, %s) -> FunctionInvocation: ...\n", a.stem, opts)
-		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s) -> FunctionInvocation: ...\n\n", a.stem, opts)
+		fmt.Fprintf(&b, "    async def send(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n", a.stem, opts)
+		fmt.Fprintf(&b, "    def send_sync(self, input: %sInput, %s, on_complete: str | None = ...) -> FunctionInvocation: ...\n", a.stem, opts)
+		fmt.Fprintf(&b, "    async def start(self, input: %sInput, *, idempotency_key: str | None = ...) -> WorkflowRun: ...\n", a.stem)
+		fmt.Fprintf(&b, "    def start_sync(self, input: %sInput, *, idempotency_key: str | None = ...) -> WorkflowRun: ...\n\n", a.stem)
 	}
 	b.WriteString("\nclass GregaleFunctions(Protocol):\n")
 	b.WriteString("    \"\"\"The functions this function may call; a name that is not an identifier is reached by item.\"\"\"\n\n")

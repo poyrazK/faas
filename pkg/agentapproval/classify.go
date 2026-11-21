@@ -146,6 +146,43 @@ var production = map[string]Target{
 	"PUT /v1/orgs/{}/projects/{}/environments/{}/config":                TargetNone,
 	"PUT /v1/projects/{}/environments/{}/workloads/{}/policies":         TargetNone,
 	"PUT /v1/orgs/{}/projects/{}/environments/{}/workloads/{}/policies": TargetNone,
+
+	// A command runs with the live deployment's credentials and can change
+	// production data like a migration (ADR-20261117215858 §1).
+	"POST /v1/apps/{}/tasks": TargetApp,
+
+	// A replay runs the app's code again on old input, and workflow
+	// recovery re-runs or stops its steps (ADR-20261117232109). The run
+	// routes name only the run, so they ask on every environment.
+	"POST /v1/apps/{}/dlq/{}/replay":                TargetApp,
+	"POST /v1/apps/{}/dlq:replay_all":               TargetApp,
+	"POST /v1/apps/{}/queues/dead_letter/{}/replay": TargetApp,
+	"POST /v1/apps/{}/workflows/runs:cancel-queued": TargetApp,
+	"POST /v1/workflows/runs/{}/cancel":             TargetNone,
+	"POST /v1/workflows/runs/{}/resume":             TargetNone,
+	"POST /v1/workflows/runs/{}/steps/{}/retry":     TargetNone,
+
+	// Pausing a subscription stops event processing, and a recovery
+	// replays matched events through the app's code (ADR-20261118161500).
+	"POST /v1/apps/{}/event-subscriptions/{}/delivery-control/pause": TargetApp,
+	"POST /v1/apps/{}/event-recoveries":                              TargetApp,
+
+	// ADR-20261119190000: starting or shipping an experiment changes what a
+	// flag serves; publishing a saved workflow changes what runs; schema
+	// versions decide which events a subscription takes. Registering a
+	// schema is account-wide, so it asks on every account.
+	"POST /v1/projects/{}/environments/{}/experiments/{}/start": TargetNone,
+	"POST /v1/projects/{}/environments/{}/experiments/{}/ship":  TargetNone,
+	"POST /v1/apps/{}/workflows/stored/{}/publish":              TargetApp,
+	"PUT /v1/apps/{}/event-subscriptions/{}/schema-versions":    TargetApp,
+	"POST /v1/event-schemas":                                    TargetNone,
+
+	// Flag publishes change what an environment's code does at its next
+	// request (ADR-20261117215858 §3). The kill route stays ungated: it
+	// only makes the app serve the fallback its own code chose.
+	"PUT /v1/projects/{}/environments/{}/flags":                     TargetNone,
+	"POST /v1/projects/{}/environments/{}/flags/rollback":           TargetNone,
+	"POST /v1/projects/{}/environments/{}/flags/{}/rollout/promote": TargetNone,
 }
 
 // productionRouteOnly are production routes whose ServeMux pattern differs
@@ -179,6 +216,8 @@ var billing = map[string]bool{
 	"POST /v1/account/platform-tenants/{}/plan-assignments": true,
 	"POST /v1/apps/{}/consumers/{}/plan-assignments":        true,
 	"PUT /v1/apps/{}/consumer-billing-policy":               true,
+	// A consumer spend cap is a spending setting (ADR-20261118161500).
+	"PUT /v1/apps/{}/consumers/{}/spend-cap": true,
 }
 
 var billingPath = regexp.MustCompile(`(^|/)(billing|consumer-billing)(/|$)|/billing-[a-z-]+(/|$)|^/v1/billing/`)
@@ -198,12 +237,58 @@ var budgetRoutes = map[string]bool{
 	"POST /v1/projects/{}/environments":             true,
 	"POST /v1/projects/{}/environment-clones":       true,
 	"POST /v1/projects/{}/environments/{}/branches": true,
+	// Source deploys apply gregale.yaml's deployment settings.
+	"POST /v1/apps/{}/deployments":                true,
+	"POST /v1/apps/{}/deployments/source-ref":     true,
+	"POST /v1/apps/{}/deployments/source-tarball": true,
+	"POST /v1/uploads/{}/commit":                  true,
+	// A cron wakes its app on schedule, so one that fires more often than
+	// the app idles keeps it running (cost-control review 2026-11-19, N3).
+	"POST /v1/crons":     true,
+	"PATCH /v1/crons/{}": true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's
 // budget, so the request must be bound before the handler reads its body.
 func ChargesBudget(pattern string) bool {
 	return budgetRoutes[Normalize(pattern)]
+}
+
+// previewRoutes accept the budget preview header (ADR-20261111114059,
+// amendment 2026-11-13): their handlers price every request they accept
+// before any write, so answering at the price writes nothing
+// (TestAgentBudgetPreviewWritesNothing). A route joins only with that
+// test.
+var previewRoutes = map[string]bool{
+	"PATCH /v1/apps/{}":                             true,
+	"POST /v1/apps/{}/scaling":                      true,
+	"POST /v1/apps/{}/prewarm":                      true,
+	"POST /v1/apps":                                 true,
+	"PATCH /v1/deployments/{}":                      true,
+	"POST /v1/postgres/databases":                   true,
+	"POST /v1/postgres/databases/{}/compute-policy": true,
+	"POST /v1/postgres/databases/{}/resize":         true,
+	"POST /v1/postgres/databases/{}/restore":        true,
+	"POST /v1/projects/{}/environments":             true,
+	"POST /v1/projects/{}/environment-clones":       true,
+	"POST /v1/projects/{}/environments/{}/branches": true,
+	// The handler fetches and checks the repository, then answers at
+	// the price of its gregale.yaml before preparing the rollout.
+	"POST /v1/apps/{}/deployments/source-ref": true,
+}
+
+// Previewable reports whether a route accepts the budget preview header.
+func Previewable(pattern string) bool {
+	return previewRoutes[Normalize(pattern)]
+}
+
+// PreviewRoutes lists the previewable route patterns, for tests.
+func PreviewRoutes() []string {
+	out := make([]string, 0, len(previewRoutes))
+	for p := range previewRoutes {
+		out = append(out, p)
+	}
+	return out
 }
 
 // gatedReads are reads that hand an agent something a person should agree

@@ -1218,3 +1218,23 @@ func (m *MemStore) AgeObjectUsageForTest(bucket string, d time.Duration) {
 	u.ObservedAt, u.AttemptAt = u.ObservedAt.Add(-d), u.AttemptAt.Add(-d)
 	m.objectUsage[bucket] = u
 }
+
+// LapseTriggerRecordClaimForTest moves a claimed trigger record's claim into
+// the past, as the PG tests do with an UPDATE: its dispatcher was lost.
+func (m *MemStore) LapseTriggerRecordClaimForTest(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if r, ok := m.records[id]; ok {
+		r.ClaimExpiresAt = pgtypeFromTime(time.Now().Add(-time.Second))
+		m.records[id] = r
+	}
+}
+
+// FinalUsageBeforeForTest reads accountID's final usage in [monthStart, at)
+// through the per-process cache the spend cap uses.
+func (s *PgStore) FinalUsageBeforeForTest(ctx context.Context, accountID string, monthStart, at time.Time) (int64, error) {
+	return s.finalUsageBefore(ctx, accountID, monthStart, at)
+}
+
+// UsageFinalBefore reports whether usage before at is final as of now.
+func UsageFinalBefore(at, now time.Time) bool { return usageFinalBefore(at, now) }

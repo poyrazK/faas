@@ -15,11 +15,17 @@ import (
 
 func cmdFlags(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
+		PrintUsage(os.Stderr, "usage: gregale flags <"+flagsUsageEditVerbs+"|get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
 		return 1
 	}
+	if args[0] == "experiments" {
+		return cmdFlagsExperiments(args[1:])
+	}
+	if _, ok := flagsEditVerbs[args[0]]; ok {
+		return cmdFlagsEdit(args[0], args[1:])
+	}
 	if !knownFlagsVerb(args[0]) {
-		// `flags list` answered "invalid flags command or missing required
+		// `flags bogus` answered "invalid flags command or missing required
 		// options", naming neither (Hunt 14 H14-63).
 		printCommandValidation(os.Stderr, "gregale flags: unknown subcommand %q\n", args[0])
 		parent, _ := lookupCliCommand("flags")
@@ -43,10 +49,22 @@ func cmdFlags(args []string) int {
 	used := fs.String("used", "", "filter requests by true or false exposure")
 	since := fs.String("since", "24h", "request evidence lookback")
 	cursor := fs.String("cursor", "", "request evidence next-page cursor")
+	var attrs repeatedFlag
+	fs.Var(&attrs, "attr", "simulated request attribute NAME=VALUE for inspect (repeatable)")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 || *project == "" || *environment == "" {
+	if fs.NArg() != 0 {
+		// `flag get --project p newui` reported "--project is required"
+		// (prod 2026-11-19): the extra argument was the problem.
+		message := fmt.Sprintf("unexpected argument %q", fs.Arg(0))
+		if args[0] == "get" {
+			message += "; flag get reads the whole configuration (use `--key` with inspect, requests or outcomes)"
+		}
+		PrintUsage(os.Stderr, message, "flags")
+		return 1
+	}
+	if *project == "" || *environment == "" {
 		PrintUsage(os.Stderr, "--project is required", "flags")
 		return 1
 	}
@@ -89,7 +107,13 @@ func cmdFlags(args []string) int {
 			out, err = client.PublishProjectFlags(ctx, *project, *environment, raw)
 		}
 	case "inspect":
-		out, err = client.InspectProjectFlagForSubject(ctx, *project, *environment, *key, *customer, *subject, *version, *fallbackVariant)
+		var attributes map[string]string
+		attributes, err = parseFlagsInspectAttributes(attrs)
+		if err != nil {
+			printCommandValidation(os.Stderr, "gregale flag inspect: %v\n", err)
+			return 1
+		}
+		out, err = client.InspectProjectFlagWithContext(ctx, *project, *environment, *key, api.InspectFlagContext{Customer: *customer, Subject: *subject, Version: *version, FallbackVariant: *fallbackVariant, Attributes: attributes})
 	case "rollback":
 		out, err = client.RollbackProjectFlags(ctx, *project, *environment, *expected, *version)
 	case "requests":

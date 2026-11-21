@@ -1,6 +1,12 @@
 package builderd
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 type fakeResid struct{ mb int }
 
@@ -58,23 +64,87 @@ func TestSlot_ZeroCeilingFallsBack(t *testing.T) {
 	}
 }
 
-func TestBuilderSlots_EnforceParentCgroupSafeSingleSlot(t *testing.T) {
-	b := &Builderd{resid: fakeResid{mb: 0}}
-
-	first, releaseFirst, ok := b.acquireSlot()
-	if !ok || first.Label != "guaranteed" {
-		t.Fatalf("first slot = %+v, acquired=%v; want guaranteed", first, ok)
+func TestBuilderSlots_SecondSlotNeedsSliceMemory(t *testing.T) {
+	cases := []struct {
+		name   string
+		freeMB int
+		ok     bool
+		want   bool
+	}{
+		{name: "default 5 GiB slice with one build running", freeMB: 5120 - 2*2048 - 64, ok: true, want: false},
+		{name: "slice unreadable", ok: false, want: false},
+		{name: "one MiB short", freeMB: secondSlotNeedMB - 1, ok: true, want: false},
+		{name: "raised slice", freeMB: secondSlotNeedMB, ok: true, want: true},
 	}
-	second, _, ok := b.acquireSlot()
-	if ok || second.Allowed {
-		t.Fatalf("second slot = %+v, acquired=%v; want denial at the 5 GiB parent fence", second, ok)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Builderd{resid: fakeResid{mb: 0}, sliceFreeMB: func() (int, bool) { return tc.freeMB, tc.ok }}
+			first, releaseFirst, ok := b.acquireSlot()
+			if !ok || first.Label != "guaranteed" {
+				t.Fatalf("first slot = %+v, acquired=%v; want guaranteed", first, ok)
+			}
+			defer releaseFirst()
+			second, releaseSecond, ok := b.acquireSlot()
+			if ok != tc.want {
+				t.Fatalf("second slot = %+v, acquired=%v; want %v", second, ok, tc.want)
+			}
+			if ok {
+				if second.Label != "opportunistic" {
+					t.Fatalf("second slot label = %q, want opportunistic", second.Label)
+				}
+				defer releaseSecond()
+				if third, _, ok := b.acquireSlot(); ok {
+					t.Fatalf("third slot = %+v; want the maxBuilderSlots limit", third)
+				}
+			}
+		})
 	}
+}
 
-	releaseFirst()
-	if _, release, ok := b.acquireSlot(); !ok {
-		t.Fatal("slot should be reusable after releases")
-	} else {
-		release()
+func TestBuilderSlots_SecondSlotNeedsLowResidency(t *testing.T) {
+	b := &Builderd{resid: fakeResid{mb: api.RAMAdmissionCeilingMB}, sliceFreeMB: func() (int, bool) { return 1 << 20, true }}
+	_, release, ok := b.acquireSlot()
+	if !ok {
+		t.Fatal("guaranteed slot unavailable")
+	}
+	defer release()
+	if got, _, ok := b.acquireSlot(); ok {
+		t.Fatalf("second slot at full tenant residency = %+v; want denial", got)
+	}
+}
+
+func TestCgroupFreeMB(t *testing.T) {
+	write := func(t *testing.T, max, current string) string {
+		dir := t.TempDir()
+		if max != "" {
+			if err := os.WriteFile(filepath.Join(dir, "memory.max"), []byte(max), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if current != "" {
+			if err := os.WriteFile(filepath.Join(dir, "memory.current"), []byte(current), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+	cases := []struct {
+		name, max, current string
+		want               int
+		ok                 bool
+	}{
+		{name: "free", max: "10737418240\n", current: "1073741824\n", want: 9216, ok: true},
+		{name: "over", max: "1048576", current: "2097152", want: 0, ok: true},
+		{name: "unlimited", max: "max\n", current: "1", ok: false},
+		{name: "missing", ok: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := cgroupFreeMB(write(t, tc.max, tc.current))
+			if got != tc.want || ok != tc.ok {
+				t.Fatalf("cgroupFreeMB = %d, %v; want %d, %v", got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,129 @@
+# Exact node lookup queries must exclude a different expected node.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: one selected node sees both channels without fleet preview or sibling metadata
+    interval: 1m
+    input_series:
+      - series: faas_serving_probe_inventory_configured{job="node",instance="cp:9100"}
+        values: 1x60
+      - series: faas_serving_probe_expected_pairs{job="node",instance="cp:9100"}
+        values: 2x60
+      - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-2",url="https://probe.example/fsn-2"}
+        values: 1x60
+      - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-2"}
+        values: 900x60
+      - series: up{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+        values: 1x60
+      - series: faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100"}
+        values: 0+60x60
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="heartbeat"}
+        values: 0x60
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="heartbeat"}
+        values: 0x60
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1x60
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1x60
+      - series: faas_serving_probe_notification_last_attempt_success{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 0x60
+      - series: faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 4x60
+      - series: faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 1200x60
+      - series: faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node="fsn-2",instance="fsn-2:9100",channel="webhook"}
+        values: 600x60
+      - series: faas_serving_probe_expected{job="node",instance="cp:9100",probe_node="fsn-3",url="https://probe.example/fsn-3"}
+        values: 1x60
+      - series: faas_serving_probe_expected_max_age_seconds{job="node",instance="cp:9100",probe_node="fsn-3"}
+        values: 900x60
+      - series: up{job="node-compute",node="fsn-3",instance="fsn-3:9100"}
+        values: 1x60
+      - series: faas_serving_probe_last_run_timestamp_seconds{job="node-compute",node="fsn-3",instance="fsn-3:9100"}
+        values: 0+60x60
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 1x60
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 1x60
+      - series: faas_serving_probe_notification_last_attempt_success{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 0x60
+      - series: faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 3x60
+      - series: faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 1300x60
+      - series: faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="heartbeat"}
+        values: 700x60
+      - series: faas_serving_probe_notification_enabled{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 1x60
+      - series: faas_serving_probe_notification_attempted{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 0x60
+      - series: faas_serving_probe_notification_last_attempt_success{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 1x60
+      - series: faas_serving_probe_notification_last_attempt_failure_code{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 0x60
+      - series: faas_serving_probe_notification_last_attempt_timestamp_seconds{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 1500x60
+      - series: faas_serving_probe_notification_last_success_timestamp_seconds{job="node-compute",node="fsn-3",instance="fsn-3:9100",channel="webhook"}
+        values: 1500x60
+    promql_expr_test:
+      - expr: label_replace({__name__=~"faas_serving_probe_notification:state|faas_serving_probe:last_run",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)")
+        eval_time: 30m
+        exp_samples:
+          - labels: 'faas_serving_probe_notification:state{evidence_metric="faas_serving_probe_notification:state",probe_node="fsn-2",channel="heartbeat"}'
+            value: 0
+          - labels: 'faas_serving_probe_notification:state{evidence_metric="faas_serving_probe_notification:state",probe_node="fsn-2",channel="webhook"}'
+            value: 3
+          - labels: 'faas_serving_probe:last_run{evidence_metric="faas_serving_probe:last_run",probe_node="fsn-2"}'
+            value: 1800
+      - expr: timestamp(label_replace({__name__=~"faas_serving_probe_notification:state|faas_serving_probe:last_run",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)"))
+        eval_time: 30m
+        exp_samples:
+          - labels: '{evidence_metric="faas_serving_probe_notification:state",probe_node="fsn-2",channel="heartbeat"}'
+            value: 1800
+          - labels: '{evidence_metric="faas_serving_probe_notification:state",probe_node="fsn-2",channel="webhook"}'
+            value: 1800
+          - labels: '{evidence_metric="faas_serving_probe:last_run",probe_node="fsn-2"}'
+            value: 1800
+      - expr: label_replace({__name__=~"faas_serving_probe_notification:(last_attempt_success|last_attempt_failure_code)",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)")
+        eval_time: 30m
+        exp_samples:
+          - labels: 'faas_serving_probe_notification:last_attempt_success{evidence_metric="faas_serving_probe_notification:last_attempt_success",probe_node="fsn-2",channel="webhook"}'
+            value: 0
+          - labels: 'faas_serving_probe_notification:last_attempt_failure_code{evidence_metric="faas_serving_probe_notification:last_attempt_failure_code",probe_node="fsn-2",channel="webhook"}'
+            value: 4
+      - expr: timestamp(label_replace({__name__=~"faas_serving_probe_notification:(last_attempt_success|last_attempt_failure_code)",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)"))
+        eval_time: 30m
+        exp_samples:
+          - labels: '{evidence_metric="faas_serving_probe_notification:last_attempt_success",probe_node="fsn-2",channel="webhook"}'
+            value: 1800
+          - labels: '{evidence_metric="faas_serving_probe_notification:last_attempt_failure_code",probe_node="fsn-2",channel="webhook"}'
+            value: 1800
+      - expr: label_replace({__name__=~"faas_serving_probe_notification:(last_attempt_timestamp_seconds|last_success_timestamp_seconds)",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)")
+        eval_time: 30m
+        exp_samples:
+          - labels: 'faas_serving_probe_notification:last_attempt_timestamp_seconds{evidence_metric="faas_serving_probe_notification:last_attempt_timestamp_seconds",probe_node="fsn-2",channel="webhook"}'
+            value: 1200
+          - labels: 'faas_serving_probe_notification:last_success_timestamp_seconds{evidence_metric="faas_serving_probe_notification:last_success_timestamp_seconds",probe_node="fsn-2",channel="webhook"}'
+            value: 600
+      - expr: timestamp(label_replace({__name__=~"faas_serving_probe_notification:(last_attempt_timestamp_seconds|last_success_timestamp_seconds)",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)"))
+        eval_time: 30m
+        exp_samples:
+          - labels: '{evidence_metric="faas_serving_probe_notification:last_attempt_timestamp_seconds",probe_node="fsn-2",channel="webhook"}'
+            value: 1800
+          - labels: '{evidence_metric="faas_serving_probe_notification:last_success_timestamp_seconds",probe_node="fsn-2",channel="webhook"}'
+            value: 1800
+      - expr: label_replace({__name__=~"faas_serving_probe_notification:evidence_status",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)")
+        eval_time: 30m
+        exp_samples:
+          - labels: 'faas_serving_probe_notification:evidence_status{evidence_metric="faas_serving_probe_notification:evidence_status",probe_node="fsn-2",channel="heartbeat"}'
+            value: 0
+          - labels: 'faas_serving_probe_notification:evidence_status{evidence_metric="faas_serving_probe_notification:evidence_status",probe_node="fsn-2",channel="webhook"}'
+            value: 0
+      - expr: timestamp(label_replace({__name__=~"faas_serving_probe_notification:evidence_status",probe_node="fsn-2"},"evidence_metric","$1","__name__","(.+)"))
+        eval_time: 30m
+        exp_samples:
+          - labels: '{evidence_metric="faas_serving_probe_notification:evidence_status",probe_node="fsn-2",channel="heartbeat"}'
+            value: 1800
+          - labels: '{evidence_metric="faas_serving_probe_notification:evidence_status",probe_node="fsn-2",channel="webhook"}'
+            value: 1800

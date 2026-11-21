@@ -83,7 +83,7 @@ read.
 
 With the optional upload-session SQL installed, use `uploadResumable` to retain
 checksummed progress and a durable completion receipt. Save the session ID from
-`onSession`, then pass `sessionId` with the same file after an interruption.
+`onSessionId` before dispatch, then pass `sessionId` with the same file after an interruption.
 `getUpload` reconciles completion; `abortUpload` cancels unfinished work.
 `expectedVersion` accepts the version from `head()` or a previous upload, `null`
 for create-only, or omission for unconditional replacement. A conflict returns
@@ -99,6 +99,15 @@ inherits the same codec. The serving fingerprint stays unchanged; ordinary
 clients retain number decoding. This is a read codec: decoded JSON columns do
 not retain the number-versus-string token distinction for subsequent writes.
 See [numeric examples](../../docs/data-api/workflows.md#exact-numeric-decoding).
+
+### Exact numeric writes
+
+Generate `--numeric-mode exact` types and use `numericMode: 'exact'` to retain
+JSON number-versus-string identity. Numbers decode to immutable `ExactNumber`
+values, including RPC results, arrays, JSON columns and `liveRead` rows. Their
+`source` holds the original literal; sending them back writes JSON numbers.
+Use `parseExactJSON` / `stringifyExactJSON` for independent serialization.
+See [round-trip examples](../../docs/data-api/workflows.md#exact-numeric-round-trips).
 
 ### Live reads
 

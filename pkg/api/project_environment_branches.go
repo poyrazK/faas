@@ -36,7 +36,7 @@ func (c *Client) ExtendProjectEnvironmentBranch(ctx context.Context, projectSlug
 }
 
 // ResetProjectEnvironmentBranch makes the branch again from its parent, with
-// its settings. Its workloads get new URLs.
+// its settings. Its workloads keep their URLs.
 func (c *Client) ResetProjectEnvironmentBranch(ctx context.Context, projectSlug, branchSlug string) (ProjectEnvironmentResponse, error) {
 	var out ProjectEnvironmentResponse
 	return out, c.do(ctx, http.MethodPost, projectEnvironmentBranchPath(projectSlug, branchSlug)+"/reset", struct{}{}, &out)
@@ -173,6 +173,22 @@ type ProjectEnvironmentBranchResponse struct {
 	// .../environments/{branch}/branch).
 	CreatedAt string                             `json:"created_at,omitempty"`
 	Databases []ProjectEnvironmentBranchDatabase `json:"databases,omitempty"`
+	// Buckets are the overlay buckets the branch owns, reported by the
+	// branch's own view.
+	Buckets []ProjectEnvironmentBranchBucket `json:"buckets,omitempty"`
+}
+
+// ProjectEnvironmentBranchBucket is one overlay bucket a branch owns on a
+// parent bucket. Consistency is as_of when the branch reads the parent as of
+// the branch point (the parent had versioning on), live_parent when it reads
+// the parent's current objects. CopyBucketID and Consistency are empty
+// until the bucket is made.
+type ProjectEnvironmentBranchBucket struct {
+	SourceBucketID string `json:"source_bucket_id"`
+	Name           string `json:"name,omitempty"`
+	CopyBucketID   string `json:"copy_bucket_id,omitempty"`
+	Consistency    string `json:"consistency,omitempty"`
+	AsOf           string `json:"as_of,omitempty"`
 }
 
 // ProjectEnvironmentBranchDatabase is one managed PostgreSQL copy a branch
@@ -199,8 +215,11 @@ type ProjectEnvironmentBranchWorkload struct {
 	SourceDeployment string `json:"source_deployment_id"`
 	Status           string `json:"status"`
 	// URL is the workload's address in the branch; its first request
-	// starts it.
+	// starts it. It is the branch's stable URL, which a reset keeps.
 	URL string `json:"url,omitempty"`
+	// EnvironmentURL is the address of this incarnation of the branch: a
+	// reset gives it a new one. Empty when it is the same as URL.
+	EnvironmentURL string `json:"environment_url,omitempty"`
 }
 
 // ProjectEnvironmentBranchListResponse lists a project's branches.

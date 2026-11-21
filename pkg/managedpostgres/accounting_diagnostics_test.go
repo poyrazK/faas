@@ -35,14 +35,31 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 		// completed window yet; one created earlier, or already deleted, does.
 		{"created this window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(3 * time.Minute)}, StateReady, false, []string{}},
 		{"created at window start", UsageProgress{CreatedAt: now.Truncate(time.Hour)}, StateReady, false, []string{}},
-		{"created last window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Nanosecond)}, StateReady, false, []string{"coverage_missing"}},
-		{"deleted this window", UsageProgress{CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"coverage_missing"}},
+		// ADR-20261115190000 amendment 1: created in the window that just
+		// closed, it owes only that window and waits on headroom; created
+		// before it, it owes a window the sweep should already have.
+		{"created last window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Nanosecond)}, StateReady, false, []string{"latest_window_pending"}},
+		{"created two windows ago", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Hour - time.Nanosecond)}, StateReady, false, []string{"coverage_missing"}},
+		// ADR-20261115190000: a resource created and deleted inside one window
+		// owes only that window; it waits on headroom, not on collection.
+		{"deleted this window", UsageProgress{CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"final_window_pending"}},
+		{"deleted last window never observed", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Hour), Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-30 * time.Minute)}, StateDeleted, false, []string{"final_window_pending"}},
+		{"deleted after an unobserved window", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-time.Hour), Terminal: true, EndedAt: now}, StateDeleted, false, []string{"coverage_missing"}},
+		{"deleted unobserved past StaleAfter", UsageProgress{CreatedAt: now.Truncate(time.Hour).Add(-5 * time.Hour), Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-5 * time.Hour)}, StateDeleted, false, []string{"coverage_missing"}},
 		{"changed window", UsageProgress{Window: 24 * time.Hour, ObservedAt: now}, StateReady, false, []string{"window_mismatch"}},
-		{"backlog", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateReady, false, []string{"coverage_incomplete"}},
+		// Amendment 1: the provider publishes the hour that just closed some
+		// minutes later; only an older gap blocks outright.
+		{"latest window uncollected", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateReady, false, []string{"latest_window_pending"}},
+		{"backlog", UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-2 * time.Hour)}, StateReady, false, []string{"coverage_incomplete"}},
 		{"stale", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter - time.Nanosecond), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{"observation_stale"}},
 		{"fresh at threshold", UsageProgress{Window: time.Hour, ObservedAt: now.Add(-policy.StaleAfter), CollectedUntil: now.Truncate(time.Hour)}, StateReady, false, []string{}},
 		{"shutdown absent", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true}, StateDeleted, false, []string{"shutdown_unconfirmed"}},
-		{"terminal backlog", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now, CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{"coverage_incomplete"}},
+		{"terminal final window open", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now, CollectedUntil: now.Truncate(time.Hour)}, StateDeleted, false, []string{"final_window_pending"}},
+		{"terminal backlog", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)}, StateDeleted, false, []string{"coverage_incomplete"}},
+		// The final window closed at 10:00 (2 h 17 min ago) and stays pending
+		// until 13:00; the one that closed at 09:00 is 3 h 17 min overdue.
+		{"terminal final window closed recently", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-150 * time.Minute), CollectedUntil: now.Truncate(time.Hour).Add(-3 * time.Hour)}, StateDeleted, false, []string{"final_window_pending"}},
+		{"terminal final window overdue", UsageProgress{Window: time.Hour, ObservedAt: now, Terminal: true, EndedAt: now.Truncate(time.Hour).Add(-210 * time.Minute), CollectedUntil: now.Truncate(time.Hour).Add(-4 * time.Hour)}, StateDeleted, false, []string{"coverage_incomplete"}},
 		// ADR-20261104143000: a covered tombstone's correction tail blocks
 		// only once it is overdue by StaleAfter (3 h): the tail of a
 		// database deleted at 06:00 is due at 09:00 and overdue after 12:00.
@@ -58,14 +75,68 @@ func TestAccountingDiagnosticReasonsAndBoundaries(t *testing.T) {
 			p := policy
 			p.Enabled = !tc.disabled
 			d := accountingDiagnostic(AccountingCoverage{DatabaseID: "d", State: tc.state, CreatedAt: good.CollectedFrom, Progress: tc.progress}, p, now)
-			if !reflect.DeepEqual(d.Reasons, tc.reasons) || d.Blocking != (len(tc.reasons) > 0) {
+			hard := 0
+			for _, reason := range tc.reasons {
+				if reason != "final_window_pending" && reason != "latest_window_pending" {
+					hard++
+				}
+			}
+			if !reflect.DeepEqual(d.Reasons, tc.reasons) || d.Blocking != (hard > 0) {
 				t.Fatalf("diagnostic = %+v", d)
 			}
+			// An empty month has headroom, so admission agrees with Blocking.
 			if (UsageSnapshot{Databases: []UsageProgress{tc.progress}}).Stale(p, now) != d.Blocking {
 				t.Fatal("diagnosis disagrees with admission")
 			}
 			if tc.name == "legacy" && (!d.RequiredUntil.IsZero() || !d.CorrectionRequiredAt.IsZero()) {
 				t.Fatal("logical tombstone invented shutdown evidence")
+			}
+		})
+	}
+}
+
+// ADR-20261115190000: a deleted database's pending final window, and
+// (amendment 1) a live database's uncollected latest window, admit only
+// while recorded usage stays below 90% of every ceiling; a hard issue on any
+// other database still blocks.
+func TestFinalWindowPendingAdmitsOnlyWithHeadroom(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 17, 0, 0, time.UTC)
+	policy := enabledUsagePolicy() // cost 100, compute 1000, egress 1 MiB
+	for name, pending := range map[string]UsageProgress{
+		"final window":  {CreatedAt: now.Truncate(time.Hour), Terminal: true, EndedAt: now},
+		"latest window": {Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-time.Hour)},
+	} {
+		t.Run(name, func(t *testing.T) { testPendingWindowHeadroom(t, policy, now, pending) })
+	}
+}
+
+func testPendingWindowHeadroom(t *testing.T, policy UsagePolicy, now time.Time, pending UsageProgress) {
+	fresh := UsageProgress{Window: time.Hour, CollectedUntil: now.Truncate(time.Hour), ObservedAt: now}
+	backlog := UsageProgress{Window: time.Hour, ObservedAt: now, CollectedUntil: now.Truncate(time.Hour).Add(-2 * time.Hour)}
+	for _, tc := range []struct {
+		name  string
+		snap  UsageSnapshot
+		stale bool
+	}{
+		{"empty month", UsageSnapshot{}, false},
+		{"just under every margin", UsageSnapshot{CostMillicents: 89, ComputeUnitSeconds: 899, EgressBytes: (1 << 20) - (1<<20)/10 - 1}, false},
+		{"cost at margin", UsageSnapshot{CostMillicents: 90}, true},
+		{"compute at margin", UsageSnapshot{ComputeUnitSeconds: 900}, true},
+		{"egress at margin", UsageSnapshot{EgressBytes: (1 << 20) - (1<<20)/10 + 1}, true},
+		{"history at margin", UsageSnapshot{HistoryByteSeconds: (1 << 50) - (1<<50)/10 + 1}, true},
+		{"other database stale", UsageSnapshot{Databases: []UsageProgress{backlog}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			snap := tc.snap
+			snap.Databases = append([]UsageProgress{pending, fresh}, snap.Databases...)
+			if got := snap.Stale(policy, now); got != tc.stale {
+				t.Fatalf("Stale = %v, want %v", got, tc.stale)
+			}
+			// Without the pending window the same usage is admitted unless
+			// another database blocks: the margin applies only to the grace.
+			snap.Databases = snap.Databases[1:]
+			if got := snap.Stale(policy, now); got != (tc.name == "other database stale") {
+				t.Fatalf("without pending window Stale = %v", got)
 			}
 		})
 	}

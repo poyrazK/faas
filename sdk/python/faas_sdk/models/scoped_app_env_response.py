@@ -7,17 +7,21 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="ScopedAppEnvResponse")
 
 
 @_attrs_define
 class ScopedAppEnvResponse:
-    """An env var envelope scoped to one named environment. The plaintext value never appears here."""
+    """An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."""
 
     scope: str
     key: str
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    value: str | Unset = UNSET
+    """This scope's plaintext value of the variable, included only on a `?values=true` listing."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -29,6 +33,8 @@ class ScopedAppEnvResponse:
 
         updated_at = self.updated_at.isoformat()
 
+        value = self.value
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -39,6 +45,8 @@ class ScopedAppEnvResponse:
                 "updated_at": updated_at,
             }
         )
+        if value is not UNSET:
+            field_dict["value"] = value
 
         return field_dict
 
@@ -53,11 +61,14 @@ class ScopedAppEnvResponse:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        value = d.pop("value", UNSET)
+
         scoped_app_env_response = cls(
             scope=scope,
             key=key,
             created_at=created_at,
             updated_at=updated_at,
+            value=value,
         )
 
         scoped_app_env_response.additional_properties = d

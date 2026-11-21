@@ -130,7 +130,7 @@ func TestPGOwnershipTransferEnforcesFreeRecipientLimit(t *testing.T) {
 	path := "/v1/orgs/" + incoming.Slug + "/transfer_ownership"
 	body := api.TransferOwnershipRequest{NewOwnerAccountID: recipient.Account.ID}
 	headers := map[string]string{"X-Active-Org": incoming.Slug}
-	rr := e.Do(t, http.MethodPost, path, body, headers)
+	rr := e.DoSession(t, "", http.MethodPost, path, body, headers)
 	var problem api.Problem
 	if err := json.Unmarshal(rr.Body.Bytes(), &problem); err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestPGOwnershipTransferEnforcesFreeRecipientLimit(t *testing.T) {
 	if err := store.UpdateOrgPlan(t.Context(), owned.ID, api.PlanHobby); err != nil {
 		t.Fatal(err)
 	}
-	if retry := e.Do(t, http.MethodPost, path, body, headers); retry.Code != http.StatusOK {
+	if retry := e.DoSession(t, "", http.MethodPost, path, body, headers); retry.Code != http.StatusOK {
 		t.Fatal("transfer after capacity freed failed", retry.Code, retry.Body.String())
 	}
 }

@@ -21,8 +21,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from collections.abc import Mapping
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -52,11 +52,175 @@ class FunctionCallError(Exception):
         super().__init__(message)
 
 
-@dataclass(frozen=True)
-class FunctionInvocation:
-    """An accepted async invocation."""
+GREGALE_ON_COMPLETE_HEADER = "X-Gregale-On-Complete"
+# Where a function reads the invocations it sent.
+GREGALE_PLATFORM_API_URL = "http://api.svc.gregale:10081"
+_MAX_WAIT_SECONDS = 30
 
-    invocation_id: str
+
+class FunctionInvocation:
+    """An accepted async invocation; only the function that sent it can read it."""
+
+    def __init__(self, function: str, invocation_id: str, platform_url: str = GREGALE_PLATFORM_API_URL,
+                 sync_client: httpx.Client | None = None, async_client: httpx.AsyncClient | None = None) -> None:
+        self.function = function
+        self.invocation_id = invocation_id
+        self._url = platform_url.rstrip("/") + "/v1/invocations/" + invocation_id
+        self._sync = sync_client
+        self._async = async_client
+
+    def __repr__(self) -> str:
+        return f"FunctionInvocation({self.function!r}, {self.invocation_id!r})"
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, FunctionInvocation) and other.invocation_id == self.invocation_id
+
+    def __hash__(self) -> int:
+        return hash(self.invocation_id)
+
+    def _status_from(self, response: httpx.Response) -> dict[str, Any]:
+        _raise_for(self.function, response)
+        body = response.json()
+        if not isinstance(body, dict):
+            raise FunctionCallError(self.function, response.status_code, None, response.text)
+        return body
+
+    def _settle(self, status: dict[str, Any], deadline: float) -> tuple[bool, Any]:
+        if status.get("done"):
+            if status.get("state") == "completed":
+                return True, status.get("result")
+            raise FunctionCallError(self.function, 500, {"code": "function_invocation_failed",
+                                                         "detail": status.get("error") or status.get("state"), "invocation": status},
+                                    str(status.get("error") or ""))
+        if time.monotonic() >= deadline:
+            raise FunctionCallError(self.function, 408, {"code": "function_invocation_pending",
+                                                         "detail": f"invocation {self.invocation_id} is still {status.get('state')}",
+                                                         "invocation": status}, "")
+        return False, None
+
+    @staticmethod
+    def _wait_param(deadline: float) -> dict[str, str]:
+        left = max(0, min(_MAX_WAIT_SECONDS, int(deadline - time.monotonic() + 0.999)))
+        return {"wait": str(left)} if left > 0 else {}
+
+    async def status(self) -> dict[str, Any]:
+        """The invocation's current state."""
+        if self._async is None:
+            raise RuntimeError("this invocation has no client; use Functions.send")
+        return self._status_from(await self._async.get(self._url))
+
+    def status_sync(self) -> dict[str, Any]:
+        """status for synchronous handlers."""
+        if self._sync is None:
+            raise RuntimeError("this invocation has no client; use Functions.send_sync")
+        return self._status_from(self._sync.get(self._url))
+
+    async def wait(self, timeout: float = 60.0) -> Any:
+        """Wait until the invocation finishes and return its result.
+
+        A failed invocation raises FunctionCallError; so does timeout (seconds)
+        passing first, with status 408.
+        """
+        if self._async is None:
+            raise RuntimeError("this invocation has no client; use Functions.send")
+        deadline = time.monotonic() + timeout
+        while True:
+            response = await self._async.get(self._url, params=self._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, result = self._settle(self._status_from(response), deadline)
+            if done:
+                return result
+
+    def wait_sync(self, timeout: float = 60.0) -> Any:
+        """wait for synchronous handlers."""
+        if self._sync is None:
+            raise RuntimeError("this invocation has no client; use Functions.send_sync")
+        deadline = time.monotonic() + timeout
+        while True:
+            response = self._sync.get(self._url, params=self._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, result = self._settle(self._status_from(response), deadline)
+            if done:
+                return result
+
+
+class WorkflowRun:
+    """A workflow run this function started with start(); only it can read or signal the run."""
+
+    def __init__(self, function: str, run_id: str, platform_url: str = GREGALE_PLATFORM_API_URL,
+                 sync_client: httpx.Client | None = None, async_client: httpx.AsyncClient | None = None) -> None:
+        self.function = function
+        self.run_id = run_id
+        self._url = platform_url.rstrip("/") + "/v1/workflow-runs/" + run_id
+        self._sync = sync_client
+        self._async = async_client
+
+    def __repr__(self) -> str:
+        return f"WorkflowRun({self.function!r}, {self.run_id!r})"
+
+    def _status_from(self, response: httpx.Response) -> dict[str, Any]:
+        _raise_for(self.function, response)
+        body = response.json()
+        if not isinstance(body, dict):
+            raise FunctionCallError(self.function, response.status_code, None, response.text)
+        return body
+
+    def _settle(self, status: dict[str, Any], deadline: float) -> tuple[bool, Any]:
+        if status.get("done"):
+            if status.get("status") == "succeeded":
+                return True, status.get("output")
+            raise FunctionCallError(self.function, 500, {"code": "workflow_run_failed",
+                                                         "detail": status.get("error") or status.get("status"), "run": status},
+                                    str(status.get("error") or ""))
+        if time.monotonic() >= deadline:
+            raise FunctionCallError(self.function, 408, {"code": "workflow_run_pending",
+                                                         "detail": f"workflow run {self.run_id} is still {status.get('status')}",
+                                                         "run": status}, "")
+        return False, None
+
+    def _client(self, sync: bool) -> Any:
+        client = self._sync if sync else self._async
+        if client is None:
+            raise RuntimeError("this run has no client; use Functions.<name>.start")
+        return client
+
+    async def status(self) -> dict[str, Any]:
+        """The run's current state."""
+        return self._status_from(await self._client(False).get(self._url))
+
+    def status_sync(self) -> dict[str, Any]:
+        """status for synchronous handlers."""
+        return self._status_from(self._client(True).get(self._url))
+
+    async def wait(self, timeout: float = 60.0) -> Any:
+        """Wait until the run finishes and return its output.
+
+        A failed run raises FunctionCallError; so does timeout (seconds)
+        passing first, with status 408.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            response = await self._client(False).get(self._url, params=FunctionInvocation._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, output = self._settle(self._status_from(response), deadline)
+            if done:
+                return output
+
+    def wait_sync(self, timeout: float = 60.0) -> Any:
+        """wait for synchronous handlers."""
+        deadline = time.monotonic() + timeout
+        while True:
+            response = self._client(True).get(self._url, params=FunctionInvocation._wait_param(deadline), timeout=_MAX_WAIT_SECONDS + 5)
+            done, output = self._settle(self._status_from(response), deadline)
+            if done:
+                return output
+
+    async def signal(self, event: str, payload: Any = None) -> None:
+        """Send the run an event its wf.wait_for_event may take."""
+        response = await self._client(False).post(self._url + "/events", json={"event": event, "payload": payload if payload is not None else {}})
+        _raise_for(self.function, response)
+
+    def signal_sync(self, event: str, payload: Any = None) -> None:
+        """signal for synchronous handlers."""
+        response = self._client(True).post(self._url + "/events", json={"event": event, "payload": payload if payload is not None else {}})
+        _raise_for(self.function, response)
 
 
 def functions_from_env(env: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -102,7 +266,8 @@ def _output(response: httpx.Response) -> Any:
     return response.text
 
 
-def _invocation(function: str, response: httpx.Response) -> FunctionInvocation:
+def _invocation(function: str, response: httpx.Response, platform_url: str = GREGALE_PLATFORM_API_URL,
+                sync_client: httpx.Client | None = None, async_client: httpx.AsyncClient | None = None) -> FunctionInvocation:
     try:
         body = response.json()
     except ValueError:
@@ -110,23 +275,28 @@ def _invocation(function: str, response: httpx.Response) -> FunctionInvocation:
     invocation_id = body.get("invocation_id") or body.get("id") if isinstance(body, dict) else None
     if not isinstance(invocation_id, str) or not invocation_id:
         raise FunctionCallError(function, response.status_code, body if isinstance(body, dict) else None, "async invocation id missing")
-    return FunctionInvocation(invocation_id)
+    return FunctionInvocation(function, invocation_id, platform_url, sync_client, async_client)
 
 
 class FunctionClient:
     """One callable function."""
 
-    def __init__(self, name: str, url: str, sync_client: httpx.Client, async_client: httpx.AsyncClient) -> None:
+    def __init__(self, name: str, url: str, sync_client: httpx.Client, async_client: httpx.AsyncClient,
+                 platform_url: str = GREGALE_PLATFORM_API_URL) -> None:
         self._name = name
         self._url = url
         self._sync = sync_client
         self._async = async_client
+        self._platform_url = platform_url
 
-    def _request(self, input: Any, path: str, headers: Mapping[str, str] | None, send: bool) -> dict[str, Any]:
+    def _request(self, input: Any, path: str, headers: Mapping[str, str] | None, send: bool,
+                 on_complete: str | None = None) -> dict[str, Any]:
         all_headers = {"content-type": "application/json", "accept": "application/json", **(headers or {}),
                        GREGALE_FUNCTION_CALL_HEADER: "1"}
         if send:
             all_headers[GREGALE_INVOKE_HEADER] = "async"
+            if on_complete:
+                all_headers[GREGALE_ON_COMPLETE_HEADER] = on_complete
         return {
             "url": self._url + (path if path.startswith("/") else "/" + path),
             "content": json.dumps(input),
@@ -145,17 +315,49 @@ class FunctionClient:
         _raise_for(self._name, response)
         return _output(response)
 
-    async def send(self, input: Any = None, *, path: str = "/", headers: Mapping[str, str] | None = None) -> FunctionInvocation:
-        """Enqueue a durable async invocation and return at once."""
-        response = await self._async.post(**self._request(input, path, headers, True))
-        _raise_for(self._name, response)
-        return _invocation(self._name, response)
+    async def send(self, input: Any = None, *, path: str = "/", headers: Mapping[str, str] | None = None,
+                   on_complete: str | None = None) -> FunctionInvocation:
+        """Enqueue a durable async invocation and return at once.
 
-    def send_sync(self, input: Any = None, *, path: str = "/", headers: Mapping[str, str] | None = None) -> FunctionInvocation:
-        """send for synchronous handlers."""
-        response = self._sync.post(**self._request(input, path, headers, True))
+        on_complete names a function that receives the completion when it
+        finishes: a name this function may call, or "self".
+        """
+        response = await self._async.post(**self._request(input, path, headers, True, on_complete))
         _raise_for(self._name, response)
-        return _invocation(self._name, response)
+        return _invocation(self._name, response, self._platform_url, self._sync, self._async)
+
+    def send_sync(self, input: Any = None, *, path: str = "/", headers: Mapping[str, str] | None = None,
+                  on_complete: str | None = None) -> FunctionInvocation:
+        """send for synchronous handlers."""
+        response = self._sync.post(**self._request(input, path, headers, True, on_complete))
+        _raise_for(self._name, response)
+        return _invocation(self._name, response, self._platform_url, self._sync, self._async)
+
+    def _start_request(self, input: Any, idempotency_key: str | None) -> dict[str, Any]:
+        headers = {"content-type": "application/json", "accept": "application/json"}
+        if idempotency_key:
+            headers["idempotency-key"] = idempotency_key
+        return {"url": self._platform_url.rstrip("/") + "/v1/workflow-runs",
+                "content": json.dumps({"function": self._name, "input": input}), "headers": headers}
+
+    def _run(self, response: httpx.Response) -> WorkflowRun:
+        _raise_for(self._name, response)
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        run_id = body.get("id") if isinstance(body, dict) else None
+        if not isinstance(run_id, str) or not run_id:
+            raise FunctionCallError(self._name, response.status_code, body if isinstance(body, dict) else None, "workflow run id missing")
+        return WorkflowRun(self._name, run_id, self._platform_url, self._sync, self._async)
+
+    async def start(self, input: Any = None, *, idempotency_key: str | None = None) -> WorkflowRun:
+        """Start a run of this workflow function and return its handle at once."""
+        return self._run(await self._async.post(**self._start_request(input, idempotency_key)))
+
+    def start_sync(self, input: Any = None, *, idempotency_key: str | None = None) -> WorkflowRun:
+        """start for synchronous handlers."""
+        return self._run(self._sync.post(**self._start_request(input, idempotency_key)))
 
 
 class Functions:
@@ -185,7 +387,8 @@ class Functions:
             known = ", ".join(sorted(self._names))
             hint = f"callable: {known}" if known else "GREGALE_FUNCTIONS is not set"
             raise KeyError(f"function {name} is not callable from here; {hint} (deploy the functions project, or add the app to calls:)")
-        client = FunctionClient(name, function_base_url(slug, self._env), self._sync, self._async)
+        platform_url = (self._env if self._env is not None else os.environ).get("GREGALE_PLATFORM_API_URL") or GREGALE_PLATFORM_API_URL
+        client = FunctionClient(name, function_base_url(slug, self._env), self._sync, self._async, platform_url)
         self._clients[name] = client
         return client
 
@@ -203,6 +406,8 @@ functions = Functions()
 __all__ = [
     "GREGALE_FUNCTIONS_ENV",
     "GREGALE_INVOKE_HEADER",
+    "GREGALE_ON_COMPLETE_HEADER",
+    "GREGALE_PLATFORM_API_URL",
     "FunctionCallError",
     "FunctionClient",
     "FunctionInvocation",
@@ -210,4 +415,5 @@ __all__ = [
     "function_base_url",
     "functions",
     "functions_from_env",
+    "WorkflowRun",
 ]

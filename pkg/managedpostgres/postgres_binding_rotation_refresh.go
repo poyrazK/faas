@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -72,7 +73,8 @@ func ensurePostgresRotationRefresh(ctx context.Context, tx pgx.Tx, binding Bindi
 		binding.RotationCleanupReady = true
 		return binding, nil
 	}
-	if err := q.QueueManagedPostgresRotationRefresh(ctx, tx, sqlc.QueueManagedPostgresRotationRefreshParams{AppID: binding.AppID, WakeID: binding.RotationWakeID}); err != nil {
+	if err := q.QueueManagedPostgresRotationRefresh(ctx, tx, sqlc.QueueManagedPostgresRotationRefreshParams{AppID: binding.AppID, WakeID: binding.RotationWakeID,
+		WakeDelaySeconds: api.ManagedPostgresRotationRefreshWakeDelay.Seconds()}); err != nil {
 		return Binding{}, mapPostgresError(err)
 	}
 	return binding, nil

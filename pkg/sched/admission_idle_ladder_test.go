@@ -40,8 +40,9 @@ func TestIdleLadderAdmissionLeavesTheFreezeLevelOutOfTheCap(t *testing.T) {
 		m.mb["n1"], m.asOf, m.ok = admitted*260, clock.now(), true
 	}
 	admitted, err := admitUntilRefused(t, l, clock, refresh)
-	if admitted != 16 || !strings.Contains(err.Error(), "beyond the overcommit allowance") {
-		t.Fatalf("admitted %d (%v), want 16 refused by the reservation cap", admitted, err)
+	capMB := measuredCeilingMB * api.MeasuredAdmissionMaxOvercommitPercent / 100
+	if want := capMB / api.BillableRAMMB(1024); admitted != want || !strings.Contains(err.Error(), "beyond the overcommit allowance") {
+		t.Fatalf("admitted %d (%v), want %d refused by the reservation cap", admitted, err, want)
 	}
 	ladder := &fakeLadderFrozen{ids: ladderIDs(4), asOf: clock.now(), ok: true}
 	l.EnableIdleLadderAdmission(ladder.read)
@@ -58,9 +59,9 @@ func TestIdleLadderAdmissionLeavesTheFreezeLevelOutOfTheCap(t *testing.T) {
 		}
 		more++
 	}
-	// 4 × 1032 MB left out of a 17,186 MB cap fits four more 1 GiB VMs.
-	if more != 4 {
-		t.Fatalf("admitted %d more with four VMs at the freeze level, want 4", more)
+	// 4 × 1032 MB left out of the cap fits four more 1 GiB VMs.
+	if want := (capMB+4*api.BillableRAMMB(1024))/api.BillableRAMMB(1024) - admitted; more != want {
+		t.Fatalf("admitted %d more with four VMs at the freeze level, want %d", more, (capMB+4*api.BillableRAMMB(1024))/api.BillableRAMMB(1024)-admitted)
 	}
 }
 
@@ -73,7 +74,8 @@ func TestIdleLadderDiscountRules(t *testing.T) {
 	admitted, _ := admitUntilRefused(t, l, clock, refresh)
 	ladder := &fakeLadderFrozen{ids: ladderIDs(admitted), asOf: clock.now(), ok: true}
 	l.EnableIdleLadderAdmission(ladder.read)
-	if got, want := l.ReservationDiscountMB("n1"), admitted*api.BillableRAMMB(1024); got != want {
+	bound := measuredCeilingMB * api.IdleLadderReservationDiscountMaxPercent / 100
+	if got, want := l.ReservationDiscountMB("n1"), min(admitted*api.BillableRAMMB(1024), bound); got != want {
 		t.Fatalf("discount for %d VMs = %d MB, want %d", admitted, got, want)
 	}
 	// With all of them left out the node takes more, and once those reach the
@@ -88,7 +90,7 @@ func TestIdleLadderDiscountRules(t *testing.T) {
 		}
 	}
 	ladder.ids, ladder.asOf = ladderIDs(admitted), clock.now()
-	if got, want := l.ReservationDiscountMB("n1"), measuredCeilingMB*api.IdleLadderReservationDiscountMaxPercent/100; got != want {
+	if got, want := l.ReservationDiscountMB("n1"), bound; got != want {
 		t.Fatalf("discount for %d VMs = %d MB, want the %d MB bound", admitted, got, want)
 	}
 	ladder.asOf = clock.now().Add(-time.Hour)

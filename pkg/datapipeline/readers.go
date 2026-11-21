@@ -17,13 +17,32 @@ import (
 // ReaderChange is separate from the schema workflow: access may be revoked
 // while a table is quarantined or copying. ReadSubjects remains the applied set.
 type ReaderChange struct {
-	ID, State                   string
-	Generation, PreviewRevision int64
-	Before, After, Tables       []string
+	BeforeIssuer, AfterIssuer           string                             `json:",omitempty"`
+	ResetAuth                           bool                               `json:",omitempty"`
+	BeforeValidUntil, AfterValidUntil   string                             `json:",omitempty"`
+	Tenant                              bool                               `json:",omitempty"`
+	BeforeMemberships, AfterMemberships []api.DataPipelineTenantMembership `json:",omitempty"`
+	ID, State                           string
+	Generation, PreviewRevision         int64
+	Before, After, Tables               []string
+}
+
+// Preserve N-1 approval hashes, while retaining explicit empty sets for a
+// tenant revocation's durable catalog acknowledgement.
+func (c ReaderChange) MarshalJSON() ([]byte, error) {
+	type base ReaderChange
+	if !c.Tenant {
+		return json.Marshal(base(c))
+	}
+	return json.Marshal(struct {
+		base
+		BeforeMemberships []api.DataPipelineTenantMembership
+		AfterMemberships  []api.DataPipelineTenantMembership
+	}{base(c), append([]api.DataPipelineTenantMembership{}, c.BeforeMemberships...), append([]api.DataPipelineTenantMembership{}, c.AfterMemberships...)})
 }
 
 func validReaders(subjects []string) bool {
-	if len(subjects) == 0 || len(subjects) > api.DataPipelineSubjectsMax {
+	if len(subjects) > api.DataPipelineSubjectsMax {
 		return false
 	}
 	seen := map[string]bool{}
@@ -52,6 +71,12 @@ func readerChangeID(p Pipeline, c ReaderChange) string {
 
 func canApproveReaders(p Pipeline) bool {
 	c := p.ReaderChange
+	if c != nil && c.Tenant {
+		access := tenantAccess(p)
+		if access == nil || !slices.Equal(access.Memberships, c.BeforeMemberships) {
+			return false
+		}
+	}
 	return c != nil && c.State == "preview" && c.PreviewRevision == p.Revision && c.Generation == p.Generation && p.State != "resync_required" && p.DesiredState != "deleted" && slices.Equal(c.Before, p.ReadSubjects) && slices.Equal(c.Tables, p.Tables) && c.ID == readerChangeID(p, *c)
 }
 
@@ -69,6 +94,16 @@ func (s *Service) Readers(ctx context.Context, account, id string, revision int6
 	}
 	if action == "preview" && !validReaders(subjects) {
 		return ErrInvalid
+	}
+	p, err := s.Store.Get(ctx, account, id)
+	if errors.Is(err, ErrNotFound) {
+		return ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if tenantAccess(p) != nil {
+		return ErrConflict
 	}
 	if s.CanCreate != nil && !s.CanCreate(ctx, account) && action != "discard" {
 		p, err := s.Store.Get(ctx, account, id)
@@ -121,6 +156,9 @@ func (s *PostgresStore) Readers(ctx context.Context, account, id string, revisio
 	if p.Revision != revision {
 		return ErrConflict
 	}
+	if tenantAccess(p) != nil {
+		return ErrConflict
+	}
 	c := p.ReaderChange
 	switch action {
 	case "preview":
@@ -130,7 +168,7 @@ func (s *PostgresStore) Readers(ctx context.Context, account, id string, revisio
 		if !CanChangeReaders(p) {
 			return ErrConflict
 		}
-		after := slices.Clone(subjects)
+		after := append([]string{}, subjects...)
 		slices.Sort(after)
 		if slices.Equal(after, p.ReadSubjects) {
 			return ErrInvalid

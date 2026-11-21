@@ -231,7 +231,9 @@ func (s *server) getAccountDeadLetterEvent(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrInternal("account dead-letter apps"))
 		return
 	}
-	writeJSON(w, http.StatusOK, accountDeadLetterEventResponse(ev, appSlugs))
+	out := accountDeadLetterEventResponse(ev, appSlugs)
+	s.addDeadLetterReplayHistory(r, ev, &out)
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -347,7 +349,8 @@ func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Acc
 		case err == nil:
 			replayed++
 			return replayed < limit, nil
-		case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrKeyedReplayExpired):
+		case errors.Is(err, state.ErrNotFound), errors.Is(err, state.ErrKeyedReplayExpired),
+			errors.Is(err, state.ErrQueueBindingRetired): // revived with its binding (ADR-20261113180000)
 			return true, nil
 		case state.IsQueueCapError(err):
 			if capped == nil {

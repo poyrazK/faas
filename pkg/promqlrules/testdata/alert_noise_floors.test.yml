@@ -41,22 +41,55 @@ tests:
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotDriftAuditUnavailable.md"
 
   - interval: 1m
-    name: "a high plan average from one paying customer stays quiet"
+    name: "a plan average above its model from one paying customer stays quiet"
     input_series:
-      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="scale"}'
-        values: '0.76x90'
-      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="scale"}'
+      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="pro"}'
+        values: '1x90'
+      - series: 'meterd_resident_gb_per_customer_planned{job="meterd",instance="cp",plan="pro"}'
+        values: '0.6046875x90'
+      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="pro"}'
         values: '1x90'
     alert_rule_test:
       - eval_time: 80m
         alertname: FaasResidentGbPerCustomerHigh
         exp_alerts: []
 
+  # Prod 2026-11-09 to 11-16: five Scale accounts averaged 1.09 resident GB.
+  # The old flat 0.45 threshold warned for a week; Scale's model is 6.02 GB
+  # (3 resident instances of 2048 + 8 MB), so this is well inside plan.
   - interval: 1m
-    name: "a high plan average across five paying customers warns"
+    name: "a scale plan inside its model stays quiet"
+    input_series:
+      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="scale"}'
+        values: '1.089x90'
+      - series: 'meterd_resident_gb_per_customer_planned{job="meterd",instance="cp",plan="scale"}'
+        values: '6.0234375x90'
+      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="scale"}'
+        values: '5x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: FaasResidentGbPerCustomerHigh
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a meterd without the planned series stays quiet"
+    input_series:
+      - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="hobby"}'
+        values: '0.6x90'
+      - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="hobby"}'
+        values: '5x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: FaasResidentGbPerCustomerHigh
+        exp_alerts: []
+
+  - interval: 1m
+    name: "a plan average above 1.5x its model across five paying customers warns"
     input_series:
       - series: 'meterd_resident_gb_per_customer{job="meterd",instance="cp",plan="pro"}'
-        values: '0.6x90'
+        values: '1x90'
+      - series: 'meterd_resident_gb_per_customer_planned{job="meterd",instance="cp",plan="pro"}'
+        values: '0.6046875x90'
       - series: 'meterd_resident_paying_customers{job="meterd",instance="cp",plan="pro"}'
         values: '5x90'
     alert_rule_test:
@@ -70,8 +103,8 @@ tests:
               public_status: internal
               plan: pro
             exp_annotations:
-              summary: "Resident GB per paying customer > 0.45 (plan pro)"
-              description: "Plan pro has been above the §12 threshold (0.45 average resident GB / paying customer) for 1h with at least five paying customers. Spec target is 0.305. Cross-check FaasHighResidentRamPct — fleet RAM pressure is the usual upstream cause."
+              summary: "Resident GB per paying customer > 1.5x plan model (plan pro)"
+              description: "Plan pro has averaged 1.00 resident GB per paying customer for 1h, more than 1.5x the financial model's value for the plan (meterd_resident_gb_per_customer_planned), with at least five paying customers. Find the accounts driving it before treating it as a pricing signal."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasResidentGbPerCustomerHigh.md"
 
   - interval: 1m

@@ -13,8 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const appRestartUsage = "usage: gregale app <slug> restart [--fresh [--wait]] [--timeout 10m] [--poll-interval 2s] [--json]"
-const appRestartStatusUsage = "usage: gregale app <slug> restart status --wake-id UUID [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const appRestartUsage = "usage: gregale app restart <slug> [--fresh [--wait]] [--timeout 10m] [--poll-interval 2s] [--json]"
+const appRestartStatusUsage = "usage: gregale app restart status <slug> --wake-id UUID [--wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 type restartStatusClient interface {
 	GetRuntimeConfigRestartStatus(context.Context, string, string) (api.RuntimeConfigRestartStatusResponse, error)
@@ -43,7 +43,7 @@ func parseAppRestartOptions(args []string) (appRestartOptions, error) {
 	} else {
 		fs.BoolVar(&out.fresh, "fresh", false, "cold-boot with current runtime configuration")
 	}
-	fs.BoolVar(&out.wait, "wait", false, "wait for restart processing, separately from application health")
+	fs.BoolVar(&out.wait, "wait", false, "wait until the restart is processed and the app's replicas pass their readiness checks")
 	fs.DurationVar(&out.timeout, "timeout", api.AppRestartWaitTimeoutDefault, "client deadline")
 	fs.DurationVar(&out.interval, "poll-interval", api.AppRestartPollIntervalDefault, "status polling interval")
 	if err := fs.Parse(args); err != nil {
@@ -131,7 +131,7 @@ func submitAppRestart(ctx, signalCtx context.Context, client appRestartClient, s
 }
 
 func restartStatusCommand(slug, wakeID string) string {
-	return "gregale app " + slug + " restart status --wake-id " + wakeID + " --wait"
+	return "gregale app restart status " + slug + " --wake-id " + wakeID + " --wait"
 }
 
 func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient, slug string, options appRestartOptions, accepted bool) int {
@@ -142,8 +142,25 @@ func followAppRestart(ctx, signalCtx context.Context, client restartStatusClient
 		}
 	}
 	last, err := pollAppRestartStatus(ctx, client, slug, options.wakeID, options.wait, options.interval, update)
+	ready := false
+	if err == nil && options.wait && last.Status == "completed" {
+		// --wait means the app can serve again, not only that the restart
+		// was processed (microservices-demo feedback, 2026-11-16).
+		if health, ok := client.(appReadinessClient); ok {
+			if readyErr := waitAppReadiness(ctx, health, slug, options.interval); readyErr != nil {
+				if signalCtx.Err() == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+					return printErr("Restart completed; app not ready yet", fmt.Errorf("stopped waiting after %s; check: gregale app health %s", options.timeout, slug))
+				}
+				return printErr("Restart completed; readiness unknown", readyErr)
+			}
+			if !jsonOutput {
+				_, _ = fmt.Fprintf(osStderr, "App %s is ready: its replicas passed their readiness checks.\n", slug)
+			}
+			ready = true
+		}
+	}
 	if last.WakeID != "" {
-		if code := outputAppRestartStatus(slug, last); code != 0 {
+		if code := outputAppRestartStatus(slug, last, ready); code != 0 {
 			return code
 		}
 	} else if accepted && jsonOutput {
@@ -216,28 +233,63 @@ func validateAppRestartStatus(row api.RuntimeConfigRestartStatusResponse, wakeID
 	}
 }
 
-func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusResponse) int {
+func outputAppRestartStatus(slug string, row api.RuntimeConfigRestartStatusResponse, ready bool) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(row))
 	}
-	next := row.ProgressNextStep()
+	message, next := row.ProgressMessage(), row.ProgressNextStep()
 	if row.Status == "completed" {
 		next = "Restart processing completed; application health still needs verification."
+		if ready {
+			// --wait checked readiness, so the server's "health has not been
+			// verified" line would contradict the result (prod check 2026-11-16).
+			message = "Restart processing is complete and the app's replicas passed their readiness checks."
+			next = "The app is ready to serve."
+		}
 	}
-	_, _ = fmt.Fprintf(osStdout, "Restart %s: %s\n  %s\n  attempts: %d\n  next: %s\n", row.WakeID, row.Status, row.ProgressMessage(), row.Attempts, next)
+	_, _ = fmt.Fprintf(osStdout, "Restart %s: %s\n  %s\n  attempts: %d\n  next: %s\n", row.WakeID, row.Status, message, row.Attempts, next)
 	if !row.RequestedAt.IsZero() {
 		_, _ = fmt.Fprintf(osStdout, "  Requested: %s\n", row.RequestedAt.UTC().Format(time.RFC3339))
 	}
 	if row.CompletedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "  Processing finished: %s\n", row.CompletedAt.UTC().Format(time.RFC3339))
 	}
-	command := recoveryCLI() + " app " + recoveryArgument(slug) + " restart status --wake-id " + recoveryArgument(row.WakeID) + " --wait"
+	command := recoveryCLI() + " app restart status " + recoveryArgument(slug) + " --wake-id " + recoveryArgument(row.WakeID) + " --wait"
 	switch row.Status {
 	case "completed":
-		command = recoveryCLI() + " app " + recoveryArgument(slug) + " health"
+		command = recoveryCLI() + " app health " + recoveryArgument(slug)
 	case "failed":
-		command = recoveryCLI() + " inspect " + recoveryArgument(slug)
+		command = recoveryCLI() + " app health " + recoveryArgument(slug) + " --explain"
 	}
 	_, _ = fmt.Fprintf(osStdout, "  Next command (POSIX shells):\n    %s\n", command)
 	return 0
+}
+
+// appReadinessClient reads app health; the API client satisfies it.
+type appReadinessClient interface {
+	GetAppHealth(ctx context.Context, slug string) (api.AppHealthResponse, error)
+}
+
+// waitAppReadiness polls app health until its readiness check passes (or the
+// app intentionally runs no replicas). ctx bounds the wait.
+func waitAppReadiness(ctx context.Context, client appReadinessClient, slug string, interval time.Duration) error {
+	for {
+		health, err := client.GetAppHealth(ctx, slug)
+		if err == nil {
+			for _, check := range health.Checks {
+				if check.Code == "readiness" && (check.Status == "pass" || check.Status == "not_applicable") {
+					return nil
+				}
+			}
+		} else if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
 }

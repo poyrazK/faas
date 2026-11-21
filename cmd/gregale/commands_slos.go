@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const slosUsage = "usage: gregale alert slo <list|create|status|rm> --app <slug>"
+const slosUsage = "usage: gregale alert slo <list|create|status|rm> [--app <slug>]"
 
 // cmdSLOs implements `gregale slos` (ADR-747): customer-defined SLO
 // definitions. Distinct from `gregale slo <slug>`, ADR-082's fixed panel.
@@ -39,13 +39,14 @@ func cmdSLOs(args []string) int {
 // `alert slo list --window`).
 func cmdSLOsList(args []string) int {
 	fs := newFlagSet("slos list", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	window := fs.String("window", "", "also show the measured SLO panel for this window (1h, 24h, 7d)")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 0 || !validSLOPanelWindow(*window) {
-		PrintUsage(os.Stderr, "usage: gregale alert slo list --app <slug> [--window 1h|24h|7d]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo list [--app <slug>] [--window 1h|24h|7d]", "slos")
 		return 1
 	}
 	client, err := authedClient()
@@ -102,7 +103,7 @@ func describeSLOObjective(slo api.SLOResponse) string {
 
 func cmdSLOsCreate(args []string) int {
 	fs := newFlagSet("slos create", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	name := fs.String("name", "", "SLO name (required)")
 	sli := fs.String("sli", "availability", "availability or latency")
 	threshold := fs.Int("latency-threshold-ms", 0, "latency threshold in ms (latency SLI only)")
@@ -111,8 +112,9 @@ func cmdSLOsCreate(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || *name == "" || *objective == 0 || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale alert slo create --app <slug> --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo create [--app <slug>] --name <name> --objective <pct> [--sli availability|latency --latency-threshold-ms N] [--window-days 7|30]", "slos")
 		return 1
 	}
 	req := api.CreateSLORequest{Name: *name, SLI: *sli, LatencyThresholdMS: *threshold, ObjectivePct: *objective, WindowDays: *window}
@@ -131,19 +133,22 @@ func cmdSLOsCreate(args []string) int {
 		return jsonOut(writeJSON(slo))
 	}
 	_, _ = fmt.Fprintf(osStdout, "Created SLO %s (%s): %s over %d days\n", slo.Name, slo.ID, describeSLOObjective(slo), slo.WindowDays)
+	_, _ = fmt.Fprintf(osStdout, "If it burns its budget %.1fx too fast, Gregale emails the app's owner (at most daily). To route it yourself instead:\n  gregale alert create --app %s --metric %s --slo %s ...\n",
+		api.PlatformAlertSLOBurnRate, *slug, api.AlertRuleMetricSLOBudgetBurn, slo.ID)
 	return 0
 }
 
 func cmdSLOsRm(args []string) int {
 	fs := newFlagSet("slos rm", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
 	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert slo delete --app <slug> <slo-id> [--yes]", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo delete [--app <slug>] <slo-id> [--yes]", "slos")
 		return 1
 	}
 	client, err := authedClient()

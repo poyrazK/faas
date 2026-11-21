@@ -15,7 +15,12 @@ account during the preview; contact support to have it turned on for yours.
   Gemini, Azure OpenAI, AWS Bedrock and Google Vertex AI.
 - **Hard caps.** Daily token limits, daily and monthly cost limits, per-app
   token limits and per-end-user limits. A call is refused before it reaches the
-  provider when its reservation would pass a cap.
+  provider when its reservation would pass a cap. A call that sets no
+  `max_tokens` (and an app with no output-token ceiling) reserves the
+  longest response its model can return, or 32,768 output tokens for a model
+  Gregale has no price for, so concurrent calls cannot run past a cost cap.
+  Set `max_tokens` to reserve less; per-minute token limits still count
+  4,096 output tokens for such a call.
 - **Guardrails.** Per-app requests and tokens per minute, model allow-lists and
   output-token ceilings.
 - **Content guardrails.** Redact or block e-mail addresses, payment card
@@ -30,6 +35,10 @@ account during the preview; contact support to have it turned on for yours.
 - **Fallback routes.** Try targets in order across providers. An
   OpenAI-format route translates chat completions, the Responses API and
   embeddings for Anthropic, Gemini, Bedrock and Vertex.
+- **Managed prompts.** Keep prompts on Gregale instead of in code: push a
+  prompt file as an immutable version, call it by name with variables, and
+  roll a new version out, canary it, evaluate it or roll it back without a
+  deploy. Each version's calls, cost and feedback are counted apart.
 - **Route strategies.** Split a route's calls by weight, or send each call
   first to the target with the lowest recent latency or cost that is up.
 - **Model canaries.** Send a share of a route's calls to a new model first and
@@ -52,6 +61,9 @@ account during the preview; contact support to have it turned on for yours.
 - **Response cache.** Identical calls, streamed or not, can be answered from
   the gateway's cache. Usage shows cache hits and what the response cache and
   prompt caching saved.
+- **Semantic cache** (Pro and Scale). A call that asks the same thing in
+  other words can be answered from the response cache too. See
+  [Semantic cache](#semantic-cache).
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
@@ -182,6 +194,8 @@ gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains
 gregale ai policy <id> --prompt-cache on                # cache repeated Claude prompts
+gregale ai policy <id> --semantic-cache on --semantic-embedding-integration <openai-id> \
+  --semantic-embedding-model text-embedding-3-small      # answer reworded questions from the cache
 gregale ai routes set <route-id> --target <a> --target <b> --strategy weighted --weights 70,30
 gregale ai routes set <route-id> --target <a> --target <b> --strategy cost --max-ttfb-ms 1500
 gregale ai routes canary <route-id> --position 2 --percent 10
@@ -256,6 +270,23 @@ ai_gateway_feedback(integration=id, call_id=call_id, rating="bad", label="wrong_
 `opaqueAIUserId` / `opaque_ai_user_id` turns an e-mail address into an
 end-user ID that is not personal data.
 
+`aiPrompt` / `ai_prompt` calls a managed prompt by name. The result carries
+the answer text, the version that served it and the call ID for feedback:
+
+```ts
+import { aiPrompt } from '@gregale/sdk-node/preview';
+
+const { text, version, callId } = await aiPrompt('support-reply').run({ question }, { caller: { user } });
+const stream = await aiPrompt('support-reply').stream({ question }); // OpenAI chat completions SSE
+```
+
+```python
+from faas_sdk.preview import ai_prompt
+
+result = ai_prompt("support-reply").run({"question": question}, user=user)
+print(result.text, result.version)
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
@@ -315,6 +346,36 @@ tools, quality flags, ratings and scores.
 Latency and the trace timeline come from the request log, so turn it on with
 `gregale ai policy <id> --request-log on`.
 
+### Semantic cache
+
+With the semantic cache on, a call the exact cache misses can still be
+answered from it when its last user message means the same as a cached
+call's. Everything else must match exactly: the model, system prompt,
+earlier turns, tools and parameters, and the calling app. By default each
+end user (`X-Gregale-AI-User`) has their own answers;
+`--semantic-share-users on` lets end users share them.
+
+- It needs the response cache (`response_cache_ttl_seconds` above 0) and a
+  Pro or Scale plan.
+- The gateway embeds the last user message through one of your OpenAI or
+  Gemini integrations, on that integration's key. Each candidate call the
+  exact cache misses costs one embedding call, shown in usage as
+  "Semantic cache embeddings".
+- A hit needs a cosine similarity of at least the threshold: 0.95 by
+  default, 0.85 to 0.99 with `--semantic-threshold`. Higher is safer. Two
+  differently worded questions can still need different answers, so turn
+  this on only where that risk is acceptable.
+- Chat completions, Responses, Claude messages and Gemini
+  `generateContent` calls are candidates when the last message is the
+  user's, is text only (no images, audio, files or tool results), is at most
+  8 KiB, and the conversation has at most 3 user messages. Batch calls and
+  calls sent with `Cache-Control: no-cache` are not.
+- A hit is billed like an exact cache hit and carries
+  `X-Gregale-AI-Cache: semantic` and `X-Gregale-AI-Similarity`. If the
+  embedding call fails or takes longer than 1 second, the call goes to the
+  provider.
+- Each outboundd node keeps its own index, in memory; a restart empties it.
+
 ## Limits and errors
 
 | Response | Meaning |
@@ -338,6 +399,11 @@ Latency and the trace timeline come from the request log, so turn it on with
 | `502 outbound_ai_response_unchecked` | A response guardrail could not check the answer. |
 | `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
+| `400 outbound_ai_prompt_variable_missing` | A prompt call set no value for a `{{variable}}` and the version has no default for it. The problem names the variable. |
+| `400 outbound_ai_prompt_request_invalid` | A prompt call's body is not JSON, its `version` is not a positive number, or an extra message has no role. |
+| `404 outbound_ai_prompt_not_found` | The account has no prompt with this name, the prompt has no live version yet, or the pinned version does not exist. |
+| `409 outbound_ai_prompt_target_unavailable` | The version's route was deleted or is no longer an openai-format route. Push a version with another target. |
+| `429 outbound_ai_prompt_limit` | From the API: the account has as many prompts as its plan allows (see Plans). |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
 | `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
@@ -360,9 +426,17 @@ The AI gateway is included on **Hobby**, **Pro** and **Scale**. Your plan's
 outbound request policy (rate, burst and concurrency per integration) applies
 to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
 1,000 (Scale) AI calls per second across all its integrations, with bursts
-of twice that. Provider charges are billed by your provider to your own key;
+of twice that. Accounts keep up to 25 (Hobby), 100 (Pro) or 500 (Scale)
+managed prompts. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
+
+Some models cost more for long prompts, and Claude's one-hour cache writes
+cost more than five-minute ones. Estimates include both: `gregale ai catalog`
+shows each model's long-context tier and one-hour cache-write price, and
+your own price list can set them per model, for example
+`--price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`
+(above 200,000 input tokens, input costs 2x and output 1.5x).
 
 ## Preview notes
 

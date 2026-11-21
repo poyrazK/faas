@@ -16,7 +16,10 @@ faas_apid_credential_writes: plain
 faas_apid_credential_plain_lookup: true
 # ADR-740 developer live source patches. Must match vmmd_service's value:
 # apid publishes patches and vmmd serves them to developer environments.
-faas_dev_patch_delivery_enabled: false
+# On by default (owner decision 2026-11-15): without it every `gregale dev`
+# save waits for a full developer build. Running environments pick patches
+# up after their next developer build boots a fresh instance.
+faas_dev_patch_delivery_enabled: true
 # ADR-1161 `gregale run --image` (POST /v1/image-runs). Enable only once the
 # image-run migration and the imaged that writes image-config columns are
 # deployed.
@@ -40,6 +43,10 @@ faas_meterd_egress_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # Initial public beta runs without charging. Set to live at the launch-date
 # transition to activate provider delivery and reconciliation paging.
 faas_billing_mode: disabled
+
+# meterd's quiet pause billing mode (ADR-20261023171905): off, shadow or on.
+# group_vars/control_plane/quiet_pause_billing.yml sets the fleet's value.
+meterd_quiet_pause_unbilled: "off"
 
 # FAAS_ENVIRONMENT for apid. CD sets "production" for production
 # environments; apid then refuses new object storage buckets while the
@@ -154,3 +161,25 @@ faas_credential_dev_bridge_plain_lookup: true
 faas_credential_data_api_keys_src: ""
 faas_credential_data_api_writes: plain
 faas_credential_data_api_plain_lookup: true
+
+# Gregale staff sales workspace and customer referrals. Monetary values are
+# estimates; there is deliberately no payout switch.
+faas_sales_enabled: false
+faas_sales_emails: []
+faas_sales_manager_emails: []
+# Owner admins manage the team, agreements, credit moves and payout records.
+faas_sales_admin_emails: []
+faas_referral_currency: usd
+faas_referral_reward_cents: 0
+faas_referral_new_customer_reward_cents: 0
+faas_sales_commission_bps: 0
+faas_referral_hold_days: 30
+faas_referral_conversion_days: 90
+
+# Anonymous website intake is a separate, opt-in rollout.
+faas_sales_intake_enabled: false
+faas_sales_intake_followup_days: 1
+faas_sales_intake_timezone: UTC
+
+# Open leads become stalled after this many days without recorded contact.
+faas_sales_stale_days: 14

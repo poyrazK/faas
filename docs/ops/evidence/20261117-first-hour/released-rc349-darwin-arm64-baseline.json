@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "provenance": {
+    "target": "https://api.gregale.dev",
+    "cli_version": "gregale v0.1.18-rc.349",
+    "release_verify_available": true,
+    "harness_revision": "a545bc148803f3f989b00666c86c8a46110dfdfd",
+    "harness_worktree_dirty": true,
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "plan": "scale",
+    "evidence_kind": "deployed",
+    "started_at": "2026-11-17T16:55:27Z"
+  },
+  "coverage": {
+    "install_login": "not_measured",
+    "interactive_start": "not_measured",
+    "scripted_cli": "passed",
+    "agent_tasks": "not_measured"
+  },
+  "steps": {
+    "first_private_response": {
+      "status": "passed",
+      "seconds": 138.56
+    },
+    "anonymous_request_denied": {
+      "status": "passed",
+      "seconds": 0.89
+    },
+    "edit_and_interrupt_wait": {
+      "status": "passed",
+      "seconds": 4.18
+    },
+    "resume_same_release_and_verify_edit": {
+      "status": "passed",
+      "seconds": 125.49
+    },
+    "failed_startup_is_diagnosable": {
+      "status": "passed",
+      "seconds": 167
+    },
+    "repair_and_verify": {
+      "status": "passed",
+      "seconds": 173.9
+    },
+    "cleanup": {
+      "status": "passed",
+      "seconds": 1.99
+    }
+  },
+  "metrics": {
+    "first_hour_first_verified_response_s": 138.56,
+    "first_hour_second_verified_deployment_s": 269.123,
+    "first_hour_resume_to_verified_response_s": 125.488,
+    "first_hour_failure_to_recovery_s": 340.899,
+    "first_hour_complete_s": 610.025,
+    "first_hour_interruptions": 1.0
+  },
+  "agents": [
+    {
+      "task": "first-hour-private",
+      "agent": null,
+      "toolset": null,
+      "runs": 0,
+      "passed": 0,
+      "median_seconds": null,
+      "median_tool_calls": null,
+      "follow_ups": null
+    },
+    {
+      "task": "first-hour-edit",
+      "agent": null,
+      "toolset": null,
+      "runs": 0,
+      "passed": 0,
+      "median_seconds": null,
+      "median_tool_calls": null,
+      "follow_ups": null
+    },
+    {
+      "task": "fix-failed-deploy",
+      "agent": null,
+      "toolset": null,
+      "runs": 0,
+      "passed": 0,
+      "median_seconds": null,
+      "median_tool_calls": null,
+      "follow_ups": null
+    }
+  ],
+  "excluded_agent_records": 0,
+  "limitations": [
+    "Scripted timings start after authentication and exclude human thinking time.",
+    "No interactive install/login or gregale start acceptance has been recorded.",
+    "One run is a baseline observation, not a percentile or reliability estimate.",
+    "Disposable-app releases use immediate rollouts; default safe-rollout latency is not measured.",
+    "Agent follow-up counts measure harness assistance, not all possible human intervention.",
+    "Account plan is recorded; a Scale run does not qualify Free-plan behavior."
+  ]
+}

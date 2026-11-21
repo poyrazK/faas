@@ -52,7 +52,7 @@ func TestBringUpScanCheckCountsRefusals(t *testing.T) {
 			m := &Manager{}
 			m.WithStorage(s)
 			m.SetImageScanMetrics(ops)
-			err := m.bringUpScanCheck(context.Background(), baseKey)
+			_, err := m.bringUpScanCheck(context.Background(), baseKey)
 			if (err != nil) != (tt.wantReason != "") {
 				t.Fatalf("bringUpScanCheck err = %v, want refusal %q", err, tt.wantReason)
 			}

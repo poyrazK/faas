@@ -12,6 +12,16 @@ import (
 // environment branches are dark (cmd/gregale/envbranch.go).
 var branchesCLI = []string{"FAAS_ENVIRONMENT_BRANCHES_ENABLED=1"}
 
+// branchesHidden reports the CLI refusing `environment branch` as unknown
+// because the account's environment-branches capability is off
+// (ADR-20261023115741). The CLI hides it only once its capability cache is
+// filled, so the opening --list probe can pass and a later step still meet
+// the refusal (journeys 2026-11-16: branch_production failed instead of
+// skipping).
+func branchesHidden(res cliResult) bool {
+	return res.exit != 0 && strings.Contains(strings.ToLower(res.problem()), "unknown command")
+}
+
 // TestEnvironmentBranches deploys a one-service project and branches its
 // production environment (ADR-20261031193635, docs/environment-branches.md):
 //   - the branch is created at once and names its workload's URL;
@@ -25,13 +35,14 @@ var branchesCLI = []string{"FAAS_ENVIRONMENT_BRANCHES_ENABLED=1"}
 func TestEnvironmentBranches(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
+	skipHidden(t, hiddenCapabilities(t, tg), "environment-branches")
 	project := tg.slug("branches")
 	const branch = "journey"
 	// The project does not exist yet, so the API answers not_found once
 	// branches are on. Anything else skips before a project is deployed for
 	// nothing.
 	switch res := tg.runWithEnv(t, branchesCLI, time.Minute, "environment", "branch", project, "--list"); {
-	case res.problemCode() == "environment_branch_unavailable":
+	case res.problemCode() == "environment_branch_unavailable" || branchesHidden(res):
 		t.Skip("environment branches are off on this target")
 	case res.exit != 0 && res.problemCode() == "":
 		t.Skipf("this CLI cannot branch environments: %s", tg.redact(tail(res.problem(), 300)))
@@ -77,6 +88,9 @@ func TestEnvironmentBranches(t *testing.T) {
 
 	s.step("branch_production", func(t *testing.T) {
 		res := tg.runWithEnv(t, branchesCLI, 2*time.Minute, "environment", "branch", project, branch, "--from", "production", "--ttl", "1h")
+		if branchesHidden(res) {
+			t.Skip("environment branches are hidden for this account")
+		}
 		if res.exit != 0 {
 			t.Fatalf("branch failed (exit %d): %s", res.exit, tg.redact(res.problem()))
 		}
@@ -118,6 +132,46 @@ func TestEnvironmentBranches(t *testing.T) {
 			return r.status == 200 && strings.Contains(string(r.body), `"service":"web"`), r.String()
 		})
 		t.Logf("metric environment_branch_first_request_s=%.1f", time.Since(start).Seconds())
+	})
+
+	var expiresAt time.Time
+	s.check("status_names_the_branch", func(t *testing.T) {
+		doc := object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, branch, "--status").stdout)
+		workloads := asSlice(field(doc, "branch.workloads"))
+		if str(doc, "branch.parent") != "production" || len(workloads) != 1 ||
+			strings.TrimSuffix(str(workloads[0], "url"), "/") != branchURL {
+			t.Fatalf("status = %s; want a branch of production serving at %s", compact(doc), branchURL)
+		}
+		var err error
+		if expiresAt, err = time.Parse(time.RFC3339, str(doc, "branch.expires_at")); err != nil {
+			t.Fatalf("status expires_at %q: %v", str(doc, "branch.expires_at"), err)
+		}
+	})
+
+	s.check("extend_moves_the_expiry", func(t *testing.T) {
+		doc := object(t, tg.runWithEnvOK(t, branchesCLI, time.Minute, "environment", "branch", project, branch, "--extend", "3h").stdout)
+		extended, err := time.Parse(time.RFC3339, str(doc, "branch.expires_at"))
+		if err != nil || !extended.After(expiresAt) || extended.Before(time.Now().Add(2*time.Hour)) {
+			t.Fatalf("extend = %s (%v); want an expiry about 3h from now, after %s", compact(doc), err, expiresAt)
+		}
+	})
+
+	s.step("reset_keeps_the_url", func(t *testing.T) {
+		// ADR-20261031193635 amendment 2026-11-12: a reset makes the branch
+		// again from production, and its workloads keep their URLs.
+		res := tg.runWithEnv(t, branchesCLI, 3*time.Minute, "environment", "branch", project, branch, "--reset")
+		if res.exit != 0 {
+			t.Fatalf("reset failed (exit %d): %s", res.exit, tg.redact(res.problem()))
+		}
+		doc := object(t, res.stdout)
+		workloads := asSlice(field(doc, "branch.workloads"))
+		if len(workloads) != 1 || strings.TrimSuffix(str(workloads[0], "url"), "/") != branchURL {
+			t.Fatalf("reset = %s; want the workload still at %s", compact(doc), branchURL)
+		}
+		eventually(t, "the reset branch serves at its URL", 3*time.Minute, 2*time.Second, func() (bool, string) {
+			r := get(branchURL + "/")
+			return r.status == 200 && strings.Contains(string(r.body), `"service":"web"`), r.String()
+		})
 	})
 
 	s.step("delete_branch", func(t *testing.T) {

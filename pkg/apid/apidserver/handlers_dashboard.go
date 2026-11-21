@@ -313,6 +313,9 @@ func (s *server) dashboardHandler(log *slog.Logger) http.HandlerFunc {
 			s.renderAppDetail(w, r, log, acct, slug)
 		case path == "/dashboard/usage":
 			s.renderUsage(w, r, log, acct)
+		case path == "/dashboard/account/health":
+			// ADR-20261112210000 — customer account health.
+			s.renderAccountHealth(w, r, log, acct)
 		case path == "/dashboard/billing":
 			s.renderBilling(w, r, log, acct)
 		case path == "/dashboard/upgrade":
@@ -451,6 +454,7 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 		DeveloperAppCount:  developerAppCount,
 		DeveloperAppsLimit: limits.DeveloperApps,
 		Plan:               string(acct.Plan),
+		Attention:          s.accountAttention(acct),
 	}}
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
@@ -1598,6 +1602,12 @@ func (s *server) renderBilling(w http.ResponseWriter, r *http.Request, log *slog
 		} else {
 			overageCents = saturatingAddCents(overageCents, storageCents)
 		}
+		// And the managed PostgreSQL overage charge (billing review 2026-11-13).
+		if databaseCents, err := meter.SpendCapManagedPostgresCents(ctx, s.store, acct.ID, time.Now()); err != nil {
+			log.Warn("dashboard renderBilling: managed postgres charge", "account_id", acct.ID, "err", err)
+		} else {
+			overageCents = saturatingAddCents(overageCents, databaseCents)
+		}
 	}
 	var overageRatio float64
 	if capOK && capCents > 0 && overageCents > 0 {
@@ -1852,6 +1862,8 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
+		ReferralsEnabled:          s.sales.Enabled(),
+		SalesEnabled:              s.isSalesMember(acct),
 		Keys:                      keyItems,
 		ShowDelete:                view.Status != state.AccountDeletedPending,
 		ShowDeleteManagedPostgres: api.AccountDeletionManagedPostgresEnabled(acct.ID),
@@ -2113,6 +2125,7 @@ func dashboardAccountView(acct state.Account, appCount int) *dashboard.AccountVi
 		AppCount:                   n,
 		EmailVerified:              acct.EmailVerified(),
 		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
+		LegalNotice:                legalChangeNotice(),
 	}
 }
 
@@ -3763,7 +3776,7 @@ func (s *server) renderDomainDoctor(w http.ResponseWriter, r *http.Request, log 
 			"Gregale could not complete the domain checks right now.",
 		).WithHeader("Retry-After", "30").
 			WithHint("Wait a moment, then run the domain check again.").
-			WithDocs("https://gregale.dev/docs/domains#doctor"))
+			WithDocs("https://gregale.dev/docs/domains"))
 		return
 	}
 	view := dashboard.DomainDoctorView{

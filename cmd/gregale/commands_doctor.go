@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
@@ -144,6 +145,10 @@ func (r doctorReport) HasProfileWarnings() bool {
 var actionableProfileWarnings = map[string]bool{
 	"package_json_invalid":  true,
 	"missing_start_command": true,
+	// A raw TCP server built from source fails readiness every time.
+	"non_http_service": true,
+	// hosting.health: / hides the home page behind the edge's health answer.
+	"health_path_root": true,
 }
 
 // ActionableProfileWarnings lists the profile warnings doctor reports.
@@ -261,6 +266,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if hasDeployableSource(abs) {
 		appEnv := loadDoctorAppEnv(context.Background(), *appFlag, abs)
 		report = runDoctorChecksForApp(abs, detectShape(abs), &appEnv)
+		replaceDoctorCheck(&report, doctorRuntimeOOMForApp(context.Background(), appEnv.App))
 	} else {
 		report = noSourceDoctorReport(abs)
 	}
@@ -959,6 +965,23 @@ func loadDeclaredEnv(path string) map[string]bool {
 			}
 		}
 	}
+	// 3. A Compose file that opts in to env import (x-gregale-env-import)
+	// supplies its services' plain `environment:` values on deploy. Doctor
+	// warned that DATABASE_URL was missing although Compose set it (prod
+	// 2026-11-19). An entry without a value comes from the host, so it
+	// still counts as missing.
+	if compose, err := reposcan.ReadComposeEnv(os.DirFS(path)); err == nil {
+		for service, entries := range compose.Services {
+			if !compose.OptedIn(service) {
+				continue
+			}
+			for key, value := range entries {
+				if value != nil && isDeclaredEnvKey(key) {
+					declared[strings.ToUpper(key)] = true
+				}
+			}
+		}
+	}
 	return declared
 }
 
@@ -1054,7 +1077,7 @@ func scanStatelessShape(path string) []string {
 			defer func() { _ = f.Close() }() //nolint:errcheck // read-only scan; close is best-effort
 			scanner := bufio.NewScanner(f)
 			for scanner.Scan() {
-				if strings.HasPrefix(strings.ToUpper(strings.TrimSpace(scanner.Text())), "VOLUME ") {
+				if len(statelessshape.StatefulVolume(scanner.Text())) > 0 {
 					out = append(out, p)
 					break
 				}
@@ -1095,6 +1118,10 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 			// port and health path described it as HTTP (Hunt 14 H14-42).
 			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
 				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else if rep.Profile.HealthDefaulted {
+				// No health route found: ready once the port accepts
+				// connections (ADR-079 amendment 2), not a /healthz probe.
+				_, _ = fmt.Fprintf(w, " · port=%d · health=none (ready once the port accepts connections)\n", rep.Profile.Port)
 			} else {
 				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
 			}

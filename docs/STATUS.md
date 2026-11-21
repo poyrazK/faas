@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Data API investigation fixes — 2026-11-12 (branch, not released)
+
+All 30 retained findings have implementations and regression coverage in
+[the resolution ledger](data-api/investigation-findings.md#resolutions).
+[ADR-20261112210000](adr/20261112210000-data-api-investigation-hardening.md)
+records the compatibility and owner migration decisions. Changes cover live
+revocation/recovery, upload creation IDs, authorization safety leases, generated
+Go/Python correctness, exact numeric round-trips, migration/catalog safety,
+independent budget counters, delayed/quarantined jobs and owner maintenance.
+
+Runtime/SDK checks, Data API CLI checks and focused real PostgreSQL/PostgREST
+recovery, catalog and owner-maintenance tests pass. The local independent-key
+budget benchmark measured about 1.49 ms per admission; this is not production
+capacity evidence. Hosted journey coverage now checks exact type generation;
+that hosted journey has not been run against an account in this environment.
+Owner maintenance is opt-in, uses separate owner credentials and defaults to
+dry-run. Existing installations require the documented SQL upgrades and runtime
+refresh; no hosted application or customer data was changed here.
+
 ## Management MCP environment promotion outcomes — 2026-11-05 (branch, not released)
 
 Project promotion acceptance now has a separate original-attempt journal and
@@ -501,6 +520,28 @@ Native/provider deployment qualification remains separate.
 ## Event substrate benchmark (V12) — 2026-10-22
 
 ## Managed PostgreSQL GA — 2026-10-31 (not released)
+
+**2026-11-15 production journey (rc.344, owner account):**
+`TestManagedPostgres` ran against production for the first time. It passed:
+- create, deploy, attach, migrate, binding verify and write/read;
+- idle wake, with a first read in 1.4 s after the 300 s suspend.
+
+Three steps failed:
+- `bindings rotate --wait` did not return within 7 minutes;
+- `resize` then answered `managed_postgres_conflict`;
+- after a point-in-time restore (ready in 24 s) was attached, `app restart --fresh --wait` did not finish in 10 minutes.
+
+The later steps (delete, recover, purge) were skipped. The journey's app and
+databases were cleaned up. PG-01 lifecycle evidence is not green.
+
+**2026-11-15 update ([ADR-20261031091607 amendment 1](adr/20261031091607-managed-postgres-ga.md)):**
+`database-rollbacks` is GA and now includes `gregale postgres restore --switch`,
+which restores a database to a chosen point and moves an app to the copy
+without changing its code ([ADR-20261023181931 amendment 3](adr/20261023181931-rollbacks-that-restore-the-database.md)).
+The customer guide states the recovery objectives. Worker, API and CLI tests
+pass on the in-memory store; the switch has not yet run against a real Neon
+restore, so the recovery times are stated, not measured. The always-on
+add-on is out of the public-release gate.
 
 [ADR-20261031091607](adr/20261031091607-managed-postgres-ga.md) moves
 `managed-postgres`, `postgres-bindings` and `postgres-restore` to `ga` and

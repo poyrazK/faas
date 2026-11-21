@@ -178,3 +178,9 @@ type SupportTicket struct {
 	UpdatedAt  pgtype.Timestamptz
 	ResolvedAt pgtype.Timestamptz
 }
+
+type SupportTicketSnapshot struct {
+	TicketID   pgtype.UUID
+	CapturedAt pgtype.Timestamptz
+	Snapshot   []byte
+}

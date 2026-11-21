@@ -334,7 +334,7 @@ func orgObjectStorageJourney(t *testing.T, server *apidserver.Server, store stat
 	if rec := send("POST", "/v1/apps/"+app.Slug+"/deployments", api.CreateDeploymentRequest{Image: "r/x@sha256:" + strings.Repeat("c", 64)}, developerHeaders); rec.Code != 202 {
 		t.Fatalf("deploy retained binding: %d %s", rec.Code, rec.Body)
 	}
-	if rec := send("DELETE", "/v1/orgs/"+org.Slug, nil, adminHeaders); rec.Code != 409 {
+	if rec := send("DELETE", "/v1/orgs/"+org.Slug, nil, browserSessionHeaders(t, server, store, admin.ID, adminHeaders)); rec.Code != 409 {
 		t.Fatalf("organization deletion orphaned bucket: %d %s", rec.Code, rec.Body)
 	}
 	if rec := send("POST", path+"/compute-bindings/"+binding.ID+"/rotate", nil, adminHeaders); rec.Code != 200 {
@@ -346,4 +346,22 @@ func orgObjectStorageJourney(t *testing.T, server *apidserver.Server, store stat
 	if rec := send("POST", path+"/compute-bindings", bindingRequest, developerHeaders); rec.Code != 403 {
 		t.Fatalf("binding retry bypassed demotion: %d %s", rec.Code, rec.Body)
 	}
+}
+
+// browserSessionHeaders turns an API-key caller's headers into a signed-in
+// dashboard session's: organization deletion and ownership transfer refuse
+// API keys.
+func browserSessionHeaders(t *testing.T, server *apidserver.Server, store state.Store, accountID string, apiHeaders map[string]string) map[string]string {
+	t.Helper()
+	token, err := apidserver.MintDashboardSession(t.Context(), store, *server.Sessions(), accountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"Cookie": apidserver.SessionCookie + "=" + token, "Sec-Fetch-Site": "same-origin"}
+	for k, v := range apiHeaders {
+		if k != "Authorization" {
+			headers[k] = v
+		}
+	}
+	return headers
 }

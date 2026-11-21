@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"net"
 	"net/url"
 	"strconv"
@@ -75,10 +76,20 @@ func NewService(c rehearsalpg.Catalog, b Backend) *Service {
 
 // Create returns a URL only to apid's sealed-secret writer; never to the REST client.
 func (s *Service) Create(ctx context.Context, account, run, app, host string, req rehearsalpg.CreateRequest) (rehearsalpg.Receipt, string, error) {
+	return s.CreateUntil(ctx, account, run, app, host, req, time.Now().UTC().Add(15*time.Minute))
+}
+
+// CreateUntil uses the caller's existing lease when it expires before the
+// fixture's normal lifetime.
+func (s *Service) CreateUntil(ctx context.Context, account, run, app, host string, req rehearsalpg.CreateRequest, expiresAt time.Time) (rehearsalpg.Receipt, string, error) {
+	defer s.runs.lock(account, run)()
+	if err := ctx.Err(); err != nil {
+		return rehearsalpg.Receipt{}, "", err
+	}
 	if req.Spec.Validate() != nil || len(req.SQL) == 0 || len(req.SQL) > rehearsalpg.MaxFixtureBytes || rehearsalpg.HashBytes([]byte(req.SQL)) != req.Spec.FixtureSHA256 {
 		return rehearsalpg.Receipt{}, "", ErrFixture
 	}
-	r := rehearsalpg.Resource{ID: uuid.NewString(), AccountID: account, RunID: run, AppID: app, OwnerID: s.OwnerID, Spec: req.Spec, Status: "provisioning", ExpiresAt: time.Now().UTC().Add(15 * time.Minute)}
+	r := rehearsalpg.Resource{ID: uuid.NewString(), AccountID: account, RunID: run, AppID: app, OwnerID: s.OwnerID, Spec: req.Spec, Status: "provisioning", ExpiresAt: expiresAt.UTC()}
 	r.BackendSHA256 = s.Backend.Identity()
 	r.DatabaseName = "grpg_" + strings.ReplaceAll(r.ID, "-", "")
 	r.RoleName = r.DatabaseName
@@ -98,11 +109,12 @@ func (s *Service) Create(ctx context.Context, account, run, app, host string, re
 		return rehearsalpg.Receipt{}, "", ErrFixture
 	}
 	r.Status = "ready"
-	r, e = s.Catalog.TransitionScenarioPostgres(ctx, r, "provisioning")
+	ready, e := s.Catalog.TransitionScenarioPostgres(ctx, r, "provisioning")
 	if e != nil {
 		s.failedCleanup(ctx, r)
 		return rehearsalpg.Receipt{}, "", ErrFixture
 	}
+	r = ready
 	wait, e := s.Backend.LockWait(ctx, r)
 	if e != nil {
 		s.failedCleanup(ctx, r)
@@ -191,14 +203,11 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 	}
 	w := s.stop(r.ID)
 	result := rehearsalpg.Evidence{Receipt: receipt(r), Status: "incomplete", Provenance: rehearsalpg.Provenance, DeploymentID: deployment, Spec: r.Spec, Before: r.Initial}
-	if schemas, ok := s.Backend.(SchemaBackend); ok {
-		result.After, result.Schema, e = schemas.FenceAndCaptureSchema(ctx, r)
-		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
-	} else {
-		result.After, e = s.Backend.FenceAndCapture(ctx, r)
-	}
-	if e != nil {
+	if e = s.captureSealedFixture(ctx, r, &result); e != nil {
 		result.Reason = "database collection failed or SQL was unfinished"
+		if errors.Is(e, errTaskParticipantPrivileges) {
+			result.Reason = "restricted Task database privileges could not be verified"
+		}
 	}
 	if w == nil {
 		result.Reason = "database collector owner was lost"
@@ -243,11 +252,33 @@ func (s *Service) Seal(ctx context.Context, account, run, deployment string) (re
 	return result, nil
 }
 
+func (s *Service) captureSealedFixture(ctx context.Context, r rehearsalpg.Resource, result *rehearsalpg.Evidence) error {
+	participants, err := s.Catalog.ScenarioPostgresTaskParticipants(ctx, r)
+	if err != nil {
+		return errTaskParticipantPrivileges
+	}
+	r.TaskParticipants = participants
+	if len(participants) > 0 {
+		// Only the native PostgreSQL backend verifies these privileges
+		// in the frozen database before collecting the final evidence.
+		if _, ok := s.Backend.(*Postgres); !ok {
+			return errTaskParticipantPrivileges
+		}
+	}
+	if schemas, ok := s.Backend.(SchemaBackend); ok {
+		result.After, result.Schema, err = schemas.FenceAndCaptureSchema(ctx, r)
+		result.SchemaInventoryVersion = rehearsalpg.SchemaInventoryVersion
+	} else {
+		result.After, err = s.Backend.FenceAndCapture(ctx, r)
+	}
+	return err
+}
+
 func (s *Service) failedCleanup(ctx context.Context, r rehearsalpg.Resource) {
 	c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	current, e := s.Catalog.GetScenarioPostgres(c, r.AccountID, r.RunID)
-	if e != nil {
+	if e != nil || current.ID != r.ID || current.OwnerID != r.OwnerID {
 		return
 	}
 	s.stop(r.ID)

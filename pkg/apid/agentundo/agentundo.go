@@ -28,7 +28,20 @@ type Dispatcher func(ctx context.Context, base *http.Request, acct state.Account
 type Engine struct {
 	Store    state.AgentUndoStore
 	Dispatch Dispatcher
-	Now      func() time.Time
+	// Lookup resolves what a capture cannot read through Dispatch; nil
+	// leaves those writes not undoable.
+	Lookup Lookup
+	Now    func() time.Time
+}
+
+// Lookup answers identities the routes undo reads through do not show.
+type Lookup interface {
+	// DeploymentApp is the slug of the app deployment belongs to, as acct
+	// sees it.
+	DeploymentApp(ctx context.Context, acct state.Account, deployment string) (string, error)
+	// EnvironmentID is the id of the named environment of the app's
+	// project, as acct sees it.
+	EnvironmentID(ctx context.Context, acct state.Account, appSlug, environment string) (string, error)
 }
 
 func (e *Engine) now() time.Time {
@@ -51,6 +64,9 @@ type Inverse struct {
 	// Deploy, when set, undoes a deploy or rollback by the app's state at
 	// apply time instead of sending Method and Path as they are.
 	Deploy *DeployUndo `json:"deploy,omitempty"`
+	// Traffic, when set, puts back an earlier traffic split instead of
+	// sending Method and Path.
+	Traffic *TrafficUndo `json:"traffic,omitempty"`
 }
 
 // Check kinds.
@@ -73,6 +89,10 @@ type Check struct {
 	// sends as the inverse body's expected_revision.
 	RevisionField string `json:"revision_field,omitempty"`
 	AfterRevision int64  `json:"after_revision,omitempty"`
+	// App and Split are what a traffic check reads: the app's path and the
+	// live split the agent left.
+	App   string  `json:"app,omitempty"`
+	Split []Split `json:"split,omitempty"`
 }
 
 // resource is what two records of one resource share: undoing them must go

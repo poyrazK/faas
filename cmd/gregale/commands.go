@@ -179,7 +179,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 	backoff := loginPollBackoff
 	for {
 		if !expiry.IsZero() && time.Now().After(expiry.Add(2*time.Second)) {
-			return printErr("Login code expired", errors.New("run gregale login again to obtain a new code"))
+			return printCliLoginRecovery("Login code expired", nil, true)
 		}
 		select {
 		case <-ctx.Done():
@@ -197,7 +197,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 			case api.CodeCliAuthPending:
 				continue // keep polling
 			case api.CodeCliAuthUnavailable:
-				return printErr("Login code unavailable", err)
+				return printCliLoginRecovery("Login code unavailable", ae, true)
 			default:
 				return printErr("Login failed", err)
 			}
@@ -355,19 +355,20 @@ func cmdApps(args []string) int {
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "SLUG\tSTATUS\tDEPLOYMENT\tURL\tAUTH")
 	for _, a := range apps {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a.Status), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", a.Slug, formatAppListStatus(a), formatAppDeploymentAvailability(a), canonicalAppURL(a), formatAppAuth(a))
 	}
 	_ = tw.Flush()
 	return 0
 }
 
 // formatAppListStatus names a parked app "parked", as ps, inspect and the
-// docs do; evicted_cold is the stored status and stays in --json.
-func formatAppListStatus(status string) string {
-	if status == "evicted_cold" {
-		return "parked"
+// docs do, with the reason when known ("parked: liveness failed");
+// evicted_cold is the stored status and stays in --json.
+func formatAppListStatus(a api.AppResponse) string {
+	if label := appParkedLabel(a); label != "" {
+		return label
 	}
-	return status
+	return a.Status
 }
 
 func formatAppDeploymentAvailability(a api.AppResponse) string {
@@ -480,12 +481,15 @@ func printErr(title string, err error) int {
 		// The parse failure that carried --help already answered it.
 		return 1
 	}
+	// ADR-20261112223000 §5: after the error, point a coding agent at the
+	// guide. Stderr only; nothing for people or JSON.
+	defer printAgentHint(osStderr)
 	if errors.Is(err, context.Canceled) {
 		var recovery *deployRecoveryError
 		if !errors.As(err, &recovery) {
 			problem := diagnosticProblem(transportProblem(err))
 			if jsonOutput {
-				_ = writeJSONProblemWithExit(os.Stderr, problem, 130)
+				_ = writeJSONProblemForError(os.Stderr, problem, 130, err)
 			} else {
 				renderAPIError(osStderr, &APIError{Problem: problem})
 			}
@@ -526,7 +530,7 @@ func printErr(title string, err error) int {
 			if hasHint {
 				problem.Hint = strings.TrimSpace(problem.Hint + " " + hintErr.Hint)
 			}
-			_ = writeJSONProblemWithExit(os.Stderr, diagnosticProblem(problem), exitCodeForStatus(problem.Status))
+			_ = writeJSONProblemForError(os.Stderr, diagnosticProblem(problem), exitCodeForStatus(problem.Status), err)
 			return exitCodeForStatus(ae.Problem.Status)
 		}
 		// Non-API errors — synthesise a Problem so scripts still see a
@@ -552,7 +556,11 @@ func printErr(title string, err error) int {
 		} else if platformErr {
 			code = 3
 		}
-		_ = writeJSONProblemWithExit(os.Stderr, diagnosticProblem(problem), code)
+		advice := jsonInputDiagnostic(err)
+		if advice == nil {
+			advice = commandErrorDiagnostic(err)
+		}
+		_ = writeJSONProblemForErrorWithCLI(os.Stderr, diagnosticProblem(problem), code, err, advice)
 		if hasExit {
 			return ec.code
 		}
@@ -782,6 +790,9 @@ func renderAPIError(w io.Writer, e *APIError) {
 	// rest of cmd/gregale — see output.go::writeStatus).
 	if p.Detail != "" {
 		_, _ = fmt.Fprintf(w, "  %s\n", p.Detail)
+	}
+	if id := problemRequestID(p); id != "" {
+		_, _ = fmt.Fprintf(w, "  Request ID: %s\n", id)
 	}
 	if p.BindingsCheck != nil {
 		for _, blocker := range p.BindingsCheck.Blockers {

@@ -27,9 +27,14 @@ type contractTestStore interface {
 	state.ExecutionAdmissionStore
 	state.Store // teststorecheck:allow the one Store-sized interface the contracts alias
 	state.RollbackTrafficStore
+	state.WorkflowRunStartStore
 	cloneFlagFixtureStore
 	projectEnvironmentQualificationStore
 	state.AccountAbuseHoldStore
+	state.AccountAbuseStrikeStore
+	state.AccountSignupFactsStore
+	state.AccountHeldLinkStore
+	state.AccountRiskStore
 	state.AgentClientStore
 	state.OrgAgentStore
 	state.KeyProjectLimitStore
@@ -52,6 +57,7 @@ type contractTestStore interface {
 	state.ComputeNodeWakeBreakerStore
 	state.ComputeNodeCPUPressureStore
 	state.ComputeNodeUsageBatcher
+	state.DeferredBuildStore
 	state.DeploymentAliasStore
 	state.DeploymentHostingFailureStore
 	state.DeploymentHostingReceiptStore
@@ -71,6 +77,8 @@ type contractTestStore interface {
 	state.EventStorageUsageStore
 	state.EventSubscriptionControlStore
 	state.EventSubscriptionStore
+	state.EventSubscriptionScopeStore
+	state.EventEnvironmentStore
 	state.EventSubscriptionReconcileStore
 	state.EventSubscriptionActivationStore
 	state.EventWorkBindingStore
@@ -161,6 +169,9 @@ type contractTestStore interface {
 	state.ProjectEnvironmentBranchDataStore
 	state.ProjectEnvironmentBranchBucketStore
 	state.ObjectBucketOverlayStore
+	state.ObjectBucketOverlayTombstonePrefixStore
+	state.CloneResumeStore
+	state.CloneEventSubscriptionResumeStore
 	state.EnvironmentBranchDeploymentReader
 	state.EnvironmentBranchCaptureStore
 	state.EnvironmentBranchCaptureObjectStore

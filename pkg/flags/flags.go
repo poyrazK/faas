@@ -20,6 +20,10 @@ type Rule struct {
 	// Subjects are opaque application subject IDs, matched only after the
 	// customer/group constraint has selected the tenant.
 	Subjects []string `json:"subjects,omitempty"`
+	// Attributes are conditions on gateway-verified (gregale.*) or
+	// application-supplied (app.*) request attributes; all must hold
+	// (ADR 20261114150000 §2).
+	Attributes []Condition `json:"attributes,omitempty"`
 	// Rollout is basis points (0..10000) of eligible customers, or subjects
 	// when RolloutUnit is "subject". Nil is 100%.
 	Rollout *int `json:"rollout,omitempty"`
@@ -32,7 +36,212 @@ type Rule struct {
 	// Value is a boolean for boolean flags, or a variant key for variant flags.
 	// Variant rules may omit it to use the configured weighted allocation.
 	Value any `json:"value,omitempty"`
+	// Experiment is the running experiment of a weighted rule: its layer
+	// slice and the environment holdout apply (ADR 20261119173702 §2).
+	Experiment *RuleExperiment `json:"experiment,omitempty"`
 }
+
+// Condition matches one request attribute. A missing attribute never
+// matches, whatever the operator.
+type Condition struct {
+	Attribute string   `json:"attribute"`
+	Op        string   `json:"op"`
+	Values    []string `json:"values"`
+}
+
+// Attribute names and operators (ADR 20261114150000 §2).
+const (
+	AttributeCountry  = "gregale.country"
+	AttributeUAFamily = "gregale.ua_family"
+	// AttributeCohort is the gateway-stamped cohorts of the request's
+	// customer (ADR 20261119102741 §4).
+	AttributeCohort    = "gregale.cohort"
+	AppAttributePrefix = "app."
+	// CohortsNone is the gregale.cohort value of a customer in no cohort.
+	CohortsNone = "-"
+
+	OpIn       = "in"
+	OpNotIn    = "not_in"
+	OpEndsWith = "ends_with"
+)
+
+var (
+	appAttributeNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+	countryPattern          = regexp.MustCompile(`^[A-Z]{2}$`)
+)
+
+// ValidAttributeName accepts the gateway attributes and app.<name>.
+func ValidAttributeName(name string) bool {
+	if name == AttributeCountry || name == AttributeUAFamily || name == AttributeCohort {
+		return true
+	}
+	rest, ok := strings.CutPrefix(name, AppAttributePrefix)
+	return ok && appAttributeNamePattern.MatchString(rest)
+}
+
+// ValidAppAttributeName accepts the <name> an application supplies.
+func ValidAppAttributeName(name string) bool { return appAttributeNamePattern.MatchString(name) }
+
+// ValidAttributeValue accepts printable ASCII up to FlagsMaxAttributeValueBytes.
+// SDKs drop an invalid application value, so it reads as missing.
+func ValidAttributeValue(value string) bool {
+	if len(value) == 0 || len(value) > api.FlagsMaxAttributeValueBytes {
+		return false
+	}
+	for _, b := range []byte(value) {
+		if b < 0x20 || b > 0x7e {
+			return false
+		}
+	}
+	return true
+}
+
+// ParseCohorts reads a gregale.cohort attribute: the sorted, comma-separated
+// cohort keys the gateway stamped, or CohortsNone for a customer in none.
+// ok is false for a malformed value, which reads as missing.
+func ParseCohorts(value string) (keys []string, ok bool) {
+	if value == CohortsNone {
+		return nil, true
+	}
+	if value == "" {
+		return nil, false
+	}
+	keys = strings.Split(value, ",")
+	if len(keys) > api.AnalyticsCohortsMaxPerEnvironment {
+		return nil, false
+	}
+	for _, k := range keys {
+		if !ValidKey(k) {
+			return nil, false
+		}
+	}
+	return keys, true
+}
+
+// FormatCohorts is the X-Faas-Flag-Cohorts value for keys: sorted and
+// comma-separated, or CohortsNone.
+func FormatCohorts(keys []string) string {
+	if len(keys) == 0 {
+		return CohortsNone
+	}
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	return strings.Join(slices.Compact(sorted), ",")
+}
+
+// matchCohorts applies a gregale.cohort condition: in matches a member of
+// any listed cohort, not_in a customer in none of them.
+func matchCohorts(c Condition, value string) bool {
+	keys, ok := ParseCohorts(value)
+	if !ok {
+		return false
+	}
+	member := slices.ContainsFunc(c.Values, func(v string) bool { return slices.Contains(keys, v) })
+	switch c.Op {
+	case OpIn:
+		return member
+	case OpNotIn:
+		return !member
+	default:
+		return false
+	}
+}
+
+// MatchConditions reports whether every condition holds for attrs.
+func MatchConditions(conditions []Condition, attrs map[string]string) bool {
+	for _, c := range conditions {
+		if c.Attribute == AttributeCohort {
+			value, ok := attrs[c.Attribute]
+			if !ok || !matchCohorts(c, value) {
+				return false
+			}
+			continue
+		}
+		value, ok := attrs[c.Attribute]
+		if !ok || !ValidAttributeValue(value) {
+			return false
+		}
+		switch c.Op {
+		case OpIn:
+			if !slices.Contains(c.Values, value) {
+				return false
+			}
+		case OpNotIn:
+			if slices.Contains(c.Values, value) {
+				return false
+			}
+		case OpEndsWith:
+			if !slices.ContainsFunc(c.Values, func(suffix string) bool { return strings.HasSuffix(value, suffix) }) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// EvaluationContext is one request's identity and attributes. Customer is
+// the platform-verified tenant; Subject and app.* attributes come from the
+// application after it authenticated the user; gregale.* attributes come
+// from the gateway.
+type EvaluationContext struct {
+	Customer   string
+	Subject    string
+	Attributes map[string]string
+	// Kills are the flag keys the gateway reported killed for this request
+	// (X-Faas-Flag-Kills). They apply even before the bundle has refreshed.
+	Kills []string
+}
+
+// ReasonKilled marks a decision forced to the application fallback by a kill.
+const ReasonKilled = "killed"
+
+// ParseKills reads the gateway's comma-separated kill header, keeping valid
+// flag keys only and bounding the list to FlagsMaxPerEnvironment.
+func ParseKills(header string) []string {
+	if header == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(header, ",") {
+		if key := strings.TrimSpace(part); ValidKey(key) && !slices.Contains(out, key) {
+			out = append(out, key)
+			if len(out) == api.FlagsMaxPerEnvironment {
+				break
+			}
+		}
+	}
+	return out
+}
+
+// FormatKills renders sorted keys for the X-Faas-Flag-Kills header.
+func FormatKills(keys []string) string {
+	sorted := slices.Clone(keys)
+	slices.Sort(sorted)
+	return strings.Join(slices.Compact(sorted), ",")
+}
+
+// KilledKeys lists the killed flags of a configuration, sorted.
+func KilledKeys(c Config) []string {
+	var out []string
+	for _, f := range c.Flags {
+		if f.Killed {
+			out = append(out, f.Key)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func killedDecision(b Bundle, key, typ string, fallback any) Decision {
+	d := Decision{Flag: key, Value: fallback, ConfigVersion: b.Version, Reason: ReasonKilled, Source: "fallback"}
+	if typ == "variant" {
+		d.Type = "variant"
+	}
+	return d
+}
+
 type ProgressiveRollout struct {
 	Stages       []int `json:"stages"`
 	CurrentStage int   `json:"current_stage"`
@@ -43,17 +252,26 @@ type ProgressiveRollout struct {
 	MaximumHTTP5xxRateBasisPoints int   `json:"maximum_http_5xx_rate_basis_points"`
 	MaximumP95LatencyMS           int   `json:"maximum_p95_latency_ms"`
 	WindowSeconds                 int   `json:"window_seconds"`
+	// Metric gates stages on a product metric (ADR 20261119173702 §5).
+	Metric *RolloutMetric `json:"metric,omitempty"`
 }
 type Flag struct {
 	Key         string `json:"key"`
 	Description string `json:"description,omitempty"`
 	// Type is omitted for legacy boolean flags. Variant flags use "variant".
-	Type     string        `json:"type,omitempty"`
-	Enabled  bool          `json:"enabled"`
-	Default  any           `json:"default"`
-	Seed     string        `json:"seed"`
-	Rules    []Rule        `json:"rules"`
-	Variants []FlagVariant `json:"variants,omitempty"`
+	Type    string `json:"type,omitempty"`
+	Enabled bool   `json:"enabled"`
+	// Killed forces every evaluation to the application's fallback, whatever
+	// the default, rules or inherited decisions say (ADR 20261114150000 §3).
+	Killed bool `json:"killed,omitempty"`
+	// Owner and ExpiresAt (YYYY-MM-DD) drive the lifecycle report
+	// (ADR 20261114150000 §4); they never change evaluation.
+	Owner     string        `json:"owner,omitempty"`
+	ExpiresAt string        `json:"expires_at,omitempty"`
+	Default   any           `json:"default"`
+	Seed      string        `json:"seed"`
+	Rules     []Rule        `json:"rules"`
+	Variants  []FlagVariant `json:"variants,omitempty"`
 }
 type FlagVariant struct {
 	Key    string `json:"key"`
@@ -62,6 +280,9 @@ type FlagVariant struct {
 type Config struct {
 	Flags  []Flag              `json:"flags"`
 	Groups map[string][]string `json:"groups"`
+	// Holdout and Layers isolate experiments (ADR 20261119173702 §2).
+	Holdout *Holdout `json:"holdout,omitempty"`
+	Layers  []Layer  `json:"layers,omitempty"`
 }
 type Bundle struct {
 	EnvironmentID string `json:"environment_id"`
@@ -138,16 +359,27 @@ func Evaluate(b Bundle, key, customer string, fallback bool) Decision {
 // EvaluateForSubject evaluates using an application-authenticated subject ID.
 // Customer identity remains the platform-verified tenant boundary.
 func EvaluateForSubject(b Bundle, key, customer, subject string, fallback bool) Decision {
+	return EvaluateWithContext(b, key, EvaluationContext{Customer: customer, Subject: subject}, fallback)
+}
+
+// EvaluateWithContext evaluates a boolean flag for one request context.
+func EvaluateWithContext(b Bundle, key string, c EvaluationContext, fallback bool) Decision {
+	if slices.Contains(c.Kills, key) {
+		return killedDecision(b, key, "boolean", fallback)
+	}
 	d := Decision{Flag: key, Value: fallback, ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
 			continue
 		}
+		if f.Killed {
+			return killedDecision(b, key, "boolean", fallback)
+		}
 		if flagType(f) != "boolean" {
 			d.Reason = "type_mismatch"
 			return d
 		}
-		return evaluateFlag(b, f, customer, subject, fallback)
+		return evaluateFlag(b, f, c, fallback)
 	}
 	return d
 }
@@ -162,16 +394,27 @@ func EvaluateVariant(b Bundle, key, customer, fallback string) Decision {
 // EvaluateVariantForSubject evaluates a named variant for an authenticated
 // application subject within the platform-verified customer.
 func EvaluateVariantForSubject(b Bundle, key, customer, subject, fallback string) Decision {
+	return EvaluateVariantWithContext(b, key, EvaluationContext{Customer: customer, Subject: subject}, fallback)
+}
+
+// EvaluateVariantWithContext evaluates a named variant for one request context.
+func EvaluateVariantWithContext(b Bundle, key string, c EvaluationContext, fallback string) Decision {
+	if slices.Contains(c.Kills, key) {
+		return killedDecision(b, key, "variant", fallback)
+	}
 	d := Decision{Flag: key, Value: fallback, Type: "variant", ConfigVersion: b.Version, Reason: "flag_missing", Source: "fallback"}
 	for _, f := range b.Flags {
 		if f.Key != key {
 			continue
 		}
+		if f.Killed {
+			return killedDecision(b, key, "variant", fallback)
+		}
 		if flagType(f) != "variant" {
 			d.Reason = "type_mismatch"
 			return d
 		}
-		return evaluateFlag(b, f, customer, subject, fallback)
+		return evaluateFlag(b, f, c, fallback)
 	}
 	return d
 }
@@ -183,7 +426,8 @@ func flagType(f Flag) string {
 	return f.Type
 }
 
-func evaluateFlag(b Bundle, f Flag, customer, subject string, fallback any) Decision {
+func evaluateFlag(b Bundle, f Flag, c EvaluationContext, fallback any) Decision {
+	customer, subject := c.Customer, c.Subject
 	typ := flagType(f)
 	d := Decision{Flag: f.Key, Value: fallback, ConfigVersion: b.Version, Reason: "type_mismatch", Source: "fallback"}
 	if typ == "variant" {
@@ -236,6 +480,9 @@ func evaluateFlag(b Bundle, f Flag, customer, subject string, fallback any) Deci
 		if r.Group != "" && !slices.Contains(b.Groups[r.Group], customer) {
 			continue
 		}
+		if len(r.Attributes) > 0 && !MatchConditions(r.Attributes, c.Attributes) {
+			continue
+		}
 		subjectScoped := len(r.Subjects) > 0 || r.RolloutUnit == "subject"
 		if subjectScoped && subject == "" {
 			subjectMissing = true
@@ -243,6 +490,16 @@ func evaluateFlag(b Bundle, f Flag, customer, subject string, fallback any) Deci
 		}
 		if len(r.Subjects) > 0 && !slices.Contains(r.Subjects, subject) {
 			continue
+		}
+		if r.Experiment != nil {
+			inSlice, held := experimentGate(b.Config, *r.Experiment, customer, subject)
+			if !inSlice {
+				continue
+			}
+			if held {
+				d.Value, d.RuleID, d.Reason = r.Experiment.Control, r.ID, ReasonHoldout
+				return d
+			}
 		}
 		if r.Rollout != nil {
 			bucket := Bucket(f.Seed, f.Key, customer)
@@ -323,6 +580,14 @@ func Validate(c Config) error {
 		if len(f.Description) > api.FlagsMaxDescriptionBytes || len(f.Seed) > api.FlagsMaxSeedBytes || strings.ContainsRune(f.Seed, 0) {
 			return fmt.Errorf("invalid flag description or seed")
 		}
+		if !ValidOwner(f.Owner) {
+			return fmt.Errorf("flag owner must be at most %d bytes of printable text", api.FlagsMaxOwnerBytes)
+		}
+		if f.ExpiresAt != "" {
+			if _, err := ParseExpiresAt(f.ExpiresAt); err != nil {
+				return err
+			}
+		}
 		typ := flagType(f)
 		if typ != "boolean" && typ != "variant" {
 			return fmt.Errorf("invalid flag type %q", f.Type)
@@ -372,6 +637,12 @@ func Validate(c Config) error {
 			if err := validateSubjects(r.Subjects); err != nil {
 				return err
 			}
+			if r.Attributes != nil && len(r.Attributes) == 0 {
+				return fmt.Errorf("attribute targeting requires at least one condition")
+			}
+			if err := validateConditions(r.Attributes); err != nil {
+				return err
+			}
 			if r.RolloutUnit != "" && r.RolloutUnit != "customer" && r.RolloutUnit != "subject" {
 				return fmt.Errorf("invalid rollout_unit")
 			}
@@ -409,9 +680,12 @@ func Validate(c Config) error {
 				if p.MinimumUsedRequests < 1 || p.MinimumUsedRequests > api.FlagsMaxProgressiveMinimumRequests || p.MaximumHTTP5xxRateBasisPoints < 0 || p.MaximumHTTP5xxRateBasisPoints > 10000 || p.MaximumP95LatencyMS < 1 || p.MaximumP95LatencyMS > api.FlagsMaxProgressiveLatencyMS || p.WindowSeconds < api.FlagsMinProgressiveWindowSeconds || p.WindowSeconds > api.FlagsMaxProgressiveWindowSeconds {
 					return fmt.Errorf("invalid progressive rollout evidence thresholds")
 				}
+				if err := validateRolloutMetric(r); err != nil {
+					return err
+				}
 			}
-			if len(r.Customers) == 0 && r.Group == "" && len(r.Subjects) == 0 && r.Rollout == nil {
-				return fmt.Errorf("rule requires customer, group, or rollout targeting")
+			if len(r.Customers) == 0 && r.Group == "" && len(r.Subjects) == 0 && len(r.Attributes) == 0 && r.Rollout == nil {
+				return fmt.Errorf("rule requires customer, group, attribute, or rollout targeting")
 			}
 			if typ == "boolean" {
 				if r.Value != nil {
@@ -425,6 +699,46 @@ func Validate(c Config) error {
 					return fmt.Errorf("variant rule value must name a configured variant")
 				}
 			}
+		}
+	}
+	return validateExperiments(c)
+}
+
+func validateConditions(conditions []Condition) error {
+	if len(conditions) > api.FlagsMaxConditionsPerRule {
+		return fmt.Errorf("a rule takes at most %d attribute conditions", api.FlagsMaxConditionsPerRule)
+	}
+	for _, c := range conditions {
+		if !ValidAttributeName(c.Attribute) {
+			return fmt.Errorf("invalid attribute %q: use gregale.country, gregale.ua_family, gregale.cohort or app.<name>", c.Attribute)
+		}
+		if c.Attribute == AttributeCohort && c.Op == OpEndsWith {
+			return fmt.Errorf("gregale.cohort takes in or not_in")
+		}
+		switch c.Op {
+		case OpIn, OpNotIn:
+		case OpEndsWith:
+			if !strings.HasPrefix(c.Attribute, AppAttributePrefix) {
+				return fmt.Errorf("ends_with applies only to app.* attributes")
+			}
+		default:
+			return fmt.Errorf("invalid attribute operator %q: use in, not_in or ends_with", c.Op)
+		}
+		if len(c.Values) == 0 || len(c.Values) > api.FlagsMaxConditionValues {
+			return fmt.Errorf("an attribute condition takes 1..%d values", api.FlagsMaxConditionValues)
+		}
+		seen := map[string]bool{}
+		for _, v := range c.Values {
+			if !ValidAttributeValue(v) || seen[v] {
+				return fmt.Errorf("invalid or duplicate attribute value %q", v)
+			}
+			if c.Attribute == AttributeCountry && !countryPattern.MatchString(v) {
+				return fmt.Errorf("gregale.country values are two uppercase letters, not %q", v)
+			}
+			if c.Attribute == AttributeCohort && !ValidKey(v) {
+				return fmt.Errorf("gregale.cohort values are cohort keys, not %q", v)
+			}
+			seen[v] = true
 		}
 	}
 	return nil

@@ -71,7 +71,7 @@ func cmdRollbackRestoreDatabases(slug, to string, acknowledge, noWait bool, time
 // releases it undoes, the restore, the writes left in the source database and
 // the downtime.
 func writeDatabaseSwitchPlan(w io.Writer, slug string, p api.Problem) {
-	_, _ = fmt.Fprintln(w, "This rollback undoes release commands that ran after its target last served:")
+	_, _ = fmt.Fprintln(w, "This rollback undoes the release commands that ran since its target's schema:")
 	for _, r := range p.CrossedReleases {
 		ref := r.DeploymentID
 		if r.Revision > 0 {
@@ -132,6 +132,11 @@ func databaseSwitchOutcome(slug string, sw api.DatabaseSwitch) int {
 	}
 	switch sw.Phase {
 	case "completed":
+		if sw.KeepsRelease {
+			PrintOK(osStdout, "Switched %s to %s. %s keeps every write and is no longer bound to %s; delete it when you no longer need it.",
+				slug, sw.TargetName, databaseName(sw), slug)
+			return 0
+		}
 		PrintOK(osStdout, "Rolled back to %s on %s. %s keeps every write and is no longer bound to %s; delete it when you no longer need it.",
 			revisionRef(sw.TargetRevision, sw.TargetDeploymentID), sw.TargetName, databaseName(sw), slug)
 		return 0
@@ -162,6 +167,9 @@ func databaseSwitchLine(slug string, sw api.DatabaseSwitch) string {
 	case "draining":
 		return fmt.Sprintf("draining %s: %d retired, %d parked, %d pending", slug, sw.Drain.Retired, sw.Drain.Parked, sw.Drain.Pending)
 	case "switching":
+		if sw.KeepsRelease {
+			return fmt.Sprintf("switching %s to %s", slug, sw.TargetName)
+		}
 		return fmt.Sprintf("switching %s to %s and %s", slug, target, sw.TargetName)
 	case "resuming":
 		return fmt.Sprintf("resuming %s on %s", slug, target)
@@ -291,11 +299,15 @@ func parseSwitchArgs(fs *flag.FlagSet, args []string) ([]string, error) {
 func writeDatabaseSwitch(w io.Writer, slug string, sw api.DatabaseSwitch) {
 	_, _ = fmt.Fprintf(w, "switch:        %s\n", sw.ID)
 	_, _ = fmt.Fprintf(w, "phase:         %s\n", databaseSwitchLine(slug, sw))
-	_, _ = fmt.Fprintf(w, "release:       %s -> %s\n", revisionRef(sw.FromRevision, sw.FromDeploymentID), revisionRef(sw.TargetRevision, sw.TargetDeploymentID))
+	if sw.KeepsRelease {
+		_, _ = fmt.Fprintf(w, "release:       %s (kept)\n", revisionRef(sw.TargetRevision, sw.TargetDeploymentID))
+	} else {
+		_, _ = fmt.Fprintf(w, "release:       %s -> %s\n", revisionRef(sw.FromRevision, sw.FromDeploymentID), revisionRef(sw.TargetRevision, sw.TargetDeploymentID))
+	}
 	_, _ = fmt.Fprintf(w, "database:      %s -> %s (restored to %s)\n", databaseName(sw), sw.TargetName, sw.RestorePoint)
-	undone := make([]string, 0, len(sw.UndoneDeploymentIDs))
-	undone = append(undone, sw.UndoneDeploymentIDs...)
-	_, _ = fmt.Fprintf(w, "undoes:        %s\n", strings.Join(undone, ", "))
+	if !sw.KeepsRelease {
+		_, _ = fmt.Fprintf(w, "undoes:        %s\n", strings.Join(sw.UndoneDeploymentIDs, ", "))
+	}
 	if sw.FailureCode != "" {
 		_, _ = fmt.Fprintf(w, "failure:       %s: %s\n", sw.FailureCode, sw.FailureDetail)
 	}

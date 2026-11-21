@@ -18,6 +18,10 @@
 // registered route exactly: the live site serves only registered routes, and
 // production-us answered 404 for /docs/errors/app-startup-timeout and 40 more
 // such links that the prefix rule accepted (Hunt 14 H14-90).
+//
+// A link's #anchor must name a heading on the published page, as the site
+// renders heading ids: 189 production links pointed at sections no page had
+// (plans#apps, orgs#members), so they opened at the top of the page.
 package main
 
 import (
@@ -30,15 +34,16 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/docsmarkers"
 	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 const catalogPath = "docs/customer-pages.json"
 
-var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?`)
+var docsURLRE = regexp.MustCompile(`https://gregale\.dev/docs(/[A-Za-z0-9._~/%-]*)?(?:#([A-Za-z0-9._~%-]+))?`)
 
 // docsBaseRE finds Go links built from pkg/api's docsBase constant.
-var docsBaseRE = regexp.MustCompile(`docsBase\s*\+\s*"(/[A-Za-z0-9._~/%-]*)`)
+var docsBaseRE = regexp.MustCompile(`docsBase\s*\+\s*"(/[A-Za-z0-9._~/%-]*)(?:#([A-Za-z0-9._~%-]+))?`)
 
 // Keep the obsolete origin split in source so the checker does not match its
 // own guard. pkg/wire retains the bare host solely to normalize responses from
@@ -64,6 +69,8 @@ type link struct {
 	// Exact links must name a registered route; the prefix rule does not
 	// apply to them.
 	Exact bool
+	// Anchor is the #fragment, without the #.
+	Anchor string
 }
 
 func main() {
@@ -95,11 +102,17 @@ func run() error {
 	if err := checkPublishedContent(cat, os.ReadFile); err != nil {
 		return err
 	}
+	if err := checkRelativeLinks(cat, os.ReadFile, fileExists); err != nil {
+		return err
+	}
 	links, err := collectLinks()
 	if err != nil {
 		return err
 	}
 	if err := checkExactLinks(cat, links); err != nil {
+		return err
+	}
+	if err := checkAnchors(cat, links, os.ReadFile); err != nil {
 		return err
 	}
 	seen := map[string]link{}
@@ -241,11 +254,11 @@ func collectLinks() ([]link, error) {
 			for _, match := range docsURLRE.FindAllStringSubmatch(string(b), -1) {
 				route := strings.Trim(match[1], "/")
 				route = strings.TrimRight(route, ".,;:!?)]}'\"")
-				links = append(links, link{Path: route, File: path})
+				links = append(links, link{Path: route, File: path, Anchor: strings.TrimRight(match[2], ".,;:!?)]}'\"")})
 			}
 			if ext == ".go" && isProductionSurface(path) {
 				for _, match := range docsBaseRE.FindAllStringSubmatch(string(b), -1) {
-					links = append(links, link{Path: strings.Trim(match[1], "/"), File: path, Exact: true})
+					links = append(links, link{Path: strings.Trim(match[1], "/"), File: path, Exact: true, Anchor: match[2]})
 				}
 			}
 			return nil
@@ -288,24 +301,84 @@ func checkCapabilityRoutes(cat catalog, capabilities []productcap.Capability) er
 	return nil
 }
 
-// internalMarkerRE finds operator and engineering material on a customer
-// page. Each alternative names something a customer cannot act on.
-var internalMarkerRE = regexp.MustCompile(strings.Join([]string{
-	`\bADRs?[- ]?\d`,
-	`\]\((?:\.\./)*(?:adr|ops|runbooks|drills)/`,
-	`\b(?:apid|schedd|vmmd|builderd|imaged|meterd|githubd|outboundd|pgproxyd|gatewayd(?:-public|-internal)?)\b`,
-	`\bpkg/(?:api|apid|state|sched|fcvm|netns|oci|rootfs|meter|billing|wire|imaged|builderd|githubd|legal|secretbox|servicecaller)\b`,
-	`\bmigrations/\d`,
-	`faas_implementation_spec|\bspec ?§|spec-§`,
-	`\bFAAS_[A-Z0-9_]+`,
-	`/etc/faas/(?:secrets|[a-z-]+\.env)|journalctl|systemctl`,
-	`native (?:qualification|acceptance|KVM)|qualified (?:server|installation)|qualification harness`,
-	`operators? (?:can|must|may) (?:set|enable|configure)|ask (?:your|the) operator|Gregale operator`,
-}, "|"))
+// checkAnchors requires the #anchor of every production link to a published
+// page to name one of the page's headings. Links to unpublished, external or
+// prefix-matched routes are not judged.
+func checkAnchors(cat catalog, links []link, read func(string) ([]byte, error)) error {
+	sources := map[string]string{}
+	for _, r := range cat.Routes {
+		if r.Source != "" && !r.External && r.Unpublished == "" {
+			sources[r.Path] = r.Source
+		}
+	}
+	anchors := map[string]map[string]bool{}
+	var findings []string
+	seen := map[string]bool{}
+	for _, l := range links {
+		source, ok := sources[l.Path]
+		if l.Anchor == "" || !ok || !isProductionSurface(l.File) {
+			continue
+		}
+		if anchors[source] == nil {
+			b, err := read(source)
+			if err != nil {
+				return fmt.Errorf("route %q source %q: %w", l.Path, source, err)
+			}
+			anchors[source] = headingAnchors(string(b))
+		}
+		if anchors[source][l.Anchor] {
+			continue
+		}
+		if f := fmt.Sprintf("%s links %s#%s, but %s has no such heading", l.File, l.Path, l.Anchor, source); !seen[f] {
+			seen[f] = true
+			findings = append(findings, f)
+		}
+	}
+	if len(findings) > 0 {
+		sort.Strings(findings)
+		return fmt.Errorf("links open at the top of the page instead of their section; link an existing heading or the page itself:\n  %s",
+			strings.Join(findings, "\n  "))
+	}
+	return nil
+}
 
-// customerEnvRE matches the FAAS_ names customers do use: the CLI's settings
-// and the variables Gregale sets inside an app.
-var customerEnvRE = regexp.MustCompile(`^FAAS_(?:TOKEN|API|JSON|COMPLETION_CACHE_PATH|DEVELOPER_ID|DEVELOPER_ENVIRONMENT|RUNTIME|APP_ID|APP_SLUG|TENANT_ID|DEPLOYMENT_ID|DEPLOYMENT_TAG|DEPLOYMENT_CREATED_AT|INSTANCE_ID|INSTANCE_IDENTITY_FILE|NODE_ID|REGION|COMMIT_SHA|IMAGE_DIGEST|EVENT_PUBLISH_ENDPOINT|METADATA_ENV_ENDPOINT|SECRETS_[A-Z_]+|WORKLOAD_[A-Z0-9_]*)$`)
+var (
+	fenceRE       = regexp.MustCompile("^\\s*(`{3,}|~{3,})")
+	headingRE     = regexp.MustCompile(`^#{2,4}\s+(.+?)\s*#*\s*$`)
+	mdLinkRE      = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
+	anchorDropRE  = regexp.MustCompile(`[^A-Za-z0-9_\s-]`)
+	anchorSpaceRE = regexp.MustCompile(`\s+`)
+)
+
+// headingAnchors returns the ids the docs site gives a page's level 2 to 4
+// headings outside fenced code: the heading's text, lowercased, without
+// punctuation, with spaces as hyphens (slugifyHeading in the site).
+func headingAnchors(markdown string) map[string]bool {
+	out := map[string]bool{}
+	fence := ""
+	for _, line := range strings.Split(markdown, "\n") {
+		if m := fenceRE.FindStringSubmatch(line); m != nil {
+			if fence == "" {
+				fence = m[1]
+			} else if m[1][0] == fence[0] && len(m[1]) >= len(fence) {
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		m := headingRE.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		text := mdLinkRE.ReplaceAllString(m[1], "$1")
+		text = strings.NewReplacer("`", "", "*", "").Replace(text)
+		text = anchorDropRE.ReplaceAllString(strings.ToLower(strings.TrimSpace(text)), "")
+		out[anchorSpaceRE.ReplaceAllString(text, "-")] = true
+	}
+	return out
+}
 
 // checkPublishedContent refuses internal material on every page the docs
 // site serves.
@@ -322,16 +395,67 @@ func checkPublishedContent(cat catalog, read func(string) ([]byte, error)) error
 			return fmt.Errorf("route %q source %q: %w", r.Path, r.Source, err)
 		}
 		for i, line := range strings.Split(string(b), "\n") {
-			for _, m := range internalMarkerRE.FindAllString(line, -1) {
-				if customerEnvRE.MatchString(m) {
-					continue
-				}
+			for _, m := range docsmarkers.Internal(line) {
 				findings = append(findings, fmt.Sprintf("%s:%d: published page %q mentions internal %q", r.Source, i+1, r.Path, m))
 			}
 		}
 	}
 	if len(findings) > 0 {
 		return fmt.Errorf("move operator material to docs/ops/<page>-operator-notes.md (ADR-20261028200304):\n  %s",
+			strings.Join(findings, "\n  "))
+	}
+	return nil
+}
+
+// markdownLinkRE matches an inline Markdown link target.
+var markdownLinkRE = regexp.MustCompile(`\]\(([^)\s]+)`)
+
+// fencedCodeRE and inlineCodeRE match code, whose text is not links.
+var (
+	fencedCodeRE = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRE = regexp.MustCompile("`+[^`]*`+")
+)
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// checkRelativeLinks requires every relative link on a published page to name
+// a file that exists. The docs site maps a link to a published page's source
+// onto that page and any other file onto GitHub, so `[Jobs](jobs)` (no `.md`)
+// shipped as a GitHub 404 in llms-full.txt from crons.md, event-driven.md and
+// edge-rules.md.
+func checkRelativeLinks(cat catalog, read func(string) ([]byte, error), exists func(string) bool) error {
+	var findings []string
+	seen := map[string]bool{}
+	for _, r := range cat.Routes {
+		if r.Source == "" || r.Unpublished != "" || seen[r.Source] {
+			continue
+		}
+		seen[r.Source] = true
+		b, err := read(r.Source)
+		if err != nil {
+			return fmt.Errorf("route %q source %q: %w", r.Path, r.Source, err)
+		}
+		text := fencedCodeRE.ReplaceAllStringFunc(string(b), func(block string) string {
+			return strings.Repeat("\n", strings.Count(block, "\n"))
+		})
+		for i, line := range strings.Split(text, "\n") {
+			line = inlineCodeRE.ReplaceAllString(line, "")
+			for _, m := range markdownLinkRE.FindAllStringSubmatch(line, -1) {
+				target, _, _ := strings.Cut(m[1], "#")
+				if target == "" || strings.HasPrefix(target, "/") || strings.Contains(target, ":") {
+					continue
+				}
+				if p := filepath.Join(filepath.Dir(r.Source), target); !exists(p) {
+					findings = append(findings, fmt.Sprintf("%s:%d: link %q names no file (%s)", r.Source, i+1, m[1], p))
+				}
+			}
+		}
+	}
+	if len(findings) > 0 {
+		return fmt.Errorf("published pages link to missing files; link the source file, e.g. jobs.md:\n  %s",
 			strings.Join(findings, "\n  "))
 	}
 	return nil

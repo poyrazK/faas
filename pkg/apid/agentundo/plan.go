@@ -104,6 +104,10 @@ func (e *Engine) applyOne(ctx context.Context, base *http.Request, acct state.Ac
 		e.applyDeployOne(ctx, base, acct, p, force, blocked, item)
 		return
 	}
+	if p.inv.Traffic != nil {
+		e.applyTrafficOne(ctx, base, acct, p, force, blocked, item)
+		return
+	}
 	same, revision := e.check(ctx, base, acct, p.chk)
 	if !same && !force {
 		blocked[resource] = true
@@ -312,6 +316,9 @@ func (e *Engine) check(ctx context.Context, base *http.Request, acct state.Accou
 			return true, revision
 		}
 		return e.sameVariables(ctx, base, acct, chk.Path, newest, chk.AfterRevision), revision
+	case CheckTraffic:
+		now, ok := e.currentSplit(ctx, base, acct, chk.App)
+		return ok && sameSplit(now, chk.Split), nil
 	}
 	return false, nil
 }

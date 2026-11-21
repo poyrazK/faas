@@ -25,7 +25,7 @@ var cliTreeVerbs = []string{
 	"abandon", "activate", "deactivate", "adopt", "allow", "assign", "attach", "detach",
 	"authorize", "bind", "unbind", "rebind", "capture", "clear", "close", "compare", "configure",
 	"confirm", "copy", "correlate", "diagnose", "dismiss", "download", "upload", "drain", "drop",
-	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install",
+	"enroll", "evaluate", "export", "import", "finalize", "grant", "ignore", "init", "install", "integrate",
 	"invite", "investigate", "lift", "lock", "merge", "minimize", "onboard", "prepare", "protect",
 	"unprotect", "qualify", "reconcile", "reconnect", "refresh", "rehearse", "reopen", "require",
 	"resize", "resync", "retire", "revoke", "review", "scan", "split", "start", "stop", "subscribe",
@@ -39,6 +39,8 @@ var cliTreeVerbs = []string{
 	"branch",
 	// undo: reverse what an agent changed (ADR-20261112080601).
 	"undo",
+	// deny: refuse a hosted agent run's call (ADR-20261027090016 amendment 2).
+	"deny",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -63,7 +65,7 @@ var cliTreeCompoundWords = []string{
 	"data-api", "rule-list", "egress-allowlist", "egress-ports", "static-egress-ip",
 	"port-forward", "wake-ahead", "wake-timeline", "streaming-cap", "spend-cap", "upload-cache",
 	"object-lock", "subscription-version", "subscription-retry", "subscription-circuit",
-	"subscription-capacity", "lock-policy", "deploy-token",
+	"subscription-capacity", "lock-policy", "deploy-token", "tool-connection", "tool-grant", "tool-publication",
 	"billing-run", "billing-policy", "rate-card", "overdue-hold", "event-recovery", "failure-recovery", "recovery-policy", "recovery-response", "deadline-alert", "notification-retry", "recovery-notification", "release-sets", "compute-policy",
 	"quality-alert", "probe-policy", "release-policy", "object-storage", "copy-source", "attack-mode",
 	"grace-window", "payment-method", "server-key", "egress-overage",
@@ -102,7 +104,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 	enableEveryCLIFeature(t)
 	nouns := map[string]bool{}
 	for _, noun := range *main.CliTreeNouns {
-		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" {
+		// postgres and redis are product names, not plurals.
+		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" && noun.Name != "redis" {
 			t.Errorf("noun %q must be singular", noun.Name)
 		}
 		nouns[noun.Name] = true
@@ -233,8 +236,7 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"alert pagerduty get --app api", "mcp readiness pagerduty get --app api"},
 		{"job lock-policy set exports --file p.json", "operations policy upsert exports --file p.json"},
 		{"admin sites list", "sites list"},
-		{"admin postgres reconcile acct-1", "postgres reconcile acct-1"},
-		{"admin credit --reason x", "admin credit --reason x"},
+		{"admin postgres live", "postgres live"},
 		{"dashboard list", "dashboards list"},
 		{"dashboard", "dashboard"},
 		{"--version", "--version"},

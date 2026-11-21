@@ -10,7 +10,7 @@
 
 `@gregale/sdk-node` exposes generally available and beta capabilities only:
 the client generated from `sdk/openapi.yaml` and the helpers for those
-capabilities (`FaaSClient`, error sentinels, idempotency, SSE, webhook and
+capabilities (`createClient`, legacy `FaaSClient`, error sentinels, idempotency, SSE, webhook and
 service-caller verification, release context). The `./browser`,
 `./secrets/runtime` and `./workflows` subpaths are part of it too.
 
@@ -28,17 +28,18 @@ webhook requests. See
 [`docs/webhook-receiver-verification.md`](../../docs/webhook-receiver-verification.md)
 for usage and delivery-ID deduplication guidance.
 
-> **Heads-up: publish state.** The manifest name is now the conventional
-> scoped form `@gregale/sdk-node`. It was previously `gregale` + `/skd-node`
-> — a typo that npm rejects outright, since an unscoped name may not contain
-> a slash. `private` is cleared and the `repository` field is set. `publishConfig.access` stays `restricted` until the licensing
-> question in [`sdk/README-publishing.md`](../README-publishing.md) is
-> settled — the current LICENSE is proprietary and non-redistributable.
-> **Nothing is on the public npm registry yet.**
+> **Publication:** this client SDK is Apache-2.0 licensed and configured for
+> public npm access. It is not published to npm yet. Use the installation
+> steps below; [SDK publishing](../README-publishing.md) tracks release setup.
 >
 > **Heads-up: pre-1.0.** Version `0.1.0` is the pre-1.0 signal. The
 > public API may shift between `0.x` releases. Pin to an exact version
 > in your `package.json` until `1.0.0` ships.
+
+Typed application CloudEvents can start durable Job pipelines through the
+preview SDK, with generated payload types, current owner authorization and
+shared Node/Python start receipts. See [event-triggered pipelines](../../docs/sdk-event-pipelines.md)
+and the [reviewed CSV example](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
 
 ## Requirements
 
@@ -50,19 +51,15 @@ for usage and delivery-ID deduplication guidance.
 
 ## Install
 
-Once the package is published:
-
-```sh
-npm install @gregale/sdk-node
-```
-
-**Today it is not published yet**, so install from a locally built tarball.
+Install from a pinned checkout of the public SDK repository.
 npm cannot install a package from a subdirectory of a git repo, and `dist/`
 is a build artifact that is not committed.
 
 ```sh
 git clone https://github.com/gregale-dev/gregale-js.git
-cd gregale-js/packages/sdk-node
+cd gregale-js
+git checkout <commit>
+cd packages/sdk-node
 npm ci && npm run build
 npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 
@@ -70,9 +67,35 @@ cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
 
+Replace `<commit>` with the full SHA of the SDK revision you reviewed. Commit
+the tarball inside your project and the updated lockfile for reproducible
+builds; see [Install the SDKs](../../docs/sdks.md#node). Maintainers can also
+obtain a verified tarball from the `sdk-mirror` workflow's
+`sdk-install-gregale-js` artifact, with its checksum in `sdk-install.json`.
+
+### First request
+
+Use your existing credential through `FAAS_TOKEN`, never a literal in source:
+
+<!-- sdk-install-quickstart:start -->
+```js
+import { AccountService, FaaSClient } from '@gregale/sdk-node';
+
+const client = new FaaSClient(process.env.FAAS_API ?? 'https://api.gregale.dev', {
+  token: process.env.FAAS_TOKEN,
+});
+try {
+  const account = await AccountService.getAccount();
+  console.log(account.plan);
+} finally {
+  client.uninstall();
+}
+```
+<!-- sdk-install-quickstart:end -->
+
 ## PostgreSQL pools across checkpoint, restore and thaw
 
-The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+The `@gregale/sdk-node/preview/postgres/runtime` subpath exports `createPostgresPool`,
 `postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
 runtime has no control-plane client or driver dependency, and does not install
 process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
@@ -200,15 +223,15 @@ Native listener qualification remains pending; see the
 ## Quick start
 
 ```ts
-import { FaaSClient, AppsService, ErrNotFound } from '@gregale/sdk-node';
+import { createClient, ErrNotFound } from '@gregale/sdk-node';
 
-const client = new FaaSClient('https://api.example.com', {
+const client = createClient('https://api.example.com', {
   token: process.env.FAAS_TOKEN!,
   retry: { maxAttempts: 3, backoffMs: 100 },
 });
 
 try {
-  const app = await AppsService.getApp({ slug: 'hello' });
+  const app = await client.apps.getApp({ slug: 'hello' });
   console.log(app.url);
 } catch (err) {
   if (err instanceof ErrNotFound) {
@@ -225,6 +248,739 @@ parsed RFC 7807 `Problem` envelope, the HTTP status, and the daemon's
 `tx_id` for support tickets. Any other problem (a 400 `validation_failed`,
 a 409, a 422 or a 500) is thrown as the base `FaasError`: test it with
 `isFaasError(err)` and read `err.problem.code`.
+
+### Independent clients and migration
+
+Use `createClient` for concurrent developers, agents, accounts, or endpoints in
+one Node process. Each client owns its token, base URL, retry policy, timeout,
+logger, transport, and default idempotency key. It never changes `OpenAPI` or
+`globalThis.fetch`. The default transport is the platform fetch captured when
+the SDK loads; pass `fetch` explicitly to use your own instrumentation or proxy.
+
+```ts
+import { createClient } from '@gregale/sdk-node';
+
+const alice = createClient('https://api.example.com', { token: aliceToken });
+const bob = createClient('https://api.example.com', { token: bobToken });
+const [aliceApp, bobApp] = await Promise.all([
+  alice.apps.getApp({ slug: 'alice-app' }),
+  bob.apps.getApp({ slug: 'bob-app' }),
+]);
+
+alice.setToken(rotatedAliceToken);
+alice.setBaseURL('https://other.example.com');
+```
+
+Service namespaces remove `Service` and lowercase the first letter:
+`AppsService` becomes `client.apps`, `ManagedPostgresService` becomes
+`client.managedPostgres`. Method arguments, response types, typed errors,
+binary downloads, and `.cancel()` are unchanged. Detached methods retain their
+client binding. Configuration changes apply to future calls; requests already
+started, including retries, keep their original configuration. Base URLs accept
+HTTP(S) and optional path prefixes, without embedded credentials, query, or fragment.
+
+| Existing caller | Isolated caller |
+| --- | --- |
+| `new FaaSClient(url, options)` | `createClient(url, options)` |
+| `AppsService.getApp({ slug })` | `client.apps.getApp({ slug })` |
+| `client.setToken(token)` | `client.setToken(token)` |
+| Shared `OpenAPI.BASE` | `client.setBaseURL(url)` |
+| `client.install()` / `client.uninstall()` | No installation lifecycle needed |
+
+`FaaSClient` is deprecated but remains available with its existing process-wide
+behavior. Existing static imports continue working. Migrate one caller at a
+time: isolated clients can run alongside the legacy singleton, including while
+it installs or removes its fetch wrapper. Keep at most one legacy singleton.
+
+For the complete generated surface, import `createClient` from
+`@gregale/sdk-node/preview`; the default factory retains the GA/beta boundary.
+The preview factory also binds `client.runExecution(...)` and
+`client.watchExecution(...)` to the client. Standalone execution exports and
+other helpers that read shared `OpenAPI` retain the legacy singleton contract;
+use bound client methods for isolated requests. Helpers with explicit
+authentication options keep their own contract.
+
+Mutations receive a fresh key per logical call, reused across retries. Prefer
+the method's `idempotencyKey` option when available. `setIdempotencyKey(key)`
+pins an instance default for resuming one operation, and
+`setIdempotencyKey(undefined)` clears it. Explicit request keys take precedence.
+Use a distinct key for every independent mutation, especially concurrent ones.
+
+### Per-request options and response diagnostics
+
+Bound generated methods from both factories accept an optional second
+`RequestOptions` argument. Existing calls and `CancelablePromise` return types
+remain valid. Keep API parameters in the first argument:
+
+```ts
+import { createClient, type ResponseInfo } from '@gregale/sdk-node';
+
+const responses: ResponseInfo[] = [];
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_TOKEN,
+  onResponse: info => { responses.push(info); },
+});
+const app = await client.apps.getApp({ slug: 'hello' }, {
+  signal: AbortSignal.timeout(5000),
+  timeoutMs: 3000,
+  retry: false,
+  onResponse: info => { console.log(info.requestId, info.status); },
+});
+// Methods without API parameters use undefined in the first slot.
+const account = await client.account.getAccount(undefined, { timeoutMs: 1000 });
+```
+
+`signal` stops this call with the caller's abort reason. `timeoutMs` overrides
+the client timeout for this call; ordinary requests default to 30 seconds.
+The total budget covers asynchronous header resolution, fetch, all retry
+attempts and backoff, and response body consumption. A deadline rejects with
+`TimeoutError`. Accept integers from 0 through 2147483647; zero disables the
+deadline. `.cancel()` retains its existing `CancelError` contract. Options and
+retry policies are copied at invocation, so concurrent calls keep separate
+budgets and policies. `retry: false` disables HTTP retries for one call;
+`retry: { maxAttempts: 3, backoffMs: 100 }` overrides the client policy.
+
+Cancellation stops local work. It does not prove a mutation was rolled back
+on the server. Retain the operation's idempotency key and reconcile uncertain
+outcomes before retrying a write.
+
+Client and per-call `onResponse` observers both receive the same frozen
+`ResponseInfo` for each HTTP response, including intermediate retry responses:
+
+| Field | Meaning |
+| --- | --- |
+| `requestId` | UUIDv4 from `X-Request-ID`, or `null` when missing or invalid |
+| `status` | HTTP status, before body decoding |
+| `attempt` | One-based attempt number within this HTTP call |
+| `durationMs` | Monotonic time for this attempt until response headers; excludes body reads and backoff |
+
+Metadata contains no URL, credentials, body, or arbitrary headers. A response
+event does not indicate that body decoding or the operation completed.
+Failures without a response emit no event, and late custom-fetch responses
+after a scoped call was cancelled are discarded. Observers are not awaited;
+their exceptions and rejected promises do not affect the request.
+
+The second argument applies to isolated generated namespaces such as
+`client.apps` and `client.runs`. Legacy static services keep their existing
+signatures. Bound `runExecution` and `watchExecution` keep their own options;
+the client-wide observer also covers their submission, SSE connection, and
+receipt responses.
+
+### Lazy deployment and build pagination
+
+Both isolated factories expose typed async iterators on `client.deployments`:
+
+| List | Item iterator | Page iterator |
+| --- | --- | --- |
+| App deployments | `iterateAppDeployments({ slug, ... })` | `iterateAppDeploymentPages({ slug, ... })` |
+| Account deployments | `iterateDeployments(params?)` | `iterateDeploymentPages(params?)` |
+| Builds | `iterateBuilds(params?)` | `iterateBuildPages(params?)` |
+
+```ts
+const deployments = client.deployments.iterateAppDeployments(
+  { slug: 'api', limit: 50 },
+  { signal: AbortSignal.timeout(60_000), timeoutMs: 30_000, maxPages: 10, maxItems: 200 },
+);
+// No request has been sent yet.
+for await (const deployment of deployments) {
+  console.log(deployment.id);
+  if (deployment.status === 'live') break;
+}
+
+for await (const page of client.deployments.iterateBuildPages(
+  { app: 'api', status: 'failed', limit: 50 },
+  { maxPages: 5 },
+)) {
+  await saveBuildPage(page.items);
+  // Persist only after consuming the entire page, together with its filters.
+  await saveCursor(page.next_before);
+}
+```
+
+Each iterator captures its endpoint, token, filters, and options when created.
+It fetches only when `next()` needs another page, without prefetching. Item
+iterators exhaust a page before fetching another; page iterators preserve the
+generated `DeploymentListResponse` or `BuildListResponse` envelope. Existing
+`listAppDeployments`, `listDeployments`, and `getBuilds` still return a single
+`CancelablePromise` page, and legacy static services retain their surface.
+
+`PaginationOptions` accepts `signal`, `retry`, and `onResponse` as above.
+Here `timeoutMs` is one total traversal budget starting at the first `next()`,
+including requests, retry waits, body reads, and time spent processing items.
+It defaults to the client timeout or 30 seconds; zero disables it. An expired
+budget rejects with `TimeoutError`; caller abort retains its reason. Between
+requests, no timer or caller event listener is kept active: buffered iteration
+checks cancellation and expiry on the next `next()`. Breaking a loop or calling
+`return()` closes the iterator; closing also aborts an outstanding page request.
+
+`maxPages` and `maxItems` are optional nonnegative safe integers. Zero fetches
+nothing. Page limits include empty pages; HTTP retry attempts do not count as
+extra pages. Item limits reduce the requested page size to the remaining
+budget, so a page is never sliced while retaining a cursor past omitted rows.
+The API `limit` remains the page size (1–200, default 50).
+
+Cursors are opaque: pass a saved `next_before` as `before`, with the same
+filters. Empty pages with a cursor advance; an absent, null, or empty cursor
+ends traversal. `PaginationError` reports `repeated_cursor` for a cycle and
+`invalid_page` for an invalid envelope or an oversized server page. It excludes
+cursor values and response bodies. HTTP errors propagate without resetting the
+cursor or restarting the walk. Response observers run for each HTTP attempt;
+their attempt count restarts on each page.
+
+Lists are live retained reads, not a snapshot of the account. Limits can stop a
+walk before the server's end. Resume from a saved cursor only after its entire
+page has been processed; stopping partway through an item page does not create
+a resumable item checkpoint.
+
+### Build and deployment waiters
+
+Both isolated factories expose `client.deployments.waitForBuild({ id }, options)`
+and `waitForDeployment({ id }, options)`. They observe an existing resource ID
+and return a `Promise<BuildResponse>` or `Promise<ReleaseTimeline>`:
+
+```ts
+import { createClient, WaiterError } from '@gregale/sdk-node';
+
+const client = createClient('https://api.example.com', { token: process.env.GREGALE_TOKEN });
+const build = await client.deployments.waitForBuild({ id: buildId }, {
+  timeoutMs: 120_000,
+  signal: AbortSignal.timeout(120_000),
+  maxPolls: 60,
+  onProgress: (value, progress) => {
+    console.log(progress.poll, value.status);
+  },
+});
+
+try {
+  const timeline = await client.deployments.waitForDeployment({ id: deploymentId }, {
+    timeoutMs: 300_000,
+  });
+  console.log(timeline.phase, timeline.traffic_percent);
+} catch (error) {
+  if (error instanceof WaiterError && error.code === 'blocked') {
+    // Inspect error.lastObserved for the hold or approval requirement.
+    // Resume by calling the waiter again with the same deployment ID.
+  } else throw error;
+}
+```
+
+`timeoutMs` is required: a positive integer from 1 through 2147483647. One
+monotonic budget starts at invocation and covers header resolution, HTTP retries,
+body reads, polling delays, and awaited progress callbacks. This explicit budget
+overrides the client timeout for status reads. `signal` preserves the caller's
+abort reason. Caller cancellation stops observation; resource cancellation is a
+separate API operation.
+
+Poll immediately, then use exponential delays with jitter. `minDelayMs` defaults
+to 1000 and `maxDelayMs` to 5000; both are positive integer milliseconds, with
+minimum no greater than maximum. `maxPolls` optionally caps status reads with a
+positive safe integer. HTTP retry attempts stay within a poll. The existing
+`retry` and `onResponse` policies apply to each status read; ordinary HTTP errors
+and network failures stop the waiter when the configured HTTP policy is exhausted.
+
+| Observation | Outcome |
+| --- | --- |
+| Build queued or running | Continue polling |
+| Build succeeded | Return the build |
+| Build failed or cancelled | Reject with the matching `WaiterError.code` |
+| Release building, scheduled, rolling out, or watching | Continue polling |
+| Release awaiting approval or held | Reject with `blocked`; set `stopOnBlocked: false` to keep observing |
+| Release failed, cancelled, rolled back, or superseded | Reject with the matching failure code |
+| Release released, live, and serving positive traffic | Return the timeline, unless it records a watch regression |
+
+A recorded `watch_regressed` event rejects with `regressed`, including when
+automatic rollback left the release serving. A released deployment without
+positive live traffic rejects with `not_serving`. The returned timeline describes
+this release and its traffic share. Use separate health or traffic checks for
+application-specific readiness requirements.
+
+`WaiterError` carries `code`, `resource`, `id`, `polls`, and a deeply frozen
+`lastObserved` snapshot. Budget expiry uses code `timeout` and name `TimeoutError`;
+poll exhaustion uses `poll_limit`. Missing/mismatched resource identities and
+invalid state fields produce `invalid_response`; unknown states produce
+`unexpected_state`. Invalid observations never replace the last valid snapshot.
+HTTP errors, progress-callback exceptions, and caller abort retain their original
+identity.
+
+`onProgress(snapshot, { poll, elapsedMs })` runs for every valid observation,
+including terminal states. Its deeply frozen snapshot is separate from the
+returned result. Async callbacks are awaited within the deadline; after timeout
+or cancellation a late callback completion cannot cause another read. Callback
+work itself remains owned by the caller. Each waiter captures its client config
+and copied options at invocation, so concurrent waits and credential/endpoint
+rotation remain isolated. Existing generated methods and static services retain
+their signatures.
+
+## Typed background jobs and batches
+
+Define a version-1 `job.json` contract with `name`, `input` and `output` schemas
+for an existing Jobs template. Generate input/output types:
+
+```sh
+gregale-job-types job.json typescript job.generated.ts
+# The same command also supports python output.
+```
+
+```ts
+import { createClient, parseJobCheckpoint } from '@gregale/sdk-node';
+import { contract } from './job.generated.js';
+const job = createClient(apiURL, { token }).jobs.defineJob(contract);
+const run = await job.submit([{ id: 'import-42:row-1', value: input }], {
+  timeoutMs: 30_000, idempotencyKey: 'import-42', parallelism: 2, retryMax: 0,
+});
+// Persist before following. No payloads, SDK token or signed URLs are included.
+const saved = JSON.stringify(run.checkpoint);
+const resumed = job.resume(parseJobCheckpoint(JSON.parse(saved)));
+// With only the run ID, reconstruct a checkpoint through owned, bounded reads:
+const attached = await job.resumeById(run.checkpoint.run_id, { timeoutMs: 30_000 });
+const progress = await resumed.wait({ timeoutMs: 120_000, onProgress: console.log });
+for (const item of await resumed.results({ timeoutMs: 30_000 })) {
+  if (item.outcome === 'succeeded') useTypedResult(item.result);
+}
+const retry = await resumed.retryFailed({ timeoutMs: 30_000, idempotencyKey: 'import-42-replay' });
+```
+
+`submit` sends one mutation with the explicit stable key. `acceptance_unknown`
+means a request may have created a run; never replace its key automatically.
+The server retains keys for 24 hours. An interrupted/cancelled submit may also
+leave an accepted run. Use the same logical input/key for explicit recovery in
+that window. `status`, `wait` and `results` validate the exact account/job/run,
+contract fingerprint, input references and replay lineage. `retryFailed` uses the
+native atomic replay endpoint and image guard; successful inputs stay complete.
+
+`wait` returns native aggregate progress (`queued`, `running`, `succeeded`,
+`failed`, `cancelled`, `dead_letter`). `results` returns per-item outcomes,
+including `invalid_result` when bytes are missing, corrupt or schema-invalid.
+Managed artifacts use separate signed GETs, with no SDK token, cookies or
+redirects, and checksums verified again after downloading. External s3/gs
+artifacts require an explicit `JobStore` adapter.
+
+All operations need a positive total `timeoutMs`; a caller `signal` aborts local
+work. Local wait cancellation/deadlines do not cancel the remote job. Use
+`run.cancel({timeoutMs: 10_000})` explicitly. Defaults: 100 polls, 1s poll delay,
+256 API requests, 100 task pages and 1000 items. These are SDK processing budgets;
+server plan/admission limits still apply. Responses and result envelopes are
+bounded to 1 MiB. Signed data reads are bounded by the per-item manifest size.
+
+Runtime helpers are available from `@gregale/sdk-node/jobs/runtime`:
+`runLocalJobBatch(contract, inputs, handler, {timeoutMs, concurrency, maxAttempts})`
+runs without a control-plane client; retries default to one attempt.
+`runJobTask(contract, handler, {timeoutMs, store})` reads the native task identity,
+validates inputs/outputs, uploads result bytes and writes the native output
+manifest. Exit unsuccessfully after an error; the host publishes success after
+successful process exit. Handler context carries a stable `inputId`, `attempt`
+and cooperative `signal`. Enforce idempotent application effects using that ID;
+execution is at least once. Cancellation does not undo committed writes.
+
+The schema subset supports closed objects (`properties`, `required`,
+`additionalProperties: false`), arrays/items, strings, finite numbers, safe
+integers, booleans, null, primitive enums and length/item/numeric bounds. Unknown
+keywords (including `$ref` and `pattern`) are refused. Small inputs fit native
+opaque references; larger inputs use a caller-owned immutable store with digest
+verification. Store adapters own their credentials and cooperative I/O. The
+`localJobStore(directory)` adapter is for tests, with synthetic s3 references.
+
+See the [CSV import example](../../examples/sdk-csv-jobs/README.md) for schemas,
+generated types, PostgreSQL writes, rejection reports and failed-only recovery.
+
+
+Small typed inputs are encoded in the native job history’s `input_ref`. For data
+that should stay in an application-owned store, model an object reference in the
+input schema and fetch it in the handler. Checkpoint files retain only digests
+and identities. Numeric enum values are restricted to safe integers.
+
+## Verify exact project deployments
+
+After apply or recovery, verify release evidence and your application's behavior:
+
+```ts
+import { projectVerificationTarget, parseProjectVerificationTarget } from '@gregale/sdk-node';
+const target = await projectVerificationTarget(application);
+// Save JSON.stringify(target) privately; another process can parse the same IDs.
+const restored = parseProjectVerificationTarget(JSON.parse(savedTarget));
+const report = await client.projects.verifyApplication(restored, {
+  timeoutMs: 120_000, maxPolls: 20, pollDelayMs: 2_000, concurrency: 2,
+  checks: [{ name: 'api-smoke', workload: 'shop-api', async run(context) {
+    // Supply an application URL/auth independently. No SDK credentials are forwarded.
+    const response = await fetch(applicationURL, { signal: context.signal, redirect: 'error' });
+    const body = await response.json(); // Bound application response size in production.
+    return { outcome: body.ok ? 'verified' : 'failed', deployment_id: body.deployment_id };
+  }}],
+});
+```
+
+You can also pass the `ProjectApplicationResult` directly. The portable target
+requires an endpoint, project, environment and exact app/deployment identities;
+see the complete [API/worker/PostgreSQL example](../../examples/sdk-project-application).
+`verified` means the supplied checks and current platform evidence passed.
+`failed`, `blocked` and `inconclusive` retain per-service codes, request IDs,
+health timestamps, bounded release events and suggested next actions. Mixed or
+older serving releases, expired telemetry, absent permissions and missing IDs do
+not produce success. No automatic repair or rollout occurs.
+
+Checks are read-only, repeatable and required by default. Return the deployment ID
+actually observed; echoing the expected ID without observing it proves nothing.
+An unsupported worker needs an identity-aware smoke check. Set
+`requireSmokeChecks: false` explicitly for HTTP platform-health-only checks;
+workers still need functional evidence. Unknown/failed callbacks are inconclusive.
+
+A positive `timeoutMs` bounds reads, delays, checks and progress. `signal` cancels
+and rejects with its reason; a deadline returns a partial report with code
+`deadline`. Defaults: 3 polls per service, 1s delay, 2 concurrent services,
+256 reads, 256 KiB per response and telemetry age at most 120s (also server TTL).
+Limits are configurable within bounded ranges; retries are disabled for these
+reads. `onProgress` receives frozen per-service observations; callback errors use
+`progress_failed`. Synchronous callbacks must return promptly.
+
+Diagnostic text is omitted by default. To include failure reasons and persisted
+log excerpts, pass `redact: text => removeApplicationSecrets(text)`. This is your
+redaction policy: output is capped at 20 strings × 512 characters per service,
+inputs over 4096 characters are omitted; a throwing redactor omits that string.
+Reports are never saved automatically. Treat log contents as untrusted evidence.
+
+
+### Preview and apply a complete project
+
+`client.projects.previewLocal` prepares the full repository and asks the server
+for its authoritative project plan. It returns a deeply immutable
+`ReviewedProjectPlan` containing source identity, target environment, workload
+changes, managed-service requirements, warnings, quota blockers and the opaque
+review token. This helper supports account-owned local projects on public and
+preview clients. The generated organization and source-ref methods remain
+available separately.
+
+```ts
+import { createClient, parseReviewedProjectPlan } from '@gregale/sdk-node';
+import { writeFile, readFile } from 'node:fs/promises';
+
+const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const plan = await client.projects.previewLocal({
+  directory: './my-project', projectSlug: 'shop',
+  appSlugs: { api: 'shop-api', worker: 'shop-worker' },
+}, { timeoutMs: 120_000 });
+await writeFile('../shop.plan.json', JSON.stringify(plan), { mode: 0o600 });
+// Inspect plan.preview before explicitly applying it.
+const options = { statePath: '../shop.apply.json', timeoutMs: 1_200_000 };
+const result = await client.projects.applyPlan(plan, options);
+// Another process can load the reviewed intent without the original source.
+const restored = parseReviewedProjectPlan(JSON.parse(await readFile('../shop.plan.json', 'utf8')));
+const recovered = await client.projects.resumePlanApplication(restored, options);
+```
+
+Preview performs no resource reconciliation or build enqueue. `environment`,
+`only`, `noTriggers` and `appSlugs` bind the selection through the server's token.
+Apply submits that exact retained archive without another upload. The server
+rechecks ownership, permissions, quotas, configuration and environment approval.
+Cached source normally expires after one hour. `preview_expired` and `plan_stale`
+require another preview and a new journal; the SDK never refreshes a review or
+changes its selection automatically.
+
+`ProjectApplyOptions` requires a private journal path and a positive total
+`timeoutMs`. `initialSecrets` maps exact selected workload names to environment
+values; `approvalToken` forwards an existing protected-environment approval.
+These transient values remain in memory and never enter the plan, progress or
+journal. The journal records endpoint, target, plan fingerprint, attempt ID and
+phase, using atomic 0600 writes. Keep the journal outside the source tree when
+planning future revisions. `loadProjectApplicationState` reads it safely.
+
+The attempt is saved before POST and automatic HTTP retries are disabled for
+both preview and apply. After an uncertain apply, or a restart from `applying`,
+recovery reads `/v1/project-submissions/{attempt}` without another mutation. A
+missing receipt stays `acceptance_unknown`; even a crash between saving intent
+and sending the POST never causes a blind resubmit. Servers must support the
+optional `Deployment-Attempt-ID` header on cached apply; a response without the
+matching durable identity is treated as uncertain. Existing cached-apply callers
+without that header retain their behavior.
+
+Results expose `succeeded`, `partial`, `failed` or `blocked`, with immutable
+per-service outcomes and accepted deployment/build IDs. Image deployments may
+have no build ID. Missing selected results remain `unknown`; enqueue and
+post-acceptance failures stay visible. Receipts are sparse acceptance records;
+use `plan.preview` for the full review. Release observation uses the existing
+waiters and does not replace application-specific end-to-end checks.
+
+One deadline covers preparation, requests, callbacks, receipt polling and every
+service waiter. `signal` cancels it; `maxReceiptPolls` bounds receipt reads and
+`wait.maxPolls` bounds each service's timeline reads. `onProgress` reports the
+phase, attempt and service without configuration values. Each call snapshots
+client configuration, and concurrent writers to the same journal are rejected
+within a process; coordinate multiple processes externally.
+
+See [the API/worker/PostgreSQL example](../../examples/sdk-project-application/README.md)
+for both language drivers and process-restart recovery.
+
+### Inspect and deploy an existing project
+
+`inspectProject(directory, options?)` reads local configuration without running
+project code. It returns an immutable `ProjectPlan` with the selected context and
+source roots, app target, framework, function runtime/handler, Docker build
+summary, candidate workspaces/functions, setting origins and typed issues.
+Both the public and preview Node entry points export it.
+
+```ts
+import { createClient, inspectProject, parseProjectPlan } from '@gregale/sdk-node';
+import { writeFile } from 'node:fs/promises';
+
+const project = await inspectProject('./apps/api', { appSlug: 'api' });
+if (project.issues.some(issue => issue.severity === 'error')) {
+  throw new Error(JSON.stringify(project.issues));
+}
+// Save the reviewed intent outside the repository for process recovery.
+await writeFile('../project-plan.json', JSON.stringify(project));
+const client = createClient(process.env.FAAS_API!, { token: process.env.FAAS_TOKEN });
+const options = { statePath: '../deployment.json', timeoutMs: 120_000 };
+const result = await client.deployments.deployProject(project, options);
+// After a restart, deserialize the original plan and use the same journal.
+const restored = parseProjectPlan(JSON.parse(JSON.stringify(project)));
+const resumed = await client.deployments.resumeProjectDeployment(restored, options);
+```
+
+Discovery honors `gregale.yaml` before `gregale.yml`, the CLI's Docker > Node >
+Python > Go marker priority, function declarations and conventional handlers.
+It recognizes npm/pnpm, Turbo, Nx, Go and Cargo workspace declarations. A declared
+member retains repository build context and selects a relative `sourceRoot`.
+At a workspace root, choose `sourceRoot` explicitly (including `'.'`). For
+`functions[]`, choose `functionName` when several functions exist. Explicit
+`appSlug`, `runtime`, `handler` and `dockerfile` options override discovery;
+`contextRoot` supplies a boundary when Git discovery is unsuitable. No remote
+app is inferred from a directory name. Set `appSlug` or `project.app` to deploy.
+
+`issues` distinguish invalid declarations, path escapes, missing inputs,
+ambiguous choices, unsupported settings and deferred validation. Root resource
+sections produce warnings because source submission does not reconcile resources.
+Function-list resource settings and TOML deployment manifests require the CLI
+and block project deployment in this version. The Docker summary exposes argument
+names and secret IDs, never their values or secret references; the original
+manifest travels in the source archive for server validation.
+
+The plan fingerprints inspected configuration and directory membership. Project
+workflows validate it before and after packing, reject excluded build inputs,
+and bind its fingerprint to the durable journal. Store the plan, journal and
+archive outside the inspected project. Resume with the original plan: once an
+archive is prepared, it remains the deployment intent even if source files have
+changed or disappeared. A changed plan cannot reuse that journal. Existing
+`deploySource` callers keep their explicit behavior; advanced callers can pass
+`project` in their workflow options with matching resolved deployment metadata.
+Selected functions get transport-only manifests and, when needed, a Go module
+inside the archive; SDKs never rewrite the customer worktree.
+
+Inspection defaults to a 120-second deadline and at most 40,000 directory entries,
+64 levels, 1 MiB per input and bounded YAML expansion. `timeoutMs`, `signal` and
+`maxEntries` can reduce these budgets. Workspace traversal skips dot directories,
+`node_modules`, `vendor`, `dist`, `target`, `coverage` and Python caches. It does
+not install dependencies, run hooks, build, contact the API or validate every
+server resource schema. `validateProjectPlan` checks saved input identity;
+`projectDeployOptions` returns the resolved source-deployment metadata.
+
+### Resumable source deployment workflows
+
+`client.deployments.deploySource(input, options)` prepares a directory, uploads
+its archive, commits it and observes the existing app's release. One durable
+journal identifies one deployment intent. Calling again with the same journal
+resumes that intent; use a new state path for each intentionally new deployment.
+
+```ts
+import { createClient, type SourceDeploymentOptions } from '@gregale/sdk-node';
+import { mkdir } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+
+const client = createClient(process.env.GREGALE_API_URL!, {
+  token: process.env.GREGALE_TOKEN,
+});
+const artifacts = resolve('..', '.gregale-artifacts');
+await mkdir(artifacts, { recursive: true });
+const input = { directory: '.', appSlug: 'api', deployOptions: { source_root: 'apps/api' } };
+const options: SourceDeploymentOptions = {
+  statePath: join(artifacts, 'api-deploy.json'),
+  timeoutMs: 300_000,
+  preparation: { maxBytes: 100 * 1024 * 1024 },
+  wait: { maxPolls: 300 },
+  onProgress: event => console.log(event.phase, event.elapsedMs),
+};
+const result = await client.deployments.deploySource(input, options);
+console.log(result.outcome, result.deploymentId, result.timeline.summary);
+
+// After interruption, with the same app, metadata and preparation policy:
+const resumed = await client.deployments.resumeSourceDeployment({
+  appSlug: input.appSlug, deployOptions: input.deployOptions,
+}, options);
+```
+
+The state parent must already exist outside the source context. Archives are
+kept beside the journal for recovery. Before transfer, the journal records the
+archive hash and stable upload/commit identities. Once prepared, resume reuses
+that archive rather than repacking changed source. Once committing or accepted,
+recovery needs neither source nor archive; it reads the acceptance receipt and
+observes the same deployment ID. `resumeSourceDeployment` fails for a missing
+journal. `loadSourceDeploymentState(path)` returns its validated immutable state.
+
+Reuse the same endpoint, app, deployment option values and preparation selection
+policy. `sourceRoot` comes from `deployOptions.source_root`. Runtime budgets,
+wait/retry policies and progress callbacks can change on resume. Journals contain
+fingerprints and identifiers, without tokens, deployment option values or logs.
+They and generated archives have private permissions.
+
+Results have outcome `succeeded`, `blocked` or `failed`, plus the acceptance
+receipt, timeline and optional resource failure code. Approval waits and holds
+return `blocked` by default. `SourceDeploymentError` exposes `code`, `outcome`,
+`phase`, `statePath`, `state` and `cause`; timeouts use outcome `timed_out` and
+caller aborts use `cancelled`. An uncertain commit uses `acceptance_unknown` and
+preserves the journal. Resume only checks its receipt, including when a process
+stopped just before commit was sent. No fresh attempt is submitted automatically.
+
+The required timeout covers all phases and awaited callbacks. `signal` stops
+local work and observation; an accepted deployment continues on the server.
+Progress includes optional source, upload and release observations, with elapsed
+milliseconds from this invocation. Existing child limits and `maxRecoveries`
+apply. The workflow observes existing release policies; it does not approve
+releases, promote traffic, roll back or cancel remote deployments.
+
+Independent journals run concurrently. One process rejects concurrent use of the
+same canonical journal with `busy`; coordinate a single writer across processes.
+Existing source/upload/waiter methods remain available separately.
+
+### Prepare local source
+
+`inspectSource(directory)` returns an immutable selection plan with paths, sizes,
+normalized modes, SHA-256 hashes, inclusion reasons, ignore-rule locations and
+blocking issues. `prepareSource(directory, outputPath, options)` scans and streams
+a reproducible tar.gz to a private temporary file, verifies the source again,
+then atomically replaces the destination. Put the destination outside the source
+context; its parent directory must exist.
+
+```ts
+import { prepareSource, saveSourceUploadCheckpoint } from '@gregale/sdk-node';
+import { join, resolve } from 'node:path';
+import { mkdir } from 'node:fs/promises';
+
+const controller = new AbortController();
+const artifacts = resolve('..', '.gregale-artifacts');
+await mkdir(artifacts, { recursive: true });
+const source = await prepareSource('.', join(artifacts, 'api-source.tar.gz'), {
+  sourceRoot: 'apps/api', // Archive the workspace context; select this app within it.
+  timeoutMs: 60_000,
+  maxBytes: 100 * 1024 * 1024,
+  maxArchiveBytes: 50 * 1024 * 1024,
+  signal: controller.signal,
+  onPlan: plan => console.log(plan.fileCount, plan.totalBytes, plan.issues),
+});
+const checkpoint = await client.uploads.uploadSource({
+  path: source.path, appSlug: 'api',
+  deployOptions: { source_root: source.plan.sourceRoot },
+}, {
+  timeoutMs: 120_000,
+  onCheckpoint: value => saveSourceUploadCheckpoint(join(artifacts, 'api-source-checkpoint.json'), value),
+});
+// commitSource remains the explicit next step after review of the prepared upload.
+```
+
+Selection follows the CLI worktree packer's default exclusions, Go vendoring,
+ordered `.gregaleignore` rules, and Dockerfile build-output/`.dockerignore` rules.
+Choose the context directory and `sourceRoot` explicitly. Dockerfile markers are
+detected at that application root; pass `dockerfile: true` for a `gregale.yaml`
+build section that selects a differently named Dockerfile. Archives use flat
+context-relative names, sorted UTF-8 paths, epoch timestamps, zero ownership and
+0644/0755 modes. PAX headers support Unicode and long names. Identical inputs
+produce identical bytes within the same SDK/runtime; compression versions may
+produce different gzip bytes across runtimes.
+
+The default `secretScan: 'strict'` rejects credential-shaped dotenv values using
+the CLI provider/entropy checks, including sandbox keys. Plans carry paths and
+reasons, never raw credentials. Move secrets to environment configuration or use
+`exclude: ['.env.local']`; `secretScan: 'off'` is an explicit override. This check
+has the CLI's dotenv scope; the server still validates uploaded source. Safe
+in-tree links are dereferenced; escaping/dangling/cyclic links and irregular files
+are blocking issues. Source changes fail with `source_changed`, preserving an
+existing archive. `SourcePreparationError.plan` contains issues when preparation
+fails with `invalid_source`.
+
+`maxEntries` counts files and directories (default/maximum 10,000); `maxBytes`
+defaults to the server's 2 GiB expanded-source safety cap. Set `maxArchiveBytes`
+to your intended upload budget. Inspection also caps visited entries at four
+times `maxEntries`, directory nesting at 64, ignore files at 1 MiB and dotenv
+lines at 64 KiB. File reads are 64 KiB. `timeoutMs` defaults to 120 seconds and
+covers scanning, packing and awaited callbacks. `onProgress` reports phase,
+relative path and bytes processed in that file. Filesystem helpers are available
+from both Node entry points; existing clients and static service calls keep their
+current behavior.
+
+### Resumable source archives and deployment acceptance
+
+Public and preview clients expose `client.uploads.uploadSource(input, options)`
+and `commitSource({ checkpoint }, options)`. Upload a prebuilt archive from a
+regular file, save portable JSON checkpoints, and recover deployment acceptance
+through the existing receipt API. Generated upload methods keep their signatures.
+
+```ts
+import {
+  createClient, loadSourceUploadCheckpoint, saveSourceUploadCheckpoint, type SourceUploadOptions,
+} from '@gregale/sdk-node';
+
+const client = createClient('https://api.example.com', { token: process.env.GREGALE_TOKEN });
+const journal = 'source-upload.json';
+let checkpoint = await loadSourceUploadCheckpoint(journal).catch(error => {
+  if (error.code === 'ENOENT') return undefined;
+  throw error;
+});
+const options: SourceUploadOptions = {
+  timeoutMs: 120_000,
+  onCheckpoint: value => saveSourceUploadCheckpoint(journal, value),
+  onProgress: value => console.log(value.stage, value.received_bytes, value.total_size),
+};
+if (!checkpoint || ['new', 'uploading'].includes(checkpoint.stage)) {
+  checkpoint = await client.uploads.uploadSource({
+    path: 'source.tar.gz', appSlug: 'api', checkpoint,
+  }, options);
+}
+const receipt = await client.uploads.commitSource({ checkpoint }, options);
+const timeline = await client.deployments.waitForDeployment(
+  { id: receipt.deployment_id }, { timeoutMs: 300_000 },
+);
+```
+
+`SourceUploadOptions.timeoutMs` is a required positive total budget, at most
+2147483647, including fingerprinting, reads, writes and awaited callbacks. Optional
+`signal` preserves the caller's abort reason. The source path, metadata, options,
+and client configuration are captured before filesystem awaits. The SDK checks
+1 MiB source grains against the initial fingerprint before sending them. Payloads
+are bounded by the server's advertised size and a 16 MiB SDK buffer bound.
+Redirects are refused. Late transports or callbacks cannot schedule later writes.
+
+`maxRecoveries` defaults to 3 (0–100). Writes disable automatic HTTP retries;
+lost chunk replies and offset conflicts trigger a session read before another
+write. Accepted offsets must fall within the durable in-flight range. GET requests
+retain `retry` and `onResponse`. `onProgress` receives frozen
+`{ stage, received_bytes, total_size }` metadata.
+
+`onCheckpoint` is required, awaited before mutations, and receives a frozen
+`SourceUploadCheckpoint`. Persist it durably and serialize one writer per journal.
+`saveSourceUploadCheckpoint` uses atomic replacement, private file permissions,
+and POSIX directory sync; local saves are queued so a late save cannot overwrite
+a newer one. `loadSourceUploadCheckpoint` waits for pending local saves. For
+another store, serialize the checkpoint and restore it through
+`parseSourceUploadCheckpoint`. The JSON schema is shared with Python and excludes
+credentials, source paths and deployment metadata values.
+
+Resume using the original file, API URL, app, and `deployOptions`, including
+whether options were supplied. Fingerprints must match; session authorization
+continues to be enforced by the API. Checkpoints record `new`, `uploading`, `ready`,
+`committing`, or `accepted`, together with stable request/attempt IDs. Expired or
+cancelled sessions stop without opening a fresh session automatically.
+
+Commit persists `committing` before its sole POST and reads the immutable
+acceptance receipt. A `committing` or `accepted` checkpoint performs receipt
+recovery only, including when the original process stopped before it could send
+the request. Missing receipts produce `SourceUploadError` with code
+`acceptance_unknown`; neither another commit nor a fresh attempt is sent.
+Recovery can return the original accepted deployment after failure or supersession
+and does not need the archive file. Preserve the journal after uncertain outcomes.
+
+`SourceUploadError` carries typed `code`, `checkpoint`, and original `cause`.
+It distinguishes changed sources, checkpoint/response validation, expired/closed
+sessions, failed persistence, exhausted recovery, request failures, incomplete
+transfers, and unknown acceptance. Total deadline failures use code `timeout` and
+name `TimeoutError`. Caller abort identity is preserved. Uploading and committing
+remain separate from release approval, promotion, and observation.
 
 ## Supported surface
 
@@ -951,6 +1707,16 @@ as it is emitted and reconnects with the latest event cursor if the SSE
 connection drops:
 
 ```ts
+import { createClient } from '@gregale/sdk-node/preview';
+
+const client = createClient('https://api.example.com', {
+  token: process.env.GREGALE_API_KEY,
+});
+const execution = await client.runs.createExecution({
+  requestBody: { runtime: 'node22', source: "console.log('hello')" },
+  idempotencyKey: 'my-logical-execution',
+});
+
 for await (const event of client.watchExecution(execution.id)) {
   if (event.type === 'stdout' || event.type === 'stderr') {
     process.stdout.write(event.data.chunk ?? '');
@@ -959,8 +1725,9 @@ for await (const event of client.watchExecution(execution.id)) {
 }
 ```
 
-`RunsService.streamExecutionEvents()` remains available when a raw SSE body
-is needed. `watchExecution` is the recommended agent-runtime path.
+`client.runs.streamExecutionEvents()` remains available for the generated
+buffered SSE response. `client.watchExecution` incrementally consumes the live
+body and is the recommended agent-runtime path.
 
 For the common submit-and-wait flow, `runExecution` composes create, resumable
 watching, and the terminal receipt:
@@ -969,12 +1736,49 @@ watching, and the terminal receipt:
 const receipt = await client.runExecution(
   { runtime: 'node22', source: "console.log('hello')" },
   {
+    idempotencyKey: 'another-logical-execution',
+    signal: AbortSignal.timeout(60_000),
     onEvent: (event) => {
       if (event.type === 'stdout') process.stdout.write(event.data.chunk ?? '');
     },
   },
 );
 ```
+
+Both methods are available on the isolated preview client. Tokens, endpoint
+path prefixes, transport, logging, retries, and idempotency settings stay bound
+to that client. Each invocation captures one configuration snapshot: changing
+the client token or endpoint affects future workflows, while an active workflow
+keeps its original configuration through reconnects and the final receipt GET.
+`watchExecution` captures when called, before its iterator is first consumed.
+Detached helper methods keep their client binding.
+
+Reconnecting only reads events; it never repeats execution submission. Overlapping
+frames with an already seen integer event ID are skipped. Cursorless events
+retain their delivery semantics and can repeat. Event callbacks run in order;
+callback errors stop observation and release the stream. An initial connection
+failure, authorization error, or malformed event is surfaced to the caller.
+After connecting, transient failures reconnect until completion or cancellation.
+
+Pass an `AbortSignal` to bound the whole workflow, including submission,
+reconnect delays, body reads, and the final receipt request. A client's
+`timeoutMs` applies to each HTTP request; ordinary requests default to 30 seconds,
+and SSE has no default deadline. Aborting one workflow stops its local I/O;
+it does not request server-side execution cancellation. Use
+`client.runs.cancelExecution({ id })` to request that separately.
+
+The returned terminal receipt includes result data and exported artifacts;
+use `decodeExecutionArtifact` to verify and decode an artifact. For recovery
+after a process restart, retain the receipt ID from `client.runs.createExecution`
+and the last successfully processed event ID, then resume with
+`client.watchExecution(id, { after, signal })`. Cursor state in a running iterator
+is held in memory. To rotate credentials during observation, start a new watcher
+from the retained cursor after updating the client.
+
+Existing `FaaSClient` convenience methods and standalone `runExecution` /
+`watchExecution` exports remain available and use shared process configuration.
+Migrate by replacing `new FaaSClient(...)` with the preview `createClient(...)`
+and calling these methods on the returned client.
 
 The source/files bundle is available only in the disposable guest's ephemeral
 scratch filesystem; no customer storage disk is attached.
@@ -3978,3 +4782,199 @@ exceeds consumed claims without resetting them. Frozen receipts resolve exact
 retries across Go/Node within Node's safe generation range, with known rejection
 receipts on `EventAcknowledgmentIntentBudgetAdoptionError.receipt`. See
 [budget adoption, exact fences and uncertainty](../../docs/event-acknowledgment-budget-adoption.md#node-selection-adoption-and-replay).
+
+## Application files (preview)
+
+Upload application/customer files with a server-side storage credential and
+bucket grant. This is separate from deployment source archives:
+
+```ts
+import {createClient, pathFileSource, parseFileCheckpoint} from '@gregale/sdk-node/preview';
+const client = createClient(apiURL, {token: storageToken});
+const files = client.storage.files({appSlug: 'imports', bucket: bucketID});
+const source = await pathFileSource('rows.csv');
+const uploaded = await files.upload('imports/new-unique-id/input.csv', source, {
+  timeoutMs: 120_000, maxBytes: 100 * 1024 * 1024, contentType: 'text/csv',
+  onCheckpoint: async checkpoint => saveDurably(checkpoint),
+  onProgress: progress => console.log(progress.confirmed_bytes),
+});
+// After restart, re-open the same source and resume the saved session:
+await files.resume(parseFileCheckpoint(savedJSON), source, {timeoutMs: 120_000});
+const store = await files.jobStore({timeoutMs: 30_000, prefix: 'job-results/'});
+const job = client.jobs.defineJob(contract, {store});
+```
+
+`downloadTo(key, sink, options)` streams bounded chunks; `download` buffers the
+result. `metadata`, `list` (opaque cursor), `delete`, and explicit multipart
+`abort(checkpoint, options)` are available. `put` supports small/empty files and
+create-only `ifNoneMatch: '*'`; persist `onReceipt(id)` before dispatch and call
+`confirm(id, key, size, options)` to recover an uncertain write. A receipt proves
+the attempt committed, rather than the current value of a mutable key.
+
+Local cancellation preserves remote parts. Save checkpoints durably, serialize
+one writer per session, keep the source stable, and use a new key for each logical
+upload. Resume verifies source bytes and reconciles confirmed provider parts.
+Defaults: 100 MiB, 10,000 parts, 60 polls; supported part layouts use at most
+64 MiB per part. Increase `maxBytes` explicitly for larger files. An ETag is
+opaque. The managed JobStore separately verifies SHA-256 of its stored bytes.
+Streaming sinks may have partial output on failure; publish only after success.
+Bucket handles retain their endpoint/token snapshot; recreate a handle after
+changing the parent client's credentials or endpoint.
+
+Browsers import `createFileBucket`, `blobFileSource`, and `FileBroker` from
+`@gregale/sdk-node/preview/browser`. Connect the broker to your authenticated
+application routes. Authorize each server-owned file ID/session/operation; never
+expose a generic signing proxy or Gregale credentials. Checkpoints contain no
+signed URLs. See the [complete browser CSV import example](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+and [design decisions](../../docs/adr/20261115153000-sdk-application-files.md).
+
+## File-triggered typed jobs (preview)
+
+`createFilePipeline` connects native file notifications to an existing typed job:
+
+```ts
+import {createFilePipeline, createNativeFileVerifier, postgresFilePipelineStore}
+  from '@gregale/sdk-node/preview';
+
+const pipeline = createFilePipeline({
+  name: 'csv-files-v1', revision: '1', scope, prefix: 'imports/', suffix: '/input.csv',
+  contract, job, files, jobStore,
+  store: postgresFilePipelineStore((sql, params) => pool.query(sql, params)),
+  verify: createNativeFileVerifier(scope, (id, signal) =>
+    client.invocations.getInvocation({id}, {signal, timeoutMs: 0, retry: false})),
+  authorize: async event => findOwnedUpload(event),
+  map: async (event, bytes, owner, signal) => mapValidatedCSV(event, bytes, owner, signal),
+});
+const result = await pipeline.handle({body, invocationId}, {timeoutMs: 60_000});
+if (result.outcome === 'unresolved') {
+  // Inspect the original acceptance; keep the intent, never auto-repost.
+  await saveRecoveryIdentity(result.receipt.intent.identity);
+}
+// After explicitly identifying the accepted run, match its exact saved inputs:
+await pipeline.reconcile(savedIdentity, inspectedRunId, {timeoutMs: 30_000});
+```
+
+`scope` contains `base_url`, `account_id`, `app_id`, `app_slug`, and `bucket`.
+`authorize` resolves a durable app record and returns `{id, sha256?}` or
+`{id, source_digest?}` (fixed 1 MiB block digest), or null to ignore an unowned
+file. Mutable files require a trusted digest; immutable events select that exact
+version. Missing old versions never read the current object. Mapping is pure
+and receives bounded verified bytes (default 16 MiB); default maximum 1,000 inputs.
+For stored inputs, use the SAME content-addressed `jobStore` as `job`; its URI
+must be stable for a digest. The managed JobStore meets this requirement.
+
+Install exported `filePipelineSchema` separately through your migration runner.
+The SQL query callback must execute one acknowledged AUTOCOMMIT statement,
+outside ambient transactions; configure driver timeouts. Native verification
+needs account-scoped invocation read access. It checks the retained original,
+including replays; pruned proof is refused. HTTP adapters still require a trusted
+gateway/authenticated delivery boundary. Event headers alone are not proof.
+
+Concurrent deliveries share one durable intent. Only its acknowledged creator
+can POST. Saved intents without a checkpoint remain unresolved across restart
+and the API idempotency window. Reconciliation reads Jobs and matches account,
+endpoint, contract and manifest; it never resubmits or requires source bytes.
+Keep receipts while notifications/replays can arrive. Job effects remain at
+least once. Separate input/output filters when enabling native triggers.
+
+The [automatic CSV application](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview)
+includes trigger setup, two-user authorization, delayed delivery, cross-language
+recovery and PostgreSQL/Chrome tests. See [the design](../../docs/adr/20261115210000-sdk-file-triggered-jobs.md).
+
+## Live job and file-pipeline views (preview)
+
+`createLiveJob` provides an authenticated typed snapshot, shared subscriptions,
+Node/browser async iteration, and `useLiveJob` from `@gregale/sdk-node/preview/react`.
+`realtimeLiveJobSource` reuses private retained channels, fresh application-issued
+tickets, reconnects and history-gap recovery. Notifications invalidate a view;
+only native Jobs-confirmed snapshots can establish completion. Report-ready
+also requires an application-verified stored report. Existing Jobs and file
+callers need no migration.
+
+The optional server `createLiveJobBridge` shares bounded Jobs observation while
+viewer leases are active. Replace the live controller on session changes and
+revoke native tickets when revoking application access. See
+[the complete contract and examples](../../docs/sdk-live-jobs.md) and
+[the live CSV dashboard](../../examples/sdk-csv-jobs/README.md#browser-file-imports-preview).
+
+## Durable typed job pipelines (preview)
+
+`defineJobPipeline` composes typed Jobs using the existing workflow journal and
+durable sleeps. `createJobPipelineClient` provides isolated typed start,
+attach-by-ID, inspect, result and native cancellation. Durable application-owned
+submission receipts prevent duplicate Jobs after driver crashes or uncertain
+acceptance. Both SDKs share receipts and journal values. Verified artifact
+handoffs and `jobPipelineLiveSnapshot` integrate with managed files and the
+existing private live views.
+
+Existing callers keep their APIs. Failed native code workflows cannot currently
+be continued; attach-by-ID reconnects for reading. Cancelling orchestration leaves
+accepted Jobs running until separately cancelled. See
+[usage, limits and recovery](../../docs/sdk-job-pipelines.md) and the
+[three-stage CSV example](../../examples/sdk-csv-jobs/README.md#durable-three-stage-pipeline-preview).
+
+## Approval gates and external input (preview)
+
+Durable typed pipelines can pause for a generated review/reply contract using
+`approval` or `waitForInput` (Python: `wait_for_input`). The application-owned
+PostgreSQL ledger binds exact reviewed inputs, checks current user roles,
+expires decisions using database time, and recovers uncertain native event
+delivery. Existing pipelines remain unchanged until a gate store is configured.
+See [usage, authentication and recovery](../../docs/sdk-pipeline-gates.md) and
+the [reviewed CSV import](../../examples/sdk-csv-jobs/README.md#reviewed-import-preview).
+
+## Typed child pipelines and batches (preview)
+
+Invoke a registered pipeline with `wf.child`, or run ordered inputs through
+`wf.children` with a shared concurrency cap. `PipelineChildren` verifies native
+parent/child provenance, retains uncertain starts for explicit reconciliation,
+and applies captured failure, deadline and parent-stop policies. Recovery uses
+an application-owned PostgreSQL ledger and never automatically repeats unknown
+starts. Existing pipelines opt in through a coordinator; their APIs stay intact.
+See [usage and recovery](../../docs/sdk-pipeline-composition.md) and the
+[reviewed batch CSV example](../../examples/sdk-csv-jobs/README.md#batch-imports-preview).
+
+## Typed transactional events (preview)
+
+Stage generated event payloads with business writes through `createEventPublisher`
+and `withEventOutboxTransaction`, then run bounded `createEventOutbox` recovery.
+The application-owned PostgreSQL protocol interoperates with upgraded Go/Python
+workers and honors persisted retry policy, publishing pause and rate limits.
+See [migration, authorization and recovery](../../docs/sdk-event-outbox.md) and
+the [complete CSV flow](../../examples/sdk-csv-jobs/README.md#event-triggered-reviewed-imports).
+
+## Typed scheduled pipelines (preview)
+
+Use `definePipelineSchedule` to bind generated inputs to a native calendar and
+emit a deployment trigger. `createPipelineScheduleClient` previews upcoming fires,
+reads bounded history, explicitly replays skipped occurrences and attaches typed
+runs, rechecking current application authorization. See
+[usage and recovery](../../docs/sdk-pipeline-schedules.md) and the
+[nightly reviewed CSV example](../../examples/sdk-csv-jobs/README.md#scheduled-reviewed-imports).
+
+## Typed Stripe webhook pipelines (preview)
+
+`createStripeWebhookAdapter` projects native verified Stripe snapshot deliveries
+into generated business events. Current-owner authorization, business writes and
+outbox intent share one PostgreSQL transaction and a cross-language handoff
+receipt. See [setup and recovery](../../docs/sdk-stripe-webhooks.md) and the
+[paid CSV flow](../../examples/sdk-csv-jobs/README.md#stripe-paid-reviewed-imports).
+
+## Typed pipeline tools (preview)
+
+`definePipelineTool` exposes existing generated business pipelines with durable
+start receipts, current authorization, typed results and human-review status.
+`createPipelineToolMCP` supplies five generated descriptors and bounded call
+handling for an existing MCP host. Node/Python share PostgreSQL receipts and
+verified run reconciliation. See [setup and recovery](../../docs/sdk-pipeline-tools.md)
+and the [CSV agent flow](../../examples/sdk-csv-jobs/README.md#agent-tools-for-reviewed-imports).
+
+## Reviewed pipeline compensation (preview)
+
+`definePipelineCompensation` prepares immutable typed undo commands from verified
+failed-pipeline evidence and runs them in a separate, human-approved workflow.
+`compensationContracts` derives the worker/root/review contracts; SQL handlers
+atomically commit business changes and typed effect receipts. `createCompensationMCP`
+adds planning to the durable tool lifecycle. Current authorization and application
+row-version guards preserve later edits. See [setup, limits and recovery](../../docs/sdk-pipeline-compensations.md)
+and the [CSV cleanup journey](../../examples/sdk-csv-jobs/README.md#reviewed-cleanup-after-report-failure).

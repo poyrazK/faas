@@ -3171,7 +3171,7 @@ func TestApplyEdgeRuleLimit_ContentLengthFastPath_DenyBeforeBackendPick(t *testi
 	if got, _ := prob["observed_bytes"].(float64); int64(got) != 30*1024*1024 {
 		t.Errorf("observed_bytes = %v; want %d", prob["observed_bytes"], 30*1024*1024)
 	}
-	if docs, _ := prob["docs_url"].(string); !strings.Contains(docs, "signed-uploads") {
+	if docs, _ := prob["docs_url"].(string); !strings.Contains(docs, "/docs/storage") {
 		t.Errorf("docs_url = %q; want signed-upload guidance", docs)
 	}
 	if hint, _ := prob["hint"].(string); !strings.Contains(hint, "signed URL") {

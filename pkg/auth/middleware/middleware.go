@@ -593,6 +593,9 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			// error and emit the audit event from here so the
 			// store stays independent of the audit seam.
 			if err != nil {
+				// ADR-20261114190002: a revoked or expired key still
+				// names its account.
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					if m.Audit != nil {
@@ -619,6 +622,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// simply unknown; both surface as "invalid
 				// bearer" through the legacy 401 path.
 			} else {
+				noteAccount(r, acct.ID)
 				if !acct.Active() {
 					if !inactiveCallerMayReach(r, acct) {
 						api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -639,6 +643,18 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				// ADR-20261107220000: an agent's write requests are
 				// recorded once the handler answers; the approval gate
 				// notes the approval a request went through on.
+				// ADR-20261111114059 amendment 2026-11-13: a budget preview
+				// writes nothing, so it opens no approval and records no
+				// activity or undo; it only notes the approval the real
+				// request would wait for.
+				if Previewing(r) && ProjectLimitable(key) {
+					if m.notePreviewApproval(w, r, key) {
+						return
+					}
+					*r = *r.WithContext(withPrincipal(r.Context(), principal{Acct: acct, Key: &key, Membership: nil}))
+					next(w, r, acct)
+					return
+				}
 				var activity *agentActivityNote
 				if ProjectLimitable(key) && (agentWrite(r.Method) || agentapproval.RecordedRead(r.Pattern)) {
 					*r = *r.WithContext(withAgentActivityNote(r.Context(), &activity))
@@ -689,6 +705,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						m.recordAgentActivity(r, acct, key, aw.status, activity)
 					}
 					next(aw, r, acct)
+					m.releaseAgentBudget(key.ID, activity) //nolint:contextcheck // the release outlives the request, like the activity row
 					if !recorded {
 						m.finishAgentUndo(r, undo, aw, activity.id)
 						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed
@@ -731,6 +748,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				api.WriteProblem(w, api.ErrCapacity("authenticate platform tenant access token"))
 				return
 			}
+			noteAccount(r, acct.ID)
 			if !acct.Active() {
 				api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
 					"Account suspended", "resolve billing to continue: "+wire.DashboardBillingURL))
@@ -774,6 +792,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 		if api.ValidOIDCKeyFormat(tok) {
 			acct, key, err := m.Authn.AuthenticateOIDCBearer(r.Context(), api.HashAPIKey(tok))
 			if err == nil {
+				noteAccount(r, acct.ID)
 				// A bearer exchanged under a trust policy Gregale created is
 				// bound to one app and confined like a per-app deploy token
 				// (ADR-20261101100000).
@@ -816,6 +835,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
+					noteAccount(r, acct.ID)
 					if m.appBoundCredentialRefused(w, r, key, "Deploy token scope is app-bound") {
 						return
 					}
@@ -838,6 +858,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					next(w, r, acct)
 					return
 				}
+				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
@@ -893,6 +914,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					r = r.WithContext(withSession(r.Context(), sess))
 					//nolint:contextcheck // same pointer-mutation contract: AccountByID reads from r.Context() so the returned principal stamps into the same ctx as withPrincipal below.
 					if acct, err := m.Authn.AccountByID(r.Context(), env.AccountID); err == nil {
+						noteAccount(r, acct.ID)
 						if !acct.Active() {
 							if !inactiveCallerMayReach(r, acct) {
 								api.WriteProblem(w, api.NewProblem(http.StatusPaymentRequired, api.CodeBillingPastDue,
@@ -1375,7 +1397,7 @@ func isBillingRecoveryRoute(method, path string) bool {
 		return true
 	}
 	switch method + " " + path {
-	case "GET /v1/account", "GET /v1/account/export", "GET /v1/usage",
+	case "GET /v1/account", "GET /v1/account/export", "GET /v1/account/health", "GET /v1/usage",
 		"GET /v1/billing/portal", "GET /v1/billing/status", "GET /v1/billing/focus", "POST /v1/billing/retry",
 		"GET /v1/billing/costs", "GET /v1/billing/forecast", "GET /v1/billing/budgets", "POST /v1/billing/budgets/preview",
 		"PATCH /v1/account/plan",
@@ -1837,9 +1859,10 @@ func IsUploadSessionPath(path string) bool {
 // /v1/apps/{slug} routes, the upload routes and its app's deployment reads,
 // and nothing else. It answers the request and reports true when it refuses.
 func (m *Middleware) appBoundCredentialRefused(w http.ResponseWriter, r *http.Request, key state.APIKey, title string) bool {
-	// App agents inspect their own minimal principal and platform capabilities
-	// before connecting to MCP. This grants no account inventory or mutations.
-	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities") {
+	// App agents inspect their minimal principal and platform/check support.
+	// Response-check support exposes no app data; its route still requires
+	// deploy:write. This grants no account inventory or mutations.
+	if slices.Contains(key.Scopes, api.ScopeAgent) && r.Method == http.MethodGet && (r.URL.Path == "/v1/account" || r.URL.Path == "/v1/capabilities" || r.URL.Path == "/v1/deployments/response-check/capabilities") {
 		return false
 	}
 	// The resumable upload routes are the CLI's default source

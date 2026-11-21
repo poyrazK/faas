@@ -30,6 +30,9 @@ type sandboxSnapshotShape struct {
 	node, base, drive, account string
 	vcpu, memMiB, cpuMilli     int
 	network                    string
+	// browser is the browser shape (ADR-20261116182615 §2): captured after
+	// a Chromium prewarm, restored only by browser sessions.
+	browser bool
 }
 
 // sandboxSnapshot is a captured snapshot and the exact drive1 it holds.
@@ -51,7 +54,7 @@ func sandboxDriveKey(spec SandboxSpec) string {
 
 func (r *AgentRunner) sandboxShape(node string, spec SandboxSpec) sandboxSnapshotShape {
 	shape := sandboxSnapshotShape{node: node, base: spec.BaseKey, drive: spec.LayerKey, vcpu: spec.VCPU, memMiB: spec.MemSizeMiB,
-		cpuMilli: spec.CPUMillicores, network: spec.Network}
+		cpuMilli: spec.CPUMillicores, network: spec.Network, browser: spec.Browser}
 	if spec.ImageKey != "" {
 		// A template's snapshot holds the account's image: its slot is the
 		// account's own.
@@ -116,7 +119,7 @@ func (r *AgentRunner) captureSandbox(ctx context.Context, p AgentRunPlacement, s
 	defer cancel()
 	capture := SandboxSpec{Instance: p.Instance, SandboxID: spec.SandboxID, AccountID: spec.AccountID, Plan: spec.Plan,
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, ImageKey: spec.ImageKey, VCPU: spec.VCPU, MemSizeMiB: spec.MemSizeMiB,
-		CPUMillicores: spec.CPUMillicores, Network: spec.Network}
+		CPUMillicores: spec.CPUMillicores, Network: spec.Network, Browser: spec.Browser}
 	namespace := storagekey.SandboxSnapshotNamespace(spec.AccountID, spec.ImageKey != "")
 	var snap *AgentRunSnapshot
 	router, ok := r.router.(sandboxCaptureRouter)
@@ -137,8 +140,13 @@ func (r *AgentRunner) captureSandbox(ctx context.Context, p AgentRunPlacement, s
 
 // sandboxCaptureID names a slot's capture keys.
 func sandboxCaptureID(shape sandboxSnapshotShape) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%d\x00%s", shape.base, shape.drive, shape.account,
-		shape.vcpu, shape.memMiB, shape.cpuMilli, shape.network)))
+	id := fmt.Sprintf("%s\x00%s\x00%s\x00%d\x00%d\x00%d\x00%s", shape.base, shape.drive, shape.account,
+		shape.vcpu, shape.memMiB, shape.cpuMilli, shape.network)
+	if shape.browser {
+		// Only the browser shape adds a field, so other slots keep their keys.
+		id += "\x00browser"
+	}
+	sum := sha256.Sum256([]byte(id))
 	return hex.EncodeToString(sum[:16])
 }
 

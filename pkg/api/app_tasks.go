@@ -160,6 +160,9 @@ func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem)
 		IsObjectStorageWriteProbeCommand(r.Command, r.CommandShell)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("platform probe commands cannot run interactively")
 	}
+	if IsAppTaskDebugCommand(r.Command) && !ValidAppTaskDebugCommand(r.Command, r.Interactive, r.CommandShell) {
+		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("debug sessions require an interactive request, no command_shell, and a command after the debug marker")
+	}
 	if IsAppTaskSessionBuiltin(r.Command) && (!r.Interactive || !ValidAppTaskSessionBuiltin(r.Command, r.CommandShell, r.TTY)) {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("copy and port-forward sessions require an interactive, non-tty request with one argument")
 	}

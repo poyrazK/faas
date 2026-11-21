@@ -65,9 +65,11 @@ def sync_detailed(
     Args:
         idempotency_key (str | Unset):
         body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
-            explicitly authorized JWT readers. A fresh passing connection check for the current source
-            credential and all selected tables is required; otherwise returns
-            data_connection_check_required.
+            explicitly authorized JWT readers. Supply read_subjects for whole-table access, or
+            serving.tenant_access with owner-managed memberships and no read_subjects. Explicit
+            columns must cover every table and retain all primary-key and tenant columns. A fresh
+            passing connection check for the current source credential and all selected tables is
+            required; otherwise returns data_connection_check_required.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -100,9 +102,11 @@ def sync(
     Args:
         idempotency_key (str | Unset):
         body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
-            explicitly authorized JWT readers. A fresh passing connection check for the current source
-            credential and all selected tables is required; otherwise returns
-            data_connection_check_required.
+            explicitly authorized JWT readers. Supply read_subjects for whole-table access, or
+            serving.tenant_access with owner-managed memberships and no read_subjects. Explicit
+            columns must cover every table and retain all primary-key and tenant columns. A fresh
+            passing connection check for the current source credential and all selected tables is
+            required; otherwise returns data_connection_check_required.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -130,9 +134,11 @@ async def asyncio_detailed(
     Args:
         idempotency_key (str | Unset):
         body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
-            explicitly authorized JWT readers. A fresh passing connection check for the current source
-            credential and all selected tables is required; otherwise returns
-            data_connection_check_required.
+            explicitly authorized JWT readers. Supply read_subjects for whole-table access, or
+            serving.tenant_access with owner-managed memberships and no read_subjects. Explicit
+            columns must cover every table and retain all primary-key and tenant columns. A fresh
+            passing connection check for the current source credential and all selected tables is
+            required; otherwise returns data_connection_check_required.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -163,9 +169,11 @@ async def asyncio(
     Args:
         idempotency_key (str | Unset):
         body (CreateDataPipelineRequest): Selected public tables, dedicated destination and
-            explicitly authorized JWT readers. A fresh passing connection check for the current source
-            credential and all selected tables is required; otherwise returns
-            data_connection_check_required.
+            explicitly authorized JWT readers. Supply read_subjects for whole-table access, or
+            serving.tenant_access with owner-managed memberships and no read_subjects. Explicit
+            columns must cover every table and retain all primary-key and tenant columns. A fresh
+            passing connection check for the current source credential and all selected tables is
+            required; otherwise returns data_connection_check_required.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

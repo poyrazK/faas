@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
+import type { OutboundAISemanticCache } from './OutboundAISemanticCache.js';
 /**
  * Replace an integration's AI gateway settings. An empty ai_provider turns AI handling off and requires a null daily_token_limit.
  */
@@ -31,6 +32,7 @@ export type PutOutboundAIPolicyRequest = {
    * Add prompt-cache breakpoints to Claude requests on the Anthropic API, Vertex AI and Amazon Bedrock that carry none: after a system prompt or tool list seen again within five minutes, and after the last message of a conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache. Requires ai_provider.
    */
   auto_prompt_cache?: boolean;
+  semantic_cache?: OutboundAISemanticCache;
   /**
    * Refuse a trace's call once the trace made this many calls, settled and in flight, with 429 outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit. Requires ai_provider.
    */

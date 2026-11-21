@@ -11,51 +11,68 @@ import (
 var invalidFlagValueName = regexp.MustCompile(`^invalid (?:value .* for flag|boolean value .* for) --([A-Za-z0-9][A-Za-z0-9-]*):`)
 
 // Guidance uses types and documentation, never defaults or supplied values.
-func flagValueGuidance(diagnostic string, fs *flag.FlagSet, path string) string {
+type flagValueAdvice struct {
+	name, kind, expectedType, marker string
+	allowed                          []string
+	expected, example                string
+}
+
+func flagValueGuidance(diagnostic string, fs *flag.FlagSet, path string) flagValueAdvice {
+	advice := flagValueAdvice{}
 	if fs == nil {
-		return ""
+		return advice
 	}
-	name := ""
 	if rest, ok := strings.CutPrefix(diagnostic, "flag --"); ok {
-		if value, ok := strings.CutSuffix(rest, " needs a value"); ok {
-			name = value
+		if name, ok := strings.CutSuffix(rest, " needs a value"); ok {
+			advice.name, advice.kind = name, "missing_value"
 		}
 	} else if match := invalidFlagValueName.FindStringSubmatch(diagnostic); len(match) == 2 {
-		name = match[1]
+		advice.name, advice.kind = match[1], "invalid_value"
 	}
-	f := fs.Lookup(name)
+	f := fs.Lookup(advice.name)
 	if f == nil {
-		return ""
+		return flagValueAdvice{}
 	}
-	documented, ok := documentedParserFlag(fs.Name(), name)
+	documented, ok := documentedParserFlag(fs.Name(), advice.name)
 	if !ok {
-		documented, ok = documentedParserFlag(path, name)
+		documented, ok = documentedParserFlag(path, advice.name)
+	}
+	if ok {
+		advice.marker = documented.Value
 	}
 	if ok && len(documented.ClosedSet) > 0 {
-		return "Allowed values: " + strings.Join(documented.ClosedSet, ", ")
+		advice.expectedType, advice.allowed = "enum", documented.ClosedSet
+		return advice
 	}
-	expected, example := "", ""
 	if getter, ok := f.Value.(flag.Getter); ok {
 		switch getter.Get().(type) {
 		case time.Duration:
-			expected, example = "a duration", "2s"
+			advice.expectedType, advice.expected, advice.example = "duration", "a duration", "2s"
 		case bool:
-			expected, example = "true or false", "true"
+			advice.expectedType, advice.expected, advice.example = "boolean", "true or false", "true"
 		case int, int64, uint, uint64:
-			expected, example = "a whole number", "1"
+			advice.expectedType, advice.expected, advice.example = "integer", "a whole number", "1"
 		case float64:
-			expected, example = "a number", "1.5"
+			advice.expectedType, advice.expected, advice.example = "number", "a number", "1.5"
 		}
 	}
-	if expected == "" && ok && documented.Value != "" {
-		expected = "a value in the documented format " + documented.Value
+	if advice.expected == "" && ok && documented.Value != "" {
+		advice.expectedType = "value"
+		advice.expected = "a value in the documented format " + documented.Value
 	}
-	if expected == "" {
+	return advice
+}
+
+func (advice flagValueAdvice) humanHint() string {
+	if len(advice.allowed) > 0 {
+		return "Allowed values: " + strings.Join(advice.allowed, ", ")
+	}
+	if advice.expected == "" {
 		return ""
 	}
-	guidance := "Expected: " + expected + "."
-	if example != "" {
-		guidance += fmt.Sprintf("\n  Format example: --%s %s (command-specific limits still apply).", name, example)
+	guidance := "Expected: " + advice.expected + "."
+	if advice.example != "" {
+		guidance += fmt.Sprintf("\n  Format example: --%s %s (command-specific limits still apply).", advice.name, advice.example)
 	}
 	return guidance
 }

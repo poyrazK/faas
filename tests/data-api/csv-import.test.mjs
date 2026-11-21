@@ -57,3 +57,15 @@ test('trigger-suppressed insert counts cannot falsely confirm a batch or offer i
  assert.equal(calls,1);assert.equal(result.summary.uncertain,25);assert.equal(result.summary.not_sent,1);assert.equal(result.rows[0].acknowledged_batch_rows,24)
  assert.deepEqual(retryableImportRows(entries(26),result.rows).map(row=>row.record),[27])
 })
+
+test('DAPI007 plain numeric and nested JSON cells reject precision loss before import',()=>{
+ const numeric={fields:[{name:'value'}],spec:{kind:'object',fields:[field('value',{kind:'number'})]}}
+ for(const value of ['9007199254740993','0.123456789012345678901']){
+  const preview=previewCsvImport({headers:['value'],records:[[value]]},[{field:'value',empty:'value'}],numeric)
+  assert.equal(preview.errors[0].code,'precision_loss')
+  assert.equal(Object.hasOwn(preview,'entries'),false)
+ }
+ const preview=previewCsvImport({headers:['details'],records:[['{"id":9007199254740993}']]},[{field:'details',empty:'value'}],model)
+ assert.equal(preview.errors[0].code,'precision_loss')
+ assert.equal(Object.hasOwn(preview,'entries'),false)
+})

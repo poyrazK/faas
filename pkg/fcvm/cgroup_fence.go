@@ -54,9 +54,29 @@ type CgroupFenceRepairReport struct {
 
 func vmCgroupParent(l Lease) string {
 	if l.IsBuilder {
-		return BuilderCgroupParent
+		return builderCgroupParent(l)
 	}
 	return tenantCgroupParent(l)
+}
+
+// builderCgroupParent is faas-cp-build.slice, or faas-borrowed.slice for a
+// builder on a borrowed slot (ADR-20261118154632). A lease rebuilt from a
+// journal record carries no parent, so it finds a borrowed builder's scope
+// on disk, as tenantCgroupParent does for flat tenants.
+func builderCgroupParent(l Lease) string {
+	if l.cgroupParent == BorrowedBuilderCgroupParent {
+		return BorrowedBuilderCgroupParent
+	}
+	if l.cgroupParent == "" && cgroupScopeExists(BorrowedBuilderCgroupParent, l.Instance) && !cgroupScopeExists(BuilderCgroupParent, l.Instance) {
+		return BorrowedBuilderCgroupParent
+	}
+	return BuilderCgroupParent
+}
+
+// BorrowedBuilder reports whether l is a builder VM on a borrowed builder
+// slot (ADR-20261118154632).
+func (l Lease) BorrowedBuilder() bool {
+	return l.IsBuilder && builderCgroupParent(l) == BorrowedBuilderCgroupParent
 }
 
 // tenantCgroupParent is the parent cgroup of a tenant (non-builder) VM: the

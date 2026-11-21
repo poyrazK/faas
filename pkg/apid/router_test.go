@@ -40,6 +40,11 @@ func TestIsApidPath(t *testing.T) {
 		{"/readyz", false},
 		{"/cli-auth", true},
 		{"/docs", true},
+		{"/terms", true},
+		{"/privacy", true},
+		{"/acceptable-use", true},
+		{"/termsfoo", false},
+		{"/privacy-notes", false},
 		{"/docs/", true},
 		{"/docs/assets/swagger-ui.css", true},
 		// ─── positive: /oauth/* subtree only ────────────────────────

@@ -1,0 +1,6 @@
+{
+  "lock": "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+  "reserve": "INSERT INTO public.gregale_stripe_webhook_receipts(account_id,app_id,endpoint_id,event_id,identity,binding_digest,body_digest) VALUES ($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7) ON CONFLICT DO NOTHING RETURNING event_id",
+  "load": "SELECT identity,state,owner_id,outbox_key,reason,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at,binding_digest,body_digest FROM public.gregale_stripe_webhook_receipts WHERE account_id=$1::uuid AND app_id=$2::uuid AND endpoint_id=$3::uuid AND event_id=$4 FOR UPDATE",
+  "complete": "UPDATE public.gregale_stripe_webhook_receipts SET state=$5,owner_id=$6,outbox_key=$7,reason=$8,updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND endpoint_id=$3::uuid AND event_id=$4 AND state='processing' RETURNING identity,state,owner_id,outbox_key,reason,to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS created_at,to_char(updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') AS updated_at"
+}

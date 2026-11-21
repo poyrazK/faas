@@ -6,8 +6,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 )
 
-// Routes are individually reviewed. Unlisted GitOps, data-service, full clone
-// and browser-approval operations remain outside shared project administration.
+// Routes are individually reviewed. A route left out of this table is refused
+// to every member of a company project, owners included.
 var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback-attempts/{attempt_id}": authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/promotion-attempts/{attempt_id}":                       authz.OrgActionReadProject,
@@ -41,6 +41,11 @@ var routeActions = map[string]authz.OrgAction{
 	"DELETE /v1/projects/{slug}/environments/{environment}/secrets/{key}":      authz.OrgActionManageProjectSecrets,
 	"POST /v1/projects":      authz.OrgActionDeployProject,
 	"POST /v1/projects/scan": authz.OrgActionDeployProject,
+	// Reviewed-plan, safe-release and connected-repository company deploys
+	// (ADR-20261113090000).
+	"POST /v1/projects/scan/source-ref":                                                   authz.OrgActionDeployProject,
+	"POST /v1/projects/safe-deploy":                                                       authz.OrgActionDeployProject,
+	"POST /v1/projects/apply-plan":                                                        authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/qualifications":                  authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/release-sets":                    authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/promote":                         authz.OrgActionDeployProject,
@@ -59,15 +64,38 @@ var routeActions = map[string]authz.OrgAction{
 	// Reviewed in bug hunt 37: flags, release-set activation, staging and
 	// verification, and release secrets are neither GitOps, data services,
 	// full clones nor browser approvals, and were refused to every member.
-	"GET /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":                                   authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":                             authz.OrgActionReadProject,
-	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":                             authz.OrgActionReadProject,
-	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":                             authz.OrgActionReadProject,
-	"PUT /v1/projects/{slug}/environments/{environment}/flags":                                            authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":                                  authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":                               authz.OrgActionDeployProject,
-	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote":                     authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                        authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":              authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/outcomes":         authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/flags/{key}/requests":         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/inspect":         authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/rollback":              authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/automation/resume":           authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/rollout/promote": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/flags/{key}/kill":            authz.OrgActionDeployProject,
+	// Flag experiments (ADR-20261115163113) follow the flag split.
+	"GET /v1/projects/{slug}/environments/{environment}/experiments":               authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":         authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results": authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiments":              authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":      authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":  authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":   authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":   authz.OrgActionDeployProject,
+	// Product analytics reads (ADR-20261117084505) follow the flag reads;
+	// funnel and retention take their query as a POST body. Cohorts
+	// (ADR-20261119102741) target flags, so writing one deploys like a flag.
+	"GET /v1/projects/{slug}/environments/{environment}/insights/events":                                  authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/insights/requests":                                authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/insights/funnel":                                 authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/insights/retention":                              authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/cohorts":                                          authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":                                    authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/cohorts":                                         authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh":                           authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/cohorts/{key}":                                 authz.OrgActionDeployProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/staging/{stage}":                     authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs":                   authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/release-sets/verification-runs/{run}":             authz.OrgActionReadProject,
@@ -101,6 +129,37 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/branch":         authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/branch/extend": authz.OrgActionConfigureProject,
 	"POST /v1/projects/{slug}/environments/{environment}/branch/reset":  authz.OrgActionConfigureProject,
+	// GitOps, full clones and browser approvals (company projects reviewed
+	// 2026-11-12, ADR-20261112230000). Reads and previews need the read
+	// action. Binding, changing or detaching the Git source that drives an
+	// environment, and adopting it, link a repository the way PATCH
+	// /v1/projects/{slug} does, so they need the security action. Approving a
+	// revision deploys it; overrides change the environment's configuration. In
+	// a protected environment other than production both also need the approve
+	// action (ProtectedEnvironmentChange). A full clone configures the project
+	// like a branch, and cloning a protected source needs the approve action.
+	"GET /v1/projects/{slug}/environments/{environment}/gitops":                    authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/releases":           authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan":    authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan":     authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source":            authz.OrgActionManageProjectSecurity,
+	"PATCH /v1/projects/{slug}/environments/{environment}/gitops/source":           authz.OrgActionManageProjectSecurity,
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/source":          authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/source/rebind":     authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             authz.OrgActionManageProjectSecurity,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/overrides":         authz.OrgActionConfigureProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides":       authz.OrgActionConfigureProject,
+	"POST /v1/projects/{slug}/environment-clones":                                  authz.OrgActionConfigureProject,
+	"GET /v1/projects/{slug}/environment-clones/{clone}":                           authz.OrgActionReadProject,
+	// An agent asks for a human review of a protected promotion it may start;
+	// the member who approves it in the browser needs the approve action,
+	// checked on the review page and again at the exchange.
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          authz.OrgActionDeployProject,
+	"POST /v1/projects/{slug}/environments/{environment}/approval-requests/exchange": authz.OrgActionDeployProject,
 }
 
 const environmentDeletePattern = "DELETE /v1/projects/{slug}/environments/{environment}"

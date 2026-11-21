@@ -9,8 +9,8 @@ import (
 // cliTreeShortcutCommands are the top-level verbs of the daily loop
 // (ADR-20261026145832 rule 5), in root help order.
 var cliTreeShortcutCommands = []string{
-	"start", "menu", "init", "dev", "deploy", "logs", "status", "open", "rollback", "run", "invoke",
-	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version", "update", "man",
+	"start", "menu", "init", "dev", "deploy", "logs", "status", "open", "rollback", "run",
+	"add", "link", "unlink", "login", "logout", "signup", "whoami", "completion", "version", "update", "man", "guide",
 }
 
 // cliTreeDailyCommands is the first screen of `gregale help`: guided

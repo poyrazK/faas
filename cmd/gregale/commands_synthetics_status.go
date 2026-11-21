@@ -15,12 +15,13 @@ import (
 // <check-id>` (ADR-748): uptime, latency, and the most recent runs.
 func cmdSyntheticsStatus(args []string) int {
 	fs := newFlagSet("synthetics status", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert check status --app <slug> <check-id|name>", "synthetics")
+		PrintUsage(os.Stderr, "usage: gregale alert check status [--app <slug>] <check-id|name>", "synthetics")
 		return 1
 	}
 	client, err := authedClient()
@@ -46,6 +47,9 @@ func renderSyntheticStatus(w io.Writer, c api.SyntheticCheckResponse) {
 	_, _ = fmt.Fprintf(w, "%s — %s %s every %d minutes, expecting %s\n", c.Name, c.Method, c.URL, c.IntervalSeconds/60, describeExpected(c.ExpectedStatus))
 	if !c.Enabled {
 		_, _ = fmt.Fprintln(w, "  Paused.")
+	}
+	if c.Warning != "" {
+		_, _ = fmt.Fprintf(w, "  Warning:  %s\n", c.Warning)
 	}
 	res := c.Results
 	if res == nil || len(res.Recent) == 0 {

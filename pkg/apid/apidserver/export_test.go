@@ -15,7 +15,11 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
+	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
 	"log/slog"
 	"net"
@@ -30,6 +34,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	githubdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/githubd/v1"
+	secretdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/secretd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/agents"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
@@ -57,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
+	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -79,6 +85,8 @@ import (
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
+var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
 
 // SealNotificationChannel validates a channel create request (ADR-749).
 var SealNotificationChannel = sealChannel
@@ -398,6 +406,7 @@ var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegression
 var ApiManifestFromState = apiManifestFromState
 var ApidListener = apidListener
 var AppDeclaresTCPListener = appDeclaresTCPListener
+var AppInternalTCPPort = appInternalTCPPort
 var AppDeclaresUDPListener = appDeclaresUDPListener
 var AppHostForDomain = appHostForDomain
 var AppIDFromPayload = appIDFromPayload
@@ -524,13 +533,38 @@ var EncodePlatformTenantActivityCursor = encodePlatformTenantActivityCursor
 var EncodeSuspectedDependency = encodeSuspectedDependency
 var EnforceCreateTriggerCaps = enforceCreateTriggerCaps
 var EnvironmentAppsWithoutLiveDeployment = environmentAppsWithoutLiveDeployment
+var ProductionAppsWithoutRelease = productionAppsWithoutRelease
 var EvaluateProjectedQuotaGate = evaluateProjectedQuotaGate
 var EvaluateQuotaGate = evaluateQuotaGate
 var ExecutionRequest = executionRequest
 var ExtractInputValue = extractInputValue
 var ExtractTarGzToDir = extractTarGzToDir
 var FailedStageFromJSON = failedStageFromJSON
-var FeatureFlagConfigRequiresSubjectTargeting = featureFlagConfigRequiresSubjectTargeting
+var RuntimeBundleForSDK = runtimeBundleForSDK
+
+// RunFeatureFlagLifecycleCheck runs the lifecycle reconciler for one
+// environment at now (ADR 20261114150000 §4).
+func RunFeatureFlagLifecycleCheck(s *server, env state.FeatureFlagAutoRolloutCandidate, now time.Time) {
+	r := &featureFlagLifecycleReconciler{server: s}
+	r.checkEnvironment(context.Background(), s.store.(state.AuditEventOutboxStore), env, now)
+}
+
+// RunFlagExperimentPass runs one pass of the experiment reconciler at now
+// (ADR 20261115163113 §3).
+func RunFlagExperimentPass(s *server, now time.Time) {
+	events, _ := s.store.(state.FlagEventStore)
+	r := &flagExperimentReconciler{server: s, store: s.store.(state.FlagExperimentStore), events: events}
+	r.runPass(context.Background(), now)
+}
+
+func FeatureFlagRequiredCapabilities(config flags.Config) []string {
+	var out []string
+	for _, c := range featureFlagRequiredCapabilities(config) {
+		out = append(out, c.capability)
+	}
+	return out
+}
+
 var FeatureFlagOutcomeQuery = featureFlagOutcomeQuery
 var FetchAccountMetricsSnapshot = fetchAccountMetricsSnapshot
 var FindDashboardCookie = findDashboardCookie
@@ -607,6 +641,20 @@ func UploadSessionLockTracked(key string) bool {
 var MustSeedEdgeRuleApp = mustSeedEdgeRuleApp
 var NearestRunningTelemetryRow = nearestRunningTelemetryRow
 var NewAppSecretCredentialSink = newAppSecretCredentialSink
+
+func NewPostgresCutoverVerifierFixture(identity *age.X25519Identity, key []byte, probe func(context.Context, string, managedpostgres.CredentialAccess, int) error, client secretdpb.SecretdClient) managedpostgres.CutoverCredentialVerifier {
+	return &appSecretCredentialSink{
+		identities:   func() []*age.X25519Identity { return []*age.X25519Identity{identity} },
+		hmacKey:      func() []byte { return key },
+		probe:        probe,
+		cutoverProbe: postgresRemoteVerifier(client),
+	}
+}
+
+func CheckPostgresCutoverVerifierConfigurationForTest(ctx context.Context, getenv func(string) string) error {
+	return configurePostgresCutoverVerifier(ctx, &appSecretCredentialSink{}, getenv)
+}
+
 var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
@@ -883,6 +931,9 @@ func (r *adminAllowlist) Emails() *map[string]struct{} { return &r.emails }
 func (r *appSecretCredentialSink) Identities() *func() []*age.X25519Identity { return &r.identities }
 func (r *appSecretCredentialSink) Probe() *func(context.Context, string, managedpostgres.CredentialAccess, int) error {
 	return &r.probe
+}
+func (r *appSecretCredentialSink) CutoverProbe() *func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error {
+	return &r.cutoverProbe
 }
 
 // Members of auditor
@@ -1334,6 +1385,13 @@ func (r *server) GetQueueBindingStatus(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Event, p2 state.Account, p3 bool) error {
 	return r.handleBillingEventWithOptions(p0, p1, p2, p3)
 }
+
+// SetPrivateExecutorForTest supplies fixture keys and a catalog dialer before
+// the production route table binds its handlers.
+func (r *server) SetPrivateExecutorForTest(executor *toolregistry.PrivateExecutor) {
+	r.privateToolsOnce.Do(func() { r.privateTools = executor })
+}
+
 func (r *server) Handler() http.Handler { return r.handler() }
 
 func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
@@ -1441,8 +1499,17 @@ func (r *server) PurgeAppCache(p0 http.ResponseWriter, p1 *http.Request, p2 stat
 func (r *server) RealtimedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.realtimedMetricsDiscovery(p0, p1)
 }
-func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) {
-	r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+func (r *server) RecordDevPatchSource(p0 context.Context, p1 state.App, p2 string, p3 string, p4 string, p5 devPatchPlan) bool {
+	return r.recordDevPatchSource(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) SettleDeferredDevBuild(p0 context.Context, p1 state.App, p2 string, p3 time.Time, p4 bool, p5 *api.DevPatchPreview) {
+	r.settleDeferredDevBuild(p0, p1, p2, p3, p4, p5)
+}
+func (r *server) CancelSupersededDevBuilds(p0 context.Context, p1 state.Account, p2 state.App, p3 string) {
+	r.cancelSupersededDevBuilds(p0, p1, p2, p3)
+}
+func (r *server) StartDeferredDevBuilds(p0 context.Context, p1 state.App) {
+	r.startDeferredDevBuilds(p0, p1)
 }
 func (r *server) RedirectToGitHubAuthorization(p0 http.ResponseWriter, p1 *http.Request, p2 int64) bool {
 	return r.redirectToGitHubAuthorization(p0, p1, p2)
@@ -1628,6 +1695,9 @@ func (r *server) KeysLeftAfterReset(p0 context.Context, p1 state.Account) []stat
 func (r *server) RemoveForeignProviderLinks(p0 context.Context, p1 string, p2 string) {
 	r.removeForeignProviderLinks(p0, p1, p2)
 }
+func (r *server) RemoveOldAddressProviderLinks(p0 context.Context, p1 state.Account, p2 string) {
+	r.removeOldAddressProviderLinks(p0, p1, p2)
+}
 func (r *server) VmmdMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.vmmdMetricsDiscovery(p0, p1)
 }
@@ -1716,6 +1786,7 @@ var PrepareIssueOTLP = prepareIssueOTLP
 
 // Storage integration tests compile in the external unit (ADR-982).
 var SetupSecrets = setupSecrets
+var EnvironmentBranchSourceVersioned = environmentBranchSourceVersioned
 var SelectedObjectStorageVerification = selectedObjectStorageVerification
 
 func (r *fakeObjectProvider) Created() *[]string { return &r.created }
@@ -2148,6 +2219,18 @@ func (r *server) ExpireComplimentaryAccounts(ctx context.Context, now time.Time)
 	return r.expireComplimentaryAccounts(ctx, now)
 }
 
+// StampActiveBillingSubscription stamps subscriptionID as acct's subscription,
+// as a provider webhook does.
+func (r *server) StampActiveBillingSubscription(ctx context.Context, acct state.Account, subscriptionID string) error {
+	return r.stampActiveBillingSubscription(ctx, acct, subscriptionID)
+}
+
+// ManagedPostgresSubjectInactive reports whether account's databases stop
+// because the account is not active.
+func ManagedPostgresSubjectInactive(ctx context.Context, store any, account state.Account) (bool, error) {
+	return managedPostgresSubjectInactive(ctx, store, account)
+}
+
 // ExpireUnverifiedAccounts runs one unverified-account expiry sweep.
 func (r *server) ExpireUnverifiedAccounts(ctx context.Context) int {
 	return r.expireUnverifiedAccounts(ctx)
@@ -2288,6 +2371,15 @@ func CapabilitiesWithInstallationGates(crashSnapshots, forks, profiling bool) *h
 	return recorder
 }
 
+// CapabilitiesWithRuntimeGates runs GET /v1/capabilities for a Pro account
+// with the app-task API and the TCP/UDP listener gates set; no managed
+// PostgreSQL bindings are configured.
+func CapabilitiesWithRuntimeGates(appTasks, tcp, udp bool) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	(&server{}).WithAppTaskAPIEnabled(appTasks).WithListenersEnabled(tcp, udp).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanPro})
+	return recorder
+}
+
 func CapabilitiesWithWorkloadVerifier(verifier *workloadidentity.Verifier) *httptest.ResponseRecorder {
 	recorder := httptest.NewRecorder()
 	(&server{workloadVerifier: verifier}).getCapabilities(recorder, httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil), state.Account{Plan: api.PlanScale})
@@ -2300,6 +2392,13 @@ var ReleasePhaseEnabledFromEnv = releasePhaseEnabledFromEnv
 var MintMCPAuthCodeForTest = mintMCPAuthCode
 var NormalizeCliAuthCodeForTest = normalizeCliAuthCode
 var MCPCodeScopesForTest = mcpCodeScopes
+
+var NewCLIAuthTestServerForTest = newCliAuthTestServer
+var RenderCLIAuthForTestAs = renderCliAuthForTestAs
+
+func (h *cliAuthTestServer) SessionCookieForTest(csrf string) *http.Cookie {
+	return &http.Cookie{Name: sessionCookie, Value: h.sessionCookies[csrf]}
+}
 
 var ALookupFunc = &aLookupFunc
 var AAAALookupFunc = &aaaaLookupFunc
@@ -2369,16 +2468,33 @@ func (r *server) LinkOAuthByEmail(req *http.Request, acct state.Account, provide
 
 // Login failure limiter internals (bug hunt round 8: eviction when full).
 func NewLoginFailureLimiterForTest() *loginFailureLimiter { return newLoginFailureLimiter() }
-func (l *loginFailureLimiter) Record(key string) bool     { return l.record(key) }
-func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
-	return l.retryAfter(key)
+func (l *loginFailureLimiter) Record(key string) bool {
+	return l.record(key, api.LoginFailuresPerEmail)
 }
+func (l *loginFailureLimiter) RetryAfter(key string) time.Duration {
+	return l.retryAfter(key, api.LoginFailuresPerEmail)
+}
+
+// LoginNetwork exposes the failed-password budget's client network (F10-1).
+var LoginNetwork = loginNetwork
 
 // RouteProbeAccountQueues exposes the per-account probe ordering (H79).
 var RouteProbeAccountQueues = routeProbeAccountQueues
 
+func (s *server) VerifyPrivateToolPinForTest(ctx context.Context, target api.ToolInvocationTarget, endpoint string) error {
+	return s.verifyPrivateToolPin(ctx, target, endpoint)
+}
+
+var ToolConnectionRecipientsForTest = toolConnectionRecipients
+
 func (s *server) ConfigureCustomerSupportForTest(ctx context.Context, pool *pgxpool.Pool) error {
 	return s.configureCustomerSupport(ctx, pool, func(string) string { return "" })
+}
+
+// ConfigureAttentionForTest wires the attention evaluator without starting
+// its loop; tests insert signals directly.
+func (s *server) ConfigureAttentionForTest(pool *pgxpool.Pool) {
+	s.attention = attention.New(pool, slog.Default(), nil)
 }
 
 func (s *server) DispatchCustomerSupportNotificationForTest(ctx context.Context) error {
@@ -2390,6 +2506,8 @@ type RegressionComparison struct {
 	Cur, Prev          string
 	CurStart, CurEnd   time.Time
 	PrevStart, PrevEnd time.Time
+	OwnStart, OwnEnd   time.Time
+	SideBySide         bool
 }
 
 func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now time.Time) (RegressionComparison, bool) {
@@ -2397,8 +2515,11 @@ func ChooseRegressionComparison(deps []sqlc.ListDeploymentsForCompareRow, now ti
 	return RegressionComparison{
 		Cur: c.cur.DeploymentID.String(), Prev: c.prev.DeploymentID.String(),
 		CurStart: c.curStart, CurEnd: c.curEnd, PrevStart: c.prevStart, PrevEnd: c.prevEnd,
+		OwnStart: c.ownStart, OwnEnd: c.ownEnd, SideBySide: c.sideBySide(),
 	}, ok
 }
+
+var MergeRegressionBaselines = mergeRegressionBaselines
 
 var DebugEvidenceLogWindow = debugEvidenceLogWindow
 
@@ -2500,6 +2621,12 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 // ProjectEnvironmentWorkloadURL exposes the environment URL builder.
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
 
+// PlatformOwnedDomain reports the apps/platform namespace check for a server
+// with the given domains.
+func PlatformOwnedDomain(apps, platform, domain string) bool {
+	return (&server{domain: apps, platformDomain: platform}).platformOwnedDomain(domain)
+}
+
 var FinancialBudgetProblem = financialBudgetProblem
 
 // DriveExecutionPipelineForTest exercises the production continuation adapter.
@@ -2509,4 +2636,42 @@ func (s *server) DriveExecutionPipelineForTest(ctx context.Context, claim state.
 
 func (s *server) DeliverPipelineCallbacksForTest(ctx context.Context) (int, error) {
 	return s.agentAPI.DeliverPipelineCallbacks(ctx)
+}
+
+// AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
+var AppOOMRecommendation = appOOMRecommendation
+
+func (s *server) PrivatePublicationReplicaClientForTest(ctx context.Context, target api.ToolInvocationTarget, instance, host, token, version string) (*mcphosting.Client, error) {
+	app, err := s.store.AppByID(ctx, target.AppID)
+	if err != nil {
+		return nil, err
+	}
+	probe, err := mcphosting.NewClient("https://"+host+target.EndpointPath, token, version)
+	if err != nil {
+		return nil, err
+	}
+	probe.HTTP = &http.Client{Timeout: 10 * time.Second, Transport: privatePublicationReplicaTransport{server: s, app: app, target: target, instance: instance, host: host, version: version}}
+	return probe, nil
+}
+
+// SetSignupGeoForTest replaces the sign-up country and network-owner lookups
+// (ADR-20261113160000); nil lookups leave the facts empty.
+func (s *server) SetSignupGeoForTest(country func(net.IP) string, asn func(net.IP) (uint32, string)) {
+	s.signupGeo = &signupGeo{country: country, asn: asn}
+}
+
+func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map[string]string) *httptest.ResponseRecorder {
+	return r.doSession(p0, p1, p2, p3, p4, p5)
+}
+
+var SyntheticCheckAuthWarning = syntheticCheckAuthWarning
+
+// Managed Redis Compose helpers (ADR-20261116192126).
+var (
+	ComposeRedisCacheName = composeRedisCacheName
+	ComposeRedisValue     = composeRedisValue
+)
+
+func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
+	return &s.runtimeBuildAdmission
 }

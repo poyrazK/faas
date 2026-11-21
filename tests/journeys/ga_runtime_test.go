@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -163,6 +164,47 @@ func TestEnvLifecycle(t *testing.T) {
 			doc := jsonBody(t, r)
 			return str(doc, "sha256") == hashOf(one), "app sees " + compact(doc)
 		})
+	})
+	s.check("pull_preview_preserves_local_file", func(t *testing.T) {
+		out := filepath.Join(dir, ".env.preview")
+		existing := "# keep local configuration\r\nexport E2E_ALPHA=" + one + "\r\nLOCAL_ONLY=keep\r\n"
+		if err := os.WriteFile(out, []byte(existing), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before, err := os.Stat(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := tg.ok(t, time.Minute, "env", "pull", "--app", slug, "-o", out, "--dry-run", "--json")
+		var plan struct {
+			DryRun  bool `json:"dry_run"`
+			Written bool `json:"written"`
+			Changes []struct {
+				Key    string `json:"key"`
+				Action string `json:"action"`
+			} `json:"changes"`
+		}
+		if err := json.Unmarshal(res.stdout, &plan); err != nil {
+			t.Fatal(err)
+		}
+		decisions := map[string]string{}
+		for _, row := range plan.Changes {
+			decisions[row.Key] = row.Action
+		}
+		if !plan.DryRun || plan.Written || decisions["E2E_ALPHA"] != "preserve" || decisions["E2E_BETA"] != "add" || decisions["LOCAL_ONLY"] != "local_only" {
+			t.Fatal("pull preview did not preserve local assignments or identify missing keys")
+		}
+		data, err := os.ReadFile(out)
+		if err != nil || string(data) != existing {
+			t.Fatal("pull preview changed the local file")
+		}
+		after, err := os.Stat(out)
+		if err != nil || !os.SameFile(before, after) || !before.ModTime().Equal(after.ModTime()) {
+			t.Fatal("pull preview replaced the local file")
+		}
+		if strings.Contains(string(res.stdout), one) || strings.Contains(string(res.stdout), two) {
+			t.Fatal("pull preview disclosed values")
+		}
 	})
 	s.check("pull_skeleton_has_no_values", func(t *testing.T) {
 		out := filepath.Join(dir, "pulled.env")

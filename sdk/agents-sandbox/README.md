@@ -29,12 +29,13 @@ const result = await run(agent, 'Triage owner/name#42.', { sandbox: { client, ma
 | `persistWorkspace`, `hydrateWorkspace` | a tar built in the guest and downloaded; `…/workspace:hydrate` |
 | `session.persistSnapshot()` (Gregale only) | `…/workspace:persist`; create with `options.snapshotId` to start from it |
 | `resolveExposedPort` | `POST …/ports`. A private port's endpoint carries its preview token in `query`; it is never written to the session state |
+| `session.startBrowser()` (Gregale only) | starts the session's headless Chromium (`gregale-browser`) and exposes its DevTools protocol on port 9222, privately. Connect with `chromium.connectOverCDP(browser.cdpUrl, { headers: browser.headers })`; the headers carry the preview token and are never written to the session state. Pages reach the web only in `web` network mode |
 | `running`, `stop`, `shutdown`, `close`, `delete` | `GET` / `DELETE /v1/sandboxes/{id}` |
 | `serializeSessionState` | `{ sandboxId, apiBase }` only. `resume` re-mints the session token with your API key, and refuses state for another API origin |
 
 ## Options
 
-`preset` (`codex`, `opencode`, `claude-code`), `ramMb`, `network` (`none`, `registries`, `web`), `idleTimeoutS`, `lifetimeS`, `labels`, `tenant`, `snapshotId`, `portVisibility`, `readyTimeoutMs`, plus `apiKey` (default `GREGALE_API_KEY`) and `apiBase` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
+`preset` (`codex`, `opencode`, `claude-code`), `browser` (boot with the sandbox browser running; `ramMb` ≥ 1024), `ramMb`, `network` (`none`, `registries`, `web`), `idleTimeoutS`, `lifetimeS`, `labels`, `tenant`, `snapshotId`, `portVisibility`, `readyTimeoutMs`, plus `apiKey` (default `GREGALE_API_KEY`) and `apiBase` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
 
 ## Not supported yet
 

@@ -45,6 +45,7 @@ func TestHostedMCP(t *testing.T) {
 	s.step("lists_account_apps", j.listsAccountApps)
 	s.check("non_agent_key_refused", j.nonAgentKeyRefused)
 	j.approvalSteps(s)
+	j.budgetSteps(s)
 	s.step("connection_listed", j.connectionListed)
 	s.step("connection_revoked", j.connectionRevoked)
 	s.step("org_created", j.orgCreated)
@@ -72,6 +73,10 @@ type hostedMCPJourney struct {
 	approvalID       string
 	reviewURL        string
 	ghost            string // an app that never exists
+	// Agent budgets and connection status (agent_budgets_test.go).
+	budgetKeyValue   string
+	budgetKeyID      string
+	budgetApprovalID string
 }
 
 var resourceMetadataRe = regexp.MustCompile(`resource_metadata="([^"]+)"`)
@@ -114,10 +119,32 @@ func (j *hostedMCPJourney) agentKeySession(t *testing.T) {
 	}
 }
 
+// listsAccountApps pages through gregale_list_apps: the tool returns one
+// bounded page sorted by slug, and a busy account's probe can sit past the
+// first (the 2026-11-15 run's account held 95 apps).
 func (j *hostedMCPJourney) listsAccountApps(t *testing.T) {
-	if text := j.session.callTool(t, "gregale_list_apps", map[string]any{}); !strings.Contains(text, j.probe) {
-		t.Fatalf("gregale_list_apps does not name the probe app %s: %s", j.probe, tail(text, 400))
+	var last string
+	for offset, pages := 0, 0; pages < 50; pages++ {
+		result := j.session.call(t, "tools/call", map[string]any{"name": "gregale_list_apps", "arguments": map[string]any{"offset": offset}})
+		var text strings.Builder
+		for _, c := range asList(result["content"]) {
+			text.WriteString(str(c, "text"))
+		}
+		if field(result, "isError") == true {
+			t.Fatalf("gregale_list_apps failed: %s", tail(text.String(), 400))
+		}
+		page, _ := json.Marshal(result["structuredContent"])
+		last = text.String() + string(page)
+		if strings.Contains(last, j.probe) {
+			return
+		}
+		next, ok := field(result, "structuredContent.next_offset").(float64)
+		if !ok || int(next) <= offset {
+			break
+		}
+		offset = int(next)
 	}
+	t.Fatalf("gregale_list_apps does not name the probe app %s on any page: %s", j.probe, tail(last, 400))
 }
 
 // nonAgentKeyRefused: a key without the agent scope is refused with a
@@ -151,7 +178,16 @@ func (j *hostedMCPJourney) connectionRevoked(t *testing.T) {
 
 func (j *hostedMCPJourney) orgCreated(t *testing.T) {
 	j.org = j.tg.slug("mcp-org")
-	j.tg.ok(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	res := j.tg.run(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	if res.exit != 0 && strings.Contains(string(res.stderr)+string(res.stdout), "org_free_limit_exceeded") {
+		// Each run deletes the Free organization it made, and a Free
+		// organization deleted this month still counts, so only the first
+		// run of a month can make one on the same account.
+		t.Skip("the account has used its Free organization this month; the organization agent policy steps need another account or next month")
+	}
+	if res.exit != 0 {
+		t.Fatalf("gregale org create failed (exit %d): %s", res.exit, res.problem())
+	}
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "delete", j.org, "--yes") })
 }
 

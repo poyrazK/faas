@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -48,7 +49,7 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	if messages <= 0 {
 		return []QueueLease{}, tx.Commit(ctx)
 	}
-	ids, err := q.QueueLeaseCandidates(ctx, tx, sqlc.QueueLeaseCandidatesParams{
+	candidates, err := q.QueueLeaseCandidates(ctx, tx, sqlc.QueueLeaseCandidatesParams{
 		AppID: app, BindingID: binding.ID, QueueName: binding.QueueName, CandidateLimit: int32(messages * 4)})
 	if err != nil {
 		return nil, err
@@ -56,12 +57,18 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 	instance := pgtype.Text{String: req.InstanceID, Valid: req.InstanceID != ""}
 	leases := make([]QueueLease, 0, messages)
 	usedBytes := 0
-	for _, id := range ids {
+	for _, candidate := range candidates {
 		if len(leases) == messages {
 			break
 		}
 		fits := func(inv Invocation) bool { return queueLeaseFits(len(leases), usedBytes, inv) }
-		lease, ok, err := leaseQueueCandidateTx(ctx, tx, q, app, id, visibility, instance, limits, fits)
+		var lease QueueLease
+		var ok bool
+		if candidate.WorkPolicyName.Valid {
+			lease, ok, err = leaseKeyedQueueCandidateTx(ctx, tx, q, req.AppID, app, candidate, visibility, instance, limits, fits)
+		} else {
+			lease, ok, err = leaseQueueCandidateTx(ctx, tx, q, app, candidate.ID, visibility, instance, limits, fits)
+		}
 		if errors.Is(err, errQueueLeaseFull) {
 			break
 		}
@@ -77,6 +84,41 @@ func (s *PgStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest)
 		return nil, fmt.Errorf("state: lease queue messages: %w", err)
 	}
 	return leases, nil
+}
+
+// leaseKeyedQueueCandidateTx leases a work-policy row only as its lane's head
+// (ADR-20261112193306, the ADR-374 lane rule push consumers already follow):
+// one running row per app, policy and key, in admission order, a retrying
+// head blocking later rows. The lane and fairness locks come before the row
+// lock, the order keyed enqueue and the push claim take them. The claim runs
+// in a savepoint because the lane check may commit lane expiries.
+func leaseKeyedQueueCandidateTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID string, app pgtype.UUID, candidate sqlc.QueueLeaseCandidatesRow,
+	visibility int, instance pgtype.Text, limits api.Limits, fits func(Invocation) bool) (QueueLease, bool, error) {
+	id := uuid.UUID(candidate.ID.Bytes).String()
+	lane, err := tx.Begin(ctx)
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	defer func() { _ = lane.Rollback(context.WithoutCancel(ctx)) }()
+	err = lockKeyedClaimTx(ctx, lane, id, appID, candidate.WorkPolicyName.String, candidate.WorkKeyDigest)
+	if err == nil && candidate.WorkFairnessLimit.Valid {
+		err = lockFairnessClaimTx(ctx, lane, appID, candidate.WorkPolicyName.String, candidate.WorkFairnessDigest, int(candidate.WorkFairnessLimit.Int32))
+	}
+	if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+		// Not the head, its fairness group is full, or it just expired.
+		return QueueLease{}, false, nil
+	}
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	lease, ok, err := leaseQueueCandidateTx(ctx, lane, q, app, candidate.ID, visibility, instance, limits, fits)
+	if err != nil {
+		return QueueLease{}, false, err
+	}
+	if err := lane.Commit(ctx); err != nil {
+		return QueueLease{}, false, err
+	}
+	return lease, ok, nil
 }
 
 // errQueueLeaseFull stops a lease whose next message would pass the response
@@ -180,9 +222,18 @@ func (s *PgStore) ExtendQueueLeases(ctx context.Context, accountID, appID, queue
 	if visibilitySeconds == 0 {
 		visibilitySeconds = api.QueueLeaseDefaultVisibilitySeconds
 	}
-	return s.settleQueueLeases(ctx, accountID, appID, queueName, receipts, func(ctx context.Context, tx pgx.Tx, inv Invocation, _ time.Time) (bool, error) {
+	lifetime := time.Duration(api.MustLimitsFor(account.Plan).MaxAsyncInvocationDeadlineSeconds) * time.Second
+	return s.settleQueueLeases(ctx, accountID, appID, queueName, receipts, func(ctx context.Context, tx pgx.Tx, inv Invocation, now time.Time) (bool, error) {
 		q := sqlc.New()
-		until, err := q.ExtendQueueLeaseInvocation(ctx, tx, sqlc.ExtendQueueLeaseInvocationParams{LeaseSeconds: int32(visibilitySeconds),
+		receipt, err := q.ReadQueueLeaseReceipt(ctx, tx, mustPgUUID(inv.ID))
+		if err != nil {
+			return false, mapErr(err)
+		}
+		seconds, ok := queueLeaseExtension(receipt.IssuedAt.Time, now, visibilitySeconds, lifetime)
+		if !ok {
+			return false, nil
+		}
+		until, err := q.ExtendQueueLeaseInvocation(ctx, tx, sqlc.ExtendQueueLeaseInvocationParams{LeaseSeconds: int32(seconds),
 			ID: mustPgUUID(inv.ID), Attempt: int32(inv.Attempts), ReplayGeneration: inv.ReplayGeneration})
 		if errors.Is(err, pgx.ErrNoRows) {
 			return false, nil
@@ -257,7 +308,16 @@ func (s *PgStore) settleQueueLease(ctx context.Context, accountID, appID, queueN
 		return "", err
 	}
 	held := queueLeaseReceipt{Attempt: int(r.Attempt), ReplayGeneration: r.ReplayGeneration, TokenHash: r.TokenHash}
-	if !queueLeaseOwned(inv, accountID, appID, queueName, held, digest, now.Time) {
+	bindingID := ""
+	if inv.QueueName != queueName && inv.QueueBindingID != "" {
+		id, err := q.QueueLeaseBindingForQueue(ctx, tx, sqlc.QueueLeaseBindingForQueueParams{
+			AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), QueueName: queueName})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return "", err
+		}
+		bindingID = uuidString(id)
+	}
+	if !queueLeaseOwned(inv, accountID, appID, queueName, bindingID, held, digest, now.Time) {
 		return QueueLeaseReasonExpired, nil
 	}
 	applied, err := apply(ctx, tx, inv, now.Time)
@@ -283,4 +343,28 @@ func (s *PgStore) QueueLeasesByInstance(ctx context.Context, appID string) (map[
 		out[row.InstanceID] = int(row.Leases)
 	}
 	return out, nil
+}
+
+func (s *PgStore) ReleaseQueueLeases(ctx context.Context, appID string, leases []QueueLease) error {
+	q := sqlc.New()
+	for _, lease := range leases {
+		inv := lease.Invocation
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		n, err := q.ReleaseQueueLeaseInvocation(ctx, tx, sqlc.ReleaseQueueLeaseInvocationParams{ID: mustPgUUID(inv.ID), AppID: mustPgUUID(appID),
+			Attempt: int32(inv.Attempts), ReplayGeneration: inv.ReplayGeneration})
+		if err == nil && n == 1 {
+			err = q.DeleteQueueLeaseReceiptForAttempt(ctx, tx, sqlc.DeleteQueueLeaseReceiptForAttemptParams{InvocationID: mustPgUUID(inv.ID), Attempt: int32(inv.Attempts)})
+		}
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+		_ = tx.Rollback(context.WithoutCancel(ctx))
+		if err != nil {
+			return fmt.Errorf("state: release queue lease: %w", err)
+		}
+	}
+	return nil
 }

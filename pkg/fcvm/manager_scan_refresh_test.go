@@ -51,7 +51,7 @@ func TestBringUpScanCheck_RechecksCachedRefusalAgainstCanonicalCopy(t *testing.T
 			}
 			m := &Manager{}
 			m.WithStorage(cache)
-			err = m.bringUpScanCheck(ctx, baseKey)
+			_, err = m.bringUpScanCheck(ctx, baseKey)
 			if tc.wantOK {
 				if err != nil {
 					t.Fatalf("stale cached refusal blocked the boot: %v", err)

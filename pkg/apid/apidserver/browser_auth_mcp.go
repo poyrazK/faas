@@ -25,30 +25,36 @@ var errBrowserAuthInput = errors.New("invalid browser authorization request")
 // codes exchanges by the code alone, so it gets a 64-bit code.
 //
 // loopbackPort is the request's LoopbackPort for a device-bound login code,
-// else 0 (ADR-20261111170000).
-func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, loopbackPort int, err error) {
+// else 0 (ADR-20261111170000). challenge is the decoded CodeChallenge of a
+// device-bound login code, else nil (account audit F10-3).
+func mintBrowserAuthCode(r *http.Request, deviceCodes bool) (code string, hash []byte, device bool, loopbackPort int, challenge []byte, err error) {
 	var input api.CliAuthCodeRequest
 	if r.ContentLength != 0 && r.Body != http.NoBody {
 		if err := decodeJSON(r, &input); err != nil {
-			return "", nil, false, 0, errBrowserAuthInput
+			return "", nil, false, 0, nil, errBrowserAuthInput
 		}
 	}
 	if input.LoopbackPort != 0 && (!input.Device || !validLoopbackPort(input.LoopbackPort)) {
-		return "", nil, false, 0, errBrowserAuthInput
+		return "", nil, false, 0, nil, errBrowserAuthInput
+	}
+	if input.CodeChallenge != "" {
+		if challenge = decodeCliAuthSecret(input.CodeChallenge); challenge == nil || !input.Device {
+			return "", nil, false, 0, nil, errBrowserAuthInput
+		}
 	}
 	if input.Purpose == "" && len(input.Scopes) == 0 {
 		if input.Device && deviceCodes {
 			code, hash, err := mintCliAuthCodeRaw()
-			return code, hash, true, input.LoopbackPort, err
+			return code, hash, true, input.LoopbackPort, challenge, err
 		}
 		code, hash, err := mintCodeOnlyCliAuthCode()
-		return code, hash, false, 0, err
+		return code, hash, false, 0, nil, err
 	}
 	if input.Device {
-		return "", nil, false, 0, errBrowserAuthInput
+		return "", nil, false, 0, nil, errBrowserAuthInput
 	}
 	code, hash, err = mintMCPAuthCode(input)
-	return code, hash, false, 0, err
+	return code, hash, false, 0, nil, err
 }
 
 // validLoopbackPort reports whether port can carry a one-click login
@@ -157,6 +163,7 @@ func mcpCapabilities(raw string) []string {
 		api.ScopeManagedPostgresManage: "create managed PostgreSQL databases and bind them to apps (billed)",
 		api.ScopeEnvWrite:              "change non-secret environment variables and restore configuration revisions",
 		api.ScopeUsageRead:             "read usage and billing cost summaries",
+		api.ScopeDataRead:              "read your app data: rows of managed PostgreSQL databases (read-only SQL), queued and dead-lettered message bodies, workflow inputs and outputs, object contents, and client IPs and user agents in edge events",
 	}
 	var out []string
 	for _, scope := range mcpCodeScopes(raw) {

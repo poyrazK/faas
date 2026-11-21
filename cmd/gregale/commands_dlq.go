@@ -158,6 +158,13 @@ func cmdDLQInspect(args []string) int {
 	if event.ReplayedAt != nil {
 		_, _ = fmt.Fprintf(osStdout, "replayed_at: %s\n", event.ReplayedAt.Format(time.RFC3339))
 	}
+	if event.ReplayCount > 0 {
+		last := ""
+		if event.LastReplayedAt != nil {
+			last = " (last " + event.LastReplayedAt.Format(time.RFC3339) + ")"
+		}
+		_, _ = fmt.Fprintf(osStdout, "replays:     %d%s\n", event.ReplayCount, last)
+	}
 	_, _ = fmt.Fprintf(osStdout, "payload:     %s\nheaders:     %s\nerror_detail: %s\n", event.Payload, event.Headers, event.ErrorDetail)
 	return 0
 }

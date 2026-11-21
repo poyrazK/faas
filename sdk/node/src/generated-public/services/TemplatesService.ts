@@ -7,6 +7,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class TemplatesService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Catalog of starter templates the dashboard wizard renders.
    * Cookie-session-authenticated (NOT API-key). The dashboard and
@@ -23,7 +24,7 @@ export class TemplatesService {
    * @throws ApiError
    */
   public static listTemplates(): CancelablePromise<Array<TemplateView>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/templates',
       errors: {

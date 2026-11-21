@@ -1,0 +1,21 @@
+# Snapshot restore speed-ups, per cell. node_join.yml renders them into
+# zz-faas-restore-speedups.conf on every run. Both are off in vmmd's code;
+# production-us turned them on 2026-11-15 after a park/wake bench on both
+# compute nodes (30 restores before, 55 after):
+#
+# vmmd_resource_journal_volatile_writes (ADR-20261026113920): volatile
+# resource journal commits go only to the tmpfs copies under
+# /run/faas/vmmd-resources and skip the disk fsync. journal_sync mean fell
+# 67 -> 28 ms and stage_drives p50 ~45 -> ~20 ms, at the same 27 commits a
+# restore. A vmmd older than #5520 (b33509c5e4, 2026-10-26) ignores the tmpfs
+# copies, so keep it on only where every rollback target includes it.
+#
+# vmmd_restore_reseed_thread (ADR-20261024105607): Node processes answer the
+# restore reseed barrier from a native thread instead of their event loop.
+# A Node app's resume_hook p50 fell 317 -> 253 ms and wake-to-running
+# 506 -> 384 ms. Only cold boots after the switch, and the snapshots they
+# capture, change; other runtimes are unaffected.
+#
+# false renders 0, so turning one off takes effect at the next vmmd start.
+vmmd_resource_journal_volatile_writes: true
+vmmd_restore_reseed_thread: true

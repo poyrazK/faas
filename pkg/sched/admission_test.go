@@ -405,6 +405,11 @@ func TestAdmitWarmPoolKindReservesRAMWithoutConcurrencyUntilPromoted(t *testing.
 		t.Fatalf("promoted deployment concurrency = %d, want 1", got)
 	}
 	l.Release(req.Instance)
+	// Invariant 1 per deployment: a release must hand the slot back, or the
+	// deployment's counter leaks and later wakes are refused.
+	if got := l.ConcurrencyForDeployment(req.AppID, req.DeploymentID); got != 0 {
+		t.Fatalf("deployment concurrency after release = %d, want 0", got)
+	}
 }
 
 // Tier A5 / ADR-066: a KindWake reservation with Plan unset still

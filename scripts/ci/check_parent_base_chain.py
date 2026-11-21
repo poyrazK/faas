@@ -40,8 +40,16 @@ def child_dockerfiles(base_stage_go: str) -> list[str]:
     return [f"images/runner-{name.lower()}.Dockerfile" for name in runtimes]
 
 
+#: Build stages whose bytes are only copied into a base, never its parent layer
+#: (ADR-20261117070620 debug tools). Their lock entries are not the base's FROM.
+HELPER_STAGES = (" AS gregale-debug-tools",)
+
+
 def pinned_ref(lock: dict, dockerfile: str) -> str:
-    entries = [e for e in lock["pinned"] if e["dockerfile"] == dockerfile]
+    entries = [
+        e for e in lock["pinned"]
+        if e["dockerfile"] == dockerfile and not e.get("pinned_in_dockerfile", "").endswith(HELPER_STAGES)
+    ]
     if len(entries) != 1:
         raise ValueError(f"{dockerfile}: want exactly one lock entry, found {len(entries)}")
     return f"{entries[0]['resolved_repo']}@{entries[0]['digest']}"

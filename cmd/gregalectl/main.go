@@ -13,8 +13,11 @@
 //   - workload-identity init|rotate|status — cluster workload-identity key + JWKS
 //   - backup init|unseal-archive-creds|unseal-rclone — backup creds
 //   - secrets init|rotate|status|stamp               — post-bootstrap secrets
-//   - trusted-publishers stays in `gregale` (admin API surface; see
-//     PR-6.5 deviation note) — NOT shipped here.
+//   - trusted-publishers stays in `gregale` (account-admin API surface;
+//     see PR-6.5 deviation note) — NOT shipped here.
+//   - billing credit|refund|consume-credits|postgres, accounts
+//     abuse-hold|egress-flows and github webhook-secret moved here from
+//     `gregale`: their routes accept only an operator session.
 //   - version, completion, man        — internal surface
 //
 // gregale (the customer-facing CLI) and gregalectl are separate
@@ -57,12 +60,13 @@ Commands:
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
   workload-identity  Provision the cluster workload-identity signing key and JWKS (workload-identity init|rotate|status)
   backup       Operator rclone / archive credentials (backup init|unseal-archive-creds|unseal-rclone)
-  secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp; PR-X / issue #911 / ADR-110)
+  secrets      Post-bootstrap secrets init (secrets init|rotate|status|stamp|rekey-progress; PR-X / issue #911 / ADR-110)
   artifact     Publish or verify release-pinned shared artifacts (artifact publish|verify)
   compute-nodes  Compute-node state and release readiness (add|list|show|release-status|drain|activate|retire)
   instances    Authenticated instance recovery (force-park|force-cold-boot|force-restart|wait)
-  accounts     Authenticated tenant support and lifecycle controls (list|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary)
-  billing      Operator billing catalog, reconciliation, and webhook diagnostics
+  accounts     Authenticated tenant support and lifecycle controls (list|find|attention|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|make-org-owner|object-storage-ceiling|complimentary|abuse-hold|egress-flows)
+  support-access  Customer-granted support access (request|grants|status|deploy|retry|cancel|rollback|restart)
+  billing      Operator billing catalog, credits, refunds, Postgres accounting, reconciliation, and webhook diagnostics
   config       Inspect and safely change hot runtime configuration (list|show|history|set|rollback)
   audit        Correlate operator intents and events by trace ID (audit trace)
   builds       Authenticated recovery for stuck builds (builds sweep-stuck)
@@ -72,7 +76,7 @@ Commands:
   deploy        Provider-neutral node adoption + fleet topology tools (deploy claim|fleet-bundle|prepare-node|join-node|join-fleet|rollback-node|add-node)
   obs           Operator incidents, evidence, context, health, fleet overview, and capacity (obs incidents|evidence|context|health|overview|capacity)
   debug         Operator-side smoke harness for the OTel spans writer (debug otel-smoke; ADR-127 PR-D)
-  github        GitHub delivery + Check Run recovery (status|retry-delivery|retry-check)
+  github        GitHub delivery + Check Run recovery and legacy webhook secrets (status|retry-delivery|retry-check|webhook-secret)
   status        Publish incidents and maintenance (status incident|maintenance ...)
   release-acceptance  Mint and revoke short-lived production acceptance credentials
   promotion-rollout  Inspect readiness and manage signed promotion rollout approvals
@@ -234,6 +238,10 @@ func run(args []string) int {
 		// mutations require a recent MFA step-up, confirmation, reason,
 		// idempotency key, and trace ID through apid.
 		return cmdAccountsDispatch(args[1:])
+	case dispatchSupportAccess:
+		// Customer-granted support access (ADR-20261116163508): requests,
+		// grants, and app operations under a grant from the operator session.
+		return cmdSupportAccessDispatch(args[1:])
 	case dispatchBilling:
 		return cmdBillingDispatch(args[1:])
 	case dispatchConfig:

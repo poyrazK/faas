@@ -1,6 +1,6 @@
-import { open, stat, realpath } from 'node:fs/promises'
+import { open, stat, lstat, readdir, realpath } from 'node:fs/promises'
 import { constants } from 'node:fs'
-import { resolve, relative, isAbsolute, sep } from 'node:path'
+import { resolve, relative, isAbsolute, sep, dirname, basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { requestStore } from './dev-requests.mjs'
 import { collectionScenarios, replayRequest } from './request-replay.mjs'
@@ -9,6 +9,30 @@ const object = value => value && typeof value === 'object' && !Array.isArray(val
 const fields = (value, allowed) => object(value) && Object.keys(value).every(key => allowed.includes(key))
 const identifier = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/
 const reserved = new Set(['sub', 'iss', 'aud', 'exp', 'iat', 'nbf', 'jti', 'role', 'gregale_read_only', '__proto__', 'constructor', 'prototype'])
+
+export async function protectMigrationOutput(migrations, output) {
+  const within = (root, path) => { const part = relative(root, path); return part === '' || part !== '..' && !part.startsWith('..' + sep) && !isAbsolute(part) }
+  const canonical = async path => {
+    try { return await realpath(path) }
+    catch (error) { if (error.code !== 'ENOENT') throw error; return join(await canonical(dirname(path)), basename(path)) }
+  }
+  const root = await realpath(migrations), destination = await canonical(resolve(output))
+  if (within(resolve(migrations), resolve(output)) || within(root, destination)) throw new Error('Types output must not replace a migration.')
+  const info = await lstat(output).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
+  if (!info) return
+  if (!info.isFile()) throw new Error('Types output must be a regular file.')
+  const visit = async directory => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) await visit(path)
+      else {
+        const source = await stat(path)
+        if (source.dev === info.dev && source.ino === info.ino) throw new Error('Types output must not alias a migration.')
+      }
+    }
+  }
+  await visit(root)
+}
 
 export async function readLocalFile(path, limit = 65536) {
   const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
@@ -61,6 +85,7 @@ export async function loadDevProject(options) {
     verification = { collection: await projectPath(base, config.verify.collection), scenarios: config.verify.scenarios }
   }
   const output = options.output_set || !config.output ? options.output : resolve(base, config.output)
+  await protectMigrationOutput(migrations, output)
   if (config.output !== undefined && (typeof config.output !== 'string' || !config.output || isAbsolute(config.output) || (relative(base, resolve(base, config.output)) === '..' || relative(base, resolve(base, config.output)).startsWith('..' + sep)))) throw new Error('Use a project-relative types output.')
   const seed = config.seed === undefined ? null : await projectPath(base, config.seed)
   const seedSQL = seed ? await readLocalFile(seed, 1048576) : null
@@ -76,6 +101,7 @@ export async function loadDevProject(options) {
     if (resolve(output) === resolve(path) || (outputInfo && info && outputInfo.dev === info.dev && outputInfo.ino === info.ino)) throw new Error('Types output must not replace configuration, seeds, requests or the baseline.')
   }
   if (options.behavior_output) {
+    await protectMigrationOutput(migrations, options.behavior_output)
     const destination = resolve(options.behavior_output), within = relative(migrations, destination)
     if (within === '' || (within !== '..' && !within.startsWith('..' + sep) && !isAbsolute(within))) throw new Error('Behavior output must not replace a migration.')
     const destinationInfo = await stat(destination).catch(error => { if (error.code !== 'ENOENT') throw error; return null })
