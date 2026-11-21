@@ -64,6 +64,12 @@ func TestFlagsAndExperiments(t *testing.T) {
 			t.Logf("warning: cleanup could not delete project %s (%s)", j.project, res.problem())
 		}
 	})
+	// The experiment outlives the step that starts it, so the test, not the
+	// step, stops it; cleanups run last-in first-out, before the project goes.
+	t.Cleanup(func() {
+		tg.run(t, time.Minute, "flag", "experiment", "stop", "checkout-exp", "--project", j.project)
+		tg.run(t, time.Minute, "flag", "experiment", "delete", "checkout-exp", "--project", j.project)
+	})
 	s := newStory(t)
 	if !s.step("deploy_project", j.deploy) {
 		return
@@ -217,15 +223,20 @@ func (j *flagsJourney) served(t *testing.T, c *flagsCustomer, path string, want 
 }
 
 // sdkMatchesInspector checks that the SDK in the VM and the server's
-// decision inspector agree for every customer.
+// decision inspector agree for every customer, once the SDK holds the
+// configuration version the inspector explains (it refreshes every 2 s, so
+// it may still serve the version before `flag rollout set`).
 func (j *flagsJourney) sdkMatchesInspector(t *testing.T) {
 	for _, c := range j.customers {
-		doc := j.served(t, c, "/checkout", func(d map[string]any) bool { return str(d, "reason") != "" && str(d, "variant") != "fallback" })
 		inspect := object(t, j.flag(t, "inspect", "--key", "checkout", "--customer-id", c.tenant, "--fallback-variant", "fallback").stdout)
 		want := str(inspect, "value")
 		if want == "" {
 			want = str(inspect, "decision.value")
 		}
+		version := num(inspect, "config_version")
+		doc := j.served(t, c, "/checkout", func(d map[string]any) bool {
+			return str(d, "reason") != "" && str(d, "variant") != "fallback" && num(d, "config_version") >= version
+		})
 		if str(doc, "variant") != want {
 			t.Errorf("customer %s: the SDK served %q, the inspector explains %q (%s)", c.tenant, str(doc, "variant"), want, compact(inspect))
 		}
@@ -235,10 +246,6 @@ func (j *flagsJourney) sdkMatchesInspector(t *testing.T) {
 func (j *flagsJourney) startExperiment(t *testing.T) {
 	j.flag(t, "experiment", "create", "checkout-exp", "--flag", "checkout", "--rule", j.rule(t), "--control", "legacy",
 		"--metric", "order_completed", "--no-guardrails", "--start")
-	t.Cleanup(func() {
-		j.tg.run(t, time.Minute, "flag", "experiment", "stop", "checkout-exp", "--project", j.project)
-		j.tg.run(t, time.Minute, "flag", "experiment", "delete", "checkout-exp", "--project", j.project)
-	})
 }
 
 // traffic sends each customer to checkout; every other customer converts.
@@ -269,7 +276,7 @@ func (j *flagsJourney) results(t *testing.T) {
 		}
 	}
 	eventually(t, "results count every exposure and conversion", 25*time.Minute, 30*time.Second, func() (bool, string) {
-		res := j.tg.run(t, time.Minute, "flag", "experiment", "result", "get", "checkout-exp", "--project", j.project)
+		res := j.tg.run(t, time.Minute, "--json", "flag", "experiment", "result", "get", "checkout-exp", "--project", j.project)
 		if res.exit != 0 {
 			return false, res.problem()
 		}
@@ -336,7 +343,7 @@ func (j *flagsJourney) analytics(t *testing.T) {
 		}
 	}
 	eventually(t, "order_completed events are queryable", 5*time.Minute, 15*time.Second, func() (bool, string) {
-		res := j.tg.run(t, time.Minute, "insight", "event", "list", "--event", "order_completed", "--project", j.project)
+		res := j.tg.run(t, time.Minute, "--json", "insight", "event", "list", "order_completed", "--project", j.project)
 		if res.exit != 0 {
 			if strings.Contains(res.problem(), "product analytics") {
 				t.Skipf("product analytics is not enabled for this account: %s", res.problem())
@@ -344,6 +351,11 @@ func (j *flagsJourney) analytics(t *testing.T) {
 			return false, res.problem()
 		}
 		doc := object(t, res.stdout)
-		return strings.Contains(compact(doc), fmt.Sprintf(`"units":%d`, converted)) || num(doc, "total.units") == float64(converted), compact(doc)
+		units := 0.0
+		points, _ := field(doc, "points").([]any)
+		for _, p := range points {
+			units += num(p, "units")
+		}
+		return units == float64(converted), compact(doc)
 	})
 }
