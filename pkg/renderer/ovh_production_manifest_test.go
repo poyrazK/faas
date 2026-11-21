@@ -60,6 +60,16 @@ func TestOVHProductionManifestPinsBareMetalNetworkAndDisks(t *testing.T) {
 	if m.DNS.Mode == "cloudflare" && m.DNS.OriginPull == "" {
 		t.Fatal("dns.mode cloudflare without dns.origin_pull; the control-plane deploy would fail")
 	}
+	// No provider firewall fronts the public cards, so sshd must be bounded to
+	// the vRack plus single operator addresses (ADR-20261109100000 §2).
+	if m.SSH == nil || len(m.SSH.AllowedCIDRs) == 0 {
+		t.Fatal("ssh.allowed_cidrs unset; sshd would answer the whole internet on every public card")
+	}
+	for _, cidr := range m.SSH.AllowedCIDRs {
+		if !strings.HasSuffix(cidr, "/32") {
+			t.Errorf("ssh.allowed_cidrs entry %q, want a single /32 operator address", cidr)
+		}
+	}
 	for _, h := range m.Fleet.Hosts {
 		if !strings.HasPrefix(h.StorageDevice, "/dev/disk/by-id/") {
 			t.Errorf("host %s storage_device = %q, want a /dev/disk/by-id path", h.Name, h.StorageDevice)

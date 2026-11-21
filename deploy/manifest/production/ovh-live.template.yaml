@@ -183,11 +183,12 @@ overlay:
 
 # ADR-20261109100000 §2: restrict sshd to the vRack and operator sources.
 # With no provider firewall in front of the public addresses, nftables is
-# the only SSH boundary. Not set yet: list the bastion, VPN or CD runner
-# addresses first. An empty list admits the vRack only, and the nftables
-# role refuses a converge from any other address rather than lock it out.
-# ssh:
-#   allowed_cidrs: ["<operator bastion>/32"]
+# the only SSH boundary. CD converges from bhs-1 over the vRack, which is
+# always admitted; the list below is the operator workstations seen in the
+# compute nodes' sshd logs on 2026-11-21. Add a source here before using it:
+# the nftables role refuses a converge from any address it would not admit.
+ssh:
+  allowed_cidrs: ["194.27.48.68/32", "159.146.26.102/32"]
 
 # The vRack range is RFC1918, so the §11 deny would block bridged tenant
 # traffic to it without this pair (Egress in pkg/manifest). Limited to the
