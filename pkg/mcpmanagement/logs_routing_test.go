@@ -180,3 +180,23 @@ func TestContextSummarizesCapabilities(t *testing.T) {
 		t.Fatalf("local api_base = %q", local.publicAPIBase())
 	}
 }
+
+// Restarting a parked app was planned, then refused at apply with a recovery
+// that said to plan the same restart again. It is now refused at planning
+// with the reason: the next request boots the current configuration.
+func TestPlanRestartRefusesAParkedApp(t *testing.T) {
+	parked := []api.InstanceResponse{{ID: "old", State: "parked", StartedAt: "2026-11-20T09:00:00Z"}}
+	srv, _ := parkedLogsBackend(t, parked, noRunningInstance, api.AppDeploymentAvailabilityLive)
+	_, m, err := newManagementServer(api.NewClient(srv.URL, testToken), Options{APIBase: srv.URL, Token: testToken, AllowWrites: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = m.planRestart(t.Context(), operationArgs{App: "alpha", Reason: "reload config"})
+	var te *inputError
+	if !errors.As(err, &te) || te.code != "nothing_to_restart" {
+		t.Fatalf("error = %v", err)
+	}
+	if anyInstanceRunning(parked) || !anyInstanceRunning([]api.InstanceResponse{{State: "RUNNING"}}) || !anyInstanceRunning([]api.InstanceResponse{{State: "waking"}}) {
+		t.Fatal("anyInstanceRunning misreads instance states")
+	}
+}

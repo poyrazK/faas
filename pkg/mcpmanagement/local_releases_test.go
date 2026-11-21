@@ -446,3 +446,15 @@ func TestLocalDeployAcceptsItsOwnAppLink(t *testing.T) {
 		t.Fatalf("another app's link: code %q, want linked_app", got)
 	}
 }
+
+// verify_plan before apply answered "no such application resource" for a
+// new app's deploy plan; with nothing applied it now reports the plan.
+func TestVerifyPlanBeforeApplyReportsThePlan(t *testing.T) {
+	f := newLocalFixture(t, false, "")
+	cs, ctx := f.connect(t, true)
+	id := planID(t, callTool(t, ctx, cs, "gregale_plan_local_deploy", map[string]any{"path": projectDir(t), "app": "fresh-app", "reason": "deploy"}, false))
+	out := callTool(t, ctx, cs, "gregale_verify_plan", map[string]any{"plan_id": id}, false)
+	if string(out["plan_id"]) != `"`+id+`"` || string(out["status"]) == "" {
+		t.Fatalf("verify before apply = %s", out)
+	}
+}
