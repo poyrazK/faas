@@ -645,9 +645,7 @@ var BucketUploadCheckpointPath = bucketUploadCheckpointPath
 var BuildAppNetworkDoctorReport = buildAppNetworkDoctorReport
 var BuildAppScalePlanChanges = buildAppScalePlanChanges
 
-// AppScalePlanWarnings is used by commands_app_scale_plan_test.go and
-// app_scale_plan_request_concurrency_test.go. #7763 dropped one of two
-// duplicate declarations and #7752 the other, leaving none; keep exactly one.
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
 var AppScalePlanWarnings = appScalePlanWarnings
 var BuildBaseline = buildBaseline
 var BuildCanarySpec = buildCanarySpec
@@ -3008,3 +3006,4 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
+
