@@ -24,6 +24,13 @@ This starter is a preview behind the agents capability.
    for it, even after parking.
 5. When the agent answers, it revokes the thread's callback URLs.
 
+A slice that throws is retried. The inbox's dead-letter policy is `block`,
+so a message that used up its attempts would stop its thread for good. The
+last attempt (`AGENT_MAX_ATTEMPTS`, equal to the group's `max_attempts`)
+therefore closes the thread with a failed final turn
+(`{"final": true, "failed": true}`) and completes; `GET /threads/:id` shows
+why. Other threads are never affected.
+
 The model here is scripted (`model.js`), so the starter runs with no
 provider key: a user message calls the `lookup` tool, and the tool's
 result is the answer. Replace it with your loop, for example a model
@@ -62,6 +69,7 @@ curl -X POST <callback_url> -H "content-type: application/json" \
 | `DATABASE_URL` | The thread store: an attached Postgres database |
 | `AGENT_READ_TOKEN` | Enables `GET /threads/:id` for this bearer token |
 | `TOOL_URL` | Optional: each tool call is POSTed here with its callback URL |
+| `AGENT_MAX_ATTEMPTS` | Attempts before a failing message closes its thread; default 5. Keep it equal to `max_attempts` in `gregale.yaml` |
 | `GREGALE_API_URL` | The Gregale API; defaults to `https://api.gregale.dev` |
 
 ## Test

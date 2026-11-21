@@ -3,7 +3,7 @@
 // redelivery finishing a dispatch the first delivery did not.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseRecord, runSlice } from "../agent.js";
+import { handleSlice, maxAttempts, parseRecord, runSlice } from "../agent.js";
 import { scriptedModel } from "../model.js";
 
 class MemoryStore {
@@ -46,10 +46,12 @@ function fixture({ dispatchFails = 0 } = {}) {
   };
 }
 
-function record(kind, messageID, data) {
+function record(kind, messageID, data, attempt) {
   return { endpoint_id: "ep-1", channel: "agent-inbox", metadata: { thread_id: "t-1", message_id: messageID, kind },
-    data_base64: Buffer.from(JSON.stringify(data)).toString("base64") };
+    data_base64: Buffer.from(JSON.stringify(data)).toString("base64"), attempt };
 }
+
+const quiet = { warn() {} };
 
 test("two turns through one asynchronous tool call", async () => {
   const { deps, calls } = fixture();
@@ -88,4 +90,52 @@ test("a redelivery dispatches a tool call the first delivery did not", async () 
 test("records that are not inbox messages are refused", () => {
   assert.equal(parseRecord({ endpoint_id: "ep-1", metadata: { thread_id: "t", message_id: "m", kind: "other" } }), null);
   assert.equal(parseRecord({ endpoint_id: "ep-1", metadata: { thread_id: "t", message_id: "m", kind: "user" }, data_base64: "!!" }), null);
+});
+
+test("a failing slice is retried before its last attempt", async () => {
+  const { deps } = fixture({ dispatchFails: 10 });
+  const message = parseRecord(record("user", "m-1", { text: "hi" }, 4));
+  await assert.rejects(handleSlice(message, deps, { attempts: 5, log: quiet }), /tool down/);
+});
+
+test("the last attempt closes the thread instead of blocking it", async () => {
+  const { deps, calls } = fixture({ dispatchFails: 10 });
+  const message = parseRecord(record("user", "m-1", { text: "hi" }, 5));
+  const turn = await handleSlice(message, deps, { attempts: 5, log: quiet });
+  assert.equal(turn.failed, true);
+  assert.match(turn.reason, /tool down/);
+  const last = deps.store.rows.at(-1);
+  assert.equal(last.message_id, "failed:m-1");
+  assert.equal(last.content.final, true);
+  assert.equal(last.content.failed, true);
+  assert.deepEqual(calls.revoked, ["t-1"]);
+  // A redelivery of the same last attempt records the failure once.
+  await handleSlice(message, deps, { attempts: 5, log: quiet });
+  assert.equal(deps.store.rows.filter((r) => r.message_id === "failed:m-1").length, 1);
+});
+
+test("a message that failed before it was stored is kept with the failure", async () => {
+  const { deps } = fixture();
+  deps.model = { next() { throw new Error("model refused"); } };
+  const turn = await handleSlice(parseRecord(record("user", "m-1", { text: "hi" }, 5)), deps, { attempts: 5, log: quiet });
+  assert.equal(turn.failed, true);
+  assert.deepEqual(deps.store.rows.map((r) => r.message_id), ["m-1", "failed:m-1"]);
+});
+
+test("a revoke failure does not fail the closing slice", async () => {
+  const { deps } = fixture({ dispatchFails: 10 });
+  deps.platform.revokeCallbacks = async () => { throw new Error("api down"); };
+  const turn = await handleSlice(parseRecord(record("user", "m-1", { text: "hi" }, 5)), deps, { attempts: 5, log: quiet });
+  assert.equal(turn.failed, true);
+});
+
+test("records carry their delivery attempt", () => {
+  assert.equal(parseRecord(record("user", "m-1", {}, 3)).attempt, 3);
+  assert.equal(parseRecord(record("user", "m-1", {})).attempt, 1);
+});
+
+test("AGENT_MAX_ATTEMPTS defaults to the group's five attempts", () => {
+  assert.equal(maxAttempts({}), 5);
+  assert.equal(maxAttempts({ AGENT_MAX_ATTEMPTS: "3" }), 3);
+  assert.equal(maxAttempts({ AGENT_MAX_ATTEMPTS: "99" }), 5);
 });
