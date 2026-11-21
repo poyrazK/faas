@@ -141,6 +141,7 @@ var toolsetOf = map[string]string{
 	"gregale_apply_env_change":                  ToolsetCore,
 	"gregale_promote_deployment":                ToolsetCore,
 	"gregale_plan_rollback":                     ToolsetCore,
+	"gregale_plan_promotion":                    ToolsetCore,
 	"gregale_apply_rollback":                    ToolsetCore,
 	"gregale_get_rollback":                      ToolsetCore,
 	"gregale_request_secret":                    ToolsetCore,
