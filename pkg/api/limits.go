@@ -2584,31 +2584,38 @@ const (
 const FinancialEvidencePageMax = 1000
 
 const (
-	FinancialAllocationMax           = 10000
-	FinancialPeriodListMax           = 36
-	FinancialEvidenceFreshness       = 3 * time.Minute
-	FinancialBudgetsPerAccount       = 128
-	FinancialBudgetNameBytes         = 128
-	FinancialBudgetActorBytes        = 256
-	FinancialBudgetThresholds        = 8
-	FinancialBudgetDrainMax          = 300
-	FinancialBudgetMoneyMax          = int64(9007199254740991)
-	FinancialBudgetRevisionMax       = int64(9007199254740991)
-	FinancialBudgetHistoryMax        = 100
-	FinancialBudgetSpecBytes         = 16384
-	FinancialBudgetOperationKeyBytes = 255
-	FinancialBudgetAlertBatch        = 32
-	FinancialBudgetAlertLease        = time.Minute
-	FinancialBudgetDeliveryInterval  = 30 * time.Second
-	FinancialBudgetAlertSendTimeout  = 20 * time.Second
-	FinancialBudgetAlertRetryBase    = time.Minute
-	FinancialBudgetAlertRetryMax     = time.Hour
-	FinancialBudgetAlertAttemptsMax  = 2147483647
-	FinancialBudgetResidentCountMax  = 2147483647
-	FinancialBudgetCommandClockGrace = 5 * time.Second
-	FinancialSourceIDBytes           = 512
-	FinancialAdjustmentActorBytes    = 256
-	FinancialAdjustmentReasonBytes   = 512
+	FinancialAllocationMax     = 10000
+	FinancialPeriodListMax     = 36
+	FinancialEvidenceFreshness = 3 * time.Minute
+	// A month-end forecast extrapolates over the sampled minutes when at
+	// least this percent of the elapsed minutes were sampled and the last
+	// FinancialForecastRecentWindow was sampled whole; one lost minute no
+	// longer hides forecasts and projected-overrun alerts for the rest of
+	// the month (cost-control review 2026-11-19).
+	FinancialForecastMinCoveragePercent = 99
+	FinancialForecastRecentWindow       = time.Hour
+	FinancialBudgetsPerAccount          = 128
+	FinancialBudgetNameBytes            = 128
+	FinancialBudgetActorBytes           = 256
+	FinancialBudgetThresholds           = 8
+	FinancialBudgetDrainMax             = 300
+	FinancialBudgetMoneyMax             = int64(9007199254740991)
+	FinancialBudgetRevisionMax          = int64(9007199254740991)
+	FinancialBudgetHistoryMax           = 100
+	FinancialBudgetSpecBytes            = 16384
+	FinancialBudgetOperationKeyBytes    = 255
+	FinancialBudgetAlertBatch           = 32
+	FinancialBudgetAlertLease           = time.Minute
+	FinancialBudgetDeliveryInterval     = 30 * time.Second
+	FinancialBudgetAlertSendTimeout     = 20 * time.Second
+	FinancialBudgetAlertRetryBase       = time.Minute
+	FinancialBudgetAlertRetryMax        = time.Hour
+	FinancialBudgetAlertAttemptsMax     = 2147483647
+	FinancialBudgetResidentCountMax     = 2147483647
+	FinancialBudgetCommandClockGrace    = 5 * time.Second
+	FinancialSourceIDBytes              = 512
+	FinancialAdjustmentActorBytes       = 256
+	FinancialAdjustmentReasonBytes      = 512
 )
 
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
@@ -3158,7 +3165,11 @@ const (
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
-	OutboundAIReserveBytesPerToken       int64 = 4
+	// A generation call that names no output ceiling reserves its model's
+	// longest response from the price catalog for its cost, or this for a
+	// model the catalog does not know (cost-control review 2026-11-19, N17).
+	OutboundAIUnknownModelOutputReserveTokens int64 = 32_768
+	OutboundAIReserveBytesPerToken            int64 = 4
 	// Per-app AI guardrails on a binding (ADR-991).
 	MaxOutboundAIRequestsPerMinute       = 100_000
 	MaxOutboundAITokensPerMinute   int64 = 1_000_000_000

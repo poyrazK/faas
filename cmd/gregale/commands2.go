@@ -6354,7 +6354,7 @@ func cmdKeys(args []string) int {
 		return 0
 	case subAdd:
 		if hasHelpFlag(args[1:]) {
-			PrintUsage(osStdout, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
+			PrintUsage(osStdout, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 0
 		}
 		flags, positional := splitArgsForFlags(args[1:])
@@ -6362,11 +6362,12 @@ func cmdKeys(args []string) int {
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
 		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
 		approvalsCSV := fs.String("approvals", "", "kinds of action an agent key must have a person approve: delete,production,credentials,billing, all or none (default all)")
+		agentKey := fs.Bool("agent", false, "a key for a coding agent: adds the agent scope, so risky requests need a person's approval and always-on cost is held to the agent's budget (default scopes: "+strings.Join(agentKeyDefaultScopes, ",")+")")
 		if err := fs.Parse(flags); err != nil {
 			return 1
 		}
 		if rejectUnexpectedFlagArgs(fs) || len(positional) != 1 {
-			PrintUsage(os.Stderr, "usage: gregale key create <label> [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 1
 		}
 		projects := splitList(*projectsCSV)
@@ -6385,11 +6386,17 @@ func cmdKeys(args []string) int {
 				}
 				scopes = append(scopes, scope)
 			}
+		}
+		scopes = agentKeyScopes(scopes, *agentKey)
+		if len(scopes) > 0 {
 			var err error
 			scopes, err = api.NormalizeCreateKeyScopes(scopes)
 			if err != nil {
 				return printErr("Invalid scopes", err)
 			}
+		}
+		if agent := api.CodingAgentFromEnv(os.Getenv); agent != "" && !slices.Contains(scopes, api.ScopeAgent) {
+			fmt.Fprintf(os.Stderr, "Warning: %s is creating a key without the agent scope: Gregale will not ask a person before it deletes, deploys to production or changes billing, and will not hold its always-on cost to an agent budget. Add --agent for a key the agent uses.\n", agent)
 		}
 		client, err := authedClient()
 		if err != nil {
