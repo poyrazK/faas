@@ -392,6 +392,16 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		result.ProjectSecretsCopied = m.copyProjectEnvironmentSharedSecretsLocked(clone, created.CreatedAt)
 		result.SecretReferencesCopied = m.copyProjectEnvironmentSecretReferencesLocked(apps, source.ID, created, now)
 		m.copyProjectEnvironmentSecretSuppressionsLocked(apps, source.ID, created, now)
+	} else if len(capturedRecords) > 0 {
+		// A durable clone writes the shared secrets it captured
+		// (ADR-20261104120000 amendment 2026-11-21).
+		shared, err := capturedCloneSharedSecrets(capturedRecords)
+		if err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if shared != nil {
+			result.ProjectSecretsCopied, result.SecretReferencesCopied = m.materializeCloneSharedSecretsLocked(clone, created, *shared, now)
+		}
 	}
 	if clone.capturedPolicies == nil && clone.branch != nil {
 		// A branch's paused automation (captureBranchAutomationLocked).

@@ -37,7 +37,7 @@ const manifestAppErrorsPort = 9093
 
 // manifestOutboundRelayPort is outboundd's ADR-989 app relay listener on the
 // control plane; the nftables role opens it to compute CIDRs.
-const manifestOutboundRelayPort = 8096
+const manifestOutboundRelayPort = manifest.OutboundRelayPort
 const manifestGithubdPort = 50053
 
 // manifestPrivateHostsGroupVarsThreshold keeps the generated inventory
@@ -255,6 +255,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += signerVars
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
+		body += renderOutboundRelayVars(m.OutboundRelay, host)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -469,6 +470,28 @@ func renderArtifactSignerVars(a manifest.ArtifactSigner, hosts []manifest.Host, 
 		return fmt.Sprintf("faas_signd_listen: %q\n", target), nil
 	}
 	return fmt.Sprintf("faas_imaged_signd_target: %q\nfaas_compute_sign_key_retired: %t\n", target, a.RetireComputeKey), nil
+}
+
+// renderOutboundRelayVars opens the ADR-989 app outbound relay when the
+// manifest turns it on. Compute vmmd already dials outboundd.faas (see
+// renderManifestHostVars); this adds the two switches that complete it:
+// outboundd's relay listener on the control plane, which also issues its
+// server leaf, and each compute node's relay client leaf. Without them vmmd
+// logs "outbound relay disabled" and apps' GREGALE_OUTBOUND_URL (managed
+// integrations, the AI gateway) answers nothing. The listener binds every
+// interface like the control plane's other compute-facing listeners; the
+// nftables role admits only compute CIDRs to it.
+func renderOutboundRelayVars(r manifest.OutboundRelay, host manifest.Host) string {
+	if !r.Enabled {
+		return ""
+	}
+	switch host.Role {
+	case roleControlPlane:
+		return fmt.Sprintf("faas_outboundd_relay_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestOutboundRelayPort))
+	case roleComputeOnly:
+		return "faas_vmmd_outbound_relay_tls_managed: true\n"
+	}
+	return ""
 }
 
 func renderScheddListenVars(m *manifest.Manifest) string {
