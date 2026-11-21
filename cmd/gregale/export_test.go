@@ -644,6 +644,8 @@ var BridgeLoopbackOnly = bridgeLoopbackOnly
 var BucketUploadCheckpointPath = bucketUploadCheckpointPath
 var BuildAppNetworkDoctorReport = buildAppNetworkDoctorReport
 var BuildAppScalePlanChanges = buildAppScalePlanChanges
+
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
 var AppScalePlanWarnings = appScalePlanWarnings
 var BuildBaseline = buildBaseline
 var BuildCanarySpec = buildCanarySpec
