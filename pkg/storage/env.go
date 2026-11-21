@@ -477,6 +477,7 @@ func s3ConfigFromEnv() S3Config {
 		Region:          os.Getenv("FAAS_S3_REGION"),
 		AccessKeyID:     os.Getenv("FAAS_S3_ACCESS_KEY_ID"),
 		SecretAccessKey: os.Getenv("FAAS_S3_SECRET_ACCESS_KEY"),
+		Granted:         strings.TrimSpace(os.Getenv("FAAS_STORAGE_ACCESS")) == "secretd",
 		PathStyle:       pathStyle,
 	}
 }

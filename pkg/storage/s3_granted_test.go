@@ -290,3 +290,47 @@ func (r *raceReader) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
+// ADR-20261117190000 slice 5: a granted S3 node holds no key at all. It must
+// still start, and every object still flows through grants.
+func TestGrantedS3_StartsWithoutAKey(t *testing.T) {
+	f := newGrantS3(t)
+	t.Setenv("FAAS_STORAGE_BACKEND", "s3")
+	t.Setenv("FAAS_S3_BUCKET", "gregale-artifacts")
+	t.Setenv("FAAS_S3_ENDPOINT", f.srv.URL)
+	t.Setenv("FAAS_S3_REGION", "bhs")
+	t.Setenv("FAAS_S3_ACCESS_KEY_ID", "")
+	t.Setenv("FAAS_S3_SECRET_ACCESS_KEY", "")
+	t.Setenv("FAAS_REQUIRE_SHARED_ARTIFACTS", "1")
+	t.Setenv("FAAS_STORAGE_LOCAL_PREFIXES", "none")
+	t.Setenv("FAAS_STORAGE_CACHE_DIR", "")
+	t.Setenv("FAAS_STORAGE_ROOT", t.TempDir())
+	t.Setenv("FAAS_STORAGE_ACCESS", "")
+	if _, err := BackendFromEnv(); err == nil {
+		t.Fatal("a direct S3 node started without a key")
+	}
+	t.Setenv("FAAS_STORAGE_ACCESS", "secretd")
+	backend, err := BackendFromEnv()
+	if err != nil {
+		t.Fatalf("granted node without a key: %v", err)
+	}
+	if _, err := DeferDeletes(backend, &recordingDeferrer{}); err != nil {
+		t.Fatal(err)
+	}
+	g := &grantS3Granter{s3: f}
+	if n, err := UseGrants(backend, g, f.srv.Client()); err != nil || n != 1 {
+		t.Fatalf("UseGrants = %d, %v", n, err)
+	}
+	if err := backend.Put(t.Context(), grantedKey, strings.NewReader("layer")); err != nil {
+		t.Fatal(err)
+	}
+	rc, err := backend.Get(t.Context(), grantedKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(got) != "layer" || g.n == 0 {
+		t.Fatalf("read %q with %d grants", got, g.n)
+	}
+}
