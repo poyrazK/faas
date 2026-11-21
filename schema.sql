@@ -58426,7 +58426,7 @@ CREATE TABLE public.request_telemetry (
     CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+    CONSTRAINT request_telemetry_ua_family_chk CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text, 'gregale-async_invoke'::text, 'gregale-exclusive_operation'::text, 'gregale-inbound_webhook'::text, 'gregale-queue'::text, 'gregale-delayed_task'::text, 'gregale-cron'::text, 'gregale-replay'::text])))
 )
 PARTITION BY RANGE (received_at);
 
@@ -58491,7 +58491,7 @@ CREATE TABLE public.request_telemetry_202611 (
     CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+    CONSTRAINT request_telemetry_ua_family_chk CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text, 'gregale-async_invoke'::text, 'gregale-exclusive_operation'::text, 'gregale-inbound_webhook'::text, 'gregale-queue'::text, 'gregale-delayed_task'::text, 'gregale-cron'::text, 'gregale-replay'::text])))
 );
 
 
@@ -58555,7 +58555,7 @@ CREATE TABLE public.request_telemetry_202612 (
     CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+    CONSTRAINT request_telemetry_ua_family_chk CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text, 'gregale-async_invoke'::text, 'gregale-exclusive_operation'::text, 'gregale-inbound_webhook'::text, 'gregale-queue'::text, 'gregale-delayed_task'::text, 'gregale-cron'::text, 'gregale-replay'::text])))
 );
 
 
@@ -58619,7 +58619,7 @@ CREATE TABLE public.request_telemetry_202701 (
     CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+    CONSTRAINT request_telemetry_ua_family_chk CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text, 'gregale-async_invoke'::text, 'gregale-exclusive_operation'::text, 'gregale-inbound_webhook'::text, 'gregale-queue'::text, 'gregale-delayed_task'::text, 'gregale-cron'::text, 'gregale-replay'::text])))
 );
 
 
@@ -58731,7 +58731,7 @@ CREATE TABLE public.request_telemetry_default (
     CONSTRAINT request_telemetry_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT request_telemetry_status_check CHECK (((status >= 100) AND (status <= 599))),
     CONSTRAINT request_telemetry_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text))),
-    CONSTRAINT request_telemetry_ua_family_check CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text])))
+    CONSTRAINT request_telemetry_ua_family_chk CHECK ((ua_family = ANY (ARRAY['chrome'::text, 'edge'::text, 'firefox'::text, 'safari'::text, 'opera'::text, 'curl'::text, 'wget'::text, 'python'::text, 'go'::text, 'java'::text, 'bot'::text, 'other'::text, '__unknown__'::text, 'gregale-async_invoke'::text, 'gregale-exclusive_operation'::text, 'gregale-inbound_webhook'::text, 'gregale-queue'::text, 'gregale-delayed_task'::text, 'gregale-cron'::text, 'gregale-replay'::text])))
 );
 
 

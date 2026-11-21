@@ -580,10 +580,7 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// Wire compatibility: older gateways do not send the additive dimension
 	// fields. Map proto3 empty defaults to the database sentinels so a rolling
 	// upgrade continues to insert rows while new gateways populate dimensions.
-	uaFamily := req.GetUaFamily()
-	if uaFamily == "" {
-		uaFamily = "__unknown__"
-	}
+	uaFamily := requestTelemetryUAFamily(req.GetUaFamily())
 	referrerHost := req.GetReferrerHost()
 	if referrerHost == "" {
 		referrerHost = "__none__"
