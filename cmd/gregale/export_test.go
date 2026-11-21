@@ -519,10 +519,6 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
-
-// AppScalePlanWarnings is exported once here; #7763 and #7752 each dropped one
-// copy, which left none and broke the cmd/gregale test build on main.
-var AppScalePlanWarnings = appScalePlanWarnings
 var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
