@@ -292,13 +292,10 @@ func (c *ExecutionCoordinator) processNextForClass(ctx context.Context, class ap
 	return true, c.processClaim(ctx, claim)
 }
 
-// claimNext spreads concurrent workers across accounts when the durable store
+// claimNextForClass spreads concurrent workers across accounts when the durable store
 // exposes the queue-account extension. The cursor is process-local and only
 // chooses the starting bucket; PostgreSQL/MemStore still provide the durable
 // SKIP LOCKED claim fence. Older stores retain the global oldest-first path.
-func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionClaim, error) {
-	return c.claimNextForClass(ctx, "")
-}
 func (c *ExecutionCoordinator) claimNextForClass(ctx context.Context, class api.ExecutionClass) (state.ExecutionClaim, error) {
 	claimedAt := c.now().UTC()
 	queueStore, ok := c.store.(state.ExecutionQueueStore)
@@ -361,9 +358,6 @@ func (c *ExecutionCoordinator) claimNextForClass(ctx context.Context, class api.
 	return state.ExecutionClaim{}, state.ErrNotFound
 }
 
-func (c *ExecutionCoordinator) nextFairAccount(accounts []state.ExecutionQueueAccount) string {
-	return c.nextFairAccountForClass(accounts, "")
-}
 func (c *ExecutionCoordinator) nextFairAccountForClass(accounts []state.ExecutionQueueAccount, class api.ExecutionClass) string {
 	c.fairMu.Lock()
 	defer c.fairMu.Unlock()

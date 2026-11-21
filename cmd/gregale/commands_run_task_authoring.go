@@ -253,7 +253,7 @@ func executeRunTaskTest(ctx context.Context, client *api.Client, request api.Cre
 	}
 	result, err := waitExecutionWorkflowRun(ctx, client, receipt, executionPollIntervalDefault)
 	if err != nil {
-		return printErr("Task test wait failed", fmt.Errorf("Run %s: %w", receipt.ID, err))
+		return printErr("Task test wait failed", fmt.Errorf("run %s: %w", receipt.ID, err))
 	}
 	if result.ID != receipt.ID {
 		return printErr("Task test returned a different Run ID", fmt.Errorf("expected Run %s", receipt.ID))
@@ -264,7 +264,7 @@ func executeRunTaskTest(ctx context.Context, client *api.Client, request api.Cre
 		}
 	}
 	if err := checkRunTaskTestResult(result, request); err != nil {
-		return printErr("Task test failed", fmt.Errorf("Run %s: %w", result.ID, err))
+		return printErr("Task test failed", fmt.Errorf("run %s: %w", result.ID, err))
 	}
 	if err := saveExecutionArtifactsWithClient(ctx, client, result, output); err != nil {
 		return printErr("Artifact download failed", err)

@@ -796,6 +796,7 @@
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/referrals/checkout",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
         "/v1/usage",
@@ -3267,6 +3268,7 @@
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
