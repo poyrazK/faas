@@ -33,9 +33,11 @@ func UnitMcpBridge() daemonunit.Unit {
 			` --oauth-redirect-uri https://antigravity.google/oauth-callback` +
 			` --oauth-redirect-uri http://localhost/callback --oauth-redirect-uri http://127.0.0.1/callback` +
 			// Cursor returns through its private-use scheme; VS Code through
-			// vscode.dev or a loopback root on an ephemeral port.
+			// vscode.dev or a loopback root on an ephemeral port; Windsurf
+			// through a loopback /oauth/callback on an ephemeral port.
 			` --oauth-redirect-uri cursor://anysphere.cursor-mcp/oauth/callback` +
 			` --oauth-redirect-uri https://vscode.dev/redirect --oauth-redirect-uri http://127.0.0.1/ --oauth-redirect-uri http://127.0.0.1` +
+			` --oauth-redirect-uri http://127.0.0.1/oauth/callback` +
 			// Uploads and plan directories live on the state disk, not in the
 			// private /tmp, which may be tmpfs inside the 1G memory limit; the
 			// bridge bounds the bytes it stages there (bug hunt H92).
