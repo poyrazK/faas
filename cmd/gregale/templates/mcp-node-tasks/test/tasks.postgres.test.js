@@ -2147,7 +2147,7 @@ test('quarantine fences new claims across heartbeats while preserving active lea
 
 test('keyed Task submission recovers the committed handle after a lost CLI reply', {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
-  timeout: 30_000,
+  timeout: 75_000,
 }, async t => {
   const { execFile } = await import('node:child_process');
   const { mkdtemp, rm } = await import('node:fs/promises');
@@ -2163,18 +2163,18 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
   const { store, pool, namespace } = await harness(t);
   const auth = {
     mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
-    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: [] },
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
   };
   const { publicKey, privateKey } = await generateKeyPair('ES256');
-  const mint = subject => new SignJWT({ scope: 'mcp:tools' }).setProtectedHeader({ alg: 'ES256' })
+  const mint = (subject, scope = 'mcp:tools reports:read') => new SignJWT({ scope }).setProtectedHeader({ alg: 'ES256' })
     .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
   const owner = await mint('alice');
   const foreign = await mint('bob');
+  const ownerWithoutTool = await mint('alice', 'mcp:tools');
   const makeKey = (time = Date.now()) => {
     const stamp = time.toString(16).padStart(12, '0');
     return `${stamp.slice(0, 8)}-${stamp.slice(8)}-7${randomUUID().slice(15)}`;
   };
-  const key = makeKey();
   const report = 'Original private report';
   const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
     build_report: { version: '1', async execute() { return { content: [{ type: 'text', text: report }] }; } },
@@ -2215,6 +2215,10 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
       assert.ok(!response.stdout.includes(credential) && !response.stderr.includes(credential), 'CLI leaked a caller token');
       return response.stdout;
     }
+    // Use a real, already aged UUID so the test crosses the replay deadline
+    // without changing either the stored key or the database clock.
+    const issuedAt = Date.now() - 30_000;
+    const key = makeKey(issuedAt);
     const submission = (credential, expectedCode, value = 'original', submissionKey = key) => cli('call', credential, expectedCode, [
       '--tool', 'build_report', '--tasks', '--task-submission-key', submissionKey,
       '--arguments', JSON.stringify({ report: value, steps: 1 }),
@@ -2231,9 +2235,22 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
     assert.equal(await submission(foreign, 1), '');
     assert.equal(await submission(owner, 1, 'original', makeKey(Date.now() - 61_000)), '');
     await eventually(async () => (await rows())[0]?.status === 'completed', 'worker did not complete the Task');
-    const full = JSON.parse(await cli('status', owner, 0, ['--task-id', committedID]));
+    await delay(Math.max(0, issuedAt + 60_100 - Date.now()));
+    assert.equal(await submission(owner, 1), '');
+    const lookup = (credential, code, submissionKey = key) => cli('status', credential, code, [
+      '--task-submission-key', submissionKey, '--metadata-only',
+    ]);
+    const recovered = JSON.parse(await lookup(owner, 0));
+    assert.ok(Number.isFinite(Date.parse(recovered.lastUpdatedAt)));
+    assert.deepEqual(recovered, { taskId: committedID, status: 'completed', lastUpdatedAt: recovered.lastUpdatedAt, nextAction: 'read_result' });
+    assert.equal(await lookup(foreign, 1), '');
+    assert.equal(await lookup(ownerWithoutTool, 1), '');
+    assert.equal(await lookup(owner, 1, makeKey()), '');
+    const full = JSON.parse(await cli('status', owner, 0, ['--task-id', recovered.taskId]));
     assert.equal(full.result.content[0].text, report);
     assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
+    await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2', [namespace, committedID]);
+    assert.equal(await lookup(owner, 1), '');
   } finally {
     api.closeTaskSubscriptions();
     await new Promise(resolveClose => { server.close(resolveClose); server.closeAllConnections(); });

@@ -427,8 +427,8 @@ func cmdMCPRemote(command string, args []string) int {
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
 	var submissionKey string
-	if command == "call" {
-		fs.Func("task-submission-key", "saved UUIDv7 for retrying a Task submission (requires --tasks)", func(value string) error {
+	if command == "call" || command == "task-get" {
+		fs.Func("task-submission-key", "saved UUIDv7 for a keyed Task submission or status lookup", func(value string) error {
 			if value == "" {
 				return errors.New("Task submission key must be a lowercase UUIDv7")
 			}
@@ -476,8 +476,11 @@ func cmdMCPRemote(command string, args []string) int {
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
 	}
-	if submissionKey != "" && (!*enableTasks || *waitForTask || inputMode) {
+	if command == "call" && submissionKey != "" && (!*enableTasks || *waitForTask || inputMode) {
 		return printErr("Invalid MCP Tasks flags", errors.New("--task-submission-key requires a handle-only call with --tasks"))
+	}
+	if command == "task-get" && submissionKey != "" && (!metadataOnly || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("status with --task-submission-key requires --metadata-only and accepts one Task selector"))
 	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
@@ -485,7 +488,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
 	}
-	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && (*taskID == "" || *legacy) {
+	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && ((*taskID == "" && submissionKey == "") || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("modern task-get, task-wait and task-cancel require --task-id"))
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
@@ -529,7 +532,7 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	c.HTTP.Timeout = timeoutValue
 	if metadataOnly {
-		return runMCPTaskMetadataStatus(ctx, c, *taskID)
+		return runMCPTaskMetadataStatus(ctx, c, *taskID, submissionKey)
 	}
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {

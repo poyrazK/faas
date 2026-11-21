@@ -35,9 +35,10 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "timeout", Short: "total completion request timeout (default 30s)", Value: "DURATION"},
 	)
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
-	taskStatusFlags := append(append([]cliFlag{}, taskRemote...), cliFlag{
-		Name: "metadata-only", Short: "show Task metadata and next action",
-	})
+	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
+		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
+		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7 (requires --metadata-only)", Value: "UUID"},
+	)
 	for i := range callFlags {
 		if callFlags[i].Name == "timeout" {
 			callFlags[i].Short = "total request timeout (default 30s; interactive/--wait 5m)"

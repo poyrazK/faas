@@ -231,18 +231,19 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
 
   function createServer({ authInfo, era }) {
     const caller = verifiedCallerIdentity(authInfo);
+    const keyedTasks = era === 'modern' && supportsTaskSubmission();
     const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
       && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = createCatalogServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
         ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {},
-          ...(era === 'modern' && supportsTaskSubmission() ? { 'io.gregale/task-submission': {} } : {}),
+          ...(keyedTasks ? { 'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } : {}),
         } } : {}),
       },
     });
     observeServerTransport(server, protocolContext.getStore());
-    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
+    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo), keyedTasks);
     for (const entry of catalog.tools()) {
       // Each SDK server serves one HTTP request. A Tasks call returns a handle,
       // so final-output validation belongs to its worker. Discovery and ordinary

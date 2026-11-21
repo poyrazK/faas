@@ -35,15 +35,20 @@ export function clientSupportsMcpTasks(ctx) {
   return !!capabilities?.extensions?.[MCP_TASKS_EXTENSION_ID];
 }
 
-function wireTask(task, pollIntervalMs) {
+function wireTaskMetadata(task, pollIntervalMs) {
   const createdAt = new Date(task.created_at).toISOString();
   const lastUpdatedAt = new Date(task.updated_at).toISOString();
   const ttlMs = Math.max(0, new Date(task.expires_at).getTime() - new Date(task.created_at).getTime());
   const status = task.status === 'queued' || task.status === 'running' ? 'working' : task.status;
-  const result = {
+  return {
     resultType: 'complete', taskId: task.task_id, status,
     createdAt, lastUpdatedAt, ttlMs, pollIntervalMs,
   };
+}
+
+function wireTask(task, pollIntervalMs) {
+  const result = wireTaskMetadata(task, pollIntervalMs);
+  const { status } = result;
   if (status === 'completed') result.result = task.result;
   if (status === 'failed') result.error = task.error || { code: -32603, message: 'Task execution failed' };
   if (status === 'input_required') result.inputRequests = task.input_requests || {};
@@ -510,6 +515,11 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       if (!task || (canAccessTool && !canAccessTool(task.tool_name))) throw new Error('Task not found');
       return wireTask(task, pollIntervalMs);
     },
+    async getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool) {
+      const task = await store.getBySubmissionKey({ submissionKey, authInfo, authMode });
+      if (!task || !canAccessTool(task.tool_name)) throw new Error('Task not found');
+      return wireTaskMetadata(task, pollIntervalMs);
+    },
     async cancel(taskID, authInfo, authMode, canAccessTool) {
       const task = await store.get({ taskID, authInfo, authMode });
       if (!task || (canAccessTool && !canAccessTool(task.tool_name))) throw new Error('Task not found');
@@ -581,8 +591,11 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
   };
 }
 
-export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool) {
+export function installMcpTaskHandlers(server, runtime, authInfo, authMode, canAccessTool, keyedTasks = false) {
   if (typeof canAccessTool !== 'function') throw new Error('MCP task handlers require the tool authorization policy');
+  if (keyedTasks) server.server.setRequestHandler('gregale/tasks/lookup', {
+    params: z.object({ submissionKey: z.string().uuid() }),
+  }, ({ submissionKey }) => runtime.getBySubmissionKey(submissionKey, authInfo, authMode, canAccessTool));
   server.server.setRequestHandler('tasks/get', {
     params: z.object({ taskId: z.string().uuid() }),
   }, ({ taskId }) => runtime.get(taskId, authInfo, authMode, canAccessTool));

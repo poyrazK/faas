@@ -12,15 +12,22 @@ import (
 )
 
 type mcpTaskStatusMetadata struct {
-	TaskID         string `json:"taskId"`
+	TaskID         string `json:"taskId,omitempty"`
 	Status         string `json:"status"`
 	LastUpdatedAt  string `json:"lastUpdatedAt,omitempty"`
 	PollIntervalMS int64  `json:"pollIntervalMs,omitempty"`
 	NextAction     string `json:"nextAction"`
 }
 
-func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, taskID string) int {
-	task, exchange, err := client.GetTask(ctx, taskID)
+func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, taskID, submissionKey string) int {
+	var task mcphosting.Task
+	var exchange mcphosting.Exchange
+	var err error
+	if submissionKey == "" {
+		task, exchange, err = client.GetTask(ctx, taskID)
+	} else {
+		task, exchange, err = client.GetTaskBySubmissionKey(ctx, submissionKey)
+	}
 	if err != nil {
 		return mcpTaskMetadataReadFailure(taskID, exchange.HTTPStatus, err)
 	}
