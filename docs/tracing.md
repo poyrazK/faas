@@ -218,6 +218,13 @@ need. Spans that exceed it are dropped and the app keeps serving. An app in an
 organization that owns its resources is limited by the organization's plan,
 not the plan of whoever created the app.
 
+Spans attach to the request's own record. On a busy app the gateway keeps a
+record for the first 30 traced requests per route, method and status each
+minute and counts later ones in the minute's totals, so those traces have no
+request record and no spans in `gregale trace` or the dashboard. Server errors
+keep their own sample. `gregale trace` says so when a trace has no request
+record.
+
 ## Sending traces to your own backend as well
 
 To keep the debugger and also see every span and log line in your own
