@@ -451,6 +451,14 @@ func (m *management) clean(s string) string {
 	if m.opts.Token != "" {
 		s = strings.ReplaceAll(s, m.opts.Token, "[REDACTED]")
 	}
+	// A hosted bridge reaches apid on loopback and stages uploads on its
+	// state disk; neither means anything to the agent (ADR-20261121140000).
+	if public := m.publicAPIBase(); public != m.opts.APIBase && m.opts.APIBase != "" {
+		s = strings.ReplaceAll(s, m.opts.APIBase, public)
+	}
+	if m.opts.uploads != nil && m.opts.uploads.root != "" {
+		s = strings.ReplaceAll(s, m.opts.uploads.root, "[hosted-upload]")
+	}
 	return credentialPattern.ReplaceAllString(safetext.Clean(s), "[REDACTED]")
 }
 
