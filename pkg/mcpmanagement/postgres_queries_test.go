@@ -19,6 +19,8 @@ type queryFixture struct {
 	qmu     sync.Mutex
 	queries []api.ManagedPostgresQueryRequest
 	ids     []string
+	// large makes the column catalog query come back truncated.
+	large bool
 }
 
 func newQueryFixture(t *testing.T, capabilities []string) (*management, *queryFixture) {
@@ -49,8 +51,11 @@ func (f *queryFixture) serve(w http.ResponseWriter, r *http.Request) {
 		s := func(v string) *string { return &v }
 		out := api.ManagedPostgresQueryResponse{DatabaseID: id, Columns: []api.ManagedPostgresQueryColumn{{Name: "id", Type: "int4"}}, Rows: [][]*string{{s("1")}}, RowCount: 1}
 		switch {
+		case strings.Contains(req.SQL, "count(a.attnum)"):
+			out.Rows = [][]*string{{s("orders"), s("table"), s("2")}, {s("users"), s("table"), s("9")}}
 		case strings.Contains(req.SQL, "pg_attribute"):
 			out.Rows = [][]*string{{s("orders"), s("table"), s("id"), s("integer"), s("t"), s("t")}, {s("orders"), s("table"), s("note"), s("text"), s("f"), s("f")}}
+			out.Truncated = f.large && !strings.Contains(req.SQL, "c.relname IN")
 		case strings.Contains(req.SQL, "pg_indexes"):
 			out.Rows = [][]*string{{s("orders"), s("orders_pkey"), s("CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)")}}
 		}
@@ -98,5 +103,42 @@ func TestPostgresSchemaGroupsColumnsAndIndexes(t *testing.T) {
 	}
 	if _, err := m.getPostgresSchema(t.Context(), postgresSchemaArgs{App: "alpha", Database: "db-1", Schema: "public'; drop"}); err == nil {
 		t.Fatal("schema name injection accepted")
+	}
+}
+
+// A 257-table schema exceeded the MCP result bound, so get_postgres_schema
+// failed with response_too_large. A large schema is listed by name with
+// column counts, and `tables` describes the named ones in full.
+func TestPostgresSchemaListsALargeSchemaByName(t *testing.T) {
+	m, f := newQueryFixture(t, []string{api.ScopeDataRead})
+	f.large = true
+	out, err := m.getPostgresSchema(t.Context(), postgresSchemaArgs{App: "alpha", Database: "db-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	for _, want := range []string{`"details_omitted":true`, `"name":"users"`, `"column_count":9`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("listing %s lacks %s", raw, want)
+		}
+	}
+	if strings.Contains(string(raw), `"columns"`) {
+		t.Fatalf("listing carries column detail: %s", raw)
+	}
+	out, err = m.getPostgresSchema(t.Context(), postgresSchemaArgs{App: "alpha", Database: "db-1", Tables: []string{"orders"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = json.Marshal(out)
+	if !strings.Contains(string(raw), `"primary_key":true`) || strings.Contains(string(raw), "details_omitted") {
+		t.Fatalf("named tables = %s", raw)
+	}
+	if last := f.queries[len(f.queries)-1].SQL; !strings.Contains(last, "tablename IN ('orders')") {
+		t.Fatalf("index query not filtered: %s", last)
+	}
+	for _, bad := range [][]string{{"orders'; drop"}, make([]string, 21)} {
+		if _, err := m.getPostgresSchema(t.Context(), postgresSchemaArgs{App: "alpha", Database: "db-1", Tables: bad}); err == nil {
+			t.Fatalf("accepted tables %q", bad)
+		}
 	}
 }
