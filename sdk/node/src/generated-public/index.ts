@@ -1030,6 +1030,8 @@ export type { ProjectReleaseStabilization } from './models/ProjectReleaseStabili
 export type { ProjectReleaseVerification } from './models/ProjectReleaseVerification.js';
 export type { ProjectReleaseWorker } from './models/ProjectReleaseWorker.js';
 export type { ProjectResponse } from './models/ProjectResponse.js';
+export type { ProjectRollbackBatch } from './models/ProjectRollbackBatch.js';
+export type { ProjectRollbackMember } from './models/ProjectRollbackMember.js';
 export type { ProjectSafeRelease } from './models/ProjectSafeRelease.js';
 export type { ProjectScanRequest } from './models/ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './models/ProjectSourceRefScanRequest.js';

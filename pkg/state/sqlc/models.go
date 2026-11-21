@@ -13466,6 +13466,12 @@ type ProjectBindingVerificationRun struct {
 	ExpiresAt       pgtype.Timestamptz
 }
 
+type ProjectDeployRollbackMember struct {
+	DeploymentID  pgtype.UUID
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+}
+
 type ProjectEnvironment struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID

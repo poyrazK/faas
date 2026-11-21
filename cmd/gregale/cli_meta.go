@@ -7005,10 +7005,11 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm project deletion"},
 				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
-			{Name: "rollback", Short: "Roll the latest project deploy back, callers first", Notes: []string{"Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.", "Stops at the first service that fails; run it again to finish."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+			{Name: "rollback", Short: "Roll back a recorded project deploy, callers first", Notes: []string{"By default, select the exact services and predecessors recorded for the latest serving project deploy.", "Resume a stopped rollback on the same CLI connection with --resume and its operation ID."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "print the rollback plan", Bool: true},
-				{Name: "yes", Short: "roll the latest deploy back", Bool: true},
-				{Name: "all", Short: "roll back every service, not only those the latest deploy changed", Bool: true},
+				{Name: "yes", Short: "save the plan and start the rollback", Bool: true},
+				{Name: "resume", Short: "resume a saved rollback operation", Value: "OPERATION_ID"},
+				{Name: "all", Short: "select each serving service and its current predecessor", Bool: true},
 				{Name: "acknowledge-releases", Short: "accept rolling back across release commands", Bool: true},
 				{Name: "timeout", Short: "wait per service (default 10m)", Value: "DURATION"},
 			}},

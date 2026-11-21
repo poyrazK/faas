@@ -16,6 +16,10 @@ func (m *MemStore) putDeploymentLocked(id string, d Deployment) {
 		}
 	}
 	prev, existed := m.deployments[id]
+	if existed {
+		d.ProjectDeployGroupID = prev.ProjectDeployGroupID
+		d.projectDeployProjectID = prev.projectDeployProjectID
+	}
 	if existed && prev.Status != DeployLive && d.Status == DeployLive && IsServiceRollout(d) {
 		now := time.Now().UTC()
 		d.RolloutStartedAt = &now

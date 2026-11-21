@@ -4,185 +4,219 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// rollbackFixtureService is one service's production release and rollback
-// target in projectRollbackAPI.
-type rollbackFixtureService struct {
-	revision, target int // target 0: no earlier release
-	createdAt        time.Time
-	commit           string
+type rollbackFixture struct {
+	mu           sync.Mutex
+	current      map[string]int
+	members      []api.ProjectRollbackMember
+	calls        []string
+	receipts     map[string]api.RollbackOperation
+	fail         string
+	loseResponse string
 }
 
-// projectRollbackAPI serves a three-service project (web → api → billing)
-// with the given releases and records the order of per-app rollbacks;
-// failSlug answers 409.
-func projectRollbackAPI(t *testing.T, failSlug string, services map[string]rollbackFixtureService) (*[]string, *[]map[string]any) {
+func rollbackID(slug string, revision int) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte(slug+":"+strconv.Itoa(revision))).String()
+}
+
+func projectRollbackFixture(t *testing.T) *rollbackFixture {
 	t.Helper()
-	var mu sync.Mutex
-	calls, bodies := &[]string{}, &[]map[string]any{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		path := r.URL.Path
-		switch {
-		case r.Method == http.MethodGet && path == "/v1/projects/shop":
-			_, _ = w.Write([]byte(`{"slug":"shop","workloads":[
-				{"slug":"shop-web","workload_name":"web","status":"active","depends_on":["api"]},
-				{"slug":"shop-api","workload_name":"api","status":"active","depends_on":["billing"]},
-				{"slug":"shop-billing","workload_name":"billing","status":"active"}],"exclusions":[]}`))
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/deployments"):
-			slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/deployments")
-			svc := services[slug]
-			items := []map[string]any{{"id": "cur-" + slug, "revision": svc.revision, "status": "live", "traffic_percent": 100,
-				"scope": "default", "created_at": svc.createdAt.Format(time.RFC3339Nano), "commit_sha": svc.commit}}
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
-		case r.Method == http.MethodGet && strings.HasSuffix(path, "/summary"):
-			slug := strings.Split(strings.TrimPrefix(path, "/v1/apps/"), "/")[0]
-			out := map[string]any{"deployment": map[string]any{"id": "cur-" + slug}, "changes": []any{}}
-			if svc := services[slug]; svc.target > 0 {
-				out["rollback_target_id"], out["rollback_target_revision"] = "tgt-"+slug, svc.target
-			}
-			_ = json.NewEncoder(w).Encode(out)
-		case r.Method == http.MethodPost && strings.HasSuffix(path, "/rollback"):
-			slug := strings.TrimSuffix(strings.TrimPrefix(path, "/v1/apps/"), "/rollback")
-			var body map[string]any
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			mu.Lock()
-			*calls, *bodies = append(*calls, slug), append(*bodies, body)
-			mu.Unlock()
-			if slug == failSlug {
-				w.Header().Set("Content-Type", "application/problem+json")
-				w.WriteHeader(http.StatusConflict)
-				_, _ = w.Write([]byte(`{"type":"about:blank","title":"Conflict","status":409,"code":"conflict","detail":"rollback refused"}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"id":"tgt-` + slug + `","status":"live"}`))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	f := &rollbackFixture{
+		current:  map[string]int{"shop-web": 4, "shop-api": 7, "shop-billing": 2},
+		receipts: make(map[string]api.RollbackOperation),
+	}
+	for slug, revision := range f.current {
+		f.members = append(f.members, api.ProjectRollbackMember{Slug: slug, Revision: revision, DeploymentID: rollbackID(slug, revision),
+			PredecessorID: rollbackID(slug, revision-1), PredecessorRevision: revision - 1, Status: "live", Scope: "default"})
+	}
+	srv := httptest.NewServer(http.HandlerFunc(f.serveHTTP))
 	t.Cleanup(srv.Close)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "fp_test_x")
-	return calls, bodies
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	return f
 }
 
-// oneDeploy is a project whose three services the latest deploy changed.
-func oneDeploy() map[string]rollbackFixtureService {
-	now := time.Now().UTC()
-	return map[string]rollbackFixtureService{
-		"shop-web":     {revision: 4, target: 3, createdAt: now, commit: "c2"},
-		"shop-api":     {revision: 7, target: 6, createdAt: now.Add(-time.Second), commit: "c2"},
-		"shop-billing": {revision: 2, target: 1, createdAt: now.Add(-2 * time.Second), commit: "c2"},
+func (f *rollbackFixture) recordedCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *rollbackFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	write := func(v any) { _ = json.NewEncoder(w).Encode(v) }
+	if r.Method == "GET" && r.URL.Path == "/v1/projects/shop" {
+		p := api.ProjectResponse{ProjectSummaryResponse: api.ProjectSummaryResponse{ID: rollbackID("shop", 0), Slug: "shop"},
+			Workloads: []api.ProjectWorkloadResponse{
+				{Slug: "shop-web", WorkloadName: "web", Status: "active", DependsOn: []string{"api"}},
+				{Slug: "shop-api", WorkloadName: "api", Status: "active", DependsOn: []string{"billing"}},
+				{Slug: "shop-billing", WorkloadName: "billing", Status: "active"},
+			}}
+		if r.URL.Query().Get("include_rollback") == "true" && len(f.members) > 0 {
+			p.RollbackBatch = &api.ProjectRollbackBatch{ID: rollbackID("batch", 1), Members: f.members}
+		}
+		write(p)
+		return
+	}
+	path := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/apps/"), "/")
+	slug, revision := path[0], f.current[path[0]]
+	switch {
+	case r.Method == "GET" && len(path) == 2 && path[1] == "deployments":
+		write(map[string]any{"items": []api.DeploymentResponse{{ID: rollbackID(slug, revision), AppID: rollbackID(slug, 0),
+			Status: "live", RolloutState: "complete", TrafficPercent: 100, Scope: "default", Revision: revision}}})
+	case r.Method == "GET" && len(path) == 4 && path[3] == "summary":
+		write(api.DeploymentSummaryResponse{RollbackTargetID: rollbackID(slug, revision-1), RollbackTargetRevision: revision - 1})
+	case r.Method == "GET" && len(path) == 3 && path[1] == "rollbacks":
+		op, ok := f.receipts[path[2]]
+		if !ok {
+			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "Unknown rollback"))
+			return
+		}
+		if op.Status == "ready" {
+			now := time.Now()
+			op.Status, op.AuditID, op.CompletedAt = "complete", "1", &now
+			f.current[slug]--
+			f.receipts[op.ID] = op
+		}
+		write(op)
+	case r.Method == "POST" && len(path) == 2 && path[1] == "rollback":
+		var req api.RollbackRequest
+		if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedCurrentDeploymentID == nil || req.TargetDeploymentID == nil ||
+			*req.ExpectedCurrentDeploymentID != rollbackID(slug, revision) || *req.TargetDeploymentID != rollbackID(slug, revision-1) {
+			api.WriteProblem(w, api.NewProblem(409, "conflict", "Unexpected rollback pair", ""))
+			return
+		}
+		f.calls = append(f.calls, slug)
+		attempt, err := uuid.Parse(r.Header.Get(api.RollbackAttemptHeader))
+		if err != nil {
+			api.WriteProblem(w, api.NewProblem(400, "validation", "Missing attempt ID", ""))
+			return
+		}
+		op := api.RollbackOperation{ID: attempt.String(), AppID: rollbackID(slug, 0), Scope: "default",
+			Status: "ready", CurrentDeploymentID: *req.ExpectedCurrentDeploymentID, TargetDeploymentID: *req.TargetDeploymentID}
+		if f.fail == slug {
+			op.Status, op.Code = "failed", "rollback_target_not_activated"
+		}
+		f.receipts[op.ID] = op
+		if f.loseResponse == slug {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusAccepted)
+		write(api.DeploymentResponse{ID: op.TargetDeploymentID, RollbackOperation: &op})
+	default:
+		http.NotFound(w, r)
 	}
 }
 
 func runProjectRollback(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	out, restore := main.CaptureStdout(t)
-	code := main.Run(append([]string{"projects", "rollback", "shop"}, args...))
+	code := main.Run(append([]string{"project", "rollback", "shop"}, args...))
 	restore()
 	return code, out.String()
 }
 
-// Callers roll back before the services they call, each pinned to the
-// planned current and target release.
-func TestProjectRollbackRollsCallersBackFirst(t *testing.T) {
-	calls, bodies := projectRollbackAPI(t, "", oneDeploy())
-	code, out := runProjectRollback(t, "--yes")
-	if code != 0 {
-		t.Fatalf("exit %d:\n%s", code, out)
+func rollbackJSON(t *testing.T, out string) (string, []struct {
+	Slug, Status string
+}) {
+	t.Helper()
+	var receipt struct {
+		ID    string `json:"operation_id"`
+		Steps []struct{ Slug, Status string }
 	}
-	if got := strings.Join(*calls, ","); got != "shop-web,shop-api,shop-billing" {
-		t.Fatalf("rollback order = %s, want web before api before billing", got)
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatalf("decode receipt: %v\n%s", err, out)
 	}
-	if body := (*bodies)[0]; body["target_deployment_id"] != "tgt-shop-web" || body["expected_current_deployment_id"] != "cur-shop-web" {
-		t.Fatalf("rollback not pinned to the plan: %v", body)
+	return receipt.ID, receipt.Steps
+}
+
+func TestProjectRollbackSelectsExactMembersAndWaitsInDependencyOrder(t *testing.T) {
+	f := projectRollbackFixture(t)
+	for i, member := range f.members {
+		if member.Slug == "shop-billing" {
+			f.members = append(f.members[:i], f.members[i+1:]...)
+			break
+		}
 	}
-	if !strings.Contains(out, "Project shop rolled back: 3 services") {
-		t.Fatalf("output:\n%s", out)
+	code, out := runProjectRollback(t, "--yes", "--json")
+	id, steps := rollbackJSON(t, out)
+	if code != 0 || id == "" || strings.Join(f.recordedCalls(), ",") != "shop-web,shop-api" ||
+		len(steps) != 3 || steps[0].Status != "rolled_back" || steps[2].Status != "skipped" {
+		t.Fatalf("exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
 }
 
-// A service the latest deploy did not change keeps its release unless --all.
-func TestProjectRollbackLeavesServicesTheLatestDeployDidNotChange(t *testing.T) {
-	services := oneDeploy()
-	billing := services["shop-billing"]
-	billing.createdAt, billing.commit = billing.createdAt.Add(-30*24*time.Hour), "c1"
-	services["shop-billing"] = billing
-	calls, _ := projectRollbackAPI(t, "", services)
-	code, out := runProjectRollback(t, "--yes")
-	if code != 0 || strings.Join(*calls, ",") != "shop-web,shop-api" {
-		t.Fatalf("exit %d, rollbacks %v:\n%s", code, *calls, out)
+func TestProjectRollbackResumesFrozenPlanAfterTerminalFailure(t *testing.T) {
+	f := projectRollbackFixture(t)
+	f.fail = "shop-api"
+	code, out := runProjectRollback(t, "--yes", "--json")
+	id, steps := rollbackJSON(t, out)
+	if code == 0 || id == "" || len(steps) != 3 || steps[1].Status != "failed" || steps[2].Status != "planned" ||
+		strings.Join(f.recordedCalls(), ",") != "shop-web,shop-api" {
+		t.Fatalf("exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
-	if !strings.Contains(out, "not changed by the latest deploy") {
-		t.Fatalf("no skip reason for billing:\n%s", out)
-	}
-	*calls = nil
-	if code, out := runProjectRollback(t, "--yes", "--all"); code != 0 || strings.Join(*calls, ",") != "shop-web,shop-api,shop-billing" {
-		t.Fatalf("--all: exit %d, rollbacks %v:\n%s", code, *calls, out)
-	}
-}
-
-// A service added since the previous deploy has nothing to roll back to and
-// does not stop the others.
-func TestProjectRollbackSkipsServiceAddedSince(t *testing.T) {
-	services := oneDeploy()
-	billing := services["shop-billing"]
-	billing.target = 0
-	services["shop-billing"] = billing
-	calls, _ := projectRollbackAPI(t, "", services)
-	code, out := runProjectRollback(t, "--yes")
-	if code != 0 || strings.Join(*calls, ",") != "shop-web,shop-api" || !strings.Contains(out, "no earlier release") {
-		t.Fatalf("exit %d, rollbacks %v:\n%s", code, *calls, out)
+	f.mu.Lock()
+	f.fail, f.members = "", nil
+	f.mu.Unlock()
+	code, out = runProjectRollback(t, "--resume", id, "--json")
+	resumed, _ := rollbackJSON(t, out)
+	if code != 0 || resumed != id || strings.Join(f.recordedCalls(), ",") != "shop-web,shop-api,shop-api,shop-billing" {
+		t.Fatalf("resume exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
 }
 
-// A rerun after a partial rollback finishes it instead of rolling the
-// already rolled-back services forward again.
-func TestProjectRollbackRerunSkipsServicesAlreadyRolledBack(t *testing.T) {
-	services := oneDeploy()
-	web := services["shop-web"]
-	web.revision, web.target = 3, 4 // web serves v3 again; its "rollback" target is the newer v4
-	services["shop-web"] = web
-	calls, _ := projectRollbackAPI(t, "", services)
-	code, out := runProjectRollback(t, "--yes")
-	if code != 0 || strings.Join(*calls, ",") != "shop-api,shop-billing" || !strings.Contains(out, "already rolled back") {
-		t.Fatalf("exit %d, rollbacks %v:\n%s", code, *calls, out)
+func TestProjectRollbackResumeStopsForNewerTargetedDeployment(t *testing.T) {
+	f := projectRollbackFixture(t)
+	f.fail = "shop-api"
+	_, out := runProjectRollback(t, "--yes", "--json")
+	id, _ := rollbackJSON(t, out)
+	f.mu.Lock()
+	f.current["shop-billing"]++
+	f.mu.Unlock()
+	code, out := runProjectRollback(t, "--resume", id, "--json")
+	if code == 0 || strings.Join(f.recordedCalls(), ",") != "shop-web,shop-api" || !strings.Contains(out, "production changed") {
+		t.Fatalf("resume exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
 }
 
-func TestProjectRollbackDryRunChangesNothing(t *testing.T) {
-	calls, _ := projectRollbackAPI(t, "", oneDeploy())
+func TestProjectRollbackRecoversLostAcceptance(t *testing.T) {
+	f := projectRollbackFixture(t)
+	f.loseResponse = "shop-web"
+	code, out := runProjectRollback(t, "--yes", "--json")
+	if code != 0 || strings.Join(f.recordedCalls(), ",") != "shop-web,shop-api,shop-billing" {
+		t.Fatalf("exit %d, calls %v\n%s", code, f.recordedCalls(), out)
+	}
+}
+
+func TestProjectRollbackDryRunDoesNotSubmit(t *testing.T) {
+	f := projectRollbackFixture(t)
 	code, out := runProjectRollback(t, "--dry-run")
-	if code != 0 || len(*calls) != 0 {
-		t.Fatalf("exit %d, rollbacks %v:\n%s", code, *calls, out)
-	}
-	if !strings.Contains(out, "1. web (shop-web): v4 -> v3 (before api)") || !strings.Contains(out, "3. billing (shop-billing): v2 -> v1") {
-		t.Fatalf("plan:\n%s", out)
+	if code != 0 || len(f.recordedCalls()) != 0 || !strings.Contains(out, "shop-web: v4 -> v3") {
+		t.Fatalf("exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
 }
 
-func TestProjectRollbackStopsAtTheFirstFailure(t *testing.T) {
-	calls, _ := projectRollbackAPI(t, "shop-api", oneDeploy())
-	code, _ := runProjectRollback(t, "--yes")
-	if code == 0 {
-		t.Fatal("exit 0 after a failed service rollback")
+func TestProjectRollbackLegacyDeployRequiresExplicitAll(t *testing.T) {
+	f := projectRollbackFixture(t)
+	f.members = nil
+	if code, _ := runProjectRollback(t, "--yes"); code == 0 || len(f.recordedCalls()) != 0 {
+		t.Fatalf("unrecorded deploy: exit %d, calls %v", code, f.recordedCalls())
 	}
-	if got := strings.Join(*calls, ","); got != "shop-web,shop-api" {
-		t.Fatalf("rollbacks = %s, want billing left alone after api failed", got)
-	}
-}
-
-func TestProjectRollbackRequiresDryRunOrYes(t *testing.T) {
-	calls, _ := projectRollbackAPI(t, "", oneDeploy())
-	if code := main.Run([]string{"projects", "rollback", "shop"}); code == 0 || len(*calls) != 0 {
-		t.Fatalf("exit %d, rollbacks %v; want a usage error and no change", code, *calls)
+	if code, out := runProjectRollback(t, "--yes", "--all"); code != 0 || len(f.recordedCalls()) != 3 {
+		t.Fatalf("explicit all: exit %d, calls %v\n%s", code, f.recordedCalls(), out)
 	}
 }

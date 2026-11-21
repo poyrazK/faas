@@ -2282,6 +2282,12 @@ func (c *Client) GetProject(ctx context.Context, slug string) (ProjectResponse, 
 	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug), nil, &out)
 }
 
+// GetProjectWithRollback requests exact production deployment membership.
+func (c *Client) GetProjectWithRollback(ctx context.Context, slug string) (ProjectResponse, error) {
+	var out ProjectResponse
+	return out, c.do(ctx, http.MethodGet, "/v1/projects/"+url.PathEscape(slug)+"?include_rollback=true", nil, &out)
+}
+
 // UpdateProject changes a project's repository or production branch.
 func (c *Client) UpdateProject(ctx context.Context, slug string, req UpdateProjectRequest) (ProjectResponse, error) {
 	var out ProjectResponse

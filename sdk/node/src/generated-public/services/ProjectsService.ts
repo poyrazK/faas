@@ -529,17 +529,25 @@ export class ProjectsService {
    */
   public static getProject({
     slug,
+    includeRollback,
   }: {
     /**
      * Project slug to inspect, update, or delete in the authenticated account.
      */
     slug: string,
+    /**
+     * Include recorded membership and predecessor revisions for the latest serving project deploy, when available.
+     */
+    includeRollback?: boolean,
   }): CancelablePromise<ProjectResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}',
       path: {
         'slug': slug,
+      },
+      query: {
+        'include_rollback': includeRollback,
       },
       errors: {
         401: `code: unauthorized`,

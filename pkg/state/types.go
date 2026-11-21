@@ -2698,6 +2698,9 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// ProjectDeployGroupID is a server-assigned production fan-out identity used during creation only.
+	ProjectDeployGroupID   string `json:"-"`
+	projectDeployProjectID string
 	// submissionAttemptID is creation-only metadata, never copied onto the wire.
 	submissionAttemptID string
 	// eventSubscriptionIntent is creation-only: the event subscriptions a

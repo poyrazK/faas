@@ -9069,6 +9069,13 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, app.AccountID, nil, app.ID, memTrafficPolicyChange{Deployments: proposed})); err != nil {
 		return Deployment{}, 0, err
 	}
+	if d.ProjectDeployGroupID != "" {
+		if app.ProjectID == "" || !projectRollbackGroupEligible(d.ProjectDeployGroupID, normalizedDeploymentScope(d.Scope)) {
+			return Deployment{}, 0, ErrInvalidArgument
+		}
+		d.projectDeployProjectID = app.ProjectID
+		proposed[d.ID] = d
+	}
 	m.recordRecoveryPredecessorLocked(d)
 	if reviewedSpec.ID != "" {
 		m.projectEnvironmentWorkloadSpecs[reviewedSpec.ID] = reviewedSpec

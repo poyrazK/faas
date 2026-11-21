@@ -55316,6 +55316,17 @@ CREATE TABLE public.project_binding_verification_runs (
 
 
 --
+-- Name: project_deploy_rollback_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_deploy_rollback_members (
+    deployment_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    deploy_group_id uuid NOT NULL
+);
+
+
+--
 -- Name: project_environment_approvals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -74760,6 +74771,14 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 
 --
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_pkey PRIMARY KEY (deployment_id);
+
+
+--
 -- Name: project_environment_approvals project_environment_approvals_approval_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87722,6 +87741,13 @@ CREATE INDEX project_binding_verification_runs_listing_idx ON public.project_bin
 --
 
 CREATE INDEX project_binding_verification_runs_project_time_idx ON public.project_binding_verification_runs USING btree (project_id, created_at DESC);
+
+
+--
+-- Name: project_deploy_rollback_members_group_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX project_deploy_rollback_members_group_idx ON public.project_deploy_rollback_members USING btree (project_id, deploy_group_id);
 
 
 --
@@ -111056,6 +111082,22 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 
 ALTER TABLE ONLY public.project_binding_verification_runs
     ADD CONSTRAINT project_binding_verification_runs_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id);
+
+
+--
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: project_deploy_rollback_members project_deploy_rollback_members_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.project_deploy_rollback_members
+    ADD CONSTRAINT project_deploy_rollback_members_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
 
 
 --

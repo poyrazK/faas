@@ -5398,6 +5398,8 @@ from .project_release_verification_percent import ProjectReleaseVerificationPerc
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
+from .project_rollback_batch import ProjectRollbackBatch
+from .project_rollback_member import ProjectRollbackMember
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
 from .project_scan_request import ProjectScanRequest
@@ -12312,6 +12314,8 @@ __all__ = (
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
     "ProjectResponse",
+    "ProjectRollbackBatch",
+    "ProjectRollbackMember",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
     "ProjectScanRequest",

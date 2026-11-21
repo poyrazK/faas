@@ -1028,6 +1028,8 @@ export type { ProjectReleaseStabilization } from './ProjectReleaseStabilization.
 export type { ProjectReleaseVerification } from './ProjectReleaseVerification.js';
 export type { ProjectReleaseWorker } from './ProjectReleaseWorker.js';
 export type { ProjectResponse } from './ProjectResponse.js';
+export type { ProjectRollbackBatch } from './ProjectRollbackBatch.js';
+export type { ProjectRollbackMember } from './ProjectRollbackMember.js';
 export type { ProjectSafeRelease } from './ProjectSafeRelease.js';
 export type { ProjectScanRequest } from './ProjectScanRequest.js';
 export type { ProjectSourceRefScanRequest } from './ProjectSourceRefScanRequest.js';

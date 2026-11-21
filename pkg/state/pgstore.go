@@ -8375,6 +8375,11 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 	if err != nil {
 		return Deployment{}, 0, err
 	}
+	if d.ProjectDeployGroupID != "" {
+		if err := recordProjectDeployGroup(ctx, tx, created, d.ProjectDeployGroupID); err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if d.submissionAttemptID != "" {
 		if _, err := attachDeploymentSubmission(ctx, tx, created.AppID, d.submissionAttemptID, created.ID); err != nil {
 			return Deployment{}, 0, err

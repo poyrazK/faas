@@ -11972,6 +11972,11 @@ paths:
       tags: [projects]
       operationId: getProject
       summary: Inspect a project, its workloads, exclusions, and latest status.
+      parameters:
+        - name: include_rollback
+          in: query
+          description: Include recorded membership and predecessor revisions for the latest serving project deploy, when available.
+          schema: {type: boolean}
       responses:
         '200':
           description: Project recovery and workload state.
@@ -35638,6 +35643,31 @@ components:
               items: {type: string}
             last_reconciliation_status: {type: string}
             last_build_status: {type: string}
+            rollback_batch:
+              $ref: '#/components/schemas/ProjectRollbackBatch'
+    ProjectRollbackBatch:
+      description: Recorded production project deployment membership and serving predecessors.
+      type: object
+      required: [id, members]
+      properties:
+        id: {type: string, format: uuid}
+        members:
+          type: array
+          items: {$ref: '#/components/schemas/ProjectRollbackMember'}
+    ProjectRollbackMember:
+      type: object
+      required: [deployment_id, revision, scope, status, previously_served]
+      properties:
+        slug: {type: string, description: App slug when the app is still attached to the project.}
+        deployment_id: {type: string, format: uuid}
+        revision: {type: integer, minimum: 0}
+        scope: {type: string}
+        status: {type: string}
+        previously_served:
+          type: boolean
+          description: Whether the revision has a recorded end to a past serving period.
+        predecessor_id: {type: string, format: uuid}
+        predecessor_revision: {type: integer, minimum: 0}
     UpdateProjectRequest:
       description: Patch for the customer-managed repository binding and production branch.
       type: object
