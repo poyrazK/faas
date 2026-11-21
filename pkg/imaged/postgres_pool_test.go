@@ -41,3 +41,31 @@ func TestStampPostgresPool(t *testing.T) {
 		})
 	}
 }
+
+// With the request-concurrency keys applied (ADR-20261101215228) the stamp
+// follows them: an app that declares nothing gets the default, capped at
+// PostgresPoolMaxPerInstance, and a declaration counts up to the maximum
+// rather than the plan's compiled bound.
+func TestStampPostgresPoolFollowsRequestConcurrency(t *testing.T) {
+	api.SetRequestConcurrency(api.RequestConcurrency{Default: 80, Max: 1000})
+	t.Cleanup(func() { api.SetRequestConcurrency(api.RequestConcurrency{}) })
+	h := (&Handler{}).WithPostgresPoolSizingRelease(func(platformflags.Subject) bool { return true })
+	for _, tc := range []struct {
+		name  string
+		plan  api.Plan
+		perVM int
+		want  string
+	}{
+		{name: "free default", plan: api.PlanFree, want: "10"},
+		{name: "hobby declared above the old bound", plan: api.PlanHobby, perVM: 8, want: "8"},
+		{name: "declared lower", plan: api.PlanPro, perVM: 3, want: "3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			app := state.App{ID: "app", ScalingPolicy: &state.ScalingPolicy{PerInstanceConcurrency: tc.perVM}}
+			got := h.stampPostgresPool(api.AppManifest{}, app, state.Account{ID: "acct", Plan: tc.plan})
+			if got.Env[api.PostgresPoolMaxEnv] != tc.want {
+				t.Fatalf("%s = %q, want %q", api.PostgresPoolMaxEnv, got.Env[api.PostgresPoolMaxEnv], tc.want)
+			}
+		})
+	}
+}
