@@ -782,6 +782,10 @@ const (
 	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
 	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
 	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	// CodeStoredWorkflowEventsUnavailable refuses publishing or enabling a
+	// stored workflow whose event trigger matches custom events while the
+	// account has custom events off.
+	CodeStoredWorkflowEventsUnavailable = "stored_workflow_events_unavailable"
 	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
@@ -2313,6 +2317,8 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
+	case CodeStoredWorkflowEventsUnavailable:
+		return http.StatusConflict
 	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:

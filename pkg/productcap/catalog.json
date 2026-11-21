@@ -4091,7 +4091,7 @@
       "name": "Outbound integrations",
       "category": "data",
       "description": "Call third-party APIs through managed integrations with key pools and limits.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
@@ -5934,8 +5934,12 @@
       "name": "Stored workflows",
       "category": "async",
       "description": "Run steps against an app manually, on a schedule or on an event.",
-      "maturity": "internal",
-      "plans": [],
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/stored-workflows",
       "acceptance_test": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI",
       "routes": [
