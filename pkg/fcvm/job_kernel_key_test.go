@@ -10,6 +10,8 @@ import (
 // ADR-20261112030000 amendment 1: schedd names the version-only kernel key
 // for jobs; a node that boots a content-addressed kernel must boot the same
 // kernel for jobs as for its app VMs.
+//
+// adr: 20261112030000
 func TestJobKernelKeyFollowsTheNodeKernel(t *testing.T) {
 	contentKey := storagekey.KernelForDigest("1.17.0", strings.Repeat("ab", 32))
 	m := &Manager{paths: Paths{Kernel: contentKey}, fcVersion: "1.17.0"}
