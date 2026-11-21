@@ -89,8 +89,9 @@ application response tools before starting.
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
    review link. When the resumable upload commit requires approval, the same
    plan and source stay available until the deadline shown in
-   `approval.expires_at` and on the review page. After approval, apply the same
-   plan ID to resume the original upload. If the app or its release changed
+   `approval.expires_at` and on the review page, including across a bridge
+   restart on the same upload storage. After approval, apply the same plan ID
+   to resume the original upload. If the app or its release changed
    during review, inspect it before creating a new plan. Reuse the plan ID to
    recover the receipt if the apply response is lost.
 4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
