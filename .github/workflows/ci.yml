@@ -1255,18 +1255,28 @@ jobs:
           sh -n scripts/test-managed-service-native.sh
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
-      - name: scoped PostgreSQL rehearsal fault, permissions and recovery (no KVM)
-        if: matrix.gates
-        env:
-          FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
-        run: >-
-          go test -race -p 1 -count=1 -v -timeout=5m
-          ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance ./pkg/apid/taskrehearsal
-          -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass|TestPostgresRealTask'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates
         with:
           node-version: '22'
+      - name: scoped PostgreSQL rehearsal fault, permissions and recovery (no KVM)
+        if: matrix.gates
+        env:
+          FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
+          FAAS_REHEARSAL_TASK_STARTER_DIR: ${{ runner.temp }}/rehearsal-task-starter
+        run: |
+          cp -R cmd/gregale/templates/mcp-node "$FAAS_REHEARSAL_TASK_STARTER_DIR"
+          npm ci --ignore-scripts --prefix "$FAAS_REHEARSAL_TASK_STARTER_DIR"
+          node -e '
+            const fs = require("node:fs");
+            const path = process.argv[1];
+            const config = JSON.parse(fs.readFileSync(path, "utf8"));
+            config.tasks.enabled = true;
+            fs.writeFileSync(path, JSON.stringify(config));
+          ' "$FAAS_REHEARSAL_TASK_STARTER_DIR/gregale-mcp.json"
+          go test -race -p 1 -count=1 -v -timeout=5m \
+            ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance ./pkg/apid/taskrehearsal \
+            -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass|TestPostgresRealTask'
       - name: queue worker safe completion canary
         if: matrix.gates
         run: go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
