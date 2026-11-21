@@ -95,8 +95,13 @@ func (m *management) unavailableCapabilities() map[string]bool {
 // publishCatalog adds the queued tools, deferring all but core above the cap.
 // Agent-key servers select toolsets per request and list them all.
 func (m *management) publishCatalog(s *mcp.Server) {
-	unavailable := m.unavailableCapabilities()
 	c := &m.catalog
+	// Read capabilities only when a gated tool is selected, so a core
+	// catalog starts without an API request.
+	var unavailable map[string]bool
+	if slices.ContainsFunc(c.pending, func(t queuedTool) bool { return toolCapability[t.name] != "" }) {
+		unavailable = m.unavailableCapabilities()
+	}
 	c.mu.Lock()
 	pending := slices.DeleteFunc(c.pending, func(t queuedTool) bool {
 		if unavailable[toolCapability[t.name]] {

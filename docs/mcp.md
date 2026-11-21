@@ -393,7 +393,7 @@ does not refresh its list, reconnect with the toolsets the result names.
 Found tools have the same checks as listed ones (ADR-20261121140000).
 
 Log search, incidents and product analytics tools are listed only while the
-capability is enabled for your account (`gregale capabilities`). The server
+capability is enabled for your account (`gregale feature list`). The server
 reads this when it starts, so a capability released later appears on the next
 connection.
 Plan receipt and verification tools accompany `core`, `release`, `provision`
