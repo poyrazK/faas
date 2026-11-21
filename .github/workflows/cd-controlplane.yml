@@ -946,6 +946,7 @@ jobs:
           POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
           FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
+          ALERTMANAGER_VARS_OVERRIDE: ${{ vars.ALERTMANAGER_VARS_OVERRIDE }}
         run: |
           set -euo pipefail
           if [[ ! -f deploy/ansible/control_plane_converge.yml ]]; then
@@ -999,6 +1000,12 @@ jobs:
           # the bundle installs. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
             bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
+          fi
+          # ADR-20261121110000: the environment's Alertmanager receiver settings
+          # (ALERTMANAGER_VARS_OVERRIDE) replace the vars' own, so a receiver
+          # change does not need the unreadable CP_ANSIBLE_VARS_B64 rewritten.
+          if [[ -f scripts/ci/alertmanager_vars.py ]]; then
+            python3 -I scripts/ci/alertmanager_vars.py "$work/vars.yml"
           fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
@@ -2011,6 +2018,7 @@ jobs:
           POSTGRES_COMPUTE_ROLE_KEY: ${{ secrets.POSTGRES_COMPUTE_ROLE_KEY }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
           FAAS_BILLING_MODE_SETTING: ${{ vars.FAAS_BILLING_MODE }}
+          ALERTMANAGER_VARS_OVERRIDE: ${{ vars.ALERTMANAGER_VARS_OVERRIDE }}
           HOSTED_RUNNER: ${{ inputs.hosted_runner }}
           ROLES: ${{ steps.plan.outputs.roles }}
         run: |
@@ -2066,6 +2074,12 @@ jobs:
           # the bundle installs. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_billing_mode.sh ]]; then
             bash scripts/ci/faas_billing_mode.sh vars "$work/vars.yml"
+          fi
+          # ADR-20261121110000: the environment's Alertmanager receiver settings
+          # (ALERTMANAGER_VARS_OVERRIDE) replace the vars' own, so a receiver
+          # change does not need the unreadable CP_ANSIBLE_VARS_B64 rewritten.
+          if [[ -f scripts/ci/alertmanager_vars.py ]]; then
+            python3 -I scripts/ci/alertmanager_vars.py "$work/vars.yml"
           fi
           # ADR-20261023104734: daemons log in as their own runtime roles when
           # the environment variable POSTGRES_RUNTIME_ROLES_ENABLED is true
