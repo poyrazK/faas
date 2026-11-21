@@ -5643,6 +5643,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	mux.Handle("GET "+dashboardRunPipelinesPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderRunPipelineHistory))))
+	mux.Handle("GET "+dashboardRunPipelinesPath+"/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderRunPipelineDetail))))
+	mux.Handle("GET "+dashboardRunPipelinesPath+"/{id}/runs/{run}/artifacts/{artifact...}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.downloadDashboardPipelineArtifact))))
+	mux.Handle("POST "+dashboardRunPipelinesPath+"/{id}/rerun-preview", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.previewDashboardPipelineRerun)))))
+	mux.Handle("POST "+dashboardRunPipelinesPath+"/{id}/reruns", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.rerunDashboardPipeline)))))
 	// ADR 20261022145950: the AI gateway's pages.
 	mux.Handle("GET "+aiconsole.Prefix, s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))
 	mux.Handle("GET "+aiconsole.Prefix+"/", s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))

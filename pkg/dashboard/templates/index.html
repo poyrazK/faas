@@ -24,6 +24,7 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
+      {{if .Data}}{{if .Data.RunPipelines}}<a href="/dashboard/run-pipelines">Run pipelines</a>{{end}}{{end}}
       {{if $.On "mcp-hosting"}}<a href="/dashboard/mcp">MCP operations</a>{{end}}
       {{if $.On "app-costs"}}<a href="/dashboard/app-costs">App costs</a>{{end}}
       {{if $.On "ai-gateway"}}<a href="/dashboard/ai">AI gateway</a>{{end}}
