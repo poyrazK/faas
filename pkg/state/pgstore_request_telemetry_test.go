@@ -117,6 +117,29 @@ func TestPgStoreRequestTelemetry_ConsumerDimension(t *testing.T) {
 	}
 }
 
+// The gateway records a platform-delivered invocation with client family
+// "gregale-<source>" (pkg/gateway invocationClientFamily). The ua_family CHECK
+// must admit every source, or each such row fails and the gateway drops its
+// whole batch (prod 2026-11-21).
+func TestPgStoreRequestTelemetry_AcceptsInvocationClientFamilies(t *testing.T) {
+	store, _, ctx := pgStoreWithPool(t)
+	sources := []state.InvocationSource{state.InvocationAsyncInvoke, state.InvocationExclusiveOperation, state.InvocationInboundWebhook,
+		state.InvocationQueue, state.InvocationDelayedTask, state.InvocationCron, state.InvocationReplay}
+	for _, source := range sources {
+		params := sqlc.InsertRequestTelemetryParams{
+			AccountID:    pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			AppID:        pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			DeploymentID: pgtype.UUID{Bytes: uuid.New(), Valid: true},
+			Route:        "(other)", Method: "POST", Status: 200, Count: 1,
+			ReceivedAt: pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+			UaFamily:   "gregale-" + string(source), ReferrerHost: "__none__", Country: "__unknown__",
+		}
+		if err := store.InsertRequestTelemetry(ctx, params); err != nil {
+			t.Errorf("insert with client family %q: %v", params.UaFamily, err)
+		}
+	}
+}
+
 func TestPgStoreRequestTelemetryByPlatformTenantUsesRequestTimeAttribution(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	accountID, otherAccountID := uuid.NewString(), uuid.NewString()
