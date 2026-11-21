@@ -1,4 +1,4 @@
--- filename: 20261121104650123_validate_base_image_scan_current_environment_keys.sql
+-- filename: 20261121140659123_validate_base_image_scan_current_environment_keys.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

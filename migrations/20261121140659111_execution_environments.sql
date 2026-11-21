@@ -1,4 +1,4 @@
--- filename: 20261121104650111_execution_environments.sql
+-- filename: 20261121140659111_execution_environments.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

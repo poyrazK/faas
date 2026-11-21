@@ -84,8 +84,11 @@ func (p *Postgres) bindTaskParticipant(ctx context.Context, r rehearsalpg.Resour
 	if q.ConfigureTaskGrantTransaction(ctx, tx) != nil {
 		return ErrFixture
 	}
-	read := taskacl.ReadTables(access == rehearsalwork.PostgresTaskObserver)
-	valid, err := q.TaskGrantTablesReady(ctx, tx, sqlc.TaskGrantTablesReadyParams{OwnerRole: r.RoleName, TableNames: read})
+	observer := access == rehearsalwork.PostgresTaskObserver
+	read := taskacl.ReadTables(observer)
+	valid, err := q.TaskGrantObjectsReady(ctx, tx, sqlc.TaskGrantObjectsReadyParams{
+		OwnerRole: r.RoleName, TableNames: read, RequireClaimOrder: !observer,
+	})
 	if err != nil || !valid {
 		return ErrFixture
 	}
@@ -101,8 +104,8 @@ func (p *Postgres) bindTaskParticipant(ctx context.Context, r rehearsalpg.Resour
 	if execFormatted(ctx, tx, command, err) != nil {
 		return ErrFixture
 	}
-	command, err = q.FormatGrantTaskTables(ctx, tx, sqlc.FormatGrantTaskTablesParams{
-		RoleName: role, ReadTables: read, WriteTables: writableTaskTables(read, access == rehearsalwork.PostgresTaskObserver),
+	command, err = q.FormatGrantTaskObjects(ctx, tx, sqlc.FormatGrantTaskObjectsParams{
+		RoleName: role, ReadTables: read, WriteTables: writableTaskTables(read, observer),
 	})
 	if execFormatted(ctx, tx, command, err) != nil {
 		return ErrFixture

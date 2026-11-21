@@ -8553,7 +8553,11 @@ type Querier interface {
 	// ADR-1027 restore drills (pkg/dbsched drill.go). schedd is the only writer.
 	StartDatabaseRestoreDrill(ctx context.Context, db DBTX, arg StartDatabaseRestoreDrillParams) (int64, error)
 	StartEnvironmentWorkloadRetirement(ctx context.Context, db DBTX, arg StartEnvironmentWorkloadRetirementParams) (EnvironmentWorkloadRetirement, error)
-	// Starts a draft while the environment runs fewer than max_running.
+	// Starts a draft while the environment runs fewer than max_running. The
+	// telemetry cursor starts just before the start minute: gateways collapse
+	// request telemetry into rows stamped at their minute's start, so a cursor at
+	// the start instant would skip every exposure in that minute
+	// (FlagExperimentStartCursor).
 	StartFlagExperiment(ctx context.Context, db DBTX, arg StartFlagExperimentParams) (FlagExperiment, error)
 	StartMigrationAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	StartOperatorPark(ctx context.Context, db DBTX, arg StartOperatorParkParams) (OperatorParkExecution, error)

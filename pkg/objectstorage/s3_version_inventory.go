@@ -56,7 +56,7 @@ func (p *S3) ListObjectVersions(ctx context.Context, bucket, cursor string, limi
 		if v.Size == nil {
 			return ObjectVersionsPage{}, ErrUnavailable
 		}
-		if err = appendEntry(aws.ToString(v.Key), aws.ToString(v.VersionId), *v.Size, false); err != nil {
+		if err = appendEntry(aws.ToString(v.Key), p.listedVersionID(aws.ToString(v.VersionId)), *v.Size, false); err != nil {
 			return ObjectVersionsPage{}, err
 		}
 	}

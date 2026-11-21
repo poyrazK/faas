@@ -1,4 +1,4 @@
--- filename: 20261121104650109_validate_execution_classes.sql
+-- filename: 20261121140659109_validate_execution_classes.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

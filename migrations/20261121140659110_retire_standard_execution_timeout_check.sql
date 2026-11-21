@@ -1,4 +1,4 @@
--- filename: 20261121104650110_retire_standard_execution_timeout_check.sql
+-- filename: 20261121140659110_retire_standard_execution_timeout_check.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
