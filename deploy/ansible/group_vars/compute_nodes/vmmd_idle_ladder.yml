@@ -35,19 +35,23 @@
 # 290% of the admission ceiling with measured RAM at 75%, 4 of 60,877 requests
 # failed, resume p99 stayed under 20 ms and no resume or compression failed.
 # On fsn-2.faas, rc.355's memory.reclaim path kept an L3/L4 VM about 40%
-# smaller than on fsn-3.faas. Next: compress on fsn-3.faas once fsn-2.faas has
-# run it for a week.
+# smaller than on fsn-3.faas.
+# Step 3 (2026-11-21): production moved to OVH (bhs-2.faas, bhs-3.faas) and
+# fsn-2/fsn-3 retired, so these lists matched no node and the ladder was off.
+# on + apps on both OVH nodes, hand-set at 13:41Z with a one-off adoption
+# restart and kept by this file. Compress stays off: the OVH nodes have no
+# zswap role and a 100 GB admission ceiling each, so idle RAM is not what
+# binds there.
 vmmd_idle_ladder_observe_nodes:
-  - fsn-2.faas
-  - fsn-3.faas
+  - bhs-2.faas
+  - bhs-3.faas
 vmmd_idle_ladder_on_nodes:
-  - fsn-2.faas
-  - fsn-3.faas
+  - bhs-2.faas
+  - bhs-3.faas
 vmmd_idle_ladder_apps_nodes:
-  - fsn-2.faas
-  - fsn-3.faas
-vmmd_idle_ladder_compress_nodes:
-  - fsn-2.faas
+  - bhs-2.faas
+  - bhs-3.faas
+vmmd_idle_ladder_compress_nodes: []
 vmmd_idle_ladder: >-
   {{ 'on' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_on_nodes
      else ('observe' if (faas_join_database_node | default(faas_node_name | default(''))) in vmmd_idle_ladder_observe_nodes
