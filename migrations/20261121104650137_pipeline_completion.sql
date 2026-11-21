@@ -2,11 +2,14 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE execution_workflow_pipelines
- ADD COLUMN completion jsonb,
- ADD COLUMN delivered_at timestamptz;
+ ADD COLUMN IF NOT EXISTS completion jsonb,
+ ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
 -- Completion and its outbox are committed together. N-1 workers may continue
 -- ordinary pipelines but cannot erase a callback pipeline without its manifest.
 -- +goose StatementBegin
+DO $guard$
+BEGIN
+ IF to_regprocedure('execution_pipeline_completion_fence()') IS NULL THEN
 CREATE FUNCTION execution_pipeline_completion_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p execution_workflow_pipelines;
 BEGIN
@@ -29,7 +32,16 @@ BEGIN
  RETURN NEW;
 END;
 $$;
-CREATE TRIGGER execution_pipeline_completion_fence BEFORE UPDATE OF status ON agent_execution_workflows FOR EACH ROW EXECUTE FUNCTION execution_pipeline_completion_fence();
+ END IF;
+END $guard$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid = 'agent_execution_workflows'::regclass AND tgname = 'execution_pipeline_completion_fence') THEN
+  CREATE TRIGGER execution_pipeline_completion_fence BEFORE UPDATE OF status ON agent_execution_workflows FOR EACH ROW EXECUTE FUNCTION execution_pipeline_completion_fence();
+ END IF;
+END $$;
 -- +goose StatementEnd
 -- +goose Down
 SELECT 1;
