@@ -302,6 +302,9 @@ func (s *server) projectResponse(r *http.Request, acct state.Account, project st
 		if deployErr == nil {
 			workload.DeploymentStatus = string(deployment.Status)
 			workload.RolloutState = deployment.RolloutState
+			if deployment.Status == state.DeployLive {
+				workload.TrafficPercent = deployment.TrafficPercent
+			}
 			if deployment.BuildID != "" {
 				if build, buildErr := s.store.BuildByID(r.Context(), deployment.BuildID); buildErr == nil {
 					workload.BuildStatus = string(build.Status)
