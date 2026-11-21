@@ -759,7 +759,7 @@ func cmdOrgsMe(args []string) int {
 // contractor key in another org via the personal-scope route.
 func cmdOrgsKeys(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale org keys <list|add|info|rm|rotate> --org <slug> [args]", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org key <list|create|get|delete|rotate> --org <slug> [args]", "orgs")
 		return 1
 	}
 	switch args[0] {
@@ -774,7 +774,7 @@ func cmdOrgsKeys(args []string) int {
 	case "rotate":
 		return cmdOrgsKeysRotate(args[1:])
 	default:
-		printCommandValidation(os.Stderr, "gregale org keys: unknown subcommand %q\n", args[0])
+		printCommandValidation(os.Stderr, "gregale org key: unknown subcommand %q\n", args[0])
 		return 1
 	}
 }
@@ -793,7 +793,7 @@ func cmdOrgsKeysList(args []string) int {
 		return 1
 	}
 	if *slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale org keys list --org <slug>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org key list --org <slug>", "orgs")
 		return 1
 	}
 	client, err := authedClient()
@@ -891,7 +891,7 @@ func cmdOrgsKeysInfo(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale org keys info --org <slug> <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org key get --org <slug> <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -932,7 +932,7 @@ func cmdOrgsKeysRm(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale org keys rm --org <slug> <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org key delete --org <slug> <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -964,7 +964,7 @@ func cmdOrgsKeysRotate(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale org keys rotate --org <slug> [--label <text>] <key-id>", "orgs")
+		PrintUsage(os.Stderr, "usage: gregale org key rotate --org <slug> [--label <text>] <key-id>", "orgs")
 		return 1
 	}
 	id := fs.Arg(0)
