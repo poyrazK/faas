@@ -109,7 +109,7 @@ class JWKVerificationTests(unittest.TestCase):
             self.assertEqual(self.status(auth, self.token("rotated-key")), 200)
             self.assertEqual(opener.open.call_count, 2)
 
-    def test_failed_fetches_cool_down_and_recover(self):
+    def test_failed_fetches_back_off_briefly_and_recover(self):
         for failure in (URLError("provider unavailable"), b"{", b'{"keys":null}'):
             with self.subTest(failure=failure):
                 auth = Authenticator(CONFIG)
@@ -127,10 +127,13 @@ class JWKVerificationTests(unittest.TestCase):
                         self.assertEqual(self.status(auth, token), 401)
                     self.assertEqual(opener.open.call_count, 1)
                     opener.open.side_effect = lambda *_args, **_kwargs: http_response(json.dumps({"keys": [self.key]}).encode())
-                    clock.return_value = 1029.999
+                    # A failed fetch backs off briefly, not for the 30 s
+                    # unknown-kid throttle (an issuer waking must not lock out
+                    # every valid token).
+                    clock.return_value = 1000.999
                     self.assertEqual(self.status(auth, token), 401)
                     self.assertEqual(opener.open.call_count, 1)
-                    clock.return_value = 1030
+                    clock.return_value = 1001
                     self.assertEqual(self.status(auth, token), 200)
                     self.assertEqual(self.status(auth, token), 200)
                     self.assertEqual(opener.open.call_count, 2)
