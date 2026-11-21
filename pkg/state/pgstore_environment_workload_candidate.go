@@ -130,7 +130,8 @@ func (s *PgStore) prepareEnvironmentGitOpsCandidatesOnce(ctx context.Context, le
 			}
 			id, err = q.CreateEnvironmentGitOpsWorkloadCandidate(ctx, tx, sqlc.CreateEnvironmentGitOpsWorkloadCandidateParams{
 				AppID: mustPgUUID(input.AppID), Scope: input.Scope, Kind: string(input.Kind), Image: input.ImageDigest, CommitSha: input.CommitSHA, Runtime: []byte(input.EnvironmentWorkloadRuntime),
-				SourcePath: input.SourcePath, SourceRoot: input.SourceRoot, SourceSha256: input.SourceSHA256, SourceBytes: input.SourceBytes, SourceUrl: input.SourceURL})
+				SourcePath: input.SourcePath, SourceRoot: input.SourceRoot, SourceSha256: input.SourceSHA256, SourceBytes: input.SourceBytes, SourceUrl: input.SourceURL,
+				BuildRegistryScope: input.BuildRegistryScope})
 			if err == nil && frozen.Source.BuildArtifactID != "" {
 				err = q.MaterializeEnvironmentBuildArtifact(ctx, tx, id)
 			} else if err == nil && input.Kind != DeploymentKindImage {

@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
+	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -81,8 +83,33 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 		return artifact, err
 	}
 	artifact = state.EnvironmentWorkloadSourceArtifact{ContextFormat: contextFormat, RevisionID: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, DefinitionDigest: lease.Revision.Digest, BuildID: request.BuildID, Path: archivePath, SHA256: checksum, Bytes: bytes,
-		LogPath: filepath.Join(spoolRoot(), request.BuildID, "build.log")}
+		LogPath:            filepath.Join(spoolRoot(), request.BuildID, "build.log"),
+		BuildRegistryScope: s.environmentGitBuildRegistryScope(archivePath, request.Source)}
 	return artifact, nil
+}
+
+// environmentGitBuildRegistryScope (ADR-20261110210000 slice 3j-4) lists the
+// image repositories the reviewed archive's Dockerfiles name, for the
+// candidate's deployments.build_registry_scope: every Dockerfile in the
+// archive and the source's selected one. An archive it cannot read records
+// none, which secretd treats as unscoped.
+func (s *server) environmentGitBuildRegistryScope(archivePath string, source api.EnvironmentWorkloadSource) *[]string {
+	var explicit []string
+	if source.Dockerfile != "" {
+		explicit = []string{source.Dockerfile, path.Join(source.Directory, source.Dockerfile)}
+	}
+	result, found, err := frameworkprofile.DockerfileRegistryScope(archivePath, "", explicit, nil)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("environment gitops: build registry scope not recorded", "err", err)
+		}
+		return nil
+	}
+	scope := []string{}
+	if found && result.Repositories != nil {
+		scope = result.Repositories
+	}
+	return &scope
 }
 
 func verifyEnvironmentGitBuildArchive(archivePath string, maxBytes int64, lease state.EnvironmentGitOpsLease, source api.EnvironmentWorkloadSource) error {
