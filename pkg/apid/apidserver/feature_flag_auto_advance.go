@@ -164,6 +164,16 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 				continue
 			}
 
+			// A stage with a metric rolls back when clearly worse and
+			// advances only when not (ADR 20261119173702 §5).
+			advance, err := s.rolloutMetricStep(ctx, candidate, current, flag.Key, rule)
+			if err != nil {
+				return err
+			}
+			if !advance {
+				continue
+			}
+
 			outcomeRequest := &http.Request{URL: &url.URL{RawQuery: url.Values{
 				"since":          {window.String()},
 				"rule_id":        {rule.ID},

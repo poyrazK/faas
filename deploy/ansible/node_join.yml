@@ -2273,10 +2273,8 @@
       when:
         - not (faas_join_skip_drain | bool)
         - faas_edge_on_compute_nodes | default(false) | bool
-      loop:
-        - faas-cloudflared.service
-        - faas-gatewayd-public-edge.socket
-        - faas-gatewayd-public-edge.service
+      # public_edge.entry direct runs no connector (ADR-20261102081618 step 6).
+      loop: "{{ (['faas-cloudflared.service'] if (faas_edge_tunnel | default(true) | bool) else []) + ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] }}"
 
     # A no-drain rollout keeps every daemon serving through the install and
     # restarts them once below: stopping them here would stop vmmd, and the
@@ -2812,10 +2810,7 @@
         name: "{{ item }}"
         state: started
       when: faas_edge_on_compute_nodes | default(false) | bool
-      loop:
-        - faas-gatewayd-public-edge.socket
-        - faas-gatewayd-public-edge.service
-        - faas-cloudflared.service
+      loop: "{{ ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] + (['faas-cloudflared.service'] if (faas_edge_tunnel | default(true) | bool) else []) }}"
 
     - name: Wait for vmmd's local socket on single-box targets
       ansible.builtin.wait_for:

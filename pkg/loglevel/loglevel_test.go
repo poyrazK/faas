@@ -34,6 +34,14 @@ func TestDetect(t *testing.T) {
 		{"    at Object.<anonymous> (/app/index.js:3:9)", ""},
 		{"[FATAL] cannot open database", loglevel.Error},
 		{"time=1 level=fatal msg=exit", loglevel.Error},
+		// prod 2026-11-20: console.error("WARN slow query took 1200ms")
+		// was missed by --level warn.
+		{"WARN slow query took 1200ms", loglevel.Warn},
+		{"WARNING disk 91% full", loglevel.Warn},
+		{"ERROR payment declined", loglevel.Error},
+		{"INFO listening on :8080", loglevel.Info},
+		{"WARNINGS are counted per minute", ""},
+		{"Warn users before expiry", ""},
 		// Prose stays unclassified: markers must start the line, keep their
 		// case, and an error name needs its ": ".
 		{"the request failed with ERROR: code 7", ""},

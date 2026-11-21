@@ -2,6 +2,7 @@
 package daemonunitspec
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -127,4 +128,70 @@ func readRepoFile(t *testing.T, rel string) string {
 		t.Fatal(err)
 	}
 	return string(body)
+}
+
+// On an encrypted host faas_storage_device is the LUKS container: blkid
+// reads it as crypto_LUKS and its UUID is the LUKS header's. The xfs role
+// must leave it to the storage role (which unlocks it and writes crypttab
+// and fstab for /dev/mapper/<label>-crypt) and only check the mounted
+// filesystem; otherwise every bootstrap and join of an encrypted host stops
+// at "already formatted with an unsupported filesystem" (2026-11-20).
+func TestXFSRoleLeavesAnEncryptedDeviceToTheStorageRole(t *testing.T) {
+	f := filepath.Join(repoRoot(t), "deploy/ansible/roles/xfs/tasks/main.yml")
+	tasks := flattenRoleTasks(f, loadYAMLList(t, f))
+	probe, decide, gated := -1, -1, 0
+	for i, task := range tasks {
+		name, _ := task.body["name"].(string)
+		if fact, ok := task.body["ansible.builtin.set_fact"].(map[string]any); ok {
+			if _, ok := fact["xfs_fc_encrypted"]; ok && probe < 0 {
+				probe = i
+			}
+			if v, ok := fact["xfs_device_managed"].(string); ok {
+				decide = i
+				if !strings.Contains(v, "xfs_fc_encrypted") {
+					t.Errorf("xfs_device_managed must depend on xfs_fc_encrypted, got %q", v)
+				}
+			}
+			continue
+		}
+		if !mentionsStorageDevice(task.body) {
+			continue
+		}
+		gated++
+		if decide < 0 || i < decide {
+			t.Errorf("%q uses faas_storage_device before the role decides whether it owns the device", name)
+		}
+		if !strings.Contains(whenText(task.body["when"]), "xfs_device_managed") {
+			t.Errorf("%q uses faas_storage_device without `when: xfs_device_managed`; on an encrypted host that is the LUKS container", name)
+		}
+	}
+	if probe < 0 || decide < 0 || probe > decide {
+		t.Fatalf("the encryption probe (task %d) must set xfs_fc_encrypted before xfs_device_managed (task %d)", probe, decide)
+	}
+	if gated < 8 {
+		t.Fatalf("found %d tasks using faas_storage_device, want at least 8; did the role move?", gated)
+	}
+}
+
+func mentionsStorageDevice(body map[string]any) bool {
+	for k, v := range body {
+		if k == "name" || k == "when" {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(v), "faas_storage_device") {
+			return true
+		}
+	}
+	return false
+}
+
+func whenText(v any) string {
+	if list, ok := v.([]any); ok {
+		parts := make([]string, 0, len(list))
+		for _, p := range list {
+			parts = append(parts, fmt.Sprint(p))
+		}
+		return strings.Join(parts, " && ")
+	}
+	return fmt.Sprint(v)
 }

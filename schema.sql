@@ -12193,6 +12193,19 @@ $_$;
 
 
 --
+-- Name: erase_referral_subject(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.erase_referral_subject() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ DELETE FROM referral_attributions WHERE account_id=OLD.id;
+ RETURN OLD;
+END $$;
+
+
+--
 -- Name: event_app_company(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -31414,6 +31427,7 @@ CREATE TABLE public.agent_run_approvals (
     arguments_summary text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    released_at timestamp with time zone,
     CONSTRAINT agent_run_approvals_arguments_sha256_check CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT agent_run_approvals_arguments_summary_check CHECK ((octet_length(arguments_summary) <= 2048)),
     CONSTRAINT agent_run_approvals_check CHECK ((expires_at > created_at)),
@@ -31426,6 +31440,13 @@ CREATE TABLE public.agent_run_approvals (
 --
 
 COMMENT ON TABLE public.agent_run_approvals IS 'ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.';
+
+
+--
+-- Name: COLUMN agent_run_approvals.released_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_run_approvals.released_at IS 'ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.';
 
 
 --
@@ -31607,6 +31628,7 @@ CREATE TABLE public.agent_runs (
     workflow_run_id uuid,
     workflow_step text,
     workflow_event text,
+    deadline_credit_max_sec integer DEFAULT 0 NOT NULL,
     CONSTRAINT agent_runs_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_runs_attempt_check CHECK ((attempt >= 1)),
     CONSTRAINT agent_runs_boot_ms_check CHECK (((boot_ms IS NULL) OR (boot_ms >= 0))),
@@ -31652,6 +31674,13 @@ COMMENT ON TABLE public.agent_runs IS 'ADR-20261027090010 agent runs; apid inser
 --
 
 COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd replica holding the lease; diagnostics only.';
+
+
+--
+-- Name: COLUMN agent_runs.deadline_credit_max_sec; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_runs.deadline_credit_max_sec IS 'ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.';
 
 
 --
@@ -43220,8 +43249,12 @@ CREATE TABLE public.flag_experiment_units (
     slow_requests bigint DEFAULT 0 NOT NULL,
     value_sum bigint DEFAULT 0 NOT NULL,
     pre_value double precision,
+    unit_customer_id uuid,
+    subject_hash bytea,
+    den_sum bigint DEFAULT 0 NOT NULL,
     CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at)))),
-    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests))))
+    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests)))),
+    CONSTRAINT flag_experiment_units_subject_chk CHECK ((((subject_hash IS NULL) AND (unit_customer_id IS NULL)) OR ((length(subject_hash) = 32) AND (unit_customer_id IS NOT NULL))))
 );
 
 
@@ -43257,7 +43290,17 @@ CREATE TABLE public.flag_experiments (
     metric_definition jsonb DEFAULT '{}'::jsonb NOT NULL,
     cuped boolean DEFAULT true NOT NULL,
     min_cuped_p_values jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT flag_experiments_v3_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
+    unit text DEFAULT 'customer'::text NOT NULL,
+    layer text DEFAULT ''::text NOT NULL,
+    traffic integer DEFAULT 0 NOT NULL,
+    layer_from integer DEFAULT 0 NOT NULL,
+    layer_to integer DEFAULT 0 NOT NULL,
+    allocation text DEFAULT 'fixed'::text NOT NULL,
+    bandit jsonb DEFAULT '[]'::jsonb NOT NULL,
+    bandit_weighted_at timestamp with time zone,
+    denominator_event text DEFAULT ''::text NOT NULL,
+    percentile integer DEFAULT 0 NOT NULL,
+    CONSTRAINT flag_experiments_v4_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text, 'ratio'::text, 'percentile'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL)) AND (unit = ANY (ARRAY['customer'::text, 'subject'::text])) AND (allocation = ANY (ARRAY['fixed'::text, 'bandit'::text])) AND ((layer = ''::text) OR (layer ~ '^[a-z][a-z0-9_-]{0,63}$'::text)) AND ((traffic >= 0) AND (traffic <= 10000)) AND ((layer_from >= 0) AND (layer_from <= 10000)) AND ((layer_to >= 0) AND (layer_to <= 10000)) AND (layer_from <= layer_to) AND (jsonb_typeof(bandit) = 'array'::text) AND ((denominator_event = ''::text) OR (denominator_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text)) AND ((percentile >= 0) AND (percentile <= 99))))
 );
 
 
@@ -57698,6 +57741,8 @@ CREATE TABLE public.referral_attributions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     attribution_source text DEFAULT 'signup'::text NOT NULL,
+    subject_kind text DEFAULT 'account'::text NOT NULL,
+    selected_by uuid,
     CONSTRAINT referral_attributions_check CHECK (((first_paid_invoice_id IS NULL) = (first_paid_at IS NULL))),
     CONSTRAINT referral_attributions_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
     CONSTRAINT referral_attributions_conversion_days_check CHECK (((conversion_days >= 1) AND (conversion_days <= 365))),
@@ -57712,7 +57757,29 @@ CREATE TABLE public.referral_attributions (
     CONSTRAINT referral_attributions_referred_reward_cents_check CHECK (((referred_reward_cents >= 0) AND (referred_reward_cents <= 100000000))),
     CONSTRAINT referral_attributions_source_check CHECK ((attribution_source = ANY (ARRAY['signup'::text, 'checkout'::text]))),
     CONSTRAINT referral_attributions_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'lost'::text]))),
+    CONSTRAINT referral_attributions_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['account'::text, 'org'::text]))),
     CONSTRAINT referral_attributions_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: referral_credit_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_credit_changes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    from_owner_id uuid,
+    to_owner_id uuid NOT NULL,
+    from_commission_bps integer NOT NULL,
+    to_commission_bps integer NOT NULL,
+    reason text NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT referral_credit_changes_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_credit_changes_from_commission_bps_check CHECK (((from_commission_bps >= 0) AND (from_commission_bps <= 10000))),
+    CONSTRAINT referral_credit_changes_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 500))),
+    CONSTRAINT referral_credit_changes_to_commission_bps_check CHECK (((to_commission_bps >= 0) AND (to_commission_bps <= 10000)))
 );
 
 
@@ -59771,6 +59838,55 @@ CREATE TABLE public.sales_activities (
 
 
 --
+-- Name: sales_commission_agreements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_commission_agreements (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    commission_bps integer NOT NULL,
+    effective_from timestamp with time zone NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_commission_agreements_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
+    CONSTRAINT sales_commission_agreements_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_commission_agreements_effective_from_check CHECK (isfinite(effective_from)),
+    CONSTRAINT sales_commission_agreements_note_check CHECK ((octet_length(note) <= 500))
+);
+
+
+--
+-- Name: sales_commission_payouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_commission_payouts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    paid_on date NOT NULL,
+    reference text DEFAULT ''::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by uuid,
+    void_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT sales_commission_payouts_amount_cents_check CHECK (((amount_cents >= 1) AND (amount_cents <= 100000000))),
+    CONSTRAINT sales_commission_payouts_check CHECK (((voided_at IS NULL) = (void_reason = ''::text))),
+    CONSTRAINT sales_commission_payouts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_commission_payouts_currency_check CHECK ((currency = ANY (ARRAY['usd'::text, 'eur'::text]))),
+    CONSTRAINT sales_commission_payouts_note_check CHECK ((octet_length(note) <= 500)),
+    CONSTRAINT sales_commission_payouts_paid_on_check CHECK (isfinite(paid_on)),
+    CONSTRAINT sales_commission_payouts_reference_check CHECK ((octet_length(reference) <= 200)),
+    CONSTRAINT sales_commission_payouts_void_reason_check CHECK ((octet_length(void_reason) <= 500)),
+    CONSTRAINT sales_commission_payouts_voided_at_check CHECK (((voided_at IS NULL) OR isfinite(voided_at)))
+);
+
+
+--
 -- Name: sales_inquiries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59952,9 +60068,9 @@ CREATE VIEW public.sales_referral_overview AS
  SELECT r.account_id,
     l.owner_id,
     l.kind,
-    a.email,
-    a.plan,
-    a.status AS account_status,
+    COALESCE(a.email, buyer.email, ''::public.citext) AS email,
+    COALESCE(a.plan, o.plan, ''::text) AS plan,
+    COALESCE(a.status, o.status, ''::text) AS account_status,
     r.created_at,
     r.stage,
     r.note,
@@ -59962,7 +60078,7 @@ CREATE VIEW public.sales_referral_overview AS
     r.currency,
     ( SELECT count(*) AS count
            FROM public.apps ap
-          WHERE (ap.account_id = a.id)) AS apps,
+          WHERE (ap.account_id = r.account_id)) AS apps,
     COALESCE((i.status = 'paid'::text), false) AS paid,
     COALESCE(i.amount_paid_cents, (0)::bigint) AS paid_cents,
     (r.first_paid_at + make_interval(days => r.hold_days)) AS eligible_at,
@@ -59971,7 +60087,7 @@ CREATE VIEW public.sales_referral_overview AS
             WHEN (i.id IS NULL) THEN 'review'::text
             WHEN ((i.status <> 'paid'::text) OR (i.amount_refunded_cents > 0) OR (i.amount_refund_pending_cents > 0)) THEN 'reversed'::text
             WHEN (i.currency <> r.currency) THEN 'currency_mismatch'::text
-            WHEN ((a.status <> 'active'::text) OR (a.email_verified_at IS NULL) OR (owner.status <> 'active'::text)) THEN 'review'::text
+            WHEN ((owner.status <> 'active'::text) OR ((r.subject_kind = 'account'::text) AND ((a.id IS NULL) OR (a.status <> 'active'::text) OR (a.email_verified_at IS NULL))) OR ((r.subject_kind = 'org'::text) AND ((o.id IS NULL) OR (o.status <> 'active'::text) OR o.deleted_pending))) THEN 'review'::text
             WHEN (((l.kind = 'customer'::text) AND (r.customer_reward_cents = 0) AND (r.referred_reward_cents = 0)) OR ((l.kind = 'sales'::text) AND (r.commission_bps = 0))) THEN 'unconfigured'::text
             WHEN (now() < (r.first_paid_at + make_interval(days => r.hold_days))) THEN 'holding'::text
             ELSE 'eligible'::text
@@ -59983,12 +60099,21 @@ CREATE VIEW public.sales_referral_overview AS
         CASE
             WHEN (l.kind = 'customer'::text) THEN r.referred_reward_cents
             ELSE (0)::bigint
-        END AS referred_reward_cents
-   FROM ((((public.referral_attributions r
+        END AS referred_reward_cents,
+    r.subject_kind,
+    COALESCE(o.name, ''::text) AS org_name,
+    r.commission_bps,
+    p.id AS payout_id,
+    COALESCE(p.amount_cents, (0)::bigint) AS payout_cents,
+    p.paid_on AS payout_paid_on
+   FROM (((((((public.referral_attributions r
      JOIN public.referral_links l ON ((l.code = r.code)))
-     JOIN public.accounts a ON ((a.id = r.account_id)))
+     LEFT JOIN public.accounts a ON (((a.id = r.account_id) AND (r.subject_kind = 'account'::text))))
+     LEFT JOIN public.orgs o ON (((o.id = r.account_id) AND (r.subject_kind = 'org'::text))))
+     LEFT JOIN public.accounts buyer ON ((buyer.id = r.selected_by)))
      JOIN public.accounts owner ON ((owner.id = l.owner_id)))
-     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))));
+     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))))
+     LEFT JOIN public.sales_commission_payouts p ON (((p.account_id = r.account_id) AND (p.voided_at IS NULL))));
 
 
 --
@@ -60013,6 +60138,25 @@ CREATE TABLE public.sales_tasks (
     CONSTRAINT sales_tasks_title_check CHECK (((title = btrim(title)) AND ((octet_length(title) >= 1) AND (octet_length(title) <= 200)))),
     CONSTRAINT sales_tasks_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT sales_tasks_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: sales_team_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_team_members (
+    account_id uuid NOT NULL,
+    role text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    updated_by uuid,
+    version bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_team_members_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_team_members_role_check CHECK ((role = ANY (ARRAY['manager'::text, 'rep'::text]))),
+    CONSTRAINT sales_team_members_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_team_members_version_check CHECK ((version > 0))
 );
 
 
@@ -63727,6 +63871,14 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 ALTER TABLE ONLY public.agent_run_usage
     ADD CONSTRAINT agent_run_usage_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: agent_runs agent_runs_deadline_credit_max_sec_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_runs
+    ADD CONSTRAINT agent_runs_deadline_credit_max_sec_check CHECK (((deadline_credit_max_sec >= 0) AND (deadline_credit_max_sec <= 3600))) NOT VALID;
 
 
 --
@@ -75450,6 +75602,14 @@ ALTER TABLE ONLY public.referral_attributions
 
 
 --
+-- Name: referral_credit_changes referral_credit_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_credit_changes
+    ADD CONSTRAINT referral_credit_changes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: referral_links referral_links_owner_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76210,6 +76370,22 @@ ALTER TABLE ONLY public.sales_activities
 
 
 --
+-- Name: sales_commission_agreements sales_commission_agreements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_commission_payouts sales_commission_payouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_payouts
+    ADD CONSTRAINT sales_commission_payouts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sales_inquiries sales_inquiries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76287,6 +76463,14 @@ ALTER TABLE ONLY public.sales_qualifications
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_team_members sales_team_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -87508,6 +87692,13 @@ CREATE INDEX referral_attributions_link ON public.referral_attributions USING bt
 
 
 --
+-- Name: referral_credit_changes_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX referral_credit_changes_account ON public.referral_credit_changes USING btree (account_id, created_at);
+
+
+--
 -- Name: referral_links_share_code_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88149,6 +88340,27 @@ CREATE INDEX sales_activities_contact ON public.sales_activities USING btree (le
 --
 
 CREATE INDEX sales_activities_page ON public.sales_activities USING btree (lead_id, occurred_at DESC, id DESC);
+
+
+--
+-- Name: sales_commission_agreements_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_commission_agreements_current ON public.sales_commission_agreements USING btree (account_id, effective_from DESC, created_at DESC);
+
+
+--
+-- Name: sales_commission_payouts_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sales_commission_payouts_live ON public.sales_commission_payouts USING btree (account_id) WHERE (voided_at IS NULL);
+
+
+--
+-- Name: sales_commission_payouts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_commission_payouts_owner ON public.sales_commission_payouts USING btree (owner_id, paid_on);
 
 
 --
@@ -90022,6 +90234,13 @@ CREATE TRIGGER accounts_billing_mail_revision_guard BEFORE UPDATE OF status, pas
 --
 
 CREATE TRIGGER accounts_deployment_mail_revision_guard BEFORE UPDATE OF email, status, deletion_requested_at, deployment_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_deployment_mail_revision();
+
+
+--
+-- Name: accounts accounts_erase_referral_subject; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_erase_referral_subject AFTER DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.erase_referral_subject();
 
 
 --
@@ -95478,6 +95697,13 @@ CREATE TRIGGER org_streaming_plan BEFORE UPDATE OF plan ON public.orgs FOR EACH 
 --
 
 CREATE TRIGGER orgs_deletion_requested_at BEFORE INSERT OR UPDATE OF deleted_pending, deletion_requested_at ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.stamp_org_deletion_requested_at();
+
+
+--
+-- Name: orgs orgs_erase_referral_subject; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER orgs_erase_referral_subject AFTER DELETE ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.erase_referral_subject();
 
 
 --
@@ -111952,14 +112178,6 @@ ALTER TABLE ONLY public.recent_build_claims
 
 
 --
--- Name: referral_attributions referral_attributions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.referral_attributions
-    ADD CONSTRAINT referral_attributions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
 -- Name: referral_attributions referral_attributions_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111968,11 +112186,27 @@ ALTER TABLE ONLY public.referral_attributions
 
 
 --
+-- Name: referral_attributions referral_attributions_namespace_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_namespace_fk FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: referral_attributions referral_attributions_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.referral_attributions
     ADD CONSTRAINT referral_attributions_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: referral_credit_changes referral_credit_changes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_credit_changes
+    ADD CONSTRAINT referral_credit_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.referral_attributions(account_id) ON DELETE CASCADE;
 
 
 --
@@ -112840,6 +113074,30 @@ ALTER TABLE ONLY public.sales_activities
 
 
 --
+-- Name: sales_commission_agreements sales_commission_agreements_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_commission_agreements sales_commission_agreements_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_commission_payouts sales_commission_payouts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_payouts
+    ADD CONSTRAINT sales_commission_payouts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.referral_attributions(account_id) ON DELETE CASCADE;
+
+
+--
 -- Name: sales_inquiries sales_inquiries_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -112957,6 +113215,22 @@ ALTER TABLE ONLY public.sales_tasks
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_team_members sales_team_members_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_team_members sales_team_members_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

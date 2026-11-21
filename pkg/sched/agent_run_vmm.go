@@ -37,6 +37,9 @@ type AgentRunSpec struct {
 	// ModelWaitPauseAfter is the model-wait pause delay (ADR-20261027090012);
 	// zero keeps the VM running.
 	ModelWaitPauseAfter time.Duration
+	// DeadlineSec is the seller's timeout when the run's timeout_sec is a
+	// guest ceiling above it (ADR-20261027090016 amendment 3); 0: none.
+	DeadlineSec int
 }
 
 // AgentRunSnapshot locates a preset snapshot vmmd captured (ADR-20261027090010 §2).
@@ -54,6 +57,9 @@ type AgentRunHooks struct {
 	Booted func(ctx context.Context, method string, bootMs int64) error
 	Output agentrunproto.OutputReceiver
 	Usage  func(ctx context.Context, u AgentRunUsage) error
+	// Extend carries the run's total approval-wait credit to vmmd
+	// (ADR-20261027090016 amendment 3). nil: no credit.
+	Extend <-chan time.Duration
 }
 
 // AgentRunUsage is vmmd's measured memory of a run VM (ADR-20261027090011):
@@ -126,20 +132,36 @@ func (c *VMMClient) RunAgent(ctx context.Context, spec AgentRunSpec, run agentru
 		Instance: spec.Instance, AccountId: spec.AccountID, Plan: string(spec.Plan), BaseKey: spec.BaseKey, LayerKey: spec.LayerKey,
 		VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB), CpuMillicores: int32(spec.CPUMillicores), Run: body,
 		Relay: relayToProto(spec.Relay), InputKey: spec.InputKey, Snapshot: snapshotToProto(spec.Snapshot),
-		ModelWaitPauseAfterMs: int32(spec.ModelWaitPauseAfter / time.Millisecond),
+		ModelWaitPauseAfterMs: int32(spec.ModelWaitPauseAfter / time.Millisecond), DeadlineSec: int32(spec.DeadlineSec),
 	}}}); err != nil {
 		return agentrunproto.Result{}, liftErr(err)
 	}
-	if cancel != nil {
-		go func() {
-			select {
-			case <-cancel:
-				_ = stream.Send(&vmmdpb.RunAgentRequest{Frame: &vmmdpb.RunAgentRequest_Cancel{Cancel: &vmmdpb.RunAgentCancel{}}})
-			case <-streamCtx.Done():
-			}
-		}()
+	if cancel != nil || hooks.Extend != nil {
+		go forwardAgentRunControl(streamCtx, stream, cancel, hooks.Extend)
 	}
 	return receiveAgentRun(streamCtx, stream, run, hooks)
+}
+
+// forwardAgentRunControl sends the run's cancel and credit frames to vmmd
+// from one goroutine, since a stream's Sends must not overlap. Nothing is
+// sent after the cancel.
+func forwardAgentRunControl(ctx context.Context, stream vmmdpb.Vmmd_RunAgentClient, cancel <-chan struct{}, extend <-chan time.Duration) {
+	for {
+		select {
+		case <-cancel:
+			_ = stream.Send(&vmmdpb.RunAgentRequest{Frame: &vmmdpb.RunAgentRequest_Cancel{Cancel: &vmmdpb.RunAgentCancel{}}})
+			return
+		case credit, ok := <-extend:
+			if !ok {
+				extend = nil
+				continue
+			}
+			_ = stream.Send(&vmmdpb.RunAgentRequest{Frame: &vmmdpb.RunAgentRequest_Extend{Extend: &vmmdpb.RunAgentExtend{
+				CreditMs: credit.Milliseconds()}}})
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func receiveAgentRun(ctx context.Context, stream vmmdpb.Vmmd_RunAgentClient, run agentrunproto.Request, hooks AgentRunHooks) (agentrunproto.Result, error) {

@@ -52,7 +52,9 @@ func (f *buildkitConsoleFilter) Write(p []byte) (int, error) {
 func (f *buildkitConsoleFilter) keep(line string) bool {
 	if strings.HasPrefix(line, "time=") {
 		f.inDebug = strings.Contains(line, " level=debug ")
-		return !f.inDebug
+		// The builder's cache disk cannot do fs-verity; buildkitd warns
+		// about it on every build, three times (prod 2026-11-20).
+		return !f.inDebug && !strings.Contains(line, `msg="failed check for fsverity support"`)
 	}
 	if f.inDebug {
 		// Continuation lines of a debug entry.

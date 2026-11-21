@@ -78,3 +78,7 @@ function is its handler. A deployment with a function handler is now primed
 only when it declares `lifecycle.warmup`; otherwise the outcome is
 `no_http_path`. HTTP apps keep the `/` fallback, and the docs now say that the
 burst runs customer code and how to point it at a harmless path.
+
+Amendment (2026-11-20): the function check also covers functions discovered
+from config in code, which deploy as `type: function` without a recorded
+handler. The app type now decides as well as the deployment's handler.

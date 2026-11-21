@@ -7,13 +7,17 @@ export interface ProgressiveRollout {
 }
 export interface FlagCondition { attribute: string; op: 'in' | 'not_in' | 'ends_with'; values: string[] }
 export interface FlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value: boolean; progression?: ProgressiveRollout }
-export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string }
+/** A running experiment on a weighted rule: its layer slice and the environment holdout apply (ADR 20261119173702 §2). */
+export interface RuleExperiment { key: string; control: string; unit: 'customer' | 'subject'; layer?: string; from?: number; to?: number }
+export interface VariantFlagRule { id: string; customers?: string[]; group?: string; subjects?: string[]; attributes?: FlagCondition[]; rollout?: number; rollout_unit?: 'customer' | 'subject'; value?: string; experiment?: RuleExperiment }
+export interface FlagHoldout { seed: string; basis_points: number }
+export interface FlagLayer { key: string; seed: string }
 export interface WeightedVariant { key: string; weight: number }
 export interface FeatureFlag { key: string; description?: string; type?: 'boolean'; enabled: boolean; killed?: boolean; default: boolean; seed: string; rules: FlagRule[]; variants?: never }
 export type BooleanFeatureFlag = FeatureFlag;
 export interface VariantFeatureFlag { key: string; description?: string; type: 'variant'; enabled: boolean; killed?: boolean; default: string; seed: string; rules: VariantFlagRule[]; variants: WeightedVariant[] }
 export type FlagDefinition = FeatureFlag | VariantFeatureFlag;
-export interface FlagsBundle { environment_id: string; version: number; flags: FlagDefinition[]; groups: Record<string, string[]> }
+export interface FlagsBundle { environment_id: string; version: number; flags: FlagDefinition[]; groups: Record<string, string[]>; holdout?: FlagHoldout; layers?: FlagLayer[] }
 export interface FlagDecision {
   flag: string; value: boolean; config_version: number; rule_id?: string;
   reason: string; bucket?: number; source: 'configuration' | 'fallback' | 'inherited'; inherited_from?: FlagDecisionOrigin;
@@ -89,7 +93,7 @@ const EVENT_QUEUE_MAX = 1000;
 const EVENT_FLUSH_MS = 5000;
 const EVENT_MAX_ABS_VALUE = 1_000_000_000_000;
 /** Capabilities this SDK advertises to the runtime endpoint. */
-export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1';
+export const GREGALE_FLAG_SDK_CAPABILITIES = 'subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1';
 /** Product analytics event bounds (ADR 20261117084505). */
 const EVENT_PROPERTY_KEY = /^[a-z][a-z0-9_]{0,63}$/;
 const EVENT_MAX_PROPERTIES = 10;
@@ -97,6 +101,12 @@ const EVENT_PROPERTY_MAX_BYTES = 256;
 const EVENT_MAX_FLAGS = 32;
 /** One event as sent to the runtime events endpoint. */
 interface QueuedFlagEvent { name: string; customer_id: string; value?: number; at: string; subject?: string; properties?: Record<string, string>; flags?: Record<string, string> }
+/** One subject experiment exposure (ADR 20261119173702 §1). */
+interface QueuedFlagExposure { flag: string; rule_id: string; variant: string; customer_id: string; subject: string; at: string }
+const EXPOSURE_BATCH = 100;
+const EXPOSURE_QUEUE_MAX = 1000;
+const EXPOSURE_DEDUPE_MS = 3_600_000;
+const EXPOSURE_DEDUPE_MAX = 10_000;
 /** Options for track(). value is an integer, such as cents. properties are up to 10
  * string values for product analytics breakdowns and filters. subject overrides the
  * request's subject (withSubject) as the end user; Gregale stores only its hash. */
@@ -119,6 +129,28 @@ export function flagSubjectBucket(seed: string, key: string, customer: string, s
 }
 export function flagSubjectVariantBucket(seed: string, key: string, customer: string, subject: string): number {
   return createHash('sha256').update(`${seed}\0${key}\0variant\0subject\0${customer}\0${subject}`).digest().readUInt32BE(0) % 10000;
+}
+function bucketOf(...parts: string[]): number {
+  return createHash('sha256').update(parts.join('\0')).digest().readUInt32BE(0) % 10000;
+}
+/** SHA-256(seed NUL "layer" NUL customer [NUL subject]) mod 10000 (ADR 20261119173702 §2). */
+export function flagLayerBucket(seed: string, customer: string, subject?: string): number {
+  return subject === undefined ? bucketOf(seed, 'layer', customer) : bucketOf(seed, 'layer', customer, subject);
+}
+/** SHA-256(seed NUL "holdout" NUL customer) mod 10000; the holdout is per customer. */
+export function flagHoldoutBucket(seed: string, customer: string): number {
+  return bucketOf(seed, 'holdout', customer);
+}
+/** Whether the unit is in the experiment's layer slice, and whether the holdout holds the customer out. */
+function experimentGate(bundle: FlagsBundle, x: RuleExperiment, customer: string, subject: string | undefined): { inSlice: boolean; held: boolean } {
+  if (x.layer) {
+    const layer = bundle.layers?.find(l => l.key === x.layer);
+    if (!layer) return { inSlice: false, held: false };
+    const b = flagLayerBucket(layer.seed, customer, x.unit === 'subject' ? subject : undefined);
+    if (b < (x.from ?? 0) || b >= (x.to ?? 0)) return { inSlice: false, held: false };
+  }
+  const h = bundle.holdout;
+  return { inSlice: true, held: !!h && h.basis_points > 0 && flagHoldoutBucket(h.seed, customer) < h.basis_points };
 }
 export function validFlagSubjectID(value: unknown): value is string {
   return typeof value === 'string' && /^[\x21-\x7e]{1,128}$/.test(value);
@@ -171,6 +203,11 @@ export function evaluateVariant(bundle: FlagsBundle, key: string, customer: stri
     const subjectScoped = !!rule.subjects?.length || rule.rollout_unit === 'subject';
     if (subjectScoped && !subject) { subjectMissing = true; continue; }
     if (rule.subjects?.length && !rule.subjects.includes(subject!)) continue;
+    if (rule.experiment) {
+      const gate = experimentGate(bundle, rule.experiment, customer, subject);
+      if (!gate.inSlice) continue;
+      if (gate.held) return { ...d, value: rule.experiment.control, rule_id: rule.id, reason: 'holdout' };
+    }
     let rolloutBucket: number | undefined;
     if (rule.rollout !== undefined) {
       rolloutBucket = rule.rollout_unit === 'subject' ? flagSubjectBucket(f.seed, f.key, customer, subject!) : flagBucket(f.seed, f.key, customer);
@@ -230,6 +267,8 @@ export class GregaleFlags {
   private readonly eventsURL: URL;
   private readonly identityURL: URL;
   private events: QueuedFlagEvent[] = [];
+  private exposures: QueuedFlagExposure[] = [];
+  private exposed = new Map<string, number>();
   private eventsDropped = 0;
   private flushing?: Promise<void>;
   private eventTimer?: ReturnType<typeof setInterval>;
@@ -312,6 +351,18 @@ export class GregaleFlags {
     if (this.events.length >= EVENT_BATCH) void this.flush().catch(() => {});
     return true;
   }
+  /** Queues one subject exposure, at most once an hour per flag, customer, subject and variant. */
+  private recordExposure(d: VariantFlagDecision, customer: string, subject: string): void {
+    const now = this.now();
+    const dedupeKey = `${d.flag}\0${customer}\0${subject}\0${d.value}`;
+    const seen = this.exposed.get(dedupeKey);
+    if (seen !== undefined && now - seen < EXPOSURE_DEDUPE_MS) return;
+    if (this.exposed.size >= EXPOSURE_DEDUPE_MAX) this.exposed.clear();
+    if (this.exposures.length >= EXPOSURE_QUEUE_MAX) { this.eventsDropped += 1; return; }
+    this.exposed.set(dedupeKey, now);
+    this.exposures.push({ flag: d.flag, rule_id: d.rule_id ?? '', variant: d.value, customer_id: customer, subject, at: new Date(now).toISOString() });
+    if (this.exposures.length >= EXPOSURE_BATCH) void this.flush().catch(() => {});
+  }
   /** Events dropped locally or refused by the API since this client started. */
   droppedEvents(): number { return this.eventsDropped; }
   /** Sends queued events now. A failed batch is dropped and counted, never retried forever. */
@@ -321,15 +372,16 @@ export class GregaleFlags {
     return this.flushing;
   }
   private async sendEvents(): Promise<void> {
-    while (this.events.length > 0) {
+    while (this.events.length > 0 || this.exposures.length > 0) {
       const batch = this.events.splice(0, EVENT_BATCH);
+      const exposures = this.exposures.splice(0, EXPOSURE_BATCH);
       try {
         const signal = AbortSignal.timeout(this.timeoutMs);
         const token = await this.identityToken(signal);
         const response = await this.fetchImpl(this.eventsURL, {
           method: 'POST', signal, redirect: 'error', cache: 'no-store',
           headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'X-Faas-Flags-Capabilities': GREGALE_FLAG_SDK_CAPABILITIES },
-          body: JSON.stringify({ events: batch }),
+          body: JSON.stringify(exposures.length > 0 ? { events: batch, exposures } : { events: batch }),
         });
         if (!response.ok) { this.eventsDropped += batch.length; continue; }
         const result = await boundedJSON(response, 16_384) as { accepted?: number };
@@ -431,6 +483,10 @@ export class GregaleFlags {
     }
     const d: VariantFlagDecision = r.fresh && r.bundle ? evaluateVariant(r.bundle, key, r.customer, fallback, r.subject, r.attributes, r.kills) : { flag: key, type: 'variant', value: fallback, config_version: r.bundle?.version ?? 0, reason: 'configuration_stale', source: 'fallback' };
     if (r.evidence.size < 32) r.evidence.set(key, { ...d, used: false });
+    if (d.reason === 'rule_match' && r.customer && r.subject && r.bundle) {
+      const rule = (r.bundle.flags.find(f => f.key === key) as VariantFeatureFlag | undefined)?.rules.find(x => x.id === d.rule_id);
+      if (rule?.experiment?.unit === 'subject') this.recordExposure(d, r.customer, r.subject);
+    }
     return d;
   }
   /** Mark at the point the selected application path is entered. */
@@ -499,7 +555,7 @@ function decodePropagationHeader(value: string | null): { customer_id: string; d
     const envelope: unknown = JSON.parse(raw.toString('utf8'));
     if (!isRecord(envelope) || !hasOnlyKeys(envelope, ['version', 'customer_id', 'decisions']) || envelope.version !== 1 || typeof envelope.customer_id !== 'string' || !UUID.test(envelope.customer_id) || !Array.isArray(envelope.decisions) || envelope.decisions.length === 0 || envelope.decisions.length > 32) return undefined;
     const decisions = new Map<string, PropagatedDecision>();
-    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'subject_missing', 'rule_match', 'configuration_stale', 'type_mismatch', 'killed']);
+    const reasons = new Set(['flag_missing', 'default', 'disabled', 'customer_missing', 'subject_missing', 'rule_match', 'configuration_stale', 'type_mismatch', 'killed', 'holdout']);
     const decisionKeys = ['flag', 'value', 'type', 'config_version', 'rule_id', 'reason', 'bucket', 'rollout_bucket', 'source', 'origin'];
     for (const rawDecision of envelope.decisions) {
       if (!isRecord(rawDecision) || !hasOnlyKeys(rawDecision, decisionKeys)) return undefined;
@@ -512,7 +568,9 @@ function decodePropagationHeader(value: string | null): { customer_id: string; d
       for (const bucket of [d.bucket, d.rollout_bucket]) if (bucket !== undefined && (!Number.isInteger(bucket) || (bucket as number) < 0 || (bucket as number) >= 10000)) return undefined;
       const fallbackReason = isFallbackReason(d.reason);
       if ((d.source === 'fallback') !== fallbackReason) return undefined;
-      if (d.reason === 'rule_match' ? typeof d.rule_id !== 'string' : d.rule_id !== undefined || d.bucket !== undefined || d.rollout_bucket !== undefined) return undefined;
+      if (d.reason === 'rule_match' ? typeof d.rule_id !== 'string'
+        : d.reason === 'holdout' ? typeof d.rule_id !== 'string' || d.bucket !== undefined || d.rollout_bucket !== undefined
+          : d.rule_id !== undefined || d.bucket !== undefined || d.rollout_bucket !== undefined) return undefined;
       if (!isRecord(d.origin) || !hasOnlyKeys(d.origin, ['app_id', 'environment_id']) || typeof d.origin.app_id !== 'string' || !UUID.test(d.origin.app_id) || typeof d.origin.environment_id !== 'string' || !UUID.test(d.origin.environment_id)) return undefined;
       const { origin: rawOrigin, ...decision } = d;
       decisions.set(d.flag, { ...decision, origin: rawOrigin } as unknown as PropagatedDecision);
@@ -537,6 +595,9 @@ function validateBundle(raw: unknown): FlagsBundle {
   const ids = (v: unknown): v is string[] => Array.isArray(v) && v.length <= 1000 && v.every(id => typeof id === 'string' && CUSTOMER_ID.test(id)) && new Set(v).size === v.length;
   if (!b || typeof b.environment_id !== 'string' || !CUSTOMER_ID.test(b.environment_id) || !Number.isSafeInteger(b.version) || b.version < 0 || !Array.isArray(b.flags) || b.flags.length > 100 || !b.groups || typeof b.groups !== 'object' || Array.isArray(b.groups) || Object.keys(b.groups).length > 100) throw new Error('Invalid Flags bundle');
   for (const [name, members] of Object.entries(b.groups)) if (!key(name) || !ids(members)) throw new Error('Invalid Flags group');
+  const seed = (v: unknown): v is string => typeof v === 'string' && v.length >= 1 && v.length <= 128;
+  if (b.holdout !== undefined && (!b.holdout || !seed(b.holdout.seed) || !Number.isInteger(b.holdout.basis_points) || b.holdout.basis_points < 0 || b.holdout.basis_points > 2000)) throw new Error('Invalid Flags holdout');
+  if (b.layers !== undefined && (!Array.isArray(b.layers) || b.layers.length > 10 || !b.layers.every(l => key(l?.key) && seed(l.seed)) || new Set(b.layers.map(l => l.key)).size !== b.layers.length)) throw new Error('Invalid Flags layers');
   const keys = new Set<string>();
   for (const f of b.flags) {
     const isVariant = f.type === 'variant';
@@ -560,6 +621,11 @@ function validateBundle(raw: unknown): FlagsBundle {
         typeof c?.attribute === 'string' && ATTRIBUTE_NAME.test(c.attribute) && ['in', 'not_in', 'ends_with'].includes(c.op) && (c.op !== 'ends_with' || c.attribute.startsWith('app.')) &&
         Array.isArray(c.values) && c.values.length >= 1 && c.values.length <= 100 && c.values.every(validFlagAttributeValue) && new Set(c.values).size === c.values.length));
       if (!key(r.id) || rules.has(r.id) || !validRuleValue || (r.customers !== undefined && !ids(r.customers)) || (r.group !== undefined && (!key(r.group) || !Object.hasOwn(b.groups, r.group))) || (r.subjects !== undefined && !validSubjects(r.subjects)) || (r.rollout_unit !== undefined && r.rollout_unit !== 'customer' && r.rollout_unit !== 'subject') || (r.rollout_unit !== undefined && r.rollout === undefined) || ((!!r.subjects?.length || r.rollout_unit === 'subject') && !tenantScoped) || (r.rollout !== undefined && (!Number.isInteger(r.rollout) || r.rollout < 0 || r.rollout > 10000)) || !validConditions || (!r.customers?.length && !r.group && !r.subjects?.length && !r.attributes?.length && r.rollout === undefined)) throw new Error('Invalid Flags rule');
+      const x = (r as VariantFlagRule).experiment;
+      if (x !== undefined && (!isVariant || r.value !== undefined || !x || typeof x.key !== 'string' || !/^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$/.test(x.key) || !variantKeys.has(x.control) ||
+        (x.unit !== 'customer' && x.unit !== 'subject') || (x.unit === 'subject') !== (r.rollout_unit === 'subject') ||
+        (x.layer === undefined ? (x.from !== undefined && x.from !== 0) || (x.to !== undefined && x.to !== 0) :
+          !b.layers?.some(l => l.key === x.layer) || !Number.isInteger(x.from ?? 0) || !Number.isInteger(x.to) || (x.from ?? 0) < 0 || (x.from ?? 0) >= (x.to ?? 0) || (x.to ?? 0) > 10000))) throw new Error('Invalid Flags rule experiment');
       rules.add(r.id);
     }
   }

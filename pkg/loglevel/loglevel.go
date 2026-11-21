@@ -51,7 +51,8 @@ var patterns = []pattern{
 // whitespace): the default formats of Python's logging module and uvicorn
 // ("ERROR:    Exception in ASGI application"), Python tracebacks, Go panics
 // and runtime fatal errors, and the first line of a Node uncaught-exception
-// report ("TypeError: …"). Uncaught crashes reach the log as plain stderr in
+// report ("TypeError: …"), and the bare "WARN slow query" shape of
+// hand-written console logging. Uncaught crashes reach the log as plain stderr in
 // these shapes, so without them a crash was no error line at all
 // (ADR-20261109153000). They are anchored to the start of the line and
 // case-sensitive, so prose that mentions an error stays unclassified.
@@ -60,8 +61,8 @@ var prefixes = []pattern{
 	{Error, "Traceback (most recent call last):"},
 	{Error, "panic: "}, {Error, "fatal error: "},
 	{Error, "Uncaught "}, {Error, "UnhandledPromiseRejection"},
-	{Warn, "WARNING:"}, {Warn, "WARN:"},
-	{Info, "INFO:"},
+	{Error, "ERROR "}, {Warn, "WARNING:"}, {Warn, "WARN:"}, {Warn, "WARNING "}, {Warn, "WARN "},
+	{Info, "INFO:"}, {Info, "INFO "},
 }
 
 // Detect returns the highest canonical level any pattern matches in line,

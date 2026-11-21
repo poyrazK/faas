@@ -91,9 +91,6 @@ func wireCapabilities(env map[string]string, command []string, preset agentprese
 		return command
 	}
 	prepend, appendArgs := wiring.args(url)
-	out := make([]string, 0, len(command)+len(prepend)+len(appendArgs))
-	out = append(out, command[0])
-	out = append(out, prepend...)
-	out = append(out, command[1:]...)
-	return append(out, appendArgs...)
+	out := prependArgs(command, prepend)
+	return append(out[:len(out):len(out)], appendArgs...)
 }

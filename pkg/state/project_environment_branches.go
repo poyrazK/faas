@@ -271,6 +271,12 @@ func branchDeploymentFromArtifact(a projectCloneArtifact, slug string, input *pr
 	d.TrafficPercent, d.TrafficPercentExplicit = 100, false
 	d.MinInstances = 0
 	d.Reason = EnvironmentBranchDeploymentReason
+	// The parent's release already ran: the branch reads the parent's data
+	// as of the branch point, after that release. A copied release command
+	// would also hold the deployment out of prime forever, since nothing
+	// runs a release task for a branch deployment (ADR-20261031193635
+	// amendment 2026-11-19).
+	d.ReleaseCommand, d.ReleaseCommandShell = nil, false
 	d.branchInput = input
 	return d
 }

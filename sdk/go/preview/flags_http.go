@@ -178,6 +178,11 @@ func validPropagatedDecision(decision *FlagDecision, origin FlagDecisionOrigin) 
 		if decision.RuleID == "" {
 			return false
 		}
+	} else if decision.Reason == "holdout" {
+		// A held-out customer's control names its rule (ADR 20261119173702 §2).
+		if decision.RuleID == "" || decision.Bucket != nil || decision.RolloutBucket != nil {
+			return false
+		}
 	} else if decision.Reason != "flag_missing" && decision.Reason != "default" && decision.Reason != "disabled" && decision.Reason != "customer_missing" && decision.Reason != "subject_missing" && decision.Reason != "configuration_stale" && decision.Reason != "type_mismatch" && decision.Reason != "killed" {
 		return false
 	} else if decision.RuleID != "" || decision.Bucket != nil || decision.RolloutBucket != nil {

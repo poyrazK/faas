@@ -3028,7 +3028,16 @@ message RunAgentRequest {
   oneof frame {
     RunAgentStart start = 1;
     RunAgentCancel cancel = 2;
+    RunAgentExtend extend = 3;
   }
+}
+
+// RunAgentExtend moves the run's deadline to deadline_sec + credit_ms, never
+// past the request's timeout_sec (ADR-20261027090016 amendment 3). credit_ms
+// is the run's total credit, so a repeated frame changes nothing. A vmmd
+// that predates it ignores it.
+message RunAgentExtend {
+  int64 credit_ms = 1;
 }
 
 // RunAgentStart names the machine and carries the run. run is an
@@ -3058,6 +3067,11 @@ message RunAgentStart {
   // once it has waited this long on the relay and nothing else. 0 (an older
   // schedd) keeps it running.
   int32 model_wait_pause_after_ms = 13;
+  // deadline_sec is the seller's timeout when it is below the request's
+  // timeout_sec, which is then the guest's ceiling: vmmd stops the run at
+  // deadline_sec plus the credit RunAgentExtend grants (ADR-20261027090016
+  // amendment 3). 0 (an older schedd): the request's timeout_sec.
+  int32 deadline_sec = 14;
 }
 
 // AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.

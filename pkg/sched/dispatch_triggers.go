@@ -2459,7 +2459,8 @@ func classifyDLQReason(code, gatewayErr string) string {
 			return triggerReasonMaxAttempts
 		case "payload_b64_invalid",
 			"response_malformed",
-			"broker_message_identity_missing":
+			"broker_message_identity_missing",
+			"function_refused_input": // the handler answered 4xx: the input itself is bad
 			return triggerReasonPoisonRecord
 		case "invoke_error":
 			return triggerReasonBrokerError

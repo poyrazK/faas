@@ -46,6 +46,17 @@ func parkedDeploymentID(app api.AppResponse) string {
 
 // parkedReleaseStatus is the release list status for a deployment that is
 // still the app's live release while the app is parked.
+// listedReleaseStatus is the STATUS column of a release row. A canary whose
+// rollout was aborted keeps status "live" with 0% traffic while its
+// predecessor serves again, and the list called it plain "live" (prod hunt
+// 2026-11-20, R10-8).
+func listedReleaseStatus(d api.DeploymentResponse) string {
+	if d.Status == "live" && d.RolloutState == api.DebugRolloutAborted && d.TrafficPercent == 0 {
+		return "aborted"
+	}
+	return d.Status
+}
+
 func parkedReleaseStatus(status string) string {
 	if status == "live" {
 		return "live/parked"

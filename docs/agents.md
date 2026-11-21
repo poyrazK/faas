@@ -202,19 +202,28 @@ agent key instead; see
 ## Give the agent its own key
 
 An agent that runs the `gregale` CLI, or the MCP server locally, needs a
-credential. Create a dedicated key instead of sharing your own login. Scope
-it to what the agent needs:
+credential. Create a dedicated agent key instead of sharing your own login:
 
 ```sh
-gregale key create coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --agent
 ```
+
+`--agent` makes it an agent key (the `agent` scope) with `apps:read` and
+`deploy:write`. Only an agent key asks a person before risky requests
+([approvals](#approve-an-agents-risky-requests)) and holds the always-on cost
+it adds to an [agent budget](#limit-what-an-agent-adds-to-your-bill). A key
+without the `agent` scope gets neither, so don't give a coding agent one.
+When the CLI runs inside Claude Code, Codex, Cursor or Gemini CLI, `key
+create` warns if the key it creates lacks the `agent` scope.
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
 and crons. It also changes app settings, including turning off an app's
 request authentication, and deletes apps (a soft delete that `gregale app
 restore` reverses within the grace period). An agent key's `--approvals`
-(default `all`) puts deletes and production changes in front of a person. Add `env:write` for the MCP tools that set non-secret variables.
+(default `all`) puts deletes and production changes in front of a person. To
+choose other scopes, list them with `--scopes`; `--agent` adds the `agent`
+scope to them. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access
@@ -384,6 +393,15 @@ and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
 tarball or an upload) applies the source's own `gregale.yaml` deployment
 settings, so it is priced for the replicas or warm floor they add before
 any of them is written.
+
+A cron is priced too (`POST /v1/crons`, and a `PATCH /v1/crons/{id}` that
+changes its schedule, timezone or enables it), because a cron that fires
+more often than its app idles keeps the app running. Each firing is priced
+as the app staying up for its idle timeout, or until the next firing when
+that comes sooner: a cron every minute costs as much as a warm instance, a
+daily one almost nothing. A command cron is priced for its own VM up to the
+command's timeout. An HTTP cron on an app that already keeps a warm
+instance adds nothing.
 
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:

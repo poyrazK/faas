@@ -524,10 +524,10 @@ works beside the previous release:
    older schedd or vmmd ignores the frame, as both ignore unknown frames
    today, and the run keeps its plain deadline.
 5. agentd: the credit poll and the guest ceiling, behind the switch
-   `FAAS_AGENT_APPROVAL_DEADLINE_CREDIT` (off). It goes on after steps 2–4
+   `FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT` (off). It goes on after steps 2–4
    are live on every node, because an older guest refuses a `timeout_sec`
    above 3,600.
 
 ### Metrics
 
-`agent_run_deadline_credit_seconds_total`: credit vmmd applied.
+`agent_run_deadline_credit_seconds_total`: credit agentd sent to vmmd.
