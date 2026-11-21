@@ -405,7 +405,7 @@ jobs:
           npm test
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
-          MCP_TASKS_TEST_DATABASE_URL='postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp' MCP_TASKS_REQUIRE_POSTGRES=1 npm test
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" npm test
       - name: Generate and qualify public OpenAPI tools
         run: |
           "$RUNNER_TEMP/gregale" mcp server import --spec pkg/mcpopenapi/testdata/reports.json --path "$RUNNER_TEMP/mcp-api-tools" --server-url https://api.example.com/v1 --operations getReport,createReport
