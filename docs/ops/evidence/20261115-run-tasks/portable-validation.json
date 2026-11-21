@@ -1,0 +1,16 @@
+{
+  "complete": true,
+  "database_scope": "existing acceptance database, isolated schemas; billing-trigger legacy admission contracts validated in local template-database lane",
+  "exit_code": 0,
+  "log_sha256": "4b92124a498a38d674e52564f627da36359db8a5ec5991faf23bf519bcd3a4ef",
+  "packages": [
+    "github.com/onebox-faas/faas/pkg/runtask",
+    "github.com/onebox-faas/faas/pkg/apid/executionadmission",
+    "github.com/onebox-faas/faas/pkg/apid/agents",
+    "github.com/onebox-faas/faas/pkg/state",
+    "github.com/onebox-faas/faas/pkg/apid/apidserver",
+    "github.com/onebox-faas/faas/cmd/gregale"
+  ],
+  "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb",
+  "test_selection": "TestDefinition|TestStoredTask|TestFingerprint|TestTask|Test(Mem|Pg)VersionedRunTasks|TestVersionedTask|TestCloneSchemaRegistryMatchesSchemaSQL|TestCmdRunTasks|TestStandaloneContractsReject|TestExtendedRunWriterGate"
+}

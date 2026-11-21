@@ -42,6 +42,9 @@ func runNativeLaunchHelperFixture() {
 			}
 		}
 		receipt := jailsetup.DeviceSetupReceipt{Scope: scope, DevMountID: 123, TunMountID: 124, KVM: jailsetup.DeviceFDIdentity{Device: 31, Inode: 53}, KVMAPI: 12, TunAccessible: true}
+		if scope.Version == 2 {
+			receipt.TunMountID, receipt.TunAccessible = 0, false
+		}
 		if os.Getenv("GREGALE_NATIVE_JAIL_DEVICE_BAD_RECEIPT") == "1" {
 			receipt.Scope.StartTime++
 		}

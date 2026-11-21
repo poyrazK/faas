@@ -9,13 +9,16 @@ accounts it is released to.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 from uuid import UUID
 
 from .._wrapper import FaaSClient as _BaseFaaSClient
 from .files import FileBucket
 
+TaskOutput = TypeVar("TaskOutput")
+
 if TYPE_CHECKING:
+    from .tasks import Task
     from .executions import ExecutionEvent, ExecutionID
     from .models.create_execution_artifact_grant_request import CreateExecutionArtifactGrantRequest
     from .models.execution_artifact_grant_response import ExecutionArtifactGrantResponse
@@ -30,6 +33,26 @@ if TYPE_CHECKING:
 
 class FaaSClient(_BaseFaaSClient):
     """`faas_sdk.FaaSClient` plus the preview disposable Runs helpers."""
+
+    def task(self, name: str, version: int, decode_result: Callable[[Any], TaskOutput]) -> Task[Any, TaskOutput]:
+        from .tasks import Task
+        return Task(self, name, version, decode_result)
+
+    def watch_execution_pipeline(self, pipeline_id: str, *, after: int = 0, poll_interval: float = 2.0) -> Iterator[dict[str, Any]]:
+        from .execution_pipeline_progress import watch_execution_pipeline
+        return watch_execution_pipeline(self, pipeline_id, after=after, poll_interval=poll_interval)
+
+    def awatch_execution_pipeline(self, pipeline_id: str, *, after: int = 0, poll_interval: float = 2.0) -> AsyncIterator[dict[str, Any]]:
+        from .execution_pipeline_progress import awatch_execution_pipeline
+        return awatch_execution_pipeline(self, pipeline_id, after=after, poll_interval=poll_interval)
+
+    def watch_execution_environment(self, environment_id: str, *, after: int = 0, poll_interval: float = 2.0) -> Iterator[dict[str, Any]]:
+        from .execution_environments import watch_execution_environment
+        return watch_execution_environment(self, environment_id, after=after, poll_interval=poll_interval)
+
+    def awatch_execution_environment(self, environment_id: str, *, after: int = 0, poll_interval: float = 2.0) -> AsyncIterator[dict[str, Any]]:
+        from .execution_environments import awatch_execution_environment
+        return awatch_execution_environment(self, environment_id, after=after, poll_interval=poll_interval)
 
     def __enter__(self) -> Self:
         super().__enter__()
@@ -245,3 +268,18 @@ class FaaSClient(_BaseFaaSClient):
             retry_initial=retry_initial,
             retry_max=retry_max,
         )
+
+    def prepare_execution_file(self, source: Any) -> Any:
+        """Hash a seekable input and prepare its immutable file identity."""
+        from .executions import prepare_execution_file
+        return prepare_execution_file(self, source)
+
+    def upload_execution_file(self, metadata: Any, source: Any) -> Any:
+        """Stream a prepared input into account-scoped retained storage."""
+        from .executions import upload_execution_file
+        return upload_execution_file(self, metadata, source)
+
+    def download_execution_file(self, file_id: str | UUID, destination: Any) -> Any:
+        """Stream and verify retained output; publish the destination after success."""
+        from .executions import download_execution_file
+        return download_execution_file(self, file_id, destination)

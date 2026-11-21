@@ -427,3 +427,16 @@ type IssueCompoundAlertPolicy = api.IssueCompoundAlertPolicy
 type UpdateIssueCompoundAlertPolicyRequest = api.UpdateIssueCompoundAlertPolicyRequest
 type PreviewIssueCompoundAlertRequest = api.PreviewIssueCompoundAlertRequest
 type IssueCompoundAlertPreview = api.IssueCompoundAlertPreview
+
+type CreateManagedExecutionWorkflowRequest = api.CreateManagedExecutionWorkflowRequest
+type CreateManagedExecutionWorkflowStep = api.CreateManagedExecutionWorkflowStep
+type ManagedExecutionWorkflowArtifactInput = api.ManagedExecutionWorkflowArtifactInput
+type ManagedExecutionWorkflowStatus = api.ManagedExecutionWorkflowStatus
+type ManagedExecutionWorkflowResponse = api.ManagedExecutionWorkflowResponse
+type ExecutionPipelineOptions = api.ExecutionPipelineOptions
+type ExecutionRetryPolicy = api.ExecutionRetryPolicy
+type ExecutionTaskBatch = api.ExecutionTaskBatch
+type ExecutionTaskBatchItem = api.ExecutionTaskBatchItem
+type ExecutionPipelineResponse = api.ExecutionPipelineResponse
+type ExecutionPipelineStepResponse = api.ExecutionPipelineStepResponse
+type ExecutionPipelineAttemptResponse = api.ExecutionPipelineAttemptResponse

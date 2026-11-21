@@ -389,6 +389,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"org invitation accept", "invitations accept"},
 	{"org invitation peek", "invitations peek"},
 	{"org invitation", "orgs invitations"},
+	{"org key", "orgs keys"},
 	{"org", "orgs"},
 	{"key", "keys"},
 	{"billing plan", "plan"},

@@ -155,6 +155,13 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	executionEnvironments          map[string]ExecutionEnvironment
+	executionTaskVersions          map[string]ExecutionTaskVersion
+	executionTaskInvocations       map[string]ExecutionTaskInvocation
+	runBudgets                     map[string]api.RunBudgetPolicy
+	runBindings                    map[string]api.RunAttributionBinding
+	runReservations                map[string]runControlReservation
+	runBudgetAlerts                map[string]api.RunBudgetAlert
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
@@ -1117,7 +1124,12 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionFiles                  map[string]ExecutionFile
+	executionFileLinks              map[string][]string
+	executionAdmissionMu            sync.Mutex
+	executionAdmissions             map[executionAdmissionKey]executionAdmission
 	executionWorkflowJobs           map[string]ExecutionWorkflowJob
+	executionPipelines              map[string]ExecutionPipeline
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -2064,6 +2076,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		executionArtifactGrants:              map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs:      map[string][]string{},
 		executionWorkflowJobs:                map[string]ExecutionWorkflowJob{},
+		executionPipelines:                   map[string]ExecutionPipeline{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -7256,8 +7269,10 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 		node, ok := m.computeNodes[ins.NodeID]
 		if ok {
 			// App-backed rows belong to the recovery arbiter in managed
-			// lifecycle states. App-less job tasks use their lease/reaper.
-			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+			// lifecycle states, until the node has been silent longer
+			// than any handoff can take. App-less job tasks use their
+			// lease/reaper.
+			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 				continue
 			}
 			if node.Active && !node.LastHeartbeatAt.Before(threshold) {
@@ -7299,6 +7314,14 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 // is reserved for explicit precondition violations (the caller
 // passed an instanceID the store has never heard of) — that signal
 // is too loud to use as a silent "the row disappeared" handler.
+// recoveryHandoffOpenLocked reports whether a recovery-managed node has
+// heartbeated recently enough for the recovery arbiter to still own its app
+// rows (api.DeadNodeRecoveryHandoffMaxSeconds). Mirrors PgStore.
+func (m *MemStore) recoveryHandoffOpenLocked(node ComputeNode) bool {
+	cutoff := m.clock().Add(-time.Duration(api.DeadNodeRecoveryHandoffMaxSeconds) * time.Second)
+	return !node.LastHeartbeatAt.Before(cutoff)
+}
+
 func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
@@ -7316,7 +7339,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID
 		return ErrConflict
 	}
 	if node, ok := m.computeNodes[nodeID]; ok {
-		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 			return ErrConflict
 		}
 		if node.Active && !node.LastHeartbeatAt.Before(threshold) {
@@ -25207,6 +25230,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		if workflow.AccountID == id {
 			clear(workflow.SealedPlan)
 			delete(m.executionWorkflowJobs, workflowID)
+			delete(m.executionPipelines, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

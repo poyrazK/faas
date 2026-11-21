@@ -308,6 +308,11 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		_, _ = f.Write([]byte{VsockResumeAckMessageType})
 		return
 	}
+	if executionGuestMode.Load() && !executionGuest.Load() {
+		log.Warn("execution resume rejected after payload admission")
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
 	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
 	// Guard against a malicious peer pinning the guest on a giant body.
 	// The cap mirrors vmmd's 8 KiB resumeHookMaxBodyBytes and is deliberately

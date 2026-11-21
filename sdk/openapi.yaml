@@ -1230,6 +1230,30 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '501': {$ref: '#/components/responses/NotImplemented'}
+  /v1/execution-workflows/{workflow_id}/cancel:
+    post:
+      tags: [runs]
+      operationId: cancelExecutionPipeline
+      summary: Stop pipeline admissions and request cancellation of active Runs.
+      description: Idempotent for an existing pipeline. Cancellation closes the durable admission fence before responding; the continuation worker cancels admitted Runs and waits for their terminal settlement. Available with writer gates disabled. Runs-only keys are limited to their stable key family. Requires runs:write, deploy:write, or admin.
+      security: [{bearerAuth: []}]
+      parameters:
+        - name: workflow_id
+          description: "Caller-supplied workflow identifier for the pipeline to cancel."
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 96}
+      responses:
+        '200':
+          description: Pipeline cancellation requested; inspect managed pipeline metadata for completion.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExecutionWorkflowResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/account:
     get:
       tags: [account]
@@ -21982,6 +22006,20 @@ components:
         compatibility with the dashboard's existing
         /members/:user_id routes.
   schemas:
+    RunBudgetRefusal:
+      description: "Budget limit that prevented admission and the current usage against it."
+      type: object
+      required: [kind, ref, metric]
+      properties:
+        kind: {$ref: '#/components/schemas/RunBudgetKind'}
+        ref: {type: string, maxLength: 96}
+        metric: {type: string, enum: [enabled, concurrent, invocations, compute_mb_ms]}
+    RunBudgetKind:
+      description: "Whether a budget applies to one customer or a named task."
+      type: string
+      enum:
+        - customer
+        - task
     EventAcknowledgmentHistoryQuery:
       type: object
       description: Scope-bound page options selecting coalesced groups by first occurrence.
@@ -30934,6 +30972,10 @@ components:
           type: string
           format: uuid
           description: "Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change."
+        expected_step:
+          type: integer
+          minimum: 0
+          description: "For advance and promote: the canary step the caller observed. The recovery is refused with canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not allowed with abort or deployment_id."
     RolloutTransitionResponse:
       description: "POST /v1/apps/{slug}/rollouts/recover response. The post-recovery Deployment + the audit row id (so the operator's terminal can echo audit_id=…)."
       type: object
@@ -35571,6 +35613,11 @@ components:
         status: {type: string}
         deployment_status: {type: string}
         rollout_state: {type: string}
+        traffic_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: "The latest deployment's share of the service's traffic while it is live. Omitted when it serves none."
         build_status: {type: string}
         depends_on:
           type: array
@@ -42272,6 +42319,20 @@ components:
           type: array
           items: {$ref: '#/components/schemas/DelayedTaskResponse'}
         next_before: {type: string, pattern: '^[a-f0-9]{32}$'}
+    ExecutionFinishedWebhookPayload:
+      description: "Account webhook payload emitted when a disposable Run reaches a terminal status."
+      type: object
+      required: [event_id, execution_id, status, runtime, finished_at, receipt_url]
+      properties:
+        event_id: {type: string}
+        execution_id: {type: string}
+        status: {type: string}
+        runtime: {type: string}
+        finished_at: {type: string}
+        receipt_url: {type: string}
+        environment_id: {type: string}
+        workflow_id: {type: string}
+        result_validation_status: {type: string}
     CreateExecutionRequest:
       description: |
         Source and JSON input for one disposable execution. Send either the
@@ -42298,6 +42359,27 @@ components:
             - required: [artifact_inputs]
       additionalProperties: false
       properties:
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        environment_id: {type: string, format: uuid, description: "Immutable ready dependency environment; requires v2 admission and the standard profile."}
+        input_schema:
+          description: Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Input is validated before quota consumption.
+          oneOf:
+            - {type: object, additionalProperties: true}
+            - {type: boolean}
+        result_schema:
+          description: Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Validation metadata is separate from execution status and never retries execution.
+          oneOf:
+            - {type: object, additionalProperties: true}
+            - {type: boolean}
+        input_files:
+          type: array
+          maxItems: 8
+          description: Retained data staged below context.input_dir. Requires v2 admission.
+          items: {$ref: '#/components/schemas/ExecutionFileInput'}
+        artifact_storage: {type: string, enum: [inline, stored], description: "Stored outputs require v2 admission; default inline preserves the original output budget."}
         workflow_id:
           type: string
           minLength: 1
@@ -42401,7 +42483,9 @@ components:
       type: object
       additionalProperties: false
       properties:
-        timeout_ms: {type: integer, minimum: 0, maximum: 30000, description: "Zero uses the plan default."}
+        execution_class: {type: string, enum: [standard, extended], description: "Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms and a smaller shared concurrency cap."}
+        max_artifact_bytes: {type: integer, format: int64, minimum: 0, maximum: 67108864, description: "Independent stored output byte budget; requires stored output_files. Zero selects the plan default constrained by scratch headroom."}
+        timeout_ms: {type: integer, minimum: 0, maximum: 300000, description: "Zero uses the class default: standard 5000 ms, extended 300000 ms. Standard plan maxima remain unchanged."}
         memory_mb: {type: integer, enum: [0, 128, 256, 512, 1024]}
         cpu_millicores: {type: integer, enum: [0, 250, 500, 1000]}
         ephemeral_disk_mb: {type: integer, enum: [0, 64, 128, 256, 512, 1024, 2048]}
@@ -42413,6 +42497,61 @@ components:
       additionalProperties: false
       properties:
         mode: {type: string, enum: [none], description: "Loopback only; no tenant bridge, DNS, or public egress."}
+    ExecutionUsage:
+      description: Host-measured resource usage for a terminal execution.
+      type: object
+      required: [wall_time_ms, cpu_time_ms, peak_memory_mb]
+      properties:
+        wall_time_ms: {type: integer, format: int64, minimum: 0}
+        cpu_time_ms: {type: integer, format: int64, minimum: 0}
+        peak_memory_mb: {type: integer, minimum: 0}
+    ExecutionTaskRef:
+      description: "Identity of a published executable task version."
+      type: object
+      required:
+        - id
+        - name
+        - version
+        - digest
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+        digest:
+          type: string
+    InvokeExecutionTaskRequest:
+      description: "Task selection, invocation input and optional file or completion configuration."
+      type: object
+      required:
+        - name
+        - version
+      properties:
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        input: {}
+        input_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionFileInput'
+        artifact_inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionArtifactInput'
+        workflow_id:
+          type: string
+        step_label:
+          type: string
     ExecutionWorkflowStatusCounts:
       description: Number of runs in each lifecycle state.
       type: object
@@ -42455,7 +42594,7 @@ components:
         and the account's concurrent Run limit. The full JSON body must not
         exceed 4 MiB. An account can have at most 16 active managed workflows.
       type: object
-      required: [workflow_id, version, steps]
+      required: [workflow_id, version]
       additionalProperties: false
       properties:
         workflow_id:
@@ -42479,6 +42618,8 @@ components:
           enum: [fail_fast, continue_independent]
           default: fail_fast
           description: Stop new admissions on a failed Run, or continue steps independent of failed branches.
+        pipeline: {$ref: '#/components/schemas/ExecutionPipelineOptions'}
+        batch: {$ref: '#/components/schemas/ExecutionTaskBatch'}
         steps:
           type: array
           minItems: 1
@@ -42487,7 +42628,7 @@ components:
     CreateManagedExecutionWorkflowStep:
       description: One disposable Run in the DAG and its dependency, result, and artifact handoff rules.
       type: object
-      required: [label, request]
+      required: [label]
       additionalProperties: false
       properties:
         label: {type: string, minLength: 1, maxLength: 96}
@@ -42516,6 +42657,8 @@ components:
           oneOf:
             - type: object
             - type: boolean
+        task: {$ref: '#/components/schemas/InvokeExecutionTaskRequest'}
+        retry: {$ref: '#/components/schemas/ExecutionRetryPolicy'}
         request:
           $ref: '#/components/schemas/CreateExecutionRequest'
           description: Must not include workflow_id, step_label, or artifact_inputs.
@@ -42544,6 +42687,7 @@ components:
       type: object
       required: [workflow_id, plan_id, status, step_count, next_step, created_at]
       properties:
+        id: {type: string, format: uuid}
         workflow_id: {type: string, maxLength: 96}
         plan_id: {type: string, pattern: '^[0-9a-f]{24}$'}
         status: {type: string, enum: [queued, running, succeeded, failed]}
@@ -42551,6 +42695,194 @@ components:
         next_step: {type: integer, minimum: 0, maximum: 16}
         error: {type: string, maxLength: 2048}
         created_at: {type: string, format: date-time}
+        pipeline: {$ref: '#/components/schemas/ExecutionPipelineResponse'}
+    ExecutionPipelineReceipt:
+      description: App-scoped RAP pipeline receipt. Completion is absent while the pipeline is pending. Reads require the owning endpoint and a live original thread grant.
+      type: object
+      required: [id]
+      properties:
+        id: {type: string, format: uuid}
+        completion: {$ref: '#/components/schemas/ExecutionPipelineCompletion'}
+    ExecutionPipelineCompletion:
+      description: Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their ordinary Run receipt permissions and expiry. Completion identity is stable across delivery retries and redrive. Aggregate wall/CPU time sums every attempt; peak memory is the maximum attempt peak, not simultaneous residency or an invoice.
+      type: object
+      required: [version, completion_id, workflow_id, outcome, finished_at, receipt, usage, steps]
+      properties:
+        rerun: {$ref: '#/components/schemas/ExecutionPipelineRerun'}
+        version: {type: string, enum: [v1]}
+        completion_id: {type: string, format: uuid}
+        workflow_id: {type: string}
+        outcome: {type: string, enum: [succeeded, failed, cancelled, deadline_exceeded]}
+        finished_at: {type: string, format: date-time}
+        receipt: {type: string}
+        usage: {$ref: '#/components/schemas/ExecutionUsage'}
+        steps:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/ExecutionPipelineCompletedStep'}
+    ExecutionPipelineCompletedStep:
+      description: "A terminal step outcome with attempts and retained output references."
+      type: object
+      required: [label, outcome, attempts]
+      properties:
+        reused_run_id: {type: string, format: uuid}
+        output_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        label: {type: string}
+        task: {$ref: '#/components/schemas/ExecutionTaskRef'}
+        outcome: {type: string, enum: [succeeded, failed, cancelled, timed_out, out_of_memory, contract_failed, blocked, not_started]}
+        result_validation: {type: string, enum: [valid, invalid]}
+        attempts:
+          type: array
+          maxItems: 3
+          items: {$ref: '#/components/schemas/ExecutionPipelineCompletedAttempt'}
+    ExecutionPipelineCompletedAttempt:
+      description: "Recorded final status and timing for one attempt in a completed pipeline."
+      type: object
+      required: [run_id, attempt, status, receipt, usage, artifacts]
+      properties:
+        run_id: {type: string, format: uuid}
+        attempt: {type: integer, minimum: 1, maximum: 3}
+        status: {type: string, enum: [succeeded, failed, timed_out, out_of_memory, cancelled]}
+        failure_code: {type: string}
+        receipt: {type: string}
+        usage: {$ref: '#/components/schemas/ExecutionUsage'}
+        artifacts:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/ExecutionPipelineArtifactRef'}
+    ExecutionPipelineArtifactRef:
+      description: "Checksum and locator for a retained file written by a completed step."
+      type: object
+      required: [name, size_bytes, sha256, url]
+      properties:
+        name: {type: string}
+        size_bytes: {type: integer}
+        sha256: {type: string}
+        url: {type: string}
+    ExecutionPipelineFinishedWebhookPayload:
+      description: Account webhook metadata for execution.pipeline.finished. Receivers fetch the authorized workflow receipt for the complete manifest. Uses existing signed delivery, retries, dead-letter and redrive.
+      type: object
+      required: [event_id, workflow_id, outcome, finished_at, receipt_url]
+      properties:
+        event_id: {type: string, format: uuid}
+        workflow_id: {type: string}
+        outcome: {type: string, enum: [succeeded, failed, cancelled, deadline_exceeded]}
+        finished_at: {type: string, format: date-time}
+        receipt_url: {type: string}
+    ExecutionPipelineProgress:
+      description: "Current pipeline sequence and observed progress for each step."
+      type: object
+      required: [status, steps]
+      properties:
+        status: {type: string, enum: [queued, running, succeeded, failed, cancelled, deadline_exceeded]}
+        steps: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineStepProgress'}}
+    ExecutionPipelineStepProgress:
+      description: "Current state of a named step and its latest attempt metadata."
+      type: object
+      required: [label, state]
+      properties:
+        label: {type: string}
+        state: {type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled, retrying, blocked, contract_failed, reused]}
+        reason: {type: string, enum: [pending, dependencies, parallel_limit, capacity, budget_concurrency, retry_backoff, admissions_disabled, admission_refused, fail_fast, plan_identity, cancelling]}
+        attempt: {type: integer, minimum: 0, maximum: 3}
+        run_id: {type: string, format: uuid}
+        retry_at: {type: string, format: date-time}
+        events_url: {type: string}
+    ExecutionPipelineRerun:
+      description: "Rerun receipt linking the replacement pipeline to its original job and reused outputs."
+      type: object
+      required: [parent_id, parent_workflow_id, parent_plan_id, reused]
+      properties:
+        parent_id: {type: string, format: uuid}
+        parent_workflow_id: {type: string}
+        parent_plan_id: {type: string}
+        reused: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineReusedStep'}}
+    ExecutionPipelineReusedStep:
+      description: "Successful earlier step and its verified Run reference reused by a rerun."
+      type: object
+      required: [label, run_id, output_sha256]
+      properties:
+        label: {type: string}
+        run_id: {type: string, format: uuid}
+        output_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ExecutionPipelineOptions:
+      type: object
+      additionalProperties: false
+      description: Preview; v2 only. Enables durable task steps, batch expansion and explicit retries. Submit exactly one of steps or batch. Requires FAAS_EXECUTION_PIPELINES_ENABLED plus v2 and tasks gates. Queueing and backoff count toward the deadline.
+      properties:
+        total_timeout_ms: {type: integer, minimum: 1, maximum: 86400000, default: 3600000}
+    ExecutionRetryPolicy:
+      type: object
+      additionalProperties: false
+      required: [max_attempts]
+      description: Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and lease_expired are retried. Each attempt has a separate Run and budget reservation; external side effects may repeat.
+      properties:
+        max_attempts: {type: integer, minimum: 1, maximum: 3}
+        backoff_ms: {type: integer, minimum: 1000, maximum: 60000, default: 1000}
+        safe_to_repeat: {type: boolean, default: false}
+    ExecutionTaskBatch:
+      type: object
+      additionalProperties: false
+      required: [name, version, items]
+      description: Expands into independent steps for one immutable task version. Cannot be combined with steps. Item labels must be unique. Account and customer/task budgets still apply to every physical attempt.
+      properties:
+        name: {type: string, minLength: 1, maxLength: 63}
+        version: {type: integer, minimum: 1}
+        customer_ref: {type: string, maxLength: 96}
+        retry: {$ref: '#/components/schemas/ExecutionRetryPolicy'}
+        items:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: {$ref: '#/components/schemas/ExecutionTaskBatchItem'}
+    ExecutionTaskBatchItem:
+      description: "A labeled invocation input submitted as part of a task batch."
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 96}
+        input: {description: JSON input for this batch item.}
+        input_files:
+          type: array
+          maxItems: 8
+          items: {$ref: '#/components/schemas/ExecutionFileInput'}
+    ExecutionPipelineResponse:
+      description: "Managed task pipeline state, steps and available completion details."
+      type: object
+      required: [deadline_at, steps]
+      properties:
+        progress: {$ref: '#/components/schemas/ExecutionPipelineProgress'}
+        rerun: {$ref: '#/components/schemas/ExecutionPipelineRerun'}
+        completion: {$ref: '#/components/schemas/ExecutionPipelineCompletion'}
+        deadline_at: {type: string, format: date-time}
+        cancel_requested: {type: boolean}
+        steps:
+          type: array
+          maxItems: 16
+          items: {$ref: '#/components/schemas/ExecutionPipelineStepResponse'}
+    ExecutionPipelineStepResponse:
+      description: "One declared task step with its dependencies and execution attempts."
+      type: object
+      required: [label, max_attempts, attempts]
+      properties:
+        label: {type: string}
+        task: {$ref: '#/components/schemas/ExecutionTaskRef'}
+        max_attempts: {type: integer, minimum: 1, maximum: 3}
+        attempts:
+          type: array
+          maxItems: 3
+          items: {$ref: '#/components/schemas/ExecutionPipelineAttemptResponse'}
+    ExecutionPipelineAttemptResponse:
+      description: "Runtime state and linked Run receipt for a pipeline attempt."
+      type: object
+      required: [run_id, attempt, status]
+      properties:
+        run_id: {type: string, format: uuid}
+        attempt: {type: integer, minimum: 1, maximum: 3}
+        previous_run_id: {type: string, format: uuid}
+        status: {type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled]}
+        failure_code: {type: string}
     AppTaskAttachInfo:
       description: One-time attach credential for an interactive app task. Returned only in the create response.
       type: object
@@ -43125,6 +43457,8 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        run_budget:
+          $ref: '#/components/schemas/RunBudgetRefusal'
         current_sequence: {type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.'}
         agent_approval: {$ref: '#/components/schemas/AgentApprovalPendingInfo'}
         condition_field: {type: string}
@@ -44569,9 +44903,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 8
+          maxItems: 12
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied", "execution.finished", "execution.budget.threshold", "execution.pipeline.finished"]}
         retry_policy: {type: string, enum: [default, aggressive, none], default: default}
         delivery_format: {type: string, enum: [json, cloudevents], default: json}
         enabled: {type: boolean, default: true}
@@ -44687,9 +45021,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 8
+          maxItems: 12
           uniqueItems: true
-          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"]}
+          items: {type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied", "execution.finished", "execution.budget.threshold", "execution.pipeline.finished"]}
         retry_policy: {type: string, enum: [default, aggressive, none]}
         delivery_format: {type: string, enum: [json, cloudevents]}
         enabled: {type: boolean}
@@ -52613,6 +52947,15 @@ components:
         plan_change_status: {type: string}
         requested_plan: {type: string}
         effective_at: {type: string, format: date-time}
+    ExecutionFileInput:
+      type: object
+      additionalProperties: false
+      required: [path]
+      description: Exactly one file_id or single-use artifact grant_token. Data is staged in the fresh guest input directory and is excluded from the source bundle budget.
+      properties:
+        file_id: {type: string, format: uuid}
+        grant_token: {type: string, writeOnly: true}
+        path: {type: string, minLength: 1, maxLength: 256}
   responses:
     EdgeRulesVersionMismatch:
       description: If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.
