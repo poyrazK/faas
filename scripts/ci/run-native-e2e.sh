@@ -491,6 +491,8 @@ if [[ -n "${phase}" ]]; then
     managed-operation-only) phase_timeout=35m ;;
     # Three cache deployments (create, resize) plus park and restart.
     managed-redis-only) phase_timeout=45m ;;
+    # One source build and two deploy/wake cycles, all through store grants.
+    storage-grants-only) phase_timeout=60m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
     # Eight native source builds plus real minute-spaced verification rounds.
@@ -543,6 +545,10 @@ export FAAS_E2E_BIN_DIR="${stage_root}/bin"
 mkdir -p "${FAAS_E2E_BIN_DIR}"
 
 case "${phase}" in
+  storage-grants-only)
+    [[ -x "${FAAS_E2E_MINIO_BIN:-}" ]] || die "storage-grants-only needs FAAS_E2E_MINIO_BIN (a minio server binary)"
+    export FAAS_E2E_STORAGE_GRANTS=1
+    ;;
   financial|financial-system)
     [[ -z "${FAAS_SKIP_PG_TESTS:-}" ]] || die "financial acceptance rejects FAAS_SKIP_PG_TESTS"
     export FAAS_FINANCIAL_SYSTEM_ACCEPTANCE=1

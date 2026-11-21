@@ -115,7 +115,7 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 	caPath, _ := pki.CARoot(pkiRoot)
 	serverCert, serverKey := pki.LeafPaths(pkiRoot, pki.FeatureRoles(pki.FeatureSecretOpener, "control-plane")[0])
 	clientCert, clientKey := pki.LeafPaths(nodeRoot, pki.FeatureRoles(pki.FeatureSecretOpener, "compute-only")[0])
-	id, err = age.GenerateX25519Identity()
+	id, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
 	}

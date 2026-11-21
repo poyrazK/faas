@@ -257,6 +257,10 @@ native_e2e_assert_phase_partition() {
 # managed workflow retry, and signed effect delivery on dedicated KVM.
 # managed-redis-only — a managed Valkey cache's create, park, restart and
 # resize handoff (ADR-20261116192126), without the platform-wide matrix.
+# storage-grants-only — source deploy -> build -> wake and image deploy ->
+# wake with the compute daemons holding no store key: every object goes
+# through secretd's signed grants over a loopback MinIO (ADR-20261117190000).
+# Needs FAAS_E2E_MINIO_BIN.
 # customer-job-operations-only derives every Customer Job Operations scenario.
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # project-worker-release-only qualifies mixed HTTP/push-worker cutover,
@@ -265,7 +269,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only managed-redis-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only managed-redis-only storage-grants-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -287,6 +291,11 @@ NATIVE_E2E_MANAGED_OPERATION_TESTS=(
 
 NATIVE_E2E_MANAGED_REDIS_TESTS=(
   TestManagedRedisMetal
+)
+
+NATIVE_E2E_STORAGE_GRANTS_TESTS=(
+  TestSourceDeployWakeMetal
+  TestDeployWakeMetal
 )
 
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
@@ -322,6 +331,9 @@ native_e2e_lane_tests() {
       ;;
     managed-redis-only)
       printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_TESTS[@]}"
+      ;;
+    storage-grants-only)
+      printf '%s\n' "${NATIVE_E2E_STORAGE_GRANTS_TESTS[@]}"
       ;;
     customer-job-operations-only)
       # Every customer_job_operations*_metal_test.go file, as the HTTP and
