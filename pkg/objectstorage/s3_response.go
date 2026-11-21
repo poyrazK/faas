@@ -11,7 +11,14 @@ import (
 
 // Bound wire bytes before the SDK allocates decoded metadata. Successful object
 // GETs stay streaming; their error responses use the metadata budget as well.
-type s3ResponseTransport struct{ base http.RoundTripper }
+type s3ResponseTransport struct {
+	base http.RoundTripper
+	// unversioned drops the version-ID headers of a backend whose buckets
+	// Gregale never versions (BackendVersioningUnsupported): the provider's
+	// IDs there name no retained history, and every caller then sees an
+	// unversioned S3 bucket.
+	unversioned bool
+}
 
 type s3MetadataResponseError struct{ versionsObserved bool }
 
@@ -25,6 +32,10 @@ func (t s3ResponseTransport) RoundTrip(request *http.Request) (*http.Response, e
 	}
 	if response == nil || response.Body == nil {
 		return nil, ErrUnavailable
+	}
+	if t.unversioned {
+		response.Header.Del("X-Amz-Version-Id")
+		response.Header.Del("X-Amz-Copy-Source-Version-Id")
 	}
 	if middleware.GetOperationName(request.Context()) == "GetObject" && response.StatusCode >= 200 && response.StatusCode < 300 {
 		return response, nil
