@@ -26,6 +26,45 @@ worker:
     max: 1
 """
 
+# Only the dedicated worker fixture emits an observation of the claim returned
+# by the stock store. The lease itself must never reach the platform log.
+WORKER_CLAIM_PROBE = b"""import { createHash } from 'node:crypto';
+import { createPostgresMcpTaskStore } from './task-store.js';
+
+export function createObservedStore(options) {
+  const store = createPostgresMcpTaskStore(options);
+  const claim = store.claim.bind(store);
+  store.claim = async (maxAttempts, leaseMs, handlers, workerID) => {
+    const task = await claim(maxAttempts, leaseMs, handlers, workerID);
+    if (task?.tool_name === 'build_report' && task.lease_token && workerID) {
+      console.log(JSON.stringify({
+        event: 'gregale_hosted_task_claim',
+        namespace: options.namespace,
+        task_id: task.task_id,
+        attempt: task.attempt_count,
+        worker_id: workerID,
+        lease_sha256: createHash('sha256').update(task.lease_token, 'utf8').digest('hex'),
+      }));
+    }
+    return task;
+  };
+  return store;
+}
+"""
+
+def worker_fixture(files):
+    worker = files["tasks-worker.js"]
+    stock = b"startMcpTaskRuntime(config, { role: 'worker' })"
+    if worker.count(stock) != 1:
+        raise ValueError("worker fixture no longer has the stock Task startup")
+    return {
+        **files,
+        "gregale.yaml": WORKER_MANIFEST,
+        "rehearsal-claim.js": WORKER_CLAIM_PROBE,
+        "tasks-worker.js": b"import { createObservedStore } from './rehearsal-claim.js';\n" +
+            worker.replace(stock, b"startMcpTaskRuntime(config, { role: 'worker', createStore: createObservedStore })"),
+    }
+
 
 def regular_bytes(path):
     if not stat.S_ISREG(path.lstat().st_mode):
@@ -57,12 +96,29 @@ def archive_digest(path):
     return digest.hexdigest()
 
 
-def preparation(destination):
-    return {
+def source_digest(path):
+    # Same root-first tree encoding as the hosted source review. Upload
+    # normalizes regular non-executable files to mode 0600.
+    digest = hashlib.sha256(b"directory:.\x00700\x00")
+    with tarfile.open(path, "r:gz") as bundle:
+        for member in sorted(bundle, key=lambda entry: entry.name):
+            if not member.isfile() or "/" in member.name or member.mode != 0o644:
+                raise ValueError("unexpected hosted Task source entry")
+            digest.update(f"{member.name}\x00{member.size}\x00600\x00".encode())
+            with bundle.extractfile(member) as data:
+                digest.update(data.read())
+    return digest.hexdigest()
+
+
+def preparation(destination, include_sources=True):
+    receipt = {
         "version": 1, "status": "prepared", "journey": "hosted-task", "native_qualified": False,
         "archive_sha256": {role: archive_digest(destination / (role + ".tar.gz")) for role in ROLES},
         "task": {"tool": "build_report", "arguments": TASK_ARGUMENTS, "expected_result": TASK_RESULT},
     }
+    if include_sources:
+        receipt["source_sha256"] = {role: source_digest(destination / (role + ".tar.gz")) for role in ROLES}
+    return receipt
 
 
 def prepare(repo, destination):
@@ -78,7 +134,7 @@ def prepare(repo, destination):
     web_package["scripts"]["start"] = "MCP_TASKS_ROLE=web node server.js"
     destination.mkdir(mode=0o700)
     archive({**files, "package.json": json_bytes(web_package)}, destination / "web.tar.gz")
-    archive({**files, "gregale.yaml": WORKER_MANIFEST}, destination / "worker.tar.gz")
+    archive(worker_fixture(files), destination / "worker.tar.gz")
     return preparation(destination)
 
 
@@ -122,7 +178,15 @@ def observation(receipt, phase):
 
 def verify(directory):
     prepared = read_document(directory / "preparation.json")
-    if json_bytes(prepared) != json_bytes(preparation(directory / "fixture")):
+    fixture = directory / "fixture"
+    expected_preparation = preparation(fixture, include_sources=False)
+    # Check archive hashes before opening a tar. Earlier receipts contain
+    # only those hashes and can still be verified.
+    if prepared.get("archive_sha256") != expected_preparation["archive_sha256"]:
+        raise ValueError("prepared fixture and archive digests disagree")
+    if "source_sha256" in prepared:
+        expected_preparation["source_sha256"] = {role: source_digest(fixture / (role + ".tar.gz")) for role in ROLES}
+    if json_bytes(prepared) != json_bytes(expected_preparation):
         raise ValueError("prepared fixture and archive digests disagree")
     receipt = read_document(directory / "hosted-task-receipt.json")
     run_id = identity(receipt.get("run_id"), "run ID")
