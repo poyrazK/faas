@@ -484,7 +484,7 @@ Register the account subscription before accepting them so their completions
 enter the webhook outbox.
 
 ```sh
-printf '%s' "$REPORT_COMPLETION_WEBHOOK_SECRET" | gregale webhooks account add \
+printf '%s' "$REPORT_COMPLETION_WEBHOOK_SECRET" | gregale webhook account add \
   --target-url https://your-backend.example/report-completion \
   --event execution.pipeline.finished --delivery-format cloudevents --from-stdin
 ```
