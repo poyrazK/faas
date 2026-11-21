@@ -49,7 +49,7 @@ func TestReadinessReadOnlyAndFailures(t *testing.T) {
 				if mode == "session" {
 					w.Header().Set("MCP-Session-Id", "PRIVATE_SESSION")
 				}
-				result := `{}`
+				var result string
 				switch req.Method {
 				case "server/discover":
 					// Revision 2026-07-28 opens with server/discover; it has
