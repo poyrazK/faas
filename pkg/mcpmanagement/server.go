@@ -76,6 +76,9 @@ type Options struct {
 	// tools and gregale_find_tools, which adds matching tools on request
 	// (ADR-20261121140000). Zero lists every selected tool.
 	MaxListedTools int
+	// HideUnavailableCapabilities reads GET /v1/capabilities once and leaves
+	// out tools whose capability is hidden or disabled for the account.
+	HideUnavailableCapabilities bool
 	// Org is the slug of the shared organization a hosted connection acts
 	// in; its apps come from the organization (ADR-20261101225122).
 	Org       string

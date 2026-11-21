@@ -46,6 +46,8 @@ type HTTPOptions struct {
 	Toolsets []string
 	// MaxListedTools caps each grant's listed catalog (Options.MaxListedTools).
 	MaxListedTools int
+	// HideUnavailableCapabilities is Options.HideUnavailableCapabilities.
+	HideUnavailableCapabilities bool
 	// Onboarding is browser (default) or the explicit api-key fallback.
 	Onboarding  string
 	StateStore  *StateStore

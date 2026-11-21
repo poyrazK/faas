@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/productcap"
 )
 
 // The full write catalog is larger than clients that cap tools at 128 accept.
@@ -61,5 +63,62 @@ func TestSmallCatalogListsEverything(t *testing.T) {
 	}
 	if names := toolNamesOf(catalog.Tools); slices.Contains(names, findToolsName) || len(names) != 29 {
 		t.Fatalf("core catalog=%v", names)
+	}
+}
+
+func TestToolCapabilitiesNameRealToolsAndCapabilities(t *testing.T) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, c := range catalog.Capabilities {
+		ids[c.ID] = true
+	}
+	for tool, capability := range toolCapability {
+		if _, ok := toolsetOf[tool]; !ok || !ids[capability] {
+			t.Errorf("%s -> %s: unknown tool or capability", tool, capability)
+		}
+	}
+}
+
+// Preview tools are left out for an account whose capability is hidden or
+// disabled; a failed capabilities read hides nothing.
+func TestUnavailableCapabilitiesHideTheirTools(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body   string
+		status int
+		listed bool
+	}{
+		"hidden":   {body: `{"plan":"free","capabilities":[{"key":"incidents","enabled":false}],"hidden_capabilities":["log-search","product-analytics"]}`, status: 200},
+		"released": {body: `{"plan":"pro","capabilities":[{"key":"incidents","enabled":true}]}`, status: 200, listed: true},
+		"failed":   {status: 503, listed: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/capabilities" {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer backend.Close()
+			cs, ctx := connectConfiguredTestServer(t, backend, Options{APIBase: backend.URL, Token: testToken, AllowWrites: true, HideUnavailableCapabilities: true}, "2026-07-28")
+			catalog, err := cs.ListTools(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			names := toolNamesOf(catalog.Tools)
+			for tool := range toolCapability {
+				if slices.Contains(names, tool) != tc.listed {
+					t.Errorf("%s listed=%v, want %v", tool, !tc.listed, tc.listed)
+				}
+			}
+			if !slices.Contains(names, "gregale_get_logs") {
+				t.Error("an ungated tool was hidden")
+			}
+		})
 	}
 }

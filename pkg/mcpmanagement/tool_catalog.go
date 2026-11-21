@@ -2,9 +2,11 @@ package mcpmanagement
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -47,12 +49,60 @@ func (m *management) queueTool(name, description string, add func()) {
 	m.catalog.pending = append(m.catalog.pending, queuedTool{name: name, description: description, add: add})
 }
 
+// toolCapability names the product capability (pkg/productcap) behind a
+// tool whose API is refused while that capability is off. Previews were
+// listed to every account although each call failed (ADR-20261121140000).
+var toolCapability = map[string]string{
+	"gregale_search_logs":           "log-search",
+	"gregale_get_log_facets":        "log-search",
+	"gregale_list_incidents":        "incidents",
+	"gregale_get_incident":          "incidents",
+	"gregale_acknowledge_incident":  "incidents",
+	"gregale_add_incident_note":     "incidents",
+	"gregale_get_insight_events":    "product-analytics",
+	"gregale_get_insight_funnel":    "product-analytics",
+	"gregale_get_insight_retention": "product-analytics",
+	"gregale_get_insight_requests":  "product-analytics",
+	"gregale_list_insight_cohorts":  "product-analytics",
+}
+
+// unavailableCapabilities reads the account's hidden and disabled
+// capabilities. A failed read hides nothing: apid still refuses the calls.
+func (m *management) unavailableCapabilities() map[string]bool {
+	if !m.opts.HideUnavailableCapabilities {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := m.client.GetCapabilities(ctx)
+	if err != nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, id := range c.HiddenCapabilities {
+		out[id] = true
+	}
+	for _, capability := range c.Capabilities {
+		if !capability.Enabled {
+			out[capability.Key] = true
+		}
+	}
+	return out
+}
+
 // publishCatalog adds the queued tools, deferring all but core above the cap.
 // Agent-key servers select toolsets per request and list them all.
 func (m *management) publishCatalog(s *mcp.Server) {
+	unavailable := m.unavailableCapabilities()
 	c := &m.catalog
 	c.mu.Lock()
-	pending := c.pending
+	pending := slices.DeleteFunc(c.pending, func(t queuedTool) bool {
+		if unavailable[toolCapability[t.name]] {
+			delete(m.toolNames, t.name)
+			return true
+		}
+		return false
+	})
 	c.pending = nil
 	limit := m.opts.MaxListedTools
 	if limit <= 0 || len(pending) <= limit || m.opts.agentKeyToolsetSelection {
