@@ -106013,6 +106013,7 @@ components:
         binding_id: { type: string }
         binding_state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
         environment_key: { type: string, example: DATABASE_URL }
+        migration_environment_key: { type: string, example: MIGRATION_DATABASE_URL, description: "The release-only migration credential the database is also bound to. Absent from a control plane that binds none." }
 
     DevSessionResponse:
       description: Stable remote developer workspace and its renewable lease.

@@ -54,8 +54,8 @@ func TestDevPostgresBindsAMigrationCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if postgres.EnvironmentKey != "DATABASE_URL" {
-		t.Fatalf("response names %s, want DATABASE_URL", postgres.EnvironmentKey)
+	if postgres.EnvironmentKey != "DATABASE_URL" || postgres.MigrationEnvironmentKey != "MIGRATION_DATABASE_URL" {
+		t.Fatalf("response names %s and %q, want DATABASE_URL and MIGRATION_DATABASE_URL", postgres.EnvironmentKey, postgres.MigrationEnvironmentKey)
 	}
 	bindings := devPostgresBindings(t, srv, acct, postgres.DatabaseID)
 	if !slices.Equal(bindings, []string{"DATABASE_URL=read_write", "MIGRATION_DATABASE_URL=migration"}) {
