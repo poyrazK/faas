@@ -197,6 +197,12 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Operator fleet instance list (ADR-20261121161842).
+const (
+	ObsInstanceListDefault = 200
+	ObsInstanceListMax     = 1000
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
