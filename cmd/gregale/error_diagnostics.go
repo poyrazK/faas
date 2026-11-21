@@ -91,7 +91,10 @@ func diagnosticProblem(p api.Problem) api.Problem {
 			// Operator-gated features answer 501 (disposable executions, app
 			// tasks) or 503 with a *_not_enabled code (tenant surfaces, private
 			// networks); retrying or checking service status cannot help.
-			p.Hint = "This feature is not enabled on this Gregale installation; ask its operator to enable it."
+			// A hosted user has no operator to ask: on prod `app exec` told
+			// them to (hunt 2026-11-21) while `gregale capabilities` said to
+			// contact support.
+			p.Hint = "This feature is not enabled on this Gregale installation: contact support (or, on your own installation, its operator). gregale feature list shows what is available."
 		case p.Status == 503 && p.RetryAfterSeconds != nil && *p.RetryAfterSeconds > 0:
 			// The server said when to come back: the resource is busy, not
 			// Gregale down. A bucket finishing an inventory read "check service

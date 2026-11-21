@@ -91,7 +91,17 @@ func cmdInit(args []string) int {
 		return 1
 	}
 	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, initCmdUsage, initCmdDocsTopic)
+		usage := initCmdUsage
+		// `gregale init function-python313 .` printed only the usage on prod
+		// (hunt 2026-11-21): name the command the words meant.
+		if pos := fs.Args(); templates.Exists(pos[0]) && fs.NArg() <= 2 && *tpl == "" {
+			dir := "./" + pos[0]
+			if fs.NArg() == 2 {
+				dir = pos[1]
+			}
+			usage += fmt.Sprintf("\n  error: the template is a flag; did you mean: gregale init --template %s --path %s", pos[0], recoveryArgument(dir))
+		}
+		PrintUsage(osStderr, usage, initCmdDocsTopic)
 		return 1
 	}
 	if *agents {

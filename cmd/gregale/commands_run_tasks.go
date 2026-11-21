@@ -103,7 +103,7 @@ func cmdRunTasks(args []string) int {
 		var row api.ExecutionResponse
 		row, err = client.InvokeExecutionTask(ctx, api.InvokeExecutionTaskRequest{CustomerRef: *customerRef, Name: name, Version: version, Input: data, InputFiles: inputIDs}, *key)
 		if err != nil {
-			return printRunSubmissionError("Task invocation failed", err, "gregale runs list", true)
+			return printRunSubmissionError("Task invocation failed", err, "gregale sandbox list", true)
 		}
 		for (*wait || *output != "") && !row.Status.Terminal() {
 			select {
