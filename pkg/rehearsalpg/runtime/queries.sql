@@ -269,3 +269,15 @@ SELECT EXISTS (
      AND worker.worker_id = sqlc.arg(worker_id)::uuid AND NOT worker.draining AND worker.expires_at > clock_timestamp()
      AND handler.deployment_id = sqlc.arg(deployment_id)::text
 );
+
+
+-- name: ObserveTaskResult :one
+-- Read only counts and the exact completed Task attempt, never its payload.
+SELECT count(*) AS task_rows,
+       count(*) FILTER (WHERE status = 'completed' AND result_encrypted IS NOT NULL) AS completed_result_rows,
+       coalesce(max(attempt_count) FILTER (
+           WHERE task_id = sqlc.arg(task_id)::uuid AND tool_name = 'build_report'
+             AND status = 'completed' AND result_encrypted IS NOT NULL AND expires_at > clock_timestamp()
+       ), 0)::integer AS attempt
+  FROM public.gregale_mcp_tasks
+ WHERE namespace = sqlc.arg(namespace)::text;
