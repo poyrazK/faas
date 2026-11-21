@@ -118,6 +118,29 @@ One customer's misconfigured destination does not fire this alert while other
 deliveries of the same kind succeed; the customer sees the failure on the
 channel's status in the dashboard.
 
+## FaasPlatformAlertEmailsFailing
+
+meterd gave up on a platform alert email (`app_outage`, `check_failing`,
+`slo_burn` or `cron_failing_paused`) after its retries. The account was not
+told. Read the notice's `last_error` in `platform_alert_notices` (status
+`failed`) and meterd's log line `platform alerts: notice failed`.
+
+- Mail relay errors: check the internal mail service and its alerts.
+- Many notices for one kind: check the detector's inputs (Prometheus for
+  outages and SLO burn, synthetic runs for checks).
+
+Notices are not re-sent automatically; a new one queues once the cooldown
+(24 h) has passed while the condition holds.
+
+## FaasGuestSpansWritesFailing
+
+apid's spans writer (`apid_otel_spans_writes_total`) failed every write for
+15 minutes with `db_error`. Spans from guests and the public OTLP endpoint are
+summarised onto `request_telemetry` rows, so traces and span evidence stop
+updating for every traced app. Check apid's log for `update spans_summary`
+errors and Postgres health. `no_row` and `rate_limited` outcomes are expected
+and do not fire this alert.
+
 ## FaasAlertEvaluationSlow
 
 Alert ticks have averaged over 50 seconds for 15 minutes, so alerts fire late.

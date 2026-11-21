@@ -325,6 +325,11 @@ log_archive:
   region: bhs
   auth: static
   credentials_src: /operator/secrets/log-archive-s3.json
+  # Compute nodes should hold a key that can only s3:PutObject on the bucket
+  # (a rooted node could otherwise read every tenant's archived logs). Create
+  # that key, then uncomment:
+  # compute_write_only: true
+  # compute_credentials_src: /operator/secrets/log-archive-s3-put-only.json
 
 # docs/ops/serving-probe.md: each compute node requests the platform-owned
 # probe function (release-acceptance account) through the public edge every
