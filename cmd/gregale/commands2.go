@@ -6677,12 +6677,12 @@ func cmdUsageList(args []string) int {
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · %s\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6, usageTrafficCell(u.TXBytes, u.NetTxBytes))
+				appLabel(slugs, u.AppID), u.Requests, api.GBHoursFromMBSeconds(u.MBSeconds), usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
+		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, api.GBHoursFromMBSeconds(u.MBSeconds))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(rows))
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", api.GBHoursFromMBSeconds(totalMBSeconds), len(rows))
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
 }
@@ -8764,7 +8764,7 @@ func cmdUsageDaily(args []string) int {
 	var totalMBSeconds int64
 	for _, u := range resp.Items {
 		totalMBSeconds += u.MBSeconds
-		gbh := float64(u.MBSeconds) / 3.6e6
+		gbh := api.GBHoursFromMBSeconds(u.MBSeconds)
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  %s\n",
 				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, usageTrafficCell(u.TXBytes, u.NetTxBytes))
@@ -8772,7 +8772,7 @@ func cmdUsageDaily(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(resp.Items))
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", api.GBHoursFromMBSeconds(totalMBSeconds), len(resp.Items))
 	return 0
 }
 

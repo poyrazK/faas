@@ -245,7 +245,7 @@ key takes the same limit:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
-gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+gregale org key create ci-agent --org acme --scopes agent --projects api
 ```
 
 A limited agent reaches the apps of those projects, including apps added to
@@ -4935,6 +4935,13 @@ Choose another starter language with `gregale mcp server init --language go --pa
 ./my-mcp-go` or `gregale mcp init --language python --path ./my-mcp-python`.
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
+
+The Node starter answers every tool call in its response and carries no durable
+Task code. For Node tools that return durable MCP Task handles, start from
+`gregale init --template mcp-node-tasks --path ./my-mcp` (Tasks off until you
+bind PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Tasks starter's
+`tasks-release.js`.
 
 In another terminal:
 

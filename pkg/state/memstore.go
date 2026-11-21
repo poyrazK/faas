@@ -7269,8 +7269,10 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 		node, ok := m.computeNodes[ins.NodeID]
 		if ok {
 			// App-backed rows belong to the recovery arbiter in managed
-			// lifecycle states. App-less job tasks use their lease/reaper.
-			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+			// lifecycle states, until the node has been silent longer
+			// than any handoff can take. App-less job tasks use their
+			// lease/reaper.
+			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 				continue
 			}
 			if node.Active && !node.LastHeartbeatAt.Before(threshold) {
@@ -7312,6 +7314,14 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 // is reserved for explicit precondition violations (the caller
 // passed an instanceID the store has never heard of) — that signal
 // is too loud to use as a silent "the row disappeared" handler.
+// recoveryHandoffOpenLocked reports whether a recovery-managed node has
+// heartbeated recently enough for the recovery arbiter to still own its app
+// rows (api.DeadNodeRecoveryHandoffMaxSeconds). Mirrors PgStore.
+func (m *MemStore) recoveryHandoffOpenLocked(node ComputeNode) bool {
+	cutoff := m.clock().Add(-time.Duration(api.DeadNodeRecoveryHandoffMaxSeconds) * time.Second)
+	return !node.LastHeartbeatAt.Before(cutoff)
+}
+
 func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
@@ -7329,7 +7339,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID
 		return ErrConflict
 	}
 	if node, ok := m.computeNodes[nodeID]; ok {
-		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 			return ErrConflict
 		}
 		if node.Active && !node.LastHeartbeatAt.Before(threshold) {

@@ -188,7 +188,7 @@ func mcpNativeFingerprint(p mcpNativeReleasePlan) (string, error) {
 func requireMCPNativeNodeWorker(workerPath string) error {
 	info, err := os.Lstat(filepath.Join(workerPath, "tasks-release.js"))
 	if err != nil || !info.Mode().IsRegular() {
-		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js; use a manual rollout for Go/Python workers as described in docs/mcp.md")
+		return errors.New("native MCP Task releases require a Node worker project with tasks-release.js (start from `gregale init mcp-node-tasks`); use a manual rollout for Go/Python workers as described in docs/mcp.md")
 	}
 	return nil
 }
