@@ -14,6 +14,9 @@ realtime:
         - channel: agent-inbox
           name: slices
           lease_seconds: 120
+          # Keep equal to AGENT_MAX_ATTEMPTS (default 5): the last attempt
+          # closes the thread instead of blocking it (agent.js handleSlice).
+          max_attempts: 5
           ordering_metadata_key: thread_id
           deduplication_metadata_key: message_id
           dead_letter_policy: block

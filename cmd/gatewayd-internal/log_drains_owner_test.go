@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -132,5 +133,71 @@ func TestAppLogDrainReconcileStopsDrainsOfAccountsWithLogDrainsOff(t *testing.T)
 		if capability != capabilityLogDrains {
 			t.Fatalf("reconcile decided %q, want %q", capability, capabilityLogDrains)
 		}
+	}
+}
+
+// Observe audit 2026-11-21 (finding 13): when an app's owner node changed, the
+// old owner cancelled its worker at once and lost the lines it had spooled.
+// It now stops the source stream, keeps the sender flushing, and stops writing
+// the drain's health, which belongs to the new owner.
+func TestAppLogDrainReconcileHandsOffMovedDrain(t *testing.T) {
+	moved := state.AppLogDrain{ID: "drain-moved", AppID: "app-moved"}
+	store := &logDrainOwnerTestStore{
+		logDrainHealthTestStore: logDrainHealthTestStore{drains: map[string]state.AppLogDrain{}},
+		rows:                    []state.AppLogDrain{moved},
+	}
+	manager := newAppLogDrainManager(store, nil, nil, nil, nil)
+	manager.owns = func(context.Context, state.AppLogDrain) (bool, error) { return false, nil }
+	streamStopped, cancelled := false, make(chan struct{})
+	done := make(chan struct{})
+	manager.workers[moved.ID] = &appLogDrainWorker{spec: moved, done: done,
+		stopStream: func() { streamStopped = true },
+		cancel:     func() { close(cancelled) }}
+	manager.updateHealth(moved.ID, func(h *state.AppLogDrainHealth) { h.Status = "healthy" })
+
+	manager.reconcile(context.Background())
+
+	manager.mu.Lock()
+	worker := manager.workers[moved.ID]
+	handing := worker != nil && worker.handingOff
+	manager.mu.Unlock()
+	if !handing || !streamStopped {
+		t.Fatalf("moved drain: handingOff=%v streamStopped=%v, want a handing-off worker with its stream stopped", handing, streamStopped)
+	}
+	manager.updateHealth(moved.ID, func(h *state.AppLogDrainHealth) { h.DeliveredTotal++ })
+	manager.healthMu.Lock()
+	_, written := manager.health[moved.ID]
+	manager.healthMu.Unlock()
+	if written {
+		t.Fatal("a handing-off worker still writes the drain's health over the new owner's")
+	}
+	// The worker has no queue, so the flush finishes at once and cancels it.
+	<-cancelled
+	close(done)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		manager.reconcile(context.Background())
+		manager.mu.Lock()
+		gone := manager.workers[moved.ID] == nil
+		manager.mu.Unlock()
+		if gone {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the handed-off worker was not retired once its flush finished")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAppLogDrainResumeAfterLastDelivery(t *testing.T) {
+	manager := newAppLogDrainManager(&logDrainOwnerTestStore{}, nil, nil, nil, nil)
+	if got := manager.drainResumeAfter("never"); !got.IsZero() {
+		t.Fatalf("a drain that never delivered resumes at %v, want zero (its creation)", got)
+	}
+	last := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	manager.updateHealth("d", func(h *state.AppLogDrainHealth) { h.LastSuccessAt = last })
+	if got := manager.drainResumeAfter("d"); !got.Equal(last.Add(-appLogDrainHandoffOverlap)) {
+		t.Fatalf("resume = %v, want %v", got, last.Add(-appLogDrainHandoffOverlap))
 	}
 }

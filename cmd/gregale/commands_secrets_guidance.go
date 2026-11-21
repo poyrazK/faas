@@ -65,12 +65,12 @@ func renderSecretReferenceAvailability(ctx context.Context, client *Client, app 
 
 func printSecretReferenceApplicationHint(app, environment string) {
 	_, _ = fmt.Fprintln(osStdout, "Reference changes apply on future cold wakes; running instances keep their current environment.")
-	_, _ = fmt.Fprintf(osStdout, "Review scoped secret delivery (POSIX shells):\n  %s secrets list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(environment))
+	_, _ = fmt.Fprintf(osStdout, "Review scoped secret delivery (POSIX shells):\n  %s env list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(environment))
 	_, _ = fmt.Fprintln(osStdout, "A fresh restart affects the app's active workloads, not only the environment shown above. Review the serving deployment scope before requesting one.")
 }
 
 func printSecretUpdateNextSteps(app, scope, wakeID string, keys ...string) {
-	command := fmt.Sprintf("%s secrets list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
+	command := fmt.Sprintf("%s env list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
 	for _, key := range sortedUniqueStrings(keys) {
 		command += " --key " + recoveryArgument(key)
 	}

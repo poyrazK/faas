@@ -64,7 +64,7 @@ func TestCronsOneOffRequestsUseDelayedTasks(t *testing.T) {
 
 	// prod hunt 2026-11-21: the receipt gave only the id, and `cron runs ID`
 	// answered "no such cron"; it names the command that reads the result.
-	if code, stdout, _ := runCLI(t, "crons", "add", "--app", "demo", "--in=30m"); code != 0 || !strings.Contains(stdout, "gregale cron info --one-off "+cronOneOffTaskID) {
+	if code, stdout, _ := runCLI(t, "crons", "add", "--app", "demo", "--in=30m"); code != 0 || !strings.Contains(stdout, "gregale cron get --one-off "+cronOneOffTaskID) {
 		t.Errorf("one-off receipt = %d %q, want the command that reads its result", code, stdout)
 	}
 

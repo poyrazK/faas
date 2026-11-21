@@ -89,3 +89,26 @@ func TestRestoreResetsInheritedConnections(t *testing.T) {
 		})
 	}
 }
+
+// An admission-held guest is restored paused (no reset at wake) and resumed by
+// runtime promotion; promotion must reset the capture's inherited sockets or
+// an app reusing a pooled keep-alive connection hangs on its first call.
+// adr: 20261121160000
+func TestRuntimePromotionResetsInheritedConnections(t *testing.T) {
+	for _, enabled := range []bool{true, false} {
+		vmm := &releaseOrderVMM{fakeVMM: &fakeVMM{}}
+		m := newTestManager(&fakeRunner{}, vmm).WithReleaseConnectionsOnDestroy(enabled)
+		p := nativePromotionFixture(t, m)
+		instance := p.Binding.InstanceID
+		if slices.Contains(vmm.seen(), "release:"+instance) {
+			t.Fatalf("paused restore reset connections before promotion: %v", vmm.seen())
+		}
+		if _, _, err := m.PromoteAdmitted(t.Context(), p); err != nil {
+			t.Fatalf("promotion: %v", err)
+		}
+		if got := slices.Contains(vmm.seen(), "release:"+instance); got != enabled {
+			t.Fatalf("enabled=%v: reset after promotion = %v (events %v)", enabled, got, vmm.seen())
+		}
+		_ = m.Destroy(t.Context(), instance)
+	}
+}

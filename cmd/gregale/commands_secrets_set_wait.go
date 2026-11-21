@@ -150,7 +150,7 @@ func runSecretUpdateWait(parent context.Context, client *Client, app, scope stri
 			for _, warning := range receipt.Warnings {
 				PrintWarn(osStdout, "%s", warning)
 			}
-			command := fmt.Sprintf("%s secrets list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
+			command := fmt.Sprintf("%s env list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
 			for _, key := range sortedUniqueStrings(keys) {
 				command += " --key " + recoveryArgument(key)
 			}
