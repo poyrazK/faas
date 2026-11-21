@@ -33,6 +33,12 @@ that the tracked events are queryable. A failing step logs the app's `/debug`
 view: the SDK refresh error and the workload-identity and runtime-flags
 statuses. Subject units, ratio, percentile, bandit and segment results stay
 with the apidserver tests.
+`TestFlagsSDKs` runs the same contract against the Python and Go flags
+SDKs (`sdk/python/faas_sdk/preview/flags.py`, `sdk/go`), each in its own
+one-service project built from the repository's source: the SDK's variant
+matches `flag inspect`, `track()` accepts a verified customer's conversion
+and drops nothing, and a kill serves the fallback until it is unset.
+Experiment counting is server-side and stays with the Node journey.
 
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
 `TestApplicationAuth` runs when the account's `gregale feature list` does not
