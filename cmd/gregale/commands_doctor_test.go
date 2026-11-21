@@ -245,8 +245,10 @@ func TestRunDoctorChecks_EnvVarReferenceForms(t *testing.T) {
 						t.Errorf("fix missing %q: %s", want, envCheck.Fix)
 					}
 				}
-				if strings.Contains(envCheck.Fix, "gregale env set") {
-					t.Errorf("fix contains removed command: %s", envCheck.Fix)
+				// The tree made `env set` the name again (ADR-20261026145832);
+				// the earlier `secrets set` must not come back.
+				if strings.Contains(envCheck.Fix, "gregale secrets set") {
+					t.Errorf("fix names the earlier command: %s", envCheck.Fix)
 				}
 			}
 		})
