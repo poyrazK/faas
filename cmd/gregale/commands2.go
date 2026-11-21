@@ -6357,7 +6357,7 @@ func cmdKeys(args []string) int {
 			PrintUsage(osStdout, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 0
 		}
-		flags, positional := splitArgsForFlags(args[1:])
+		flags, positional := splitArgsForFlags(args[1:], "agent")
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
 		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
