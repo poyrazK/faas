@@ -7,19 +7,33 @@
 import pg from "pg";
 import { agentSchema } from "./schema.js";
 
+// schemaLock serializes schema creation. A new database's first slices run
+// in parallel (the trigger's max_concurrency), and concurrent CREATE TABLE IF
+// NOT EXISTS of one table collide in Postgres's catalog ("duplicate key value
+// violates unique constraint pg_type_typname_nsp_index"): the slice fails and
+// is retried. The schema runs as one simple query, which Postgres executes
+// as one implicit transaction, so the transaction-scoped lock covers every
+// statement. The key differs from the agent-infinity-rust template's.
+export const schemaLock = "0x6167656e74730002";
+
+export const schema = `
+SELECT pg_advisory_xact_lock(${schemaLock});
+${agentSchema}`;
+
 export class PostgresStore {
-  constructor(connectionString = process.env.DATABASE_URL) {
+  constructor(connectionString = process.env.DATABASE_URL, { newClient } = {}) {
     if (!connectionString) throw new Error("DATABASE_URL is not set; attach a Postgres database to this app");
     this.connectionString = connectionString;
+    this.newClient = newClient ?? ((connectionString) => new pg.Client({ connectionString, connectionTimeoutMillis: 5_000 }));
     this.ready = false;
   }
 
   async withClient(fn) {
-    const client = new pg.Client({ connectionString: this.connectionString, connectionTimeoutMillis: 5_000 });
+    const client = this.newClient(this.connectionString);
     await client.connect();
     try {
       if (!this.ready) {
-        await client.query(agentSchema);
+        await client.query(schema);
         this.ready = true;
       }
       return await fn(client);
