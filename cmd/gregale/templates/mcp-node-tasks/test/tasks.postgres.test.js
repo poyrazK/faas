@@ -2145,12 +2145,14 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-test('keyed Task submission recovers the committed handle after a lost CLI reply', {
+for (const useReceipt of [false, true]) test(useReceipt
+  ? 'private Task receipt survives killing the CLI after PostgreSQL commits'
+  : 'keyed Task submission recovers the committed handle after a lost CLI reply', {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
-  timeout: 75_000,
+  timeout: useReceipt ? 30_000 : 75_000,
 }, async t => {
   const { execFile } = await import('node:child_process');
-  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { mkdtemp, readFile, rm, stat } = await import('node:fs/promises');
   const { createServer } = await import('node:http');
   const { tmpdir } = await import('node:os');
   const { resolve } = await import('node:path');
@@ -2159,6 +2161,7 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
   const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
   const run = promisify(execFile);
   const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-submission-'));
+  const receiptPath = join(clientDir, 'task-receipt.json');
   t.after(() => rm(clientDir, { recursive: true, force: true }));
   const { store, pool, namespace } = await harness(t);
   const auth = {
@@ -2185,32 +2188,54 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
   }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
   const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
     result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
-  let dropFirstReply = true, committedID, proxyError;
+  let dropFirstReply = true, committedID, proxyError, submittingCLI;
+  let requests = 0;
   const server = createServer((req, res) => {
+    requests++;
     if (!dropFirstReply || req.headers['mcp-method'] !== 'gregale/tasks/submit') return api.app(req, res);
     dropFirstReply = false;
     void (async () => {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
-      const reply = await fetch(`http://127.0.0.1:${server.address().port}/mcp`, {
-        method: 'POST', headers: req.headers, body: Buffer.concat(chunks), signal: AbortSignal.timeout(5000),
+      const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+      const body = Buffer.concat(chunks);
+      if (useReceipt) {
+        const key = JSON.parse(body).params._meta['io.gregale/task-submission-key'];
+        assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        assert.equal((await stat(receiptPath)).mode & 0o777, 0o600);
+        assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), {
+          version: 1, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
+        });
+      }
+      const reply = await fetch(endpoint, {
+        method: 'POST', headers: req.headers, body, signal: AbortSignal.timeout(5000),
       });
       assert.equal(reply.status, 200);
       await reply.arrayBuffer();
       const persisted = await rows();
       assert.equal(persisted.length, 1);
       committedID = persisted[0].task_id;
+      if (useReceipt) {
+        const exited = once(submittingCLI, 'exit');
+        assert.ok(submittingCLI.kill('SIGKILL'));
+        const [, signal] = await exited;
+        assert.equal(signal, 'SIGKILL');
+      }
     })().catch(error => { proxyError = error; }).finally(() => res.destroy());
   });
   try {
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
-    async function cli(verb, credential, expectedCode, args) {
-      const response = await run(binary, ['mcp', 'client', verb, '--url', endpoint,
+    function startCLI(verb, credential, args) {
+      return run(binary, ['mcp', 'client', verb, '--url', endpoint,
         '--token-env', 'GREGALE_JOURNEY_TOKEN', '--timeout', '6s', '--json', ...args], {
         cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000,
-      }).then(({ stdout, stderr }) => ({ stdout, stderr, code: 0 }), ({ stdout, stderr, code }) => ({ stdout, stderr, code }));
+      });
+    }
+    async function cli(verb, credential, expectedCode, args) {
+      const response = await startCLI(verb, credential, args)
+        .then(({ stdout, stderr }) => ({ stdout, stderr, code: 0 }), ({ stdout, stderr, code }) => ({ stdout, stderr, code }));
       assert.equal(response.code, expectedCode, `unexpected exit from mcp client ${verb}`);
       assert.ok(!response.stdout.includes(credential) && !response.stderr.includes(credential), 'CLI leaked a caller token');
       return response.stdout;
@@ -2223,29 +2248,49 @@ test('keyed Task submission recovers the committed handle after a lost CLI reply
       '--tool', 'build_report', '--tasks', '--task-submission-key', submissionKey,
       '--arguments', JSON.stringify({ report: value, steps: 1 }),
     ]);
-    assert.equal(await submission(owner, 3), '');
+    const receiptCall = ['--tool', 'build_report', '--tasks', '--task-receipt', receiptPath,
+      '--arguments', JSON.stringify({ report: 'original', steps: 1 })];
+    if (useReceipt) {
+      const pending = startCLI('call', owner, receiptCall);
+      submittingCLI = pending.child;
+      await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
+    } else {
+      assert.equal(await submission(owner, 3), '');
+    }
     assert.ifError(proxyError);
     assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
-    for (const replay of await Promise.all([submission(owner, 0), submission(owner, 0)])) {
-      const { result } = JSON.parse(replay);
-      assert.equal(result.resultType, 'task');
-      assert.equal(result.taskId, committedID);
+    if (!useReceipt) {
+      for (const replay of await Promise.all([submission(owner, 0), submission(owner, 0)])) {
+        const { result } = JSON.parse(replay);
+        assert.equal(result.resultType, 'task');
+        assert.equal(result.taskId, committedID);
+      }
+      assert.equal(await submission(owner, 1, 'changed'), '');
+      assert.equal(await submission(foreign, 1), '');
+      assert.equal(await submission(owner, 1, 'original', makeKey(Date.now() - 61_000)), '');
     }
-    assert.equal(await submission(owner, 1, 'changed'), '');
-    assert.equal(await submission(foreign, 1), '');
-    assert.equal(await submission(owner, 1, 'original', makeKey(Date.now() - 61_000)), '');
     await eventually(async () => (await rows())[0]?.status === 'completed', 'worker did not complete the Task');
-    await delay(Math.max(0, issuedAt + 60_100 - Date.now()));
-    assert.equal(await submission(owner, 1), '');
-    const lookup = (credential, code, submissionKey = key) => cli('status', credential, code, [
-      '--task-submission-key', submissionKey, '--metadata-only',
-    ]);
+    if (!useReceipt) {
+      await delay(Math.max(0, issuedAt + 60_100 - Date.now()));
+      assert.equal(await submission(owner, 1), '');
+    }
+    const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
+    const lookup = (credential, code) => cli('status', credential, code, [...selector, '--metadata-only']);
     const recovered = JSON.parse(await lookup(owner, 0));
     assert.ok(Number.isFinite(Date.parse(recovered.lastUpdatedAt)));
     assert.deepEqual(recovered, { taskId: committedID, status: 'completed', lastUpdatedAt: recovered.lastUpdatedAt, nextAction: 'read_result' });
     assert.equal(await lookup(foreign, 1), '');
     assert.equal(await lookup(ownerWithoutTool, 1), '');
-    assert.equal(await lookup(owner, 1, makeKey()), '');
+    if (useReceipt) {
+      const beforeMismatch = requests;
+      assert.equal(await cli('status', owner, 1, [...selector, '--metadata-only', '--url', `${endpoint}/other`]), '');
+      assert.equal(requests, beforeMismatch);
+      const receipt = await readFile(receiptPath, 'utf8');
+      assert.equal(await cli('call', owner, 1, receiptCall), '');
+      assert.equal(await readFile(receiptPath, 'utf8'), receipt);
+    } else {
+      assert.equal(await cli('status', owner, 1, ['--task-submission-key', makeKey(), '--metadata-only']), '');
+    }
     const full = JSON.parse(await cli('status', owner, 0, ['--task-id', recovered.taskId]));
     assert.equal(full.result.content[0].text, report);
     assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);

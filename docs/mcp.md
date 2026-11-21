@@ -5659,6 +5659,22 @@ gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKE
   --task-submission-key "$TASK_SUBMISSION_KEY" --metadata-only
 ```
 
+For a process that may restart, use a new private receipt file in place of a
+manually saved key. The CLI saves it before sending the Task submission.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --metadata-only
+```
+
+The receipt contains the submission key and a fingerprint of the resolved
+endpoint. Use the same endpoint and provide the original caller's credential
+when reading it. Use a new receipt path for each new submission. An existing
+receipt remains available for status lookup after a lost reply or CLI exit.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
