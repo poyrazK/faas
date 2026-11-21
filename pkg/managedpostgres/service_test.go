@@ -145,11 +145,11 @@ func testRegistry(t *testing.T, provider Provider, mutate func(*Config)) *Regist
 
 func TestRegistryProvisioningFlagDefaultsOffAndRequiresExplicitOptIn(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities()}
-	if registry := testRegistry(t, provider, nil); registry.ProvisioningEnabled {
+	if registry := testRegistry(t, provider, nil); registry.ProvisioningEnabled() {
 		t.Fatal("provisioning enabled by default")
 	}
 	registry := testRegistry(t, provider, func(config *Config) { config.ProvisioningEnabled = true })
-	if !registry.ProvisioningEnabled {
+	if !registry.ProvisioningEnabled() {
 		t.Fatal("explicit provisioning opt-in was discarded")
 	}
 }

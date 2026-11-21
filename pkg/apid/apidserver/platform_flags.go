@@ -115,6 +115,14 @@ func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value jso
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error())
 	}
 	switch def.Kind {
+	case runtimeConfigKindManagedPostgresPolicy:
+		// The value's own shape was checked above; here it must also fit this
+		// apid's provider registry (the approval's backend, the merged usage
+		// policy), so a value apid would refuse is never stored.
+		if err := s.runtimeConfig.checkManagedPostgresPolicy(value); err != nil {
+			return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Managed PostgreSQL policy does not fit this platform", err.Error())
+		}
+		return value, nil
 	case runtimeConfigKindPlatformFlag:
 		flag, _ := platformflags.ParseDefinition(value)
 		groups, _ := s.platformFlags().Snapshot().Groups()

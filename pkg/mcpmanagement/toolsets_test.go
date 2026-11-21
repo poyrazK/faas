@@ -43,7 +43,7 @@ func TestReadOnlyCoreCatalogMatchesStdioContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(catalog.Tools) != 29 {
+	if len(catalog.Tools) != 30 {
 		t.Fatalf("read-only core count=%d names=%v", len(catalog.Tools), toolNamesOf(catalog.Tools))
 	}
 	for _, tool := range catalog.Tools {

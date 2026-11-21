@@ -71,6 +71,15 @@ type Service struct {
 	freePlan               func(context.Context, string) (bool, error)
 }
 
+// Registry is the provider registry the service places databases with; apid
+// binds the live operator policy (managed_postgres_policy) to it.
+func (s *Service) Registry() *Registry {
+	if s == nil {
+		return nil
+	}
+	return s.registry
+}
+
 // DefaultRegion returns the operator-configured placement used when a
 // higher-level workflow does not ask for a specific region.
 func (s *Service) DefaultRegion() string {
@@ -151,7 +160,7 @@ func NewService(registry *Registry, store Store, options ServiceOptions) (*Servi
 	}
 	if options.MaxDatabasesPerAccount == nil {
 		options.MaxDatabasesPerAccount = func(context.Context, string) (int, error) {
-			return registry.MaxDatabasesPerAccount, nil
+			return registry.MaxDatabasesPerAccount(), nil
 		}
 	}
 	return &Service{

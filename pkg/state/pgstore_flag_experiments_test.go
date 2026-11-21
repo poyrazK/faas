@@ -173,6 +173,37 @@ func TestPg_FlagExperimentUnitsFromTelemetry(t *testing.T) {
 	}
 }
 
+// A started experiment reads the exposures of its start minute: gateways
+// stamp minute-collapsed telemetry at the minute's start, before the start
+// instant (prod 2026-11-21: a journey's experiment counted no exposures).
+func TestPg_FlagExperimentCountsStartMinuteExposures(t *testing.T) {
+	f := newFlagExperimentPgFixture(t, "flags-exp-minute")
+	s, ctx, acct := f.s, f.ctx, f.acct
+	a := f.tenant("a")
+	minute := time.Now().UTC().Add(-time.Hour).Truncate(time.Minute)
+	start := minute.Add(13 * time.Second)
+	if _, err := s.CreateFlagExperiment(ctx, state.FlagExperiment{AccountID: acct, ProjectID: f.project, EnvironmentID: f.env,
+		Key: "checkout-minute", FlagKey: "checkout", RuleID: "weighted", Control: "legacy", MetricEvent: "order_completed",
+		MixingLift: 0.02, Weights: map[string]int{"legacy": 50, "new": 50}, CreatedBy: acct}, 2); err != nil {
+		t.Fatalf("CreateFlagExperiment: %v", err)
+	}
+	x, err := s.StartFlagExperiment(ctx, f.env, "checkout-minute", map[string]int{"legacy": 50, "new": 50}, [2]int{}, start, 1)
+	if err != nil {
+		t.Fatalf("StartFlagExperiment: %v", err)
+	}
+	if want := state.FlagExperimentStartCursor(start); !x.TelemetryCursor.Equal(want) || !x.StartedAt.Equal(start) {
+		t.Fatalf("started at %v cursor %v; want %v and %v", x.StartedAt, x.TelemetryCursor, start, want)
+	}
+	f.exposure(a, "new", minute, 200, 10) // a request at start+2s, collapsed into its minute
+	running, err := s.ListRunningFlagExperiments(ctx, "", 10)
+	if err != nil || len(running) != 1 {
+		t.Fatalf("running = %+v, %v", running, err)
+	}
+	if read, err := s.AdvanceFlagExperimentUnits(ctx, running[0], running[0].TelemetryCursor, minute.Add(5*time.Minute), 1000); err != nil || read != 1 {
+		t.Fatalf("AdvanceFlagExperimentUnits from the start cursor read %d, %v; want the start minute's exposure", read, err)
+	}
+}
+
 // ADR 20261116190208 §1, §2: units carry request, server error and slow
 // request counts from telemetry, each arm keeps a latency histogram, the
 // latency threshold is fixed once, and a mean metric sums event values from

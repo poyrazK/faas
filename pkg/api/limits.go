@@ -210,6 +210,12 @@ const (
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
+// Operator fleet instance list (ADR-20261121161842).
+const (
+	ObsInstanceListDefault = 200
+	ObsInstanceListMax     = 1000
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -4525,11 +4531,14 @@ const (
 	BuilderSlotsDefaultReserved = 1
 	BuilderSlotsDefaultMax      = 2
 	// BuilderReservedSlotsMax bounds a node's reserved slots. A reserved
-	// slot is funded out of tenant sizing (ADR-203's BuilderSlotReserveMB),
-	// and nodes size for exactly one until vmmd re-derives sizing live
-	// (ADR-20261118154632 step 7), so 1 is the only accepted value.
+	// slot is funded out of tenant sizing (ADR-203's BuilderSlotReserveMB)
+	// and needs room in faas-cp-build.slice, so a node is provisioned for its
+	// count at deploy time (FAAS_BUILDER_RESERVED_SLOTS, the manifest's
+	// builder_reserved_slots; ADR-20261118154632 amendment 1). builder_slots
+	// may ask for up to this many; each node runs at most what it was
+	// provisioned for.
 	BuilderReservedSlotsMin = 1
-	BuilderReservedSlotsMax = 1
+	BuilderReservedSlotsMax = 4
 	// BuilderSlotsMax bounds a node's total slots, reserved plus borrowed.
 	BuilderSlotsMax = 16
 	// BuilderSlotsNodeEntriesMax bounds how many nodes `builder_slots` names.
@@ -9217,9 +9226,14 @@ const (
 	// fills a 2 GiB guest and BuildKit snapshots keep several hundred MiB
 	// charged to the Firecracker cgroup while a layer is being committed.
 	BuildVMOverheadMB = 768
-	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling. It leaves enough
-	// room for one guaranteed builder's full snapshot below the 6 GiB parent.
+	// BuilderSliceMaxMB is the faas-cp-build.slice ceiling of a node with one
+	// reserved builder slot (BuilderSliceMemoryMaxMB(1)). It leaves enough
+	// room for that builder's full snapshot below the 6 GiB parent.
 	BuilderSliceMaxMB = 5_120
+	// BuilderSliceHeadroomMB is the slack faas-cp-build.slice keeps above its
+	// builders' fences and the one snapshot allowance
+	// (BuilderSliceMemoryMaxMB).
+	BuilderSliceHeadroomMB = 256
 	// BuilderSecondSlotHeadroomMB is the free builder-slice memory a second,
 	// opportunistic build must leave after its own worst case (a full
 	// snapshot: 2 × BuildVMRAMMB + BuildVMOverheadMB). The default slice
@@ -14696,6 +14710,38 @@ func BuilderMemoryMaxMB(ramMB int) int {
 	return ramMB + BuildVMOverheadMB
 }
 
+// ClampBuilderReservedSlots bounds a node's provisioned reserved builder
+// slots to [BuilderReservedSlotsMin, BuilderReservedSlotsMax]; zero or a
+// negative count is the compiled one slot.
+func ClampBuilderReservedSlots(reserved int) int {
+	return min(max(reserved, BuilderReservedSlotsMin), BuilderReservedSlotsMax)
+}
+
+// BuilderSliceMemoryMaxMB is faas-cp-build.slice's MemoryMax on a node
+// provisioned with reserved guaranteed builder slots (ADR-20261118154632
+// amendment 1): one BuilderMemoryMaxMB fence per slot, BuildVMRAMMB more for
+// the one warm snapshot a node captures at a time (BuilderSnapshotMemoryMaxMB
+// widens that builder's fence), and BuilderSliceHeadroomMB. One slot is
+// BuilderSliceMaxMB.
+func BuilderSliceMemoryMaxMB(reserved int) int {
+	return ClampBuilderReservedSlots(reserved)*BuilderMemoryMaxMB(BuildVMRAMMB) + BuildVMRAMMB + BuilderSliceHeadroomMB
+}
+
+// BuilderSliceCPUQuotaPct is faas-cp-build.slice's CPUQuota, in percent of
+// one CPU: BuildVMVCPU full CPUs per reserved slot, the cpu.max each builder
+// scope already carries.
+func BuilderSliceCPUQuotaPct(reserved int) int {
+	return ClampBuilderReservedSlots(reserved) * BuildVMVCPU * 100
+}
+
+// ComputeCPSliceMemoryMaxMB is faas-cp.slice's MemoryMax on a compute node
+// with reserved builder slots: the spec §13 control-plane slice, which holds
+// faas-cp-build.slice, grown by one builder fence for every reserved slot
+// past the first.
+func ComputeCPSliceMemoryMaxMB(reserved int) int {
+	return ControlPlaneReserveMB + (ClampBuilderReservedSlots(reserved)-1)*BuilderMemoryMaxMB(BuildVMRAMMB)
+}
+
 // BuilderSnapshotMemoryMaxMB returns the temporary per-instance memory.max
 // used while Firecracker writes a full builder snapshot into the jail tmpfs.
 // The builder already has ramMB resident in the VMM; the full memory file can
@@ -15797,15 +15843,18 @@ const (
 	NodeShapeComputeEdgeObjectGateway
 )
 
-// nonTenantReserveMB is the RAM held back from tenants for a box shape.
-func nonTenantReserveMB(shape NodeRoleShape) int {
+// nonTenantReserveMB is the RAM held back from tenants for a box shape. A
+// compute shape funds BuilderSlotReserveMB for each reserved builder slot the
+// node is provisioned with (ADR-20261118154632 amendment 1).
+func nonTenantReserveMB(shape NodeRoleShape, builderReservedSlots int) int {
+	builders := ClampBuilderReservedSlots(builderReservedSlots) * BuilderSlotReserveMB
 	switch shape {
 	case NodeShapeComputeOnly:
-		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB
+		return ComputeNodeDaemonReserveMB + builders
 	case NodeShapeComputeEdge:
-		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB + ComputeEdgeDaemonReserveMB
+		return ComputeNodeDaemonReserveMB + builders + ComputeEdgeDaemonReserveMB
 	case NodeShapeComputeEdgeObjectGateway:
-		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB + ComputeEdgeDaemonReserveMB + ComputeObjectGatewayReserveMB
+		return ComputeNodeDaemonReserveMB + builders + ComputeEdgeDaemonReserveMB + ComputeObjectGatewayReserveMB
 	}
 	return ControlPlaneReserveMB
 }
@@ -15865,14 +15914,25 @@ func DeriveNodeSizing(memTotalMB, hostCPUs int) NodeSizing {
 // Measured on the production compute nodes, every faas daemon together holds
 // roughly 490 MB RSS and the host agents another ~390 MB, so
 // ComputeNodeDaemonReserveMB carries a wide margin over observed use. The
-// builder slot is reserved separately because builderd is a compute-only
-// daemon: spec §4.5 guarantees one 2,048 MB build VM per node, and a build
-// must never be funded out of the tenant slice.
+// builder slots are reserved separately because builderd is a compute-only
+// daemon: spec §4.5 guarantees each of the node's reserved 2,048 MB build VMs
+// (one unless provisioned otherwise, ADR-20261118154632 amendment 1), and a
+// build must never be funded out of the tenant slice.
 //
 // A control-plane or single-box host keeps the spec constant unchanged, so
 // the 64 GB reference still resolves to exactly 57,344 / 56,000 / 47,600.
 func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) NodeSizing {
-	reserve := nonTenantReserveMB(shape)
+	return DeriveNodeSizingForRoleWithBuilders(memTotalMB, hostCPUs, shape, BuilderSlotsDefaultReserved)
+}
+
+// DeriveNodeSizingForRoleWithBuilders is DeriveNodeSizingForRole for a
+// compute host provisioned with builderReservedSlots guaranteed builder slots
+// (ADR-20261118154632 amendment 1): each slot past the first holds back
+// another BuilderSlotReserveMB from tenants. The count is clamped to
+// [BuilderReservedSlotsMin, BuilderReservedSlotsMax] and ignored for the
+// single-box and control-plane shapes.
+func DeriveNodeSizingForRoleWithBuilders(memTotalMB, hostCPUs int, shape NodeRoleShape, builderReservedSlots int) NodeSizing {
+	reserve := nonTenantReserveMB(shape, builderReservedSlots)
 	out := NodeSizing{
 		MemMB:              memTotalMB,
 		TenantSliceMaxMB:   TenantSliceMaxMB,
@@ -15919,9 +15979,10 @@ const (
 	// ~880 MB across all of them; this carries margin over that without
 	// charging the absent control-plane daemons.
 	ComputeNodeDaemonReserveMB = 1_536
-	// BuilderSlotReserveMB funds the one guaranteed builder microVM on a
-	// node that runs builderd. A build must never be paid for out of the
-	// tenant slice, so it is reserved rather than admitted.
+	// BuilderSlotReserveMB funds one guaranteed builder microVM on a node
+	// that runs builderd, once per reserved slot it is provisioned with
+	// (ADR-20261118154632 amendment 1). A build must never be paid for out
+	// of the tenant slice, so it is reserved rather than admitted.
 	BuilderSlotReserveMB = 2_048
 	// ComputeEdgeDaemonReserveMB is the extra RAM held back on a compute node
 	// that runs the app edge, for gatewayd-public and cloudflared

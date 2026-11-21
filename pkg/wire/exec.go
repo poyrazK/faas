@@ -73,6 +73,20 @@ func (ExecRunner) Output(ctx context.Context, argv []string) ([]byte, error) {
 	return out, nil
 }
 
+// CombinedOutput executes argv and returns stdout and stderr interleaved, for
+// tools such as debugfs that report a failed request on stderr and still
+// exit 0. A non-zero exit is returned as an error alongside the output.
+func (ExecRunner) CombinedOutput(ctx context.Context, argv []string) ([]byte, error) {
+	if len(argv) == 0 {
+		return nil, fmt.Errorf("wire: empty command")
+	}
+	out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("%s: %w: %s", argv[0], err, strings.TrimSpace(string(out)))
+	}
+	return out, nil
+}
+
 // RunCapture is the stdout-aware command runner used by vmmd when it needs to
 // inspect kernel-assigned nft handles after an in-place ruleset update. It is
 // kept additive to Output so existing callers and test doubles remain valid.

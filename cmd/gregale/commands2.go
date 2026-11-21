@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -240,7 +241,7 @@ func cmdApp(args []string) int {
 	// out of help, completions, man pages and the generated reference until
 	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
 	// answers an unlisted account as for an unknown field.
-	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = the platform default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
@@ -1751,9 +1752,9 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 
 // errNegativePerInstanceConcurrency rejects --per-instance-concurrency
 // below zero before any request (ADR-20261022203523). The upper bound is the
-// plan's concurrency per VM, which the API enforces.
+// app's concurrency_per_vm, which the API enforces (ADR-20261101215228).
 func errNegativePerInstanceConcurrency(value int) error {
-	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the platform default); got %d", value)
 }
 
 // explainPerInstanceConcurrencyRefusal turns the API's dark-launch refusal of
@@ -1763,7 +1764,7 @@ func errNegativePerInstanceConcurrency(value int) error {
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
 		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
-		const hint = "leave it unset to use the plan's concurrency per VM"
+		const hint = "leave it unset to use the platform default"
 		// printErr renders the APIError it finds in the chain, so a wrapped
 		// explanation never reached the screen (prod 2026-11-19 showed the
 		// raw "unknown field(s)"). Rewrite the problem itself.
@@ -2999,14 +3000,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not read local project context", linkErr)
 		}
 		if linkedProject != "" {
-			// The app slug is unused by a project deploy; a project link
-			// that selects no single workload must not fail here.
-			if app, appErr := linkedAppSlug(contextDir); appErr == nil {
-				slug = app
-			} else {
-				slug = linkedProject
-			}
+			slug = projectDeployPlaceholderSlug(contextDir, linkedProject)
 		}
+	}
+	// An explicit --project-slug skips the link lookup above, but the checkout
+	// may still carry the project-only link the previous project deploy wrote
+	// (linkCheckoutAfterProjectDeploy). linkedDefaultAppName below refuses
+	// such a link, so `deploy --project --project-slug X` failed on every run
+	// after the first (boa multi-service deploy, 2026-11-21).
+	if projectRequested && slug == "" && *projectSlug != "" {
+		slug = projectDeployPlaceholderSlug(contextDir, *projectSlug)
 	}
 	if slug == "" {
 		var nameErr error
@@ -4172,7 +4175,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
-		plan = withProvidedEnvKeys(plan, deploySecrets)
+		var secretOwners projectSecretOwners
+		if len(deploySecrets) > 0 {
+			secretOwners = projectSecretOwnersFor(sourceDir, plan.Workloads)
+		}
+		plan = withProvidedEnvKeys(plan, deploySecrets, secretOwners)
 		if execution.projectPlan != nil && plan.CanApply {
 			if err := execution.projectPlan(ctx, client, plan); err != nil {
 				return printErr("Could not review project target", err)
@@ -4227,7 +4234,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
-			projectDeployInitialSecrets(plan.Workloads, deploySecrets), platformTenantRequiredPtr)
+			projectDeployInitialSecrets(plan.Workloads, deploySecrets, secretOwners), platformTenantRequiredPtr)
 		if err != nil {
 			var apiErr *APIError
 			if errors.As(err, &apiErr) && apiErr.Problem.Code == "project_submission_mismatch" {
@@ -4260,6 +4267,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if len(deploySecrets) > 0 && !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment across %d workload(s)", len(deploySecrets), len(plan.Workloads))
+			skipped := secretOwners.skipped(plan.Workloads, deploySecrets)
+			for _, key := range slices.Sorted(maps.Keys(skipped)) {
+				PrintProgress(osStdout, "%s not set on %s: only other services reference it", key, strings.Join(skipped[key], ", "))
+			}
 		}
 		if *safeProjectDeploy {
 			if apply.SafeRelease == nil || apply.SafeRelease.PreviousReleaseID != plan.SafeRelease.PreviousReleaseID {
@@ -6357,7 +6368,7 @@ func cmdKeys(args []string) int {
 			PrintUsage(osStdout, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 0
 		}
-		flags, positional := splitArgsForFlags(args[1:])
+		flags, positional := splitArgsForFlags(args[1:], "agent")
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
 		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")
@@ -6666,12 +6677,12 @@ func cmdUsageList(args []string) int {
 		// trailing column is noise.
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f · %s\n",
-				appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6, usageTrafficCell(u.TXBytes, u.NetTxBytes))
+				appLabel(slugs, u.AppID), u.Requests, api.GBHoursFromMBSeconds(u.MBSeconds), usageTrafficCell(u.TXBytes, u.NetTxBytes))
 			continue
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
+		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, api.GBHoursFromMBSeconds(u.MBSeconds))
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(rows))
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", api.GBHoursFromMBSeconds(totalMBSeconds), len(rows))
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
 }
@@ -8753,7 +8764,7 @@ func cmdUsageDaily(args []string) int {
 	var totalMBSeconds int64
 	for _, u := range resp.Items {
 		totalMBSeconds += u.MBSeconds
-		gbh := float64(u.MBSeconds) / 3.6e6
+		gbh := api.GBHoursFromMBSeconds(u.MBSeconds)
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h  %s\n",
 				appLabel(slugs, u.AppID), u.Day, u.Requests, gbh, usageTrafficCell(u.TXBytes, u.NetTxBytes))
@@ -8761,7 +8772,7 @@ func cmdUsageDaily(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
-	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(resp.Items))
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", api.GBHoursFromMBSeconds(totalMBSeconds), len(resp.Items))
 	return 0
 }
 

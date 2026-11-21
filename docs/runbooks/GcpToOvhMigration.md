@@ -739,8 +739,9 @@ After the checks in phase 1 step 9, stop it
 - **Customer object storage on OVH** (set up 2026-11-21): project
   `gregale-customer-storage-us-1`, users and policies in
   `deploy/ovh/customer-object-storage-policies/`, backend `ovh-bhs-prod-v1`
-  (`driver: s3`, `max_buckets: 95` until OVH raises the project quota to
-  1,000) as the `us-east-1` default, and the `object_storage` block in
+  (`driver: s3`, `versioning: unsupported` (ADR-20261121150000),
+  `max_buckets: 95` until OVH raises the project quota to 1,000) as the
+  `us-east-1` default, and the `object_storage` block in
   `ovh-live.template.yaml`. The gateway runs on the control plane behind
   Cloudflare. Launch runs `gateway_safety_v1` accounting, which needs no
   OVH usage driver, and no Object Lock (no `object_lock` in the registry)

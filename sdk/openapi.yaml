@@ -30972,6 +30972,10 @@ components:
           type: string
           format: uuid
           description: "Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change."
+        expected_step:
+          type: integer
+          minimum: 0
+          description: "For advance and promote: the canary step the caller observed. The recovery is refused with canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not allowed with abort or deployment_id."
     RolloutTransitionResponse:
       description: "POST /v1/apps/{slug}/rollouts/recover response. The post-recovery Deployment + the audit row id (so the operator's terminal can echo audit_id=…)."
       type: object
@@ -35609,6 +35613,11 @@ components:
         status: {type: string}
         deployment_status: {type: string}
         rollout_state: {type: string}
+        traffic_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: "The latest deployment's share of the service's traffic while it is live. Omitted when it serves none."
         build_status: {type: string}
         depends_on:
           type: array

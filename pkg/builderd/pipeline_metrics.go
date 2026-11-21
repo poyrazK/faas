@@ -83,7 +83,7 @@ func (m *PipelineMetrics) Collect(ch chan<- prometheus.Metric) {
 	used := m.builder.activeSlots
 	borrowed := m.builder.activeBorrowed
 	m.builder.slotMu.Unlock()
-	reserved := 1
+	reserved := m.builder.reservedSlots()
 	if m.builder.elastic.Enabled() {
 		reserved = m.builder.elastic.Applied().Reserved
 	}

@@ -254,6 +254,12 @@ func BucketProblem(w http.ResponseWriter, err error) {
 		problem.Detail = detail + " Limit: " + limit.Kind + "."
 		problem.DocsURL = api.ObjectStorageLimitsDocsURL
 	}
+	if errors.Is(err, ErrObjectStorageDisabled) {
+		// Without its own hint the CLI's 5xx fallback said "check Gregale's
+		// service status … before retrying a deploy" for a feature the
+		// installation does not run (prod hunt 2026-11-21).
+		problem.Hint = "Object storage is not enabled on this Gregale installation; retrying will not help. Ask its operator to enable it."
+	}
 	api.WriteProblem(w, problem)
 }
 

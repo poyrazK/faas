@@ -109285,6 +109285,10 @@ components:
           type: string
           format: uuid
           description: "Exact older live predecessor in the candidate scope. Canary recovery requires positive serving weight; a service handoff also accepts its retained zero-weight predecessor. Required with deployment_id. Enforced binding policies check this exact recipient before routing can change."
+        expected_step:
+          type: integer
+          minimum: 0
+          description: "For advance and promote: the canary step the caller observed. The recovery is refused with canary_step_conflict when the running canary is at another step, and with 404 when no canary is running. Not allowed with abort or deployment_id."
 
     RolloutTransitionResponse:
       description: "POST /v1/apps/{slug}/rollouts/recover response. The post-recovery Deployment + the audit row id (so the operator's terminal can echo audit_id=…)."
@@ -120955,8 +120959,8 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
-      description: Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
-      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids]
+      description: Crons, event subscriptions and bucket notifications enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids, bucket_notifications_resumed, bucket_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
         crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
@@ -120968,6 +120972,11 @@ components:
         event_subscription_ids:
           type: array
           description: Event subscriptions enabled by this call.
+          items: { type: string }
+        bucket_notifications_resumed: { type: integer, minimum: 0, description: "Number of buckets whose copied notification rules were resumed." }
+        bucket_ids:
+          type: array
+          description: Buckets whose notification rules this call resumed.
           items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.
@@ -121291,6 +121300,11 @@ components:
         status: { type: string }
         deployment_status: { type: string }
         rollout_state: { type: string }
+        traffic_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: "The latest deployment's share of the service's traffic while it is live. Omitted when it serves none."
         build_status: { type: string }
         depends_on:
           type: array

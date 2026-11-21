@@ -215,6 +215,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BUILDERD_ROLE", Owners: []string{"builderd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_BUILDER_BASE_PATH", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_BUILDER_BASE_REF", Owners: []string{"imaged"}, Source: EnvSourceDropin},
+	{Name: "FAAS_BUILDER_RESERVED_SLOTS", Owners: []string{"builderd", "shared", "vmmd"}, Source: EnvSourceDropin, Note: "guaranteed builder slots the compute node is provisioned with (ADR-20261118154632 amendment 1): builderd runs that many guaranteed builds and vmmd funds them in its compute-only sizing; node_join renders it from the manifest's builder_reserved_slots (zz-faas-builder-slots.conf, zz-faas-capacity.conf) beside the build slice, control-plane slice and tenant fence it sizes for that count; default 1"},
 	{Name: "FAAS_BUILDER_SLOT_CPUS", Owners: []string{"builderd"}, Source: EnvSourceDevOnly, Note: "acceptance-host override of the online CPU count that caps builder_slots max (ADR-20261118154632); production leaves it unset"},
 	{Name: "FAAS_BUILDER_WARM_BUILDERS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "opt-in warm-builder snapshot restores; off unless set to true because restores resume a guest whose mounted drive was edited offline"},
 	{Name: "FAAS_BUILDER_WARM_IDLE_MS", Owners: []string{"builderd"}, Source: EnvSourceDefault, Note: "optional builderd warm-slot idle window override in milliseconds; code default is 5 minutes"},

@@ -45,6 +45,9 @@ func (s *PgStore) ReserveProjectEnvironmentCloneObjectBucket(ctx context.Context
 	if err := validateCloneBucketReservation(want, reserved, source); err != nil {
 		return ObjectBucket{}, false, err
 	}
+	if err := copyCloneBucketNotificationsTx(ctx, tx, source, reserved.ID); err != nil {
+		return ObjectBucket{}, false, err
+	}
 	return reserved, created, tx.Commit(ctx)
 }
 
