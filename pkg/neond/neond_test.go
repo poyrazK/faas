@@ -53,6 +53,9 @@ func TestMatch(t *testing.T) {
 	}
 }
 
+// fakeLive maps a project to its live resources. A project with live
+// resources is named by account "acct-<project>"; "accounts/<project>" lists
+// the accounts of a project explicitly.
 type fakeLive map[string][]string
 
 func (f fakeLive) LiveResourcesInProject(_ context.Context, project string) ([]string, error) {
@@ -62,8 +65,21 @@ func (f fakeLive) LiveResourcesInProject(_ context.Context, project string) ([]s
 	return f[project], nil
 }
 
+func (f fakeLive) AccountsInProject(_ context.Context, project string) ([]string, error) {
+	if project == "broken" {
+		return nil, errors.New("database unavailable")
+	}
+	if accounts, ok := f["accounts/"+project]; ok {
+		return accounts, nil
+	}
+	if len(f[project]) > 0 {
+		return []string{"acct-" + project}, nil
+	}
+	return nil, nil
+}
+
 func TestPolicy(t *testing.T) {
-	live := fakeLive{"live": {"live"}, "branched": {"branched/br-live"}}
+	live := fakeLive{"live": {"live"}, "branched": {"branched/br-live"}, "accounts/deleting": {"acct-9"}}
 	defaults := map[string]bool{"live/br-main": true}
 	branch := func(_ context.Context, project, b string) (bool, error) { return defaults[project+"/"+b], nil }
 	check := func(method, path string) error {
@@ -72,7 +88,7 @@ func TestPolicy(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s %s not on the allow-list", method, path)
 		}
-		return NewPolicy(live, branch, 100, nil).Check(context.Background(), route, params, path)
+		return NewPolicy(live, branch, Limits{PerHour: 100, PerSubjectPerHour: 100}, nil).Check(context.Background(), route, params, path)
 	}
 	for _, tc := range []struct {
 		method, path string
@@ -80,6 +96,12 @@ func TestPolicy(t *testing.T) {
 	}{
 		{"GET", "/projects/live", nil},
 		{"PATCH", "/projects/live", nil},
+		// Quota writes and role deletes only on a project a database names,
+		// in any state.
+		{"PATCH", "/projects/stranger", ErrRefused},
+		{"PATCH", "/projects/deleting", nil},
+		{"DELETE", "/projects/stranger/branches/br-1/roles/gregale_0123456789abcdef0123456789abcdef01234567", ErrRefused},
+		{"PATCH", "/projects/stranger/endpoints/ep-1", nil},
 		{"DELETE", "/projects/live", ErrRefused},
 		{"DELETE", "/projects/gone", nil},
 		{"DELETE", "/projects/live/branches/br-main", ErrRefused},
@@ -102,13 +124,76 @@ func TestPolicy(t *testing.T) {
 
 func TestLimiter(t *testing.T) {
 	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
-	l := NewLimiter(2, time.Hour, func() time.Time { return now })
-	if !l.Allow() || !l.Allow() || l.Allow() {
+	l := NewLimiter(2, 100, time.Hour, func() time.Time { return now })
+	allow := func(subjects ...string) bool {
+		_, ok := l.Allow(subjects)
+		return ok
+	}
+	if !allow() || !allow() || allow() {
 		t.Fatal("want two then a refusal")
 	}
 	now = now.Add(time.Hour)
-	if !l.Allow() {
+	if !allow() {
 		t.Fatal("window passed: want admitted")
+	}
+}
+
+func TestLimiterPerSubject(t *testing.T) {
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	l := NewLimiter(5, 2, time.Hour, func() time.Time { return now })
+	for i := range 2 {
+		if subject, ok := l.Allow([]string{"acct-a"}); !ok {
+			t.Fatalf("call %d refused for %q", i, subject)
+		}
+	}
+	if subject, ok := l.Allow([]string{"acct-b", "acct-a"}); ok || subject != "acct-a" {
+		t.Fatalf("third call of acct-a = %q %v; want refused for acct-a", subject, ok)
+	}
+	// The refused call counted against nobody: acct-b and the fleet still
+	// have room.
+	if _, ok := l.Allow([]string{"acct-b"}); !ok {
+		t.Fatal("acct-b refused")
+	}
+	if _, ok := l.Allow(nil); !ok {
+		t.Fatal("unowned call refused")
+	}
+	if _, ok := l.Allow([]string{"acct-b"}); !ok {
+		t.Fatal("acct-b's second call refused")
+	}
+	// The fleet limit (5) is now reached for everyone.
+	if subject, ok := l.Allow([]string{"acct-c"}); ok || subject != "" {
+		t.Fatalf("past the fleet limit = %q %v", subject, ok)
+	}
+	now = now.Add(time.Hour)
+	if _, ok := l.Allow([]string{"acct-a"}); !ok {
+		t.Fatal("window passed: want acct-a admitted")
+	}
+}
+
+func TestPolicyPerSubjectLimit(t *testing.T) {
+	live := fakeLive{"accounts/old-a": {"acct-a"}, "accounts/old-a2": {"acct-a"}, "accounts/old-b": {"acct-b"}}
+	policy := NewPolicy(live, nil, Limits{PerHour: 100, PerSubjectPerHour: 1}, nil)
+	check := func(path string) error {
+		t.Helper()
+		route, params, _ := Match(http.MethodDelete, path)
+		return policy.Check(context.Background(), route, params, path)
+	}
+	if err := check("/projects/old-a/snapshots/s-1"); err != nil {
+		t.Fatal(err)
+	}
+	err := check("/projects/old-a2")
+	if !errors.Is(err, ErrSubjectRateLimited) || !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("acct-a's second delete = %v; want the account limit", err)
+	}
+	if err := check("/projects/old-b"); err != nil {
+		t.Fatalf("acct-b = %v", err)
+	}
+	// Projects no database names (failed creates, copy targets) count only
+	// against the fleet limit.
+	for _, path := range []string{"/projects/orphan-1", "/projects/orphan-2"} {
+		if err := check(path); err != nil {
+			t.Fatalf("%s = %v", path, err)
+		}
 	}
 }
 
@@ -142,12 +227,17 @@ func (f *neonFake) handler(t *testing.T) http.Handler {
 
 func startNeond(t *testing.T, live LiveResources, perHour int) (*Client, *neonFake, *prometheus.Registry) {
 	t.Helper()
+	return startNeondLimits(t, live, Limits{PerHour: perHour, PerSubjectPerHour: perHour})
+}
+
+func startNeondLimits(t *testing.T, live LiveResources, limits Limits) (*Client, *neonFake, *prometheus.Registry) {
+	t.Helper()
 	fake := &neonFake{}
 	neon := httptest.NewServer(fake.handler(t))
 	t.Cleanup(neon.Close)
 	base, _ := url.Parse(neon.URL + "/api/v2")
 	reg := prometheus.NewRegistry()
-	server, err := NewServer(base, neon.Client(), "admin-key", live, perHour, reg, slog.New(slog.DiscardHandler))
+	server, err := NewServer(base, neon.Client(), "admin-key", live, limits, reg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

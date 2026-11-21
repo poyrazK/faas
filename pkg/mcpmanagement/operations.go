@@ -35,7 +35,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -123,7 +123,7 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 	p := &releasePlan{Action: "operation_" + kind, App: a.App, AppID: app.ID, AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, Scope: normalizedScope(a.Environment), Project: a.Project, ProjectID: env.ProjectID, EnvironmentID: env.ID, Reason: a.Reason, ExpiresAt: time.Now().Add(releasePlanTTL), Operation: &operationPlan{Kind: kind, Request: data, AppHash: hex.EncodeToString(hash[:])}}
 	// Agent keys and hosted sign-ins (mcp-login keys) pay from an agent
 	// budget (ADR-20261111114059); a person's own key never does.
-	p.budgeted = slices.Contains(account.KeyScopes, api.ScopeAgent) || m.remote()
+	p.budgeted = m.budgeted(account)
 	if a.Environment != "" {
 		_, p.WorkloadRevision, err = m.client.GetAppInEnvironmentRevision(ctx, a.App, a.Environment)
 	}
@@ -385,6 +385,20 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
+	case "dlq_replay", "workflow_recovery", "monitoring_change":
+		return m.runAsyncOperation(ctx, p)
+	case "run_command":
+		return m.runCommand(ctx, p)
+	case "edge_change":
+		return m.runEdgeChange(ctx, p, retry)
+	case "preview_change":
+		return m.runPreviewChange(ctx, p, retry)
+	case "event_change":
+		return m.runEventChange(ctx, p)
+	case "consumer_change":
+		return m.runConsumerChange(ctx, p)
+	case "workflow_publish":
+		return m.runWorkflowPublish(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}

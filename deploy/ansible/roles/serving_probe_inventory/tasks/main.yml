@@ -1,0 +1,19 @@
+---
+- name: serving_probe_inventory — validate deployment expectations
+  ansible.builtin.include_tasks: validate.yml
+
+- name: serving_probe_inventory — create textfile collector directory
+  ansible.builtin.file:
+    path: /var/lib/node_exporter/textfile_collector
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+    mode: "0775"
+
+- name: serving_probe_inventory — publish independent control-plane expectations
+  ansible.builtin.template:
+    src: serving-probe-inventory.prom.j2
+    dest: /var/lib/node_exporter/textfile_collector/serving-probe-inventory.prom
+    owner: root
+    group: node_exporter
+    mode: "0644"

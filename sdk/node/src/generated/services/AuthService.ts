@@ -22,6 +22,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class AuthService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Email + password sign-in.
    * Verifies the email + password against the `account_passwords`
@@ -47,7 +48,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login',
       body: requestBody,
@@ -82,7 +83,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<PasswordLoginResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/signup',
       body: requestBody,
@@ -115,7 +116,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/login/forgot',
       body: requestBody,
@@ -153,7 +154,7 @@ export class AuthService {
   }: {
     requestBody: PasswordSignupRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup',
       body: requestBody,
@@ -188,7 +189,7 @@ export class AuthService {
   }: {
     requestBody: PasswordLoginRequest,
   }): CancelablePromise<ProgrammaticAuthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/login',
       body: requestBody,
@@ -219,7 +220,7 @@ export class AuthService {
   }): CancelablePromise<{
     accepted: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/referrals/selection',
       body: requestBody,
@@ -261,7 +262,7 @@ export class AuthService {
   }): CancelablePromise<{
     status: 'ok';
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/signup/magic-link',
       body: requestBody,
@@ -278,13 +279,12 @@ export class AuthService {
   }
   /**
    * Verify a password-signup email address.
-   * A browser (Accept text/html) gets an HTML page whose button posts the
-   * token back, and nothing is consumed, so a mail scanner that prefetches
-   * the link cannot use up the token. Any other client consumes the
-   * 24-hour, single-use token here and the account email is marked
-   * verified. No session is created.
+   * A browser (Accept text/html) gets confirmation or sign-in guidance.
+   * Opening the page does not consume the token. Other GET clients consume
+   * the 24-hour, single-use token only with a live session for its account.
+   * No session is created.
    *
-   * @returns string The confirmation page, or for a non-browser client the verified-email page.
+   * @returns string Confirmation, sign-in guidance, or the verified-email page.
    * @throws ApiError
    */
   public static verifyEmail({
@@ -295,13 +295,14 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/verify-email',
       query: {
         'token': token,
       },
       errors: {
+        401: `code: unauthorized`,
         410: `Verification link expired, invalid, or already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -313,11 +314,12 @@ export class AuthService {
   }
   /**
    * Confirm an email verification from its confirmation page.
-   * The confirmation page's form posts the token here. It is consumed and
-   * the account email marked verified; the HTML answer asks the customer
-   * to sign in again rather than creating a session.
+   * The confirmation page posts the token here. A live session for the
+   * account is required to consume it and mark the address verified.
+   * Other browser sessions receive instructions for signing into the
+   * correct account. No session is created.
    *
-   * @returns string Email verified; HTML sign-in prompt.
+   * @returns string Email verified or sign-in guidance for a browser.
    * @throws ApiError
    */
   public static confirmEmailVerification({
@@ -330,12 +332,13 @@ export class AuthService {
       token: string;
     },
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/verify-email',
       formData: formData,
       mediaType: 'application/x-www-form-urlencoded',
       errors: {
+        401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         410: `The posted token is expired, unknown, or was already used.`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -364,7 +367,7 @@ export class AuthService {
      */
     token: string,
   }): CancelablePromise<string> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/auth/reset',
       query: {
@@ -389,7 +392,7 @@ export class AuthService {
   }: {
     formData: PasswordResetConfirm,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/auth/reset',
       formData: formData,
@@ -428,7 +431,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static googleAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google',
       errors: {
@@ -473,7 +476,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/google/callback',
       query: {
@@ -515,7 +518,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static githubAuthRedirect(): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github',
       errors: {
@@ -565,7 +568,7 @@ export class AuthService {
      */
     state: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/github/callback',
       query: {
@@ -630,7 +633,7 @@ export class AuthService {
    * @throws ApiError
    */
   public static getAuthCapabilities(): CancelablePromise<AuthCapabilities> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/capabilities',
       errors: {
@@ -671,7 +674,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/logout',
       cookies: {
@@ -730,7 +733,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<CSRFTokenResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/csrf',
       cookies: {
@@ -775,7 +778,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<SessionListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/auth/sessions',
       cookies: {
@@ -831,7 +834,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/auth/sessions/{id}',
       path: {
@@ -867,17 +870,19 @@ export class AuthService {
    * unverified, at most once a minute and five times an hour. Returns
    * `already_verified` when there is nothing to send. Available after the
    * 30-day verification period ends, when other routes answer
-   * `email_verification_required`.
+   * `email_verification_required`. The browser forms also accept a
+   * form-encoded CSRF token from the signed-in account and render HTML.
    *
    * @returns EmailVerificationResendResponse The address is already verified.
    * @throws ApiError
    */
   public static resendEmailVerification(): CancelablePromise<EmailVerificationResendResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/verify-email/resend',
       errors: {
         401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -917,7 +922,7 @@ export class AuthService {
       csrf_token: string;
     },
   }): CancelablePromise<SessionsRevokeAllResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/sessions/revoke_all',
       cookies: {
@@ -975,7 +980,7 @@ export class AuthService {
   }: {
     requestBody: OIDCExchangeRequest,
   }): CancelablePromise<(OIDCExchangeResponse | OAuthTokenExchangeResponse)> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/auth/oidc/exchange',
       body: requestBody,
@@ -1040,7 +1045,7 @@ export class AuthService {
      */
     faasSid?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/dashboard/account/set-password',
       cookies: {
@@ -1082,7 +1087,7 @@ export class AuthService {
     ready_after_ms: number;
     expires_in_seconds: number;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/sales/inquiries/challenge',
       errors: {
@@ -1135,7 +1140,7 @@ export class AuthService {
   }): CancelablePromise<{
     accepted: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/sales/inquiries',
       body: requestBody,
@@ -1173,7 +1178,7 @@ export class AuthService {
      */
     code?: string;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/referrals/checkout',
       errors: {

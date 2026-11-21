@@ -310,7 +310,9 @@ func TestQueuePullLeases(t *testing.T) {
 }
 
 func (j *queueJourney) createBinding(t *testing.T) {
-	if res := j.tg.exec(t, j.tg.token, t.TempDir(), time.Minute, "deploy", "--create-only", "--app", "--name", j.app); res.exit != 0 {
+	// A pull binding's worker class must match the app's (#6986), so the
+	// consumer app is created in worker mode, not as a request-mode app.
+	if res := j.tg.exec(t, j.tg.token, t.TempDir(), time.Minute, "deploy", "--create-only", "--app", "--name", j.app, "--execution-mode", "worker"); res.exit != 0 {
 		t.Fatalf("deploy --create-only %s failed (exit %d): %s", j.app, res.exit, j.tg.redact(res.problem()))
 	}
 	j.queue = "jobs-" + randomHex(t, 6)

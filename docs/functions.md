@@ -67,7 +67,7 @@ function, defaults included, for example
 The same values are in `effective_limits` on the app's API response
 (`request_budget_ms`, `idle_timeout_s`, `pause`).
 
-Use `gregale invoke APP` for a smoke request and `gregale invocation get ID`
+Use `gregale invocation run APP` for a smoke request and `gregale invocation get ID`
 for an async result. Runtime-specific limits are in [plans](plans.md).
 
 ## Several functions in one project
@@ -467,6 +467,89 @@ in the background, `wait()`, `status()` and completions work between local
 functions, and the callee checks its `input` schema as it does when
 deployed. It also refreshes generated type files that are out of date.
 `calls:` apps are not served locally.
+
+## Durable workflow functions
+
+Set `workflow: true` and a function becomes a durable
+[code-first workflow](code-workflows.md): its handler takes the run's input
+and a `wf` object, and every `wf.step`, `wf.sleep` and `wf.waitForEvent` is
+recorded, so the run survives crashes, deploys and parks of any length
+without keeping a VM alive.
+
+```yaml
+functions:
+  - name: order-followup
+    root: functions/order-followup
+    runtime: node24
+    workflow: true            # or {timeout: 60s, retry: {max_attempts: 5}, trigger: {...}}
+```
+
+```js
+// functions/order-followup/handler.js
+export const config = { workflow: true };   // the same, declared in code
+
+export default async function handler(order, wf) {
+  const charge = await wf.step('charge', ({ idempotencyKey }) =>
+    payments.charge(order.id, { idempotencyKey }));
+  await wf.sleep('delivery_delay', '3d');
+  const approval = await wf.waitForEvent('refund_approval', { event: 'approved', timeout: '7d' });
+  const label = await wf.call('shipping-label', { order: order.id });  // a sibling function
+  return { charge: charge.id, approved: approval !== null, label };
+}
+```
+
+In Python, write `async def handler(input, wf)` with the same operations
+(`wf.wait_for_event`). A Go workflow function serves
+`faas.ServeWorkflows(...)` from its `main`, as in
+[Code-first workflows](code-workflows.md#go).
+
+- `wf.call('name', input)` calls another function the workflow may call and
+  returns its output. The run parks while the callee runs, so a long call
+  holds no VM; the callee checks its `input` schema and keeps its own
+  retries. A failed call throws `WorkflowCallError`. Wrapping
+  `functions.name.call()` in a `wf.step` still works for quick calls.
+- Another function starts a run with `start()` and gets a handle back:
+
+  ```js
+  import { functions } from '@gregale/sdk-node';
+  const run = await functions['order-followup'].start(order, { idempotencyKey: order.id });
+  await run.signal('refund_approval', { approved: true });   // a wf.waitForEvent takes it
+  const result = await run.wait({ timeoutMs: 30_000 });      // or run.status()
+  ```
+
+  Python: `run = await functions.order_followup.start(order, idempotency_key=...)`,
+  then `await run.wait()`, `await run.status()`, `await run.signal(event, payload)`.
+  Go: `run, err := functions.Start(ctx, "order-followup", order)`, then
+  `run.Wait`, `run.Status`, `run.Signal`. Generated types give `start()` the
+  workflow's input and `wait()` its output. The run starts in the caller's
+  environment under the plan's run quotas; only the function that started a
+  run can read or signal it.
+- The workflow is named after the function and runs on the function's app.
+  Start a run with
+  `gregale workflow run order-followup --app <project>-order-followup --input '{...}'`;
+  `trigger` in the mapping starts runs on a schedule or an event as well.
+- `timeout` bounds each call of the handler, `retry` is the default step
+  retry policy and `max_concurrent_runs` caps parallel runs, as for any code
+  workflow. The rules for workflow code (determinism, operation names) and
+  the limits are the same.
+- A Node or Python workflow function needs the SDK in its dependencies
+  (`@gregale/sdk-node` in `package.json`, `gregale-sdk` in
+  `requirements.txt` or `pyproject.toml`); `gregale deploy` refuses it
+  otherwise. Workflows are available on Hobby and higher plans.
+- A workflow function runs only through workflow runs. A plain request to
+  its URL, or a sibling's `call()`, answers `404`
+  `workflow_function_not_invocable`; start a run with
+  `functions.<name>.start()` or `gregale workflow run`. Its deploy checks
+  that its route answers rather than calling the handler.
+
+`gregale dev --local` drives workflow functions in process: steps and
+`wf.call` really run against the local functions, sleeps finish at once
+(`--workflow-sleep-scale 0.01` runs them at 1% of their length instead), and an
+event wait lasts until the event arrives. Start a run and wait for its output
+with `gregale dev trigger --local workflow order-followup --data '{"id":1}'`,
+send the latest unfinished run an event with
+`gregale dev trigger --local workflow order-followup --event refund_approval --data '{"approved":true}'`,
+or use `start()` and the run handle from another local function.
 
 ## Snapshot hooks
 

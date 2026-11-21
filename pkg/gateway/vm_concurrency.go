@@ -48,6 +48,22 @@ func effectiveVMConcurrencyLimit(app App, limits api.Limits) int {
 	return limits.PerInstanceConcurrency(app.PerInstanceConcurrency)
 }
 
+// burstScaleOutConcurrency is the requests per instance burst scale-out
+// plans with. For a function that declares no per_instance_concurrency it is
+// the runner's execution slots when those are fewer than perVM: admission
+// still lets perVM requests in (they wait in the runner's queue, as above),
+// but a sibling instance is asked for once the slots are busy. Dividing
+// in-flight work by perVM meant a function never scaled out below 80
+// concurrent requests on Scale, so a queue backlog ran on one instance's
+// four workers while the app's other instances stayed parked (prod
+// measurement 2026-11-19, ADR-20261022203523 amendment).
+func burstScaleOutConcurrency(app App, perVM int) int {
+	if app.PerInstanceConcurrency > 0 || app.FunctionRunnerSlots <= 0 || app.FunctionRunnerSlots >= perVM {
+		return perVM
+	}
+	return app.FunctionRunnerSlots
+}
+
 // concurrencyAdmissionPolicy is the warm-queue policy for app. An app that
 // declares per_instance_concurrency waits the longer per-instance default
 // unless it set max_queue_wait_ms itself (ADR-20261022203523): a full
@@ -467,6 +483,23 @@ func (m *vmConcurrencyManager) record(plan string, delta int64) {
 	if m != nil && m.onDelta != nil && plan != "" && delta != 0 {
 		m.onDelta(plan, delta)
 	}
+}
+
+// inflight returns the requests this gateway holds on an instance now. It
+// never creates a gate, so reading an idle instance leaves the map unchanged.
+func (m *vmConcurrencyManager) inflight(instanceID string) int {
+	if m == nil || instanceID == "" {
+		return 0
+	}
+	m.mu.Lock()
+	g := m.gates[instanceID]
+	m.mu.Unlock()
+	if g == nil {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.inflight
 }
 
 func (m *vmConcurrencyManager) tryAcquire(instanceID, plan string, limit int) (func(), bool) {

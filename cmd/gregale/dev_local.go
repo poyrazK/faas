@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,6 +54,11 @@ type devLocalTrigger struct {
 	Method   string `json:"method"`
 	Path     string `json:"path"`
 	Body     string `json:"body"`
+	// Workflow starts a run of a workflow function with Body as its input;
+	// with Event, it sends that event (Body as payload) to the function's
+	// latest unfinished run instead.
+	Workflow bool   `json:"workflow,omitempty"`
+	Event    string `json:"event,omitempty"`
 }
 
 type devLocalTriggerResult struct {
@@ -88,6 +92,7 @@ func cmdDevLocal(args []string) int {
 	offline := fs.Bool("offline", false, "run Postgres and buckets in Docker instead of using the developer session")
 	postgres := fs.Bool("postgres", false, "with --offline, start Postgres and set DATABASE_URL")
 	reset := fs.Bool("reset", false, "with --offline, wipe the local database and bucket files first")
+	sleepScale := fs.Float64("workflow-sleep-scale", 0, "multiply workflow sleeps and event timeouts by this (0: sleeps finish at once, waits last until an event)")
 	var buckets devBucketNames
 	fs.Var(&buckets, "bucket", "with --offline, a local bucket; repeatable")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 {
@@ -114,7 +119,10 @@ func cmdDevLocal(args []string) int {
 	if err != nil {
 		return printErr("Could not start locally", err)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	// A closed terminal (SIGHUP) stops like Ctrl-C. The app runs in its own
+	// process group, so the hangup never reaches it; without this the CLI
+	// died with no cleanup and left the app holding its port.
+	ctx, stop := signal.NotifyContext(context.Background(), testTerminationSignals()...)
 	defer stop()
 	if err := devLocalPreflight(ctx, projectDir, fns, app, devLocalEnv(os.Environ(), nil, fileEnv)); err != nil {
 		return printErr("Local preflight failed", err)
@@ -174,6 +182,7 @@ func cmdDevLocal(args []string) int {
 	}
 	srv.envConfig = envConfig
 	srv.port = listenPort
+	srv.sleepScale = max(*sleepScale, 0)
 	statePath := filepath.Join(cacheDir, "state.json")
 	if err := writeDevLocalState(statePath, devLocalState{Port: srv.port, Token: srv.token, PID: os.Getpid()}); err != nil {
 		return printErr("Could not start local functions", err)
@@ -320,6 +329,10 @@ type devLocalServer struct {
 	mu         sync.Mutex // serializes reload output and Go rebuilds
 	// invocations holds local sends for wait() and status().
 	invocations devLocalInvocations
+	// workflows holds local workflow runs (ADR-20261113120824 §4);
+	// sleepScale multiplies their sleeps (0 finishes them at once).
+	workflows  devLocalWorkflows
+	sleepScale float64
 }
 
 func newDevLocalServer(fns []*localFunction, projectDir string) (*devLocalServer, error) {
@@ -389,10 +402,20 @@ func (s *devLocalServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // invoke runs one request with the platform headers a gateway would set.
 func (s *devLocalServer) invoke(w http.ResponseWriter, r *http.Request, fn *localFunction, source string) {
+	s.invokeWith(w, r, fn, source, nil)
+}
+
+// invokeWith is invoke with platform headers (x-faas-*) the dev server sets
+// itself, such as a workflow call's; request headers of that prefix are
+// always dropped first.
+func (s *devLocalServer) invokeWith(w http.ResponseWriter, r *http.Request, fn *localFunction, source string, platform http.Header) {
 	for name := range r.Header {
 		if strings.HasPrefix(strings.ToLower(name), "x-faas-") || strings.EqualFold(name, devLocalTokenHeader) {
 			r.Header.Del(name)
 		}
+	}
+	for name, values := range platform {
+		r.Header[name] = values
 	}
 	timeout := time.Duration(fn.TimeoutS) * time.Second
 	if timeout <= 0 {
@@ -442,6 +465,10 @@ func (s *devLocalServer) serveTrigger(w http.ResponseWriter, r *http.Request) {
 	fn := s.byName[t.Function]
 	if fn == nil {
 		http.Error(w, fmt.Sprintf("no function %q", t.Function), http.StatusNotFound)
+		return
+	}
+	if t.Workflow {
+		s.serveWorkflowTrigger(w, fn, t)
 		return
 	}
 	if t.Method == "" {

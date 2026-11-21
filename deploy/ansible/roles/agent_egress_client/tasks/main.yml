@@ -1,0 +1,115 @@
+---
+# ADR-20261117185346: a tunnel to the agent egress gateway for agent VMs'
+# egress. The private key is minted on the node and never leaves it; the
+# gateway learns the public key and this node's slice through a peer file.
+
+- name: agent_egress_client — tunnel disabled, remove any earlier tunnel
+  when: not faas_agent_egress_iface
+  block:
+    - name: agent_egress_client — stop the tunnel
+      ansible.builtin.systemd:
+        name: wg-quick@wg-agent
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: agent_egress_client — remove the tunnel config
+      ansible.builtin.file:
+        path: /etc/wireguard/wg-agent.conf
+        state: absent
+
+- name: agent_egress_client — tunnel enabled
+  when: faas_agent_egress_iface | length > 0
+  block:
+    - name: agent_egress_client — require the manifest tunnel contract
+      ansible.builtin.assert:
+        that:
+          - faas_agent_egress_gateway_endpoint | length > 0
+          - faas_agent_egress_gateway_public_key | length > 0
+          - faas_agent_egress_node_slice | length > 0
+          - faas_agent_egress_node_address | length > 0
+        fail_msg: >-
+          faas_agent_egress_iface is set but the gateway endpoint, key or this
+          node's slice is missing. Regenerate host_vars with
+          `make manifest-ansible` from a manifest that declares
+          egress.agent_gateway.
+
+    - name: agent_egress_client — install wireguard-tools
+      ansible.builtin.apt:
+        name: wireguard-tools
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: agent_egress_client — mint the node key once
+      ansible.builtin.shell: |
+        set -eu
+        umask 077
+        wg genkey > /etc/wireguard/{{ faas_agent_egress_iface }}.key
+      args:
+        creates: /etc/wireguard/{{ faas_agent_egress_iface }}.key
+        executable: /bin/bash
+
+    - name: agent_egress_client — read the node key
+      ansible.builtin.slurp:
+        src: /etc/wireguard/{{ faas_agent_egress_iface }}.key
+      register: faas_agent_egress_key_file
+      no_log: true
+
+    - name: agent_egress_client — derive the node public key
+      ansible.builtin.command: wg pubkey
+      args:
+        stdin: "{{ faas_agent_egress_key_file.content | b64decode | trim }}"
+      register: faas_agent_egress_pubkey
+      changed_when: false
+      no_log: true
+
+    - name: agent_egress_client — publish the node public key
+      ansible.builtin.set_fact:
+        faas_agent_egress_private_key: "{{ faas_agent_egress_key_file.content | b64decode | trim }}"
+        faas_agent_egress_client_public_key: "{{ faas_agent_egress_pubkey.stdout | trim }}"
+      no_log: true
+
+    - name: agent_egress_client — render the tunnel config
+      ansible.builtin.template:
+        src: wg-agent.conf.j2
+        dest: /etc/wireguard/{{ faas_agent_egress_iface }}.conf
+        owner: root
+        group: root
+        mode: "0600"
+      no_log: true
+      notify: restart faas agent egress tunnel
+
+    # delegate_to is templated before `when`, so it must resolve even
+    # without the group (see tenant_egress_client).
+    - name: agent_egress_client — register this node with the gateway
+      ansible.builtin.template:
+        src: peer.conf.j2
+        dest: /etc/faas/agent-egress/peers/{{ inventory_hostname }}.conf
+        owner: root
+        group: root
+        mode: "0600"
+      delegate_to: "{{ (groups['agent_egress_gateway'] | default([]) + [inventory_hostname]) | first }}"
+      when: groups['agent_egress_gateway'] | default([]) | length > 0
+      register: faas_agent_egress_peer
+
+    - name: agent_egress_client — apply the peer on the gateway  # noqa: no-handler (the tunnel starts below and needs a live peer)
+      ansible.builtin.command: /usr/local/sbin/faas-agent-egress-sync
+      delegate_to: "{{ (groups['agent_egress_gateway'] | default([]) + [inventory_hostname]) | first }}"
+      when: faas_agent_egress_peer is changed
+      changed_when: true
+
+    - name: agent_egress_client — show the key for a hand-managed gateway
+      ansible.builtin.debug:
+        msg: >-
+          Register this node on the agent egress gateway:
+          [Peer] PublicKey = {{ faas_agent_egress_client_public_key }},
+          AllowedIPs = {{ faas_agent_egress_node_slice }}
+      when: groups['agent_egress_gateway'] | default([]) | length == 0
+
+    - name: agent_egress_client — start the tunnel
+      ansible.builtin.systemd:
+        name: wg-quick@{{ faas_agent_egress_iface }}
+        enabled: true
+        state: started
+        daemon_reload: true

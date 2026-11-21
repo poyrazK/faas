@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -43,6 +44,13 @@ func (b *PGBackend) EnsureWarmCapacity(ctx context.Context, appID, scope, trigge
 	method := WakeMethodUnspecified
 	found := false
 	markWakeAdmissionStarted(ctx)
+	if b.log != nil {
+		rpcStart := time.Now()
+		b.log.Debug("gateway: ensure wake capacity rpc start", "app_id", appID, "trigger", trigger, "desired", desired)
+		defer func() {
+			b.log.Debug("gateway: ensure wake capacity rpc end", "app_id", appID, "took", time.Since(rpcStart).String(), "err", err)
+		}()
+	}
 	err = capacity.EnsureWakeCapacity(ctx, appID, trigger, desired, func(instanceID, nodeID, deploymentID, wakeID string, rawMethod int32, port int) {
 		// The callback begins only after the schedd response arrives. Stamp that
 		// boundary before publishing the first returned target.

@@ -1,6 +1,6 @@
 # ADR-847: Opt-in synthetic probes for routes without organic traffic
 
-- Status: Accepted (amended 2026-10-29)
+- Status: Accepted (amended 2026-10-29, 2026-11-09, 2026-11-19)
 - Date: 2026-10-09
 - Related: ADR-454, ADR-459, ADR-482, ADR-843, ADR-846
 - Amends: ADR-454 (observed evidence only)
@@ -105,3 +105,28 @@ protected-app rollouts in two weeks).
 This replaces "Probes reach only routes the customer's own auth gates allow
 anonymously" for the platform's gates.
 
+
+## Amendment 3 (2026-11-19): probes do not reset the idle timer
+
+The gateway kept route probes out of request telemetry and usage, but a
+probe's 2xx still reset the instance's idle timer. In production three apps
+whose canaries had been aborted on 2026-11-15 kept two live deployments at
+their split weights, were probed every minute, and so never went idle: ten
+1 GiB instances stayed resident and billed for four days, and one app
+(`e2edp-1115-r`) never parked again, captured no snapshot, and cold-booted
+every one of its 184 scale-up instances and 169 request wakes
+(`cold_reason=no_snapshot`).
+
+- A route probe no longer resets the idle timer. It still refreshes the
+  gateway's own cached target, since a 2xx proves the target alive.
+- This replaces "Probes … keep the canary warm" above. During a canary a quiet
+  deployment parks after its idle timeout like any other, and the next probe
+  wakes it again: a restore from the snapshot the park kept, billed like any
+  request-triggered wake. Probe evidence is unchanged; a probe that wakes the
+  deployment counts like any other.
+- The protection-baseline health probe's park-after-probe rule
+  (ADR-20261116120000 §3) is unchanged: an instance only that probe woke still
+  parks once the probe is done.
+- Separately, probe targets now require the canary's rollout to be pending or
+  rolling out, as "only while a canary is in flight" above already said; an
+  aborted or completed rollout is no longer probed.

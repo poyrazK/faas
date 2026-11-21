@@ -45,8 +45,11 @@ func (s *Service) validLink(ctx context.Context, code string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		_, member := s.Config.Member(owner.Email)
-		return member, nil
+		team, err := s.roster(ctx)
+		if err != nil {
+			return false, err
+		}
+		return team.role(owner.Email) != "", nil
 	}
 	return true, nil
 }

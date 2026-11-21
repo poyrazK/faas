@@ -216,7 +216,7 @@ export const sendRequest = async (
 
   onCancel(() => controller.abort());
 
-  return await fetch(url, request);
+  return await (config.FETCH ?? fetch)(url, request);
 };
 
 export const getResponseHeader = (response: Response, responseHeader?: string): string | undefined => {
@@ -294,6 +294,7 @@ export const catchErrorCodes = (options: ApiRequestOptions, result: ApiResult): 
  * @throws ApiError
  */
 export const request = <T>(config: OpenAPIConfig, options: ApiRequestOptions): CancelablePromise<T> => {
+  if (config.REQUEST) return config.REQUEST<T>(options);
   return new CancelablePromise(async (resolve, reject, onCancel) => {
     try {
       const url = getUrl(config, options);

@@ -17,7 +17,7 @@ func renderInspectAttention(w io.Writer, summary inspectSummary) {
 }
 
 func inspectAttention(summary inspectSummary) (state, reason, command string) {
-	command = recoveryCLI() + " inspect " + recoveryArgument(summary.App.Slug)
+	command = recoveryCLI() + " app health " + recoveryArgument(summary.App.Slug) + " --explain"
 	for _, recommendation := range summary.Recommendations {
 		if recommendation.Severity == "error" {
 			return "Needs attention", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
@@ -57,7 +57,7 @@ func inspectAttention(summary inspectSummary) (state, reason, command string) {
 			return "Parked", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
 		}
 	}
-	return "No urgent issues reported", "This snapshot has no error or warning recommendations; it does not verify every route or workload.", recoveryCLI() + " app " + recoveryArgument(summary.App.Slug) + " health"
+	return "No urgent issues reported", "This snapshot has no error or warning recommendations; it does not verify every route or workload.", recoveryCLI() + " app health " + recoveryArgument(summary.App.Slug)
 }
 
 // Construct commands from known observations, rather than executing or parsing
@@ -69,7 +69,7 @@ func inspectAttentionCommand(summary inspectSummary, code string) string {
 		if summary.Failure != nil {
 			return cli + " deployment get " + recoveryArgument(summary.Failure.DeploymentID)
 		}
-		return cli + " inspect " + slug + " --errors"
+		return cli + " app health " + slug + " --errors"
 	case "health_gate_firing":
 		return cli + " alerts list --app " + slug
 	case "app_parked":

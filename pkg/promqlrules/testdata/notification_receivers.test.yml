@@ -1,0 +1,109 @@
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: unavailable collector warns and recovers
+    interval: 1m
+    input_series:
+      - series: 'up{job="alertmanager",instance="cp:9094"}'
+        values: '1x30'
+      - series: 'up{job="node",instance="cp:9100"}'
+        values: '1x30'
+      - series: 'faas_notification_receiver_expected{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '1x30'
+      - series: 'faas_notification_receiver_collector_up{job="node",instance="cp:9100"}'
+        values: '0x7 1x22'
+      - series: 'faas_notification_receiver_collector_last_run_timestamp_seconds{job="node",instance="cp:9100"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasNotificationReceiverCollectorUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: alertmanager
+              family: notification_receivers
+              public_status: internal
+            exp_annotations:
+              summary: Per-receiver notification evidence is unavailable
+              description: Alertmanager is reachable, but the receiver collector or independent receiver inventory is missing, stale or invalid. Check the receiver-metrics timer and the receiver-name-in-metrics feature flag. Missing evidence cannot establish successful delivery.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md
+      - eval_time: 10m
+        alertname: FaasNotificationReceiverCollectorUnavailable
+        exp_alerts: []
+
+  - name: incomplete expected receiver warns and recovers
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="cp:9100"}'
+        values: '1x20'
+      - series: 'faas_notification_receiver_collector_up{job="node",instance="cp:9100"}'
+        values: '1x20'
+      - series: 'faas_notification_receiver_collector_last_run_timestamp_seconds{job="node",instance="cp:9100"}'
+        values: '0+60x20'
+      - series: 'faas_notification_receiver_expected{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '1x20'
+      - series: 'faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0x20'
+      - series: 'faas_notification_receiver_failures_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0x20'
+      - series: 'faas_notification_receiver_last_success_observed_timestamp_seconds{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0x20'
+      - series: 'faas_notification_receiver_latency_seconds_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '_ _ _ _ _ _ _ _ 1x12'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasNotificationReceiverTelemetryMissing
+        exp_alerts:
+          - exp_labels:
+              receiver: faas-page
+              integration: slack
+              severity: warn
+              component: alertmanager
+              family: notification_receivers
+              public_status: internal
+            exp_annotations:
+              summary: Configured notification receiver lacks transport evidence
+              description: The faas-page / slack group is expected by deployment intent but has no complete, fresh transport evidence. Check configuration reload and collector errors; another receiver's success does not satisfy this expectation.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md
+      - eval_time: 10m
+        alertname: FaasNotificationReceiverTelemetryMissing
+        exp_alerts: []
+
+  - name: failed completed requests warn by receiver then age out
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="cp:9100"}'
+        values: '1x30'
+      - series: 'faas_notification_receiver_collector_up{job="node",instance="cp:9100"}'
+        values: '1x30'
+      - series: 'faas_notification_receiver_collector_last_run_timestamp_seconds{job="node",instance="cp:9100"}'
+        values: '0+60x30'
+      - series: 'faas_notification_receiver_expected{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '1x30'
+      - series: 'faas_notification_receiver_requests_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0+1x30'
+      - series: 'faas_notification_receiver_failures_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0+1x10 10x20'
+      - series: 'faas_notification_receiver_latency_seconds_total{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0+0.1x30'
+      - series: 'faas_notification_receiver_last_success_observed_timestamp_seconds{job="node",instance="cp:9100",receiver="faas-page",integration="slack"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasNotificationReceiverRequestsFailing
+        exp_alerts:
+          - exp_labels:
+              receiver: faas-page
+              integration: slack
+              severity: warn
+              component: alertmanager
+              family: notification_receivers
+              public_status: internal
+            exp_annotations:
+              summary: Notification transport requests are failing for a receiver
+              description: The faas-page / slack group recorded failed completed requests in the last ten minutes, including retry attempts. Inspect provider errors and verify firing and recovery receipts using the on-call procedure. Transport success does not prove human acknowledgement.
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md
+      - eval_time: 23m
+        alertname: FaasNotificationReceiverRequestsFailing
+        exp_alerts: []

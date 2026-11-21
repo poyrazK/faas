@@ -1,20 +1,51 @@
 # Errors
 
-Gregale errors use RFC 9457 JSON. The `code` is stable for automation;
+A Gregale API error response uses RFC 9457 Problem Details JSON
+(`Content-Type: application/problem+json`). The `code` is stable for automation;
 `detail` names the observed value or failing stage; `docs_url` points to the
 relevant recovery guide. CLI output preserves those fields and the next
 command when one is known. `type` defaults to `about:blank` when no specific
 problem URI is supplied. `instance` identifies the specific occurrence when
 the caller supplies an occurrence URI.
 
+An error response looks like this:
+
+```json
+{
+  "type": "about:blank",
+  "title": "App limit reached",
+  "status": 403,
+  "code": "plan_limit_apps",
+  "detail": "free plan allows 1 deployed app(s); you have 1.",
+  "limit": 1,
+  "observed": 1,
+  "docs_url": "https://gregale.dev/docs/plans#at-a-glance"
+}
+```
+
+A limit error carries the plan's `limit` and the `observed` value. Some codes
+add fields of their own, such as `retry_after_seconds`.
+
+The [error code reference](error-codes.md) lists every code with the HTTP
+status it is sent with, its title and hint, and the page that explains it.
+This page covers the codes you are most likely to meet and what to do next.
+
 On app and API requests, Gregale sends its own timeouts and failed
 connections to your app as 503 rather than 502 or 504. The response carries
 its `code` and the `X-Faas-Error-Code` header, so the problem body and request
 id reach you through Cloudflare, which replaces 502 and 504 bodies with its
-own page. A 502
-or 504 that your app returns itself is passed on unchanged, and Cloudflare
+own page. A 502 or 504 that your app returns itself keeps its status, and Cloudflare
 then shows its own error page in place of your body. Key automation on `code`
 or `X-Faas-Error-Code`, not on the status.
+
+On the Free Cloudflare front, a customer-originated 502/504 JSON body can
+therefore arrive as plain `error code: 502` or `error code: 504`.
+Customer-originated 500 and 503 bodies pass through. If your client needs a
+structured body for temporary unavailability, your app can deliberately use
+503 with its own stable error code. Gregale does not change customer status
+codes. Preserving arbitrary origin 502/504 bodies requires a separately
+supported front; Cloudflare documents origin error page pass-through as an
+Enterprise feature.
 
 | Code family | Meaning | Next step |
 |---|---|---|
@@ -28,11 +59,12 @@ or `X-Faas-Error-Code`, not on the status.
 | `function_input_invalid` | 422 from a function: an SDK functions client called it with input that does not match the function's `input` schema in `gregale.yaml` (the detail names the failing field, e.g. `input.email is required`). Only calls from the SDK's `functions` client are checked | Fix the caller's input, or change the callee's `input` schema and redeploy it. See [functions](functions.md). |
 | `execution_mode_conflict` | The app's startup behavior contradicts its `execution_mode` (a worker bound a port or exited, a job served; a worker with a push queue binding may listen for its deliveries) | Set `execution_mode` to match the app, or change its start command. |
 | `validation_failed` | A request or manifest is malformed | Correct the named field; no write is committed. |
-| `request_budget_exceeded` (503) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invoke --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
+| `request_budget_exceeded` (503) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invocation run --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |
 | `idempotency_key_reused` (422) | The request's `Idempotency-Key` was used in the last 24 hours for a different request (another body, query, or precondition header); nothing ran, and the first request's result is kept | Send a new key for a new request. To get the first request's result, resend it unchanged with the same key. |
 | `auth_rate_limited` (429) | Too many failed authentication attempts came from this address, or password sign-in for this email address is paused after repeated failures from any address | Wait for `Retry-After`, then retry with valid credentials, or reset the password to lift the pause. |
 | `api_rate_limited` (429) | The account made more authenticated API requests this minute than its plan allows (Free 600, Hobby 1,200, Pro 3,000, Scale 6,000 a minute) | Wait for `Retry-After` and spread requests out. |
+| `obs_runtime_busy` (429) | Runtime diagnostic collection is temporarily at capacity | Wait for `Retry-After` or reduce overlapping runtime diagnostics requests. |
 | `queue_receive_busy` (429) | The account already has 32 queue receive long-polls waiting | Retry after one of them returns, or run fewer concurrent consumers. |
 | `ip_denied`, `geo_denied`, `waf_blocked` (403) | An app edge rule refused the client's IP address or country, or a blocking WAF rule matched the request | Check the rule with `gregale edge rule list --app APP` and any list it references with `gregale edge rule-list get NAME`. |
 | `unauthorized` (401) | The dashboard session or API credential is missing or expired | Sign in again or refresh the API credential, then retry. |

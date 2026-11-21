@@ -29,12 +29,19 @@ func tableSelectionView(p datapipeline.Pipeline, data dashboard.DataPipelinesDat
 		}
 	}
 	v.CanRequest = v.CanRequest && len(v.Choices) > 0
+	if p.Serving != nil && len(p.Serving.Columns) > 0 {
+		v.CanRequest = false
+		v.Choices = nil
+	}
 	return v
 }
 
 func tableSelectionViews(pipelines []datapipeline.Pipeline, data dashboard.DataPipelinesData) []dashboard.DataPipelineTableSelection {
 	views := []dashboard.DataPipelineTableSelection{}
 	for _, p := range pipelines {
+		if p.Operations != nil && p.Operations.Snapshot != nil {
+			continue
+		}
 		if p.State == "deleted" {
 			continue
 		}

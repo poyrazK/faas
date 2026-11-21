@@ -274,6 +274,8 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 				puller = resolving
 			}
 			h := New(store, notif, puller, b, guestInitPath, t.TempDir(), silentLogger())
+			rep := &noticeOrderReplicator{notif: notif}
+			h.WithArtifactReplicator(rep)
 
 			h.HandleNotification(context.Background(), db.Notification{
 				Channel: db.NotifyDeploymentChanged,
@@ -291,6 +293,7 @@ func TestHandleDeployment_RealBuildPath(t *testing.T) {
 			if findNotify(notif, db.NotifySnapshotPrime) == nil {
 				t.Error("expected snapshot_prime notification")
 			}
+			assertLayerPublishedAfterReplication(t, notif, rep, app.ID, dep.ID)
 			if resolving != nil {
 				if len(resolving.configRefs) != 1 || resolving.configRefs[0] != mp.appRef || len(resolving.manifestRefs) < 1 || resolving.manifestRefs[0] != mp.appRef {
 					t.Fatalf("build did not consume selected child: configs=%v manifests=%v", resolving.configRefs, resolving.manifestRefs)

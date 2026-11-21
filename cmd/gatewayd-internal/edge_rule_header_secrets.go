@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
@@ -80,6 +81,11 @@ func (c *edgeRuleHeaderSecrets) put(appID, id, value string) {
 // its credential. A store error fails the load, keeping the host's
 // last-known-good rules.
 func (g *gatewaydEdgeRules) resolveEdgeRuleHeaderSecrets(ctx context.Context, rules []state.EdgeRule) ([]state.EdgeRule, error) {
+	if g.headerSecretsInject {
+		// ADR-20261110210000 slice 3i: the reference travels to the
+		// instance's vmmd, which opens the value through secretd.
+		return rules, nil
+	}
 	wanted := map[string][]string{} // app id -> uncached ids
 	found := false
 	for _, r := range rules {
@@ -141,6 +147,22 @@ func (g *gatewaydEdgeRules) resolveEdgeRuleHeaderSecrets(ctx context.Context, ru
 		out[i].Action.Headers = &headers
 	}
 	return out, nil
+}
+
+// edgeHeaderSecretsInjectFromEnv reads FAAS_GATEWAY_EDGE_HEADER_SECRETS
+// (ADR-20261110210000 slice 3i): unset or "local" opens sealed request header
+// values here with the edge identity; "inject" never opens them and names
+// them to the instance's vmmd instead, which must run with
+// FAAS_VMMD_EDGE_HEADER_SECRETS=secretd on every node first.
+func edgeHeaderSecretsInjectFromEnv(getenv func(string) string) (bool, error) {
+	switch mode := getenv("FAAS_GATEWAY_EDGE_HEADER_SECRETS"); mode {
+	case "", "local":
+		return false, nil
+	case "inject":
+		return true, nil
+	default:
+		return false, fmt.Errorf("gatewayd-internal: FAAS_GATEWAY_EDGE_HEADER_SECRETS=%q: want local or inject", mode)
+	}
 }
 
 // edgeRuleHeaderSecretIDs lists the sealed values a headers rule references.

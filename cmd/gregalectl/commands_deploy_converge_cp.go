@@ -29,6 +29,7 @@ package main
 // contract. The workflow records the role hashes after it.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -326,12 +327,43 @@ func controlPlaneEnvironmentHash(inventoryRoot string, inventory []manifestAnsib
 		}
 		writeField("rendered/"+filepath.ToSlash(rel), file.Body)
 	}
-	vars, err := os.ReadFile(varsFile)
+	vars, err := operatorVarsForHash(varsFile)
 	if err != nil {
-		return "", fmt.Errorf("read control-plane Ansible variables: %w", err)
+		return "", err
 	}
 	writeField("operator-vars", vars)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+// operatorVarsPlaceholder stands in for the vars file's own directory in
+// the hashes below.
+const operatorVarsPlaceholder = "${operator_vars_dir}/"
+
+// operatorVarsForHash returns the operator vars file as the contract and
+// environment hashes see it: CD stages files next to it (the seal-domain
+// keys, scripts/ci/seal_domain_vars.sh) and names them by absolute path, so
+// the runner's temporary directory and the job's work directory reached the
+// hashes. The control plane has two runners and the full release and the
+// host-configuration lane use different work directories, so a deploy that
+// landed elsewhere than the last one saw a moved environment and converged
+// every role (rc.343, rc.344: 22 to 30 minutes instead of the changed
+// roles). The directory is not an input: the staged files' content is, and
+// it reaches the hashes through the recipients the script writes beside
+// them (docs/adr/20261115120000-full-release-converge-speed.md).
+func operatorVarsForHash(varsFile string) ([]byte, error) {
+	vars, err := os.ReadFile(varsFile)
+	if err != nil {
+		return nil, fmt.Errorf("read control-plane Ansible variables: %w", err)
+	}
+	dir, err := filepath.Abs(filepath.Dir(varsFile))
+	if err != nil {
+		return nil, fmt.Errorf("resolve control-plane Ansible variables directory: %w", err)
+	}
+	prefix := filepath.ToSlash(filepath.Clean(dir))
+	if prefix == "/" {
+		return vars, nil
+	}
+	return bytes.ReplaceAll(vars, []byte(prefix+"/"), []byte(operatorVarsPlaceholder)), nil
 }
 
 func soleControlPlaneHost(m *manifest.Manifest) (manifest.Host, error) {
@@ -399,9 +431,9 @@ func controlPlaneBootstrapContractHash(ansibleDir, inventoryRoot string, invento
 		}
 		writeField("rendered/"+filepath.ToSlash(rel), file.Body)
 	}
-	vars, err := os.ReadFile(varsFile)
+	vars, err := operatorVarsForHash(varsFile)
 	if err != nil {
-		return "", fmt.Errorf("read control-plane Ansible variables: %w", err)
+		return "", err
 	}
 	writeField("operator-vars", vars)
 	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil

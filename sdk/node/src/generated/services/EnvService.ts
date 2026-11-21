@@ -18,6 +18,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class EnvService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Render the env-diff matrix (presence / value-equality across scopes).
    * Returns the (rows × scopes) matrix of env vars + sealed
@@ -39,7 +40,7 @@ export class EnvService {
      */
     slug: string,
   }): CancelablePromise<EnvDiffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/env-diff',
       path: {
@@ -59,7 +60,7 @@ export class EnvService {
   /**
    * List env vars on an app.
    * Returns every env var key + timestamps on the app. The plaintext
-   * value NEVER appears in the response — guest-init reads the value
+   * value appears only with `?values=true`; guest-init reads it
    * at process start from `/etc/faas/env.json` inside the guest.
    *
    * **scope filter.** The optional `?scope=`
@@ -77,6 +78,7 @@ export class EnvService {
   public static listEnv({
     slug,
     scope,
+    values,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -92,8 +94,12 @@ export class EnvService {
      *
      */
     scope?: string,
+    /**
+     * `true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value.
+     */
+    values?: 'true',
   }): CancelablePromise<AppEnvListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/env',
       path: {
@@ -101,6 +107,7 @@ export class EnvService {
       },
       query: {
         'scope': scope,
+        'values': values,
       },
       errors: {
         400: `code: env_scope_invalid — ?scope= failed the EnvScopePattern check (empty, too long, or out-of-shape slug). Applies to both env and secrets surfaces.`,
@@ -158,7 +165,7 @@ export class EnvService {
      */
     guard?: boolean,
   }): CancelablePromise<EnvBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/env/batch',
       path: {
@@ -221,7 +228,7 @@ export class EnvService {
      */
     xGregaleEnvReceiptProof?: string,
   }): CancelablePromise<EnvBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/env/batch/requests/{request_id}',
       path: {
@@ -277,7 +284,7 @@ export class EnvService {
      */
     limit?: number,
   }): CancelablePromise<ListConfigRevisionsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/config/revisions',
       path: {
@@ -329,7 +336,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<ConfigRevisionDetail> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/config/revisions/{revision}',
       path: {
@@ -376,7 +383,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<ConfigGuard> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/config/guard',
       path: {
@@ -423,7 +430,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<ConfigRollbackResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/config/rollback',
       path: {
@@ -482,7 +489,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<ConfigRollbackReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/config/rollback/requests/{request_id}',
       path: {
@@ -566,7 +573,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<AppEnvResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/env/{key}',
       path: {
@@ -637,7 +644,7 @@ export class EnvService {
      */
     scope?: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/env/{key}',
       path: {

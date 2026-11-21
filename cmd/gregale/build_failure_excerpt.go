@@ -88,10 +88,21 @@ func printBuildFailureExcerpt(ctx context.Context, c *Client, w io.Writer, slug 
 	_, _ = fmt.Fprintf(w, "  full build log: gregale logs %s --deployment %s\n", slug, d.ID)
 }
 
+// deploymentLogStreamer reads a deployment's log page; *Client is one.
+type deploymentLogStreamer interface {
+	StreamDeploymentLogs(ctx context.Context, id string, beforeSeq *int64, limit int, follow bool) (io.ReadCloser, error)
+}
+
 // readBuildLog collects a finished deployment's build log lines, the stream
 // gregale logs --deployment reads for a deployment that never served.
-func readBuildLog(ctx context.Context, c *Client, deploymentID string) []string {
-	body, err := c.StreamDeploymentLogs(ctx, deploymentID, nil, 500, false)
+func readBuildLog(ctx context.Context, c deploymentLogStreamer, deploymentID string) []string {
+	return readRecentDeploymentLog(ctx, c, deploymentID, 500)
+}
+
+// readRecentDeploymentLog returns the newest limit log rows of a deployment,
+// oldest first, split into lines.
+func readRecentDeploymentLog(ctx context.Context, c deploymentLogStreamer, deploymentID string, limit int) []string {
+	body, err := c.StreamDeploymentLogs(ctx, deploymentID, nil, limit, false)
 	if err != nil {
 		return nil
 	}

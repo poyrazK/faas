@@ -43,6 +43,8 @@ class AgentApprovalResponse:
     """The review page"""
     agent: str | Unset = UNSET
     """The connection's client name or key label."""
+    connection_id: str | Unset = UNSET
+    """The id of the agent connection that asked, as GET /v1/agent-connections lists it."""
     decided_at: datetime.datetime | Unset = UNSET
     """When a person approved or denied it."""
     note: str | Unset = UNSET
@@ -73,6 +75,8 @@ class AgentApprovalResponse:
 
         agent = self.agent
 
+        connection_id = self.connection_id
+
         decided_at: str | Unset = UNSET
         if not isinstance(self.decided_at, Unset):
             decided_at = self.decided_at.isoformat()
@@ -99,6 +103,8 @@ class AgentApprovalResponse:
             field_dict["review_url"] = review_url
         if agent is not UNSET:
             field_dict["agent"] = agent
+        if connection_id is not UNSET:
+            field_dict["connection_id"] = connection_id
         if decided_at is not UNSET:
             field_dict["decided_at"] = decided_at
         if note is not UNSET:
@@ -131,6 +137,8 @@ class AgentApprovalResponse:
 
         agent = d.pop("agent", UNSET)
 
+        connection_id = d.pop("connection_id", UNSET)
+
         _decided_at = d.pop("decided_at", UNSET)
         decided_at: datetime.datetime | Unset
         if isinstance(_decided_at, Unset):
@@ -153,6 +161,7 @@ class AgentApprovalResponse:
             expires_at=expires_at,
             review_url=review_url,
             agent=agent,
+            connection_id=connection_id,
             decided_at=decided_at,
             note=note,
             reason=reason,

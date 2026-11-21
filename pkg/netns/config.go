@@ -45,8 +45,11 @@ const (
 	// package-registry and git-host names, for sandbox sessions in
 	// registries mode (ADR-20261027090013 §6).
 	SandboxRegistriesDNSPort = 5356
-	DatabaseRoutePort        = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
-	TenantBridge             = "br-tenants" // root-ns bridge the veth host-side enslaves to
+	// SandboxWebDNSPort is the bridge resolver that answers public names
+	// only, for sandbox sessions in web mode (ADR-20261112121456 §2).
+	SandboxWebDNSPort = 5357
+	DatabaseRoutePort = 5432         // managed-database route port on DatabaseRouteAddress (ADR-1027); mirrors api.DatabaseRoutePort
+	TenantBridge      = "br-tenants" // root-ns bridge the veth host-side enslaves to
 	// nft chain-policy words (ADR-031). Forwarded as the `policy`
 	// value in the per-netns forward-chain argv, so goconst demands
 	// the literals live in named constants.
@@ -163,6 +166,11 @@ type Config struct {
 	// it reaches none of the bridge's service ports, and the DNS gate with
 	// port 443 alone leaves it only the addresses that resolver answered.
 	SandboxRegistries bool
+	// SandboxWeb marks a sandbox session VM in web mode
+	// (ADR-20261112121456 §2): isolated from the platform like
+	// SandboxRegistries, but its DNS goes to the public-names resolver and
+	// the DNS gate admits whatever that resolver answered.
+	SandboxWeb bool
 	// GuestMAC, when set, is the only MAC the guest may send from: with it,
 	// an ingress guard on the tap accepts only IPv4 from GuestIP and ARP for
 	// GuestIP, both from GuestMAC, and drops every other frame
@@ -364,6 +372,11 @@ func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 	return rules
 }
 
+// sandbox reports whether the VM is a sandbox session with a network
+// (ADR-20261027090013 §6, ADR-20261112121456): it reaches no bridge service,
+// managed database or private service address.
+func (c Config) sandbox() bool { return c.SandboxRegistries || c.SandboxWeb }
+
 // databaseRouteRules admits guest TCP to the database route's one port
 // (ADR-1027) and drops everything else sent to the address. Like a service
 // address it is a platform hop, so the accept precedes every ADR-361/373
@@ -374,7 +387,7 @@ func (c Config) databaseRouteRules(nft func(...string) []string) [][]string {
 		return nil
 	}
 	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", addr.String(), "drop")
-	if c.SandboxRegistries {
+	if c.sandbox() {
 		// A sandbox session reaches no managed database (ADR-20261027090013 §6).
 		return [][]string{drop}
 	}
@@ -398,7 +411,7 @@ func (c Config) serviceAddressRules(nft func(...string) []string) [][]string {
 	}
 	block := prefix.Masked().String()
 	drop := nft("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "ip", "daddr", block, "drop")
-	if c.SandboxRegistries {
+	if c.sandbox() {
 		// A sandbox session reaches no private service (ADR-20261027090013 §6).
 		return [][]string{drop}
 	}
@@ -417,6 +430,20 @@ func (c Config) RetargetAppPortCommands() [][]string {
 	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
 	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
 	return append([][]string{nft("flush", "chain", "ip", "faas", "prerouting")}, c.appPortDNATRules(nft)...)
+}
+
+// TenantPortFloodOffCommand keeps other tenant ports' broadcast and multicast
+// off vethHost's br-tenants port. Every new namespace sends IPv6 router
+// solicitations, MLD reports and duplicate address checks, and ARP
+// broadcasts; flooded to every port, they moved each instance's root-side
+// veth counters (vmmd's ingress meter and the idle ladder's activity guard)
+// and resumed paused apps no traffic was meant for (ADR-20261107122928
+// amendment 2). Tenants reach each other only through the host, never over
+// the bridge. The kernel still floods what the bridge device itself sends,
+// such as the host's ARP for this lease, and unknown unicast still floods.
+// It is an ip command so it joins the setup's ip batch.
+func TenantPortFloodOffCommand(vethHost string) []string {
+	return []string{"ip", "link", "set", "dev", vethHost, "type", "bridge_slave", "mcast_flood", "off", "bcast_flood", "off"}
 }
 
 // SetupCommands returns the ordered argv list that creates the namespace, veth
@@ -440,6 +467,7 @@ func (c Config) SetupCommands() [][]string {
 		// veth pair; host end onto the tenant bridge, peer end into the netns.
 		cmd("ip", "link", "add", c.VethHost, "type", "veth", "peer", "name", c.VethPeer),
 		cmd("ip", "link", "set", c.VethHost, "master", TenantBridge),
+		TenantPortFloodOffCommand(c.VethHost),
 		cmd("ip", "link", "set", c.VethHost, "up"),
 		peerIntoNetns,
 		// Lease IPs are reused with new veth MACs. Their bridge neighbor
@@ -696,6 +724,9 @@ func (c Config) NftCommands() [][]string {
 			add("add", "counter", "ip", "faas", e.CounterName, "{}")
 		}
 	}
+	// R8-2: count the guest's own traffic to internal destinations, so
+	// billing can leave it out of app egress.
+	cmds = append(cmds, c.internalEgressAccounting(nft)...)
 	// NAT: publish :8080 to the guest; masquerade the guest's egress.
 	add("add", "chain", "ip", "faas", "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}")
 	cmds = append(cmds, c.appPortDNATRules(nft)...)
@@ -755,7 +786,7 @@ func (c Config) NftCommands() [][]string {
 		if c.QualificationOnly {
 			proxyPorts = []int{ServiceProxyPort}
 		}
-		if c.SandboxRegistries {
+		if c.sandbox() {
 			proxyPorts = nil
 		}
 		if c.RehearsalRunID != "" && !c.QualificationOnly {
@@ -770,7 +801,7 @@ func (c Config) NftCommands() [][]string {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(port), "accept")
 		}
-		if c.ServiceProxyHTTPS && !c.SandboxRegistries {
+		if c.ServiceProxyHTTPS && !c.sandbox() {
 			add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 				"ip", "daddr", c.HostBridgeIP.String(), "tcp", "dport", strconv.Itoa(ServiceProxyHTTPSPort), "accept")
 		}
@@ -780,6 +811,8 @@ func (c Config) NftCommands() [][]string {
 			dnsPort = RehearsalServiceDiscoveryDNSPort
 		case c.SandboxRegistries:
 			dnsPort = SandboxRegistriesDNSPort
+		case c.SandboxWeb:
+			dnsPort = SandboxWebDNSPort
 		}
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap,
 			"ip", "daddr", c.HostBridgeIP.String(), "udp", "dport", strconv.Itoa(dnsPort), "accept")
@@ -1364,8 +1397,11 @@ func (c Config) GuestDNSPinCommands(nft func(...string) []string) [][]string {
 		return nil
 	}
 	resolver := ServiceDiscoveryDNSPort
-	if c.SandboxRegistries {
+	switch {
+	case c.SandboxRegistries:
 		resolver = SandboxRegistriesDNSPort
+	case c.SandboxWeb:
+		resolver = SandboxWebDNSPort
 	}
 	target := fmt.Sprintf("%s:%d", c.HostBridgeIP, resolver)
 	port := strconv.Itoa(ServiceDiscoveryDNSPort)

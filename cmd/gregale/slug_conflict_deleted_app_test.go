@@ -27,10 +27,10 @@ func TestSlugConflictNamesOwnDeletedApp(t *testing.T) {
 	}{
 		{name: "restorable",
 			deleted: `{"apps":[{"id":"a1","slug":"other"},{"id":"a2","slug":"taken","restore_eligible":true,"delete_grace_until":"` + grace.Format(time.RFC3339) + `"}]}`,
-			want:    []string{`"taken"`, "an app you deleted", "gregale app restore taken", "2026-11-24 08:10 UTC"}},
+			want:    []string{`"taken"`, "an app you deleted", "gregale app restore taken", "gregale app purge taken", "2026-11-24 08:10 UTC"}},
 		{name: "not restorable",
 			deleted:   `{"apps":[{"id":"a2","slug":"taken","restore_eligible":false,"restore_blocker":"plan_quota"}]}`,
-			want:      []string{"held by an app you deleted until it is purged", "pick a different --name"},
+			want:      []string{"held by an app you deleted until it is purged", "gregale app purge taken", "pick a different --name"},
 			forbidden: "apps restore"},
 		{name: "another account", deleted: `{"apps":[]}`,
 			want: []string{`slug "taken" is already in use`}, forbidden: "deleted"},

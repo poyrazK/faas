@@ -1,0 +1,5 @@
+[Service]
+# ADR-20261109170000: refuse v1 layer signatures, which do not name their
+# storage key and can be replayed onto another app's layer. Only true once
+# `gregalectl artifact resign` has converted every stored layer.
+Environment=FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2={{ '1' if (artifact_signature_require_v2 | default(false) | bool) else '0' }}

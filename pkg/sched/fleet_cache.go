@@ -99,6 +99,7 @@ type NodeTelemetry struct {
 	LastRequestAt       time.Time
 	NetTxBytes          *int64
 	NetRxBytes          *int64
+	InternalTxBytes     *int64
 	OpenConns           int64
 	FlowSummaries       []flowcount.FlowSummary
 	// ADR-361 decision 6 fan-out sample and plan ceiling (0 = none).

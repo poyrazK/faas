@@ -821,6 +821,13 @@ func TestScheddEgressAdapterForwardsCumulativeCountersForDurableCheckpointing(t 
 	if !ok || got.NetTXBytes != 10 || got.NetRXBytes != 5 || !got.NetworkCumulative || !got.NetTXValid || !got.NetRXValid {
 		t.Fatalf("regressed cumulative observation = %+v, %v", got, ok)
 	}
+	// Billing review R8-2: the internal-egress reading rides along, and the
+	// aggregator keeps it next to the gateway's bytes.
+	cpu.rows["inst-1"] = scheddgrpc.InstanceStatsRow{InstanceID: "inst-1", NetTxBytes: 20, InternalTxBytes: 8, InternalTxValid: true}
+	merged, ok := (&egressAggregator{schedd: a}).ReadUsageDeltas("inst-1")
+	if !ok || merged.InternalTXBytes != 8 || !merged.InternalTXValid {
+		t.Fatalf("internal egress observation = %+v, %v", merged, ok)
+	}
 }
 
 // TestGatewayEgressAdapter_Concurrent — race-safe concurrent

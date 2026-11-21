@@ -32,15 +32,26 @@ INVENTORY = os.path.join(ROOT, "docs", "ga-capability-inventory.md")
 RULES = [
     (r"(^|/|-)support([/-]|$)", "Native customer support"),
     (r"(^|/|-)customer-attention([/-]|$)", "Native customer support"),
+    # Offline export tools belong to the existing CLI capability (row 156).
+    (r"^export$", "`gregale` CLI"),
+    # Per-agent setup guides document driving the CLI from a coding agent.
+    (r"^(claude-code|codex|cursor|antigravity|gemini-cli)$", "`gregale` CLI"),
     # --- test fixtures and generated noise
     (r"^/(a|b|boom|echo|counter|dial|h1|users|untrusted|not-net-http|etc/faas/uuid\.txt|contract|probe-contract|identity|signal|requests|last-capture|price|seal|token|grpc|api|internal/?|ingest|control|control/ack|push\.v1\.pusherservice/push|openapi\.json|\{\$\}|/?|\+route\+|`\+route\+`)$", "TEST"),
-    (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck", "TOOLING"),
+    (r"test|fixture|fake|example|scenario-restart|rehearsal-native|qualif|conformance|smoke|e2e|bench|eval$|dryrun|leakcheck|^mutate$", "TOOLING"),
+    # First-hour acceptance and baseline docs describe qualification tooling.
+    (r"^first-hour-(acceptance|baseline)$", "TOOLING"),
     # --- attribution fixes: specific names that broader keywords would misfile
+    (r"hosted-task-source|tasktoolsource|task-tool-source-intents|mcp-hosted-task-source-retention", "Gregale management MCP server"),
+    # Agent-authored tools and exact delegated execution remain management MCP preview.
+    (r"^/v1/(delegated-)?tool-(publications|registry|invocations|grants|oauth-connections|connections)(/|$)", "Gregale management MCP server"),
+    (r"^tool-(publications|invocations|grants|oauth-(connections|authorizations))$|^tool(connection|grant|invocation|publication)$|^mcp-private-tool-invocation$", "Gregale management MCP server"),
     (r"scheduled-release", "Scheduled releases"),
     (r"release-review", "Release review"),
     (r"image-run|interactive-run", "Image runs"),
     (r"wake-page", "Browser wake page"),
     (r"session-affinity", "Session affinity"),
+    (r"^/v1/apps/protection$|protection[-_]baseline|app[-_]protection|^production-protection$", "Production protection by default"),
     (r"synthetic", "Synthetic checks"),
     (r"app-cost|cost-trend|costs-overview", "Per-app costs"),
     (r"async-route|execution-mode", "Async routes at the edge"),
@@ -82,11 +93,13 @@ RULES = [
     # --- round-4 triage: specific identifiers seen unmatched
     (r"^/(checkout\\?|generate=\d+\\|orders/\{id\}|users/4f8a|\.\.\.|app\.css|compile)$|^/v1\?api-key|^/v1/users|^/v1/apps/\{slug\}\\$|^$", "TEST"),
     (r"^/compile$|livequery", "Live queries"),
-    (r"^/connections|data/connections|data-connection", "Data pipelines"),
+    (r"^/connections|data/(connections|pipeline-setups)|data-connection", "Data pipelines"),
     (r"/v1/hooks/", "Durable inbound webhooks"),
     (r"/v1/status|status-incident", "Public status page"),
     (r"/v1/synthesize|synth", "INFRA"),
     (r"/v1/internal/(apps|services)/", "INFRA"),
+    # agentproxyd's registration API, reached by vmmd over wg-agent (ADR-20261117185346 §4).
+    (r"^/v1/registrations/", "INFRA"),
     (r"/v1/apps/\{slug\}/diff|^diff$", "Affected-workload preview"),
     (r"apps/\{slug\}/env/|app-envs?$", "Env vars:"),
     (r"health/history|^apps/status status$|^conditions$", "App health assessment"),
@@ -140,10 +153,22 @@ RULES = [
     # Keyed credential hashes (ADR 20261029202403): storage plumbing under
     # every credential, no capability of its own.
     (r"^credhash$", "INFRA"),
+    # ADR-20261115180000: shared-store object deletion on the control plane.
+    (r"^objectgc$", "INFRA"),
+    (r"^storagegrant$", "INFRA"),
     # ADR-20261109170000: signd's record of the layers it signed.
     (r"^artifact-signatures$", "INFRA"),
+    # ADR-20261109170000: the layer verifiers' v2-only switch.
+    (r"^artifact-signature-require-v2$", "INFRA"),
     # ADR-20261109170000: signd's listener and imaged's signd target.
     (r"^signd-", "INFRA"),
+    # ADR-20261110210000 §4: which logins may set an app's owner node, its
+    # record, and schedd's FAAS_APP_OWNER_AUTHORITY switch.
+    (r"^app-owner-(authority|writes|release-requests)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd, its peer grants and open audit.
+    (r"^(secretd|secretpg|secret-grants|secret-open-audit)$", "INFRA"),
+    # ADR-20261110210000 §3: secretd's listener, budget and identity settings.
+    (r"^secretd-", "INFRA"),
     # ADR-20261112160000: neond's key file, socket and delete limit.
     (r"^neond-", "INFRA"),
     # Compile-on-first-use regexps for package-level patterns
@@ -207,9 +232,9 @@ RULES = [
     (r"keys?$|api-key|^/v1/keys|scopes|service-caller-key|key-pool", "API keys"),
     (r"^mail$|mail|email|notification-email|magic-link|postmark|resend", "Customer notification emails"),
     (r"signup|login|logout|mfa|password|session|cli-auth|email-verif|verify|whoami|account|oauth-links|link$|unlink", "Signup, login"),
-    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags", "Customer feature flags"),
+    (r"feature-flag|customer-flags|^flags|flags-|/flags|platformflags|capflags|platform-flags|feature-flags|^flag[-_](kills|request[-_]attributes|cohorts)$|^analytics-(events|property-keys)$|^insights$|/insights|^analytics-cohort|/cohorts|insight-cohort|^flag-(experiments|experiment-units|experiment-latency|conversion-daily|event-usage|event-names)$", "Customer feature flags"),
     # --- developer tools
-    (r"mcp-management|mcpmanagement|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
+    (r"mcp-management|mcpmanagement|mcp[-_]?openapi|agent-connections|agentconnections|agent-policy|mcp-serve|oauth-authorization|oauth-protected|/oauth/(authorize|consent|register|revoke|token)|well-known/oauth|jwks", "Gregale management MCP server"),
     (r"security\.txt|security/|pgp|docs-links|customer-pages|docs-content|^/docs|subprocessor-md|^docs$|security-advisories|^/(terms|privacy|acceptable-use)$|^legal$|legal[-_]pages|^legal-acceptances$", "Docs site and trust pages"),
     (r"openapi\.(json|yaml)|^/v1/openapi|capabilities|productcap|sdk-coverage|^meta$", "Public OpenAPI spec"),
     (r"^sdk|sdk$|webhook-receiver|idempotency|transport|^client|options$|dto$|codes$|errors$|scopes$|^doc$|streaming$|release-context|^context", "SDKs:"),
@@ -247,6 +272,7 @@ RULES = [
     (r"live-?quer|livequery|/live$|\{database\}/live", "Live queries"),
     (r"realtime", "Realtime channels"),
     (r"entit|durable-entity|__gregale/entities", "Durable entities"),
+    (r"redis|valkey|^resp$", "Managed Redis"),
     (r"data-api|dataapi|postgres-pool|pgpool", "Data API"),
     (r"postgres|database|^pg-|managedpostgres|managed-postgres|/databases|pgbouncer", "Managed Postgres"),
     (r"bucket|object|s3|upload-route|storage", "Object storage"),
@@ -283,7 +309,9 @@ RULES = [
     (r"cors", "CORS presets"),
     (r"edge-protection|pre-auth|challenge|waf|bot", "Edge protection"),
     (r"edge-rule|edgerule|geo|asn|jwt|rewrite|redirect", "Edge rules (incl"),
-    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist", "App access control"),
+    # ADR-20261110210000 slice 3h: verify-only basic auth (app-basic-auth-verifiers,
+    # basicverifier, the gateway's basic-auth-verifiers).
+    (r"require-authn|public-auth|appaccess|app-access|authn|ip-allowlist|basic-auth-verifiers|basicverifier", "App access control"),
     (r"retry", "Gateway request retry"),
     (r"circuit", "Circuit breaking"),
     (r"static-egress|reserved-ip|egress-ip", "Static egress IP"),
@@ -344,6 +372,9 @@ RULES = [
     (r"affected|deploydiff|^diff$|^scan$", "Affected-workload preview"),
     (r"stateless|source-review|unreviewed", "Stateless-contract checks"),
     (r"registry", "Private registry credentials"),
+    # ADR-20261110210000 slice 3j-4: the Dockerfile reader that scopes a
+    # build's private-registry pulls.
+    (r"^dockerfilebase$", "Private registry credentials"),
     (r"trusted-signer|signer|require-signed|signature-enforcement|fleet-signing", "Signed deploys"),
     (r"deploy-token", "Per-app deploy tokens"),
     (r"source-ref", "Source-ref deploys"),
@@ -395,9 +426,9 @@ INFRA_RULES = [
     r"^(state|statetest|wire|db|migrate|migration-new|schema-dump|goose|sqlc|pgx|api|apid|apidserver|httpkit|durable|receivers|object$)",
     r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock|sdunit|guestdisk",
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
-    r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
+    r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|errorcodes-md|docsmarkers|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
-    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$",
+    r"^target-(hydration|placement|publication)$|^(pgbackend-)?public-routing-(burst|capacity|view)$|^publicrouting$|^at-capacity-settle$|^boot-tracker$",
     # ADR-20261030115139: the public edge's status for platform problems.
     r"^platform-error-status$",
     # ADR-20261031105055: the compute edge's host-to-node routing and its switch.

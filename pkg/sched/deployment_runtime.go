@@ -21,7 +21,9 @@ func deploymentRuntimePort(dep state.Deployment) int {
 // healthcheckPathFromDep resolves the readiness endpoint for every boot path.
 // The explicit customer override is authoritative. Existing source
 // deployments derive the value at wake time from the durable hosting receipt
-// or inference profile, so they gain HTTP readiness without a redeploy.
+// or inference profile, so they gain HTTP readiness without a redeploy. A
+// profile whose /healthz is the platform default, not a route the source or
+// gregale.yaml named, gets TCP readiness ("") (ADR-079 amendment 2).
 func healthcheckPathFromDep(dep state.Deployment) string {
 	if raw, declared := scopedDeploymentRuntimeField(dep, "healthcheck"); declared {
 		var hc api.AppManifestHealthcheck
@@ -54,6 +56,9 @@ func healthcheckPathFromDep(dep state.Deployment) string {
 			Profile frameworkprofile.Profile `json:"profile"`
 		}
 		if err := json.Unmarshal(dep.APIHostingReceipt, &receipt); err == nil {
+			if receipt.Profile.HealthDefaulted {
+				return ""
+			}
 			if receipt.Source.Kind == string(state.DeploymentKindImage) && receipt.Profile.HealthPath == "" {
 				// An empty profile path is an intentional direct-OCI TCP
 				// readiness contract. Do not fall through to a stale inferred
@@ -69,6 +74,9 @@ func healthcheckPathFromDep(dep state.Deployment) string {
 		var profile frameworkprofile.Profile
 		if err := json.Unmarshal(dep.InferredProfile, &profile); err == nil &&
 			profile.Version == frameworkprofile.Version && validRuntimeHealthPath(profile.HealthPath) {
+			if profile.HealthDefaulted {
+				return ""
+			}
 			return profile.HealthPath
 		}
 	}
@@ -148,9 +156,22 @@ func routedPortRawTCPForApp(dep state.Deployment, app state.App, path string, gr
 	return path == "" && !grpc && routesRawTCPListener(dep, app)
 }
 
+// runsManagedValkey reports a managed cache deployment (ADR-20261116192126):
+// its listener is Valkey's RESP port, private, and cannot answer the
+// plan-default HTTP liveness probe, which killed a woken cache about 50 s
+// in (native run redis-20261118T095202). Every cache deployment runs exactly
+// api.ManagedValkeyImage, which imaged enforces, so the deployment row
+// identifies it without a lookup on the wake path.
+func runsManagedValkey(dep state.Deployment) bool {
+	return dep.ImageDigest == api.ManagedValkeyImage
+}
+
 // routesRawTCPListener reports that the deployment's routed port is declared
 // on the app as a public TCP listener.
 func routesRawTCPListener(dep state.Deployment, app state.App) bool {
+	if runsManagedValkey(dep) {
+		return true
+	}
 	port := deploymentRuntimePort(dep)
 	if port == 0 {
 		port = api.DefaultAppPort

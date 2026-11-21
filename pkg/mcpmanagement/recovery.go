@@ -38,8 +38,8 @@ func recoveryForError(p ToolError) Recovery {
 		action = "inspect"
 	case p.Status == http.StatusUnauthorized || p.Status == http.StatusForbidden:
 		action = "request_access"
-	case p.Code == "writes_disabled" || p.Code == "capability_required" || p.Code == "approval_required" || p.Code == "account_changed" ||
-		p.Code == "app_access_denied" || p.Code == "request_access_denied":
+	case p.Code == "writes_disabled" || p.Code == "tool_build_access_denied" || p.Code == "job_access_denied" || p.Code == "capability_required" || p.Code == "approval_required" || p.Code == "account_changed" ||
+		p.Code == "app_access_denied" || p.Code == "environment_access_denied" || p.Code == "request_access_denied":
 		action = "request_access"
 	case p.Code == api.CodeEnvBatchRevisionConflict || p.Code == "plan_stale" || p.Code == "plan_expired" ||
 		p.Code == "invalid_plan":
@@ -49,7 +49,7 @@ func recoveryForError(p ToolError) Recovery {
 }
 
 func (m *management) recoveryTool(r Recovery, tool string, args map[string]any) Recovery {
-	if (strings.HasPrefix(tool, "gregale_apply_") || tool == "gregale_promote_deployment") && !m.opts.AllowWrites {
+	if (strings.HasPrefix(tool, "gregale_apply_") || tool == "gregale_promote_deployment" || tool == "gregale_start_job" || tool == "gregale_cancel_job_run") && !m.opts.AllowWrites {
 		return Recovery{Action: "request_access"}
 	}
 	capability := ""
@@ -172,6 +172,12 @@ func safePlanRetry(p *releasePlan, tool string) bool {
 // ambiguous attempts retain their original request and idempotency identity.
 func (m *management) operationFailure(p *releasePlan, err error, priorAttempt bool) error {
 	problem := m.toolError(err).StructuredContent.(ToolError)
+	if problem.Approval != nil && problem.Code == api.CodeApprovalRequired {
+		// apid's approval gate answers before the route runs: nothing was
+		// written, and the approval allows exactly this plan's retry.
+		// Recording a refusal would make the approved retry impossible.
+		return err
+	}
 	status := "outcome_unknown"
 	if p.configReceipt != nil {
 		status = "partial"
@@ -203,9 +209,62 @@ func (m *management) toolErrorForCall(name string, args any, err error) *mcp.Cal
 		// A person decides; the plan and its retry advice wait for them.
 		return result
 	}
+	if name == "gregale_verify_application_response" {
+		var target applicationResponseArgs
+		raw, _ := json.Marshal(args)
+		_ = json.Unmarshal(raw, &target)
+		if p.Recovery.Action != "request_access" && p.Code != "invalid_argument" && api.ValidDeploymentResponseCheckID(target.DeploymentID) {
+			// A GET can already have run after cancellation or an ambiguous
+			// failure. Inspect the selected release; never suggest replay.
+			p.Recovery = m.recoveryTool(Recovery{Action: "inspect"}, "gregale_get_deployment", map[string]any{"deployment_id": target.DeploymentID})
+			if p.Status >= 500 || p.Code == "timeout" || p.Code == "cancelled" || p.Code == "request_failed" {
+				p.Outcome = "outcome_unknown"
+			}
+		}
+		return errorResult(p)
+	}
+	if name == "gregale_invoke_tool" || name == "gregale_get_tool_invocation" || name == "gregale_cancel_tool_invocation" {
+		var invocation struct {
+			RequestID    string `json:"request_id"`
+			InvocationID string `json:"invocation_id"`
+		}
+		raw, _ := json.Marshal(args)
+		_ = json.Unmarshal(raw, &invocation)
+		id := invocation.InvocationID
+		if name == "gregale_invoke_tool" {
+			id = invocation.RequestID
+		}
+		if p.Recovery.Action != "request_access" && p.Code != "invalid_argument" && id != "" {
+			p.Recovery = Recovery{Action: "inspect", Tool: "gregale_get_tool_invocation", Arguments: map[string]any{"invocation_id": id}}
+			if name == "gregale_invoke_tool" && (p.Status >= 500 || p.Code == "timeout" || p.Code == "cancelled" || p.Code == "request_failed") {
+				p.Outcome = "outcome_unknown"
+			}
+		}
+		return errorResult(p)
+	}
+	if (name == "gregale_start_job" || name == "gregale_cancel_job_run") && p.Recovery.Action != "request_access" &&
+		(p.Status == 429 || p.Status >= 500 || p.Code == "timeout" || p.Code == "cancelled" || p.Code == "request_failed") {
+		// Dispatch keys belong to the caller and survive connection restarts.
+		// Never echo task inputs or mint a replacement request ID on recovery.
+		p.Outcome = "outcome_unknown"
+		p.Recovery = Recovery{Action: "retry_same_request", Tool: name, ReuseInputs: true, AfterSeconds: p.RetryAfterSeconds}
+		return errorResult(p)
+	}
 	var lookup planLookupArgs
 	raw, _ := json.Marshal(args)
 	_ = json.Unmarshal(raw, &lookup)
+	if name == "gregale_apply_tool_deploy" {
+		if p.Recovery.Action != "request_access" {
+			p.Recovery = Recovery{Action: "inspect", Tool: "gregale_get_tool_deploy", Arguments: map[string]any{"plan_id": lookup.PlanID}}
+			if p.Code == "invalid_plan" || p.Code == "plan_stale" || p.Code == "source_changed" {
+				p.Recovery = Recovery{Action: "replan", Tool: "gregale_plan_tool_deploy"}
+				if m.remote() {
+					p.Recovery.Tool = "gregale_plan_uploaded_tool_deploy"
+				}
+			}
+		}
+		return errorResult(p)
+	}
 	if lookup.PlanID != "" {
 		m.mu.Lock()
 		plan := m.plans[lookup.PlanID]

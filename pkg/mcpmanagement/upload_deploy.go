@@ -31,7 +31,7 @@ func registerUploadDeploys(s *mcp.Server, m *management) {
 		return
 	}
 	registerTool(s, m, "gregale_create_source_upload", "Get a one-time URL to upload a project as a .tar.gz, valid for 15 minutes. Upload it with the returned command, then call gregale_plan_upload_deploy with upload_id. For a few small files, pass them to gregale_plan_upload_deploy instead.", false, m.createSourceUpload)
-	register(s, m, "gregale_plan_upload_deploy", "Review deploying an uploaded project, or files passed inline, as one app; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment.", m.planUploadDeploy)
+	register(s, m, "gregale_plan_upload_deploy", "Review deploying an uploaded project, or files passed inline, as one app; pins the files and the app's release state for 15 minutes. A native resumable upload commit approval extends the same plan to its approval deadline. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment.", m.planUploadDeploy)
 	registerTool(s, m, "gregale_apply_upload_deploy", "Apply a reviewed upload deploy plan with a stable idempotency key, creating the app if planned. This can incur build/runtime costs. Retry with the same plan ID after ambiguous errors; follow with gregale_wait_deployment.", false, m.applyLocalDeploy)
 }
 
@@ -72,37 +72,9 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 	if (args.UploadID == "") == (len(args.Files) == 0) {
 		return nil, invalid("invalid_argument", "pass either upload_id or files")
 	}
-	var dir string
-	if args.UploadID != "" {
-		up, archive, err := m.opts.uploads.take(m.opts.grantID, args.UploadID)
-		if err != nil {
-			return nil, err
-		}
-		if up.app != args.App {
-			_ = os.Remove(archive)
-			return nil, invalid("invalid_argument", "this upload was created for app "+up.app)
-		}
-		// The plan directory takes over the upload's reservation, unpacked.
-		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
-		if err != nil {
-			_ = os.Remove(archive)
-			return nil, err
-		}
-		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
-		_ = os.Remove(archive)
-		if err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_upload", err.Error())
-		}
-	} else {
-		var err error
-		if dir, err = m.opts.uploads.newDir("grant:"+m.opts.grantID, maxInlineBytes); err != nil {
-			return nil, err
-		}
-		if err := writeInlineFiles(dir, args.Files); err != nil {
-			m.opts.uploads.removeDir(dir)
-			return nil, invalid("invalid_argument", err.Error())
-		}
+	dir, err := m.uploadedProject(args.App, args.UploadID, args.Files)
+	if err != nil {
+		return nil, err
 	}
 	plan, err := m.planDirDeploy(ctx, dir, planLocalDeployArgs{uploaded: true, Path: dir, App: args.App, Reason: args.Reason, CreateOnly: args.CreateOnly})
 	if err != nil {
@@ -110,4 +82,47 @@ func (m *management) planUploadDeploy(ctx context.Context, args planUploadDeploy
 		return nil, err
 	}
 	return plan, nil
+}
+
+// Both hosted deployment workflows consume the same connection-bound upload
+// or bounded inline source. Neither accepts a management-host path.
+func (m *management) uploadedProject(app, uploadID string, files []inlineFile) (string, error) {
+	var dir string
+	if uploadID != "" {
+		up, archive, err := m.opts.uploads.take(m.opts.grantID, uploadID)
+		if err != nil {
+			return "", err
+		}
+		if up.app != app || up.accountID != m.opts.accountID && m.opts.accountID != "" {
+			_ = os.Remove(archive)
+			return "", invalid("invalid_argument", "this upload belongs to another app or account")
+		}
+		// The reviewed source takes over the consumed upload's reservation.
+		dir, err = m.opts.uploads.newDir(up.accountID, up.maxBytes*unpackFactor)
+		if err != nil {
+			_ = os.Remove(archive)
+			return "", err
+		}
+		err = extractUpload(archive, dir, up.maxBytes*unpackFactor)
+		_ = os.Remove(archive)
+		if err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_upload", err.Error())
+		}
+	} else {
+		accountID := m.opts.accountID
+		if accountID == "" {
+			accountID = "grant:" + m.opts.grantID
+		}
+		var err error
+		dir, err = m.opts.uploads.newDir(accountID, maxInlineBytes)
+		if err != nil {
+			return "", err
+		}
+		if err := writeInlineFiles(dir, files); err != nil {
+			m.opts.uploads.removeDir(dir)
+			return "", invalid("invalid_argument", err.Error())
+		}
+	}
+	return dir, nil
 }

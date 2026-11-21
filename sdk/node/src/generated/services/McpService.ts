@@ -31,6 +31,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class McpService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read masked PagerDuty webhook acknowledgement settings
    * Read scope and MFA required. Version zero is disabled. The stable relative webhook path is returned before configuration; concatenate it with the trusted API origin when creating the PagerDuty v3 subscription.
@@ -55,7 +56,7 @@ export class McpService {
      */
     destination?: 'primary' | 'fallback',
   }): CancelablePromise<MCPReadinessPagerDutyAcknowledgementPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements',
       path: {
@@ -97,7 +98,7 @@ export class McpService {
      */
     requestBody: SetMCPReadinessPagerDutyAcknowledgementsRequest,
   }): CancelablePromise<MCPReadinessPagerDutyAcknowledgementPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements',
       path: {
@@ -144,7 +145,7 @@ export class McpService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessPagerDutyAcknowledgementEvents> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty-acknowledgements/events',
       path: {
@@ -182,7 +183,7 @@ export class McpService {
      */
     id: string,
   }): CancelablePromise<MCPReadinessPagerDutyPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty',
       path: {
@@ -221,7 +222,7 @@ export class McpService {
      */
     requestBody: SetMCPReadinessPagerDutyRequest,
   }): CancelablePromise<MCPReadinessPagerDutyPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-pagerduty',
       path: {
@@ -258,7 +259,7 @@ export class McpService {
      */
     id: string,
   }): CancelablePromise<MCPReadinessReminderDefaults> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults',
       path: {
@@ -297,7 +298,7 @@ export class McpService {
      */
     requestBody: SetMCPReadinessReminderDefaultsRequest,
   }): CancelablePromise<MCPReadinessReminderDefaults> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-reminder-defaults',
       path: {
@@ -334,7 +335,7 @@ export class McpService {
      */
     id: string,
   }): CancelablePromise<MCPReadinessFallbackPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback',
       path: {
@@ -370,7 +371,7 @@ export class McpService {
     id: string,
     requestBody: SetMCPReadinessFallbackRequest,
   }): CancelablePromise<MCPReadinessFallbackPolicy> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/alerts/{id}/mcp-readiness-fallback',
       path: {
@@ -423,7 +424,7 @@ export class McpService {
      */
     includeResolved?: boolean,
   }): CancelablePromise<MCPReadinessAttentionPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-attention',
       path: {
@@ -472,7 +473,7 @@ export class McpService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessAttentionHistory> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions',
       path: {
@@ -515,7 +516,7 @@ export class McpService {
      */
     requestBody: MCPReadinessAttentionAction,
   }): CancelablePromise<MCPReadinessAttentionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-readiness-incidents/{id}/attention-actions',
       path: {
@@ -562,7 +563,7 @@ export class McpService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessNotificationQueues> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-notifications',
       path: {
@@ -600,7 +601,7 @@ export class McpService {
      */
     requestBody: MCPReadinessNotificationAction,
   }): CancelablePromise<MCPReadinessNotificationReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-readiness-notifications/actions',
       path: {
@@ -646,7 +647,7 @@ export class McpService {
      */
     limit?: number,
   }): CancelablePromise<MCPReadinessMaintenancePage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-readiness-maintenance',
       path: {
@@ -684,7 +685,7 @@ export class McpService {
      */
     requestBody: CreateMCPReadinessMaintenanceRequest,
   }): CancelablePromise<MCPReadinessMaintenanceWindow> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-readiness-maintenance',
       path: {
@@ -724,7 +725,7 @@ export class McpService {
      */
     requestBody: CancelMCPReadinessMaintenanceRequest,
   }): CancelablePromise<MCPReadinessMaintenanceWindow> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/mcp-readiness-maintenance/{id}/cancel',
       path: {
@@ -758,7 +759,7 @@ export class McpService {
     slug: string,
     requestBody: MCPTaskCompatibilityReportRequest,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/mcp-task-compatibility',
       path: {
@@ -789,7 +790,7 @@ export class McpService {
      */
     slug: string,
   }): CancelablePromise<MCPTaskCompatibilityReportResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/mcp-task-compatibility',
       path: {
@@ -836,7 +837,7 @@ export class McpService {
      */
     host: string,
   }): CancelablePromise<MCPInstanceHealthProbeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-health',
       path: {
@@ -903,7 +904,7 @@ export class McpService {
      */
     mcpProbeAuthorization?: string,
   }): CancelablePromise<MCPInstanceProtocolProbeResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/deployments/{deployment}/instances/{instance}/mcp-probe',
       path: {

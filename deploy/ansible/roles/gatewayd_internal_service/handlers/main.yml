@@ -52,3 +52,9 @@
     daemon_reload: true
   listen: restart faas-realtimed
   when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+# The host-firewall start guard applies at the next start: reload only.
+- name: gatewayd_internal_service — reload systemd for the host-firewall start guard
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen: reload systemd for the host-firewall start guard

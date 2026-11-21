@@ -40,6 +40,9 @@ func TestMetalPmemDensity(t *testing.T) {
 	if err != nil || !PmemBaseSupported(fcVersion) {
 		t.Skipf("Firecracker %q without virtio-pmem (%v)", fcVersion, err)
 	}
+	if bits, ok := pmemHostSupported(); !ok {
+		t.Skipf("host has %d physical address bits; pmem needs %d", bits, PmemMinPhysAddrBits)
+	}
 	withCgroupRootAt(t, "/sys/fs/cgroup")
 	for _, mode := range []string{"blk", "pmem"} {
 		v := newMetalVMM(t, 180*time.Second)

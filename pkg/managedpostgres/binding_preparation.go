@@ -43,8 +43,12 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 	if err := backend.Capabilities.SupportsCredentialAccess(binding.Access); err != nil {
 		return "", "", err
 	}
+	request := bindingCredentialRequest(binding, databaseDataResource(database))
+	if request.CustomRoles, request.CustomRoleDefault, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
+		return "", "", err
+	}
 	callCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := issueAdmittedCredentials(callCtx, backend.Provider, bindingCredentialRequest(binding, databaseDataResource(database)))
+	material, err := issueAdmittedCredentials(callCtx, backend.Provider, request)
 	cancel()
 	defer clearCredentialMaterial(&material)
 	if err != nil {

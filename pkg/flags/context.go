@@ -137,7 +137,7 @@ func validateDecision(decision Decision, allowInherited bool) error {
 	if !validDecisionReason(decision.Reason) {
 		return fmt.Errorf("invalid decision reason")
 	}
-	fallbackReason := decision.Reason == "flag_missing" || decision.Reason == "configuration_stale" || decision.Reason == "type_mismatch"
+	fallbackReason := decision.Reason == "flag_missing" || decision.Reason == "configuration_stale" || decision.Reason == "type_mismatch" || decision.Reason == ReasonKilled
 	switch decision.Source {
 	case "configuration":
 		if fallbackReason || decision.InheritedFrom != nil {
@@ -154,7 +154,9 @@ func validateDecision(decision Decision, allowInherited bool) error {
 	default:
 		return fmt.Errorf("invalid decision source")
 	}
-	if decision.Reason == "rule_match" && decision.RuleID == "" || decision.Reason != "rule_match" && (decision.RuleID != "" || decision.Bucket != nil || decision.RolloutBucket != nil) {
+	ruleReason := decision.Reason == "rule_match" || decision.Reason == ReasonHoldout
+	if ruleReason && decision.RuleID == "" || !ruleReason && decision.RuleID != "" ||
+		decision.Reason != "rule_match" && (decision.Bucket != nil || decision.RolloutBucket != nil) {
 		return fmt.Errorf("invalid rule evidence")
 	}
 	return nil
@@ -162,7 +164,7 @@ func validateDecision(decision Decision, allowInherited bool) error {
 
 func validDecisionReason(reason string) bool {
 	switch reason {
-	case "flag_missing", "default", "disabled", "customer_missing", "subject_missing", "rule_match", "configuration_stale", "type_mismatch":
+	case "flag_missing", "default", "disabled", "customer_missing", "subject_missing", "rule_match", "configuration_stale", "type_mismatch", ReasonKilled, ReasonHoldout:
 		return true
 	default:
 		return false

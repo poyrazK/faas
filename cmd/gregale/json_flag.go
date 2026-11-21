@@ -115,7 +115,7 @@ func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
 	if fields := strings.Fields(topic); len(fields) > 0 {
 		topic = fields[0]
 	}
-	printUsage(osStderr, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	rejectArgumentCount(name, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic, fs.NArg(), 0, 0)
 	// A command with verbs (`dev`, `test`) parses its own flags when the
 	// first word is none of them; that word is a mistyped verb, so name them
 	// (Hunt 14 H14-64).
@@ -164,7 +164,7 @@ func flagSetCommandName(name string) string {
 
 func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 	if jsonOutput && !jsonUsageHelp {
-		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human})
+		fs.SetOutput(&jsonFlagErrorWriter{name: fs.Name(), dst: human, flags: fs})
 		return
 	}
 	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human, flags: fs})
@@ -245,7 +245,9 @@ func publicCommandPath(args []string) string {
 
 // flagDiagnosticDash matches the single-dash flag names the flag package
 // prints ("-app"); the CLI documents and accepts double-dash flags.
-var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z0-9])`)
+// A digit after the dash is a negative number the flag package read as a
+// flag: `flag rollout set … -5` said "unknown flag --5" (prod 2026-11-19).
+var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )-([A-Za-z])`)
 
 // normalizeFlagDiagnostic rewrites a flag package parse error in the CLI's
 // own spelling, e.g. "flag provided but not defined: -app" becomes
@@ -253,6 +255,9 @@ var flagDiagnosticDash = regexp.MustCompile(`(^|flag |for |defined: |argument: )
 func normalizeFlagDiagnostic(message string) string {
 	message = flagDiagnosticDash.ReplaceAllString(message, "${1}--${2}")
 	if rest, ok := strings.CutPrefix(message, "flag provided but not defined: "); ok {
+		if len(rest) > 1 && rest[0] == '-' && rest[1] >= '0' && rest[1] <= '9' {
+			return "unknown flag " + rest + " (a negative number is read as a flag)"
+		}
 		return "unknown flag " + rest
 	}
 	if rest, ok := strings.CutPrefix(message, "flag needs an argument: "); ok {
@@ -281,25 +286,8 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 	}
 	if !w.wrote {
 		w.wrote = true
-		path := invokedCommandPath
-		if path == "" {
-			if fields := strings.Fields(w.name); len(fields) > 0 {
-				path = fields[0]
-			}
-		}
-		diagnostic := normalizeFlagDiagnostic(strings.TrimSpace(text))
-		if suggestion := suggestUnknownFlag(diagnostic, w.flags); suggestion != "" {
-			diagnostic += "\n  Did you mean --" + suggestion + "?"
-		}
-		if guidance := flagValueGuidance(diagnostic, w.flags, path); guidance != "" {
-			diagnostic += "\n  " + guidance
-		}
-		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
-			diagnostic += "\n  " + hint
-		}
-		if hint := appSettingFlagHint(diagnostic, w.name); hint != "" {
-			diagnostic += "\n  " + hint
-		}
+		path := flagDiagnosticPath(w.name)
+		diagnostic, _ := describeFlagDiagnostic(text, w.flags, path)
 		path = strings.TrimPrefix(spellUsageForTree("gregale "+path), "gregale ")
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
 			diagnostic, cliTreeSpellPath(path))
@@ -317,10 +305,12 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 // flag" (Hunt 12 H12-27).
 func globalFlagPlacementHint(diagnostic, path string) string {
 	for _, global := range []struct{ name, example string }{
+		{"http-timeout", "--http-timeout 90s"},
 		{"debug-http", "--debug-http"},
 		{"non-interactive", "--non-interactive"},
 		{"wait-for-approval", "--wait-for-approval"},
 		{"profile", "--profile NAME"},
+		{"http-retries", "--http-retries 3"},
 	} {
 		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
 			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)
@@ -350,6 +340,7 @@ type jsonFlagErrorWriter struct {
 	name  string
 	dst   io.Writer
 	wrote bool
+	flags *flag.FlagSet
 }
 
 func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
@@ -357,14 +348,16 @@ func (w *jsonFlagErrorWriter) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	w.wrote = true
-	err := writeJSONProblemWithExit(w.dst, api.Problem{
+	_, advice := describeFlagDiagnostic(string(p), w.flags, flagDiagnosticPath(w.name))
+	advice.HelpArgv = flagDiagnosticHelpArgv(flagDiagnosticPath(w.name), w.name)
+	err := writeJSONProblemWithCLI(w.dst, api.Problem{
 		Type:    docsSiteURL + "/errors/invalid-request",
 		Title:   "Invalid command flags",
 		Status:  400,
 		Code:    api.CodeValidation,
 		Detail:  normalizeFlagDiagnostic(strings.TrimSpace(string(p))),
 		DocsURL: cliDocsURL,
-	}, 1)
+	}, 1, &advice)
 	return len(p), err
 }
 
@@ -490,7 +483,10 @@ func writeJSONProblem(p api.Problem) error {
 }
 
 func writeJSONProblemTo(w io.Writer, p api.Problem) error {
-	b, err := json.Marshal(p)
+	b, err := json.Marshal(struct {
+		api.Problem
+		RequestID string `json:"request_id,omitempty"`
+	}{Problem: p, RequestID: safeProblemRequestID(p)})
 	if err != nil {
 		return err
 	}
@@ -500,11 +496,17 @@ func writeJSONProblemTo(w io.Writer, p api.Problem) error {
 
 // Client error metadata supplements the server's stable Problem code.
 func writeJSONProblemWithExit(w io.Writer, p api.Problem, code int) error {
+	return writeJSONProblemWithCLI(w, p, code, nil)
+}
+
+func writeJSONProblemWithCLI(w io.Writer, p api.Problem, code int, advice *cliFlagDiagnostic) error {
 	b, err := json.Marshal(struct {
 		api.Problem
-		Category string `json:"category"`
-		ExitCode int    `json:"exit_code"`
-	}{p, exitCategory(code), code})
+		Category  string             `json:"category"`
+		ExitCode  int                `json:"exit_code"`
+		RequestID string             `json:"request_id,omitempty"`
+		CLI       *cliFlagDiagnostic `json:"cli,omitempty"`
+	}{Problem: p, Category: exitCategory(code), ExitCode: code, RequestID: safeProblemRequestID(p), CLI: advice})
 	if err != nil {
 		return err
 	}

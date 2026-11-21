@@ -28,8 +28,8 @@ func TestSeedLedgerKeepsResidentRowsPastTheBareCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 6 x 256 MB = 1,536 MB: past the 1,024 MB ceiling and inside the 200%
-	// bound, booked as a measuring scheduler books them.
+	// 6 x 256 MB = 1,536 MB: past the 1,024 MB ceiling and inside the
+	// overcommit bound, booked as a measuring scheduler books them.
 	measured := state.WithNodeAdmission(f.ctx, state.NodeAdmission{NodeID: node.ID, Generation: node.LifecycleGeneration,
 		ReservationPercent: api.MeasuredAdmissionMaxOvercommitPercent})
 	for range replicas {

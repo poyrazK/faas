@@ -268,6 +268,11 @@ const (
 	ManagedPostgresHoldPreview        = "preview"
 )
 
+// ManagedPostgresDefaultMajor is the PostgreSQL major a new database gets
+// when the request names none. Project manifests pick the newest offered
+// major instead (ADR-20261025111824).
+const ManagedPostgresDefaultMajor = 17
+
 // ManagedPostgresUsageResponse.EgressState values.
 const (
 	ManagedPostgresEgressHealthy = "healthy"
@@ -411,6 +416,44 @@ type CreateManagedPostgresBindingRequest struct {
 	Scope          string `json:"scope"`
 	EnvironmentKey string `json:"environment_key"`
 	Access         string `json:"access"`
+}
+
+// ManagedPostgresCustomRole is a custom group role declared on a managed
+// database (ADR-20261116213000): a NOLOGIN role the platform creates and
+// grants to the database's own logins, which may SET ROLE to it.
+type ManagedPostgresCustomRole struct {
+	DatabaseID string `json:"database_id"`
+	Name       string `json:"name"`
+	BypassRLS  bool   `json:"bypass_rls"`
+	// GrantedTo lists the access modes whose logins may SET ROLE to it:
+	// migration, read_write (session logins too) and read_only.
+	GrantedTo []string `json:"granted_to"`
+	// MemberOf lists other custom roles of the database it is a member of.
+	MemberOf []string `json:"member_of"`
+	// DefaultFor lists the access modes (read_write, read_only) whose
+	// logins start every session as this role (ADR-20261116213000
+	// amendment 2).
+	DefaultFor []string `json:"default_for"`
+	// State is pending until the role is applied to the database, ready
+	// after, and deleting until a deleted role is dropped.
+	State         string `json:"state"`
+	LastErrorCode string `json:"last_error_code,omitempty"`
+	CreatedAt     string `json:"created_at"`
+	UpdatedAt     string `json:"updated_at"`
+}
+
+type ManagedPostgresCustomRoleList struct {
+	Items []ManagedPostgresCustomRole `json:"items"`
+}
+
+// PutManagedPostgresCustomRoleRequest declares or replaces a custom role.
+type PutManagedPostgresCustomRoleRequest struct {
+	BypassRLS bool     `json:"bypass_rls"`
+	GrantedTo []string `json:"granted_to"`
+	MemberOf  []string `json:"member_of"`
+	// DefaultFor, when present, replaces the access modes whose logins
+	// start as this role; absent keeps the current ones still granted.
+	DefaultFor *[]string `json:"default_for,omitempty"`
 }
 
 // ManagedPostgresCutover reports staging and control-plane SQL evidence only.

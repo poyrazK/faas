@@ -112,7 +112,10 @@ type OpsMetrics struct {
 	// The two closed labels have no app, deployment, or instance IDs.
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
-	snapshotPublication         *prometheus.CounterVec
+	// initSnapshotPrime counts init snapshot priming bursts by outcome
+	// (ADR-20261114153000). One closed label, no IDs.
+	initSnapshotPrime   *prometheus.CounterVec
+	snapshotPublication *prometheus.CounterVec
 	// wakeFailover counts schedd's re-placements of a wake a node refused
 	// before the VM started (ADR-20261022184531). Closed labels only.
 	wakeFailover *prometheus.CounterVec
@@ -1721,6 +1724,9 @@ type OpsMetrics struct {
 	// whose scan found a fixable CRITICAL refused every boot on it with
 	// no metric and no alert (Hunt 12 H12-1).
 	baseScanRefusals *prometheus.CounterVec
+	// baseScanGraceAdmits counts boots vmmd's scan gate admitted on a base
+	// with a fixable CRITICAL inside api.BaseScanCriticalBootGrace.
+	baseScanGraceAdmits *prometheus.CounterVec
 	// baseScanFailuresHeld counts shared-base scans that failed for a
 	// reason other than the bytes or their findings while a clean scan of
 	// the same bytes stayed in force (bug hunt 2026-10-28 H102).
@@ -2289,12 +2295,19 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_compute_node_readiness",
 		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
 	}, []string{"node", "state"})
+	initSnapshotPrime := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_init_snapshot_prime_total",
+		Help: "Init snapshot priming before a deployment's prime capture, by outcome (ADR-20261114153000): primed (at least one 2xx), no_http_path (gRPC, HTTP/2 or raw-TCP app without lifecycle.warmup, not primed), unsupported (vmmd without PrimeInstance), no_success (no 2xx response) or failed (the RPC failed). Every outcome but primed captures the snapshot unprimed.",
+	}, []string{"outcome"})
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
 		Buckets: []float64{0.1, 0.5, 1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600},
 	}, []string{"site", "outcome"})
 	if prefix == "schedd" {
+		for _, outcome := range initSnapshotPrimeOutcomes {
+			initSnapshotPrime.WithLabelValues(outcome)
+		}
 		for _, site := range []string{InitSnapshotSitePrime, InitSnapshotSitePark} {
 			for _, outcome := range []string{
 				InitSnapshotOutcomeCaptured,
@@ -2886,9 +2899,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// without churn on the API surface.
 	pressureReassignmentsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_pressure_reassignments_total",
-		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable}. `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
+		Help: "Cross-node capacity-pressure rebalance decisions (Tier A9 / ADR-087), labelled by outcome ∈ {migrated, conflict, no_headroom, no_eligibility, no_peer, overflow_target_unavailable, release_requested}. `release_requested` counts a node asking the control plane to move an app under control-plane owner authority (ADR-20261110210000). `migrated` is the §12 dashboard panel (sum over 5m for the rate); `no_headroom` is the tripwire for sustained full-cluster pressure (call the operator); `overflow_target_unavailable` is the Tier A10 / ADR-088 tripwire when the customer's preferred spill target is full or inactive. Single-registry: registered on every daemon (mirrors rebalanceDecisions / liveMigrationDecisions); only schedd increments via PressureReassignments.",
 	}, []string{"outcome"})
-	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable"} {
+	for _, outcome := range []string{"migrated", "conflict", "no_headroom", "no_eligibility", "no_peer", "overflow_target_unavailable", "release_requested"} {
 		pressureReassignmentsTotal.WithLabelValues(outcome)
 	}
 	// ADR-088 / Tier A10: per-app overflow_node preference
@@ -3231,7 +3244,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	})
 	residentGBPerCustomer := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_gb_per_customer",
-		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Spec §12 target 0.305 (≈312 MB/customer); > 0.45 warns. Emitted by meterd once per ResidencyInterval.",
+		Help: "Month-to-date GB-RAM-hours divided by elapsed UTC-month hours and paying-customer count, per plan (ADR-031). Warns above 1.5x resident_gb_per_customer_planned (ADR-20261117070932). Emitted by meterd once per ResidencyInterval.",
+	}, []string{"plan"})
+	residentGBPerCustomerPlanned := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_resident_gb_per_customer_planned",
+		Help: "The financial model's resident GB per paying customer for each plan: planned resident concurrency times the plan's RAM plus 8 MB (api.PlannedResidentGBPerCustomer, ADR-20261117070932). Constant per release.",
 	}, []string{"plan"})
 	residentPayingCustomers := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_resident_paying_customers",
@@ -4075,6 +4092,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		workerRecovery.apps, workerRecovery.replicas, workerRecovery.observedAt,
 		queue.depth, queue.inFlight, queue.oldestAge, queue.deadLetter,
 		queue.bindingDepth, queue.bindingInFlight, queue.bindingLagSeconds, queue.bindingDeadLetter, queue.bindingWorkerDemand, queue.bindingThrottled,
+		queue.bindingBlockedLanes, queue.bindingBlockedAgeSeconds,
 		delayedTasks.dispatchTotal, delayedTasks.scheduleLagSeconds,
 		cronDelivery.deliveryTotal, cronDelivery.scheduleLagSeconds,
 		ops, dur, watchdogKills, warmSnapshotErrors, warmPoolSize, warmPoolResumeTotal, frozenFreezeTotal, frozenThawTotal, frozenFastPathSkipped, frozenThawTickets, ownerCacheTotal, frozenParksTotal, frozenCompressTotal, frozenInstances, warmupErrors, livenessRestarts, workloadOOMKills, serviceReplicaStatus, serviceRolloutHandoffPhaseDuration, daemonRestartCount, daemonBuildInfo, daemonUptimeSeconds, daemonReady, daemonReadyReason, faasDeployVersion, bridgeFramingTotal, guestInitDuration, wakeSnapshotTier, wakeColdReason, executionActive, executionTotal, executionPhaseDuration, executionFailures, executionOutputBytes, executionSweeps, executionQueueDepth, executionQueueOldestWait, executionWorkers, wakeFailure, wakeLatency, guestTailSeconds, guestTailFailedTotal, tailCapReached, evictedPriority, evictionFiredTotal, eventsWriteFail, auditWriteFail, cveCheckTotal, cvesOpenTotal,
@@ -4082,7 +4100,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		auditWriteDur, cronFireNowDispatchDur, accountOrgMismatch, requestFailures, requestTotal, stripePushDur, paddlePushDur, polarPushDur,
 		buildDur, buildQueueWait, buildCacheOutcome, builderWarmRestoreTotal,
 		buildExportCleanupTotal, buildExportCleanupErrors, buildExportBytes, builderSliceOOMKills,
-		residentGBPerCustomer, residentPayingCustomers, billingCapExceededTotal,
+		residentGBPerCustomer, residentPayingCustomers, residentGBPerCustomerPlanned, billingCapExceededTotal,
 		meterdFloorAppliedTotal, meteredMBSecondsTotal,
 		// ADR-123 alert-preset signal series — PR-A (3) + PR-B (2). Each
 		// backs one of the 8 alert_presets catalog rows. Without
@@ -4164,7 +4182,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, initSnapshotPrime, wakeFailover, computeNodeReadiness, nodeWakeBreaker)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4260,6 +4278,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
 	}, []string{"base", "reason"})
 	commonCollectors = append(commonCollectors, baseScanRefusals)
+	baseScanGraceAdmits := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_grace_admits_total",
+		Help: "Instance boots vmmd's base scan gate admitted on a base whose scan found a fixable CRITICAL vulnerability, inside the grace that keeps already-serving apps waking (api.BaseScanCriticalBootGrace), labelled by base. New deployments on the base are refused; publish a patched base before the grace ends or every boot on it is refused.",
+	}, []string{"base"})
+	commonCollectors = append(commonCollectors, baseScanGraceAdmits)
 	baseScanFailuresHeld := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_base_scan_failures_held_total",
 		Help: "Shared-base scans that failed for a reason other than the bytes or their findings (scanner_unavailable, artifact_read, scanner_invalid) while the last clean scan of the same bytes stayed in force, labelled by base (the artifact storage key) and reason. Boots continue; the base is refused only once the hold runs out (api.SharedBaseScanFailureGrace).",
@@ -5434,6 +5457,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, plan := range api.Plans {
 		residentGBPerCustomer.WithLabelValues(string(plan))
 		residentPayingCustomers.WithLabelValues(string(plan))
+		// The plan's modelled value is fixed for a release, so it is set
+		// here rather than on meterd's residency tick.
+		if planned, ok := api.PlannedResidentGBPerCustomer(plan); ok {
+			residentGBPerCustomerPlanned.WithLabelValues(string(plan)).Set(planned)
+		}
 	}
 	// Pre-instantiate the closed plan set for the billingCapExceeded
 	// counter (issue #279). Same precedent as residentGBPerCustomer
@@ -5608,6 +5636,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		initSnapshotPrime:                          initSnapshotPrime,
 		wakeFailover:                               wakeFailover,
 		computeNodeReadiness:                       computeNodeReadiness,
 		nodeWakeBreaker:                            nodeWakeBreaker,
@@ -5836,6 +5865,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
 		baseScanRefusals:                     baseScanRefusals,
+		baseScanGraceAdmits:                  baseScanGraceAdmits,
 		baseScanFailuresHeld:                 baseScanFailuresHeld,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
@@ -6349,6 +6379,35 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	m.initSnapshotAttempts.WithLabelValues(site, outcome).Inc()
 	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed && outcome != InitSnapshotOutcomeSourceDiverged {
 		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
+	}
+}
+
+// Closed outcome labels of schedd_init_snapshot_prime_total
+// (ADR-20261114153000).
+const (
+	InitSnapshotPrimePrimed      = "primed"
+	InitSnapshotPrimeNoHTTPPath  = "no_http_path"
+	InitSnapshotPrimeUnsupported = "unsupported"
+	InitSnapshotPrimeNoSuccess   = "no_success"
+	InitSnapshotPrimeFailed      = "failed"
+)
+
+var initSnapshotPrimeOutcomes = []string{
+	InitSnapshotPrimePrimed, InitSnapshotPrimeNoHTTPPath, InitSnapshotPrimeUnsupported,
+	InitSnapshotPrimeNoSuccess, InitSnapshotPrimeFailed,
+}
+
+// RecordInitSnapshotPrime counts one priming decision before a prime capture.
+// Unknown outcomes are dropped. Only schedd exports the collector.
+func (m *OpsMetrics) RecordInitSnapshotPrime(outcome string) {
+	if m == nil || m.metricPrefix != "schedd" || m.initSnapshotPrime == nil {
+		return
+	}
+	for _, known := range initSnapshotPrimeOutcomes {
+		if outcome == known {
+			m.initSnapshotPrime.WithLabelValues(outcome).Inc()
+			return
+		}
 	}
 }
 
@@ -8780,6 +8839,15 @@ func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
 	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
 }
 
+// ObserveBaseScanGraceAdmit counts one boot admitted on a base with a fixable
+// CRITICAL inside api.BaseScanCriticalBootGrace. Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanGraceAdmit(base string) {
+	if m == nil {
+		return
+	}
+	m.baseScanGraceAdmits.WithLabelValues(base).Inc()
+}
+
 // ObserveBaseScanFailureHeld counts one failed shared-base scan whose last
 // clean verdict stayed in force. Safe on a nil receiver.
 func (m *OpsMetrics) ObserveBaseScanFailureHeld(base, reason string) {
@@ -8971,9 +9039,9 @@ func (m *OpsMetrics) IncrementStaleDeploymentsReconciled() {
 
 // SetResidentGBPerCustomer writes one sample to the
 // <daemon>_resident_gb_per_customer gauge (ADR-031, PR #141).
-// Spec §12 target is 0.305 average resident GB per paying customer
-// (≈ 312 MB/customer); > 0.45 warns. Safe on a nil receiver so meterd
-// unit tests without metrics keep working.
+// FaasResidentGbPerCustomerHigh warns above 1.5x the plan's
+// _resident_gb_per_customer_planned (ADR-20261117070932). Safe on a nil
+// receiver so meterd unit tests without metrics keep working.
 func (m *OpsMetrics) SetResidentGBPerCustomer(plan string, gb float64) {
 	if m == nil {
 		return

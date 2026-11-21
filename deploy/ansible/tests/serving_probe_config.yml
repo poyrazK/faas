@@ -1,0 +1,135 @@
+---
+- name: Validate and render serving probes without provisioning services
+  hosts: localhost
+  gather_facts: false
+  vars:
+    serving_probe_role: "{{ playbook_dir }}/../roles/serving_probe"
+    serving_probe_template: "{{ playbook_dir }}/../roles/serving_probe/templates/faas-serving-probe.env.j2"
+    faas_serving_probe_urls: [https://probe.example/]
+  tasks:
+    - name: Accept an existing status-only configuration
+      ansible.builtin.include_role:
+        name: "{{ serving_probe_role }}"
+        tasks_from: validate
+        public: true
+
+    - name: Validate a marker with whitespace, quotes, backslash and UTF-8
+      ansible.builtin.include_role:
+        name: "{{ serving_probe_role }}"
+        tasks_from: validate
+        public: true
+      vars:
+        faas_serving_probe_expected_body: 'probe "ok"\sağlıklı'
+        faas_serving_probe_max_first_byte_seconds: 2
+
+    - name: Render the marker with systemd-compatible quoting
+      ansible.builtin.set_fact:
+        serving_probe_rendered: "{{ lookup('ansible.builtin.template', serving_probe_template) }}"
+      vars:
+        faas_serving_probe_expected_body: 'probe "ok"\sağlıklı'
+        faas_serving_probe_max_first_byte_seconds: 2
+
+    - name: Confirm the marker and budget remain single environment values
+      ansible.builtin.assert:
+        that:
+          - >-
+            ('FAAS_SERVING_PROBE_EXPECTED_BODY=' ~ ('probe "ok"\sağlıklı' | to_json(ensure_ascii=False))) in serving_probe_rendered
+          - serving_probe_rendered.splitlines() | select('match', '^FAAS_SERVING_PROBE_EXPECTED_BODY=') | list | length == 1
+          - "'FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS=2' in serving_probe_rendered"
+
+    - name: Reject invalid bodies and latency budgets before provisioning
+      ansible.builtin.include_tasks: serving_probe_invalid_case.yml
+      loop:
+        - {body: "line\nbreak"}
+        - {body: "line\rbreak"}
+        - {body: "nul\u0000"}
+        - {body: "delete\u007f"}
+        - {body: "{{ 'é' * 2049 }}"}
+        - {body: 42}
+        - {budget: 0}
+        - {budget: -1}
+        - {budget: 21}
+        - {budget: inf}
+        - {budget: nan}
+        - {timeout: inf}
+        - {retry_delay: nan}
+
+- name: Verify independent inventory and node configuration use the same fleet policy
+  hosts: localhost
+  gather_facts: false
+  vars:
+    faas_node_name: fsn-2
+    faas_serving_probe_fleet:
+      fsn-2:
+        urls: [https://probe.example/]
+        expected_body: fleet-probe-ok
+        max_first_byte_seconds: 2
+      fsn-3:
+        urls: [https://probe.example/, https://second-probe.example/]
+        expected_body: second-marker
+        max_first_byte_seconds: 3
+    serving_probe_inventory_template: "{{ playbook_dir }}/../roles/serving_probe_inventory/templates/serving-probe-inventory.prom.j2"
+    serving_probe_node_template: "{{ playbook_dir }}/../roles/serving_probe/templates/faas-serving-probe.env.j2"
+  tasks:
+    - name: Validate inventory without provisioning a collector
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir }}/../roles/serving_probe_inventory"
+        tasks_from: validate
+        public: true
+
+    - name: Load and validate the node's policy without provisioning a service
+      ansible.builtin.include_role:
+        name: "{{ playbook_dir }}/../roles/serving_probe"
+        tasks_from: validate
+        public: true
+
+    - name: Render independent intent and node configuration
+      ansible.builtin.set_fact:
+        serving_probe_intent: "{{ lookup('ansible.builtin.template', serving_probe_inventory_template) }}"
+        serving_probe_config: "{{ lookup('ansible.builtin.template', serving_probe_node_template) }}"
+
+    - name: Verify identity, pair membership and budgets agree
+      ansible.builtin.assert:
+        that:
+          - "'faas_serving_probe_inventory_configured 1' in serving_probe_intent"
+          - "'faas_serving_probe_expected_pairs 3' in serving_probe_intent"
+          - >-
+            'faas_serving_probe_expected{probe_node="fsn-2",url="https://probe.example/"} 1' in serving_probe_intent
+          - >-
+            'faas_serving_probe_expected{probe_node="fsn-3",url="https://second-probe.example/"} 1' in serving_probe_intent
+          - >-
+            'faas_serving_probe_expected_first_byte_seconds{probe_node="fsn-2"} 2.0' in serving_probe_intent
+          - "'FAAS_SERVING_PROBE_URLS=https://probe.example/' in serving_probe_config"
+          - "'FAAS_SERVING_PROBE_EXPECTED_BODY=\"fleet-probe-ok\"' in serving_probe_config"
+          - "'FAAS_SERVING_PROBE_MAX_FIRST_BYTE_SECONDS=2' in serving_probe_config"
+          - "'fleet-probe-ok' not in serving_probe_intent and 'second-marker' not in serving_probe_intent"
+
+    - name: An absent inventory stays explicitly unconfigured
+      ansible.builtin.assert:
+        that:
+          - "'faas_serving_probe_inventory_configured 0' in lookup('ansible.builtin.template', serving_probe_inventory_template)"
+      vars:
+        faas_serving_probe_fleet: null
+
+    - name: An explicitly empty inventory expects zero probes
+      ansible.builtin.assert:
+        that:
+          - "'faas_serving_probe_inventory_configured 1' in lookup('ansible.builtin.template', serving_probe_inventory_template)"
+          - "'faas_serving_probe_expected_pairs 0' in lookup('ansible.builtin.template', serving_probe_inventory_template)"
+      vars:
+        faas_serving_probe_fleet: {}
+
+    - name: Reject invalid fleet policies
+      ansible.builtin.include_tasks: serving_probe_fleet_invalid_case.yml
+      loop:
+        - {name: invalid inventory type, fleet: []}
+        - {name: invalid node identity, fleet: {'bad node': {urls: [https://probe.example/], expected_body: ok}}}
+        - {name: missing marker, fleet: {fsn-2: {urls: [https://probe.example/]}}}
+        - {name: empty marker, fleet: {fsn-2: {urls: [https://probe.example/], expected_body: ''}}}
+        - {name: duplicate URL, fleet: {fsn-2: {urls: [https://probe.example/, https://probe.example/], expected_body: ok}}}
+        - {name: invalid URL, fleet: {fsn-2: {urls: [http://probe.example/], expected_body: ok}}}
+        - {name: invalid budget, fleet: {fsn-2: {urls: [https://probe.example/], expected_body: ok, max_first_byte_seconds: 0}}}
+        - {name: insufficient maximum age, fleet: {fsn-2: {urls: [https://probe.example/], expected_body: ok, max_age_seconds: 100}}}
+        - {name: unknown policy field, fleet: {fsn-2: {urls: [https://probe.example/], expected_body: ok, unknown: true}}}
+      loop_control:
+        label: "{{ item.name }}"

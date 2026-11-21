@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -117,6 +118,14 @@ var defaultExcludeDirs = map[string]bool{
 	"target":   true, // Maven / Cargo / Scala
 	".venv":    true, // Python virtualenv
 	".cache":   true, // pip / pytest / generic
+	// Framework build output and tool caches the builder regenerates.
+	".nuxt":         true, // Nuxt
+	".output":       true, // Nuxt / Nitro build output
+	".svelte-kit":   true, // SvelteKit
+	".turbo":        true, // Turborepo cache
+	".pytest_cache": true,
+	".mypy_cache":   true,
+	".ruff_cache":   true,
 }
 
 // defaultExcludeFiles are basenames dropped anywhere in the tree (OS/VCS
@@ -313,7 +322,7 @@ func shouldExclude(relSlashPath string, isDir bool, patterns []gregaleignorePatt
 // output. A Dockerfile build commonly COPYs them (`COPY target/*.jar`,
 // `COPY dist/ ...`), so they ship by default when the source builds with a
 // Dockerfile (ADR-20261026152731).
-var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true}
+var buildOutputDirs = map[string]bool{"dist": true, ".next": true, "coverage": true, "target": true, ".cache": true, ".nuxt": true, ".output": true, ".svelte-kit": true}
 
 // packRules is the complete file-selection policy for one packed root.
 type packRules struct {
@@ -325,7 +334,11 @@ type packRules struct {
 	// goVendor reports whether a vendor/ directory at rel holds Go module
 	// vendoring (vendor/modules.txt), which is source, not an install.
 	goVendor func(rel string) bool
-	report   *deploySourceFilesReport
+	// pythonVenv reports whether the directory at rel is a Python virtual
+	// environment (it holds pyvenv.cfg), whatever it is called: venv/, env/
+	// and .venv/ are installs the builder recreates, never source.
+	pythonVenv func(rel string) bool
+	report     *deploySourceFilesReport
 }
 
 // exclude applies, in order: .git (always excluded, cannot be re-included);
@@ -355,6 +368,24 @@ func parseDockerignore(data []byte) []gregaleignorePattern {
 	return patterns
 }
 
+// rootDockerignorePatterns is the root .dockerignore followed by the files
+// Docker always sends whatever it says: the Dockerfile and .dockerignore. A
+// .dockerignore listing `Dockerfile` (common, to keep it out of the image)
+// otherwise left the build with no Dockerfile (2026-11-15 agent eval).
+// Compose service contexts get the same re-include in
+// composeServiceDockerignorePatterns.
+func rootDockerignorePatterns(data []byte) []gregaleignorePattern {
+	patterns := parseDockerignore(data)
+	if len(patterns) == 0 {
+		return nil
+	}
+	for _, rel := range []string{"Dockerfile", dockerignoreFile} {
+		patterns = append(patterns, gregaleignorePattern{raw: "!" + rel, anchor: true, negate: true,
+			globSegments: []string{escapeGregaleignoreLiteral(rel)}, source: "Docker build context"})
+	}
+	return patterns
+}
+
 // dockerfileSource reports whether dir builds with a Dockerfile: one at its
 // root, or a gregale.yaml build: section naming one.
 func dockerfileSource(dir string) bool {
@@ -371,12 +402,23 @@ func loadPackRules(srcDir string, dockerfile bool) packRules {
 	rules := packRules{dockerfile: dockerfile, goVendor: func(rel string) bool {
 		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel), "modules.txt"))
 		return err == nil && info.Mode().IsRegular()
+	}, pythonVenv: func(rel string) bool {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel), "pyvenv.cfg"))
+		return err == nil && info.Mode().IsRegular()
 	}}
 	if dockerfile {
 		if data, err := os.ReadFile(filepath.Join(srcDir, dockerignoreFile)); err == nil {
-			rules.patterns = parseDockerignore(data)
+			rules.patterns = rootDockerignorePatterns(data)
 		}
 	}
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		info, err := os.Lstat(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxGitignoreBytes {
+			return nil, false
+		}
+		data, err := os.ReadFile(filepath.Join(srcDir, filepath.FromSlash(rel)))
+		return data, err == nil
+	})...)
 	rules.patterns = append(rules.patterns, loadGregaleignore(srcDir)...)
 	return rules
 }
@@ -681,10 +723,14 @@ func (e *NestedMarkerHintError) Unwrap() error { return e.Err }
 //     requirements.txt / pyproject.toml / Pipfile / setup.py / go.mod /
 //     Dockerfile). A README.md and dotfiles are ignored — most repos have
 //     them and they don't change the shape.
-//   - shapeApp: any app marker present at the root. App markers always win
-//     over a co-located handler.* — a customer with `package.json +
-//     handler.js` is unambiguously a Node app and must pass --function to
-//     override.
+//   - shapeApp: any app marker present at the root. App markers win over a
+//     co-located handler.* — a customer with `package.json + handler.js`
+//     and a start script is a Node app and must pass --function to
+//     override. One exception: a package.json that starts nothing (no
+//     start script, no main, no server.js/app.js/index.js) next to a
+//     handler.js/handler.ts only carries the function's dependencies or
+//     "type": "module"; deploying it as an app booted a guest with nothing
+//     to run (journeys TestFunctionSnapshotHooks, 2026-11-15/16).
 //   - shapeUnknown: cwd is empty, missing, or contains only excluded files.
 //
 // The detector is intentionally minimal: it mirrors the top-level sniff rule
@@ -705,8 +751,9 @@ func detectShape(srcDir string) shape {
 		return shapeUnknown
 	}
 	var (
-		hasAppMarker bool
-		handlerFile  string // name of the single handler.* if present
+		hasAppMarker   bool
+		hasPackageJSON bool
+		handlerFile    string // name of the single handler.* if present
 	)
 	for _, e := range entries {
 		if e.IsDir() {
@@ -729,7 +776,9 @@ func detectShape(srcDir string) shape {
 		switch strings.ToLower(name) {
 		// Keep in sync with detectFramework's app-marker switch and
 		// pkg/builderd/detect.go:73-82. If you change one, change all.
-		case "package.json", "requirements.txt", "pyproject.toml",
+		case "package.json":
+			hasPackageJSON = true
+		case "requirements.txt", "pyproject.toml",
 			"pipfile", "setup.py", "go.mod", "dockerfile":
 			hasAppMarker = true
 		}
@@ -745,6 +794,9 @@ func detectShape(srcDir string) shape {
 			handlerFile = strings.ToLower(name)
 		}
 	}
+	if hasPackageJSON && (!isNodeHandler(handlerFile) || !packageJSONStartsNothing(srcDir)) {
+		hasAppMarker = true
+	}
 	switch {
 	case hasAppMarker:
 		return shapeApp
@@ -753,6 +805,36 @@ func detectShape(srcDir string) shape {
 	default:
 		return shapeUnknown
 	}
+}
+
+func isNodeHandler(name string) bool { return name == "handler.js" || name == "handler.ts" }
+
+// packageJSONStartsNothing reports whether srcDir's package.json names no way
+// to start a server: no start or start:prod script, no main, and none of the
+// conventional entrypoints the Node app profile falls back to. An unreadable
+// or invalid package.json counts as starting something, so the app path
+// reports the real error.
+func packageJSONStartsNothing(srcDir string) bool {
+	data, err := os.ReadFile(filepath.Join(srcDir, "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct {
+		Main    string            `json:"main"`
+		Scripts map[string]string `json:"scripts"`
+	}
+	if json.Unmarshal(data, &pkg) != nil {
+		return false
+	}
+	if strings.TrimSpace(pkg.Main) != "" || strings.TrimSpace(pkg.Scripts["start"]) != "" || strings.TrimSpace(pkg.Scripts["start:prod"]) != "" {
+		return false
+	}
+	for _, entry := range []string{"server.js", "app.js", "index.js"} {
+		if _, err := os.Stat(filepath.Join(srcDir, entry)); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // inferFunctionRuntime picks the apid runtime + wire handler for a
@@ -901,6 +983,9 @@ func packDirToTarGzReported(srcDir, destPath string, capMB int, envOverride map[
 	}
 
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	if len(entries)+len(buildOnlyFiles) > api.SourceArchiveMaxEntries {
+		entries = dropComposeUnusedDirs(srcDir, entries)
+	}
 	expandedCap := api.SourceArchiveMaxExpandedBytes
 	var totalUncompressed int64
 	existingEntries := make(map[string]bool, len(entries))
@@ -1068,7 +1153,7 @@ func packWriteError(capMB int, name string, err error) error {
 type sourceUploadLimitErr struct{ capMB int }
 
 func (e *sourceUploadLimitErr) Error() string {
-	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", e.capMB)
+	return fmt.Sprintf("packed source is over your plan's %d MB upload limit; exclude large files in .gregaleignore (https://gregale.dev/docs/deploys#what-gets-uploaded)", e.capMB)
 }
 
 func sourceUploadLimitError(capMB int) error {
@@ -1076,7 +1161,7 @@ func sourceUploadLimitError(capMB int) error {
 }
 
 func sourceExpandedLimitError() error {
-	return fmt.Errorf("source expands to more than %d MB uncompressed, the limit on every plan; exclude large files in .gregaleignore (https://gregale.dev/docs/deploy-from-source#what-gets-uploaded)", api.SourceArchiveMaxExpandedBytes>>20)
+	return fmt.Errorf("source expands to more than %d MB uncompressed, the limit on every plan; exclude large files in .gregaleignore (https://gregale.dev/docs/deploys#what-gets-uploaded)", api.SourceArchiveMaxExpandedBytes>>20)
 }
 
 // packEntry is one archive entry: rel is its archive name and abs the file

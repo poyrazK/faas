@@ -84,14 +84,16 @@ func TestQueuePollerBindingIdentitySurvivesRename(t *testing.T) {
 	if err != nil || row.State != state.InvocationPending || row.QueueBindingID != original.Binding.ID || row.QueueName != "orders" {
 		t.Fatalf("release changed admission=%+v %v", row, err)
 	}
+	// A released claim gives its attempt back (ADR-20261112200000), so the
+	// redelivery is attempt 1 again.
 	retried := poller.Poll(ctx, trigger)
-	if retried.Error != nil || len(retried.Records) != 1 || retried.Records[0].InvocationAttempt != 2 {
+	if retried.Error != nil || len(retried.Records) != 1 || retried.Records[0].InvocationAttempt != 1 {
 		t.Fatalf("released work lost attempt fence=%+v", retried)
 	}
-	if err := poller.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{old.ID: {Attempt: 1}}, oldTrigger); err != nil {
+	if err := poller.ReleaseNamedClaims(ctx, map[string]sched.QueueDeliveryClaim{old.ID: {Attempt: 1, ReplayGeneration: 1}}, oldTrigger); err != nil {
 		t.Fatal(err)
 	}
-	if row, err := store.InvocationByID(ctx, old.ID); err != nil || row.State != state.InvocationDispatching || row.Attempts != 2 {
+	if row, err := store.InvocationByID(ctx, old.ID); err != nil || row.State != state.InvocationDispatching || row.Attempts != 1 {
 		t.Fatalf("stale release reclaimed newer attempt=%+v %v", row, err)
 	}
 	if err := poller.Ack(ctx, trigger, []string{old.ID}); err != nil {

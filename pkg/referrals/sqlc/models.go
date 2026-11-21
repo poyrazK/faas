@@ -36,6 +36,16 @@ type Invoice struct {
 	CreatedAt                pgtype.Timestamptz
 }
 
+type Org struct {
+	ID                     pgtype.UUID
+	Name                   string
+	Plan                   string
+	Status                 string
+	PersonalOrg            bool
+	DeletedPending         bool
+	StripeSubscriptionItem pgtype.Text
+}
+
 type ReferralAttribution struct {
 	AccountID           pgtype.UUID
 	Code                string
@@ -54,6 +64,20 @@ type ReferralAttribution struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	AttributionSource   string
+	SubjectKind         string
+	SelectedBy          pgtype.UUID
+}
+
+type ReferralCreditChange struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	ChangedBy         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ReferralLink struct {
@@ -63,6 +87,10 @@ type ReferralLink struct {
 	Active    bool
 	CreatedAt pgtype.Timestamptz
 	ShareCode pgtype.Text
+}
+
+type ResourceNamespace struct {
+	ID pgtype.UUID
 }
 
 type SalesActivity struct {
@@ -78,6 +106,32 @@ type SalesActivity struct {
 	FollowUpTitle string
 	FollowUpOn    pgtype.Date
 	TaskID        pgtype.UUID
+}
+
+type SalesCommissionAgreement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	EffectiveFrom pgtype.Timestamptz
+	Note          string
+	CreatedBy     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type SalesCommissionPayout struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OwnerID     pgtype.UUID
+	AmountCents int64
+	Currency    string
+	PaidOn      pgtype.Date
+	Reference   string
+	Note        string
+	RecordedBy  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	VoidedAt    pgtype.Timestamptz
+	VoidedBy    pgtype.UUID
+	VoidReason  string
 }
 
 type SalesInquiry struct {
@@ -184,6 +238,12 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         int64
 	ReferredRewardCents int64
+	SubjectKind         string
+	OrgName             string
+	CommissionBps       int32
+	PayoutID            pgtype.UUID
+	PayoutCents         int64
+	PayoutPaidOn        pgtype.Date
 }
 
 type SalesTask struct {
@@ -197,4 +257,14 @@ type SalesTask struct {
 	UpdatedBy   pgtype.UUID
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type SalesTeamMember struct {
+	AccountID pgtype.UUID
+	Role      string
+	Active    bool
+	UpdatedBy pgtype.UUID
+	Version   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }

@@ -30,6 +30,12 @@
       - faas_billing_mode in ['disabled', 'live']
     fail_msg: "faas_billing_mode must be disabled or live"
 
+- name: control_plane_service — validate the quiet pause billing mode
+  ansible.builtin.assert:
+    that:
+      - meterd_quiet_pause_unbilled in ['off', 'shadow', 'on']
+    fail_msg: "meterd_quiet_pause_unbilled must be \"off\", \"shadow\" or \"on\" (quoted: YAML reads a bare on/off as a boolean)"
+
 - name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
   ansible.builtin.user:
     name: "{{ item }}"
@@ -500,6 +506,17 @@
     group: root
     mode: "0644"
 
+# Prod findings 2026-11-15 #25: the capability list follows whether the edge
+# runs tcpd/udpd. Rendered unconditionally so turning them off clears it.
+- name: control_plane_service — tell apid whether TCP/UDP listeners are served
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-listeners.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-listeners.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-A (issue #911 / ADR-110 PR-1): drop the FAAS_NODE_NAME
 # env line into every control-plane unit so the multi-box identity
 # travels from host_vars to the daemons without a TOML edit on every
@@ -748,6 +765,38 @@
     state: absent
   register: faas_app_errors_dropin_removed
   when: faas_apid_app_errors_listen | default('') | length == 0
+
+- name: control_plane_service — install the v2-only artifact signature switch
+  notify:
+    - restart faas-schedd
+    - restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-artifact-signatures.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/zz-faas-artifact-signatures.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-schedd
+    - faas-apid
+
+# ADR-20261023171905: whether meterd subtracts the quiet-paused seconds the
+# pause ledger proves. Rendered unconditionally so a change of mode lands; the
+# hand drop-in production-us used before this switch goes.
+- name: control_plane_service — set meterd's quiet pause billing mode
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-quiet-pause-unbilled.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-quiet-pause-unbilled.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — remove the hand-installed quiet pause billing drop-in
+  notify: restart faas-meterd
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-meterd.service.d/70-faas-quiet-pause-unbilled.conf
+    state: absent
 
 - name: control_plane_service — install split-box schedd routing drop-in
   notify: restart faas-schedd

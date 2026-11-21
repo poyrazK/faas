@@ -89,6 +89,11 @@ necessary.
 
 ## Install into an existing client
 
+To add local migrations, a typed client, generated types and two-user
+authorization verification together, use
+[`gregale data-api integrate`](data-api-onboarding.md#add-typed-data-to-an-existing-typescript-application).
+The lower-level installer below adds only the SDK to an existing client.
+
 With a trusted CLI already installed, use the verified SDK installer from any
 project containing a client package.json:
 

@@ -15,7 +15,12 @@ account during the preview; contact support to have it turned on for yours.
   Gemini, Azure OpenAI, AWS Bedrock and Google Vertex AI.
 - **Hard caps.** Daily token limits, daily and monthly cost limits, per-app
   token limits and per-end-user limits. A call is refused before it reaches the
-  provider when its reservation would pass a cap.
+  provider when its reservation would pass a cap. A call that sets no
+  `max_tokens` (and an app with no output-token ceiling) reserves the
+  longest response its model can return, or 32,768 output tokens for a model
+  Gregale has no price for, so concurrent calls cannot run past a cost cap.
+  Set `max_tokens` to reserve less; per-minute token limits still count
+  4,096 output tokens for such a call.
 - **Guardrails.** Per-app requests and tokens per minute, model allow-lists and
   output-token ceilings.
 - **Content guardrails.** Redact or block e-mail addresses, payment card
@@ -30,6 +35,10 @@ account during the preview; contact support to have it turned on for yours.
 - **Fallback routes.** Try targets in order across providers. An
   OpenAI-format route translates chat completions, the Responses API and
   embeddings for Anthropic, Gemini, Bedrock and Vertex.
+- **Managed prompts.** Keep prompts on Gregale instead of in code: push a
+  prompt file as an immutable version, call it by name with variables, and
+  roll a new version out, canary it, evaluate it or roll it back without a
+  deploy. Each version's calls, cost and feedback are counted apart.
 - **Route strategies.** Split a route's calls by weight, or send each call
   first to the target with the lowest recent latency or cost that is up.
 - **Model canaries.** Send a share of a route's calls to a new model first and
@@ -261,6 +270,23 @@ ai_gateway_feedback(integration=id, call_id=call_id, rating="bad", label="wrong_
 `opaqueAIUserId` / `opaque_ai_user_id` turns an e-mail address into an
 end-user ID that is not personal data.
 
+`aiPrompt` / `ai_prompt` calls a managed prompt by name. The result carries
+the answer text, the version that served it and the call ID for feedback:
+
+```ts
+import { aiPrompt } from '@gregale/sdk-node/preview';
+
+const { text, version, callId } = await aiPrompt('support-reply').run({ question }, { caller: { user } });
+const stream = await aiPrompt('support-reply').stream({ question }); // OpenAI chat completions SSE
+```
+
+```python
+from faas_sdk.preview import ai_prompt
+
+result = ai_prompt("support-reply").run({"question": question}, user=user)
+print(result.text, result.version)
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
@@ -373,6 +399,11 @@ end user (`X-Gregale-AI-User`) has their own answers;
 | `502 outbound_ai_response_unchecked` | A response guardrail could not check the answer. |
 | `400 outbound_ai_feedback_invalid`, `403 outbound_ai_feedback_not_authorized` | Feedback was malformed, or did not come from an app. |
 | `400 outbound_ai_translation_unsupported` | A route cannot translate this request for its target. |
+| `400 outbound_ai_prompt_variable_missing` | A prompt call set no value for a `{{variable}}` and the version has no default for it. The problem names the variable. |
+| `400 outbound_ai_prompt_request_invalid` | A prompt call's body is not JSON, its `version` is not a positive number, or an extra message has no role. |
+| `404 outbound_ai_prompt_not_found` | The account has no prompt with this name, the prompt has no live version yet, or the pinned version does not exist. |
+| `409 outbound_ai_prompt_target_unavailable` | The version's route was deleted or is no longer an openai-format route. Push a version with another target. |
+| `429 outbound_ai_prompt_limit` | From the API: the account has as many prompts as its plan allows (see Plans). |
 | `400 outbound_ai_content_flagged` | The moderation check found a blocked category. `X-Gregale-AI-Moderation` names it. |
 | `503 outbound_ai_moderation_unavailable` | The moderation check failed and its policy blocks on failure. A `block` policy fails closed unless set with `--moderation-on-error allow`; a `flag` policy lets the call through. |
 | `429 outbound_ai_account_rate_limited` | The account's AI calls per second across all its integrations reached the plan limit (see Plans). Retry after a second. |
@@ -395,9 +426,17 @@ The AI gateway is included on **Hobby**, **Pro** and **Scale**. Your plan's
 outbound request policy (rate, burst and concurrency per integration) applies
 to AI calls too, and each account may make at most 40 (Hobby), 200 (Pro) or
 1,000 (Scale) AI calls per second across all its integrations, with bursts
-of twice that. Provider charges are billed by your provider to your own key;
+of twice that. Accounts keep up to 25 (Hobby), 100 (Pro) or 500 (Scale)
+managed prompts. Provider charges are billed by your provider to your own key;
 Gregale's cost figures are estimates from your price list or the built-in
 catalog, used for budgets and reports.
+
+Some models cost more for long prompts, and Claude's one-hour cache writes
+cost more than five-minute ones. Estimates include both: `gregale ai catalog`
+shows each model's long-context tier and one-hour cache-write price, and
+your own price list can set them per model, for example
+`--price model=claude,input=3,output=15,cache-write-1h=6,long-context=200000:200:150`
+(above 200,000 input tokens, input costs 2x and output 1.5x).
 
 ## Preview notes
 

@@ -452,6 +452,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 
 - Builder VM: 2 vCPU, **2048 MB**, 8 GB scratch ext4 (thrown away), 4 GB per-app cache volume (kept, quota'd), rootfs = our `builder-base` image containing BuildKit (rootless inside the VM — inside a VM it may as well be root), Railpack, git, and the OCI exporter. No inbound network; outbound via the build egress policy (§7).
 - Semaphore: **1 builder slot** per 5 GiB parent cgroup. A second ordinary 2816 MiB builder can exceed that fence, and a snapshot builder can approach it alone, so local overcommit is disabled. Queue is FIFO per account with global fairness. Additional capacity comes from another eligible compute node.
+- Elastic builder slots (ADR-20261118154632), behind the `builder_elastic_slots` runtime config (default `off`): each node runs `builder_slots`' `reserved` slots (the slot above, funded out of tenant sizing, never preempted) plus `max - reserved` **borrowed** slots in `faas-borrowed.slice`, beside `faas-cp.slice`. A borrowed build starts only while tenant + borrowed memory + 3,328 MiB stays within 70% of the tenant slice's `memory.max`, and gives its memory back to tenants: builderd cancels and requeues the newest borrowed build above 85%, vmmd destroys one above 92% (or `MemAvailable` < 512 MiB) for 1 s, and borrowed builders run with `oom_score_adj` 1000. A build given back twice runs only on a reserved slot. Tenant admission is unchanged; builds never outrank tenant wakes. `max` is clamped to online CPUs / 2 and changes apply without a restart.
 - Timeouts: 15 min build (`api.BuildTimeoutSeconds`; ADR-791 — the original 10 min was raised for cold rootless Railpack exports). End-to-end deploy time is not separately enforced; the CLI waits build + 5 min. On timeout/OOM (VM hits its own wall — host unaffected): kill VM, mark build `failed(reason)`, requeue once if `oom` and slot was opportunistic.
 - Source in: scratch disk pre-loaded with the tarball. Image out: OCI layout written to the cache volume, hash-addressed; host copies it out after VM exit (no live channel needed — keeps the surface tiny).
 
@@ -476,7 +477,7 @@ The per-route rate-limiting primitive. A customer tightens the per-route rps/bur
 - **Quiet-paused seconds are not billed** (ADR-20261023171905). A running second in which vmmd holds the instance quiet-paused (ADR-1151, `between_requests` workloads) is not a running second, as a frozen second is not. schedd records each node's pauses in the pause ledger (`instance_quiet_pauses`, per-node watermark `quiet_pause_watermarks`) behind `quiet_pause_ledger`, and meterd subtracts the paused seconds the ledger proves from each closed minute's residency behind `[meter] quiet_pause_unbilled` (`off` / `shadow` / `on`, default off). A closed pause counts exactly and an open one only up to its node's watermark, so anything unproven is billed; the subtraction runs before compute funding and the ADR-060 floor fill, so a floor keeps billing its paused capacity. What a minute did not bill, net of that floor fill, is recorded in `usage_minutes.paused_mb_seconds`, and the usage summary shows the month's total as `quiet_paused_gb_hours`, beside the billed GB-hours and not part of them.
 - Quota ladder per account per month: 0–100 % of included GB-h: nothing; 100 %: email; Free tier at 100 %: hard stop (park, don't wake, `402` page); paid tiers: overage accrues at $0.05/GB-h (ADR-20261107192333), pushed hourly as provider usage records through the adapter interface.
 - Provider catalog: one product and monthly price per plan, one metered price (`gb_ram_hour`), and one customer plus subscription per account. The public-release provider is Polar; Paddle and Stripe webhooks remain compatibility paths and are selected explicitly with `FAAS_BILLING_PROVIDER`.
-- Dunning: `payment_failed` → account `past_due` (apps run, deploys blocked) → 7 days → `suspended` (apps parked, wake returns `402` page) → 21 days → `deleted_pending` (30-day snapshot retention, then GC). All transitions emailed. Subscription end (`subscription.revoked` / provider equivalent) → plan `free` + subscription binding cleared, status untouched: a voluntary cancel stays `active` (one "subscription ended" email), a non-payment revocation keeps its dunning stamp. Free → paid is a hosted-checkout hand-off — `PATCH /v1/account/plan` 402 `checkout_url`, `/dashboard/upgrade`, `gregale plan` — and the plan flips only on the provider webhook. A subscription webhook moves the account only as far as the provider's current subscription allows: a payment failure for a subscription that is active again is ignored, and the plan is the subscription's current product (ADR-20261026180850). Deleting an account or organization cancels its subscription at period end before the deletion is recorded; the grace hard delete repeats it before erasure.
+- Dunning: `payment_failed` → account `past_due` (apps run, deploys blocked) → 7 days → plan `free`, status `active`, `past_due_at` kept as the unpaid-balance marker until a paid order or an operator clears it; nothing is suspended or deleted for non-payment (ADR-20261114093000, which replaced the old 7-day suspension and 21-day `deleted_pending` steps). All transitions emailed. Subscription end (`subscription.revoked` / provider equivalent) → plan `free` + subscription binding cleared, status untouched: a voluntary cancel stays `active` (one "subscription ended" email), a non-payment revocation keeps its dunning stamp. Free → paid is a hosted-checkout hand-off — `PATCH /v1/account/plan` 402 `checkout_url`, `/dashboard/upgrade`, `gregale plan` — and the plan flips only on the provider webhook. A subscription webhook moves the account only as far as the provider's current subscription allows: a payment failure for a subscription that is active again is ignored, and the plan is the subscription's current product (ADR-20261026180850). Deleting an account or organization cancels its subscription at period end before the deletion is recorded; the grace hard delete repeats it before erasure.
 
 #### 4.7.1 Operator credits + per-account overage cap (issue #279)
 
@@ -1611,9 +1612,9 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | Metric | Plan value | Alert |
 |---|---|---|
 | `snapshot_fleet_avg_mb` / `p95` | 130 / — | avg > 160 warn, > 200 page |
-| resident GB per paying customer | 0.305 (=312 MB) | > 0.45 warn |
+| resident GB per paying customer | 0.305 (=312 MB) blended; per plan `meterd_resident_gb_per_customer_planned` | > 1.5× the plan's planned value warn (ADR-20261117070932) |
 | `resident_ram_pct_of_target` | ≤ 100 % | > 80 % warn, > 92 % page |
-| `lv_fc_used_pct` | — | > 80 % warn, > 90 % page |
+| `lv_fc_used_pct` | ≤ 85 % (artifact cache floor) | > 87 % warn, > 90 % page (ADR-20261114182830 amendment 1) |
 | build queue wait p95 | < 60 s | > 300 s warn |
 | `gateway_wake_latency_seconds` p95 (one sample per admitted wake) | ≤ 0.8 s | > 1.5 s warn |
 | `gateway_wake_request_latency_seconds` p95 (every request that waited on a wake) | n/a (what callers see; includes the queue behind a wake) | none |
@@ -2038,6 +2039,16 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 
 ---
 
+### 12.12 Elastic builder slots (ADR-20261118154632)
+
+`builderd_build_slots_limit` reports the applied `builder_slots` max while
+`builder_elastic_slots` is on. `builderd_build_slots_reserved`,
+`builderd_build_slots_active{kind="reserved|borrowed"}` and
+`builderd_build_preemptions_total{actor="builderd|vmmd"}` describe the
+node's slots and give-backs; vmmd adds `vmmd_builder_preemptions_total` and
+`vmmd_builder_borrowed_memory_bytes`. `FaasBuildPreemptionsHigh` warns when
+a node gives back more than 6 builds an hour.
+
 ## 13. RAM budget ledger (enforced as systemd slices)
 
 | Slice | Budget | Contents |
@@ -2045,7 +2056,7 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
 | `faas-obs.slice` (control plane) | 3,584 MB, `CPUWeight=20`, `CPUQuota=100%`, `IOWeight=20` | prometheus (`MemoryHigh` 2,304) · alertmanager 128 · grafana 384 · loki and the control plane's promtail once logs are enabled; yields CPU and IO to PostgreSQL and the daemons. Sized for a split-box control plane with no tenant VMs; a single box that also runs tenants sizes `faas_obs_slice_memory_max` down, out of the headroom above the admission line (ADR-20261023124955) |
-| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
+| `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to 2.5 times that, ADR-909 amendment 3) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.

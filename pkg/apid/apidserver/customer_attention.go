@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 
 	"github.com/google/uuid"
@@ -21,12 +22,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var attentionKinds = []string{api.AttentionKindDeployFailing, api.AttentionKindRefusedBurst, api.AttentionKindDomainStuck}
+var attentionKinds = api.AttentionKinds()
 
 // supportSignalMetrics are low-cardinality: no account or app labels.
 type supportSignalMetrics struct {
 	apiErrors *prometheus.CounterVec
 	open      *prometheus.GaugeVec
+	outcomes  *prometheus.CounterVec
 }
 
 func newSupportSignalMetrics(reg prometheus.Registerer, prefix string) *supportSignalMetrics {
@@ -35,6 +37,8 @@ func newSupportSignalMetrics(reg prometheus.Registerer, prefix string) *supportS
 			Help: "Control-plane API problems returned to authenticated customers, by problem code."}, []string{"code"}),
 		open: prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: prefix + "_customer_attention_signals_open",
 			Help: "Open customer attention signals by kind at the latest evaluation."}, []string{"kind"}),
+		outcomes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: prefix + "_customer_attention_outcomes_total",
+			Help: "Customer attention signals by kind and what support did (contacted, a dismiss outcome, or resolved_on_own)."}, []string{"kind", "outcome"}),
 	}
 	register := func(c prometheus.Collector) prometheus.Collector {
 		if err := reg.Register(c); err != nil {
@@ -48,6 +52,7 @@ func newSupportSignalMetrics(reg prometheus.Registerer, prefix string) *supportS
 	}
 	m.apiErrors = register(m.apiErrors).(*prometheus.CounterVec)
 	m.open = register(m.open).(*prometheus.GaugeVec)
+	m.outcomes = register(m.outcomes).(*prometheus.CounterVec)
 	for _, kind := range attentionKinds {
 		m.open.WithLabelValues(kind)
 	}
@@ -75,6 +80,16 @@ func (s *server) observeAttention(result attention.Result) {
 	}
 	for _, kind := range attentionKinds {
 		m.open.WithLabelValues(kind).Set(float64(result.OpenByKind[kind]))
+		if n := result.ResolvedOnOwnByKind[kind]; n > 0 {
+			m.outcomes.WithLabelValues(kind, api.AttentionOutcomeResolvedOnOwn).Add(float64(n))
+		}
+	}
+}
+
+// countAttentionOutcome counts one staff action on a signal.
+func (s *server) countAttentionOutcome(kind, outcome string) {
+	if m := s.supportSignals.Load(); m != nil && validAttentionKind(kind) {
+		m.outcomes.WithLabelValues(kind, outcome).Inc()
 	}
 }
 
@@ -103,7 +118,7 @@ func (s *server) obsListAttention(w http.ResponseWriter, r *http.Request, acct s
 		filter.AccountID = id.String()
 	}
 	if filter.Kind != "" && !validAttentionKind(filter.Kind) {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad kind", "kind must be deploy_failing, refused_burst or domain_stuck"))
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad kind", "kind must be one of "+strings.Join(attentionKinds, ", ")))
 		return
 	}
 	switch st := query.Get("state"); st {

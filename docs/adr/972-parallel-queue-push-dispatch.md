@@ -82,3 +82,27 @@
 NATS, Redis Streams and SQS-compatible triggers onto lanes of their own. The
 ordering argument above holds per trigger, so each trigger keeps one batch in
 flight; only the schedd that owns the trigger's app polls it.
+
+## Amendment (2026-11-19): a lane drains while records keep coming
+
+A prod measurement (Scale account, Node function, binding
+`max_concurrency` 20) drained a 2,000-message backlog at 35–40 messages/s
+with an instant handler and 17–19/s with a 200 ms handler, whatever the
+app's instances or function concurrency. Each lane carried one record and
+ended; lanes are submitted again only on the trigger tick (1 s ticker plus
+`pg_notify` wakeups), so every record paid 250–350 ms of scheduler wait and
+about half the lanes sat idle between ticks. Throughput was lanes × tick
+rate, not what the handler could take.
+
+A lane now keeps claiming: after each delivered record it polls again, and
+stops at an empty poll, an error (a gateway failure still backs the
+allowance off), a cancelled scheduler, or its budget —
+`api.QueuePushLaneDrainBudget` (1 s) or `api.QueuePushLaneDrainMaxRecords`
+(64), whichever comes first. The budget returns the slot to the shared pool
+about once a tick, so other triggers on the node still get lanes. Each
+record is still one claim under the binding's `max_concurrency`, one gateway
+invocation and one settle; ordering, keyed lanes and fairness locks are
+unchanged. The dispatch reports its poll's record count through the
+context, so a dispatch that returns before polling ends the lane.
+
+Rollback: revert; lanes go back to one record each.

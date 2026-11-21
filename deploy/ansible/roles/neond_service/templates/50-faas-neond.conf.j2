@@ -8,7 +8,9 @@ Environment=FAAS_NEOND_LISTEN=unix:///run/faas/neond.sock
 # apid is the only caller; neond closes any other peer by SO_PEERCRED.
 Environment=FAAS_NEOND_CALLERS=faas-apid
 Environment=FAAS_NEOND_DESTRUCTIVE_PER_HOUR={{ faas_neond_destructive_per_hour }}
+Environment=FAAS_NEOND_DESTRUCTIVE_PER_SUBJECT_PER_HOUR={{ faas_neond_destructive_per_subject_per_hour }}
 Environment=FAAS_NEOND_ROLE={{ faas_box_role | default('single-box') }}
+Environment=FAAS_NEOND_METRICS_ADDR={{ faas_neond_metrics_addr }}
 {% if faas_neond_org_id | length > 0 %}
 # Project keys, sealed to the neon seal domain (its identity arrives in the
 # seal_domains role's 60-faas-seal-domain-neon.conf).

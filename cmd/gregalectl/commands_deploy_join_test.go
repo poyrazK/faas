@@ -769,17 +769,22 @@ func TestNodeJoinTakesTheDrainedEdgeOutOfTheTunnel(t *testing.T) {
 	}
 	// The connector leaves first, so Cloudflare stops sending before the
 	// socket refuses; closing the socket is what stops socket activation.
-	connector := strings.Index(outBlock, "- faas-cloudflared.service")
-	socket := strings.Index(outBlock, "- faas-gatewayd-public-edge.socket")
+	// public_edge.entry direct runs no connector (ADR-20261102081618 step 6),
+	// so both loops name it only behind faas_edge_tunnel.
+	connector := strings.Index(outBlock, "'faas-cloudflared.service'")
+	socket := strings.Index(outBlock, "'faas-gatewayd-public-edge.socket'")
 	if connector < 0 || socket < 0 || connector > socket {
 		t.Fatalf("edge take-out must stop the connector, then the socket: connector=%d socket=%d", connector, socket)
+	}
+	if !strings.Contains(outBlock, "if (faas_edge_tunnel | default(true) | bool)") {
+		t.Error("edge take-out stops the connector even without a tunnel")
 	}
 	backEnd := strings.Index(playbook[back:], "\n    - name: ")
 	if backEnd < 0 {
 		t.Fatal("edge return task has no successor")
 	}
 	backBlock := playbook[back : back+backEnd]
-	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "- faas-gatewayd-public-edge.socket", "- faas-cloudflared.service"} {
+	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "'faas-gatewayd-public-edge.socket'", "'faas-cloudflared.service'", "if (faas_edge_tunnel | default(true) | bool)"} {
 		if !strings.Contains(backBlock, token) {
 			t.Errorf("edge return missing %q", token)
 		}
@@ -1266,6 +1271,42 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 	if err := validateSharedStorageEnv(path); err != nil {
 		t.Fatalf("valid GCS migration env rejected: %v", err)
 	}
+	s3Env := "FAAS_STORAGE_BACKEND=s3\n" +
+		"FAAS_S3_BUCKET=gregale-artifacts-bhs\n" +
+		"FAAS_S3_ENDPOINT=https://s3.bhs.io.cloud.ovh.net\n" +
+		"FAAS_S3_REGION=bhs\n" +
+		"FAAS_S3_ACCESS_KEY_ID=AK\n" +
+		"FAAS_S3_SECRET_ACCESS_KEY=SK\n" +
+		"FAAS_STORAGE_FALLBACK_BACKEND=gcs\n" +
+		"FAAS_GCS_BUCKET=gregale-artifacts-test\n" +
+		"FAAS_STORAGE_LOCAL_PREFIXES=none\n" +
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1\n" +
+		"FAAS_STORAGE_CACHE_SERVE_STALE=0\n"
+	if err := os.WriteFile(path, []byte(s3Env), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err != nil {
+		t.Fatalf("valid S3 env with GCS migration fallback rejected: %v", err)
+	}
+	for name, body := range map[string]string{
+		"plain http endpoint":     strings.Replace(s3Env, "https://s3.bhs", "http://s3.bhs", 1),
+		"no region":               strings.Replace(s3Env, "FAAS_S3_REGION=bhs\n", "", 1),
+		"no secret":               strings.Replace(s3Env, "FAAS_S3_SECRET_ACCESS_KEY=SK\n", "", 1),
+		"gcs fallback, no bucket": strings.Replace(s3Env, "FAAS_GCS_BUCKET=gregale-artifacts-test\n", "", 1),
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := validateSharedStorageEnv(path); err == nil {
+			t.Fatalf("%s: invalid S3 storage env accepted", name)
+		}
+	}
+	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=gcs\nFAAS_GCS_BUCKET=b-test\nFAAS_STORAGE_FALLBACK_BACKEND=gcs\nFAAS_STORAGE_LOCAL_PREFIXES=none\nFAAS_REQUIRE_SHARED_ARTIFACTS=1\nFAAS_STORAGE_CACHE_SERVE_STALE=0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateSharedStorageEnv(path); err == nil {
+		t.Fatal("gcs fallback under gcs accepted")
+	}
 	if err := os.WriteFile(path, []byte("FAAS_STORAGE_BACKEND=local\nFAAS_OCI_REGISTRY=https://registry.example\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1300,6 +1341,12 @@ func TestValidateSharedStorageEnv(t *testing.T) {
 
 func TestValidateImagedStorageEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "imaged-storage.env")
+	if err := os.WriteFile(path, []byte("FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateImagedStorageEnv(path); err != nil {
+		t.Fatalf("valid S3 lifecycle env rejected: %v", err)
+	}
 	if err := os.WriteFile(path, []byte("FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1310,6 +1357,9 @@ func TestValidateImagedStorageEnv(t *testing.T) {
 		"FAAS_OCI_USERNAME=gregale-bot\n",
 		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=secret\nFAAS_STORAGE_BACKEND=local\n",
 		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_OCI_PASSWORD=__SET_FROM_SECRET_STORE__\n",
+		"FAAS_S3_ACCESS_KEY_ID=AK\n",
+		"FAAS_OCI_USERNAME=gregale-bot\nFAAS_S3_SECRET_ACCESS_KEY=SK\n",
+		"FAAS_S3_ACCESS_KEY_ID=AK\nFAAS_S3_SECRET_ACCESS_KEY=SK\nFAAS_OCI_PASSWORD=secret\n",
 	} {
 		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
@@ -1686,6 +1736,48 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployJoinValidate: %v", err)
 	}
+
+	// Retired keys (ADR-20261109170000): node_join.yml removes them from the
+	// node, so the join no longer needs sign.key or fleet.age, and still
+	// needs both while they are not retired.
+	withoutKeys := deployJoinOptions{
+		ManifestFile:            manifestPath,
+		Node:                    "fsn-2",
+		SSHHost:                 "203.0.113.27",
+		ReleaseTarball:          tarball,
+		BootstrapBinary:         bootstrap,
+		CosignBinary:            cosign,
+		PKISource:               pkiDir,
+		VerifyKeySource:         verifyKey,
+		ComputeDBEnvSource:      computeDBEnv,
+		StorageEnvSource:        storageEnv,
+		ImagedStorageEnvSource:  imagedStorageEnv,
+		RuntimeBasesEnvSource:   runtimeBasesEnv,
+		FleetAgeRecipientSource: fleetAgeRecipient,
+		RepoRoot:                repo,
+		PostgresOverlapNodes:    4,
+		SkipFleetPreflight:      true,
+	}
+	if _, err := deployJoinValidate(withoutKeys); err == nil || !strings.Contains(err.Error(), "is required for apply") {
+		t.Fatalf("unretired keys missing: err = %v, want a required-for-apply refusal", err)
+	}
+	retiredVars := filepath.Join(artifactDir, "ansible-vars.yml")
+	if err := os.WriteFile(retiredVars, []byte("faas_compute_sign_key_retired: true\nfaas_compute_fleet_key_retired: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withoutKeys.AnsibleVarsFile = retiredVars
+	if _, err := deployJoinValidate(withoutKeys); err != nil {
+		t.Fatalf("retired keys missing: deployJoinValidate: %v", err)
+	}
+	signOnly := withoutKeys
+	if err := os.WriteFile(filepath.Join(artifactDir, "sign-only.yml"), []byte("faas_compute_sign_key_retired: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	signOnly.AnsibleVarsFile = filepath.Join(artifactDir, "sign-only.yml")
+	if _, err := deployJoinValidate(signOnly); err == nil || !strings.Contains(err.Error(), "--fleet-age-key is required for apply") {
+		t.Fatalf("fleet key not retired: err = %v, want --fleet-age-key refusal", err)
+	}
+
 	applyOpts := deployJoinOptions{
 		ManifestFile:            manifestPath,
 		Node:                    "fsn-2",

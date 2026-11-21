@@ -36,7 +36,7 @@ func ValidateCompatibility(ctx context.Context, c *Client, baseline *Contract) V
 		report.Checks = append(report.Checks, check)
 		return err == nil
 	}
-	if !add("initialize", "Initialization failed: check reachability, authorization, protocol negotiation and stateless session configuration.", c.InitializeStateless(ctx)) {
+	if !add("initialize", "Initialization failed: check reachability, authorization, protocol negotiation and stateless session configuration.", c.OpenStateless(ctx)) {
 		return report
 	}
 	catalog, exchange, err := c.DiscoverCatalog(ctx)

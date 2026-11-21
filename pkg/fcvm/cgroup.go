@@ -109,7 +109,9 @@ var cgroupRoot = "/sys/fs/cgroup"
 // PerInstanceScope for the lockstep definition.
 //
 // The +8 MB is the per-VM overhead accounted for by
-// api.PerVMOverheadMB (pkg/api/limits.go).
+// api.PerVMOverheadMB (pkg/api/limits.go). The fence itself sits a further
+// api.AppVMHeadroomMB above it (ADR-20261116191801): a cold-booting guest
+// fills its RAM and Firecracker's own pages did not fit in 8 MB.
 //
 // Note: the original spec text used `vm-{instance}.scope`; jailer
 // v1.7's --id validator rejects '.' (panic: "Invalid char (.) at
@@ -269,14 +271,14 @@ const builderCPUMax = "200000 100000"
 // writeBuildCgroup applies the dedicated builder VM fence. Build VMs are
 // fixed at 2 vCPU / 2048 MiB by the build contract, so their CPU quota is
 // independent of the owning account's tenant plan quota.
-func writeBuildCgroup(instance string, planMB int) error {
+func writeBuildCgroup(parent, instance string, planMB int) error {
 	if planMB < 1 {
 		return fmt.Errorf("fcvm: cgroup: builder planMB %d < 1", planMB)
 	}
-	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, BuilderCgroupParent), perInstanceControllers); err != nil {
+	if err := ensureSubtreeControllers(filepath.Join(cgroupRoot, parent), perInstanceControllers); err != nil {
 		return err
 	}
-	scope := filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(instance))
+	scope := filepath.Join(cgroupRoot, parent, PerInstanceScope(instance))
 	if err := writeMemoryMaxAt(scope, api.BuilderMemoryMaxMB(planMB)); err != nil {
 		return err
 	}
@@ -309,18 +311,18 @@ func writeMemoryMaxAt(scope string, memoryMB int) error {
 // fully-resolved scope path. Idempotent. Public so the cgroup unit
 // test can exercise it directly without spinning up a Manager.
 func writeMemoryMaxTo(scope string, planMB int) error {
-	return writeMemoryMaxAt(scope, api.BillableRAMMB(planMB))
+	return writeMemoryMaxAt(scope, api.AppVMMemoryMaxMB(planMB))
 }
 
 // snapshotMemoryLimits returns the VM scope with its ordinary memory.max and
 // the widened limit used while a full snapshot is written, both in MiB.
 func snapshotMemoryLimits(l Lease) (scope string, ordinaryMB, widenedMB int) {
 	if l.IsBuilder {
-		return filepath.Join(cgroupRoot, BuilderCgroupParent, PerInstanceScope(l.Instance)),
+		return filepath.Join(cgroupRoot, builderCgroupParent(l), PerInstanceScope(l.Instance)),
 			api.BuilderMemoryMaxMB(l.MemoryMaxMiB), api.BuilderSnapshotMemoryMaxMB(l.MemoryMaxMiB)
 	}
 	return filepath.Join(cgroupRoot, tenantCgroupParent(l), PerInstanceScope(l.Instance)),
-		api.BillableRAMMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
+		api.AppVMMemoryMaxMB(l.MemoryMaxMiB), api.SnapshotMemoryMaxMB(l.MemoryMaxMiB)
 }
 
 // widenSnapshotMemoryCgroup temporarily raises the VM's host-side memory.max

@@ -10,6 +10,15 @@ import type { DataSourceTable } from './DataSourceTable.js';
  */
 export type DataConnectionCheck = {
   /**
+   * Snapshot-specific compatibility evidence, without native replication requirements.
+   */
+  mode?: 'snapshot';
+  /**
+   * Hostname-derived setup hint; never a qualification or admission grant.
+   */
+  source_provider_hint?: string;
+  source_guidance_url?: string;
+  /**
    * Exact discovery selection retained across queueing and worker completion.
    */
   requested_tables?: Array<string>;

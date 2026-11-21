@@ -27,6 +27,7 @@
         "/signup",
         "=/v1/account",
         "/v1/account/email",
+        "/v1/account/health",
         "/v1/account/mfa",
         "/v1/account/rate-limits",
         "/v1/account/security-activity",
@@ -82,11 +83,13 @@
         "/v1/agent-runs",
         "/v1/agent-tools",
         "/v1/agents",
+        "/v1/sandbox-egress-policy",
         "/v1/sandbox-snapshots",
         "/v1/sandbox-templates",
         "/v1/sandboxes"
       ],
       "cli": [
+        "agents",
         "sandbox-templates"
       ],
       "consumers": [
@@ -161,6 +164,28 @@
       ],
       "cli": [
         "ai"
+      ]
+    },
+    {
+      "id": "ai-prompts",
+      "name": "AI managed prompts",
+      "category": "data",
+      "description": "Version prompts apps call by name, with canaries, rollback and evaluations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/outboundai/prompts_test.go::TestPromptAPILifecycle",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-prompt-evaluations",
+        "/v1/outbound/ai-prompts"
+      ],
+      "cli": [
+        "ai prompts"
       ]
     },
     {
@@ -344,7 +369,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli",
+      "docs_url": "/docs/auth#api-keys",
       "acceptance_test": "pkg/apid/apidserver/handlers_scopes_test.go::TestMintKeyScopes",
       "core": true,
       "routes": [
@@ -403,7 +428,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/auth",
+      "docs_url": "/docs/auth#app-access-control",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
       "settings": [
         "app.public_auth",
@@ -641,7 +666,6 @@
       "description": "Accept a request at the edge and run it asynchronously.",
       "maturity": "preview",
       "plans": [
-        "free",
         "hobby",
         "pro",
         "scale"
@@ -1245,7 +1269,9 @@
       "routes": [
         "/dashboard/orgs/{}/support",
         "/dashboard/support",
+        "/dashboard/support-access",
         "/v1/orgs/{}/support",
+        "/v1/orgs/{}/support-access",
         "/v1/support"
       ]
     },
@@ -1346,14 +1372,14 @@
       "id": "database-rollbacks",
       "name": "Rollbacks that restore the database",
       "category": "data",
-      "description": "Roll an app back with its managed databases restored to that release's point in time.",
-      "maturity": "preview",
+      "description": "Roll an app back with its managed databases restored to that release's point in time, or restore a database and move the app to the copy without changing its code.",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#rollbacks-that-restore-the-database",
       "acceptance_test": "pkg/apid/databaseswitch/worker_test.go::TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes",
       "parent": "postgres-restore",
       "routes": [
@@ -1528,7 +1554,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#safe-changes",
       "acceptance_test": "pkg/deploydiff/render_text_test.go::TestKindOrder",
       "routes": [
         "/dashboard/apps/{}/diff",
@@ -1590,7 +1616,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#cancel",
       "acceptance_test": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy",
       "routes": [
         "/v1/deployments/{}/reorder"
@@ -1630,7 +1656,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#deploy-tokens",
       "acceptance_test": "pkg/apid/apidserver/handlers_deploy_tokens_test.go::TestDeployTokenBearer_BoundToItsApp",
       "routes": [
         "/dashboard/apps/{}/deploy-tokens",
@@ -1652,7 +1678,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deployments",
+      "docs_url": "/docs/deploy-from-github#deployment-aliases",
       "acceptance_test": "pkg/apid/apidserver/handlers_deployment_aliases_test.go::TestDeploymentAliasesCRUD",
       "routes": [
         "/dashboard/apps/{}/deployment-aliases",
@@ -1700,7 +1726,7 @@
       "id": "developer-environments",
       "name": "Developer environments",
       "category": "runtime",
-      "description": "Run an expiring remote copy of an app for development, with file sync.",
+      "description": "Run an expiring remote copy of an app for development, with file sync and live source patches that put an edit live without a rebuild.",
       "maturity": "preview",
       "plans": [
         "free",
@@ -1709,7 +1735,7 @@
         "scale"
       ],
       "docs_url": "/docs/dev",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly",
+      "acceptance_test": "tests/journeys/dev_loop_test.go::TestDevLoop",
       "settings": [
         "manifest.dev"
       ],
@@ -2589,10 +2615,13 @@
       "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
       "routes": [
         "/v1/projects/{}/environments/{}/flags",
+        "/v1/projects/{}/environments/{}/cohorts",
+        "/v1/projects/{}/environments/{}/insights",
         "/v1/runtime/flags"
       ],
       "cli": [
-        "flags"
+        "flags",
+        "insights"
       ]
     },
     {
@@ -2676,7 +2705,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/gdpr",
+      "docs_url": "/docs/account#export-and-deletion",
       "acceptance_test": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment",
       "core": true,
       "routes": [
@@ -3237,6 +3266,30 @@
       ]
     },
     {
+      "id": "managed-redis",
+      "name": "Managed Redis",
+      "category": "data",
+      "description": "Create a Redis-compatible Valkey cache that scales to zero and bind it to an app.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/redis",
+      "acceptance_test": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCacheCreateBindDelete",
+      "routes": [
+        "=/v1/redis",
+        "=/v1/redis/{}",
+        "/v1/redis/{}/bindings",
+        "/v1/redis/{}/restart",
+        "/v1/redis/{}/upgrade"
+      ],
+      "cli": [
+        "redis"
+      ]
+    },
+    {
       "id": "management-mcp",
       "name": "Management MCP server",
       "category": "developer",
@@ -3271,6 +3324,26 @@
       "parent": "mcp-hosting",
       "routes": [
         "/v1/apps/{}/mcp-catalog-monitor"
+      ]
+    },
+    {
+      "id": "mcp-hosted-tool-invocations",
+      "name": "Hosted granted tool invocation",
+      "category": "runtime",
+      "description": "Invoke exact owner-granted open or private tool versions through personal hosted connections with separate consent, static or managed OAuth credentials with guided public-client setup, durable single-dispatch receipts and cancellation without replay.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#hosted-invocation-with-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/delegated_invocations_test.go::TestDelegatedToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/delegated-tool-invocations",
+        "/v1/delegated-tool-connections",
+        "/v1/tool-oauth-connections"
       ]
     },
     {
@@ -3371,6 +3444,63 @@
       "routes": [
         "/v1/apps/{}/mcp-task-compatibility",
         "/v1/deployments/{}/mcp-task-hold"
+      ]
+    },
+    {
+      "id": "mcp-tool-grants",
+      "name": "Scoped published-tool grants",
+      "category": "runtime",
+      "description": "Delegate exact private tool versions to personal agent connections with expiry, revocation and native project boundaries.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#scoped-tool-grants",
+      "acceptance_test": "pkg/apid/toolregistry/grants_test.go::TestToolGrantsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-grants"
+      ]
+    },
+    {
+      "id": "mcp-tool-invocations",
+      "name": "Registered MCP tool invocation",
+      "category": "runtime",
+      "description": "Invoke one exact private registered tool version with explicit consent, durable single-dispatch tracking and honest cancellation outcomes.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#invoke-published-tools",
+      "acceptance_test": "pkg/apid/toolregistry/invocations_test.go::TestToolInvocationsPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-invocations"
+      ]
+    },
+    {
+      "id": "mcp-tool-registry",
+      "name": "Private MCP tool registry",
+      "category": "runtime",
+      "description": "Retain publication attempts and discover exact private tool versions with publisher-attested runtime schemas and native deployment identity.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp#private-tool-registry",
+      "acceptance_test": "pkg/apid/toolregistry/handlers_test.go::TestToolRegistryPostgres",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/tool-publications",
+        "/v1/task-tool-release-intents",
+        "/v1/task-tool-source-intents",
+        "/v1/tool-registry"
       ]
     },
     {
@@ -3934,7 +4064,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/orgs",
+      "docs_url": "/docs/account#members-roles-and-invitations",
       "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
       "routes": [
         "/dashboard/invitations/{}",
@@ -3948,7 +4078,8 @@
         "/v1/orgs/{}/invitations",
         "/v1/orgs/{}/leave",
         "/v1/orgs/{}/members",
-        "/v1/orgs/{}/transfer_ownership"
+        "/v1/orgs/{}/transfer_ownership",
+        "/v1/orgs/{}/security-policy"
       ],
       "cli": [
         "orgs",
@@ -4081,6 +4212,29 @@
       ]
     },
     {
+      "id": "postgres-changes",
+      "name": "Postgres change workers",
+      "category": "async",
+      "description": "Capture Postgres row changes into a worker's queue, on managed databases or ones you run.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/postgres-changes",
+      "acceptance_test": "pkg/commitmanaged/changes_test.go::TestChangesSourceDeliversToWorkerQueue",
+      "routes": [
+        "/v1/apps/{}/postgres-changes"
+      ],
+      "settings": [
+        "manifest.postgres_changes"
+      ],
+      "cli": [
+        "postgres-changes"
+      ]
+    },
+    {
       "id": "postgres-compute-policy",
       "name": "Postgres compute policy and resize",
       "category": "data",
@@ -4099,6 +4253,27 @@
         "/v1/postgres/databases/{}/compute-policy-changes",
         "/v1/postgres/databases/{}/resize",
         "/v1/postgres/databases/{}/resizes"
+      ]
+    },
+    {
+      "id": "postgres-custom-roles",
+      "name": "Postgres custom roles",
+      "category": "data",
+      "description": "Declare NOLOGIN group roles, BYPASSRLS included, that a database's own logins can SET ROLE to, so tools such as Windmill run on managed Postgres.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/postgres-custom-roles",
+      "acceptance_test": "pkg/managedpostgres/custom_role_service_test.go::TestCustomRoleServiceDeclaresAppliesAndFences",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/roles"
+      ],
+      "cli": [
+        "postgres roles"
       ]
     },
     {
@@ -4426,7 +4601,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/rollouts",
       "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal",
       "settings": [
         "app.release_policy=safe",
@@ -4489,6 +4664,30 @@
         "projects",
         "projects environments config",
         "projects environments secrets"
+      ]
+    },
+    {
+      "id": "protection-baseline",
+      "name": "Production protection by default",
+      "category": "observability",
+      "description": "New public apps get availability and latency SLOs, an hourly health check, email alerts and an SLO release gate, created as ordinary objects you can edit or remove.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/synthetic-checks",
+      "acceptance_test": "pkg/apid/apidserver/handlers_app_protection_test.go::TestGetAppProtectionReportsBaselineItems",
+      "routes": [
+        "/v1/apps/{}/protection"
+      ],
+      "settings": [
+        "manifest.protection"
+      ],
+      "cli": [
+        "app protection"
       ]
     },
     {
@@ -4813,7 +5012,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/releases#releases-that-change-the-database",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
       "routes": [
         "/v1/deployments/{}/release-outcome"
@@ -5016,7 +5215,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/deploy-from-github#revisions",
       "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestRollbackApp_HappyPath",
       "routes": [
         "/dashboard/apps/{}/rollback",
@@ -5252,6 +5451,24 @@
       "routes": [
         "/v1/apps/{}/buckets/{}/s3-credentials",
         "/v1/orgs/{}/apps/{}/buckets/{}/s3-credentials"
+      ]
+    },
+    {
+      "id": "sales-referrals",
+      "name": "Sales and referrals",
+      "category": "account",
+      "description": "Staff sales pipeline, attributed signup links and customer referral codes.",
+      "maturity": "internal",
+      "plans": [],
+      "operator_flag": "FAAS_SALES_ENABLED",
+      "docs_url": "/docs/adr/20261103180000-sales-referrals",
+      "acceptance_test": "pkg/apid/apidserver/sales_test.go::TestSalesRoutesDefaultOff",
+      "routes": [
+        "/dashboard/referral-assets",
+        "/dashboard/referrals",
+        "/dashboard/sales",
+        "/v1/referrals",
+        "/v1/sales"
       ]
     },
     {
@@ -5567,7 +5784,8 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip",
       "settings": [
         "app.after_restore",
-        "app.before_checkpoint"
+        "app.before_checkpoint",
+        "app.warmup"
       ]
     },
     {
@@ -5607,7 +5825,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/build/source-ref",
+      "docs_url": "/docs/deploy-from-source",
       "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR",
       "routes": [
         "/v1/apps/{}/deployments/source-ref",
@@ -5857,7 +6075,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/deploys",
+      "docs_url": "/docs/rollouts#traffic-mirroring",
       "acceptance_test": "pkg/apid/apidserver/handlers_mirror_test.go::TestMirrorCreate_RangeCheck",
       "consumers": [
         "gatewayd-internal"

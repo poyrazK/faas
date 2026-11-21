@@ -393,6 +393,11 @@ appears only in a comment still counts. Waive that case and say so.
 
 ## Gate 3: post-deploy SLO gate (deploy workflows)
 
+The canonical platform rollout additionally runs the read-only
+[post-deployment monitoring verifier](ops/post-deployment-monitoring.md) after
+its recovery step. It checks fresh serving and notification evidence and retains
+a report; its failures cannot trigger that earlier rollback path.
+
 `scripts/ci/slo_gate.py` watches Prometheus for a set time after a unit
 deploy. Its exit status tells the workflow whether to promote the unit or
 roll it back. It needs only the Python standard library, so it runs on the

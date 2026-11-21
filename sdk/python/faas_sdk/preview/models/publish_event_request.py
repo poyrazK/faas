@@ -41,6 +41,9 @@ class PublishEventRequest:
     accountid: UUID | Unset = UNSET
     """Optional tenancy assertion; must match the bearer account."""
     account_id: UUID | Unset = UNSET
+    environmentid: UUID | Unset = UNSET
+    """Project environment the event belongs to; omitted is production. Only that environment's subscriptions
+    receive the event, and only production events start workflows."""
 
     def to_dict(self) -> dict[str, Any]:
         id = self.id
@@ -73,6 +76,10 @@ class PublishEventRequest:
         if not isinstance(self.account_id, Unset):
             account_id = str(self.account_id)
 
+        environmentid: str | Unset = UNSET
+        if not isinstance(self.environmentid, Unset):
+            environmentid = str(self.environmentid)
+
         field_dict: dict[str, Any] = {}
 
         field_dict.update(
@@ -95,6 +102,8 @@ class PublishEventRequest:
             field_dict["accountid"] = accountid
         if account_id is not UNSET:
             field_dict["account_id"] = account_id
+        if environmentid is not UNSET:
+            field_dict["environmentid"] = environmentid
 
         return field_dict
 
@@ -146,6 +155,13 @@ class PublishEventRequest:
         else:
             account_id = UUID(_account_id)
 
+        _environmentid = d.pop("environmentid", UNSET)
+        environmentid: UUID | Unset
+        if isinstance(_environmentid, Unset):
+            environmentid = UNSET
+        else:
+            environmentid = UUID(_environmentid)
+
         publish_event_request = cls(
             id=id,
             source=source,
@@ -157,6 +173,7 @@ class PublishEventRequest:
             schemaversion=schemaversion,
             accountid=accountid,
             account_id=account_id,
+            environmentid=environmentid,
         )
 
         return publish_event_request

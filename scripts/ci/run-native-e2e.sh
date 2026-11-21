@@ -489,6 +489,8 @@ if [[ -n "${phase}" ]]; then
     exclusive-operations-only) phase_timeout=20m ;;
     # A source build plus one managed workflow guest recovery round trip.
     managed-operation-only) phase_timeout=35m ;;
+    # Three cache deployments (create, resize) plus park and restart.
+    managed-redis-only) phase_timeout=45m ;;
     customer-job-operations-only) phase_timeout=35m ;;
     customer-workflow-operations-only) phase_timeout=35m ;;
     # Eight native source builds plus real minute-spaced verification rounds.
@@ -508,6 +510,10 @@ if [[ -n "${phase}" ]]; then
     financial|financial-system) phase_timeout=35m ;;
     # Includes native workflow and HTTP Operations image/guest/recovery scenarios.
     wake) phase_timeout=30m ;;
+    # One test, but its harness builds every daemon with -race cold and scans
+    # the host's real builder base before the first deploy (~80 s); 15m
+    # killed it mid-deploy on gregale-internal-test-1 (2026-11-17).
+    app-task-interactive-only) phase_timeout=45m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

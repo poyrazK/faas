@@ -42,6 +42,8 @@ In order (each role is independent and verifies its own preconditions):
 | `nftables` | §7 | `/etc/nftables.conf` | managed-marker backup + `nft -c` syntax check |
 | `tenant_egress_client` | ADR-372 | compute: `wg-tenant` tunnel, tenant policy routing, the node's peer file on the gateway (no-op without `egress.tenant_gateway`) | node-minted key kept, templated config, `wg syncconf` on the gateway |
 | `tenant_egress_gateway` | ADR-372 | gateway host only (`tenant_egress_gateway.yml`): WireGuard, forwarding, `inet faas_tenant_gw` deny + NAT table | key checked against the manifest, `nft -c` validated table replace |
+| `agent_egress_client` | ADR-20261117185346 | compute: `wg-agent` tunnel and the agent table's route, the node's slice peer file on the agent gateway (no-op without `egress.agent_gateway`); vmmd owns the policy rules | node-minted key kept, templated config, `wg syncconf` on the gateway |
+| `agent_egress_gateway` | ADR-20261117185346 | agent gateway host only (`agent_egress_gateway.yml`): WireGuard, forwarding, `inet faas_agent_gw` deny + NAT to the agent addresses; may share the tenant gateway's host | key checked against the manifest, agent addresses checked on the NIC, `nft -c` validated table replace |
 | `postgres` | §1 (cp slice), §4 | distro PostgreSQL major, `faas` user | apt idempotent, `creates:` on home |
 | `postgres_backup` | §14 backup/restore gates | nightly tar-format basebackup + off-host push timers | systemd units, directories, and secret checks are idempotent |
 | `host_hardening` | §11, ADR-143 | sshd drop-in, fail2ban, unattended security upgrades, auditd rules, kernel sysctls | templates + validated `sshd -t`; lockout guard before disabling password auth |
@@ -195,8 +197,11 @@ on the control plane and the adopted compute node as `root:faas 0440` and
 rejects `FAAS_STORAGE_BACKEND=local` or a `snap/` local-prefix override at
 both the CLI and Ansible staging boundaries. The file must set
 `FAAS_STORAGE_BACKEND=oci` with an HTTPS registry, or
-`FAAS_STORAGE_BACKEND=gcs` with `FAAS_GCS_BUCKET`; credentials remain outside
-the repository. GCS uses the VM's attached service account through ADC. This
+`FAAS_STORAGE_BACKEND=gcs` with `FAAS_GCS_BUCKET`, or
+`FAAS_STORAGE_BACKEND=s3` with `FAAS_S3_BUCKET`, an HTTPS `FAAS_S3_ENDPOINT`,
+`FAAS_S3_REGION` and an access key pair; credentials remain outside the
+repository. GCS uses the VM's attached service account through ADC; S3 is the
+choice on bare metal, where no machine identity exists. This
 lets vmmd preposition snapshots into
 each node's bounded read-through cache without provider-specific disk or
 peer-address configuration.
@@ -328,12 +333,17 @@ Firecracker and kernel artifacts; their SHA-256 values must match
 `release.firecracker_digest` and `release.kernel_digest`.
 This makes a mismatched host fail during join, while the node is still
 drained, instead of failing its first customer restore.
-Strict mode also requires the selected GCS bucket or HTTPS registry and rejects stale-cache fallback;
+On bare metal the same contract uses `FAAS_STORAGE_BACKEND=s3` with
+`FAAS_S3_BUCKET`, `FAAS_S3_ENDPOINT=https://...`, `FAAS_S3_REGION`,
+`FAAS_S3_ACCESS_KEY_ID` and `FAAS_S3_SECRET_ACCESS_KEY` in place of the GCS
+lines (ADR-20261107123000).
+Strict mode also requires the selected GCS or S3 bucket or HTTPS registry and rejects stale-cache fallback;
 the cache may still accelerate successful remote reads, but it cannot serve a
 last-known-good blob after the registry reports an error.
 
 `/etc/faas/imaged-storage.env` is a separate `root:faas 0440` override that
-contains only `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`. It is loaded after
+contains only `FAAS_OCI_USERNAME` and `FAAS_OCI_PASSWORD`, or, on an S3 fleet,
+only `FAAS_S3_ACCESS_KEY_ID` and `FAAS_S3_SECRET_ACCESS_KEY`. It is loaded after
 `storage.env` by `faas-imaged` and `faas-vmmd`, so image garbage collection and
 VM snapshot publication can use a package lifecycle credential without
 granting delete authority to request-serving daemons. `cd-compute` verifies

@@ -158,3 +158,10 @@ func TestAppSpecToProtoCarriesStartupCPUBoostOptOut(t *testing.T) {
 		t.Fatal("disable_startup_cpu_boost was not forwarded to vmmd")
 	}
 }
+
+// ADR-20261119140000: the probe host reaches vmmd's AppSpec unchanged.
+func TestAppSpecToProtoCarriesProbeHost(t *testing.T) {
+	if got := (sched.AppSpec{ProbeHost: "my-site.gregale.dev"}).ToProto().GetProbeHost(); got != "my-site.gregale.dev" {
+		t.Fatalf("probe_host = %q, want my-site.gregale.dev", got)
+	}
+}

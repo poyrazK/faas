@@ -7,11 +7,15 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,7 +25,7 @@ import (
 // toolchain check was given 15 s for that reason, but its http.Client carried
 // a fixed 5 s Timeout that cut the budget; after every production rollout the
 // first Node build on each node failed in ~10 s as "timeout: build exited 124".
-const builderHTTPSPreflightBudget = 15 * time.Second
+var builderHTTPSPreflightBudget = 15 * time.Second
 
 // builderHTTPSPreflightAttempts and builderHTTPSPreflightRetryDelay retry a
 // preflight whose request failed in transport. The first Node build after a
@@ -46,11 +50,22 @@ func (e builderNetworkError) Unwrap() error { return e.err }
 // attempt and reports an error unless healthy accepts the response status.
 // Each request is bounded by its context only; there is no shorter client
 // timeout. A transport failure is retried up to builderHTTPSPreflightAttempts.
+//
+// The error names each failed attempt's phase (DNS lookup, TCP connect, TLS
+// handshake, waiting for response), the address it dialled and how long it
+// took (#6624): two production Node builds failed on three straight
+// nodejs.org timeouts reported only as "context deadline exceeded", which
+// could not tell a DNS, egress or upstream problem apart.
 func builderHTTPSPreflight(parent context.Context, name, url string, healthy func(status int) bool) error {
 	var err error
+	var attempts []string
 	for attempt := 1; attempt <= builderHTTPSPreflightAttempts; attempt++ {
 		var transport bool
-		transport, err = builderHTTPSPreflightOnce(parent, url, healthy)
+		var detail string
+		transport, detail, err = builderHTTPSPreflightOnce(parent, url, healthy)
+		if err != nil {
+			attempts = append(attempts, fmt.Sprintf("attempt %d: %s", attempt, detail))
+		}
 		if err == nil || !transport || parent.Err() != nil {
 			break
 		}
@@ -62,16 +77,108 @@ func builderHTTPSPreflight(parent context.Context, name, url string, healthy fun
 		}
 	}
 	if err != nil {
-		return builderNetworkError{fmt.Errorf("%s HTTPS preflight: %w", name, err)}
+		return builderNetworkError{fmt.Errorf("%s HTTPS preflight failed (%s): %w", name, strings.Join(attempts, "; "), err)}
 	}
 	return nil
 }
 
+// preflightStage is how far one preflight request got.
+type preflightStage int
+
+const (
+	stageStart preflightStage = iota
+	stageResolved
+	stageConnected
+	stageSecured
+	stageRequestSent
+	stageResponding
+)
+
+// failing names the phase a request that reached s was in when it failed.
+func (s preflightStage) failing() string {
+	switch s {
+	case stageStart:
+		return "DNS lookup"
+	case stageResolved:
+		return "TCP connect"
+	case stageConnected:
+		return "TLS handshake"
+	case stageSecured:
+		return "sending request"
+	case stageRequestSent:
+		return "waiting for response"
+	default:
+		return "reading response"
+	}
+}
+
+// preflightTrace records the furthest stage a request reached and the address
+// it dialled. httptrace hooks can run on other goroutines.
+type preflightTrace struct {
+	mu      sync.Mutex
+	reached preflightStage
+	addr    string
+}
+
+func (t *preflightTrace) reach(s preflightStage) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s > t.reached {
+		t.reached = s
+	}
+}
+
+func (t *preflightTrace) clientTrace() *httptrace.ClientTrace {
+	return &httptrace.ClientTrace{
+		DNSDone: func(info httptrace.DNSDoneInfo) {
+			if info.Err == nil {
+				t.reach(stageResolved)
+			}
+		},
+		ConnectStart: func(_, addr string) {
+			t.mu.Lock()
+			t.addr = addr
+			t.mu.Unlock()
+			t.reach(stageResolved) // an IP literal skips DNS
+		},
+		ConnectDone: func(_, _ string, err error) {
+			if err == nil {
+				t.reach(stageConnected)
+			}
+		},
+		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			if err == nil {
+				t.reach(stageSecured)
+			}
+		},
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				t.reach(stageRequestSent)
+			}
+		},
+		GotFirstResponseByte: func() { t.reach(stageResponding) },
+	}
+}
+
+// describe summarises a failed attempt: phase, dialled address and duration.
+func (t *preflightTrace) describe(elapsed time.Duration) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	d := t.reached.failing()
+	if t.addr != "" {
+		d += " to " + t.addr
+	}
+	return d + " failed after " + elapsed.Round(10*time.Millisecond).String()
+}
+
 // builderHTTPSPreflightOnce runs one preflight request. transport reports a
-// failure before any response arrived.
-func builderHTTPSPreflightOnce(parent context.Context, url string, healthy func(status int) bool) (transport bool, err error) {
+// failure before any response arrived; detail describes a failure.
+func builderHTTPSPreflightOnce(parent context.Context, url string, healthy func(status int) bool) (transport bool, detail string, err error) {
 	ctx, cancel := context.WithTimeout(parent, builderHTTPSPreflightBudget)
 	defer cancel()
+	trace := &preflightTrace{}
+	ctx = httptrace.WithClientTrace(ctx, trace.clientTrace())
+	start := time.Now()
 	err = func() error {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
@@ -89,7 +196,14 @@ func builderHTTPSPreflightOnce(parent context.Context, url string, healthy func(
 		}
 		return nil
 	}()
-	return transport, err
+	switch {
+	case err == nil:
+		return false, "", nil
+	case !transport:
+		return false, err.Error(), err
+	default:
+		return true, trace.describe(time.Since(start)), err
+	}
 }
 
 // buildExitStatus maps a build attempt's error to the exit code and failure

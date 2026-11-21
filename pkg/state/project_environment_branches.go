@@ -82,6 +82,9 @@ type ProjectEnvironmentBranch struct {
 	// SlotID names the branch's stable workload URLs
 	// (EnvironmentBranchSlotID); empty on branches made before slots.
 	SlotID string
+	// PullRequestNumber is set on a branch githubd made for a pull request
+	// (ADR-20261113121342); zero on every other branch.
+	PullRequestNumber int
 	// DataState is ready, pending or failed. DataError explains a failure or
 	// the last retryable error; DataLeaseToken is set on a claimed branch.
 	DataState      string
@@ -153,6 +156,9 @@ type ProjectEnvironmentBranchCreate struct {
 	// PrivateNetworks is off (the default when empty) or join; join needs
 	// live egress.
 	PrivateNetworks string
+	// PullRequestNumber marks a branch made for a pull request; zero for
+	// any other branch.
+	PullRequestNumber int
 	// MaxDepth caps how deep a branch of a branch may go (>= 1). MaxBranches
 	// caps the account's live branches; zero means no cap.
 	MaxDepth    int
@@ -167,7 +173,8 @@ type ProjectEnvironmentBranchCreate struct {
 func (r ProjectEnvironmentBranchCreate) validate() error {
 	if r.AccountID == "" || r.ProjectID == "" || r.Slug == r.ParentSlug ||
 		!api.ValidProjectEnvironmentSlug(r.Slug) || !api.ValidProjectEnvironmentSlug(r.ParentSlug) ||
-		r.Slug == "production" || r.Slug == DefaultEnvScope || r.ExpiresAt.IsZero() || r.MaxDepth < 1 || r.MaxBranches < 0 {
+		r.Slug == "production" || r.Slug == DefaultEnvScope || r.ExpiresAt.IsZero() || r.MaxDepth < 1 || r.MaxBranches < 0 ||
+		r.PullRequestNumber < 0 {
 		return ErrInvalidArgument
 	}
 	if !r.BranchPoint.IsZero() && !r.BranchPoint.Before(r.ExpiresAt) {
@@ -264,6 +271,12 @@ func branchDeploymentFromArtifact(a projectCloneArtifact, slug string, input *pr
 	d.TrafficPercent, d.TrafficPercentExplicit = 100, false
 	d.MinInstances = 0
 	d.Reason = EnvironmentBranchDeploymentReason
+	// The parent's release already ran: the branch reads the parent's data
+	// as of the branch point, after that release. A copied release command
+	// would also hold the deployment out of prime forever, since nothing
+	// runs a release task for a branch deployment (ADR-20261031193635
+	// amendment 2026-11-19).
+	d.ReleaseCommand, d.ReleaseCommandShell = nil, false
 	d.branchInput = input
 	return d
 }
@@ -320,7 +333,7 @@ func (m *MemStore) prepareProjectEnvironmentBranchLocked(req ProjectEnvironmentB
 	return ProjectEnvironmentBranch{AccountID: req.AccountID, ProjectID: req.ProjectID,
 		ParentEnvironmentID: parent.ID, ParentSlug: parent.Slug, BranchPoint: point.UTC().Truncate(time.Microsecond),
 		ExpiresAt: req.ExpiresAt.UTC(), EgressMode: req.EgressMode, PrivateNetworks: environmentBranchPrivateNetworks(req.PrivateNetworks),
-		Depth: depth, CreatedAt: now, SlotID: EnvironmentBranchSlotID(req.ProjectID, req.Slug),
+		Depth: depth, CreatedAt: now, SlotID: EnvironmentBranchSlotID(req.ProjectID, req.Slug), PullRequestNumber: req.PullRequestNumber,
 		DataState: dataState, dataNextAttemptAt: now}, nil
 }
 

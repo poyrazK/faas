@@ -12,6 +12,7 @@ ExecStart=/usr/local/bin/alertmanager \
     --config.file=/etc/alertmanager/alertmanager.yml \
     --storage.path=/var/lib/alertmanager \
     --web.listen-address=127.0.0.1:9094 \
+    --enable-feature=receiver-name-in-metrics \
     --cluster.listen-address=
 Restart=on-failure
 RestartSec=10s

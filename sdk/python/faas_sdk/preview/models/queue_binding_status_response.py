@@ -59,6 +59,11 @@ class QueueBindingStatusResponse:
     lag_age_seconds: float | None | Unset = UNSET
     oldest_pending_at: datetime.datetime | None | Unset = UNSET
     oldest_pending_age_seconds: int | None | Unset = UNSET
+    blocked_groups: int | Unset = UNSET
+    """group_key groups whose first message has failed and holds later messages with its key until it succeeds or
+    dead-letters. Omitted when zero."""
+    oldest_blocked_age_seconds: int | Unset = UNSET
+    """Age of the oldest message holding its group_key group."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,6 +153,10 @@ class QueueBindingStatusResponse:
         else:
             oldest_pending_age_seconds = self.oldest_pending_age_seconds
 
+        blocked_groups = self.blocked_groups
+
+        oldest_blocked_age_seconds = self.oldest_blocked_age_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -190,6 +199,10 @@ class QueueBindingStatusResponse:
             field_dict["oldest_pending_at"] = oldest_pending_at
         if oldest_pending_age_seconds is not UNSET:
             field_dict["oldest_pending_age_seconds"] = oldest_pending_age_seconds
+        if blocked_groups is not UNSET:
+            field_dict["blocked_groups"] = blocked_groups
+        if oldest_blocked_age_seconds is not UNSET:
+            field_dict["oldest_blocked_age_seconds"] = oldest_blocked_age_seconds
 
         return field_dict
 
@@ -330,6 +343,10 @@ class QueueBindingStatusResponse:
 
         oldest_pending_age_seconds = _parse_oldest_pending_age_seconds(d.pop("oldest_pending_age_seconds", UNSET))
 
+        blocked_groups = d.pop("blocked_groups", UNSET)
+
+        oldest_blocked_age_seconds = d.pop("oldest_blocked_age_seconds", UNSET)
+
         queue_binding_status_response = cls(
             binding_id=binding_id,
             name=name,
@@ -355,6 +372,8 @@ class QueueBindingStatusResponse:
             lag_age_seconds=lag_age_seconds,
             oldest_pending_at=oldest_pending_at,
             oldest_pending_age_seconds=oldest_pending_age_seconds,
+            blocked_groups=blocked_groups,
+            oldest_blocked_age_seconds=oldest_blocked_age_seconds,
         )
 
         queue_binding_status_response.additional_properties = d

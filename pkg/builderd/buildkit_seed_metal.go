@@ -108,12 +108,9 @@ func (d *VMMDriver) CreateBuildKitSeed(ctx context.Context, buildID, snapshotter
 	if err := os.MkdirAll(d.driveDir, 0o755); err != nil {
 		return false, fmt.Errorf("builderd: mkdir drive dir: %w", err)
 	}
-	available, err := driveFilesystemAvailable(d.driveDir)
-	if err != nil {
+	room, err := buildKitSeedHasRoom(ctx, d.driveDir, d.reclaimDriveSpace, driveFilesystemAvailable)
+	if err != nil || !room {
 		return false, err
-	}
-	if available < uint64(BuildDriveMinFreeBytes)+uint64(api.BuildKitSeedReserveBytes) {
-		return false, nil
 	}
 
 	source, err := buildkitSeedSourceTar()

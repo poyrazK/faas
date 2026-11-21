@@ -68,6 +68,8 @@ func cmdAI(args []string) int {
 		return cmdAIReplay(args[1:])
 	case "evaluate":
 		return cmdAIEvaluate(args[1:])
+	case "prompts":
+		return cmdAIPrompts(args[1:])
 	case "tokens":
 		return cmdAITokens(args[1:])
 	}

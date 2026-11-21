@@ -80,3 +80,41 @@ func TestResolveEdgeRuleHeaderSecrets(t *testing.T) {
 		t.Fatalf("no opener: enabled=%v err=%v", out[0].Enabled, err)
 	}
 }
+
+// adr: 20261110210000 — slice 3i: in inject mode the gateway opens nothing;
+// the compiled op names the value and the rule's app for the instance's vmmd.
+func TestInjectModeKeepsEdgeRuleHeaderSecretsSealed(t *testing.T) {
+	for _, tc := range []struct {
+		env    string
+		inject bool
+		bad    bool
+	}{{"", false, false}, {"local", false, false}, {"inject", true, false}, {"vmmd", false, true}} {
+		inject, err := edgeHeaderSecretsInjectFromEnv(func(string) string { return tc.env })
+		if inject != tc.inject || (err != nil) != tc.bad {
+			t.Errorf("FAAS_GATEWAY_EDGE_HEADER_SECRETS=%q = %v, %v", tc.env, inject, err)
+		}
+	}
+	const appID = "11111111-1111-4111-8111-111111111111"
+	in := []state.EdgeRule{{ID: "r", AppID: appID, Enabled: true, Kind: state.EdgeRuleKindHeaders, Action: state.EdgeRuleAction{
+		Kind: state.EdgeRuleKindHeaders, Headers: &state.EdgeRuleHeadersAction{RequestHeaders: []state.EdgeRuleHeaderOp{
+			{Name: "X-Trace", Action: "set", Value: "1"},
+			{Name: "Authorization", Action: "set", Secret: true, SecretID: "s-1"},
+		}},
+	}}}
+	g := &gatewaydEdgeRules{store: state.NewMemStore(), headerSecretsInject: true}
+	out, err := g.resolveEdgeRuleHeaderSecrets(context.Background(), in)
+	if err != nil || !out[0].Enabled {
+		t.Fatalf("inject mode: enabled=%v err=%v", out[0].Enabled, err)
+	}
+	compiled, errs := compileHeadersRules(out)
+	if len(errs) != 0 || len(compiled) != 1 {
+		t.Fatalf("compiled = %+v, errs = %v", compiled, errs)
+	}
+	ops := compiled[0].RequestHeaders
+	if ops[0].SecretID != "" || ops[0].Value != "1" {
+		t.Fatalf("literal op = %+v", ops[0])
+	}
+	if ops[1].Value != "" || ops[1].SecretID != "s-1" || ops[1].SecretAppID != appID {
+		t.Fatalf("sealed op = %+v, want a reference to the rule's app", ops[1])
+	}
+}

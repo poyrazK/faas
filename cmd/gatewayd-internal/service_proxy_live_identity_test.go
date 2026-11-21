@@ -251,3 +251,39 @@ func TestBootingServiceCallerRequiresMatchingBootingRow(t *testing.T) {
 		})
 	}
 }
+
+// An ordinary `app exec` task calls its app's services as its app through the
+// address schedd recorded for it (app_task_networks, ADR-20261118070000). The
+// gateway never names a task from vmmd's attestation alone: without the
+// recorded row, as while an older schedd runs, the task stays anonymous.
+func TestExecTaskCallerNeedsItsRecordedNetwork(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*liveCallerFixture)
+		want bool
+	}{
+		{"recorded task network", func(*liveCallerFixture) {}, true},
+		{"no recorded network", func(f *liveCallerFixture) { f.rows = nil }, false},
+		{"another caller on the address", func(f *liveCallerFixture) { f.rows = []state.Instance{{ID: "other", AppID: "other"}} }, false},
+		{"task and a stale row share the address", func(f *liveCallerFixture) {
+			f.rows = append(f.rows, state.Instance{ID: "other", AppID: "other"})
+		}, false},
+		{"task not running", func(f *liveCallerFixture) { f.task.Status = state.AppTaskSucceeded }, false},
+		{"expired lease", func(f *liveCallerFixture) { expired := time.Now().Add(-time.Second); f.task.LeaseExpiresAt = &expired }, false},
+		{"vmmd names another app", func(f *liveCallerFixture) { f.live.AppId = "other" }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := managedLiveCallerFixture()
+			f.task.BindingVerification = nil
+			f.rows = []state.Instance{{ID: f.task.ID, AppID: f.task.AppID, DeploymentID: f.task.DeploymentID}}
+			test.edit(f)
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "node-uuid", "10.100.0.7")
+			if err != nil || (len(rows) == 1) != test.want {
+				t.Fatalf("exec caller = %+v, %v", rows, err)
+			}
+			if test.want && (rows[0].AppID != f.task.AppID || rows[0].DeploymentID != f.task.DeploymentID) {
+				t.Fatalf("exec caller identity = %+v, want the task's app", rows[0])
+			}
+		})
+	}
+}

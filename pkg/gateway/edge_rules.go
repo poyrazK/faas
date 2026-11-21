@@ -215,6 +215,11 @@ type EdgeRuleHeaderOp struct {
 	Action string
 	// Template, when set, renders Value per request (ADR-968).
 	Template *api.EdgeRuleTemplate
+	// SecretAppID and SecretID name a sealed request header value the
+	// instance's vmmd opens (ADR-20261110210000 slice 3i); Value is then
+	// empty and the gateway never holds it.
+	SecretAppID string
+	SecretID    string
 }
 
 // EdgeRuleHeadersResolved is the kind=headers subset. PR 4 applies

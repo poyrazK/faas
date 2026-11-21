@@ -866,6 +866,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			srv.runAgentActivitySweep(ctx)
 		})
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runPostReleaseWatchWorker(ctx) })
+		// ADR-20261116120000: create the protection baseline for enrolled apps.
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionReconciler(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runProtectionHealthProber(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runScheduledReleaseWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runDatabaseSwitchWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.plainRollbacks().Run(ctx) })
@@ -1011,7 +1014,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
 		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
-		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
+		startFeatureFlagLifecycleReconciler(ctx, srv, log)
+		startFlagExperimentReconciler(ctx, srv, log) // ADR 20261115163113
+		startPlatformFlagRamps(ctx, srv, log)        // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1044,6 +1049,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			},
 			Audit: srv.audit, // issue #755 / PR-5.5: emit account.deleted from the sweep
 		})
+		srv.purgeDeletedApp = graceLoop.PurgeApp
 		go func() { _ = graceLoop.Run(ctx) }()
 		// Login-token cleanup (issue #165 PR #2, ADR-032). The
 		// login_tokens table backs password-reset (15-min TTL) and
@@ -1623,6 +1629,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
 		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
 		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
@@ -1657,6 +1664,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv.configureCustomerErrors(ctx, deps.pool, slog.Default())
 	srv.configureAttention(ctx, deps.pool, slog.Default())
+	srv.signupGeo = openSignupGeo(deps.getenv, slog.Default())
 	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
 	srv.environmentBranchContainmentEnabled = deps.getenv(api.EnvironmentBranchContainmentEnv) == "1"
 	srv.environmentBranchContainedObjectsEnabled = deps.getenv(api.EnvironmentBranchContainedObjectsEnv) == "1"
@@ -1778,7 +1786,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if srv.managedPostgresUncapped {
 		log.Warn("managed postgres release held to accounts a flag rule names: compute and storage caps are not both on")
 	}
-	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(deps.pool, deps.getenv, log,
+	managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector, err := loadManagedPostgres(ctx, deps.pool, deps.getenv, log,
 		&managedPostgresHooks{Overage: srv.managedPostgresOverageAvailable, Released: srv.managedPostgresReleased, NotifyCap: srv.noticeManagedPostgresCap, Charges: srv.managedPostgresChargeSink, RestoreSlotExpired: srv.recordManagedPostgresRestoreSlotExpired,
 			BranchExpired: srv.recordManagedPostgresBranchExpired, NotifyRestoreSlot: srv.noticeManagedPostgresRestoreSlot, NotifyPlanExcess: srv.noticeManagedPostgresPlanExcess,
 			Egress: srv.managedPostgresEgressAllowance}, ops.Registry())
@@ -1945,6 +1953,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if verifyErr != nil {
 			return fmt.Errorf("apid: load rollback artifact verifier: %w", verifyErr)
 		}
+		rollbackVerifier.RequireV2(deps.getenv("FAAS_ARTIFACT_SIGNATURE_REQUIRE_V2") == "1")
 		srv.WithRollbackArtifactVerifier(rollbackVerifier)
 		log.Info("apid: rollback artifact verifier ready", "pub", signPubPath)
 	}
@@ -2428,6 +2437,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go srv.runRouteProbeWorker(ctx)
 	go srv.runWorkflowReadinessSubscriptionWorker(ctx)
 	go srv.runWorkflowReadinessReminderWorker(ctx)
+	go srv.runSupportAccessSummaries(ctx)
 	go srv.runApplicationStandardWorker(ctx)
 	go srv.runMigrationVerificationWorker(ctx)
 	go srv.runMigrationCutoverWorker(ctx)
@@ -2645,7 +2655,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if deps.captureDialTLS != nil {
 			deps.captureDialTLS("bridge", bridgeTLS)
 		}
-		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions)
+		bridgeSrv, bridgeLis, err = runGithubdBridgeServer(ctx, sock, bridgeTLS, srv.store, srv.notif, log, srv.ops, spoolRoot(), resolveGithubdStagingRoot(deps.getenv), srv.agentStepsAllowed, srv.releasePhaseOff, srv.applyBridgeSourceSettings, srv.prepareBuildPreviewDatabases, srv.deliverGitHubSubscriptions, srv)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: githubd bridge listen %q: %w", sock, err)
@@ -2906,6 +2916,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	if srv.privateTools != nil {
+		srv.privateTools.StartSourceRetentionCleanup(ctx)
+	}
+	privateStop := context.AfterFunc(ctx, srv.stopPrivateTools)
+	defer func() { privateStop(); srv.stopPrivateTools() }()
 	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
@@ -3355,7 +3370,7 @@ func runAdvisoryServer(ctx context.Context, target string, tlsCfg *tls.Config, s
 // here are fatal — without the bridge listener githubd has no
 // way to enqueue builds and the dispatch path is silently
 // degraded (every push hits the noopEnqueuer path).
-func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error) (*grpc.Server, net.Listener, error) {
+func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Config, store githubdBridgeStore, notif githubdBridgeNotifier, log *slog.Logger, ops *wire.OpsMetrics, spool string, stagingRoot string, agentSteps func(state.Account) bool, releasePhaseOff bool, applySettings bridgeSettingsApplier, previewDatabases func(context.Context, state.Account, api.Plan, state.App) error, githubSubscriptions func(context.Context, string, string, api.GitHubPullRequestEvent) error, prBranches pullRequestBranches) (*grpc.Server, net.Listener, error) {
 	// Same multi-box guard as runAdvisoryServer — a tcp/dns
 	// target without TLS would silently build an insecure server.
 	// ADR-052.
@@ -3382,7 +3397,7 @@ func runGithubdBridgeServer(ctx context.Context, target string, tlsCfg *tls.Conf
 	// apid_githubd_bridge_enqueued_total on each landed build.
 	// The accessor is nil-receiver safe so the metric stays zero
 	// when ops is nil (test path).
-	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions)
+	registerGithubdBridge(srv, store, notif, log, ops, spool, stagingRoot, agentSteps, releasePhaseOff, applySettings, previewDatabases, githubSubscriptions, prBranches)
 	return srv, lis, nil
 }
 

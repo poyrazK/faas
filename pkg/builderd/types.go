@@ -34,6 +34,16 @@ type WarmVM interface {
 	DeleteWarmSnapshot(ctx context.Context, snapshot WarmSnapshot) error
 }
 
+// BuildConsoleVM is the optional capability to follow a running builder's
+// console. builderd reads BuildKit's step lines from it while the build runs,
+// so a deploy shows "[3/12] RUN mvn package" instead of going quiet until the
+// VM exits (retail-store feedback A3, 2026-11-17). FollowBuildConsole calls
+// line for each console line, oldest first, until the VM's console closes or
+// ctx ends. Its error only costs the live steps; the build is unaffected.
+type BuildConsoleVM interface {
+	FollowBuildConsole(ctx context.Context, h BuildHandle, line func(string)) error
+}
+
 // DeferredCacheVM is the optional capability behind DeferCacheExport
 // (ADR-20261029171525). When WaitForCompletion reports
 // BuildOutcome.DependencyCacheDeferred, it has kept the build drive, and the
@@ -63,6 +73,9 @@ type DeferredCacheSpec struct {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
+	// Borrowed runs the builder on a borrowed builder slot, in
+	// faas-borrowed.slice (ADR-20261118154632).
+	Borrowed              bool
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
@@ -91,9 +104,15 @@ type VMRequest struct {
 	// keeps the builder fully ephemeral; developer sessions set it so matching
 	// BuildKit layers can cross otherwise-isolated builder VM lifetimes.
 	DependencyCacheKey string
-	LogPath            string // build log appended by the VM
-	RAMMB              int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
-	TimeoutSec         int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
+	// DependencyCacheSeedKey names the account's cache family
+	// (dependencyCacheFamilyKey). When DependencyCacheKey has no cache yet,
+	// the build starts from the family's latest published cache instead of
+	// cold; it still publishes only to DependencyCacheKey. Empty for builds
+	// with build secrets or registry credentials.
+	DependencyCacheSeedKey string
+	LogPath                string // build log appended by the VM
+	RAMMB                  int    // from the plan's BuildVMRAMMB (spec §1, §4.5)
+	TimeoutSec             int    // wall-clock build budget (0 ⇒ pkg/api/limits.go default)
 	// Plan is the owning account's plan tier. vmmd validates it on
 	// CreateColdBoot (issue #301 / ADR-043) and routes the builder VM
 	// into the per-plan cgroup sub-slice. Empty = legacy path that
@@ -144,6 +163,7 @@ type BuildHandle struct {
 	TimeoutSec              int       // wall-clock budget the caller selected
 	StartedAt               time.Time // when Spawn returned; for log lines / metrics
 	DependencyCacheKey      string    // cache generation to publish after success
+	DependencyCacheSeedKey  string    // cache family to record DependencyCacheKey under after publish
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
 	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's
@@ -153,6 +173,10 @@ type BuildHandle struct {
 	// build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// Borrowed is a builder on a borrowed slot (ADR-20261118154632). It runs
+	// outside faas-cp-build.slice, so that slice's oom_kill counter says
+	// nothing about it.
+	Borrowed bool
 	// DeferredCache is set when the build's manifest asked the guest to defer
 	// its dependency-cache export.
 	DeferredCache *DeferredCacheSpec
@@ -169,6 +193,9 @@ type BuildHandle struct {
 // or a marked-failed build row on failure. Named BuildOutcome to avoid
 // clashing with the orchestrator's BuildResult (whole-ProcessOne return).
 type BuildOutcome struct {
+	// PreemptedForTenants: vmmd destroyed this borrowed builder because
+	// tenants needed its memory (ADR-20261118154632).
+	PreemptedForTenants   bool
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
 	DockerfileBuildSHA256 string

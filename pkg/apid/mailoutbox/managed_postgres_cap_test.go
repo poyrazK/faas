@@ -187,3 +187,77 @@ func TestPGManagedPostgresCapSkipsWhatItMustNotMail(t *testing.T) {
 		})
 	}
 }
+
+// ADR-20261110160000 amendment 2026-11-13: each database held for its own
+// egress allowance gets its own email, naming it, linked to its notice so it
+// is mailed once.
+func TestPGManagedPostgresCapMailsEachHeldDatabase(t *testing.T) {
+	f := capFixture(t)
+	id := account(t, f)
+	reached := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	month := time.Date(reached.Year(), reached.Month(), 1, 0, 0, 0, 0, time.UTC)
+	if _, err := f.pool.Exec(t.Context(), "INSERT INTO resource_namespaces(id) VALUES($1) ON CONFLICT DO NOTHING", id); err != nil {
+		t.Fatal(err)
+	}
+	databases := map[string]string{}
+	for _, name := range []string{"orders", "events"} {
+		database := uuid.NewString()
+		databases[database] = name
+		if _, err := f.pool.Exec(t.Context(), "INSERT INTO managed_postgres_databases(id) VALUES($1)", database); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.pool.Exec(t.Context(), `INSERT INTO managed_postgres_egress_hold_notices(database_id,period_start,subject_id,reached_at,
+			used_bytes,allowance_bytes,ceiling_bytes,overage_billed) VALUES($1,$2,$3,$4,$5,$6,$6,false)`,
+			database, month, id, reached, int64(510)<<30, int64(500)<<30); err != nil {
+			t.Fatal(err)
+		}
+		event := ManagedPostgresCapEvent{DatabaseID: database, DatabaseName: name, SubjectID: id, PeriodStart: month, Threshold: "egress_held",
+			ReachedAt: reached, Used: 510 << 30, Allowance: 500 << 30, Ceiling: 500 << 30}
+		for range 2 {
+			if err := f.service.NoticeManagedPostgresCap(t.Context(), id, event); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if intents := capIntents(t, f, id); len(intents) != 2 {
+		t.Fatalf("intents %v; want one for each held database", intents)
+	}
+	var linked int
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM managed_postgres_egress_hold_notices WHERE subject_id=$1 AND mail_intent_id IS NOT NULL", id).Scan(&linked); err != nil || linked != 2 {
+		t.Fatalf("linked notices %d, %v", linked, err)
+	}
+	for range 2 {
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(f.sender.calls) != 2 {
+		t.Fatalf("sent %d messages; want 2", len(f.sender.calls))
+	}
+	seen := map[string]bool{}
+	for _, call := range f.sender.calls {
+		for _, name := range databases {
+			if strings.Contains(call.message.Subject, "database "+name+" is paused") && strings.Contains(call.message.TextBody, "Your database "+name+" sent") {
+				seen[name] = true
+			}
+		}
+	}
+	if len(seen) != 2 {
+		t.Fatalf("messages %+v do not name each database", f.sender.calls)
+	}
+	// A notice for another subject's database is not linked.
+	other := uuid.NewString()
+	for database := range databases {
+		err := f.service.NoticeManagedPostgresCap(t.Context(), id, ManagedPostgresCapEvent{DatabaseID: database, SubjectID: other, PeriodStart: month,
+			Threshold: "egress_held", ReachedAt: reached, Used: 1, Allowance: 1, Ceiling: 1})
+		if err != nil || len(capIntents(t, f, id)) != 2 {
+			t.Fatalf("cross-subject notice: %v, intents %v", err, capIntents(t, f, id))
+		}
+		break
+	}
+	// Only an egress hold names a database.
+	if err := f.service.NoticeManagedPostgresCap(t.Context(), id, ManagedPostgresCapEvent{DatabaseID: uuid.NewString(), SubjectID: id, PeriodStart: month,
+		Threshold: "warning", ReachedAt: reached, Used: 1, Allowance: 1, Ceiling: 1}); !errors.Is(err, internalmail.ErrInvalid) {
+		t.Fatalf("compute threshold with a database = %v", err)
+	}
+}

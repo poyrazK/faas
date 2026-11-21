@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
 import { once } from 'node:events'
-import { adminKeyHashes, createAdminHandler, deleteOwnAccount, importRecord, newAdminKey, serviceToken, signingKey } from '../admin.mjs'
+import { adminKeyHashes, adminKeySummary, createAdminHandler, deleteOwnAccount, importRecord, keyAllows, newAdminKey, requiredScope, serviceToken, signingKey } from '../admin.mjs'
 import { createServer, goTrueAdminPath } from '../server.mjs'
 
 const user = '0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f70'
@@ -15,6 +15,50 @@ test('admin keys are random, hashed and parsed from the environment', () => {
   assert.match(key, /^gaak_[A-Za-z0-9_-]{43}$/)
   assert.match(hash, /^[0-9a-f]{64}$/)
   assert.equal(adminKeyHashes({ AUTH_ADMIN_KEY_0A1B2C3D: hash, AUTH_ADMIN_KEY_SHORT: hash, AUTH_ADMIN_KEY_0A1B2C3E: 'nothex', OTHER: hash }).length, 1)
+})
+
+test('admin keys carry scopes and an expiry; bare digests hold every scope', () => {
+  const { hash } = newAdminKey()
+  const keys = adminKeyHashes({
+    AUTH_ADMIN_KEY_0A1B2C3D: hash,
+    AUTH_ADMIN_KEY_0A1B2C3E: `${hash};scopes=users:read,sso;expires=1900000000`,
+    AUTH_ADMIN_KEY_0A1B2C3F: `${hash};scopes=users:read,root`,
+    AUTH_ADMIN_KEY_0A1B2C40: `${hash};expires=soon`,
+  })
+  assert.deepEqual(keys.map(key => [key.id, key.scopes, key.expiresAt]), [['0A1B2C3D', ['all'], null], ['0A1B2C3E', ['sso', 'users:read'], 1900000000000]])
+  assert.deepEqual(adminKeySummary(keys)[1], { id: '0A1B2C3E', scopes: ['sso', 'users:read'], expires_at: '2030-03-17T17:46:40.000Z' })
+  assert.ok(!JSON.stringify(adminKeySummary(keys)).includes(hash))
+  for (const [method, path, scope] of [['GET', 'users', 'users:read'], ['POST', 'users/import', 'users:write'], ['POST', `users/${user}/impersonate`, 'impersonate'],
+    ['GET', 'impersonations', 'impersonate'], ['POST', 'sso', 'sso'], ['GET', 'oauth/clients', 'oauth-clients'], ['POST', 'service-accounts', 'service-accounts'],
+    ['PATCH', 'emails/welcome', 'emails'], ['GET', 'activity', 'users:read'], ['PATCH', `orgs/${org}`, 'users:write'], ['GET', 'unknown', 'all']]) {
+    assert.equal(requiredScope(method, path.split('/')), scope, `${method} ${path}`)
+  }
+  const reader = keys[1]
+  assert.equal(keyAllows(reader, 'users:read'), true)
+  assert.equal(keyAllows(reader, 'users:write'), false)
+  assert.equal(keyAllows(reader, 'all'), false)
+  assert.equal(keyAllows({ scopes: ['users:write'] }, 'users:read'), true)
+  assert.equal(keyAllows(keys[0], 'impersonate'), true)
+})
+
+test('expired and narrower keys are refused before any route runs', async t => {
+  const full = newAdminKey(), reader = newAdminKey(), old = newAdminKey()
+  const { admin } = fakeAdmin([[/^GET \/admin\/users\?/, () => ({ status: 200, headers: { 'x-total-count': '0' }, data: { users: [] } })]])
+  const keys = adminKeyHashes({
+    AUTH_ADMIN_KEY_0A1B2C3D: full.hash,
+    AUTH_ADMIN_KEY_0A1B2C3E: `${reader.hash};scopes=users:read;expires=1900000000`,
+    AUTH_ADMIN_KEY_0A1B2C3F: `${old.hash};expires=1600000000`,
+  })
+  const call = await serve(t, { admin, pool: fakePool(() => ({ rows: [] })), keys })
+  assert.equal((await call('GET', '/admin/v1/users', { key: reader.key })).status, 200)
+  const denied = await call('POST', `/admin/v1/users/${user}/sign-out`, { key: reader.key })
+  assert.equal(denied.status, 403)
+  assert.equal(denied.body.code, 'admin_key_scope')
+  assert.equal((await call('GET', '/admin/v1/impersonations', { key: reader.key })).status, 403)
+  const expired = await call('GET', '/admin/v1/users', { key: old.key })
+  assert.equal(expired.status, 401)
+  assert.equal(expired.body.code, 'admin_key_expired')
+  assert.equal((await call('GET', '/admin/v1/users', { key: full.key })).status, 200)
 })
 
 test('service tokens are ES256 service_role tokens under the signing key', () => {

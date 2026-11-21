@@ -114,7 +114,21 @@ tests:
     input_series:
       - series: 'up{job="node-compute",instance="compute-1"}'
         values: '1x20'
+      - series: 'node_dmi_info{job="node-compute",instance="compute-1",system_vendor="Google"}'
+        values: '1x20'
       - series: 'node_systemd_unit_state{job="node-compute",instance="compute-1",name="google-cloud-ops-agent.service",state="active"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FaasGCPOpsAgentMissing
+        exp_alerts: []
+
+  # A bare-metal host (OVHcloud) has no GCP agent to miss.
+  - interval: 30s
+    input_series:
+      - series: 'up{job="node-compute",instance="bhs-2"}'
+        values: '1x20'
+      - series: 'node_dmi_info{job="node-compute",instance="bhs-2",system_vendor="None"}'
         values: '1x20'
     alert_rule_test:
       - eval_time: 6m
@@ -124,6 +138,8 @@ tests:
   - interval: 30s
     input_series:
       - series: 'up{job="node-compute",instance="compute-2"}'
+        values: '1x20'
+      - series: 'node_dmi_info{job="node-compute",instance="compute-2",system_vendor="Google"}'
         values: '1x20'
     alert_rule_test:
       - eval_time: 6m

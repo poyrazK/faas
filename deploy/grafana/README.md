@@ -17,6 +17,34 @@ triage an alert. The heatmap trace click-through follows
 `docs/runbooks/FaasTraceExemplars.md`. The duration histogram continues to
 record all calls even when tracing is unsampled.
 
+## `runtime-diagnostics.json`
+
+**Gregale Runtime Diagnostics** shows active collections and capacity refusals
+by apid instance, report outcomes, and query failures and latency by diagnostic
+group. The coverage panel shows which apid instances report runtime metrics,
+which are missing metrics despite a successful scrape, and which fail scrapes.
+Use the apid instance selector to filter every panel to one replica.
+Use the evidence group selector to focus evidence panels and core warning rows.
+The warning timeline shows pending, firing, clear, and scrape coverage states.
+Core evidence rows show **Insufficient evaluations** when the warning's source
+metric is present and the group has fewer than 10 evaluations in 30 minutes.
+Revision markers show when a scrape first observed a different apid commit.
+Restart markers show where successful scrapes observed an apid uptime drop.
+Compare the last complete report's age with the latest finished collection's
+age and outcome for each apid.
+The incomplete reports panel identifies the evidence groups to investigate.
+The 30-minute table pairs each group's incomplete rate with its sample count.
+The core gaps table counts affected reports by group and reason.
+The source failure table breaks down transport, HTTP, and response errors
+by apid and evidence group.
+Phase timing and inventory outcomes help locate delays on each apid.
+The deadline panel identifies the phase and the governing deadline.
+Response size and omitted previews help explain how much detail a report
+kept. The two-slot, three-second, and 64 KiB reference lines follow the
+runtime collector's limits. See the
+[operator guide](../../docs/ops/post-deployment-monitoring.md#runtime-collector-metrics).
+UID `faas-runtime-diagnostics`.
+
 ## `bridge-protection.json` (ADR-127 §D3 / G19)
 
 Four-panel dashboard for the bridge wire-protocol framing protection

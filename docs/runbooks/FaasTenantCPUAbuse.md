@@ -34,8 +34,8 @@ schedd also logs `cpu abuse: sustained CPU` with the same fields. A recycled ins
 
 ## Act
 
-- Abuse: place a hold by hand if schedd has not already (`gregale admin abuse-hold place --note "<why>" <account_uuid>`); see `FaasTenantEgressAbuse.md` for the hold lifecycle.
-- Legitimate Free app: nothing to do in shadow mode; in enforce mode, release any hold (`gregale admin abuse-hold release --note "<review outcome>" <account_uuid>`) and suggest a paid plan.
+- Abuse: place a hold by hand if schedd has not already (`gregalectl accounts abuse-hold place --account-id <account_uuid> --note "<why>" --yes`); see `FaasTenantEgressAbuse.md` for the hold lifecycle.
+- Legitimate Free app: nothing to do in shadow mode; in enforce mode, release any hold (`gregalectl accounts abuse-hold release --account-id <account_uuid> --note "<review outcome>" --yes`) and suggest a paid plan.
 - Paid `flagged`: review only; paid plans are never recycled by this rule.
 
 ## Rollout

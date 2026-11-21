@@ -1,0 +1,37 @@
+---
+- name: serving_probe — validate fleet node and policy shape
+  ansible.builtin.assert:
+    that:
+      - serving_probe_policy.key is string
+      - serving_probe_policy.key is match('^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$')
+      - serving_probe_policy.value is mapping
+      - serving_probe_policy.value.keys() | difference(['urls', 'expected_body', 'max_first_byte_seconds', 'timeout_seconds', 'retry_delay_seconds', 'interval', 'max_age_seconds']) | length == 0
+      - serving_probe_policy.value.urls is defined
+      - serving_probe_policy.value.urls is sequence and serving_probe_policy.value.urls is not string
+      - serving_probe_policy.value.urls | length > 0
+      - serving_probe_policy.value.urls | unique | length == serving_probe_policy.value.urls | length
+      - serving_probe_policy.value.urls | select('match', '^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~!&()*+,;=:@%/?-]*)?$') | list | length == serving_probe_policy.value.urls | length
+      - serving_probe_policy.value.expected_body is defined
+      - serving_probe_policy.value.expected_body is string
+      - serving_probe_policy.value.expected_body | length > 0
+      - serving_probe_policy.value.expected_body.encode('utf-8') | length <= 4096
+      - not (serving_probe_policy.value.expected_body is search('[\x00-\x1f\x7f]'))
+      - serving_probe_policy.value.interval | default('5min') is match('^[1-9][0-9]*(s|min|h)$')
+    fail_msg: Each fleet entry needs a stable node name, unique HTTPS URLs, a nonempty exact response body, and supported policy fields.
+
+- name: serving_probe — validate fleet timing policy
+  vars:
+    serving_probe_interval: "{{ serving_probe_policy.value.interval | default('5min') }}"
+    serving_probe_interval_seconds: "{{ (serving_probe_interval | regex_replace('(s|min|h)$', '') | int) * {'s': 1, 'min': 60, 'h': 3600}[serving_probe_interval | regex_search('(s|min|h)$')] }}"
+    serving_probe_timeout: "{{ serving_probe_policy.value.timeout_seconds | default(20) | float }}"
+    serving_probe_budget: "{{ serving_probe_policy.value.max_first_byte_seconds | default(serving_probe_timeout) | float }}"
+    serving_probe_max_age: "{{ serving_probe_policy.value.max_age_seconds | default(900) | float }}"
+    serving_probe_retry_delay: "{{ serving_probe_policy.value.retry_delay_seconds | default(30) | float(default=-1) }}"
+  ansible.builtin.assert:
+    that:
+      - serving_probe_timeout | float >= 1 and serving_probe_timeout | float < ('inf' | float)
+      - serving_probe_budget | float > 0 and serving_probe_budget | float <= serving_probe_timeout | float
+      - serving_probe_retry_delay | float >= 0 and serving_probe_retry_delay | float < ('inf' | float)
+      - serving_probe_max_age | float >= 3 * (serving_probe_interval_seconds | int)
+      - serving_probe_max_age | float < ('inf' | float)
+    fail_msg: Fleet timing must be finite, the latency budget positive and within the timeout, and maximum result age at least three probe intervals.

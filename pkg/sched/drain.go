@@ -1196,6 +1196,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		if errors.Is(err, ErrPermanentInvoke) {
 			retryAfter = 0
 		}
+		retryAfter = asyncTimeoutRetryDelay(inv, err, retryAfter)
 		budget := d.invocationAttemptBudget(ctx, inv)
 		retryAfter, budget = d.applicationFailure(ctx, inv, err, retryAfter, budget)
 		if errors.Is(err, ErrDispatchRefused) {
@@ -1518,6 +1519,36 @@ func (d *Drain) invocationRetryDelay(ctx context.Context, inv state.Invocation) 
 		return delay
 	}
 	return time.Duration(d.retryAfterSeconds) * time.Second
+}
+
+// asyncTimeoutBackoff is the retry curve for an async invoke whose request
+// timed out: the app received it and may still be running it, so the flat
+// default delay started a second copy beside the first (prod 2026-11-15: a
+// 45 s job behind a 30 s request timeout ran 6 times, ~32 s apart).
+var asyncTimeoutBackoff = dispatch.RetryPolicy{BaseSeconds: 30, MaxSeconds: 900}
+
+// asyncTimeoutRetryDelay stretches the retry delay of a timed-out async
+// invoke without its own retry policy onto asyncTimeoutBackoff. Other
+// sources, explicit policies and terminal failures keep retryAfter.
+func asyncTimeoutRetryDelay(inv state.Invocation, err error, retryAfter time.Duration) time.Duration {
+	// apid stamps the plan's max_attempts on every async invocation, so only
+	// a declared delay curve counts as the caller's own policy. Checking the
+	// whole policy for Zero left this backoff dead on prod: a 45 s job behind
+	// a 30 s dispatch limit was retried 2/3/5/9/17 s after each timeout and
+	// never completed (2026-11-19).
+	if retryAfter <= 0 || inv.Source != state.InvocationAsyncInvoke || hasRetryDelayCurve(inv.RetryPolicy()) {
+		return retryAfter
+	}
+	if !errors.Is(err, ErrDispatchTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+		return retryAfter
+	}
+	return max(retryAfter, asyncTimeoutBackoff.Backoff(inv.Attempts))
+}
+
+// hasRetryDelayCurve reports whether a retry policy declares its own delays;
+// max_attempts alone does not.
+func hasRetryDelayCurve(p dispatch.RetryPolicy) bool {
+	return p.BaseSeconds != 0 || p.MaxSeconds != 0 || p.JitterSeconds != 0
 }
 
 // cronPlatformRetry lets a plain HTTP cron run that Gregale refused before

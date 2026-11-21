@@ -581,7 +581,7 @@ func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTT
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
 func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
-	return r.pollerForTrigger(t)
+	return r.pollerForTrigger(context.Background(), t)
 }
 func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
 func (r *Loop) BeatMain()                                  { r.beatMain() }
@@ -628,7 +628,20 @@ func (r *Loop) DispatchWorkflowRetention(p0 context.Context)                    
 func (r *Loop) RunWorkflowSchedulesTick(p0 context.Context) error {
 	return r.runWorkflowSchedulesTick(p0)
 }
-func (r *Loop) WaitPrimes()         { r.waitPrimes() }
+func (r *Loop) WaitPrimes() { r.waitPrimes() }
+
+// DrainSupersededDeployment runs one pass of the graceful superseded drain.
+func (r *Loop) DrainSupersededDeployment(ctx context.Context, deploymentID string, deadline time.Time) {
+	r.drainSupersededDeployment(ctx, deploymentID, deadline)
+}
+
+// SetSupersededDrainPoll replaces the busy-instance recheck interval and
+// returns the restore.
+func SetSupersededDrainPoll(d time.Duration) func() {
+	old := supersededDrainPoll
+	supersededDrainPoll = d
+	return func() { supersededDrainPoll = old }
+}
 func (r *Loop) WorkPool() *workPool { return r.workPool() }
 func (r *Loop) XHandleNotification(p0 context.Context, p1 db.Notification) {
 	r.handleNotification(p0, p1)
@@ -767,11 +780,15 @@ func (r *fakeVMM) Mu() *sync.Mutex                  { return &r.mu }
 func (r *fakeVMM) Restores() *int                   { return &r.restores }
 func (r *fakeVMM) SleepFor() *time.Duration         { return &r.sleepFor }
 func (r *fakeVMM) SnapErr() *error                  { return &r.snapErr }
-func (r *fakeVMM) Snapshots() *int                  { return &r.snapshots }
+
+// SetColdBootHook runs h at the start of every CreateColdBoot.
+func (r *fakeVMM) SetColdBootHook(h func()) { r.coldBootHook = h }
+func (r *fakeVMM) Snapshots() *int          { return &r.snapshots }
 func (r *fakeVMM) StatsHook() *func(context.Context, string) (*StatsSnapshot, error) {
 	return &r.statsHook
 }
 func (r *fakeVMM) WakeErr() *error           { return &r.wakeErr }
+func (r *fakeVMM) BaseScanGrace() *bool      { return &r.baseScanGrace }
 func (r *fakeVMM) WarmSnapshotHook() *func() { return &r.warmSnapshotHook }
 func (r *fakeVMM) WarmSnapshots() *int       { return &r.warmSnapshots }
 
@@ -1067,6 +1084,22 @@ var CronDue = cronDue
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
 
+// XRunCronPrewakeRetention runs the hourly cron pre-wake intent sweep once.
+func (l *Loop) XRunCronPrewakeRetention(ctx context.Context) { l.runCronPrewakeRetention(ctx) }
+
+// XCronPrewakeFires exposes cronPrewakeFires: per app the fire time and cron
+// ID it would pre-wake for, and the apps it leaves to a fire under way.
+func XCronPrewakeFires(crons []state.Cron, now time.Time, lead time.Duration) (map[string]time.Time, map[string]string, map[string]bool) {
+	fires, busy := cronPrewakeFires(crons, now, lead)
+	at := map[string]time.Time{}
+	ids := map[string]string{}
+	for app, f := range fires {
+		at[app] = f.at
+		ids[app] = f.cron.ID
+	}
+	return at, ids, busy
+}
+
 // XEventJobContinue is the recovery and backfill sweeps' failure decision.
 // adr: 20261028095548 — a job whose own work failed was backed off, so the
 // sweep goes on to the next one.
@@ -1123,12 +1156,12 @@ func AdmissionBlockers(err error) []api.WorkerAdmissionBlocker {
 	return admissionBlockers(err)
 }
 
-// AppVCPUs, AppCPUMillicores, AppCPUBookingMillicores and AppCPUWeight
-// expose an app instance's CPU, which follows its size (ADR-20261109172421).
-func AppVCPUs(app state.App) int                { return appVCPUs(app) }
-func AppCPUMillicores(app state.App) int        { return appCPUMillicores(app) }
-func AppCPUBookingMillicores(app state.App) int { return appCPUBookingMillicores(app) }
-func AppCPUWeight(app state.App) int32          { return appCPUWeight(app) }
+// AppVCPUs, AppCPUMillicores and AppCPUWeight expose an app instance's CPU,
+// which follows its size (ADR-20261109172421). AppCPUBookingMillicores is
+// exported by guest_vcpus.go itself, for pkg/fcvm's metal tests.
+func AppVCPUs(app state.App) int         { return appVCPUs(app) }
+func AppCPUMillicores(app state.App) int { return appCPUMillicores(app) }
+func AppCPUWeight(app state.App) int32   { return appCPUWeight(app) }
 
 // ReportNodeMemory, NodeFrozenCount and UnreportedNodeUsedMB reach the node
 // memory report (ADR 20261101091815).
@@ -1365,6 +1398,9 @@ func XFillLedger(t testing.TB, r *SnapshotRefresher, nodeID string, percent int)
 // XSetNow replaces the refresher's clock.
 func (r *SnapshotRefresher) XSetNow(now func() time.Time) { r.now = now }
 
+// XSetNow pins the engine clock (stale instance hint tests).
+func (e *Engine) XSetNow(now func() time.Time) { e.now = now }
+
 // XResidentRAMForNode is the refresher engine's ledger residency on nodeID.
 func (r *SnapshotRefresher) XResidentRAMForNode(nodeID string) int {
 	return r.e.ledger.ResidentRAMForNode(nodeID)
@@ -1411,3 +1447,25 @@ func NodeBudgetRefusal(detail string, blockers ...api.WorkerAdmissionBlocker) er
 func (r *Loop) FinishFailedPrime(ctx context.Context, appID, deploymentID string, err error) {
 	r.finishFailedPrime(ctx, appID, deploymentID, 1, err)
 }
+
+// XInitPrimePath exposes the init snapshot priming path choice
+// (ADR-20261114153000).
+var XInitPrimePath = initPrimePath
+
+// PollStoredTriggerReplays polls a stored-replay source over records with
+// trigger t, as dispatchOneTrigger does after the record-rate reservation.
+func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
+	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
+}
+
+// DrainQueuePushLane runs one push lane over dispatch (ADR-972 amendment
+// 2026-11-19).
+func DrainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	return drainQueuePushLane(ctx, dispatch)
+}
+
+// ReportTriggerPoll records a poll's record count, as dispatchOneTrigger does.
+func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx, records) }
+
+// ErrTriggerGatewayDispatch marks a batch the gateway could not take.
+var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch

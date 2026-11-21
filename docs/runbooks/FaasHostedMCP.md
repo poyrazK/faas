@@ -28,6 +28,24 @@ Covers `FaasHostedMCPDown`, `FaasHostedMCPRestarting` and
   dropped after ten idle minutes, so memory follows active connections.
   `gregale_management_mcp_connection_servers` counts the built ones.
 
+## OAuth client callback refused
+
+`invalid_client` with `none of the client's redirect URIs is allowed on this
+server` means the bridge fetched the client's metadata but none of its callbacks
+matched the operator allowlist. Authorization stops before account sign-in.
+
+The shipped unit allows Google Antigravity's exact HTTPS callback,
+`https://antigravity.google/oauth-callback`, published at
+`https://antigravity.google/oauth/client-metadata.json`. Older units omit it.
+Inspect `systemctl cat faas-mcp-bridge` for the active `--oauth-redirect-uri`
+arguments and any `ExecStart` override. Converge `control_plane_service` to
+install the updated unit and let its handler reload/restart the bridge. An
+override that replaces `ExecStart` also needs the exact callback. Retry
+**Authenticate** in Antigravity after the updated service is running.
+
+Add only independently verified exact HTTPS callbacks; the existing loopback
+rules remain separate. Do not accept arbitrary client-provided redirect hosts.
+
 ## Inspect and revoke connections
 
 The admin socket is `/run/faas-mcp-bridge/admin.sock`, in a 0700 directory
@@ -106,3 +124,18 @@ grants. At the bound, new client registrations or sign-ins are refused; the
 
 Raising the bound is a code change (`hostedOAuthEntries` in
 `pkg/mcpmanagement/hosted_limits.go`) and an ADR amendment.
+
+## Optional Task recovery inspection
+
+`--allow-task-inspection` defaults off. With `build-tools` selected it exposes
+only `gregale_inspect_task_tool_recovery` and `gregale_plan_task_tool_recovery`
+to the original personal-account agent key. It is independent of
+`--allow-tool-publishing`, invocation and connection write consent, and needs no
+CLI runner or upload store. The key must retain `agent,apps:read,deploy:write`
+for the existing native requester check. OAuth, organization/project-limited
+and app-bound credentials remain excluded; another key cannot read the journal.
+See the [customer workflow](../mcp.md#hosted-read-only-task-inspection) and
+[ADR-20261116163708](../adr/20261116163708-hosted-task-recovery-inspection.md).
+Disabling the flag on bridge restart removes the tools; it never changes native
+release state, approvals or running executors. Do not retry a release to recover
+an inspection response: reconnect and inspect its retained intent ID.

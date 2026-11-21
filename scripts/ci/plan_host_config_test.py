@@ -17,12 +17,12 @@ hr = phc.host_roles
 
 BASE, COMMIT = "b" * 40, "c" * 40
 RELEASE = {"kind": "gregale-unit-release", "format_version": 2, "base_sha": BASE, "git_sha": COMMIT}
-NEW = {"format_version": 1, "group": "control_plane", "globals": "sha256:g", "order": ["nftables", "postgres", "grafana"],
+NEW = {"format_version": hr.FORMAT, "group": "control_plane", "globals": "sha256:g", "order": ["nftables", "postgres", "grafana"],
        "roles": {"nftables": "sha256:n", "postgres": "sha256:p2", "grafana": "sha256:f"}}
 
 
 def record(commit="a" * 40, **changes):
-    out = {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane", "commit": commit,
+    out = {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane", "commit": commit,
            "globals": "sha256:g", "order": NEW["order"], "environment": "sha256:e",
            "roles": {"nftables": "sha256:n", "postgres": "sha256:p1", "grafana": "sha256:f"}}
     out.update(changes)
@@ -65,7 +65,7 @@ class PlanTest(unittest.TestCase):
                 else:
                     # The record names every role at the release commit;
                     # the workflow adds the environment hash after the gate.
-                    self.assertEqual(rec, {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane",
+                    self.assertEqual(rec, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
 
@@ -94,6 +94,7 @@ class PlanTest(unittest.TestCase):
             ("not a unit release", dict(RELEASE, kind="other"), host(record()), None, "format 2"),
             ("N±1", RELEASE, host(record()), "d" * 40, "N±1"),
             ("host runs another full release", RELEASE, host(record(), base="e" * 40), None, "deploy that full release"),
+            ("a rebuilt host has no active release", RELEASE, host(None, base=None), None, "no active release yet"),
             ("host converged newer content", RELEASE, host(record(commit="f" * 40)), None, "not an ancestor"),
         ]
         for name, release, state, previous, want in cases:
@@ -144,9 +145,16 @@ class FullReleaseTest(unittest.TestCase):
                                  (action, roles, every, COMMIT))
                 # Every action records the release commit's hashes once the
                 # play succeeded; the workflow adds the environment hash.
-                self.assertEqual(written, {"format_version": 1, "kind": "gregale-host-config", "group": "control_plane",
+                self.assertEqual(written, {"format_version": hr.FORMAT, "kind": "gregale-host-config", "group": "control_plane",
                                            "commit": COMMIT, "globals": "sha256:g", "order": NEW["order"],
                                            "roles": NEW["roles"]})
+
+    def test_a_rebuilt_host_with_no_active_release_converges_every_role(self):
+        # unit_deploy.sh host-state on a control plane rebuilt from backups,
+        # before its first activation: no release, maybe no record.
+        fresh = {"current": None, "base_git_sha": None, "manifest_hash": None, "record": None, "contract": None}
+        out, _ = phc.plan_full_release(COMMIT, fresh, NEW)
+        self.assertEqual((out["action"], out["roles"], out["all"]), ("all", NEW["order"], True))
 
 
 class GateTest(unittest.TestCase):

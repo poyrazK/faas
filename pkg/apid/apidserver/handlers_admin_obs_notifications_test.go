@@ -57,7 +57,7 @@ func TestObsNotificationHealthReadAndAuthorization(t *testing.T) {
 	path := operatorobs.NotificationHealthPath
 	rec := e.Do(t, "GET", path, nil, nil)
 	var out api.ObsNotificationHealth
-	if json.Unmarshal(rec.Body.Bytes(), &out) != nil || rec.Code != 200 || out.State != "partial" || out.AlertmanagerAPI.State != "disabled" || out.Integrations == nil || out.Signals["alertmanager_failures"].Value != nil {
+	if json.Unmarshal(rec.Body.Bytes(), &out) != nil || rec.Code != 200 || out.State != "partial" || out.AlertmanagerAPI.State != "disabled" || out.Integrations == nil || out.Signals["alertmanager_failures"].Value != nil || out.ReceiverHealth == nil || out.ReceiverHealth.State != "partial" || out.ReceiverHealth.Groups == nil {
 		t.Fatalf("unknown: %d %s", rec.Code, rec.Body)
 	}
 	for _, query := range []string{"?since=now", "?url=http://external.example", "?"} {

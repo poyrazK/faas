@@ -213,7 +213,7 @@ func newKeyedServer(t *testing.T) (*Server, *keyedNeon, *memKeys, *age.X25519Ide
 	t.Cleanup(ts.Close)
 	base, _ := url.Parse(ts.URL + "/api/v2")
 	reg := prometheus.NewRegistry()
-	server, err := NewServer(base, ts.Client(), "admin-key", fakeLive{}, 100, reg, slog.New(slog.DiscardHandler))
+	server, err := NewServer(base, ts.Client(), "admin-key", fakeLive{}, Limits{PerHour: 100, PerSubjectPerHour: 100}, reg, slog.New(slog.DiscardHandler))
 	if err != nil {
 		t.Fatal(err)
 	}

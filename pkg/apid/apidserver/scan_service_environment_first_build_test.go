@@ -62,3 +62,56 @@ func TestEnvironmentAppsWithoutLiveDeployment(t *testing.T) {
 		t.Error("staging treated as the production scope")
 	}
 }
+
+// 2026-11-15 agent eval: three retail services failed their first boot, and
+// every later `gregale deploy --project` reported them "unchanged; its live
+// release keeps serving" and queued nothing. A production app with no live
+// release whose last deployment ended (or that never deployed) rebuilds; one
+// still deploying, one already serving and one already queued do not.
+func TestProductionAppsWithoutRelease(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "prod-down@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(slug string) state.App {
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	deploy := func(app state.App) state.Deployment {
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindTarball, Status: state.DeployPending})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dep
+	}
+	serving, failed, building, never, queued := mk("ui"), mk("orders"), mk("cart"), mk("catalog"), mk("checkout")
+	if err := store.MarkDeploymentLive(ctx, deploy(serving).ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range []state.App{failed, queued} {
+		if _, err := store.SetDeploymentFailed(ctx, deploy(app).ID, "internal", "cold boot failed"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deploy(building)
+
+	got, err := apidserver.ProductionAppsWithoutRelease(ctx, store,
+		[]state.App{serving, failed, building, never, queued}, nil, []state.App{queued})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{failed.ID: true, never.ID: true}
+	if len(got) != len(want) {
+		t.Fatalf("rebuilds = %+v, want %s and %s", got, failed.Slug, never.Slug)
+	}
+	for _, app := range got {
+		if !want[app.ID] {
+			t.Fatalf("rebuilds include %s; want only %s and %s", app.Slug, failed.Slug, never.Slug)
+		}
+	}
+}

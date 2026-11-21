@@ -32,6 +32,10 @@ while [[ "$1" == -* ]]; do
   case "$1" in -i|-o) shift 2 ;; *) echo 'forwarding is disabled' >&2; exit 99 ;; esac
 done
 shift
+# The fake control plane already runs a release, so the observer requires a
+# healthy API baseline (a rebuilt one is covered by
+# scripts/ci/observe_remote_rollout_test.sh).
+if [[ "$1" == *'/opt/faas/current'* ]]; then echo active; exit 0; fi
 exec bash -c "$1"
 `)
 			writeRolloutExecutable(t, temp, "scp", `#!/usr/bin/env bash

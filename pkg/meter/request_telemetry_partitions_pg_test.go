@@ -29,7 +29,7 @@ func (d partitionTestDB) QueryRow(ctx context.Context, sql string, args ...any) 
 
 func TestEnsureRequestTelemetryPartitionsMovesDefaultRowsAndIsIdempotent(t *testing.T) {
 	ctx := t.Context()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t) // a private clone: no CREATE INDEX CONCURRENTLY waits on other packages' transactions
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
@@ -80,11 +80,12 @@ func TestEnsureRequestTelemetryPartitionsMovesDefaultRowsAndIsIdempotent(t *test
 }
 
 func TestDropExpiredPartitionsUsesLongestPlanWindow(t *testing.T) {
-	if !containsAll(retentionDropExpiredPartitionsSQL,
-		"partstart + interval '1 month'",
-		fmt.Sprintf("interval '%d days'", DefaultRequestTelemetryRetentionDays),
+	body := partitionMaintenanceMigration(t)
+	if !containsAll(body,
+		"END) <= now() - keep THEN",
+		fmt.Sprintf("WHEN 'request_telemetry' THEN interval '%d days'", DefaultRequestTelemetryRetentionDays),
 	) {
-		t.Fatalf("partition drop cutoff does not preserve the longest plan window:\n%s", retentionDropExpiredPartitionsSQL)
+		t.Fatalf("partition drop cutoff does not preserve the longest plan window:\n%s", body)
 	}
 }
 

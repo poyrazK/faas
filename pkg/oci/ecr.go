@@ -38,6 +38,15 @@ type ecrToken struct {
 	renewAt time.Time
 }
 
+// RegistryCredential turns a credential stored for registry (an API host)
+// into the one the registry accepts: an ECR IAM access key becomes its
+// exchanged token; anything else is returned as it is. The control plane's
+// registry proxy (ADR-20261110210000 slice 3j) resolves it before answering
+// the registry's challenge.
+func (c *RegistryClient) RegistryCredential(ctx context.Context, registry string, auth *BasicAuth) (*BasicAuth, error) {
+	return c.registryAuth(ctx, Reference{Registry: registry}, auth)
+}
+
 // registryAuth turns a stored credential into the one the registry accepts.
 // Only an IAM access key for an ECR registry changes; every other credential
 // is returned as it is.

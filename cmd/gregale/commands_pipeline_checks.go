@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/datapipeline"
 )
 
 type connectionCheckClient interface {
@@ -86,7 +87,7 @@ func waitConnectionCheck(ctx context.Context, client connectionCheckClient, chec
 	}
 }
 
-func checkConnectionForCreate(ctx context.Context, client connectionCheckClient, id, database string, tables []string) error {
+func checkConnectionForCreate(ctx context.Context, client connectionCheckClient, id, database string, tables []string, serving ...*api.DataPipelineServing) error {
 	check, err := requestConnectionCheck(ctx, client, id, database, api.RequestDataConnectionCheck{Tables: tables})
 	if err == nil {
 		check, err = waitConnectionCheck(ctx, client, check, time.Second)
@@ -97,6 +98,13 @@ func checkConnectionForCreate(ctx context.Context, client connectionCheckClient,
 	if err != nil {
 		_ = writeJSON(check)
 		return err
+	}
+	if len(serving) > 0 && serving[0] != nil {
+		if err := datapipeline.ValidateServingSelection(check, tables, serving[0]); err != nil {
+			_ = writeJSON(check)
+			return fmt.Errorf("select compatible columns for every table, retaining every primary key and a text, varchar or UUID tenant column: %w", err)
+		}
+		return nil
 	}
 	for _, name := range tables {
 		found := false
@@ -135,6 +143,7 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	fs := newFlagSet("pipeline connection "+action, flag.ContinueOnError)
 	var database string
 	tables := fs.String("tables", "", "inspect these comma-separated table names, including tables beyond the default discovery page")
+	mode := fs.String("mode", "", "snapshot for read-only scheduled import qualification; omit for CDC")
 	search := fs.String("search", "", "discover table names containing this lowercase text")
 	if action == "check" {
 		fs.StringVar(&database, "database", "", "also check an existing managed mirror ID")
@@ -158,14 +167,14 @@ func cmdPipelineConnectionCheck(action string, args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 	var check api.DataConnectionCheck
-	selection := api.RequestDataConnectionCheck{Search: *search}
+	selection := api.RequestDataConnectionCheck{Mode: *mode, Search: *search}
 	if *tables != "" {
 		selection.Tables = strings.Split(*tables, ",")
 		for i := range selection.Tables {
 			selection.Tables[i] = strings.TrimSpace(selection.Tables[i])
 		}
 	}
-	if action == "tables" && *tables == "" && *search == "" {
+	if action == "tables" && *tables == "" && *search == "" && *mode == "" {
 		check, err = client.GetDataConnectionCheck(ctx, id)
 	} else {
 		check, err = requestConnectionCheck(ctx, client, id, database, selection)

@@ -103,9 +103,20 @@ if ((RUN_ATTEMPT > 1)); then
 fi
 
 deploy_attempt() {
-	local template="$1" slug="$2" output="$3"
+	local template="$1" slug="$2" output="$3" fresh="${4:-}"
+	local source=(--template "$template")
+	if [[ -n "$fresh" ]]; then
+		# A source no build has seen: the build cache cannot answer it, so a
+		# builder VM (one per builderd) must build it. See the node canary.
+		local dir="$workdir/source-$slug"
+		if [[ ! -d "$dir" ]]; then
+			"$GREGALE_BIN" init --template "$template" --path "$dir" --no-mcp >"$output.init" 2>&1 || return 1
+			printf 'release %s canary %s\n' "$RELEASE_SHA" "$slug" >"$dir/release-canary.txt"
+		fi
+		source=(--path "$dir")
+	fi
 	FAAS_JSON=1 "$GREGALE_BIN" deploy \
-		--template "$template" --name "$slug" --wait --timeout "$DEPLOY_TIMEOUT_SECONDS" \
+		"${source[@]}" --name "$slug" --wait --timeout "$DEPLOY_TIMEOUT_SECONDS" \
 		--yes --no-require-authn --reason production-release-acceptance >"$output" 2>"$output.stderr"
 }
 
@@ -131,8 +142,8 @@ policy_check_timed_out() {
 # fails the gate on its first attempt; the retried failure's evidence is
 # printed before it is replaced.
 deploy_one() {
-	local template="$1" slug="$2" output="$3" rc=0 delay="" why=""
-	deploy_attempt "$template" "$slug" "$output" || rc=$?
+	local template="$1" slug="$2" output="$3" fresh="${4:-}" rc=0 delay="" why=""
+	deploy_attempt "$template" "$slug" "$output" "$fresh" || rc=$?
 	if (( rc != 0 )) && jq -e '.failure_class == "infra"' "$output" >/dev/null 2>&1; then
 		delay="$INFRA_RETRY_DELAY_SECONDS" why="an infrastructure-class failure"
 	elif (( rc != 0 )) && policy_check_timed_out "$output"; then
@@ -143,7 +154,7 @@ deploy_one() {
 		report_failed_deploy "$slug" "$output" "$rc"
 		sleep "$delay"
 		rc=0
-		deploy_attempt "$template" "$slug" "$output" || rc=$?
+		deploy_attempt "$template" "$slug" "$output" "$fresh" || rc=$?
 	fi
 	return "$rc"
 }
@@ -359,11 +370,21 @@ verify_app_policy_controls() {
 # take only one of the pair and a healthy activated node claims the other.
 # One deployment at a time let the other node win every build: rc.309's fsn-2
 # canary deployed twice in its 20 minutes, both built on fsn-3, and failed.
+# The pair only splits when both builds need a builder VM. A build-cache hit
+# needs no slot and finishes in seconds, so whichever builderd claims first
+# takes every one: rc.345's fsn-3 canary followed fsn-2's, the templates were
+# cached, and fsn-2 (in the database's zone) built all six in under ten
+# seconds each. Each canary deployment therefore builds a fresh source.
 if [[ -n "$ACCEPTANCE_NODE" ]]; then
 	# Slugs stay reserved after cleanup, so each node's apps carry its name
 	# (a valid slug is at most 40 characters).
 	node_tag="$(printf '%s' "${ACCEPTANCE_NODE%%.*}" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9-' '-' | cut -c1-10)"
 	node_report="$workdir/node.json"
+	# The node activated before this step started. Placement prefers the node
+	# with the most headroom, which after the previous node's drain is rarely
+	# this one (rc.347: fsn-3 built a canary app and placed none of six), so
+	# an instance the node itself started since now also proves it serves.
+	canary_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	canary_deadline=$((SECONDS + 20 * 60))
 	i=0
 	while ((i < NODE_CANARY_MAX_DEPLOYMENTS && SECONDS < canary_deadline)); do
@@ -379,7 +400,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 			round_slugs+=("$canary_slug")
 			round_outputs+=("$canary_output")
 			phase "node canary ${ACCEPTANCE_NODE}: deployment ${i} (${template})"
-			deploy_one "$template" "$canary_slug" "$canary_output" & pids+=("$!")
+			deploy_one "$template" "$canary_slug" "$canary_output" fresh & pids+=("$!")
 		done
 		failed=0
 		for index in "${!pids[@]}"; do
@@ -399,7 +420,7 @@ if [[ -n "$ACCEPTANCE_NODE" ]]; then
 		done
 		node_exit=0
 		"$GREGALECTL_BIN" release-acceptance verify-node --node "$ACCEPTANCE_NODE" \
-			--slugs "$(IFS=,; echo "${slugs[*]}")" >"$node_report" || node_exit=$?
+			--slugs "$(IFS=,; echo "${slugs[*]}")" --since "$canary_since" >"$node_report" || node_exit=$?
 		if (( node_exit == 0 )); then
 			printf 'node canary passed: release=%s node=%s deployments=%s\n' \
 				"$RELEASE_SHA" "$ACCEPTANCE_NODE" "${#slugs[@]}"

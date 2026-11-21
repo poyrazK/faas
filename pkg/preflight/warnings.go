@@ -47,6 +47,11 @@ var warningRules = map[string]warningRule{
 		title:  "Source may bind to localhost",
 		remedy: "Bind to 0.0.0.0 and read the port from $PORT, or traffic cannot reach the app.",
 	},
+	"health_path_root": {
+		level:  LevelAmber,
+		title:  "Health path is the home page",
+		remedy: "Gregale answers the health path at its edge, so `/` would never reach your app. Add a route such as `/healthz` and set `hosting.health` to it.",
+	},
 	"profile_input_truncated": {
 		level:  LevelAmber,
 		title:  "Source too large to inspect fully",
@@ -57,7 +62,7 @@ var warningRules = map[string]warningRule{
 	"non_http_service": {
 		level:  LevelAmber,
 		title:  "TCP server will fail the HTTP readiness probe",
-		remedy: "Deploy the published image with `gregale deploy --image <image>@sha256:<digest>`; it is ready once its port accepts connections.",
+		remedy: "A datastore is not run: use managed PostgreSQL or a hosted service. Another TCP server: deploy its published image with `gregale deploy --image <image>@sha256:<digest>`.",
 	},
 	// Expected on every container deploy: the image, not the source, carries
 	// the entrypoint. Informational, so it never downgrades an otherwise

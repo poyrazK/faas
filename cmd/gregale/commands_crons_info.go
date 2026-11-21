@@ -112,7 +112,12 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 		_, _ = fmt.Fprintf(w, "  path:     %s\n", c.Path)
 	}
 	_, _ = fmt.Fprintf(w, "  enabled:  %t\n", c.Enabled)
-	if c.SuspendedReason != "" {
+	switch c.SuspendedReason {
+	case "":
+	case "failing":
+		// ADR-20261115194000: schedd paused it after consecutive failed runs.
+		_, _ = fmt.Fprintf(w, "  suspended: failing (every recent run failed; see `gregale cron runs %s`, fix the app, then `gregale crons update %s --enable` or deploy to resume)\n", c.ID, c.ID)
+	default:
 		_, _ = fmt.Fprintf(w, "  suspended: %s (deploy the app to reactivate this schedule)\n", c.SuspendedReason)
 	}
 	_, _ = fmt.Fprintf(w, "  timezone: %s\n", c.Timezone)

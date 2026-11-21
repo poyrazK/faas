@@ -487,10 +487,10 @@ func testCliAuthLoopbackClaimRebindsDevice(t *testing.T, fx *Fixture) {
 	tokenHash := api.HashToken([]byte("loopback-" + uuid.NewString()))
 	minted := api.HashToken([]byte("minted-" + uuid.NewString()))
 	fresh := api.HashToken([]byte("fresh-" + uuid.NewString()))
-	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, time.Now().UTC().Add(10*time.Minute)); err != nil {
+	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, nil, time.Now().UTC().Add(10*time.Minute)); err != nil {
 		t.Fatalf("IssueCliAuthDeviceCode: %v", err)
 	}
-	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); err != nil || status != api.CliAuthStatusPending {
+	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); err != nil || status != api.CliAuthStatusPending {
 		t.Fatalf("before approval: %q, %v; want pending", status, err)
 	}
 	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, fresh); err != nil {
@@ -499,15 +499,87 @@ func testCliAuthLoopbackClaimRebindsDevice(t *testing.T, fx *Fixture) {
 	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, minted); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("second claim: %v, want ErrConflict (and the device code kept)", err)
 	}
-	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted); !errors.Is(err, state.ErrNotFound) {
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("exchange with the minting device code: %v, want ErrNotFound", err)
 	}
-	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh)
+	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, nil)
 	if err != nil || status != api.CliAuthStatusConsumed || accountID != fx.Account.ID {
 		t.Fatalf("exchange with the new device code: %q/%q, %v; want consumed/%s", status, accountID, err, fx.Account.ID)
 	}
-	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh); !errors.Is(err, state.ErrNotFound) {
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, nil); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("second exchange: %v, want ErrNotFound", err)
+	}
+}
+
+// testCliAuthDeviceCodeNeedsItsVerifier pins the verifier binding (account
+// audit F10-3): a code minted with a verifier hash exchanges only together
+// with it, and a wrong or missing verifier leaves the approved row for the
+// real CLI instead of consuming it. The binding survives a loopback approval,
+// which replaces only the device code.
+func testCliAuthDeviceCodeNeedsItsVerifier(t *testing.T, fx *Fixture) {
+	devices, ok := fx.Store.(state.CliAuthDeviceCodeStore)
+	if !ok {
+		t.Skip("store has no device codes")
+	}
+	tokenHash := api.HashToken([]byte("verifier-" + uuid.NewString()))
+	minted := api.HashToken([]byte("minted-" + uuid.NewString()))
+	fresh := api.HashToken([]byte("fresh-" + uuid.NewString()))
+	verifier := api.HashToken([]byte("verifier-secret-" + uuid.NewString()))
+	other := api.HashToken([]byte("other-secret-" + uuid.NewString()))
+	if err := devices.IssueCliAuthDeviceCode(fx.Ctx, tokenHash, minted, verifier, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthDeviceCode: %v", err)
+	}
+	if status, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, minted, nil); err != nil || status != api.CliAuthStatusPending {
+		t.Fatalf("pending without verifier: %q, %v; want pending", status, err)
+	}
+	if err := devices.ClaimCliAuthCodeForDevice(fx.Ctx, tokenHash, fx.Account.ID, fresh); err != nil {
+		t.Fatalf("ClaimCliAuthCodeForDevice: %v", err)
+	}
+	for name, presented := range map[string][]byte{"no verifier": nil, "wrong verifier": other} {
+		if status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, presented); !errors.Is(err, state.ErrNotFound) || accountID != "" {
+			t.Fatalf("approved, %s: %q/%q, %v; want ErrNotFound and no account", name, status, accountID, err)
+		}
+	}
+	status, accountID, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, verifier)
+	if err != nil || status != api.CliAuthStatusConsumed || accountID != fx.Account.ID {
+		t.Fatalf("exchange with the verifier: %q/%q, %v; want consumed/%s", status, accountID, err, fx.Account.ID)
+	}
+	if _, _, err := devices.ConsumeCliAuthDeviceCode(fx.Ctx, fresh, verifier); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("second exchange: %v, want ErrNotFound", err)
+	}
+}
+
+// testCliAuthRequesterIsRecordedUntilApproval pins CliAuthRequesterStore
+// (account audit F10): the minting address and time read back for the
+// approval page, and a claimed code takes no new address.
+func testCliAuthRequesterIsRecordedUntilApproval(t *testing.T, fx *Fixture) {
+	requesters, ok := fx.Store.(state.CliAuthRequesterStore)
+	if !ok {
+		t.Skip("store does not record requesters")
+	}
+	tokenHash := api.HashToken([]byte("requester-" + uuid.NewString()))
+	before := time.Now().Add(-time.Minute)
+	if err := fx.Store.IssueCliAuthCode(fx.Ctx, tokenHash, time.Now().UTC().Add(10*time.Minute)); err != nil {
+		t.Fatalf("IssueCliAuthCode: %v", err)
+	}
+	if req, err := requesters.CliAuthRequester(fx.Ctx, tokenHash); err != nil || req.IP != "" {
+		t.Fatalf("before recording: %+v, %v; want no address", req, err)
+	}
+	if err := requesters.RecordCliAuthRequester(fx.Ctx, tokenHash, "192.0.2.10"); err != nil {
+		t.Fatalf("RecordCliAuthRequester: %v", err)
+	}
+	req, err := requesters.CliAuthRequester(fx.Ctx, tokenHash)
+	if err != nil || req.IP != "192.0.2.10" || req.CreatedAt.Before(before) {
+		t.Fatalf("CliAuthRequester = %+v, %v; want 192.0.2.10 minted just now", req, err)
+	}
+	if err := fx.Store.ClaimCliAuthCode(fx.Ctx, tokenHash, fx.Account.ID); err != nil {
+		t.Fatalf("ClaimCliAuthCode: %v", err)
+	}
+	if err := requesters.RecordCliAuthRequester(fx.Ctx, tokenHash, "198.51.100.1"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("record after approval: %v, want ErrNotFound", err)
+	}
+	if _, err := requesters.CliAuthRequester(fx.Ctx, api.HashToken([]byte("never-"+uuid.NewString()))); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unknown code: %v, want ErrNotFound", err)
 	}
 }
 
@@ -731,5 +803,55 @@ func testTriggerRecordClaimIsBoundedAndScoped(t *testing.T, fx *Fixture) {
 	}
 	if len(empty) != 0 {
 		t.Fatalf("empty trigger returned %d records", len(empty))
+	}
+}
+
+// testEndAppDeleteGraceFreesSlugForOwner pins the owner's early purge
+// (gregale app purge): EndAppDeleteGrace closes a deleted app's restore window
+// so the sweeper's claim and permanent delete run at once, after which the
+// same account can create an app with that slug again. A live app has no
+// window to close.
+func testEndAppDeleteGraceFreesSlugForOwner(t *testing.T, fx *Fixture) {
+	slug := "purging-" + uuid.NewString()[:8]
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: slug,
+		Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("EndAppDeleteGrace on a live app = %v, want ErrNotFound", err)
+	}
+	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, app.ID, time.Now().UTC().Add(7*24*time.Hour)); err != nil {
+		t.Fatalf("ScheduleAppDeletion: %v", err)
+	}
+	if err := fx.Store.ClaimAppDeletion(fx.Ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim inside the window = %v, want ErrNotFound", err)
+	}
+	ended, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID)
+	if err != nil {
+		t.Fatalf("EndAppDeleteGrace: %v", err)
+	}
+	if ended.Status != state.AppDeleted || ended.DeleteGraceUntil == nil || ended.DeleteGraceUntil.After(time.Now().Add(time.Second)) {
+		t.Fatalf("ended app = status %q grace %v, want deleted with the window closed", ended.Status, ended.DeleteGraceUntil)
+	}
+	if _, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("repeated EndAppDeleteGrace = %v, want idempotent success", err)
+	}
+	if _, err := fx.Store.RestoreApp(fx.Ctx, app.ID, api.MustLimitsFor(api.PlanFree)); err == nil {
+		t.Fatal("RestoreApp after the window closed succeeded, want a refusal")
+	}
+	if err := fx.Store.ClaimAppDeletion(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("ClaimAppDeletion after the window closed: %v", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	if _, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: slug,
+		Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	}); err != nil {
+		t.Fatalf("owner reusing the purged slug: %v", err)
 	}
 }

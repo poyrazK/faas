@@ -36,7 +36,7 @@ type accountMutationOutput struct {
 
 func cmdAccountsDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|find|attention|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|object-storage-ceiling|complimentary")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl accounts: missing subcommand; want list|find|attention|show|360|activity|suspend|restore|revoke-sessions|reset-mfa|revert-email|make-org-owner|object-storage-ceiling|complimentary|abuse-hold|egress-flows|risk|held-links")
 		return 2
 	}
 	switch args[0] {
@@ -52,12 +52,20 @@ func cmdAccountsDispatch(args []string) int {
 		return cmdAccounts360(args[1:])
 	case "activity":
 		return cmdAccountsActivity(args[1:])
-	case "suspend", "restore", "revoke-sessions", "reset-mfa", "revert-email":
+	case "suspend", "restore", "revoke-sessions", "reset-mfa", "revert-email", "make-org-owner":
 		return cmdAccountsMutation(args[0], args[1:])
 	case "object-storage-ceiling":
 		return cmdAccountsObjectStorageCeiling(args[1:])
 	case "complimentary":
 		return cmdAccountsComplimentary(args[1:])
+	case "abuse-hold":
+		return cmdAccountsAbuseHold(args[1:])
+	case "egress-flows":
+		return cmdAccountsEgressFlows(args[1:])
+	case "risk":
+		return cmdAccountsRisk(args[1:])
+	case "held-links":
+		return cmdAccountsHeldLinks(args[1:])
 	default:
 		_, _ = fmt.Fprintf(osStderr, "gregalectl accounts: unknown subcommand %q\n", args[0])
 		return 2
@@ -232,7 +240,7 @@ func printAccountDiagnosis(d api.ObsTenantDiagnosis) {
 func cmdAccountsAttention(args []string) int {
 	fs := flag.NewFlagSet("attention", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
-	kind := fs.String("kind", "", "deploy_failing, refused_burst or domain_stuck")
+	kind := fs.String("kind", "", strings.Join(api.AttentionKinds(), ", "))
 	stateFlag := fs.String("state", "", "active (default), open, dismissed or resolved")
 	accountID := fs.String("account-id", "", "only this account (uuid)")
 	limit := fs.Int("limit", api.AttentionListMax, "maximum signals (1..200)")
@@ -273,8 +281,15 @@ func cmdAccountsAttention(args []string) int {
 		return 0
 	}
 	for _, s := range response.Items {
-		_, _ = fmt.Fprintf(osStdout, "signal id=%d account_id=%s kind=%s subject=%s state=%s observed=%d since=%s last=%s detail=%q\n",
+		_, _ = fmt.Fprintf(osStdout, "signal id=%d account_id=%s kind=%s subject=%s state=%s observed=%d since=%s last=%s detail=%q",
 			s.ID, s.AccountID, s.Kind, s.Subject, s.State, s.Observed, s.FirstSeenAt.Format(time.RFC3339), s.LastSeenAt.Format(time.RFC3339), s.Detail)
+		if s.Outcome != "" {
+			_, _ = fmt.Fprintf(osStdout, " outcome=%s", s.Outcome)
+		}
+		if s.TicketID != "" {
+			_, _ = fmt.Fprintf(osStdout, " ticket_id=%s", s.TicketID)
+		}
+		_, _ = fmt.Fprintln(osStdout)
 	}
 	return 0
 }
@@ -364,6 +379,10 @@ func cmdAccountsMutation(action string, args []string) int {
 	reason := fs.String("reason", "", "audit reason slug ([a-z0-9_]{1,64})")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	ack := fs.Bool("yes", false, "acknowledge the account mutation")
+	org := new(string)
+	if action == "make-org-owner" {
+		org = fs.String("org", "", "organization slug")
+	}
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -394,6 +413,14 @@ func cmdAccountsMutation(action string, args []string) int {
 		return 1
 	}
 	path := "/v1/admin/ops/accounts/" + url.PathEscape(id) + "/" + action + "?confirm=true&reason=" + url.QueryEscape(cleanReason)
+	if action == "make-org-owner" {
+		slug := strings.TrimSpace(*org)
+		if slug == "" {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl accounts make-org-owner: --org is required")
+			return 2
+		}
+		path += "&org=" + url.QueryEscape(slug)
+	}
 	headers := make(http.Header)
 	headers.Set(operatorTraceIDHeader, traceID)
 	var response api.ObsAccountMutationResponse

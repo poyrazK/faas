@@ -95,6 +95,15 @@ func (q *Queries) ConfigureCapture(ctx context.Context, db DBTX) error {
 	return err
 }
 
+const configureTaskGrantTransaction = `-- name: ConfigureTaskGrantTransaction :exec
+SELECT pg_catalog.set_config('search_path','pg_catalog',true)
+`
+
+func (q *Queries) ConfigureTaskGrantTransaction(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, configureTaskGrantTransaction)
+	return err
+}
+
 const databaseConnectionsAllowed = `-- name: DatabaseConnectionsAllowed :one
 SELECT datallowconn::boolean FROM pg_catalog.pg_database WHERE datname=$1::text
 `
@@ -157,6 +166,27 @@ SELECT pg_catalog.format('REVOKE ALL ON SCHEMA public FROM PUBLIC; GRANT USAGE,C
 
 func (q *Queries) FormatConfigureSchema(ctx context.Context, db DBTX, roleName string) (string, error) {
 	row := db.QueryRow(ctx, formatConfigureSchema, roleName)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const formatConfigureTaskSchema = `-- name: FormatConfigureTaskSchema :one
+SELECT pg_catalog.format(
+ 'ALTER SCHEMA public OWNER TO %1$I;
+  REVOKE ALL ON SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+  REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM PUBLIC',
+ $1::text)::text
+`
+
+func (q *Queries) FormatConfigureTaskSchema(ctx context.Context, db DBTX, ownerRole string) (string, error) {
+	row := db.QueryRow(ctx, formatConfigureTaskSchema, ownerRole)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -268,6 +298,46 @@ func (q *Queries) FormatFreezeRole(ctx context.Context, db DBTX, roleName string
 	return column_1, err
 }
 
+const formatGrantTaskConnect = `-- name: FormatGrantTaskConnect :one
+SELECT pg_catalog.format('GRANT CONNECT ON DATABASE %I TO %I; GRANT USAGE ON SCHEMA public TO %I',
+ $1::text,$2::text,$2::text)::text
+`
+
+type FormatGrantTaskConnectParams struct {
+	DatabaseName string
+	RoleName     string
+}
+
+func (q *Queries) FormatGrantTaskConnect(ctx context.Context, db DBTX, arg FormatGrantTaskConnectParams) (string, error) {
+	row := db.QueryRow(ctx, formatGrantTaskConnect, arg.DatabaseName, arg.RoleName)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const formatGrantTaskTables = `-- name: FormatGrantTaskTables :one
+SELECT (pg_catalog.format('GRANT SELECT ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest($1::text[]) AS name),
+ $2::text) ||
+ CASE WHEN cardinality($3::text[])>0 THEN
+ pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest($3::text[]) AS name),
+ $2::text) ELSE '' END)::text
+`
+
+type FormatGrantTaskTablesParams struct {
+	ReadTables  []string
+	RoleName    string
+	WriteTables []string
+}
+
+func (q *Queries) FormatGrantTaskTables(ctx context.Context, db DBTX, arg FormatGrantTaskTablesParams) (string, error) {
+	row := db.QueryRow(ctx, formatGrantTaskTables, arg.ReadTables, arg.RoleName, arg.WriteTables)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const formatRecoverDatabase = `-- name: FormatRecoverDatabase :one
 SELECT pg_catalog.format('ALTER DATABASE %I ALLOW_CONNECTIONS true',$1::text)::text
 `
@@ -341,9 +411,12 @@ func (q *Queries) OtherSessions(ctx context.Context, db DBTX, arg OtherSessionsP
 }
 
 const participantRoles = `-- name: ParticipantRoles :many
-SELECT r.rolname::text FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_auth_members m ON m.member=r.oid
- JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
-WHERE owner.rolname=$1::text AND r.rolname::text ~ '^grpw_[a-f0-9]{40}$' ORDER BY r.rolname LIMIT 16
+SELECT r.rolname::text FROM pg_catalog.pg_roles r
+WHERE (r.rolname::text ~ '^grpw_[a-f0-9]{40}$' AND EXISTS (
+ SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
+ WHERE m.member=r.oid AND owner.rolname=$1::text))
+ OR r.rolname::text ~ ('^grpt_' || substr($1::text,6) || '_[a-f0-9]{24}$')
+ORDER BY r.rolname LIMIT 16
 `
 
 func (q *Queries) ParticipantRoles(ctx context.Context, db DBTX, ownerRole string) ([]string, error) {
@@ -533,6 +606,107 @@ func (q *Queries) SupportedExtensions(ctx context.Context, db DBTX) (pgtype.Bool
 	var column_1 pgtype.Bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const taskGrantTablesReady = `-- name: TaskGrantTablesReady :one
+SELECT count(*)=cardinality($1::text[])
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner
+WHERE n.nspname='public' AND c.relkind='r' AND c.relpersistence='p'
+ AND owner.rolname=$2::text AND c.relname::text=ANY($1::text[])
+`
+
+type TaskGrantTablesReadyParams struct {
+	TableNames []string
+	OwnerRole  string
+}
+
+func (q *Queries) TaskGrantTablesReady(ctx context.Context, db DBTX, arg TaskGrantTablesReadyParams) (bool, error) {
+	row := db.QueryRow(ctx, taskGrantTablesReady, arg.TableNames, arg.OwnerRole)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const taskParticipantPrivileges = `-- name: TaskParticipantPrivileges :one
+WITH relations AS (
+  SELECT c.oid,c.relname,c.relkind,c.relpersistence,c.relowner,n.nspname
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+), public_schema AS (
+  SELECT oid,nspowner FROM pg_catalog.pg_namespace WHERE nspname='public'
+)
+SELECT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_roles r, public_schema s, pg_catalog.pg_roles owner
+  WHERE r.rolname=$1::text AND owner.rolname=$2::text
+    AND owner.rolname=current_user AND s.nspowner=owner.oid AND r.oid<>owner.oid
+    AND r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
+    AND pg_catalog.has_database_privilege(r.oid,current_database(),'CONNECT')
+    AND NOT pg_catalog.has_database_privilege(r.oid,current_database(),'CREATE,TEMPORARY')
+    AND pg_catalog.has_schema_privilege(r.oid,s.oid,'USAGE')
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_schema_privilege(r.oid,n.oid,'CREATE')
+    )
+    AND cardinality($3::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relkind='r' AND c.relpersistence='p' AND c.relowner=owner.oid
+        AND c.relname::text=ANY($3::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT')
+    )
+    AND cardinality($4::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relname::text=ANY($4::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'UPDATE')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'DELETE')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM relations c
+      WHERE CASE WHEN c.relkind='S' THEN
+        pg_catalog.has_sequence_privilege(r.oid,c.oid,'SELECT,USAGE,UPDATE')
+      WHEN c.relkind IN ('r','p','v','m','f') THEN
+        c.relowner=r.oid
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE,REFERENCES,TRIGGER')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'REFERENCES')
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION,DELETE WITH GRANT OPTION')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL($3::text[]))
+          AND pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT'))
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL($4::text[]))
+          AND (pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE')
+            OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE')))
+      ELSE false END
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE p.prosecdef AND n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
+    )
+)::boolean AS valid
+`
+
+type TaskParticipantPrivilegesParams struct {
+	RoleName    string
+	OwnerRole   string
+	ReadTables  []string
+	WriteTables []string
+}
+
+// Inspect effective ACLs after the fixture is frozen. Never assume the
+// provisioned grants survived a candidate's migrations.
+func (q *Queries) TaskParticipantPrivileges(ctx context.Context, db DBTX, arg TaskParticipantPrivilegesParams) (bool, error) {
+	row := db.QueryRow(ctx, taskParticipantPrivileges,
+		arg.RoleName,
+		arg.OwnerRole,
+		arg.ReadTables,
+		arg.WriteTables,
+	)
+	var valid bool
+	err := row.Scan(&valid)
+	return valid, err
 }
 
 const terminateSessions = `-- name: TerminateSessions :many

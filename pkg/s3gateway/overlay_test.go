@@ -117,6 +117,9 @@ func (s *overlayGatewayStore) AddObjectBucketOverlayTombstones(ctx context.Conte
 func (s *overlayGatewayStore) ObjectBucketOverlayTombstones(ctx context.Context, bucketID string, keys []string) (map[string]bool, error) {
 	return s.mem.ObjectBucketOverlayTombstones(ctx, bucketID, keys)
 }
+func (s *overlayGatewayStore) ObjectBucketOverlayTombstonesUnder(ctx context.Context, bucketID, prefix string) (bool, error) {
+	return s.mem.ObjectBucketOverlayTombstonesUnder(ctx, bucketID, prefix)
+}
 func (s *overlayGatewayStore) DeleteObjectBucketOverlay(ctx context.Context, bucketID string) error {
 	return s.mem.DeleteObjectBucketOverlay(ctx, bucketID)
 }
@@ -137,18 +140,55 @@ func readyGatewayBucket(t *testing.T, mem *state.MemStore, b state.ObjectBucket)
 	return b
 }
 
-// newOverlayGatewayHandler serves a branch bucket ("br-preview") whose
-// overlay reads through to the parent's "assets".
+// overlayFixtureOptions vary newOverlayFixture.
+type overlayFixtureOptions struct {
+	consistency string
+	asOf        time.Time
+	// provider wraps the fixture's provider, to add capabilities.
+	provider func(*overlayTestProvider) objectstorage.Provider
+	// roundTrip serves presigned reads in place of the provider's.
+	roundTrip func(*http.Request) (*http.Response, error)
+	// store wraps the fixture's store, to add capabilities.
+	store func(*overlayGatewayStore) Store
+}
+
+// overlayFixture is a branch bucket ("br-preview") whose overlay reads
+// through to the parent's "assets".
+type overlayFixture struct {
+	handler        *Handler
+	provider       *overlayTestProvider
+	served         objectstorage.Provider
+	store          *overlayGatewayStore
+	parent, branch state.ObjectBucket
+}
+
+// newOverlayGatewayHandler serves a live_parent branch bucket.
 func newOverlayGatewayHandler(t *testing.T, source, branch map[string]string) (*Handler, *overlayTestProvider) {
+	t.Helper()
+	f := newOverlayFixture(t, source, branch, overlayFixtureOptions{})
+	return f.handler, f.provider
+}
+
+func newOverlayFixture(t *testing.T, source, branch map[string]string, opts overlayFixtureOptions) overlayFixture {
 	t.Helper()
 	provider := &overlayTestProvider{gatewayTestProvider: &gatewayTestProvider{}, buckets: map[string]map[string]string{
 		"gregale-source": source, "gregale-branch": branch,
 	}}
+	var served objectstorage.Provider = provider
+	if opts.provider != nil {
+		served = opts.provider(provider)
+	}
+	if opts.roundTrip == nil {
+		opts.roundTrip = provider.roundTrip
+	}
+	if opts.consistency == "" {
+		opts.consistency, opts.asOf = state.ObjectBucketOverlayLiveParent, time.Now()
+	}
 	registry, err := objectstorage.NewRegistry(objectstorage.Config{
 		DefaultRegion: "us-east-1", Defaults: map[string]string{"us-east-1": "test"}, MaxUploadBytes: 16 << 20,
 		Backends: []objectstorage.BackendConfig{{ID: "test", Driver: "test", Region: "us-east-1", Namespace: "fixture"}},
 	}, func(string) string { return "" }, map[string]objectstorage.Factory{"test": func(objectstorage.BackendConfig, func(string) string) (objectstorage.Provider, error) {
-		return provider, nil
+		return served, nil
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -173,22 +213,26 @@ func newOverlayGatewayHandler(t *testing.T, source, branch map[string]string) (*
 	child.EnvironmentCloneSourceBucketID = parent.ID
 	parent, child = readyGatewayBucket(t, mem, parent), readyGatewayBucket(t, mem, child)
 	if _, err := mem.PutObjectBucketOverlay(t.Context(), state.ObjectBucketOverlay{BucketID: child.ID, AccountID: account.ID,
-		SourceBucketID: parent.ID, SourceAppID: app.ID, Consistency: state.ObjectBucketOverlayLiveParent, AsOf: time.Now()}); err != nil {
+		SourceBucketID: parent.ID, SourceAppID: app.ID, Consistency: opts.consistency, AsOf: opts.asOf}); err != nil {
 		t.Fatal(err)
 	}
 	store := &overlayGatewayStore{mem: mem, gatewayTestStore: &gatewayTestStore{ObjectDeletionStore: mem, bucket: child,
 		credential: state.ObjectS3Credential{ID: "credential", AccountID: account.ID, BucketID: child.ID, AccessKeyID: testAccess,
 			SecretSealed: []byte("sealed"), Permission: state.ObjectBucketPermissionReadWrite, Status: state.ObjectS3CredentialStatusActive}}}
+	var handlerStore Store = store
+	if opts.store != nil {
+		handlerStore = opts.store(store)
+	}
 	handler, err := New(Config{
-		Registry: registry, Store: store, Host: "s3.gregale.dev", Region: "us-east-1", SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
+		Registry: registry, Store: handlerStore, Host: "s3.gregale.dev", Region: "us-east-1", SpoolDir: t.TempDir(), MinSpoolFreeBytes: 1,
 		OpenSecret: func([]byte) (string, error) { return testSecret, nil },
-		HTTPClient: &http.Client{Transport: roundTripFunc(provider.roundTrip)},
+		HTTPClient: &http.Client{Transport: roundTripFunc(opts.roundTrip)},
 		Now:        func() time.Time { return time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC) },
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	return handler, provider
+	return overlayFixture{handler: handler, provider: provider, served: served, store: store, parent: parent, branch: child}
 }
 
 func serveOverlay(t *testing.T, handler *Handler, method, target string) *httptest.ResponseRecorder {
@@ -296,6 +340,21 @@ func TestGatewayOverlayListsTheMergedBuckets(t *testing.T) {
 	}
 	if keys, _ := listOverlayKeys(t, handler, url.Values{"prefix": {"dir/"}, "start-after": {"dir/c.txt"}}); !slices.Equal(keys, []string{"dir/d.txt", "dir/x.txt"}) {
 		t.Fatalf("prefix listing = %v", keys)
+	}
+	// A parent prefix whose keys the branch all deleted no longer lists.
+	for _, key := range []string{"dir/c.txt", "dir/d.txt"} {
+		if got := serveOverlay(t, handler, http.MethodDelete, "https://s3.gregale.dev/br-preview/"+key); got.Code != http.StatusNoContent {
+			t.Fatalf("delete %s = %d", key, got.Code)
+		}
+	}
+	if keys, _ := listOverlayKeys(t, handler, url.Values{"delimiter": {"/"}}); !slices.Contains(keys, "dir/") {
+		t.Fatalf("dir/ still holds the branch's own dir/x.txt: %v", keys)
+	}
+	if got := serveOverlay(t, handler, http.MethodDelete, "https://s3.gregale.dev/br-preview/dir/x.txt"); got.Code != http.StatusNoContent {
+		t.Fatalf("delete dir/x.txt = %d", got.Code)
+	}
+	if keys, _ := listOverlayKeys(t, handler, url.Values{"delimiter": {"/"}}); slices.Contains(keys, "dir/") {
+		t.Fatalf("a prefix the branch emptied still lists: %v", keys)
 	}
 	q := url.Values{"list-type": {"2"}, "continuation-token": {overlayListCursorPrefix + "!!"}}
 	if got := serveOverlay(t, handler, http.MethodGet, "https://s3.gregale.dev/br-preview?"+q.Encode()); got.Code != http.StatusBadRequest {

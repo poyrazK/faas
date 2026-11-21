@@ -8,14 +8,17 @@ from ...client import AuthenticatedClient, Client
 from ...models.apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from ...models.apply_response import ApplyResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     *,
     body: ApplyCachedProjectPlanRequest,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -74,6 +77,7 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ApplyCachedProjectPlanRequest,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[ApplyResponse | Problem]:
     """Deploy an account-owned reviewed project source without another upload.
 
@@ -86,6 +90,7 @@ def sync_detailed(
     for correction. Values are never included in responses or scan plans.
 
     Args:
+        deployment_attempt_id (str | Unset):
         body (ApplyCachedProjectPlanRequest): Applies an account-owned reviewed project archive
             with selected workloads and optional initial sealed configuration.
 
@@ -99,6 +104,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -112,6 +118,7 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
     body: ApplyCachedProjectPlanRequest,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> ApplyResponse | Problem | None:
     """Deploy an account-owned reviewed project source without another upload.
 
@@ -124,6 +131,7 @@ def sync(
     for correction. Values are never included in responses or scan plans.
 
     Args:
+        deployment_attempt_id (str | Unset):
         body (ApplyCachedProjectPlanRequest): Applies an account-owned reviewed project archive
             with selected workloads and optional initial sealed configuration.
 
@@ -138,6 +146,7 @@ def sync(
     return sync_detailed(
         client=client,
         body=body,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -145,6 +154,7 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
     body: ApplyCachedProjectPlanRequest,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[ApplyResponse | Problem]:
     """Deploy an account-owned reviewed project source without another upload.
 
@@ -157,6 +167,7 @@ async def asyncio_detailed(
     for correction. Values are never included in responses or scan plans.
 
     Args:
+        deployment_attempt_id (str | Unset):
         body (ApplyCachedProjectPlanRequest): Applies an account-owned reviewed project archive
             with selected workloads and optional initial sealed configuration.
 
@@ -170,6 +181,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         body=body,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -181,6 +193,7 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
     body: ApplyCachedProjectPlanRequest,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> ApplyResponse | Problem | None:
     """Deploy an account-owned reviewed project source without another upload.
 
@@ -193,6 +206,7 @@ async def asyncio(
     for correction. Values are never included in responses or scan plans.
 
     Args:
+        deployment_attempt_id (str | Unset):
         body (ApplyCachedProjectPlanRequest): Applies an account-owned reviewed project archive
             with selected workloads and optional initial sealed configuration.
 
@@ -208,5 +222,6 @@ async def asyncio(
         await asyncio_detailed(
             client=client,
             body=body,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

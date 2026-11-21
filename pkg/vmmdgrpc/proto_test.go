@@ -397,11 +397,16 @@ func TestSealedFromProto(t *testing.T) {
 
 	pbs := []*vmmdpb.SealedSecret{
 		{Key: "A", Ciphertext: []byte{0x01, 0x02}},
-		{Key: "B", Ciphertext: []byte{0x03, 0x04, 0x05}},
+		{Key: "B", Ciphertext: []byte{0x03, 0x04, 0x05}, SourceKey: "SRC", SecretScope: "preview"},
 	}
 	got := sealedFromProto(pbs)
 	if len(got) != 2 {
 		t.Fatalf("len=%d want 2", len(got))
+	}
+	// ADR-20261110210000 slice 3d-4: the app_secrets scope rides along so
+	// vmmd can open the row by reference.
+	if got[1].Scope != "preview" || got[1].SourceKey != "SRC" || got[0].Scope != "" {
+		t.Errorf("scope not forwarded: %+v", got)
 	}
 	if got[0].Key != "A" || string(got[0].Ciphertext) != string([]byte{0x01, 0x02}) {
 		t.Errorf("entry 0 wrong: %+v", got[0])

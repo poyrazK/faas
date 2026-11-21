@@ -48,7 +48,7 @@ func nativeSnapshotMemoryLimits(owner nativeLaunchRecord) (uint64, uint64, error
 	if owner.Lease.MemoryMaxMiB < 1 || owner.Lease.IsBuilder || owner.Lease.MemoryMaxMiB > api.RAMAdmissionCeilingMB {
 		return 0, 0, errors.New("native snapshot memory: original tenant RAM policy is required")
 	}
-	return uint64(api.BillableRAMMB(owner.Lease.MemoryMaxMiB)) << 20, uint64(api.SnapshotMemoryMaxMB(owner.Lease.MemoryMaxMiB)) << 20, nil
+	return uint64(api.AppVMMemoryMaxMB(owner.Lease.MemoryMaxMiB)) << 20, uint64(api.SnapshotMemoryMaxMB(owner.Lease.MemoryMaxMiB)) << 20, nil
 }
 
 func (f nativeSnapshotMemoryFrame) validate(owner nativeLaunchRecord) error {

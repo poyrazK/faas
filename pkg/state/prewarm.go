@@ -74,6 +74,19 @@ type PrewarmExpiryStore interface {
 	ExpirePrewarmIntent(ctx context.Context, id string, expiredAt time.Time) (bool, error)
 }
 
+// CronPrewarmRetentionStore deletes settled intents the cron pre-wake filed
+// (trigger cron, ADR-20261107122928 amendment 3) whose window ended before
+// the cutoff, at most limit rows per call. Intents the API filed keep their
+// lifecycle read-back.
+type CronPrewarmRetentionStore interface {
+	PruneCronPrewarmIntents(ctx context.Context, before time.Time, limit int) (int, error)
+}
+
+// prewarmSettled reports a terminal intent status.
+func prewarmSettled(status string) bool {
+	return status == PrewarmStatusSucceeded || status == PrewarmStatusFailed || status == PrewarmStatusCancelled
+}
+
 // ValidatePrewarmIntent contains the store-independent invariants shared by
 // the API and both persistence implementations.
 func ValidatePrewarmIntent(count int, wakeAt, expiresAt, now time.Time, trigger string) error {

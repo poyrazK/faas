@@ -57,6 +57,21 @@ const (
 	ProductionTriggerActions ProductionTrigger = "actions"
 )
 
+// PreviewMode chooses how a project's pull requests are previewed
+// (ADR-20261113121342): an app preview per workload, or an environment
+// branch of production per pull request.
+type PreviewMode string
+
+const (
+	PreviewModeApp    PreviewMode = "app"
+	PreviewModeBranch PreviewMode = "branch"
+)
+
+// Valid reports whether m is one of the wire-stable preview modes.
+func (m PreviewMode) Valid() bool {
+	return m == PreviewModeApp || m == PreviewModeBranch
+}
+
 // GitHubAppPolicyStore is the optional extension that stores the GitHub
 // policy of an app bound to GitHub without a project (ADR-20261101160300):
 // its production trigger and whether it gets pull-request previews. A
@@ -102,7 +117,9 @@ type GitHubDeployPolicy struct {
 	PreviewDraftPRs      bool
 	PreviewServicePolicy PreviewServicePolicy
 	ProductionTrigger    ProductionTrigger
-	UpdatedAt            time.Time
+	// PreviewMode is app (the default) or branch (ADR-20261113121342).
+	PreviewMode PreviewMode
+	UpdatedAt   time.Time
 }
 
 // DefaultGitHubDeployPolicy returns the safe policy for a project that has
@@ -116,6 +133,7 @@ func DefaultGitHubDeployPolicy(projectID, accountID string) GitHubDeployPolicy {
 		PreviewDraftPRs:      true,
 		PreviewServicePolicy: PreviewServicePolicyDeny,
 		ProductionTrigger:    ProductionTriggerWebhook,
+		PreviewMode:          PreviewModeApp,
 	}
 }
 
@@ -175,6 +193,9 @@ func (p GitHubDeployPolicy) Validate() error {
 	if p.ProductionTrigger != "" && !p.ProductionTrigger.Valid() {
 		return fmt.Errorf("state: production_trigger must be %q or %q", ProductionTriggerWebhook, ProductionTriggerActions)
 	}
+	if p.PreviewMode != "" && !p.PreviewMode.Valid() {
+		return fmt.Errorf("state: preview_mode must be %q or %q", PreviewModeApp, PreviewModeBranch)
+	}
 	return nil
 }
 
@@ -229,6 +250,9 @@ func (m *MemStore) UpsertGitHubDeployPolicy(_ context.Context, policy GitHubDepl
 	if policy.ProductionTrigger == "" {
 		policy.ProductionTrigger = ProductionTriggerWebhook
 	}
+	if policy.PreviewMode == "" {
+		policy.PreviewMode = PreviewModeApp
+	}
 	if err := policy.Validate(); err != nil {
 		return GitHubDeployPolicy{}, err
 	}
@@ -253,12 +277,12 @@ func (s *PgStore) GetGitHubDeployPolicy(ctx context.Context, projectID, accountI
 	var updatedAt time.Time
 	err := s.pool.QueryRow(ctx, `
 		select project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		       preview_ttl_hours, preview_bot_prs, preview_draft_prs, preview_service_policy, production_trigger, updated_at
+		       preview_ttl_hours, preview_bot_prs, preview_draft_prs, preview_service_policy, production_trigger, preview_mode, updated_at
 		  from github_deploy_policies
 		 where project_id = $1 and account_id = $2`, projectID, accountID).Scan(
 		&policy.ProjectID, &policy.AccountID, &policy.RootDir, &raw,
 		&policy.PreviewEnabled, &policy.PreviewTTLHours, &policy.PreviewBotPRs, &policy.PreviewDraftPRs,
-		&policy.PreviewServicePolicy, &policy.ProductionTrigger, &updatedAt)
+		&policy.PreviewServicePolicy, &policy.ProductionTrigger, &policy.PreviewMode, &updatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return DefaultGitHubDeployPolicy(projectID, accountID), nil
@@ -279,6 +303,9 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 	if policy.ProductionTrigger == "" {
 		policy.ProductionTrigger = ProductionTriggerWebhook
 	}
+	if policy.PreviewMode == "" {
+		policy.PreviewMode = PreviewModeApp
+	}
 	if err := policy.Validate(); err != nil {
 		return GitHubDeployPolicy{}, err
 	}
@@ -291,8 +318,8 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 	err = s.pool.QueryRow(ctx, `
 		insert into github_deploy_policies
 		    (project_id, account_id, root_dir, ignored_paths, preview_enabled, preview_ttl_hours,
-		     preview_service_policy, production_trigger, preview_bot_prs, preview_draft_prs, updated_at)
-		values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, now())
+		     preview_service_policy, production_trigger, preview_bot_prs, preview_draft_prs, preview_mode, updated_at)
+		values ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, now())
 		on conflict (project_id) do update set
 		    account_id = excluded.account_id,
 		    root_dir = excluded.root_dir,
@@ -303,15 +330,16 @@ func (s *PgStore) UpsertGitHubDeployPolicy(ctx context.Context, policy GitHubDep
 		    preview_draft_prs = excluded.preview_draft_prs,
 		    preview_service_policy = excluded.preview_service_policy,
 		    production_trigger = excluded.production_trigger,
+		    preview_mode = excluded.preview_mode,
 		    updated_at = now()
 		returning project_id, account_id, root_dir, ignored_paths, preview_enabled,
-		          preview_ttl_hours, preview_bot_prs, preview_draft_prs, preview_service_policy, production_trigger, updated_at`,
+		          preview_ttl_hours, preview_bot_prs, preview_draft_prs, preview_service_policy, production_trigger, preview_mode, updated_at`,
 		policy.ProjectID, policy.AccountID, policy.RootDir, raw,
 		policy.PreviewEnabled, policy.PreviewTTLHours, policy.PreviewServicePolicy, policy.ProductionTrigger,
-		policy.PreviewBotPRs, policy.PreviewDraftPRs).Scan(
+		policy.PreviewBotPRs, policy.PreviewDraftPRs, policy.PreviewMode).Scan(
 		&stored.ProjectID, &stored.AccountID, &stored.RootDir, &storedRaw,
 		&stored.PreviewEnabled, &stored.PreviewTTLHours, &stored.PreviewBotPRs, &stored.PreviewDraftPRs,
-		&stored.PreviewServicePolicy, &stored.ProductionTrigger, &stored.UpdatedAt)
+		&stored.PreviewServicePolicy, &stored.ProductionTrigger, &stored.PreviewMode, &stored.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return GitHubDeployPolicy{}, ErrNotFound

@@ -124,6 +124,7 @@ var previewFields = map[string]map[string]bool{
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
@@ -145,8 +146,36 @@ var routeExclude = map[string]bool{
 	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
 
 	// ADR-20261112134100: private staff inbox metadata; public customer counterparts remain documented.
-	"GET /v1/admin/support/notifications":                                         true,
-	"POST /v1/admin/support/tickets/{ticket}/read":                                true,
+	"GET /v1/admin/support/notifications":          true,
+	"POST /v1/admin/support/tickets/{ticket}/read": true,
+	// ADR-20261115175927: the private staff inbox API, now registered literally; the operator console reads it.
+	"GET /v1/admin/support/tickets":                                               true,
+	"GET /v1/admin/support/tickets/{ticket}":                                      true,
+	"GET /v1/admin/support/tickets/{ticket}/messages":                             true,
+	"POST /v1/admin/support/tickets/{ticket}/messages":                            true,
+	"POST /v1/admin/support/tickets/{ticket}/notes":                               true,
+	"GET /v1/admin/support/tickets/{ticket}/events":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/close":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/reopen":                              true,
+	"POST /v1/admin/support/tickets/{ticket}/pause":                               true,
+	"POST /v1/admin/support/tickets/{ticket}/resume":                              true,
+	"POST /v1/admin/support/tickets/{ticket}/triage":                              true,
+	"POST /v1/admin/support/availability":                                         true,
+	"GET /v1/admin/support/policies":                                              true,
+	"POST /v1/admin/support/policies":                                             true,
+	"GET /v1/admin/support/teams":                                                 true,
+	"POST /v1/admin/support/teams":                                                true,
+	"GET /v1/admin/support/staff":                                                 true,
+	"POST /v1/admin/support/staff":                                                true,
+	"GET /v1/admin/support/events":                                                true,
+	"GET /v1/admin/support/report":                                                true,
+	"GET /v1/admin/support/tickets/{ticket}/engineering":                          true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering":                         true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering/preview":                 true,
+	"POST /v1/admin/support/tickets/{ticket}/engineering/publish":                 true,
+	"POST /v1/admin/support/tickets/{ticket}/redactions/preview":                  true,
+	"POST /v1/admin/support/tickets/{ticket}/redactions/apply":                    true,
+	"GET /v1/admin/support/tickets/{ticket}/customer":                             true,
 	"DELETE /v1/apps/{slug}/operation-approval-forms/{id}":                        true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
 	"DELETE /v1/apps/{slug}/operation-concurrency/{id}":                           true, // ADR-20261018210500 per-customer Operation concurrency; gated by FAAS_OPERATION_CONCURRENCY_ACCOUNTS until prod-tested
 	"GET /v1/apps/{slug}/operation-approval-forms":                                true, // ADR-20261019001500 approval input forms; gated by FAAS_OPERATION_APPROVAL_INPUTS_ACCOUNTS until prod-tested
@@ -243,6 +272,10 @@ var routeExclude = map[string]bool{
 	// ADR-20261102123523 PR preview databases: behind the preview-databases
 	// capability until launch. Mirror in cmd/sdk-coverage/main.go::routeExclude.
 	"PUT /v1/postgres/databases/{id}/previews": true,
+	// ADR-20261116213000 custom Postgres roles (postgres_custom_roles flag).
+	"GET /v1/postgres/databases/{id}/roles":           true,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":    true,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}": true,
 
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
@@ -443,40 +476,59 @@ var routeExclude = map[string]bool{
 	// unregistered routes to every account it is not released to, so it stays
 	// out of the public OpenAPI spec and generated SDKs until launch. Mirror
 	// across this list AND cmd/sdk-coverage/main.go::routeExclude.
-	"POST /v1/agents":                                 true,
-	"POST /v1/agent-callbacks":                        true,
-	"POST /v1/agent-callbacks/{token}":                true,
-	"POST /v1/agent-callbacks/revocations":            true,
-	"GET /v1/agent-tools/.well-known/rap-toolset":     true,
-	"POST /v1/agent-tools/invoke":                     true,
-	"POST /v1/agent-tools/close_thread":               true,
-	"POST /v1/sandboxes":                              true,
-	"GET /v1/sandboxes":                               true,
-	"GET /v1/sandboxes/{id}":                          true,
-	"PATCH /v1/sandboxes/{id}":                        true,
-	"DELETE /v1/sandboxes/{id}":                       true,
-	"GET /v1/sandbox-snapshots":                       true,
-	"GET /v1/sandbox-snapshots/{id}":                  true,
-	"DELETE /v1/sandbox-snapshots/{id}":               true,
-	"GET /v1/sandbox-templates":                       true,
-	"GET /v1/sandbox-templates/{name}":                true,
-	"PUT /v1/sandbox-templates/{name}":                true,
-	"DELETE /v1/sandbox-templates/{name}":             true,
-	"POST /v1/sandboxes/{id}/ports":                   true,
-	"GET /v1/sandboxes/{id}/ports":                    true,
-	"GET /v1/sandboxes/{id}/ports/{port}":             true,
-	"DELETE /v1/sandboxes/{id}/ports/{port}":          true,
-	"GET /v1/agents":                                  true,
-	"GET /v1/agents/{agent}":                          true,
-	"DELETE /v1/agents/{agent}":                       true,
-	"POST /v1/agents/{agent}/versions":                true,
-	"GET /v1/agents/{agent}/versions/{version}":       true,
-	"POST /v1/agents/{agent}/runs":                    true,
-	"GET /v1/agent-runs":                              true,
-	"GET /v1/agent-runs/{id}":                         true,
-	"DELETE /v1/agent-runs/{id}":                      true,
-	"GET /v1/agent-runs/{id}/outputs":                 true,
-	"GET /v1/agent-runs/{id}/outputs/files/{name...}": true,
+	"POST /v1/agents": true,
+	// ADR-20261116163508 customer-granted support access: dark behind the
+	// support_grants platform flag, so it stays out of the public OpenAPI spec
+	// and generated SDKs until launch. Mirror across this list AND
+	// cmd/sdk-coverage/main.go::routeExclude (scripts/ci/speccompliance).
+	"GET /v1/orgs/{slug}/support-access":                        true,
+	"POST /v1/orgs/{slug}/support-access/grants":                true,
+	"POST /v1/orgs/{slug}/support-access/grants/{id}/revoke":    true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/approve": true,
+	"POST /v1/orgs/{slug}/support-access/requests/{id}/decline": true,
+	"POST /v1/admin/support-access/requests":                    true, // operator-only
+	"GET /v1/admin/support-access/grants":                       true, // operator-only
+	"POST /v1/agent-callbacks":                                  true,
+	"POST /v1/agent-callbacks/{token}":                          true,
+	"POST /v1/agent-callbacks/revocations":                      true,
+	"GET /v1/agent-tools/.well-known/rap-toolset":               true,
+	"POST /v1/agent-tools/invoke":                               true,
+	"POST /v1/agent-tools/close_thread":                         true,
+	"POST /v1/sandboxes":                                        true,
+	"GET /v1/sandboxes":                                         true,
+	"GET /v1/sandboxes/{id}":                                    true,
+	"PATCH /v1/sandboxes/{id}":                                  true,
+	"DELETE /v1/sandboxes/{id}":                                 true,
+	"GET /v1/sandbox-snapshots":                                 true,
+	"GET /v1/sandbox-snapshots/{id}":                            true,
+	"DELETE /v1/sandbox-snapshots/{id}":                         true,
+	"GET /v1/sandbox-templates":                                 true,
+	"GET /v1/sandbox-templates/{name}":                          true,
+	"PUT /v1/sandbox-templates/{name}":                          true,
+	"DELETE /v1/sandbox-templates/{name}":                       true,
+	"POST /v1/sandboxes/{id}/ports":                             true,
+	"GET /v1/sandboxes/{id}/ports":                              true,
+	"GET /v1/sandboxes/{id}/ports/{port}":                       true,
+	"DELETE /v1/sandboxes/{id}/ports/{port}":                    true,
+	"GET /v1/sandboxes/{id}/task":                               true,
+	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
+	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
+	"GET /v1/sandboxes/{id}/egress":                             true,
+	"GET /v1/sandbox-egress-policy":                             true,
+	"PUT /v1/sandbox-egress-policy":                             true,
+	"GET /v1/agents":                                            true,
+	"GET /v1/agents/{agent}":                                    true,
+	"DELETE /v1/agents/{agent}":                                 true,
+	"POST /v1/agents/{agent}/versions":                          true,
+	"GET /v1/agents/{agent}/versions/{version}":                 true,
+	"POST /v1/agents/{agent}/runs":                              true,
+	"GET /v1/agent-runs":                                        true,
+	"GET /v1/agent-runs/{id}":                                   true,
+	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/approvals":                         true,
+	"POST /v1/agent-runs/{id}/approvals/{approval_id}":          true,
+	"GET /v1/agent-runs/{id}/outputs":                           true,
+	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -490,34 +542,40 @@ var routeExclude = map[string]bool{
 	// must move together; the SDK does not model operator-only
 	// surfaces, and the public OpenAPI spec does not document
 	// them.
-	"GET /v1/admin/obs/overview":                true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/capacity":                true, // operator-only capacity projection
-	"GET /v1/admin/obs/tenants":                 true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/360":        true, // operator-only tenant 360 projection
-	"GET /v1/admin/obs/lookup":                  true, // operator-only identifier lookup (ADR-20261112170000)
-	"GET /v1/admin/obs/attention":               true, // operator-only customer attention signals (ADR-20261113123000)
-	"GET /v1/admin/obs/tenants/{id}":            true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/activity":   true, // operator-only tenant activity drill-down
-	"GET /v1/admin/obs/apps/{id}":               true, // operator-only app workload drill-down
-	"GET /v1/admin/obs/nodes":                   true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/{name}/detail":     true, // operator-only node workload drill-down
-	"GET /v1/admin/obs/nodes/{name}/heartbeats": true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/events":            true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
-	"GET /v1/admin/obs/nodes/wake-latency":      true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
-	"GET /v1/admin/obs/anomalies":               true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/audit-log/search":        true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/events":                  true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/traces/{trace_id}":       true, // operator-only exact trace correlation
-	"GET /v1/admin/obs/rate-limits":             true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/builder-heartbeats":      true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
-	"GET /v1/admin/obs/health":                  true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
-	"GET /v1/admin/obs/incidents":               true, // operator-only bounded incident correlation inbox
+	"GET /v1/admin/obs/overview":                     true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/capacity":                     true, // operator-only capacity projection
+	"GET /v1/admin/obs/tenants":                      true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/360":             true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/lookup":                       true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":                    true, // operator-only customer attention signals (ADR-20261113123000)
+	"GET /v1/admin/obs/attention/summary":            true, // operator console signal actions (ADR-20261115175927)
+	"GET /v1/admin/obs/attention/{id}/contact-draft": true,
+	"POST /v1/admin/obs/attention/{id}/dismiss":      true,
+	"POST /v1/admin/obs/attention/{id}/contact":      true,
+	"GET /v1/admin/obs/tenants/{id}/health":          true,
+	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
+	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
+	"GET /v1/admin/obs/nodes":                        true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/{name}/detail":          true, // operator-only node workload drill-down
+	"GET /v1/admin/obs/nodes/{name}/heartbeats":      true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/events":                 true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
+	"GET /v1/admin/obs/nodes/wake-latency":           true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
+	"GET /v1/admin/obs/anomalies":                    true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/audit-log/search":             true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/events":                       true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/traces/{trace_id}":            true, // operator-only exact trace correlation
+	"GET /v1/admin/obs/rate-limits":                  true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/builder-heartbeats":           true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
+	"GET /v1/admin/obs/health":                       true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":                    true, // operator-only bounded incident correlation inbox
 
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
 	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
+	"GET /v1/admin/obs/serving-health":                               true, // private serving-probe coverage evidence
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
 	"GET /v1/admin/obs/rule-coverage":                                true, // private explicitly selected rule coverage
@@ -553,6 +611,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/ops/accounts/{id}/revoke-sessions":              true, // operator-only tenant security control
 	"POST /v1/admin/ops/accounts/{id}/reset-mfa":                    true, // operator-only account recovery (ADR-20261108160000)
 	"POST /v1/admin/ops/accounts/{id}/revert-email":                 true, // operator-only account recovery (ADR-20261110100000)
+	"POST /v1/admin/ops/accounts/{id}/make-org-owner":               true, // operator-only org recovery (ADR-20261114170352)
 	"POST /v1/admin/ops/accounts/{id}/object-storage-ceiling":       true, // operator-only support grant (ADR-20261101214152)
 	"POST /v1/admin/ops/accounts/{id}/complimentary":                true, // operator-only complimentary plan (ADR-20261111140000)
 	"POST /v1/admin/ops/nodes/{name}/drain":                         true, // operator-only node lifecycle control
@@ -579,6 +638,11 @@ var routeExclude = map[string]bool{
 	"GET /dashboard/service-map":                                    true, // ADR-1131 HTML view of GET /v1/service-map
 	"GET /dashboard/dev-bridges/{id}":                               true, // ADR-379 HTML activity projection
 	"POST /dashboard/dev-bridges/{id}/revoke":                       true, // ADR-379 cookie + CSRF form
+	"GET /dashboard/support-access":                                 true, // ADR-20261116163508 HTML page
+	"POST /dashboard/support-access/{org}/grants":                   true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/grants/{id}/revoke":       true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/approve":    true, // ADR-20261116163508 cookie + CSRF form
+	"POST /dashboard/support-access/{org}/requests/{id}/decline":    true, // ADR-20261116163508 cookie + CSRF form
 	"POST /dashboard/apps/new":                                      true, // dashboard-only create + GitHub bind form adapter
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
@@ -784,8 +848,15 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// ADR-20261117215858: a query result column, declared inline in the
+	// ManagedPostgresQueryResponse schema.
+	"ManagedPostgresQueryColumn":     true,
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
+	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
+	"OutboundAIPromptCallRequest": true,
+	// ADR-20261116120000: the reconciler's internal baseline item list, never a wire DTO.
+	"ProtectionBaselineItem": true,
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
@@ -856,18 +927,22 @@ var dtoExclude = map[string]bool{
 	"ManagedPostgresPlanLimits":         true, // internal plan policy, not a wire DTO
 	"ManagedPostgresPreviewOwner":       true, // ADR-20261102123523 preview-databases capability; documented at launch
 	"SetManagedPostgresPreviewsRequest": true, // ADR-20261102123523 preview-databases capability; documented at launch
-	"RealtimeLimits":                    true, // internal plan policy, not a wire DTO
-	"ExecutionSnapshotShape":            true, // internal snapshot compatibility key, not a wire DTO
-	"ResolvedExecutionRequest":          true, // sealed scheduler intent, not a public DTO
-	"MigrationDependencyReport":         true, // Private guest task protocol, not an HTTP DTO.
-	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
-	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
-	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
-	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
-	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
-	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
-	"CanaryRouteHealthRecoveryResponse": true, // loopback-only worker result
+	// ADR-20261116213000 postgres_custom_roles flag; documented at launch.
+	"ManagedPostgresCustomRole":           true,
+	"ManagedPostgresCustomRoleList":       true,
+	"PutManagedPostgresCustomRoleRequest": true,
+	"RealtimeLimits":                      true, // internal plan policy, not a wire DTO
+	"ExecutionSnapshotShape":              true, // internal snapshot compatibility key, not a wire DTO
+	"ResolvedExecutionRequest":            true, // sealed scheduler intent, not a public DTO
+	"MigrationDependencyReport":           true, // Private guest task protocol, not an HTTP DTO.
+	"ResolvedCreateAppTaskRequest":        true, // validated state admission input, not a public DTO
+	"RecoverDeploymentRolloutRequest":     true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":            true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":           true, // ADR-1447 loopback-only meterd ↔ apid hold route
+	"AlertRuleRow":                        true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
+	"RouteCapturedOperation":              true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
+	"CanaryRouteHealthRecoveryRequest":    true, // loopback-only fresh check and recovery contract
+	"CanaryRouteHealthRecoveryResponse":   true, // loopback-only worker result
 	// Canary and smoke reports are emitted through app-task stdout for the CLI
 	// to decode; these structs are not standalone HTTP request/response DTOs.
 	"ServiceBindingProbeCheck":  true,
@@ -970,6 +1045,7 @@ var dtoExclude = map[string]bool{
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
 	"ObsBetaFunnel":                   true,
+	"ObsCodingAgent":                  true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,
@@ -1124,8 +1200,10 @@ var schemaSpecOnly = map[string]bool{
 	// DTOs in handlers_feature_flags.go and handlers_feature_flag_evidence.go.
 	// TestFeatureFlagsSpecContracts checks these actual encoded shapes,
 	// including their flattened embedded fields, against the OpenAPI schemas.
-	"FlagRule": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
-	"FlagsBundle": true, "FeatureFlagVersion": true,
+	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
+	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
+	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
@@ -1698,10 +1776,24 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "deployment_response_check.go"),
 		filepath.Join(root, "pkg", "api", devBucketsFile),
 		filepath.Join(root, "pkg", "api", "mcp_policy.go"),
+		filepath.Join(root, "pkg", "api", "mcp_access_fingerprint.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission.go"),
 		filepath.Join(root, "pkg", "api", "mcp_admission_history.go"),
 		filepath.Join(root, "pkg", "api", "mcp_convergence.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_monitor.go"),
+		filepath.Join(root, "pkg", "api", "tool_publications.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_source_intents.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_binding_verification.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_rehearsal.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_quarantine.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_retirement.go"),
+		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
+		filepath.Join(root, "pkg", "api", "tool_publication_readiness.go"),
+		filepath.Join(root, "pkg", "api", "tool_invocations.go"),
+		filepath.Join(root, "pkg", "api", "tool_grants.go"),
+		filepath.Join(root, "pkg", "api", "tool_connections.go"),
+		filepath.Join(root, "pkg", "api", "tool_authorization.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_observer.go"),
 		filepath.Join(root, "pkg", "api", "mcp_catalog_renewal.go"),
 		filepath.Join(root, "pkg", "api", "mcp_connection_health.go"),
@@ -1864,6 +1956,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
 		filepath.Join(root, "pkg", "api", "slos.go"),                  // ADR-747 customer SLO DTOs
 		filepath.Join(root, "pkg", "api", "synthetic_checks.go"),      // ADR-748 synthetic check DTOs
+		filepath.Join(root, "pkg", "api", "app_protection.go"),        // ADR-20261116120000 protection DTOs
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
@@ -1887,6 +1980,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
 		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", "conditions.go"),                      // resource conditions (ADR-20261030151810)
+		filepath.Join(root, "pkg", "api", "postgres_changes.go"),                // Postgres change workers (ADR-20261112140000)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1942,6 +2036,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_recurrence.go"),
 		filepath.Join(root, "pkg", "api", "obs_collection_history.go"),
 		filepath.Join(root, "pkg", "api", "obs_notifications.go"),
+		filepath.Join(root, "pkg", "api", "obs_serving_health.go"),
+		filepath.Join(root, "pkg", "api", "obs_serving_probe_notifications.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_health.go"),
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
@@ -1956,6 +2052,12 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", agentInspectionFile),
 		filepath.Join(root, "pkg", "api", "app_resource_inventory.go"),
 		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_serving.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_evolution.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_operations.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_freshness.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_setups.go"),
+		filepath.Join(root, "pkg", "api", "data_pipeline_indexes.go"),
 		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
@@ -2015,6 +2117,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),        // ADR 20261021171712 quality signals
 		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"),    // ADR 20261022153155 AI calls by deployment
 		filepath.Join(root, "pkg", "api", "outbound_ai_semantic_cache.go"), // ADR 20261112194947 semantic cache
+		filepath.Join(root, "pkg", "api", "outbound_ai_prompts.go"),        // ADR 20261114180740 managed prompts
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
@@ -2114,18 +2217,21 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
-		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
-		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
-		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
-		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
-		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
-		filepath.Join(root, "pkg", "api", "agent_undo.go"),        // ADR-20261112080601: agent undo
-		filepath.Join(root, "pkg", "api", "account_health.go"),    // ADR-20261112210000: customer account health
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"),          // ADR-1447 amendment: rollout explanation + debug status
+		filepath.Join(root, "pkg", "api", "agent_connections.go"),      // ADR-20261030133644: connected agents
+		filepath.Join(root, "pkg", "api", "agent_approvals.go"),        // ADR-20261104140058: approvals for risky agent actions
+		filepath.Join(root, "pkg", "api", "agent_activity.go"),         // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),           // ADR-20261111114059: agent budgets
+		filepath.Join(root, "pkg", "api", "agent_undo.go"),             // ADR-20261112080601: agent undo
+		filepath.Join(root, "pkg", "api", "account_health.go"),         // ADR-20261112210000: customer account health
+		filepath.Join(root, "pkg", "api", "feature_flag_kill.go"),      // ADR-20261117215858: flag kill switch
+		filepath.Join(root, "pkg", "api", "managed_postgres_query.go"), // ADR-20261117215858: read-only queries
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {
 		t.Fatalf("scan DTOs: %v", err)
 	}
+	addRuntimeBuildSchemas(t, root, spec, dtos)
 	// This public SDK schema names an inline Go map. Verify its actual wire
 	// shape before including it in both directions of schema parity.
 	checkReleaseSecretVersionMap(t, root, spec)

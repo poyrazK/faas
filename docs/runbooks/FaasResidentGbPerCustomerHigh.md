@@ -1,14 +1,21 @@
 # FaasResidentGbPerCustomerHigh
 
 Source: `deploy/ansible/roles/prometheus/files/faas.rules.yml`.
-Metric: `meterd_resident_gb_per_customer{plan}` (meterd `/metrics`).
-Spec: §12 (resident GB per paying customer — plan target 0.305, warn > 0.45).
+Metrics: `meterd_resident_gb_per_customer{plan}` and
+`meterd_resident_gb_per_customer_planned{plan}` (meterd `/metrics`).
+Spec: §12 (resident GB per paying customer), ADR-20261117070932.
 
 ## Symptom
 
-The §12 fleet dashboard's "Resident GB per paying customer" panel
-shows a single plan crossing the 0.45 warn threshold for 1 hour.
-Plan label is in the alertname annotation: `{{ $labels.plan }}`.
+One plan's average resident GB per paying customer has been above 1.5×
+its planned value for 1 hour, with at least five paying customers. The
+plan is the alert's `plan` label.
+
+The planned value is the financial model's resident concurrency for the
+plan times its RAM plus 8 MB (`api.PlannedResidentGBPerCustomer`): Free
+0.005, Hobby 0.076, Pro 0.605, Scale 6.02 GB. The §12 0.305 GB target is
+the blend across the plan mix, so a Pro or Scale cohort normally reads
+above it; that is not this alert.
 
 The metric is month-to-date GB-RAM-hours divided by elapsed hours in
 the UTC month and by the paying-customer count of the plan. This yields
@@ -25,7 +32,8 @@ reaper parks them, and their GB-hours are real platform cost.
 curl -fsS http://127.0.0.1:9106/metrics | grep meterd_resident_gb_per_customer
 ```
 
-Each plan label should appear with a current value. If a single plan
+Each plan label should appear with a current value, and the
+`_planned` series with the plan's model. If a single plan
 is the offender, look at the per-app consumers in that plan:
 
 ```bash
@@ -67,10 +75,10 @@ suppressed alongside a known Hobby migration.
 
 ## Recover
 
-The metric is informational — the page-tier consequence is
-`FaasHighResidentRamPct` (fleet RAM ceiling, 92% page). If both fire,
-follow the high-resident-RAM runbook. If only this one fires, identify
-the offending app(s) via the per-account breakdown above and either:
+The metric is an economic signal, not a capacity one: the plan's
+customers are running more than its price assumes. Node memory pressure
+pages separately (`FaasHighResidentRamPct`). Identify the offending
+app(s) via the per-account breakdown above and either:
 
 1. Adjust the customer's idle timeout / max concurrency via
    `apid PATCH /v1/apps/{slug}` (operator action — Pro/Scale only).

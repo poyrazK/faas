@@ -361,6 +361,11 @@ jobs:
       - name: CD Ansible toolchain cache
         run: bash scripts/ci/ensure-ansible-toolchain_test.sh
 
+      # The OVH key installer handles production secrets; keep the secret
+      # off command lines and output, and the merge from dropping lines.
+      - name: OVH key installer
+        run: bash deploy/ovh/install-s3-key_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just
@@ -517,6 +522,9 @@ jobs:
 
       - name: cgroup metrics gate
         run: make cgroup-metrics-test
+
+      - name: Notification receiver metrics and receipt validation
+        run: make notification-receiver-metrics-test
 
       - name: observability go/no-go check tests
         run: make obs-gate-test
@@ -1090,11 +1098,11 @@ jobs:
             test_timeout: 30m
             job_timeout_minutes: 45
           - id: b
-            label: gregale/gregalectl/daemons
+            label: gregalectl/daemons
             # Packages with pgtest-backed tests must run in a Postgres shard:
             # in the pure shards pgtest skips them, and cmd/githubd shipped a
             # query that failed on every call while its test was never run.
-            package_pattern: '/(cmd/gregale|cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/e2etest/postgresprobe|pkg/e2etest/postgresfixture|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/releasehistory)(/|$)'
+            package_pattern: '/(cmd/gregalectl|cmd/meterd|cmd/schedd|cmd/schema-dump|cmd/githubd|cmd/migrate|cmd/managed-postgres-qualify|pkg/lease|pkg/managedpostgres|pkg/e2etest/postgresprobe|pkg/e2etest/postgresfixture|pkg/mirror|pkg/outbound|pkg/releaseinstall|pkg/releasehistory)(/|$)'
             coverage_file: cover-shard2b.out
             gitops_acceptance: false
             state_coverage: false
@@ -1102,14 +1110,16 @@ jobs:
             # 2026-10-27, 1243 s on 2026-10-29 and passed the 30m package
             # timeout on 2026-10-30 (run 40995340344); it is 501 s without
             # race or coverage. The job keeps 30 minutes past the package
-            # budget for race compilation and coverage upload.
-            test_timeout: 45m
+            # budget for race compilation and coverage upload. It took 2611 s
+            # and 2702 s on 2026-11-14 and then hit the 45m bound (run
+            # 43569561576), so the bounds are 60m and 90 minutes.
+            test_timeout: 60m
             # Shard b alone runs the PostgreSQL native verdict, starter TLS,
             # fixture and GitOps compilation gates before its tests: about
             # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
             # minute test step. 45 cancelled it mid-suite. The gates moved to
             # shard c when they reached 36 minutes (run 40420329172).
-            job_timeout_minutes: 75
+            job_timeout_minutes: 90
           - id: c
             label: PostgreSQL native and starter gates
             # Shard b's pre-test gates took 26 minutes on 2026-10-26 and 36 on
@@ -1122,6 +1132,28 @@ jobs:
             gates: true
             test_timeout: 30m
             job_timeout_minutes: 60
+          # cmd/gregale outgrew shard b: under -race and coverage it passed
+          # the 60m package bound on 2026-11-17 and 2026-11-18, and alone on
+          # two CPUs it still passed 60m (run 44367426786). Its ~5,600 tests
+          # split by name into two halves of about equal count.
+          - id: d1
+            label: gregale CLI 1/2
+            package_pattern: '/cmd/gregale(/|$)'
+            test_run: '^Test[A-F]'
+            coverage_file: cover-shard2d1.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 60m
+            job_timeout_minutes: 90
+          - id: d2
+            label: gregale CLI 2/2
+            package_pattern: '/cmd/gregale(/|$)'
+            test_run: '^(Test[^A-F]|Example|Fuzz)'
+            coverage_file: cover-shard2d2.out
+            gitops_acceptance: false
+            state_coverage: false
+            test_timeout: 60m
+            job_timeout_minutes: 90
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
@@ -1206,7 +1238,7 @@ jobs:
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-pg-2-${{ matrix.id }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
       - name: Enable TLS for durable SQL credential acceptance
-        if: matrix.id == 'b' || matrix.gates
+        if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates
         env:
           POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: bash scripts/ci/enable_postgres_tls.sh "$POSTGRES_SERVICE_CONTAINER"
@@ -1223,16 +1255,16 @@ jobs:
           sh -n scripts/test-managed-service-native.sh
           go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter ./pkg/e2etest/servicestarter ./pkg/e2etest/testdata/helloserver
           go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest|ServiceGuest)'
-      - name: scoped PostgreSQL rehearsal fault and recovery (no KVM)
+      - name: scoped PostgreSQL rehearsal fault, permissions and recovery (no KVM)
         if: matrix.gates
         env:
           FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
         run: >-
           go test -race -p 1 -count=1 -v -timeout=5m
           ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
-          -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
+          -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass|TestPostgresRealTask'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
-        if: matrix.id == 'b' || matrix.gates
+        if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates
         with:
           node-version: '22'
       - name: queue worker safe completion canary
@@ -1262,7 +1294,7 @@ jobs:
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
-        if: matrix.id == 'b' || matrix.gates
+        if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates
         with:
           python-version: '3.12'
       - name: generated Python PostgreSQL starter TLS recovery
@@ -1298,6 +1330,10 @@ jobs:
           printf '%s\n' "$PKGS"
           COVERARGS=()
           TESTLOGARGS=()
+          RUNARGS=()
+          if [ -n '${{ matrix.test_run }}' ]; then
+            RUNARGS=(-run '${{ matrix.test_run }}')
+          fi
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             # Keep named adapter outcomes alongside the complete coverage run.
             TESTLOGARGS=(-v)
@@ -1309,7 +1345,7 @@ jobs:
             COVERPKGS=$(printf '%s\n' "$PKGS" "$STATEPKG" | grep -v '/pkg/state/sqlc$' | sort -u | paste -sd, -)
             COVERARGS=(-coverpkg="$COVERPKGS")
           fi
-          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
+          go test -race -count=1 -p 4 -timeout='${{ matrix.test_timeout }}' "${RUNARGS[@]}" "${TESTLOGARGS[@]}" "${COVERARGS[@]}" -coverprofile="coverage/${{ matrix.coverage_file }}" -covermode=atomic $PKGS
           if [ '${{ matrix.state_coverage }}' = 'true' ]; then
             # Credit the union of blocks covered by multiple test binaries.
             python3 scripts/ci/normalize_go_cover_profile.py "coverage/${{ matrix.coverage_file }}"
@@ -1355,7 +1391,7 @@ jobs:
 
       - name: coverage floor (ship-blocking packages)
         # Shard a contributes external state coverage to the aggregate gate.
-        if: matrix.id == 'b'
+        if: matrix.id == 'b' || startsWith(matrix.id, 'd')
         # Validates the ship-blocking package floors via the shared
         # coverage-floor gate (see Makefile). Packages not exercised by
         # this matrix entry's PKGS list print "(no statements — skip)"
@@ -1888,6 +1924,18 @@ jobs:
         run: make environment-preflight-action-check
       - name: synthetic-canary alert payload tests
         run: make canary-alert-test
+
+      - name: synthetic-canary missing-run heartbeat tests
+        run: make canary-heartbeat-test
+
+      - name: synthetic-canary SSH and notification fallback tests
+        run: make canary-transport-test
+
+      - name: post-deployment monitoring transport and workflow tests
+        run: make post-deployment-monitoring-test
+
+      - name: production monitoring qualification tests
+        run: make monitoring-qualification-test
       # ---- former job `workflow-lint`: workflow YAML lint + native builder toolchain contract ----
       # Per-job-family Go cache. setup-go keys one cache on go.sum for the
       # whole workflow and saves only on a miss, so the first (smallest) job
@@ -2247,6 +2295,17 @@ jobs:
       - name: Alertmanager config check
         run: make alertmanager-config-check
 
+      - name: Notification delivery drill
+        run: NOTIFICATION_DRILL_REPORT="$RUNNER_TEMP/notification-drill.json" make notification-delivery-check
+
+      - name: Notification drill evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: notification-drill
+          path: ${{ runner.temp }}/notification-drill.json
+          if-no-files-found: error
+          retention-days: 7
+
   # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
   # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture
   # evaluates the full rule set, so they slow as rules grow: in the checks
@@ -2318,6 +2377,8 @@ jobs:
           node-version: '22.10.0'
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
+      - name: SDK source selection agrees with CLI
+        run: go test sdk/request-contracts/cli-source-preparation_test.go sdk/request-contracts/project-inspection-cli_test.go
       - name: build fakeapid fixture
         working-directory: sdk/fakeapid
         run: go build -o bin/fakeapid .
@@ -2595,6 +2656,7 @@ jobs:
         run: |
           python -m pip install 'pip==26.2.2'
           python -m pip install 'ruamel.yaml==0.19.1' 'openapi-python-client==0.29.0' 'pytest==9.2.0' 'pytest-asyncio==1.4.1' 'httpx==0.28.1'
+          python -m pip install 'build==1.6.1' 'mypy==2.4.1' 'poetry-core>=2,<3'
           python -m pip install -e '.[auth]'
           python -m pip install -r ../../cmd/gregale/templates/rest-api-postgres-python/requirements.txt
           python -m pip install -r ../../cmd/gregale/templates/object-storage-python/requirements.txt

@@ -19,7 +19,7 @@ func (m *MemStore) OrgAccessSnapshot(_ context.Context, orgID, accountID string)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	mem, ok := m.memberships[orgAccountKey{OrgID: orgID, AccountID: accountID}]
-	if !ok || mem.RemovedAt != nil {
+	if !ok || mem.RemovedAt != nil || m.orgMFABlocksLocked(orgID, accountID) {
 		return OrgAccessSnapshot{}, ErrNotFound
 	}
 	return OrgAccessSnapshot{Role: mem.Role, Revision: m.orgAccessRevisions[orgAccountKey{OrgID: orgID, AccountID: accountID}]}, nil
@@ -73,8 +73,12 @@ func (m *MemStore) checkOrgAccessLocked(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
+	if f.SupportGrantID != "" {
+		return m.checkSupportGrantFenceLocked(ctx, f)
+	}
 	mem, exists := m.memberships[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}]
-	if !exists || mem.RemovedAt != nil || m.orgAccessRevisions[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}] != f.Revision {
+	if !exists || mem.RemovedAt != nil || m.orgAccessRevisions[orgAccountKey{OrgID: f.OrgID, AccountID: f.AccountID}] != f.Revision ||
+		m.orgMFABlocksLocked(f.OrgID, f.AccountID) {
 		return rejectOrgAccess(ctx)
 	}
 	if f.CredentialID == "" {

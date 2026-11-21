@@ -167,6 +167,7 @@ type InspectAppSummary = inspectAppSummary
 type InspectHealthSummary = inspectHealthSummary
 type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
+type InspectRuntimeWarning = inspectRuntimeWarning
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
 type InspectRecommendation = inspectRecommendation
@@ -518,6 +519,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
@@ -551,6 +553,12 @@ var LoopbackBindRegex = &loopbackBindRegex
 var McpNativeCheckWorkers = &mcpNativeCheckWorkers
 var NonInteractive = &nonInteractive
 var OsStderr = &osStderr
+var GitMetadataTimeout = &gitMetadataTimeout
+var GitSlowNoticeAfter = &gitSlowNoticeAfter
+var GitPipeWaitDelay = &gitPipeWaitDelay
+var WithProjectWaitProgress = withProjectWaitProgress
+var ProjectBuildStepInterval = &projectBuildStepInterval
+var WaitForProjectApplyTimeouts = waitForProjectApplyTimeouts
 var OsStdin = &osStdin
 var OsStdout = &osStdout
 var ProfileOverride = &profileOverride
@@ -713,6 +721,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdRedis = cmdRedis
 var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
@@ -724,7 +733,6 @@ var CmdAccountStatus = cmdAccountStatus
 var CmdAdd = cmdAdd
 var CmdAddBucket = cmdAddBucket
 var CmdAddPostgres = cmdAddPostgres
-var CmdAdmin = cmdAdmin
 var CmdAppCopy = cmdAppCopy
 var CmdAlertActions = cmdAlertActions
 var CmdAlertAdd = cmdAlertAdd
@@ -781,7 +789,6 @@ var CmdBillingExport = cmdBillingExport
 var CmdBillingFinancial = cmdBillingFinancial
 var CmdBillingPaymentMethod = cmdBillingPaymentMethod
 var CmdBillingPortal = cmdBillingPortal
-var CmdBillingReconcilePaddleOverage = cmdBillingReconcilePaddleOverage
 var CmdBillingRefreshInvoice = cmdBillingRefreshInvoice
 var CmdBillingRetry = cmdBillingRetry
 var CmdBillingStatus = cmdBillingStatus
@@ -859,6 +866,8 @@ var DataAPIDrainEvery = dataAPIDrainEvery
 var CheckDataAPIReportSettings = checkDataAPIReportSettings
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
+var CmdDataAPIIntegrate = cmdDataAPIIntegrate
+var DataAPIIntegrationSteps = dataAPIIntegrationSteps
 var CmdDataAPIRefresh = cmdDataAPIRefresh
 var CmdDataAPITransaction = cmdDataAPITransaction
 var CmdDataAPIVerify = cmdDataAPIVerify
@@ -931,7 +940,6 @@ var CmdEventsSubscriptions = cmdEventsSubscriptions
 var CmdEventsWorkflowBackfill = cmdEventsWorkflowBackfill
 var CmdEventsWorkflowReplayPreview = cmdEventsWorkflowReplayPreview
 var CmdFlags = cmdFlags
-var CmdGithubWebhookSecret = cmdGithubWebhookSecret
 var CmdInit = cmdInit
 var CmdInspect = cmdInspect
 var CmdInvitations = cmdInvitations
@@ -959,6 +967,7 @@ var CmdMCPAccess = cmdMCPAccess
 var CmdMCPCatalogMonitor = cmdMCPCatalogMonitor
 var CmdMCPDeploy = cmdMCPDeploy
 var CmdMCPInit = cmdMCPInit
+var CmdMCPImportOpenAPI = cmdMCPImportOpenAPI
 var CmdMCPReadiness = cmdMCPReadiness
 var CmdMCPReadinessAttention = cmdMCPReadinessAttention
 var CmdMCPReadinessFallback = cmdMCPReadinessFallback
@@ -1025,15 +1034,12 @@ var CmdPostgresBindingsRotate = cmdPostgresBindingsRotate
 var CmdPostgresCreate = cmdPostgresCreate
 var CmdPostgresCutover = cmdPostgresCutover
 var CmdPostgresDelete = cmdPostgresDelete
-var CmdPostgresDiagnostics = cmdPostgresDiagnostics
 var CmdPostgresGet = cmdPostgresGet
 var CmdPostgresList = cmdPostgresList
 var CmdPostgresUndelete = cmdPostgresUndelete
-var CmdPostgresReconcile = cmdPostgresReconcile
 var CmdPostgresResize = cmdPostgresResize
 var CmdPostgresUsage = cmdPostgresUsage
 var CmdPostgresOverage = cmdPostgresOverage
-var CmdPostgresUsageImport = cmdPostgresUsageImport
 var CmdPreview = cmdPreview
 var CmdPreviewCustomers = cmdPreviewCustomers
 var CmdPreviewDestroy = cmdPreviewDestroy
@@ -1164,7 +1170,7 @@ var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
 
-// ReleaseGateRequest builds a release gate create request from its flags.
+// ReleaseGateRequest builds a release gate add request from its flags.
 var ReleaseGateRequest = releaseGateRequest
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
@@ -1248,6 +1254,8 @@ var DefaultProjectSlug = defaultProjectSlug
 var DeployContextDirectory = deployContextDirectory
 var DeployDeveloperSource = deployDeveloperSource
 var DeployIdempotencyKey = deployIdempotencyKey
+
+var MissingRequiredSecretNames = missingRequiredSecretNames
 var DeployManifestObjectStorageBindings = deployManifestObjectStorageBindings
 var DeployManifestPostgresBindings = deployManifestPostgresBindings
 var DeployManifestQueueBindings = deployManifestQueueBindings
@@ -1365,6 +1373,15 @@ var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
 var FinishMCPDeploy = finishMCPDeploy
 var FinishMCPDeployWithSmoke = finishMCPDeployWithSmoke
+
+func CheckMCPPublicationBaselineForTest(ctx context.Context, c *Client, slug, candidate, appID string, serving *string) error {
+	return checkMCPPublicationBaseline(ctx, c, slug, candidate, &mcpCatalogPinReceipt{expectedAppID: appID, expectedServing: serving})
+}
+
+func ValidateMCPReviewedToolCatalogForTest(cfg mcphosting.Config, report mcphosting.Report) error {
+	return validateMCPReviewedToolCatalog(cfg, report)
+}
+
 var RunMCPVerificationJobs = runMCPVerificationJobs
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
@@ -1390,7 +1407,6 @@ var GeneratedTestCIVMRunCommand = generatedTestCIVMRunCommand
 var GitArchiveHEAD = gitArchiveHEAD
 var GithubSetupCheckWaitFor = githubSetupCheckWaitFor
 var GithubTarballURL = githubTarballURL
-var GithubWebhookSecretSet = githubWebhookSecretSet
 var GroupDigits = groupDigits
 var HostingLocalConfig = hostingLocalConfig
 var HostingLocalRead = hostingLocalRead
@@ -1536,6 +1552,8 @@ var ParkedLogsSelection = parkedLogsSelection
 var ParkedWindowInstances = parkedWindowInstances
 var RetainedLineLevelMatches = retainedLineLevelMatches
 var ParseAIPriceSpec = parseAIPriceSpec
+
+var FormatPriceTiers = formatPriceTiers
 var ParseAIRouteTargets = parseAIRouteTargets
 var ParseStoredWorkflowLiveBaseline = parseStoredWorkflowLiveBaseline
 var ParseStoredWorkflowLiveGate = parseStoredWorkflowLiveGate
@@ -1749,6 +1767,9 @@ var RemoveTestFaultRules = removeTestFaultRules
 var RenderAccountSLO = renderAccountSLO
 var RenderAppBindingInventory = renderAppBindingInventory
 var RenderAppMetrics = renderAppMetrics
+
+// RenderServiceMap exposes the service-map text output.
+var RenderServiceMap = renderServiceMap
 var RenderAppSLO = renderAppSLO
 var RenderApplyRescue = renderApplyRescue
 var RenderStoredWorkflowLiveGate = renderStoredWorkflowLiveGate
@@ -1773,6 +1794,7 @@ var RenderDeploymentProgress = renderDeploymentProgress
 var RenderDeploymentReleaseSummary = renderDeploymentReleaseSummary
 var RenderDeploymentRow = renderDeploymentRow
 var RenderDeploymentRowWide = renderDeploymentRowWide
+var RenderDeploymentHeader = renderDeploymentHeader
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage
@@ -1906,8 +1928,13 @@ var RunLocalTest = runLocalTest
 var RunLocalTestWithLoad = runLocalTestWithLoad
 var RunLogs = runLogs
 var RunMCPBrowserConnection = runMCPBrowserConnection
+
+var RunToolBrowserConnectionForTest = runToolBrowserConnection
+var ToolAuthorizationCallbackForTest = toolAuthorizationCallback
+var RunToolConnectionBrowserCommandForTest = runMCPToolConnectionBrowser
 var RunMCPCatalogMonitor = runMCPCatalogMonitor
 var RunMCPNativeRelease = runMCPNativeRelease
+var RunMCPNativeReleaseContext = runMCPNativeReleaseContext
 var RunMCPNativeRetirement = runMCPNativeRetirement
 var RunMCPResourceWatch = runMCPResourceWatch
 var RunMCPWatch = runMCPWatch
@@ -2148,6 +2175,7 @@ var WarnRootOnlyProtectiveRule = warnRootOnlyProtectiveRule
 var WarnSingleHostProtectiveRule = warnSingleHostProtectiveRule
 var WarnTemplatedEdgeRulePaths = warnTemplatedEdgeRulePaths
 var WatchDevPatch = watchDevPatch
+var FinishDeferredDevSync = finishDeferredDevSync
 var WithBindingProgress = withBindingProgress
 var WithBindingVerificationBudget = withBindingVerificationBudget
 var WithBindingVerificationSlot = withBindingVerificationSlot
@@ -2392,10 +2420,11 @@ func (r *mcpReleaseAuthorization) InsufficientToken() *string { return &r.insuff
 func (r *mcpReleaseRole) Token() *string { return &r.token }
 
 // Members of mcpServeOptions
-func (r *mcpServeOptions) AllowWrites() *bool   { return &r.allowWrites }
-func (r *mcpServeOptions) Onboarding() *string  { return &r.onboarding }
-func (r *mcpServeOptions) Redirects() *[]string { return &r.redirects }
-func (r *mcpServeOptions) StateFile() *string   { return &r.stateFile }
+func (r *mcpServeOptions) AllowToolInvocation() *bool { return &r.allowToolInvocation }
+func (r *mcpServeOptions) AllowWrites() *bool         { return &r.allowWrites }
+func (r *mcpServeOptions) Onboarding() *string        { return &r.onboarding }
+func (r *mcpServeOptions) Redirects() *[]string       { return &r.redirects }
+func (r *mcpServeOptions) StateFile() *string         { return &r.stateFile }
 
 // Members of mcpTasksStatusResult
 func (r *mcpTasksStatusResult) Diagnose() { r.diagnose() }
@@ -2765,6 +2794,7 @@ var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
 
 // Deploy preflights (#6625, #6631).
 var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var GregaleStateHome = gregaleStateHome
 var SourceCapLookupBudgets = &sourceCapLookupBudgets
 var SourceUploadLimitError = sourceUploadLimitError
 
@@ -2870,3 +2900,95 @@ var DoctorRuntimeOOMFromSummary = doctorRuntimeOOMFromSummary
 var DoctorRuntimeOOMForApp = doctorRuntimeOOMForApp
 var ReplaceDoctorCheck = replaceDoctorCheck
 var DoctorCheckRuntimeOOM = doctorCheckRuntimeOOM
+
+// Readiness probe flag (2026-11-13).
+var ResolveDeployReadiness = resolveDeployReadiness
+var DeployProbeOverrides = deployProbeOverrides
+
+// UpdateAppCLISurface is one reviewed CLI surface of an API field.
+type UpdateAppCLISurface = updateAppCLISurface
+
+// DeployRequestCLISurfaces returns the deploy request's CLI surfaces.
+func DeployRequestCLISurfaces() map[string]UpdateAppCLISurface { return deployRequestCLISurfaces }
+
+// DeployOverridesCLISurfaces returns the deploy overrides' CLI surfaces.
+func DeployOverridesCLISurfaces() map[string]UpdateAppCLISurface { return deployOverridesCLISurfaces }
+
+func WaitPrivatePublicationVerificationForTest(ctx context.Context, c *Client, id string, in api.ToolPublicationVerificationRequest) (api.ToolPublicationVerification, error) {
+	return waitPrivatePublicationVerification(ctx, c, id, in)
+}
+
+// TaskQuarantineGateForTest exposes the fixed adapter to subprocess contract tests.
+func TaskQuarantineGateForTest() string { return mcpTaskQuarantineGate }
+
+// TaskRetirementGateForTest exposes the fixed read-only adapter.
+func TaskRetirementGateForTest() string { return mcpTaskRetirementGate }
+
+var RememberInitApp = rememberInitApp
+var LinkedDefaultAppName = linkedDefaultAppName
+
+// gregale dev findings (2026-11-15).
+var DevSourceFingerprint = devSourceFingerprint
+var DevLocalEnvExcludes = devLocalEnvExcludes
+var DeployCredentialExcludes = deployCredentialExcludes
+var WithoutExcludedFindings = withoutExcludedFindings
+var ShouldExcludeWithRules = func(srcDir, rel string, isDir, dockerfile bool) bool {
+	return loadPackRules(srcDir, dockerfile).exclude(rel, isDir)
+}
+var DevAuthProxyHandler = devAuthProxyHandler
+var DevNeedsAuthProxy = devNeedsAuthProxy
+var IsDevSourceRouteMissing = isDevSourceRouteMissing
+var OnDiskPathCase = onDiskPathCase
+var RenewDevSessionWhileWatching = renewDevSessionWhileWatching
+
+type DevSeedRunner = devSeedRunner
+type DevSeedOutcome = devSeedOutcome
+
+var NewDevSeedRunner = newDevSeedRunner
+
+const DevSeedOutcomeDone = devSeedOutcomeDone
+const DevSeedOutcomeFailed = devSeedOutcomeFailed
+
+func (r *devSeedRunner) Start() (bool, bool)                    { return r.start() }
+func (r *devSeedRunner) Finish(o devSeedOutcome) devSeedOutcome { return r.finish(o) }
+
+// DevLogFollowerRender renders events through one follower and returns
+// whether each ended the stream as parked.
+func DevLogFollowerRender(events []api.Event) (parked []bool) {
+	f := newDevLogFollower(nil)
+	for _, event := range events {
+		end, done, _ := f.render(event)
+		parked = append(parked, done && end == devStreamParked)
+	}
+	return parked
+}
+
+// SyncDevEnvPairs runs one env-file sync with in-memory pairs.
+func SyncDevEnvPairs(ctx context.Context, s *devEnvSyncState, client devSecretClient, app, path string, pairs map[string]string, fingerprint byte) (written int, err error) {
+	list := make([]secretsPair, 0, len(pairs))
+	for key, value := range pairs {
+		list = append(list, secretsPair{Key: key, Value: value})
+	}
+	var fp [32]byte
+	fp[0] = fingerprint
+	report, err := s.syncPairs(ctx, client, app, path, list, fp, "developer config")
+	return report.Written, err
+}
+
+// RenderAppProtection exposes renderAppProtection (ADR-20261116120000 §5).
+func RenderAppProtection(w io.Writer, slug string, resp api.AppProtectionResponse) {
+	renderAppProtection(w, slug, resp)
+}
+
+var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
+
+// UncommittedProjectFile exposes the HEAD-deploy project-file check.
+func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
+	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}
+
+// BucketUploadContentType returns the content type an upload would store.
+func BucketUploadContentType(args []string) (string, error) {
+	o, err := parseBucketTransfer(args)
+	return o.contentType, err
+}

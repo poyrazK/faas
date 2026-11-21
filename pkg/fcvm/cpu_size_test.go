@@ -65,7 +65,7 @@ func TestRepairCgroupFencesKeepsTheInstanceWeightAndNoQuota(t *testing.T) {
 	if rep := v.RepairCgroupFences(context.Background()); rep.Repaired != 1 || rep.Failed != 0 {
 		t.Fatalf("report = %+v, want one repair", rep)
 	}
-	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), "32", fmt.Sprintf("max %d", cpuMaxPeriodUS))
+	assertFence(t, scope, memoryMaxValue(api.AppVMMemoryMaxMB(512)), "32", fmt.Sprintf("max %d", cpuMaxPeriodUS))
 }
 
 // An uncapped lease drops its quota only at the app default ceiling: an app
@@ -102,7 +102,7 @@ func TestUncappedLeaseKeepsAnAppsOwnCPUCap(t *testing.T) {
 	if rep := v.RepairCgroupFences(context.Background()); rep.Repaired != 1 || rep.Failed != 0 {
 		t.Fatalf("report = %+v, want one repair", rep)
 	}
-	assertFence(t, scope, memoryMaxValue(api.BillableRAMMB(512)), "32", half)
+	assertFence(t, scope, memoryMaxValue(api.AppVMMemoryMaxMB(512)), "32", half)
 }
 
 // No VM's CPU depends on its plan (step 6.3). An app instance gets the

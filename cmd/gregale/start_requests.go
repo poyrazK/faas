@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
 	"github.com/onebox-faas/faas/pkg/safetext"
@@ -24,6 +25,8 @@ type startRequestResult struct {
 	httpStatus                           int
 	elapsed                              time.Duration
 	private, bodyTruncated               bool
+	internal                             bool
+	viaDeploymentURL                     bool
 	edgeHealth                           bool
 	publicDeploymentCheck                bool
 }
@@ -62,7 +65,7 @@ func (r *startRunner) captureDeployment(dep api.DeploymentResponse) {
 func (r *startRunner) suggestedRequestPath() string {
 	// The starter root returns the editable greeting. Existing projects get
 	// the detected/verified health endpoint rather than a likely root 404.
-	if startTemplateAllowed(r.session.Template) {
+	if startTemplateAllowed(r.session.Template) || r.session.Template == templates.PrivateNode {
 		return "/"
 	}
 	if validStartRequestPath(r.session.HealthPath) {
@@ -88,7 +91,11 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 	}
 	r.requestFailure.logsAllowed = true
 	var result startRequestResult
-	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) != api.AppVisibilityInternal && !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
+	internal := api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal
+	if r.session.Template == templates.PrivateNode && (!internal || app.ProjectID != r.session.ProjectID) {
+		return printErr("Private app access changed", errors.New("restore the original internal project app before checking its response"))
+	}
+	if !internal && !app.RequireAuthn && (app.PublicAuth.Mode == "" || app.PublicAuth.Mode == api.AppPublicAuthModeOpen) {
 		result, err = r.requestPublic(app, path)
 		if err == nil && !result.edgeHealth && result.httpStatus >= 200 && result.httpStatus < 300 && result.servedDeployment == "" {
 			PrintProgress(osStdout, "The public response did not identify its deployment. Checking the selected deployment through your account...")
@@ -114,6 +121,7 @@ func (r *startRunner) sendTestRequest(path, expectedGreeting string) int {
 		}
 		return printErr("Test request failed", err)
 	}
+	result.internal = internal
 	return r.verifyRequest(result, expectedGreeting)
 }
 
@@ -134,7 +142,7 @@ func (r *startRunner) requestPrivate(app api.AppResponse, path string) (startReq
 }
 
 func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequestResult, error) {
-	targetURL := canonicalAppURL(app)
+	targetURL, viaDeploymentURL := canonicalAppURL(app), false
 	readCtx, cancel := context.WithTimeout(r.ctx, deploymentReceiptFetchTimeout)
 	defer cancel()
 	preview, err := r.client.GetDeploymentURL(readCtx, r.session.DeploymentID)
@@ -150,7 +158,7 @@ func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequ
 		if preview.DeploymentID != r.session.DeploymentID || preview.AppID != r.session.AppID {
 			return startRequestResult{}, errors.New("the deployment URL does not match the accepted app and deployment in this environment; no request was sent")
 		}
-		targetURL = preview.URL
+		targetURL, viaDeploymentURL = preview.URL, true
 	}
 	base, err := url.Parse(targetURL)
 	if err != nil || base.Host == "" || base.User != nil || (base.Scheme != "https" && base.Scheme != "http") {
@@ -182,7 +190,7 @@ func (r *startRunner) requestPublic(app api.AppResponse, path string) (startRequ
 	if served == "" {
 		served = response.Header.Get(api.RevisionHeader)
 	}
-	return startRequestResult{path: path, appURL: target.String(), body: string(body), httpStatus: response.StatusCode, elapsed: time.Since(started), servedDeployment: served, edgeHealth: response.Header.Get("X-Faas-Health-Source") == "edge"}, nil
+	return startRequestResult{path: path, appURL: target.String(), body: string(body), httpStatus: response.StatusCode, elapsed: time.Since(started), servedDeployment: served, edgeHealth: response.Header.Get("X-Faas-Health-Source") == "edge", viaDeploymentURL: viaDeploymentURL}, nil
 }
 
 // Keep the direct helper for CLI integration tests and callers that already
@@ -234,6 +242,7 @@ func (r *startRunner) verifyRequest(result startRequestResult, expectedGreeting 
 func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 	_, _ = fmt.Fprintln(osStdout)
 	PrintOK(osStdout, "Your app answered. Keep building.")
+	PrintProgress(osStdout, "Application response verified")
 	r.renderRequestDetails(result, true)
 	if !r.startedAt.IsZero() {
 		_, _ = fmt.Fprintf(osStdout, "  Session       %s elapsed\n", time.Since(r.startedAt).Round(time.Second))
@@ -242,17 +251,30 @@ func (r *startRunner) renderRequestSuccess(result startRequestResult) {
 
 func (r *startRunner) renderRequestDetails(result startRequestResult, verified bool) {
 	if result.private {
-		label := "Private app"
-		if result.publicDeploymentCheck {
+		label, target := "Private app", result.appURL
+		if result.internal {
+			label, target = "Internal app", r.session.AppSlug
+		} else if result.publicDeploymentCheck {
 			label = "App"
 		}
-		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(result.appURL), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		_, _ = fmt.Fprintf(osStdout, "  %-13s %s\n  Deployment    %s\n  Request       GET %s · HTTP %d · %s · owner-authorized check\n", label, startResponseText(target), result.servedDeployment, result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		PrintProgress(osStdout, "Public access has not been verified. Account credentials were not forwarded to the app.")
+		if result.internal {
+			PrintProgress(osStdout, "Internal apps have no public endpoint. This check uses your Gregale account.")
+		} else if !result.publicDeploymentCheck {
+			PrintProgress(osStdout, "A private endpoint may return 401 in a browser without its required credentials. Application-owned authentication still applies.")
+		}
 	} else {
 		label := "Request URL"
 		if verified {
 			label = "Verified URL"
 		}
 		_, _ = fmt.Fprintf(osStdout, "  %s  %s\n  Request       GET %s · HTTP %d · %s\n", label, startResponseText(result.appURL), result.path, result.httpStatus, result.elapsed.Round(time.Millisecond))
+		if verified && result.viaDeploymentURL {
+			PrintProgress(osStdout, "Public access verified through this deployment's own URL for this request path. The app's main URL and custom domains were not checked.")
+		} else if verified {
+			PrintProgress(osStdout, "Public access verified for this deployment and request path.")
+		}
 	}
 	body := strings.TrimSpace(startResponseText(result.body))
 	if body == "" {

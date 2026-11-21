@@ -1988,6 +1988,62 @@ references are resolved, including chains; external, cyclic, unresolved, or
 ambiguous path-item references stop scaffolding rather than silently omitting
 routes. Input must be a regular, non-symlink file of at most 5 MiB.
 
+## gRPC steps
+
+A request or check can call a gRPC method instead of sending HTTP. Give the
+scenario the service's `.proto` files, or let the CLI ask the server through
+gRPC reflection:
+
+```yaml
+scenarios:
+  catalog-smoke:
+    project: shop
+    source: ./src/productcatalogservice
+    grpc:
+      protos: [protos/demo.proto]   # relative to this manifest
+      import_paths: [protos]        # optional
+      reflection: auto              # auto (default), always or never
+    requests:
+      - name: list-products
+        grpc:
+          method: hipstershop.ProductCatalogService/ListProducts
+          message: {}
+          metadata: {x-tenant: acme}
+          timeout: 5s
+        expect:
+          code: OK
+          json: {/products/0/id: OLJCESPC7Z}
+          headers: {content-type: application/grpc}
+          trailers: {x-trace: t1}
+        capture: {first_product: /products/0/id}
+      - name: get-product
+        grpc:
+          method: hipstershop.ProductCatalogService/GetProduct
+          message: {id: "${steps.list-products.first_product}"}
+        expect:
+          json: {/name: Sunglasses}
+```
+
+- `method` is `package.Service/Method`. With `reflection: auto` the protos are
+  used when they define the method and server reflection otherwise; `never`
+  needs the protos, `always` ignores them. `gregale test --validate` compiles
+  the protos and checks every method they should define, without a network
+  call.
+- Messages are protobuf JSON. Unary and server-streaming methods take
+  `message`; client- and bidirectional-streaming methods take `messages`, sent
+  in order. `${…}` templates work as in HTTP steps.
+- `code` is a status name or number and defaults to `OK`; `message` matches the
+  status message exactly. `headers` and `trailers` match response metadata.
+- `json` pointers and `capture` read the response object, or, for server- and
+  bidirectional-streaming methods, the array of responses (`/0/id`).
+  `message_count` checks how many responses arrived.
+- `as` sends the consumer's key as `authorization: Bearer …` metadata.
+- `--engine local` dials the loopback app over plaintext HTTP/2;
+  `real-vm` dials the deployed app over TLS. gRPC steps add no wake evidence,
+  and load mode (`--load`) runs HTTP steps only.
+- A step reads at most 1,000 response messages and 1 MiB of response JSON; a
+  request message may be 1 MiB; the default timeout is 30 s, at most 5 minutes.
+
 ## Local HTTP tests and case data
 
 Start your application with its normal local development command, then run the
@@ -2057,11 +2113,23 @@ managed_work:
 List every enrolled workload, including services with no resource permissions.
 The primary must own declared fixtures with `read_write`; at least one sibling
 must have `async: true` and declared async routes. A service with no resource
-capability gets no fixture credentials. PostgreSQL currently supports explicit
-`read_write` access to this fixture database; object access supports `read` and
-`read_write` to this fixture namespace. Declared workers get distinct database
-logins and workload-bound object credentials. Ordinary provider bindings and
-account tokens are never copied. Service secrets cannot override these bindings.
+capability gets no fixture credentials. PostgreSQL supports `read_write`,
+`task_runtime` and `task_observer` on this fixture database. Object access
+supports `read` and `read_write` on this fixture namespace. Declared workers
+get distinct database logins and workload-bound object credentials. Ordinary
+provider bindings and account tokens are never copied. Service secrets cannot
+override these bindings.
+
+For a Task fixture, seed the required Task tables in `public` using the
+fixture SQL. Keep the primary on `read_write` as the sole migration owner.
+Give a worker `postgres: task_runtime` and an observer workload
+`postgres: task_observer`. Both receive their own `DATABASE_URL` for the
+disposable fixture. The runtime can read its Task tables and write queue
+state. The observer can only read the Task inspection tables. Neither
+login is a member of the migration owner role or can create schema objects.
+A Task role cannot be combined with another `read_write` participant or
+with `postgres_fault`. These grants describe the seeded fixture. Recheck
+permissions after any migration that changes them.
 
 An authorized private call to `http://worker.svc.gregale:10081/import` now follows
 the worker's enabled async route path/method/header rules and returns the ordinary

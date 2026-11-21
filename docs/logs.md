@@ -33,6 +33,8 @@ says so instead of skipping silently.
 
 ## Retention
 
+How long logs and request events are kept depends on your plan:
+
 | Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
 |---|---|---|---|---|
 | Free | 1 day | 1 day | — | — |
@@ -113,8 +115,12 @@ change configuration.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
-`[ERROR]` or `level=error`. Lines with no recognisable level are left out when
-you filter by level.
+`[ERROR]`, `level=error`, or a line that starts with `ERROR `, `WARN ` or
+`INFO `. Lines with no recognisable level are left out when you filter by level.
+
+An app's stdout and stderr reach Gregale through one console, so every app
+line is labelled `stdout` whichever stream the app wrote it to. Mark severity
+in the line itself rather than relying on the stream.
 
 Save filters you use often with `gregale logs views save NAME ...` and reuse
 them with `--view NAME`.

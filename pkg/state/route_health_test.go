@@ -19,11 +19,16 @@ import (
 
 func healthFixture(t *testing.T, s state.Store) (state.Account, state.App, state.Deployment, state.Deployment) {
 	t.Helper()
+	return healthFixtureOfType(t, s, state.AppTypeApp)
+}
+
+func healthFixtureOfType(t *testing.T, s state.Store, appType state.AppType) (state.Account, state.App, state.Deployment, state.Deployment) {
+	t.Helper()
 	account, err := s.CreateAccount(t.Context(), uuid.NewString()+"@example.test", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "health-" + uuid.NewString()[:8], Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 1})
+	app, err := s.CreateApp(t.Context(), state.App{AccountID: account.ID, Slug: "health-" + uuid.NewString()[:8], Type: appType, RAMMB: 512, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

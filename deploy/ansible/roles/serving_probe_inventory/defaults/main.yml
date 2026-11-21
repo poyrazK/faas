@@ -1,0 +1,4 @@
+---
+# Null means no inventory was supplied; {} explicitly expects no probes.
+# Supply this same mapping to control-plane and compute convergence.
+faas_serving_probe_fleet: null

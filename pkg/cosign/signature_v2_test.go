@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/storage"
 )
 
 func TestSignatureV2BindsTheStorageKey(t *testing.T) {
@@ -93,6 +95,56 @@ func TestVerifierStillAcceptsV1(t *testing.T) {
 	}
 }
 
+// After the re-sign pass, RequireV2 closes the v1 replay: Alice's v1-signed
+// layer copied over Bob's key verified under v1 (Codex finding, 2026-11-16).
+func TestVerifierRequireV2RefusesReplayedV1(t *testing.T) {
+	ctx := context.Background()
+	privPath, pubPath := keyPairTempDir(t)
+	mem := newMemStorage()
+	const keyA = "apps/alice/11111111-1111-1111-1111-111111111111.ext4"
+	const keyB = "apps/bob/22222222-2222-2222-2222-222222222222.ext4"
+	mem.blobs[keyA] = bytes.Repeat([]byte("alice's code "), 512)
+	signer, err := NewLocalSigner(privPath, mem, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := signer.Sign(ctx, keyA, SigKeyFor(keyA)); err != nil {
+		t.Fatal(err)
+	}
+	mem.blobs[keyB] = append([]byte(nil), mem.blobs[keyA]...)
+	mem.blobs[SigKeyFor(keyB)] = append([]byte(nil), mem.blobs[SigKeyFor(keyA)]...)
+
+	lenient, err := NewLocalVerifier(pubPath, mem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := lenient.Verify(ctx, keyB, SigKeyFor(keyB)); err != nil {
+		t.Fatalf("precondition: v1 replay should verify without RequireV2: %v", err)
+	}
+
+	strict, err := NewLocalVerifier(pubPath, mem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict.RequireV2(true)
+	var problem *api.Problem
+	if err := strict.Verify(ctx, keyB, SigKeyFor(keyB)); !errors.As(err, &problem) || problem.Code != "sig_invalid" {
+		t.Fatalf("RequireV2 verified a replayed v1 signature: %v", err)
+	}
+	if err := strict.CheckPresent(ctx, keyB, SigKeyFor(keyB)); !errors.As(err, &problem) || problem.Code != "sig_invalid" {
+		t.Fatalf("RequireV2 CheckPresent accepted a v1 signature: %v", err)
+	}
+
+	// A v2 signature still verifies under RequireV2.
+	signer.WithSignatureV2(true)
+	if err := signer.Sign(ctx, keyA, SigKeyFor(keyA)); err != nil {
+		t.Fatal(err)
+	}
+	if err := strict.Verify(ctx, keyA, SigKeyFor(keyA)); err != nil {
+		t.Fatalf("RequireV2 rejected a v2 signature: %v", err)
+	}
+}
+
 func TestCheckSignatureShape(t *testing.T) {
 	good, err := json.Marshal(SignatureV2{Format: SignatureFormatV2, Key: "k", Digest: string(bytes.Repeat([]byte("a"), 64)), Signature: make([]byte, 64)})
 	if err != nil {
@@ -115,5 +167,51 @@ func TestCheckSignatureShape(t *testing.T) {
 	}
 	if err := checkSignatureShape("other", good); err == nil {
 		t.Error("a v2 signature for another key passed the shape check")
+	}
+}
+
+// A compute node's cache serves the signature it already holds. After
+// `artifact resign` rewrites the canonical object to v2, a node that cached
+// the v1 copy must refetch it rather than fail every boot under RequireV2.
+func TestVerifierRequireV2RefreshesCachedV1Signature(t *testing.T) {
+	ctx := context.Background()
+	privPath, pubPath := keyPairTempDir(t)
+	parent := newMemStorage()
+	const key = "apps/dave/44444444-4444-4444-4444-444444444444.ext4"
+	parent.blobs[key] = bytes.Repeat([]byte("dave's code "), 512)
+	signer, err := NewLocalSigner(privPath, parent, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := signer.Sign(ctx, key, SigKeyFor(key)); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(t.TempDir(), "cache"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Warm the node cache with the v1 signature.
+	rc, err := cache.Get(ctx, SigKeyFor(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = rc.Close()
+
+	// The re-sign pass rewrites the canonical signature only.
+	signer.WithSignatureV2(true)
+	if err := signer.Sign(ctx, key, SigKeyFor(key)); err != nil {
+		t.Fatal(err)
+	}
+
+	strict, err := NewLocalVerifier(pubPath, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict.RequireV2(true)
+	if err := strict.CheckPresent(ctx, key, SigKeyFor(key)); err != nil {
+		t.Fatalf("CheckPresent kept the stale cached v1 signature: %v", err)
+	}
+	if err := strict.Verify(ctx, key, SigKeyFor(key)); err != nil {
+		t.Fatalf("Verify kept the stale cached v1 signature: %v", err)
 	}
 }

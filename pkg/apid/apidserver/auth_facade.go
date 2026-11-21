@@ -37,6 +37,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
+	"github.com/onebox-faas/faas/pkg/apid/taskexecution"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
@@ -56,7 +57,7 @@ import (
 // allowlist; bearer principals are unaffected.
 func (s *server) auth(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))
-	return s.authMw.RequireSession(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireSession(pkgNext))
 }
 
 // authLimited wraps s.auth in pkg/middleware.AuthLimit with the
@@ -67,20 +68,20 @@ func (s *server) auth(next accountHandler) http.HandlerFunc {
 // middleware-level concern, not a per-daemon configuration detail.
 func (s *server) authLimited(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.authorizeAppResource(next))))))))
-	return s.authMw.RequireLimited(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // Project publishing checks the human's verification before resolving the
 // project, so a missing resource cannot bypass the verification response.
 func (s *server) authVerifiedLimited(next accountHandler) http.HandlerFunc {
 	pkgNext := middleware.AccountHandler(s.recordCustomerErrors(s.requireAPIRequestBudget(s.capabilityAllowed(s.sameOriginSessionWrites(s.requireMFA(s.requireVerificationNotOverdue(s.requireVerifiedEmail(s.authorizeAppResource(next)))))))))
-	return s.authMw.RequireLimited(pkgNext)
+	return s.recordCredentialRefusals(s.authMw.RequireLimited(pkgNext))
 }
 
 // The handler account remains the storage/quota subject, while the request
 // principal remains the actor for scope, MFA, verification and audit checks.
 func (s *server) authorizeAppResource(next accountHandler) accountHandler {
-	return accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), middleware.AccountHandler(s.monetizationAccount(next))))))))
+	return s.supportAccessGate(accountHandler(appaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), postgresaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func() *managedpostgres.Service { return s.managedPostgres }, objectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), queueaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), taskexecution.Wrap(s.store, middleware.AccountHandler(s.monetizationAccount(next))))))))))
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {

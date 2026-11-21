@@ -49,6 +49,16 @@ on:
           without this acknowledgement.
         type: boolean
         default: false
+      skip_control_stage:
+        description: >-
+          Roll out only the compute targets, against the control plane's
+          already-active release_tag. For a control plane rebuilt from
+          backups with no compute node yet: its gatewayd-public reports ready
+          only once a compute gatewayd-internal answers, so the control-plane
+          stage cannot pass until one node has joined
+          (docs/runbooks/ControlPlaneStateBackup.md).
+        type: boolean
+        default: false
       release_tag:
         description: "Existing signed pre-1.0 release tag"
         required: true
@@ -251,6 +261,7 @@ jobs:
 
   control:
     name: Control-plane stage
+    if: ${{ !inputs.skip_control_stage }}
     uses: ./.github/workflows/cd-controlplane.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
@@ -262,7 +273,7 @@ jobs:
   compute-prepare:
     name: Prepare compute fleet in parallel
     needs: [control, plan]
-    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true'
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare == 'true' }}
     uses: ./.github/workflows/cd-compute.yml
     with:
       deploy_environment: ${{ inputs.deploy_environment }}
@@ -279,7 +290,7 @@ jobs:
   compute-prepare-compat:
     name: Prepare compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, plan]
-    if: inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true'
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && inputs.compute_rollout_mode == 'phased' && needs.plan.outputs.batch_prepare != 'true' }}
     strategy:
       # Claims, signed enrollment bundles, and explicit preflight skips retain
       # the single-target path until the fleet command supports those inputs.
@@ -311,7 +322,7 @@ jobs:
   compute:
     name: Roll out compute (${{ matrix.target.node || matrix.target.claim_file }})
     needs: [control, compute-prepare, compute-prepare-compat, plan]
-    if: ${{ always() && needs.control.result == 'success' && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
+    if: ${{ always() && (needs.control.result == 'success' || (inputs.skip_control_stage && needs.control.result == 'skipped')) && needs.plan.result == 'success' && (inputs.compute_rollout_mode == 'full' || (needs.plan.outputs.batch_prepare == 'true' && needs.compute-prepare.result == 'success') || (needs.plan.outputs.batch_prepare != 'true' && needs.compute-prepare-compat.result == 'success')) }}
     strategy:
       # Activation drains and restarts one node at a time. Fail fast preserves
       # the remaining old-version nodes as the healthy fallback.
@@ -338,7 +349,10 @@ jobs:
       format_storage: ${{ matrix.target.format_storage }}
       skip_fleet_preflight: ${{ matrix.target.skip_fleet_preflight }}
       rollout_phase: ${{ inputs.compute_rollout_mode == 'full' && 'full' || 'activate' }}
-      node_canary: true
+      # ADR-20261118060000: only the first node's leg runs the canary. It
+      # catches a release that cannot serve or build before any other node
+      # moves; the fleet acceptance gate after the last node covers the rest.
+      node_canary: ${{ toJSON(matrix.target) == toJSON(fromJSON(needs.plan.outputs.targets)[0]) }}
     secrets: inherit
 
   verify:
@@ -349,12 +363,14 @@ jobs:
     environment: ${{ inputs.deploy_environment }}
     # Initial parallel deploys, bounded serial coverage follow-ups, and the
     # zero-downtime redeploy can exceed 45 minutes without any gate failing.
-    timeout-minutes: 90
+    # Reserve the verifier's capped one-hour observation budget after rollout.
+    timeout-minutes: 155
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
       CONTROL_RESULT: ${{ needs.control.result }}
+      SKIP_CONTROL_STAGE: ${{ inputs.skip_control_stage }}
       CONTROL_ACTIVATED: ${{ needs.control.outputs.activated }}
       BATCH_PREPARE: ${{ needs.plan.outputs.batch_prepare }}
       COMPUTE_PREPARE_RESULT: ${{ needs.compute-prepare.result }}
@@ -368,6 +384,22 @@ jobs:
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 1
+
+      # Read the wrapper from this workflow's commit, including when an older
+      # signed release is selected. An old remote CLI produces unknown evidence.
+      - name: Check out monitoring verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .monitoring-verifier
+          persist-credentials: false
+
+      - name: Initialize monitoring evidence
+        env:
+          MONITORING_REPORT: ${{ runner.temp }}/post-deployment-monitoring.json
+        run: |
+          DESIRED_RELEASE="$(git rev-parse HEAD)" \
+            python3 .monitoring-verifier/scripts/ci/post_deployment_monitoring.py --initialize
 
       - name: Resolve desired release and set up control-plane SSH
         run: |
@@ -425,7 +457,9 @@ jobs:
             prepare_ok=true
           fi
           gate_timeout=2m
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
+          control_ok=false
+          if [[ "$CONTROL_RESULT" == "success" || ( "$SKIP_CONTROL_STAGE" == "true" && "$CONTROL_RESULT" == "skipped" ) ]]; then control_ok=true; fi
+          if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then
             gate_timeout=0
           fi
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes "root@${CP_HOST}" \
@@ -462,12 +496,13 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
+          if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then
             echo "::error::platform rollout failed: plan=${PLAN_RESULT} control=${CONTROL_RESULT} compute-prepare=${selected_prepare_result} compute=${COMPUTE_RESULT} active-node-gate=${gate_exit}" >&2
             exit 1
           fi
           active_node_count="$(jq -er '.active_node_count | select(. > 0)' "$status_file")"
           echo "ACTIVE_NODE_COUNT=$active_node_count" >> "$GITHUB_ENV"
+          echo "MONITORING_NOT_BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Verify control-plane origin liveness and readiness
         run: |
@@ -622,3 +657,21 @@ jobs:
             echo "::error::release ${DESIRED_RELEASE} failed its post-activation gates AND the rollback did not complete — the control plane needs an operator now"
           fi
           exit 1
+
+      # Keep this AFTER recovery: unknown monitoring evidence or a monitoring
+      # fault must not invoke the rollback path above.
+      - name: Verify post-deployment monitoring
+        timeout-minutes: 65
+        env:
+          MONITORING_OPERATOR_TOKEN: ${{ secrets.MONITORING_OPERATOR_TOKEN }}
+          MONITORING_REPORT: ${{ runner.temp }}/post-deployment-monitoring.json
+        run: python3 .monitoring-verifier/scripts/ci/post_deployment_monitoring.py
+
+      - name: Upload post-deployment monitoring evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: post-deployment-monitoring-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/post-deployment-monitoring.json
+          if-no-files-found: warn
+          retention-days: 14
