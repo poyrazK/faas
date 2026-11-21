@@ -68,6 +68,8 @@ var toolCapability = map[string]string{
 
 // unavailableCapabilities reads the account's hidden and disabled
 // capabilities. A failed read hides nothing: apid still refuses the calls.
+//
+//nolint:contextcheck // Server construction has no request context; the read is bounded by its own timeout.
 func (m *management) unavailableCapabilities() map[string]bool {
 	if !m.opts.HideUnavailableCapabilities {
 		return nil
