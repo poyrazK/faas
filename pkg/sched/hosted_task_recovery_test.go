@@ -10,11 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 )
 
 type rehearsalReservationStore struct {
-	*state.MemStore
+	MemStore           *state.MemStore
 	account, run, plan string
 	reservedAt         time.Time
 }
@@ -91,7 +92,7 @@ func TestHostedTaskRehearsalInterruptsExactWorkerAtMostOnce(t *testing.T) {
 				t.Fatal(err)
 			}
 			vm := &rehearsalWorkerVM{fakeVMM: &fakeVMM{destroyErr: destroyErr}, instance: ins.ID}
-			e := newEngine(t, reservation, vm, &fakeNotifier{}, "1.10.0")
+			e := newEngine(t, statetest.NewMem(reservation), vm, &fakeNotifier{}, "1.10.0")
 			var reconcile string
 			e.workerReconcileSubmit = func(_ context.Context, appID string) { reconcile = appID }
 			in := tasktoolrehearsal.WorkerInterruption{AccountID: account.ID, RunID: run.String(), PlanSHA256: reservation.plan, TaskID: uuid.NewString(),
@@ -100,7 +101,9 @@ func TestHostedTaskRehearsalInterruptsExactWorkerAtMostOnce(t *testing.T) {
 			stale.ObservedAt = stale.ObservedAt.Add(-tasktoolrehearsal.WorkerStopDeadline)
 			foreign := in
 			foreign.WakeID = uuid.NewString()
-			for _, invalid := range []tasktoolrehearsal.WorkerInterruption{stale, foreign} {
+			wrongPlan := in
+			wrongPlan.PlanSHA256 = strings.Repeat("b", 64)
+			for _, invalid := range []tasktoolrehearsal.WorkerInterruption{stale, foreign, wrongPlan} {
 				if _, err := e.InterruptHostedTaskWorker(ctx, invalid); !errors.Is(err, state.ErrConflict) {
 					t.Fatalf("invalid interruption returned %v", err)
 				}
