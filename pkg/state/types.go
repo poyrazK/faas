@@ -2924,6 +2924,8 @@ type Deployment struct {
 	// explicitly requested zero. It is persisted for activation semantics but
 	// remains internal; TrafficPercent is the customer-visible value.
 	TrafficPercentExplicit bool `json:"-"`
+	// ServingEndedAt records when this revision last stopped receiving traffic.
+	ServingEndedAt *time.Time `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads

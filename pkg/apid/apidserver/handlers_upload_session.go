@@ -836,6 +836,10 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if sourceURL == "" {
 		sourceURL = "local-tar://upload-session/" + uploadID
 	}
+	r, scheduleResult, ok := s.attachDeploymentSchedule(w, r, acct, app, sched)
+	if !ok {
+		return
+	}
 	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 		OperationDefinitions:      sourceOperationSpecs(manifest),
 		OperationAdmissionEnabled: s.operation.OperationDefinitionsAdmission(app.AccountID, app.ID, rolloutReq.Scope, sourceOperationSpecs(manifest)),
@@ -957,10 +961,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrCapacity("could not read deployment"))
 		return
 	}
-	if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	writeJSON(w, http.StatusCreated, s.deploymentResponse(r.Context(), d, app))
 }
 

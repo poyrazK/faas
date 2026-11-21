@@ -616,6 +616,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		// ADR-20261021221906: a sync about to reach the running instance as a live
 		// patch holds its build back; a later sync supersedes it.
 		buildNotBefore := devloop.BuildNotBefore(time.Now(), devPatch.preview, devPatchDeliveryEnabled(), devSource.buildNow, devloop.CoalesceWindow(os.Getenv))
+		r, scheduleResult, ok := s.attachDeploymentSchedule(w, r, acct, app, sched)
+		if !ok {
+			return
+		}
 		res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
 			BuildNotBefore:            buildNotBefore,
 			OperationDefinitions:      sourceOperationSpecs(manifest),
@@ -690,10 +694,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			published := s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, devPatchRoot, devPatch)
 			s.settleDeferredDevBuild(r.Context(), app, d.ID, buildNotBefore, published, devPatch.preview)
 		}
-		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
-			api.WriteProblem(w, prob)
-			return
-		}
+		s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 		response := s.deploymentResponse(r.Context(), d, app)
 		response.DevPatch = devPatch.preview
 		writeJSON(w, http.StatusAccepted, response)
