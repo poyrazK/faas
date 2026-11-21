@@ -18,6 +18,8 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -114,7 +116,7 @@ func Parse(raw json.RawMessage) (Config, error) {
 
 func validSlots(where string, s Slots) error {
 	if s.Reserved < api.BuilderReservedSlotsMin || s.Reserved > api.BuilderReservedSlotsMax {
-		return fmt.Errorf("builder_slots: %s.reserved is %d; it must be between %d and %d until nodes re-derive their sizing live (ADR-20261118154632 step 7)",
+		return fmt.Errorf("builder_slots: %s.reserved is %d; it must be between %d and %d (ADR-20261118154632 amendment 1)",
 			where, s.Reserved, api.BuilderReservedSlotsMin, api.BuilderReservedSlotsMax)
 	}
 	if s.Max < s.Reserved || s.Max > api.BuilderSlotsMax {
@@ -129,6 +131,33 @@ func (c Config) For(node string) Slots {
 		return s
 	}
 	return c.Default
+}
+
+// ReservedSlotsEnv carries the reserved builder slots a node is provisioned
+// with (ADR-20261118154632 amendment 1). node_join writes it for builderd and
+// vmmd from the manifest's builder_reserved_slots, next to the build slice and
+// tenant fences it sizes for that count.
+const ReservedSlotsEnv = "FAAS_BUILDER_RESERVED_SLOTS"
+
+// ReservedFromEnv reads ReservedSlotsEnv. Unset, unparsable or below one is
+// the compiled one slot; above api.BuilderReservedSlotsMax is clamped.
+func ReservedFromEnv(getenv func(string) string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(getenv(ReservedSlotsEnv)))
+	if err != nil {
+		return api.BuilderSlotsDefaultReserved
+	}
+	return api.ClampBuilderReservedSlots(n)
+}
+
+// Provisioned sets s.Reserved to the reserved slots the node was provisioned
+// with (FAAS_BUILDER_RESERVED_SLOTS, ADR-20261118154632 amendment 1): its
+// build slice and tenant sizing fund exactly that many, so builder_slots
+// cannot add or remove one. s.Max is raised to at least that count. It
+// reports whether s changed.
+func Provisioned(s Slots, reserved int) (Slots, bool) {
+	reserved = api.ClampBuilderReservedSlots(reserved)
+	out := Slots{Reserved: reserved, Max: max(s.Max, reserved)}
+	return out, out != s
 }
 
 // Clamp lowers s.Max to the builds the node's CPUs can run at BuildVMVCPU

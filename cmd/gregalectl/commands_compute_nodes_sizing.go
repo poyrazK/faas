@@ -35,6 +35,14 @@ type nodeSizingReport struct {
 	VCPUSlots          int    `json:"vcpu_slots"`
 	MemMB              int    `json:"mem_mb"`
 	Detected           bool   `json:"detected"`
+	// The reserved builder slots the host is sized for, and the build and
+	// control-plane slice fences node_join writes for them
+	// (ADR-20261118154632 amendment 1). Zero slice values on a host that is
+	// not compute-only: its slices keep the systemd_slices role's values.
+	BuilderReservedSlots  int `json:"builder_reserved_slots"`
+	BuildSliceMemoryMaxMB int `json:"build_slice_memory_max_mb,omitempty"`
+	BuildSliceCPUQuotaPct int `json:"build_slice_cpu_quota_pct,omitempty"`
+	CPSliceMemoryMaxMB    int `json:"cp_slice_memory_max_mb,omitempty"`
 }
 
 // nodeSizingShape maps a box role onto the reserve shape. Only compute-only
@@ -68,6 +76,7 @@ func cmdComputeNodesSizing(args []string) int {
 	jsonOut := fs.Bool("json", false, "emit the machine-readable report")
 	edge := fs.Bool("edge", false, "the host runs the app edge (ADR-1343): hold back its CPU and RAM")
 	objectGateway := fs.Bool("object-gateway", false, "the edge host also runs the S3 gateway (ADR-20261031122757): hold back its CPU and RAM")
+	builderReserved := fs.Int("builder-reserved-slots", api.BuilderSlotsDefaultReserved, fmt.Sprintf("guaranteed builder slots the compute host runs (%d-%d, ADR-20261118154632): size the tenant fence and the build slices for them", api.BuilderReservedSlotsMin, api.BuilderReservedSlotsMax))
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -80,22 +89,36 @@ func cmdComputeNodesSizing(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes sizing: --object-gateway applies only with --edge: the gateway's tunnel runs beside the app edge")
 		return 2
 	}
+	if *builderReserved < api.BuilderReservedSlotsMin || *builderReserved > api.BuilderReservedSlotsMax {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes sizing: --builder-reserved-slots must be %d-%d, got %d\n", api.BuilderReservedSlotsMin, api.BuilderReservedSlotsMax, *builderReserved)
+		return 2
+	}
+	if *builderReserved != api.BuilderSlotsDefaultReserved && resolved != role.RoleComputeOnly {
+		_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes sizing: --builder-reserved-slots applies only to a compute-only host, got role %q\n", resolved)
+		return 2
+	}
 	memMB, cpus := hostsize.MemTotalMB(), hostsize.CPUs()
-	sizing := api.DeriveNodeSizingForRole(memMB, cpus, nodeSizingShape(resolved, *edge, *objectGateway))
+	sizing := api.DeriveNodeSizingForRoleWithBuilders(memMB, cpus, nodeSizingShape(resolved, *edge, *objectGateway), *builderReserved)
 	report := nodeSizingReport{
-		Role:               string(resolved),
-		HostMemTotalMB:     memMB,
-		HostCPUs:           cpus,
-		TenantCPUs:         sizing.TenantCPUs,
-		Edge:               *edge,
-		ObjectGateway:      *objectGateway,
-		NonTenantReserveMB: sizing.NonTenantReserveMB,
-		TenantSliceMaxMB:   sizing.TenantSliceMaxMB,
-		TenantBudgetMB:     sizing.TenantBudgetMB,
-		AdmissionCeilingMB: sizing.AdmissionCeilingMB,
-		VCPUSlots:          sizing.VCPUSlots,
-		MemMB:              sizing.MemMB,
-		Detected:           memMB > 0,
+		Role:                 string(resolved),
+		HostMemTotalMB:       memMB,
+		HostCPUs:             cpus,
+		TenantCPUs:           sizing.TenantCPUs,
+		Edge:                 *edge,
+		ObjectGateway:        *objectGateway,
+		NonTenantReserveMB:   sizing.NonTenantReserveMB,
+		TenantSliceMaxMB:     sizing.TenantSliceMaxMB,
+		TenantBudgetMB:       sizing.TenantBudgetMB,
+		AdmissionCeilingMB:   sizing.AdmissionCeilingMB,
+		VCPUSlots:            sizing.VCPUSlots,
+		MemMB:                sizing.MemMB,
+		Detected:             memMB > 0,
+		BuilderReservedSlots: *builderReserved,
+	}
+	if resolved == role.RoleComputeOnly {
+		report.BuildSliceMemoryMaxMB = api.BuilderSliceMemoryMaxMB(*builderReserved)
+		report.BuildSliceCPUQuotaPct = api.BuilderSliceCPUQuotaPct(*builderReserved)
+		report.CPSliceMemoryMaxMB = api.ComputeCPSliceMemoryMaxMB(*builderReserved)
 	}
 	if *jsonOut || jsonOutput {
 		body, err := json.Marshal(report)
@@ -110,5 +133,7 @@ func cmdComputeNodesSizing(args []string) int {
 		report.Role, report.Edge, report.Detected, report.HostMemTotalMB, report.HostCPUs, report.TenantCPUs)
 	_, _ = fmt.Fprintf(osStdout, "non_tenant_reserve_mb=%d tenant_slice_max_mb=%d tenant_budget_mb=%d admission_ceiling_mb=%d vcpu_slots=%d\n",
 		report.NonTenantReserveMB, report.TenantSliceMaxMB, report.TenantBudgetMB, report.AdmissionCeilingMB, report.VCPUSlots)
+	_, _ = fmt.Fprintf(osStdout, "builder_reserved_slots=%d build_slice_memory_max_mb=%d build_slice_cpu_quota_pct=%d cp_slice_memory_max_mb=%d\n",
+		report.BuilderReservedSlots, report.BuildSliceMemoryMaxMB, report.BuildSliceCPUQuotaPct, report.CPSliceMemoryMaxMB)
 	return 0
 }
