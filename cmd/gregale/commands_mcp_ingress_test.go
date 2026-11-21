@@ -9,8 +9,8 @@ import (
 
 func TestMCPDefaultRequestTimeout(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		app        api.AppResponse
+		name        string
+		app         api.AppResponse
 		wantTimeout int
 	}{
 		{"scale plan unset raises to 300", api.AppResponse{EffectiveLimits: api.AppEffectiveLimits{RequestBudgetMS: 30_000, RequestBudgetMaxMS: 900_000}}, 300},
