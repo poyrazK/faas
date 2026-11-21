@@ -4235,6 +4235,11 @@ type Querier interface {
 	// fan-out can enforce tenant isolation without joining apps.
 	ListEventSubscriptionsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]EventSubscription, error)
 	ListEvents(ctx context.Context, db DBTX, arg ListEventsParams) ([]ListEventsRow, error)
+	// The operator wake-latency report (ADR-20261121200409): one kind's rows at
+	// or after since, newest first, as a backward scan of events_kind_at_idx
+	// (kind, at DESC). The caller asks for one row more than it keeps to learn
+	// whether the window was cut.
+	ListEventsByKindSince(ctx context.Context, db DBTX, arg ListEventsByKindSinceParams) ([]ListEventsByKindSinceRow, error)
 	// One kind of a subject's events since a time, newest first: the debugger's
 	// "why is it running" history reads only the scheduler's observations, so
 	// other events about the app cannot push them out of a bounded read
