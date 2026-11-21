@@ -11,7 +11,7 @@ import (
 // testPostReleaseWatchCandidates pins ADR-1445's candidate rule on both
 // stores: a completed live release that kept automatic rollback, finished
 // inside the window and is the newest in its scope is watched against its
-// superseded predecessor; a rolled-back, opted-out or replaced release is not.
+// previously serving predecessor; a rolled-back, opted-out or replaced release is not.
 func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 	t.Helper()
 	store, ok := fx.Store.(state.PostReleaseWatchStore)
@@ -71,6 +71,7 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 	schedules := fx.Store.(state.ScheduledReleaseStore)
 	scheduled, _, err := schedules.ScheduleRelease(fx.Ctx, state.ScheduledRelease{
 		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: release.ID, ReleaseAt: now,
+		ScheduledBy: fx.Account.Email, ScheduledByAccountID: fx.Account.ID,
 	}, "replaced", "", now)
 	if err != nil {
 		t.Fatal(err)
