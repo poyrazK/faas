@@ -176,8 +176,11 @@ gregale logs drain health my-api <drain-id>
   as does the Datadog integration.
 - OTLP records use the standard fields, so your backend can link lines to
   traces, filter by level and group by app without custom mapping: the
-  request's trace id is the record's `traceId`; stderr lines are `ERROR`
-  and other lines `INFO` (`severityText` and `severityNumber`); and the
+  request's trace id is the record's `traceId`; the line's level (the same
+  detection as `gregale logs --level`: a structured `"level"` field, a marker
+  such as `[error]` or `level=warn`, or a crash line such as `Traceback` or
+  `panic:`) is `severityText` and `severityNumber` (`ERROR`, `WARN` or
+  `INFO`), and Datadog drains send it as `status`; and the
   resource carries `service.name` (the app's slug), `service.instance.id`,
   `service.version` (the deployed commit), `deployment.environment.name` and
   `cloud.region`. The `faas.*` record attributes (app, deployment, request

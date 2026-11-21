@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/loglevel"
 )
 
 // Kind is the wire encoding used by a drain.
@@ -50,23 +51,26 @@ const (
 // Record is one runtime log line. Timestamps are retained as time.Time so
 // both encodings can represent nanosecond precision without reparsing.
 type Record struct {
-	AppID               string    `json:"app_id"`
-	AccountID           string    `json:"account_id"`
-	TenantID            string    `json:"tenant_id,omitempty"`
-	RequestID           string    `json:"request_id,omitempty"`
-	TraceID             string    `json:"trace_id,omitempty"`
-	DeploymentID        string    `json:"deployment_id,omitempty"`
-	InstanceID          string    `json:"instance_id"`
-	NodeID              string    `json:"node_id,omitempty"`
-	Region              string    `json:"region,omitempty"`
-	CommitSHA           string    `json:"commit_sha,omitempty"`
-	DeploymentTag       string    `json:"deployment_tag,omitempty"`
-	DeploymentCreatedAt string    `json:"deployment_created_at,omitempty"`
-	ImageDigest         string    `json:"image_digest,omitempty"`
-	Sequence            uint64    `json:"sequence"`
-	Stream              string    `json:"stream"`
-	Line                string    `json:"line"`
-	WrittenAt           time.Time `json:"written_at"`
+	AppID               string `json:"app_id"`
+	AccountID           string `json:"account_id"`
+	TenantID            string `json:"tenant_id,omitempty"`
+	RequestID           string `json:"request_id,omitempty"`
+	TraceID             string `json:"trace_id,omitempty"`
+	DeploymentID        string `json:"deployment_id,omitempty"`
+	InstanceID          string `json:"instance_id"`
+	NodeID              string `json:"node_id,omitempty"`
+	Region              string `json:"region,omitempty"`
+	CommitSHA           string `json:"commit_sha,omitempty"`
+	DeploymentTag       string `json:"deployment_tag,omitempty"`
+	DeploymentCreatedAt string `json:"deployment_created_at,omitempty"`
+	ImageDigest         string `json:"image_digest,omitempty"`
+	Sequence            uint64 `json:"sequence"`
+	Stream              string `json:"stream"`
+	// Level is the canonical level (info, warn, error) vmmd parsed from the
+	// line; RecordLevel derives one when it is empty.
+	Level     string    `json:"level,omitempty"`
+	Line      string    `json:"line"`
+	WrittenAt time.Time `json:"written_at"`
 	// Attributes are extra string attributes of a structured line, such as
 	// an AI gateway call's OpenTelemetry GenAI attributes (ADR-1340). OTLP
 	// drains add them to the log record's attributes in key order.
@@ -713,18 +717,45 @@ type otlpLogRecord struct {
 	TraceID string `json:"traceId,omitempty"`
 }
 
-// OTLP SeverityNumber values (logs data model) for the two levels a runtime
-// line maps to.
+// OTLP SeverityNumber values (logs data model) for the levels a runtime line
+// maps to.
 const (
 	otlpSeverityInfo  = 9
+	otlpSeverityWarn  = 13
 	otlpSeverityError = 17
 )
 
-// otlpSeverity maps a line's stream to an OTLP severity the same way the
-// Datadog drain maps it to a status: stderr is ERROR, everything else INFO.
-func otlpSeverity(stream string) (int, string) {
-	if stream == "stderr" {
+// RecordLevel is the line's canonical level (pkg/loglevel): the level vmmd
+// parsed at ring intake, else error for a stderr line, else the line-shape
+// heuristic `gregale logs --level` uses, else info. guest-init merges the
+// app's stderr into stdout before the serial console, so the stream alone
+// labelled every line info and no drain backend saw an error.
+func RecordLevel(r Record) string {
+	switch strings.ToLower(strings.TrimSpace(r.Level)) {
+	case loglevel.Error, "fatal", "critical":
+		return loglevel.Error
+	case loglevel.Warn, "warning":
+		return loglevel.Warn
+	case loglevel.Info, "debug", "trace":
+		return loglevel.Info
+	}
+	if r.Stream == "stderr" {
+		return loglevel.Error
+	}
+	if level := loglevel.Detect(r.Line); level != "" {
+		return level
+	}
+	return loglevel.Info
+}
+
+// otlpSeverity maps a line's level to an OTLP severity the same way the
+// Datadog drain maps it to a status.
+func otlpSeverity(r Record) (int, string) {
+	switch RecordLevel(r) {
+	case loglevel.Error:
 		return otlpSeverityError, "ERROR"
+	case loglevel.Warn:
+		return otlpSeverityWarn, "WARN"
 	}
 	return otlpSeverityInfo, "INFO"
 }
@@ -818,7 +849,7 @@ func makeOTLPPayload(service string, record Record) otlpLogsPayload {
 			resource = append(resource, otlpKeyValue{Key: field.key, Value: otlpAnyValue{StringValue: field.value}})
 		}
 	}
-	severityNumber, severityText := otlpSeverity(record.Stream)
+	severityNumber, severityText := otlpSeverity(record)
 	return otlpLogsPayload{ResourceLogs: []otlpResourceLogs{{
 		Resource: otlpResource{Attributes: resource},
 		ScopeLogs: []otlpScopeLogs{{

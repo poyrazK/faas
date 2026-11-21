@@ -143,3 +143,29 @@ func TestOTLPBatchKeepsServicePerRecord(t *testing.T) {
 		t.Fatalf("records = %+v / %+v", first, second)
 	}
 }
+
+// The drains follow the line's level, not its stream: guest-init merges stderr
+// into stdout, so a stream-only mapping labelled every crash INFO.
+func TestDrainSeverityFollowsLevel(t *testing.T) {
+	cases := []struct {
+		record Record
+		number int
+		text   string
+	}{
+		{Record{Stream: "stdout", Level: "error", Line: "boom"}, 17, "ERROR"},
+		{Record{Stream: "stdout", Level: "warn", Line: "careful"}, 13, "WARN"},
+		{Record{Stream: "stdout", Line: "Traceback (most recent call last):"}, 17, "ERROR"},
+		{Record{Stream: "stdout", Line: `level=warn msg="slow"`}, 13, "WARN"},
+		{Record{Stream: "stdout", Level: "info", Line: "ERROR: ignored, vmmd said info"}, 9, "INFO"},
+		{Record{Stream: "system", Line: "listening on :8080"}, 9, "INFO"},
+	}
+	for _, tc := range cases {
+		record := makeOTLPPayload("my-api", tc.record).ResourceLogs[0].ScopeLogs[0].LogRecords[0]
+		if record.SeverityNumber != tc.number || record.SeverityText != tc.text {
+			t.Fatalf("%+v: severity = %d %q, want %d %q", tc.record, record.SeverityNumber, record.SeverityText, tc.number, tc.text)
+		}
+		if got := makeDatadogLog("my-api", tc.record).Status; strings.ToUpper(got) != tc.text {
+			t.Fatalf("%+v: datadog status %q, want %q", tc.record, got, tc.text)
+		}
+	}
+}
