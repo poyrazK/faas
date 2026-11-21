@@ -405,6 +405,14 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		n := int64(math.Round(SafeFloat(q.wakeSamples.v)))
 		resp.WakeSamples = &n
 	}
+	// 7a. The app's own wake p95 (gateway_app_wake_latency_seconds). Best
+	// effort: a gateway release without the series leaves it unset and
+	// clients keep showing the fleet figure.
+	if q.appWakeP95.err == nil && q.appWakeSamples.err == nil {
+		n := int64(math.Round(SafeFloat(q.appWakeSamples.v)))
+		p95 := SafeFloat(q.appWakeP95.v)
+		resp.AppWakeSamples, resp.AppWakeP95MS = &n, &p95
+	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
 	// (gateway_queue_depth{app}). The alert preset
@@ -471,6 +479,7 @@ type fetchQueries struct {
 	count, p50, p95, p99               fetchResult
 	errorRate, cacheHitRate, coldStart fetchResult
 	wakeP95, wakeSamples, queueDepth   fetchResult
+	appWakeP95, appWakeSamples         fetchResult
 	egressBytes, txBytes               fetchResult
 	freshness                          *fetchResult
 }
@@ -520,6 +529,11 @@ func startFetchQueries(ctx context.Context, fetcher PromQL, appID, rng string) f
 		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
 		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng)), nil)
 	query(&out.wakeSamples, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng), nil)
+	query(&out.appWakeP95, HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le) (rate(gateway_app_wake_latency_seconds_bucket{app=%q}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_app_wake_latency_seconds_count{app=%q}[%s]))`, appID, rng)), nil)
+	query(&out.appWakeSamples, fmt.Sprintf(`sum(increase(gateway_app_wake_latency_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng), nil)
 	query(&out.queueDepth, fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID), nil)
 	query(&out.egressBytes, fmt.Sprintf(`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)
 	query(&out.txBytes, fmt.Sprintf(`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)

@@ -369,8 +369,12 @@ func TestAppMetrics_Fetch_EmptyHistogramUsesPromQLFallback(t *testing.T) {
 	if src != appmetrics.SourcePrometheus {
 		t.Fatalf("src = %q, want %q", src, appmetrics.SourcePrometheus)
 	}
-	if n := histogramQueries.Load(); n != 4 {
-		t.Fatalf("histogram queries = %d, want 4", n)
+	// p50, p95, p99, the fleet wake p95 and the app's own wake p95.
+	if n := histogramQueries.Load(); n != 5 {
+		t.Fatalf("histogram queries = %d, want 5", n)
+	}
+	if resp.AppWakeP95MS == nil || *resp.AppWakeP95MS != 0 {
+		t.Fatalf("idle app wake p95 = %v, want 0", resp.AppWakeP95MS)
 	}
 	if resp.LatencyP50MS != 0 || resp.LatencyP95MS != 0 || resp.LatencyP99MS != 0 || resp.WakeP95MS != 0 {
 		t.Fatalf("idle histogram values must be zero: %+v", resp)
