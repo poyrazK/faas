@@ -427,7 +427,7 @@ func envChangeInput(values map[string]string) ([]string, []byte, error) {
 func secretRefusal(err error, app string) error {
 	var apiErr *api.APIError
 	if err == nil || errors.As(err, &apiErr) && apiErr.Problem.Code == "secret_scan_strict" {
-		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
+		return invalid("secret_detected", "a variable looks like a credential, by its name or its value, and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
 	}
 	return err
 }
