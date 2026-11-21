@@ -45,6 +45,22 @@ func TestReconcileStaleInstanceHint(t *testing.T) {
 			},
 			afterStart: past, wantState: state.StateRunning,
 		},
+		{
+			// A schedd that started a moment ago may not reach vmmd on the
+			// first call; the hint retries within its budget.
+			name: "vmmd answers after two failed calls: row fails",
+			stats: func(string) statsFunc {
+				calls := 0
+				return func(context.Context, string) (*sched.StatsSnapshot, error) {
+					calls++
+					if calls <= 2 {
+						return nil, errors.New("not connected yet")
+					}
+					return &sched.StatsSnapshot{}, nil
+				}
+			},
+			afterStart: past, wantMoved: true, wantState: state.StateFailed,
+		},
 		{name: "inside the grace window: row stays", stats: empty, afterStart: 500 * time.Millisecond, wantState: state.StateRunning},
 		{name: "hint for another app: row stays", stats: empty, afterStart: past, otherApp: true, wantState: state.StateRunning},
 	}
