@@ -344,7 +344,7 @@ func TestLocalDeployRefusesUnsafeDirectories(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(home, "linked", ".gregale", "project.json"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(home, "linked", ".gregale", "project.json"), []byte(`{"version":2,"project":"shop","environment":"production"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	f := newLocalFixture(t, false, "")
@@ -423,5 +423,26 @@ func TestFingerprintTreeTracksFilesAndSkipsGit(t *testing.T) {
 	}
 	if changed, _, _, _ := fingerprintTree(dir); changed == first {
 		t.Fatal("a new file kept the fingerprint")
+	}
+}
+
+// `gregale deploy` links every directory it deploys to its app. Refusing any
+// link let an agent deploy a directory once: its fix could never ship.
+func TestLocalDeployAcceptsItsOwnAppLink(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "work", "api")
+	if err := os.MkdirAll(filepath.Join(dir, ".gregale"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".gregale", "project.json"), []byte(`{"version":2,"app":"alpha"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f := newLocalFixture(t, false, "")
+	cs, ctx := f.connect(t, true)
+	callTool(t, ctx, cs, "gregale_plan_local_deploy", map[string]any{"path": dir, "app": "alpha", "reason": "redeploy"}, false)
+	out := callTool(t, ctx, cs, "gregale_plan_local_deploy", map[string]any{"path": dir, "app": "beta", "reason": "deploy elsewhere"}, true)
+	if got := toolCode(t, out); got != "linked_app" {
+		t.Fatalf("another app's link: code %q, want linked_app", got)
 	}
 }
