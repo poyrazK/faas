@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -25,12 +26,26 @@ func TestDevLocalAppCLIHelper(t *testing.T) {
 	if os.Getenv("GREGALE_LOCAL_APP_CLI_HELPER") != "1" {
 		return
 	}
+	go stopWhenTestProcessExits()
 	for i, arg := range os.Args {
 		if arg == "--" {
 			os.Exit(main.Run(os.Args[i+1:]))
 		}
 	}
 	os.Exit(2)
+}
+
+// stopWhenTestProcessExits interrupts the helper CLI when the test binary
+// that started it dies (a go test timeout or kill skips t.Cleanup), so the CLI
+// stops its app instead of leaving both running for days.
+func stopWhenTestProcessExits() {
+	parent := os.Getppid()
+	for os.Getppid() == parent {
+		time.Sleep(200 * time.Millisecond)
+	}
+	_ = syscall.Kill(os.Getpid(), syscall.SIGINT)
+	time.Sleep(15 * time.Second)
+	os.Exit(1)
 }
 
 type localAppTestOutput struct {
@@ -193,6 +208,32 @@ func TestDevLocalHTTPAppNoReload(t *testing.T) {
 	}
 	time.Sleep(1500 * time.Millisecond)
 	waitLocalAppBody(t, address, "original", out)
+}
+
+func TestDevLocalHTTPAppStopsOnHangup(t *testing.T) {
+	dir := writeDevLocalProject(t, map[string]string{
+		"package.json": `{"scripts":{"dev":"node server.cjs"}}`,
+		"server.cjs":   localNodeApp("hangup"),
+	})
+	address, cmd, out, done := startLocalAppCLI(t, dir)
+	waitLocalAppBody(t, address, "hangup", out)
+	// A closed terminal sends SIGHUP to the CLI only: the app has its own
+	// process group.
+	if err := cmd.Process.Signal(syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("CLI did not stop cleanly on SIGHUP: %v %s", err, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("CLI ignored SIGHUP: %s", out.String())
+	}
+	if conn, err := net.DialTimeout("tcp", strings.TrimPrefix(address, "http://"), time.Second); err == nil {
+		_ = conn.Close()
+		t.Fatalf("app outlived the CLI after SIGHUP: %s", out.String())
+	}
 }
 
 func TestDevLocalHTTPAppStopsDescendants(t *testing.T) {

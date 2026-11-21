@@ -1884,6 +1884,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		WithDeploymentSmokeTargetLoader(newDeploymentSmokeTargetLoader(pgStore)).
 		// ADR 20261114150000 §3: stamp each deployment's killed flags.
 		WithFlagKillLoader(pgStore.FeatureFlagKillsForDeployment).
+		// ADR 20261119102741 §4: stamp each verified customer's cohorts.
+		WithFlagCohortLoader(pgStore.AnalyticsCohortsForDeploymentCustomer).
 		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).

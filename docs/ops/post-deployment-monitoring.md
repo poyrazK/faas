@@ -28,6 +28,179 @@ Optional advisory build evidence compares observed metric identities with that
 SHA for explicitly selected critical jobs. The platform workflow separately
 verifies fleet release convergence.
 
+### Runtime collector overload
+
+Each apid admits at most two source-backed runtime collections at once. The cap
+is shared across operators, keys, versioned profiles and diagnostic selections;
+it applies even when metrics are disabled. There is no waiting queue or shared
+cached report. Authentication and query validation run before admission.
+
+At capacity the endpoint returns HTTP 429 with problem code `obs_runtime_busy`,
+`limit` and `observed` values, and `Retry-After: 1`. Retry after the hint, or reduce
+overlapping verifiers. The delay reserves no slot. Requests without an expected
+role keep their source-free unknown response; requests already canceled perform
+no source reads. Admitted work retains capacity until it finishes unwinding after
+cancellation, including aggregation and preview fitting. The existing
+three-second source deadline remains unchanged.
+
+The CLI records HTTP 429 with `X-Faas-Error-Code: obs_runtime_busy` as advisory
+unknown (`source_runtime_busy`) in the report and poll history. The terminal
+summary points to overlapping verifiers and the Grafana capacity panels.
+Other HTTP 429 responses remain `source_rate_limited`. The next scheduled poll
+follows the existing verification budget and health gates. Refusals count
+separately from completed reports and source-read attempts.
+
+### Runtime collector metrics
+
+Open **Gregale Runtime Diagnostics** in Grafana to compare active collections
+and refusals by apid, report outcomes, source read failures and latency by
+diagnostic group, and preview omissions. Compare collection p95 with the
+three-second source budget as a reference. The duration histogram also includes
+aggregation and response fitting. Latency and size panels leave gaps when
+the collector has no observations.
+
+Use **apid instance** to narrow every panel to one scrape target. The default
+**All** selection shows every apid instance in the time range. The selector
+includes failed scrapes and refreshes with the dashboard time range.
+Use **Evidence group** to focus the core evidence warning rows and the panels
+that break down evidence by group. Its **All** selection shows every group.
+
+The runtime collector warning notifications link to the affected apid in
+Grafana. Firing warnings show the last two hours. Resolved warnings show the
+two hours ending at each alert's recovery time. Incomplete-evidence warnings
+also select the affected evidence group. Open the usual SSH/IAP tunnel
+to use the default `http://127.0.0.1:3000` links. Set Alertmanager's `am_grafana_base_url`
+to the URL operators use when they access Grafana through another address or
+mount path. Each warning also links to its runbook.
+
+Start with **Runtime telemetry coverage by apid** when other panels are quiet.
+**Reporting** includes idle collectors. **Runtime metrics missing** means the
+scrape succeeded without the runtime collection gauge, which can happen during
+a rolling upgrade. **Scrape failed** means Prometheus could not scrape the
+instance. **No matching apid targets** means no apid `up` series matches the
+instance filter at the end of the selected time range.
+
+The **Runtime collector warning timeline** shows when warnings were pending,
+firing, and clear for the selected apid. It shows a separate row for each core
+evidence group. **Clear** requires a successful scrape with the warning's
+source metric present. Core evidence also requires at least 10 evaluations
+for the same apid and group over 30 minutes. **Insufficient evaluations**
+marks core evidence rows below that floor when the scrape succeeds and the
+source metric is present. Pending or firing warnings take precedence.
+**Scrape failed** and **Runtime metrics missing** show gaps in coverage
+during the same time range.
+
+**apid revision changes** marks observed upgrades and rollbacks with the
+instance and short commit SHA. The marker time is the scrape that first saw the
+new revision. Markers require two closely spaced, successful scrapes with
+different valid revisions. The first observation after a scrape gap
+establishes a new baseline.
+
+**apid restarts** marks the first scrape that sees a drop in an instance's
+uptime. It also covers restarts on the same revision. Detection requires two
+closely spaced successful scrapes with uptime samples. A restart during a
+scrape gap can go unobserved.
+
+**Time since the last complete runtime report by apid** shows the age of
+the last report with complete evidence for its selected diagnostics.
+**No complete report since startup** means apid has yet to collect one.
+Compare it with **Last runtime collection by apid**, which shows the age and
+outcome of the latest finished collection. A recent incomplete or timed-out
+collection explains why the complete-report age can grow even while requests
+are finishing. An idle collector keeps its previous outcome as the age grows.
+**No collection since startup**, **Collection metric missing**, and **Scrape
+failed** identify why an age is unavailable. Older replicas can still report
+other runtime metrics during a rolling upgrade.
+
+Apid's existing private `/metrics` registry exposes self-monitoring for accepted
+`runtime-builds` reads. These metrics describe this process's collection work;
+HTTP 200, collection completeness and daemon health are separate observations.
+
+| Metric | Meaning |
+|---|---|
+| `apid_operator_runtime_active_collections` | Current admitted source collections in this apid, including work still unwinding after cancellation. Reads the shared admission object. |
+| `apid_operator_runtime_refused_collections_total` | Capacity refusals before source reads; excludes authentication/validation refusals, unselected roles and preflight cancellation. |
+| `apid_operator_runtime_reports_total{outcome}` | Completed collections: `complete`, `incomplete`, `deadline_exceeded`, `canceled`, `unselected`, or `encoding_error`. Fresh mismatches and not-ready results can still be complete evidence. |
+| `apid_operator_runtime_incomplete_reports_total{group}` | Reports with outcome `incomplete`, counted once for each affected core or selected diagnostic group. |
+| `apid_operator_runtime_group_evaluations_total{group,outcome}` | One evaluation per group in each complete or incomplete report. `outcome` is the completeness of that group's evidence. |
+| `apid_operator_runtime_core_evidence_gaps_total{group,reason}` | One event per affected core group and reason in an incomplete report. Full-set summaries include evidence outside the retained preview. |
+| `apid_operator_runtime_last_complete_report_timestamp_seconds` | Unix time of apid's most recent `complete` report. Zero until the first complete report in that process. |
+| `apid_operator_runtime_last_collection_timestamp_seconds{outcome}` | Unix time of apid's latest finished collection, with one sample for its report outcome. Zero with outcome `not_collected` until a collection finishes in that process. |
+| `apid_operator_runtime_collection_deadlines_total{phase,origin}` | One event per completed report with `deadline_exceeded`. The origin is apid's `collection_budget` or an inherited `caller_deadline`. |
+| `apid_operator_runtime_collection_duration_seconds` | Collection time, including initial identity reads, aggregation and preview fitting. |
+| `apid_operator_runtime_phase_duration_seconds{phase}` | Wall-clock time for each collection phase. Parallel reads contribute one elapsed time to the phase. |
+| `apid_operator_runtime_inventory_attempts_total{outcome}` | Compute inventory checks by `success`, `invalid_inventory`, `source_error`, `deadline_exceeded`, `canceled`, or `not_configured`. Successful empty inventory counts as success. |
+| `apid_operator_runtime_query_attempts_total{group,outcome}` | Source-read invocations: `success`, `source_error`, `deadline_exceeded`, `canceled`, or `not_configured`. Includes preflight rejection without an HTTP request. `source_error` includes HTTP, transport and strict payload failures; raw errors are excluded. |
+| `apid_operator_runtime_query_source_errors_total{group,reason}` | Detail for the `source_error` outcome. Reasons are `transport_error` for a failed HTTP request, `http_error` for a non-200 response, `invalid_response` for an unreadable or invalid vector payload, and `other` for remaining failures such as an invalid request URL. |
+| `apid_operator_runtime_query_duration_seconds{group}` | Source-read latency through decoding, including failed invocations. |
+| `apid_operator_runtime_response_bytes` | Encoded payload size including the JSON newline, before transport writing; not acknowledged delivery. |
+| `apid_operator_runtime_preview_omitted_items_total{group}` | Items omitted by preview and response limits, counted again on each report. Full-set summaries retain their coverage. |
+
+`group` is one of `identity`, `readiness`, `process`, `loop_health`, or the
+fourteen fixed diagnostic group names below. Readiness and process details
+share the identity preview omission count. Selection excludes reads without
+counting them as failed. Query success alone does not establish valid or fresh
+domain evidence: inspect the report's full-set counts and incomplete flags.
+Use **Incomplete runtime reports by evidence group** to find which groups
+contribute to the incomplete outcome, including groups with successful source
+reads. One report can appear in several groups.
+The **Incomplete report rate by evidence group (30m)** table pairs the
+incomplete share with the estimated number of group evaluations in the
+30 minutes ending at the selected time. Both columns use the **apid instance**
+filter. Groups appear when Prometheus observes an increase in evaluations.
+**Core evidence gaps by reason (30m)** uses the same window and instance
+filter. A single report can count in several rows. Identity uses the report
+summary's `unavailable` category for conflicting targets. The process rows
+also identify changes in the target set, repeated samples, and unavailable
+comparisons.
+
+**Source read failures by reason (5m)** breaks down recent source errors by
+apid and evidence group. Use **Non-successful source reads by group (5m)** for
+deadlines, cancellations, missing configuration, and totals. Older replicas
+may report aggregate source errors during a rolling upgrade.
+
+A collection deadline outcome means its shared context expired before completion;
+a source-read deadline can also expire independently. All counters reset with the
+apid process. No labels contain release SHAs, nodes, target IDs, queries, source
+URLs, selection combinations or upstream errors.
+
+The **Collection phase duration p95 by apid (5m)** panel shows five phases.
+
+- `inventory` loads and validates compute inventory for control-plane profiles.
+- `core_evidence` reads build identity, readiness and process evidence and builds
+  the initial summaries.
+- `loop_and_advisory` collects and validates loop and selected advisory evidence.
+- `assembly` combines loop and advisory summaries.
+- `preview_fitting` fits the report within its response size limit.
+
+Static profiles skip inventory, and unselected roles skip the collection phases.
+Each phase has its own distribution. Compare the lines to locate a slowdown and
+use the total duration panel for overall p95.
+
+The **Collection deadlines by phase and origin (5m)** panel shows where expiry
+was first observed. `before_collection` means the caller deadline had already
+expired at entry. `outside_phases` means expiry could not be assigned to a
+measured phase. Compare phase durations to see how much time earlier stages
+also consumed. Individual Prometheus query timeouts appear in source read
+outcomes while the collection context still has time. Caller disconnects that
+cancel the request appear as `canceled` report outcomes.
+
+The capacity and deadline warnings each require an estimated three or more
+events in the previous five minutes for five consecutive minutes, with a
+successful apid scrape.
+
+- [FaasRuntimeCollectorCapacityRefusals](../runbooks/FaasRuntimeCollectorCapacityRefusals.md)
+  points to HTTP 429 refusals before collection starts.
+- [FaasRuntimeCollectorDeadlines](../runbooks/FaasRuntimeCollectorDeadlines.md)
+  points to reports whose collection context expired. A report can have several
+  timed-out source reads, so the warning counts it once.
+
+[FaasRuntimeCollectorIncompleteCoreEvidence](../runbooks/FaasRuntimeCollectorIncompleteCoreEvidence.md)
+warns when one core group on a successfully scraped apid has at least 10
+estimated evaluations in 30 minutes and at least half are incomplete.
+The condition must hold for 15 minutes. The warning names the affected group
+and links to that replica's dashboard.
+
 ### Advisory running-build evidence
 
 Pass an explicit versioned build profile with `--expected-role` to include

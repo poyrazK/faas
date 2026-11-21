@@ -9,6 +9,27 @@
 # there by mistake disappears on reboot and eats RAM until then").
 # We size it 12 GB — well below the tenant budget on a single box.
 #
+# On an encrypted host (ADR-20261109120000) the storage role owns the device:
+# faas_storage_device is the LUKS container, the XFS filesystem lives on
+# /dev/mapper/<label>-crypt, and the storage role writes its crypttab and
+# fstab lines. This role then only checks the mounted filesystem below; read
+# as a plain disk, the container is "crypto_LUKS" and its UUID is the LUKS
+# header's, not the filesystem's.
+- name: xfs — inspect which device holds /srv/fc
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --output, SOURCE, --mountpoint, /srv/fc]
+  register: xfs_fc_source
+  changed_when: false
+  failed_when: false
+
+- name: xfs — note whether /srv/fc is the encrypted data volume
+  ansible.builtin.set_fact:
+    xfs_fc_encrypted: "{{ (xfs_fc_source.stdout | default('') | trim) is match('^/dev/mapper/.+-crypt$') }}"
+
+- name: xfs — leave an encrypted data volume's device to the storage role
+  ansible.builtin.set_fact:
+    xfs_device_managed: "{{ (faas_storage_device | default('') | trim) != '' and not (xfs_fc_encrypted | bool) }}"
+
 - name: xfs — validate the requested storage device path
   ansible.builtin.stat:
     path: "{{ faas_storage_device }}"
@@ -17,7 +38,7 @@
     # device rather than the symlink itself.
     follow: true
   register: faas_storage_device_stat
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — require the requested storage device to be a block device
   ansible.builtin.assert:
@@ -27,7 +48,7 @@
     fail_msg: >-
       faas_storage_device={{ faas_storage_device }} is not an existing block
       device. Refusing to guess or format a path.
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — inspect the requested storage device filesystem
   ansible.builtin.command:
@@ -35,7 +56,7 @@
   register: faas_storage_device_type
   changed_when: false
   failed_when: false
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — inspect whether the requested device is already mounted
   ansible.builtin.command:
@@ -48,7 +69,17 @@
   register: faas_storage_device_mount
   changed_when: false
   failed_when: false
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
+
+- name: xfs — refuse an encrypted volume that is not unlocked and mounted
+  ansible.builtin.assert:
+    that:
+      - (faas_storage_device_type.stdout | default('') | trim) != 'crypto_LUKS'
+    fail_msg: >-
+      {{ faas_storage_device }} is a LUKS container but {{ faas_storage_mountpoint }}
+      is not mounted from /dev/mapper/*-crypt. Unlock it first (the storage
+      role, through Tang); this role never formats or mounts the container.
+  when: xfs_device_managed | bool
 
 - name: xfs — require a blank device or an existing XFS filesystem
   ansible.builtin.assert:
@@ -61,7 +92,7 @@
       {{ faas_storage_device }} is already formatted or mounted with an
       unsupported filesystem. The join pipeline only accepts XFS and never
       reformats an existing filesystem.
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — require explicit consent before formatting a blank device
   ansible.builtin.assert:
@@ -72,7 +103,7 @@
       --format-storage (or set faas_storage_format=true) to explicitly allow
       creating the production XFS fast-root filesystem.
   when:
-    - (faas_storage_device | default('') | trim) != ''
+    - xfs_device_managed | bool
     - (faas_storage_device_type.stdout | default('') | trim) == ''
 
 - name: xfs — install xfsprogs before formatting a blank device
@@ -80,7 +111,7 @@
     name: xfsprogs
     state: present
   when:
-    - (faas_storage_device | default('') | trim) != ''
+    - xfs_device_managed | bool
     - (faas_storage_device_type.stdout | default('') | trim) == ''
     - faas_storage_format | bool
 
@@ -90,7 +121,7 @@
     argv: [mkfs.xfs, -m, reflink=1, "{{ faas_storage_device }}"]
   register: faas_storage_mkfs
   when:
-    - (faas_storage_device | default('') | trim) != ''
+    - xfs_device_managed | bool
     - (faas_storage_device_type.stdout | default('') | trim) == ''
     - faas_storage_format | bool
 
@@ -99,14 +130,14 @@
     argv: [blkid, -o, value, -s, UUID, "{{ faas_storage_device }}"]
   register: faas_storage_device_uuid
   changed_when: false
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — require a filesystem UUID for the managed mount
   ansible.builtin.assert:
     that:
       - (faas_storage_device_uuid.stdout | trim) | length > 0
     fail_msg: "Could not read a UUID from {{ faas_storage_device }}. Refusing to write fstab."
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — ensure fast-root mountpoint exists
   ansible.builtin.file:
@@ -123,7 +154,7 @@
     line: "UUID={{ faas_storage_device_uuid.stdout | trim }} {{ faas_storage_mountpoint }} xfs {{ faas_storage_mount_options }} 0 2"
     state: present
     create: false
-  when: (faas_storage_device | default('') | trim) != ''
+  when: xfs_device_managed | bool
 
 - name: xfs — read current fast-root mount target before mounting
   ansible.builtin.command:
@@ -141,7 +172,7 @@
     faas_storage_mount_result.rc != 0 and
     'already mounted' not in ((faas_storage_mount_result.stdout | default('')) ~ (faas_storage_mount_result.stderr | default('')))
   when:
-    - (faas_storage_device | default('') | trim) != ''
+    - xfs_device_managed | bool
     - (faas_storage_pre_mount_target.stdout | default('') | trim) != faas_storage_mountpoint
 
 - name: xfs — read the effective fast-root mount target
@@ -209,15 +240,51 @@
     group: root
     mode: "1700"
 
+# ADR-20261109120000 amendment 5: on an encrypted /srv/fc (unlocked through
+# Tang after early boot) a mount beneath it that local-fs.target requires
+# times out and drops boot into emergency mode. There the tmpfs is nofail
+# and every faas unit requires it instead (13-faas-jail-tmpfs.conf).
+# xfs_fc_encrypted comes from the probe at the top of this file.
 - name: xfs — persist and mount /srv/fc/jail tmpfs exactly once
   ansible.posix.mount:
     path: /srv/fc/jail
     src: tmpfs
     fstype: tmpfs
-    opts: nodev,nosuid,size=12G,mode=1700
+    opts: "nodev,nosuid,size=12G,mode=1700{{ ',nofail' if (xfs_fc_encrypted | bool) else '' }}"
     dump: "0"
     passno: "0"
     state: mounted
+
+- name: xfs — create the faas unit drop-in directory for the jail tmpfs
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: xfs_fc_encrypted | bool
+
+- name: xfs — keep faas daemons off an unmounted jail tmpfs
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-.service.d/13-faas-jail-tmpfs.conf
+    content: |
+      # Managed by Gregale (xfs, ADR-20261109120000 amendment 5). The jail
+      # tmpfs sits on the encrypted data volume and is nofail, so boot never
+      # waits for Tang; a faas daemon waits for it instead.
+      [Unit]
+      RequiresMountsFor=/srv/fc/jail
+    owner: root
+    group: root
+    mode: "0644"
+  register: xfs_jail_dropin
+  when: xfs_fc_encrypted | bool
+
+- name: xfs — load the jail tmpfs drop-in and the fstab change
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - xfs_fc_encrypted | bool
+    - xfs_jail_dropin is changed
 
 - name: xfs — verify /srv/fc/jail is the required tmpfs
   ansible.builtin.command:

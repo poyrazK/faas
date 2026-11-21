@@ -156,6 +156,11 @@ type App struct {
 	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
 	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
 	PerInstanceConcurrency int
+	// FunctionRunnerSlots is how many requests a function instance's
+	// generated runner executes at once (interpreter workers × the app's
+	// function_concurrency); zero for apps without one. It sizes burst
+	// scale-out only, never admission (burstScaleOutConcurrency).
+	FunctionRunnerSlots int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -901,6 +906,17 @@ type Backend interface {
 	// *api.Problem-shaped errors — the dispatch goroutine logs +
 	// drops those without writing a misleading ledger row.
 	ScheduleMirror(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
+}
+
+// backendLaneCapacityCount counts the instances holding the requesting
+// lane's slots: deploymentID's environment, or production when it is empty or
+// one of the production weights. Backends without lane data fall back to the
+// app-wide count.
+func backendLaneCapacityCount(backend Backend, appID, deploymentID string) int {
+	if counter, ok := backend.(interface{ LaneCapacityCount(string, string) int }); ok {
+		return counter.LaneCapacityCount(appID, deploymentID)
+	}
+	return backendCapacityCount(backend, appID)
 }
 
 func backendCapacityCount(backend Backend, appID string) int {
@@ -7148,7 +7164,8 @@ haveApp:
 		return
 	}
 	// A preview runs unreviewed code: the credential a platform gate just
-	// verified does not reach it (ADR-20261102100001).
+	// verified does not reach it (ADR-20261102100001), and no app receives
+	// a verified Gregale API key (ADR-20261120060000).
 	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
@@ -7700,7 +7717,7 @@ haveApp:
 				if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
 					admitErr = notServing
 				} else {
-					pick, admitErr = h.settleAtCapacity(r.Context(), app, limits, maxInstances, func() PickResult {
+					pick, admitErr = h.settleAtCapacity(r.Context(), app, exactDeploymentID, limits, maxInstances, func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
 					})
 					settled = admitErr == nil
@@ -7883,6 +7900,7 @@ haveApp:
 	// Reconcile pressure accumulated by the app-level burst. Public snapshots
 	// use deployment-scoped admissions; explicit pin URLs skip expansion.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
+	burstPerVM := burstScaleOutConcurrency(app, perVMConcurrency)
 	waitedForBurst := false
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
@@ -7891,9 +7909,9 @@ haveApp:
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
-			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency, routing)
+			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM, routing)
 		} else {
-			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM)
 		}
 		if burstErr != nil {
 			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
@@ -7960,7 +7978,7 @@ haveApp:
 		// cached instance was evicted since. Only a true count of live
 		// instances is the customer's limit (#5709).
 		var wakeErr error
-		pick, wakeErr = h.settleAtCapacity(r.Context(), app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+		pick, wakeErr = h.settleAtCapacity(r.Context(), app, "", limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 			return h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 		})
 		if wakeErr != nil {
@@ -8825,9 +8843,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
+	//
+	// A route probe (ADR-847) is platform traffic, not customer activity: it
+	// still refreshes the gateway's cached target below, but it never resets
+	// the idle timer. A probed app otherwise never parked, kept its RAM and
+	// its billed running time, and never captured a snapshot (ADR-847
+	// amendment 2026-11-19).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
 		now := time.Now()
-		h.lastSeen.Touch(target.InstanceID, now)
+		if !isRouteProbe(r.Context()) {
+			h.lastSeen.Touch(target.InstanceID, now)
+		}
 		if recorder, ok := h.backend.(targetActivityRecorder); ok {
 			recorder.TouchTarget(appID, target.InstanceID, now)
 		}
@@ -9553,7 +9579,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
-	if s.sharedCachePrivate {
+	if s.sharedCachePrivate || !declaresCachePolicy(s.Header()) {
 		markSharedCachePrivate(s.Header())
 	}
 }

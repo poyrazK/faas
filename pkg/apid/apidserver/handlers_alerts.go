@@ -1184,17 +1184,26 @@ func alertRuleFamily(m state.AlertMetric) string {
 // that catches obvious misconfigurations. We accept the small
 // resolver-discrepancy window because the dispatcher re-validates
 // every fire using the same oci.EgressIPAllowed predicate.
+// invalidTargetURL keeps the alert_rule_invalid code callers route on, with
+// a title that fits every caller: webhook, log drain and tenant webhook
+// creation answered "Invalid alert rule" (prod 2026-11-19).
+func invalidTargetURL(reason string) *api.Problem {
+	problem := api.ErrAlertRuleInvalid(reason)
+	problem.Title = "Invalid target URL"
+	return problem
+}
+
 func resolveAndCheckEgress(c context.Context, rawURL string) *api.Problem {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return api.ErrAlertRuleInvalid("webhook_url is not a valid URL")
+		return invalidTargetURL("the URL is not valid")
 	}
 	host := u.Hostname()
 	if host == "" {
-		return api.ErrAlertRuleInvalid("webhook_url must include a host")
+		return invalidTargetURL("the URL must include a host")
 	}
 	if legacyNumericHost(host) {
-		return api.ErrAlertRuleInvalid(fmt.Sprintf("the URL's host %s is a numeric address in a legacy form; use a hostname or a dotted IPv4 address", host))
+		return invalidTargetURL(fmt.Sprintf("the URL's host %s is a numeric address in a legacy form; use a hostname or a dotted IPv4 address", host))
 	}
 	// Resolve. If the host doesn't resolve at create-time we
 	// don't 403 — the customer might be staging a rule that fires

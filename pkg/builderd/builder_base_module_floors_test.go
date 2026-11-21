@@ -25,7 +25,7 @@ func TestBuilderBaseBuildKitModuleFloors(t *testing.T) {
 		arg, module, fixed, advisory string
 	}{
 		{"BUILDKIT_COMPRESS_VERSION", "github.com/klauspost/compress", "v1.20.2", "GO-2026-6865"},
-		{"CONTAINERD_VERSION", "github.com/containerd/containerd/v2", "v2.3.6", "GHSA-p7v4-vr35-mj6f"},
+		{"CONTAINERD_VERSION", "github.com/containerd/containerd/v2", "v2.3.7", "GHSA-vwhp-8p66-mq4f"},
 	} {
 		t.Run(tc.arg, func(t *testing.T) {
 			m := regexp.MustCompile(`(?m)^ARG ` + tc.arg + `=(\S+)$`).FindStringSubmatch(dockerfile)

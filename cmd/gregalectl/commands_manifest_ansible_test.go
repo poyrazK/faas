@@ -707,16 +707,19 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		enabled   bool
 		placement bool
 		direct    bool
+		entry     string
+		noTunnel  bool
 		edgedns   bool
 		spread    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
 		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
-		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true, entry: "both"},
+		{name: "direct entry without the tunnel", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: direct\n", enabled: true, direct: true, entry: "direct", noTunnel: true},
 		{name: "spread and local first", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n  placement_node_set: true\n  local_first: true\n", enabled: true, placement: true, spread: true},
 		{name: "direct entry with edgednsd", yaml: strings.Replace(base, "address: 10.42.0.2:50051\n", "address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n", 1) +
-			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, edgedns: true},
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, entry: "both", edgedns: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -767,9 +770,17 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			// ADR-20261102081618: direct entry opens the compute edges' TLS
 			// listener and keeps their 80/443 Cloudflare-only.
-			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
-				if got := strings.Contains(computeVars, line); got != tc.direct {
-					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+			if got := strings.Contains(computeVars, "faas_cloudflare_origin_only: true\n"); got != tc.direct {
+				t.Errorf("compute host Cloudflare-only firewall = %v, want %v:\n%s", got, tc.direct, computeVars)
+			}
+			if tc.direct && !strings.Contains(computeVars, fmt.Sprintf("faas_edge_entry: %q\n", tc.entry)) {
+				t.Errorf("compute host vars missing faas_edge_entry %q:\n%s", tc.entry, computeVars)
+			}
+			// ADR-20261102081618 step 6: entry direct drops the tunnel
+			// connector on the compute hosts and its scrape on the control plane.
+			for host, vars := range map[string]string{"control": controlVars, "compute": computeVars} {
+				if got := strings.Contains(vars, "faas_edge_tunnel: false\n"); got != tc.noTunnel {
+					t.Errorf("%s host faas_edge_tunnel: false = %v, want %v:\n%s", host, got, tc.noTunnel, vars)
 				}
 			}
 			if strings.Contains(controlVars, "faas_edge_entry") {

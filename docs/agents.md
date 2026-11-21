@@ -87,9 +87,12 @@ application response tools before starting.
 3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
    the user has authorized deployment. Follow the
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
-   review link. After approval, apply the same plan ID to resume the original
-   upload. Use that same plan ID to recover the receipt if the apply response
-   is lost.
+   review link. When the resumable upload commit requires approval, the same
+   plan and source stay available until the deadline shown in
+   `approval.expires_at` and on the review page. After approval, apply the same
+   plan ID to resume the original upload. If the app or its release changed
+   during review, inspect it before creating a new plan. Reuse the plan ID to
+   recover the receipt if the apply response is lost.
 4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
    with `{"app":"fastapi-demo","deployment_id":"<deployment.id>"}`.
    If `pending` is true, poll again with the same ID. Proceed when
@@ -208,7 +211,10 @@ gregale key create coding-agent --scopes apps:read,deploy:write
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `env:write` for the MCP tools that set non-secret variables.
+and crons. It also changes app settings, including turning off an app's
+request authentication, and deletes apps (a soft delete that `gregale app
+restore` reverses within the grace period). An agent key's `--approvals`
+(default `all`) puts deletes and production changes in front of a person. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access

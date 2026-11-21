@@ -12193,6 +12193,19 @@ $_$;
 
 
 --
+-- Name: erase_referral_subject(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.erase_referral_subject() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ DELETE FROM referral_attributions WHERE account_id=OLD.id;
+ RETURN OLD;
+END $$;
+
+
+--
 -- Name: event_app_company(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -31378,6 +31391,65 @@ COMMENT ON TABLE public.agent_run_ai_spend IS 'ADR-20261027090010 §7 per-run mo
 
 
 --
+-- Name: agent_run_approval_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_approval_decisions (
+    approval_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    decision text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    decided_by text DEFAULT ''::text NOT NULL,
+    decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_approval_decisions_decided_by_check CHECK ((char_length(decided_by) <= 200)),
+    CONSTRAINT agent_run_approval_decisions_decision_check CHECK ((decision = ANY (ARRAY['approve'::text, 'deny'::text]))),
+    CONSTRAINT agent_run_approval_decisions_note_check CHECK ((octet_length(note) <= 1024))
+);
+
+
+--
+-- Name: TABLE agent_run_approval_decisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_approval_decisions IS 'ADR-20261027090016 amendment 2: the seller''s decision on an agent run approval, written once by apid; outboundd reads it.';
+
+
+--
+-- Name: agent_run_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_approvals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool text NOT NULL,
+    arguments_sha256 text NOT NULL,
+    arguments_summary text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    released_at timestamp with time zone,
+    CONSTRAINT agent_run_approvals_arguments_sha256_check CHECK ((arguments_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT agent_run_approvals_arguments_summary_check CHECK ((octet_length(arguments_summary) <= 2048)),
+    CONSTRAINT agent_run_approvals_check CHECK ((expires_at > created_at)),
+    CONSTRAINT agent_run_approvals_tool_check CHECK (((char_length(tool) >= 1) AND (char_length(tool) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_run_approvals; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_approvals IS 'ADR-20261027090016 amendment 2: approval requests of agent runs, written by outboundd. arguments_summary is untrusted agent text.';
+
+
+--
+-- Name: COLUMN agent_run_approvals.released_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_run_approvals.released_at IS 'ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.';
+
+
+--
 -- Name: agent_run_callbacks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31402,6 +31474,52 @@ CREATE TABLE public.agent_run_callbacks (
 --
 
 COMMENT ON TABLE public.agent_run_callbacks IS 'ADR-20261030125501 gregale_run links written by apid: the thread and tool call a finished agent run answers.';
+
+
+--
+-- Name: agent_run_capability_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_capability_decisions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool text NOT NULL,
+    decision text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_capability_decisions_decision_check CHECK ((decision = ANY (ARRAY['denied'::text, 'budget'::text, 'disabled'::text]))),
+    CONSTRAINT agent_run_capability_decisions_tool_check CHECK (((char_length(tool) >= 1) AND (char_length(tool) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_run_capability_decisions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_capability_decisions IS 'ADR-20261027090016 amendment 1: capability calls outboundd refused, by policy (denied), exhausted budget (budget) or a tool switched off (disabled).';
+
+
+--
+-- Name: agent_run_capability_summaries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_run_capability_summaries (
+    run_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    tool_calls integer DEFAULT 0 NOT NULL,
+    refused_calls integer DEFAULT 0 NOT NULL,
+    first_call_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_call_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_run_capability_summaries_refused_calls_check CHECK ((refused_calls >= 0)),
+    CONSTRAINT agent_run_capability_summaries_tool_calls_check CHECK ((tool_calls >= 0))
+);
+
+
+--
+-- Name: TABLE agent_run_capability_summaries; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_run_capability_summaries IS 'ADR-20261027090016 amendment 1: per-run capability counts written by outboundd. tool_calls are the calls admitted against the run''s tool-call budget.';
 
 
 --
@@ -31510,6 +31628,7 @@ CREATE TABLE public.agent_runs (
     workflow_run_id uuid,
     workflow_step text,
     workflow_event text,
+    deadline_credit_max_sec integer DEFAULT 0 NOT NULL,
     CONSTRAINT agent_runs_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_runs_attempt_check CHECK ((attempt >= 1)),
     CONSTRAINT agent_runs_boot_ms_check CHECK (((boot_ms IS NULL) OR (boot_ms >= 0))),
@@ -31555,6 +31674,13 @@ COMMENT ON TABLE public.agent_runs IS 'ADR-20261027090010 agent runs; apid inser
 --
 
 COMMENT ON COLUMN public.agent_runs.lease_owner IS 'ADR-20261027090014 agentd replica holding the lease; diagnostics only.';
+
+
+--
+-- Name: COLUMN agent_runs.deadline_credit_max_sec; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_runs.deadline_credit_max_sec IS 'ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.';
 
 
 --
@@ -31633,6 +31759,7 @@ CREATE TABLE public.agent_versions (
     ai_budget_millicents bigint,
     deliveries jsonb DEFAULT '[]'::jsonb NOT NULL,
     pause_during_model_calls boolean DEFAULT true NOT NULL,
+    capability_policy jsonb,
     CONSTRAINT agent_versions_ai_budget_millicents_check CHECK (((ai_budget_millicents IS NULL) OR ((ai_budget_millicents >= 1) AND (ai_budget_millicents <= '1000000000000'::bigint)))),
     CONSTRAINT agent_versions_deliveries_check CHECK (((jsonb_typeof(deliveries) = 'array'::text) AND (jsonb_array_length(deliveries) <= 4))),
     CONSTRAINT agent_versions_harness_check CHECK (((harness_preset IS NULL) <> (harness_image IS NULL))),
@@ -31654,6 +31781,13 @@ CREATE TABLE public.agent_versions (
 --
 
 COMMENT ON TABLE public.agent_versions IS 'ADR-20261027090010 immutable agent versions: harness descriptor, prompt template, size and timeout.';
+
+
+--
+-- Name: COLUMN agent_versions.capability_policy; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.agent_versions.capability_policy IS 'ADR-20261027090016 amendment 1: the tools a run of this version may call over the capability gateway, and its per-run tool-call budget. Written by apid; read by outboundd.';
 
 
 --
@@ -31946,6 +32080,37 @@ CREATE TABLE public.alert_test_sends (
 --
 
 COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
+
+
+--
+-- Name: analytics_cohort_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_cohort_members (
+    cohort_id uuid NOT NULL,
+    customer_id uuid NOT NULL
+);
+
+
+--
+-- Name: analytics_cohorts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.analytics_cohorts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    environment_id uuid NOT NULL,
+    key text NOT NULL,
+    definition jsonb NOT NULL,
+    members integer DEFAULT 0 NOT NULL,
+    truncated boolean DEFAULT false NOT NULL,
+    refreshed_at timestamp with time zone,
+    refresh_requested_at timestamp with time zone DEFAULT now() NOT NULL,
+    refresh_error text DEFAULT ''::text NOT NULL,
+    created_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT analytics_cohorts_chk CHECK (((key ~ '^[a-z][a-z0-9_-]{0,63}$'::text) AND (jsonb_typeof(definition) = 'object'::text) AND ((definition ->> 'kind'::text) = ANY (ARRAY['did'::text, 'did_not'::text, 'funnel'::text])) AND (members >= 0) AND (length(refresh_error) <= 512) AND ((length(created_by) >= 1) AND (length(created_by) <= 256))))
+);
 
 
 --
@@ -32656,7 +32821,7 @@ CREATE TABLE public.api_keys (
     runs_principal_id uuid DEFAULT gen_random_uuid() NOT NULL,
     display_prefix text,
     CONSTRAINT api_keys_display_prefix_chk CHECK (((display_prefix IS NULL) OR (display_prefix ~ '^fp_[a-z]+_[0-9a-f]{8}$'::text))),
-    CONSTRAINT api_keys_scopes_vocab_v4_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'secrets:request'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'queues:consume'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text, 'agent'::text]) AND (cardinality(scopes) > 0))),
+    CONSTRAINT api_keys_scopes_vocab_v5_chk CHECK (((scopes <@ ARRAY['admin'::text, 'apps:read'::text, 'deploy:write'::text, 'secrets:read'::text, 'secrets:write'::text, 'secrets:request'::text, 'usage:read'::text, 'env:read'::text, 'env:write'::text, 'registry_credentials:read'::text, 'registry_credentials:write'::text, 'upstreams:write'::text, 'metrics:write'::text, 'delayed_tasks:read'::text, 'delayed_tasks:write'::text, 'events:publish'::text, 'queues:send'::text, 'queues:consume'::text, 'storage:manage'::text, 'storage:read'::text, 'storage:write'::text, 'postgres:manage'::text, 'postgres:read'::text, 'data:read'::text, 'github:manage'::text, 'project_environments:read'::text, 'project_environments:qualify'::text, 'runs:read'::text, 'runs:write'::text, 'agent'::text]) AND (cardinality(scopes) > 0))),
     CONSTRAINT api_keys_status_check CHECK ((status = ANY (ARRAY['active'::text, 'grace'::text, 'revoked'::text])))
 );
 
@@ -43083,8 +43248,13 @@ CREATE TABLE public.flag_experiment_units (
     latency_requests bigint DEFAULT 0 NOT NULL,
     slow_requests bigint DEFAULT 0 NOT NULL,
     value_sum bigint DEFAULT 0 NOT NULL,
+    pre_value double precision,
+    unit_customer_id uuid,
+    subject_hash bytea,
+    den_sum bigint DEFAULT 0 NOT NULL,
     CONSTRAINT flag_experiment_units_chk CHECK ((((length(variant) >= 1) AND (length(variant) <= 128)) AND ((converted_at IS NULL) OR (converted_at >= first_exposed_at)))),
-    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests))))
+    CONSTRAINT flag_experiment_units_counts_chk CHECK (((requests >= 0) AND ((errors >= 0) AND (errors <= requests)) AND ((latency_requests >= 0) AND (latency_requests <= requests)) AND ((slow_requests >= 0) AND (slow_requests <= latency_requests)))),
+    CONSTRAINT flag_experiment_units_subject_chk CHECK ((((subject_hash IS NULL) AND (unit_customer_id IS NULL)) OR ((length(subject_hash) = 32) AND (unit_customer_id IS NOT NULL))))
 );
 
 
@@ -43117,7 +43287,20 @@ CREATE TABLE public.flag_experiments (
     stop_reason text DEFAULT ''::text NOT NULL,
     breach jsonb,
     value_through_day date,
-    CONSTRAINT flag_experiments_v2_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL))))
+    metric_definition jsonb DEFAULT '{}'::jsonb NOT NULL,
+    cuped boolean DEFAULT true NOT NULL,
+    min_cuped_p_values jsonb DEFAULT '{}'::jsonb NOT NULL,
+    unit text DEFAULT 'customer'::text NOT NULL,
+    layer text DEFAULT ''::text NOT NULL,
+    traffic integer DEFAULT 0 NOT NULL,
+    layer_from integer DEFAULT 0 NOT NULL,
+    layer_to integer DEFAULT 0 NOT NULL,
+    allocation text DEFAULT 'fixed'::text NOT NULL,
+    bandit jsonb DEFAULT '[]'::jsonb NOT NULL,
+    bandit_weighted_at timestamp with time zone,
+    denominator_event text DEFAULT ''::text NOT NULL,
+    percentile integer DEFAULT 0 NOT NULL,
+    CONSTRAINT flag_experiments_v4_chk CHECK (((key ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'::text) AND (metric_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text) AND (metric_kind = ANY (ARRAY['conversion'::text, 'mean'::text, 'funnel'::text, 'retention'::text, 'ratio'::text, 'percentile'::text])) AND (status = ANY (ARRAY['draft'::text, 'running'::text, 'stopped'::text])) AND (mixing_lift > (0)::double precision) AND (mixing_lift <= (1)::double precision) AND (jsonb_typeof(weights) = 'object'::text) AND (jsonb_typeof(min_p_values) = 'object'::text) AND (jsonb_typeof(min_cuped_p_values) = 'object'::text) AND (jsonb_typeof(metric_definition) = 'object'::text) AND (jsonb_typeof(guardrails) = 'object'::text) AND ((breach IS NULL) OR (jsonb_typeof(breach) = 'object'::text)) AND ((latency_threshold_ms IS NULL) OR (latency_threshold_ms >= 0)) AND (stop_reason = ANY (ARRAY[''::text, 'manual'::text, 'guardrail_breach'::text, 'shipped'::text])) AND ((status = 'stopped'::text) OR (stop_reason = ''::text)) AND ((length(flag_key) >= 1) AND (length(flag_key) <= 128)) AND ((length(rule_id) >= 1) AND (length(rule_id) <= 128)) AND ((length(control) >= 1) AND (length(control) <= 128)) AND ((length(created_by) >= 1) AND (length(created_by) <= 256)) AND ((status = 'draft'::text) OR (started_at IS NOT NULL)) AND ((status <> 'stopped'::text) OR (stopped_at IS NOT NULL)) AND (unit = ANY (ARRAY['customer'::text, 'subject'::text])) AND (allocation = ANY (ARRAY['fixed'::text, 'bandit'::text])) AND ((layer = ''::text) OR (layer ~ '^[a-z][a-z0-9_-]{0,63}$'::text)) AND ((traffic >= 0) AND (traffic <= 10000)) AND ((layer_from >= 0) AND (layer_from <= 10000)) AND ((layer_to >= 0) AND (layer_to <= 10000)) AND (layer_from <= layer_to) AND (jsonb_typeof(bandit) = 'array'::text) AND ((denominator_event = ''::text) OR (denominator_event ~ '^[a-z][a-z0-9_.-]{0,63}$'::text)) AND ((percentile >= 0) AND (percentile <= 99))))
 );
 
 
@@ -43634,6 +43817,22 @@ CREATE TABLE public.hosted_task_rehearsal_plans (
     CONSTRAINT hosted_task_rehearsal_plans_check CHECK ((((((payload -> 'Plan'::text) ->> 'account_id'::text) = (account_id)::text) AND (((payload -> 'Plan'::text) ->> 'intent_id'::text) = id) AND ((((payload -> 'Plan'::text) ->> 'expires_at'::text))::timestamp with time zone = expires_at) AND (((payload -> 'Plan'::text) ->> 'status'::text) = ANY (ARRAY['planned'::text, 'approved'::text, 'claimed'::text, 'revoked'::text, 'stale'::text, 'expired'::text])) AND ((payload -> 'Plan'::text) @> '{"no_traffic": true}'::jsonb)) IS TRUE)),
     CONSTRAINT hosted_task_rehearsal_plans_id_check CHECK ((id ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT hosted_task_rehearsal_plans_payload_check CHECK (((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 4096)))
+);
+
+
+--
+-- Name: hosted_task_rehearsal_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosted_task_rehearsal_runs (
+    account_id uuid NOT NULL,
+    id text NOT NULL,
+    run_id uuid NOT NULL,
+    plan_sha256 text NOT NULL,
+    reserved_at timestamp with time zone NOT NULL,
+    approval_expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT hosted_task_rehearsal_runs_check CHECK ((reserved_at < approval_expires_at)),
+    CONSTRAINT hosted_task_rehearsal_runs_plan_sha256_check CHECK ((plan_sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -47079,6 +47278,7 @@ CREATE TABLE public.managed_postgres_custom_roles (
     retry_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    default_for text[] DEFAULT '{}'::text[] NOT NULL,
     CONSTRAINT managed_postgres_custom_roles_attempt_count_check CHECK ((attempt_count >= 0)),
     CONSTRAINT managed_postgres_custom_roles_granted_to_check CHECK ((granted_to <@ ARRAY['migration'::text, 'read_only'::text, 'read_write'::text])),
     CONSTRAINT managed_postgres_custom_roles_last_error_check CHECK ((char_length(last_error) <= 128)),
@@ -49093,6 +49293,21 @@ CREATE TABLE public.managed_realtime_worker_heartbeats (
     CONSTRAINT managed_realtime_worker_heartbeats_ready_check CHECK ((ready = ANY (ARRAY[true, false]))),
     CONSTRAINT managed_realtime_worker_heartbeats_status_code_check CHECK (((octet_length(status_code) <= 64) AND (status_code ~ '^[ -~]*$'::text))),
     CONSTRAINT managed_realtime_worker_heartbeats_worker_check CHECK (((octet_length(worker) >= 1) AND (octet_length(worker) <= 128)))
+);
+
+
+--
+-- Name: managed_valkey_caches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_valkey_caches (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    memory_mb integer NOT NULL,
+    eviction_policy text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT managed_valkey_caches_eviction_policy_check CHECK ((eviction_policy = ANY (ARRAY['allkeys-lru'::text, 'allkeys-lfu'::text, 'allkeys-random'::text, 'volatile-lru'::text, 'volatile-lfu'::text, 'volatile-random'::text, 'volatile-ttl'::text, 'noeviction'::text]))),
+    CONSTRAINT managed_valkey_caches_memory_mb_check CHECK ((((memory_mb >= 32) AND (memory_mb <= 4096)) AND ((memory_mb % 32) = 0)))
 );
 
 
@@ -57526,6 +57741,8 @@ CREATE TABLE public.referral_attributions (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     attribution_source text DEFAULT 'signup'::text NOT NULL,
+    subject_kind text DEFAULT 'account'::text NOT NULL,
+    selected_by uuid,
     CONSTRAINT referral_attributions_check CHECK (((first_paid_invoice_id IS NULL) = (first_paid_at IS NULL))),
     CONSTRAINT referral_attributions_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
     CONSTRAINT referral_attributions_conversion_days_check CHECK (((conversion_days >= 1) AND (conversion_days <= 365))),
@@ -57540,7 +57757,29 @@ CREATE TABLE public.referral_attributions (
     CONSTRAINT referral_attributions_referred_reward_cents_check CHECK (((referred_reward_cents >= 0) AND (referred_reward_cents <= 100000000))),
     CONSTRAINT referral_attributions_source_check CHECK ((attribution_source = ANY (ARRAY['signup'::text, 'checkout'::text]))),
     CONSTRAINT referral_attributions_stage_check CHECK ((stage = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'lost'::text]))),
+    CONSTRAINT referral_attributions_subject_kind_check CHECK ((subject_kind = ANY (ARRAY['account'::text, 'org'::text]))),
     CONSTRAINT referral_attributions_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: referral_credit_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.referral_credit_changes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    from_owner_id uuid,
+    to_owner_id uuid NOT NULL,
+    from_commission_bps integer NOT NULL,
+    to_commission_bps integer NOT NULL,
+    reason text NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT referral_credit_changes_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT referral_credit_changes_from_commission_bps_check CHECK (((from_commission_bps >= 0) AND (from_commission_bps <= 10000))),
+    CONSTRAINT referral_credit_changes_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 500))),
+    CONSTRAINT referral_credit_changes_to_commission_bps_check CHECK (((to_commission_bps >= 0) AND (to_commission_bps <= 10000)))
 );
 
 
@@ -59599,6 +59838,55 @@ CREATE TABLE public.sales_activities (
 
 
 --
+-- Name: sales_commission_agreements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_commission_agreements (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    commission_bps integer NOT NULL,
+    effective_from timestamp with time zone NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_commission_agreements_commission_bps_check CHECK (((commission_bps >= 0) AND (commission_bps <= 10000))),
+    CONSTRAINT sales_commission_agreements_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_commission_agreements_effective_from_check CHECK (isfinite(effective_from)),
+    CONSTRAINT sales_commission_agreements_note_check CHECK ((octet_length(note) <= 500))
+);
+
+
+--
+-- Name: sales_commission_payouts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_commission_payouts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    owner_id uuid NOT NULL,
+    amount_cents bigint NOT NULL,
+    currency text NOT NULL,
+    paid_on date NOT NULL,
+    reference text DEFAULT ''::text NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    voided_at timestamp with time zone,
+    voided_by uuid,
+    void_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT sales_commission_payouts_amount_cents_check CHECK (((amount_cents >= 1) AND (amount_cents <= 100000000))),
+    CONSTRAINT sales_commission_payouts_check CHECK (((voided_at IS NULL) = (void_reason = ''::text))),
+    CONSTRAINT sales_commission_payouts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_commission_payouts_currency_check CHECK ((currency = ANY (ARRAY['usd'::text, 'eur'::text]))),
+    CONSTRAINT sales_commission_payouts_note_check CHECK ((octet_length(note) <= 500)),
+    CONSTRAINT sales_commission_payouts_paid_on_check CHECK (isfinite(paid_on)),
+    CONSTRAINT sales_commission_payouts_reference_check CHECK ((octet_length(reference) <= 200)),
+    CONSTRAINT sales_commission_payouts_void_reason_check CHECK ((octet_length(void_reason) <= 500)),
+    CONSTRAINT sales_commission_payouts_voided_at_check CHECK (((voided_at IS NULL) OR isfinite(voided_at)))
+);
+
+
+--
 -- Name: sales_inquiries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59780,9 +60068,9 @@ CREATE VIEW public.sales_referral_overview AS
  SELECT r.account_id,
     l.owner_id,
     l.kind,
-    a.email,
-    a.plan,
-    a.status AS account_status,
+    COALESCE(a.email, buyer.email, ''::public.citext) AS email,
+    COALESCE(a.plan, o.plan, ''::text) AS plan,
+    COALESCE(a.status, o.status, ''::text) AS account_status,
     r.created_at,
     r.stage,
     r.note,
@@ -59790,7 +60078,7 @@ CREATE VIEW public.sales_referral_overview AS
     r.currency,
     ( SELECT count(*) AS count
            FROM public.apps ap
-          WHERE (ap.account_id = a.id)) AS apps,
+          WHERE (ap.account_id = r.account_id)) AS apps,
     COALESCE((i.status = 'paid'::text), false) AS paid,
     COALESCE(i.amount_paid_cents, (0)::bigint) AS paid_cents,
     (r.first_paid_at + make_interval(days => r.hold_days)) AS eligible_at,
@@ -59799,7 +60087,7 @@ CREATE VIEW public.sales_referral_overview AS
             WHEN (i.id IS NULL) THEN 'review'::text
             WHEN ((i.status <> 'paid'::text) OR (i.amount_refunded_cents > 0) OR (i.amount_refund_pending_cents > 0)) THEN 'reversed'::text
             WHEN (i.currency <> r.currency) THEN 'currency_mismatch'::text
-            WHEN ((a.status <> 'active'::text) OR (a.email_verified_at IS NULL) OR (owner.status <> 'active'::text)) THEN 'review'::text
+            WHEN ((owner.status <> 'active'::text) OR ((r.subject_kind = 'account'::text) AND ((a.id IS NULL) OR (a.status <> 'active'::text) OR (a.email_verified_at IS NULL))) OR ((r.subject_kind = 'org'::text) AND ((o.id IS NULL) OR (o.status <> 'active'::text) OR o.deleted_pending))) THEN 'review'::text
             WHEN (((l.kind = 'customer'::text) AND (r.customer_reward_cents = 0) AND (r.referred_reward_cents = 0)) OR ((l.kind = 'sales'::text) AND (r.commission_bps = 0))) THEN 'unconfigured'::text
             WHEN (now() < (r.first_paid_at + make_interval(days => r.hold_days))) THEN 'holding'::text
             ELSE 'eligible'::text
@@ -59811,12 +60099,21 @@ CREATE VIEW public.sales_referral_overview AS
         CASE
             WHEN (l.kind = 'customer'::text) THEN r.referred_reward_cents
             ELSE (0)::bigint
-        END AS referred_reward_cents
-   FROM ((((public.referral_attributions r
+        END AS referred_reward_cents,
+    r.subject_kind,
+    COALESCE(o.name, ''::text) AS org_name,
+    r.commission_bps,
+    p.id AS payout_id,
+    COALESCE(p.amount_cents, (0)::bigint) AS payout_cents,
+    p.paid_on AS payout_paid_on
+   FROM (((((((public.referral_attributions r
      JOIN public.referral_links l ON ((l.code = r.code)))
-     JOIN public.accounts a ON ((a.id = r.account_id)))
+     LEFT JOIN public.accounts a ON (((a.id = r.account_id) AND (r.subject_kind = 'account'::text))))
+     LEFT JOIN public.orgs o ON (((o.id = r.account_id) AND (r.subject_kind = 'org'::text))))
+     LEFT JOIN public.accounts buyer ON ((buyer.id = r.selected_by)))
      JOIN public.accounts owner ON ((owner.id = l.owner_id)))
-     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))));
+     LEFT JOIN public.invoices i ON (((i.id = r.first_paid_invoice_id) AND (i.account_id = r.account_id))))
+     LEFT JOIN public.sales_commission_payouts p ON (((p.account_id = r.account_id) AND (p.voided_at IS NULL))));
 
 
 --
@@ -59841,6 +60138,25 @@ CREATE TABLE public.sales_tasks (
     CONSTRAINT sales_tasks_title_check CHECK (((title = btrim(title)) AND ((octet_length(title) >= 1) AND (octet_length(title) <= 200)))),
     CONSTRAINT sales_tasks_updated_at_check CHECK (isfinite(updated_at)),
     CONSTRAINT sales_tasks_version_check CHECK ((version > 0))
+);
+
+
+--
+-- Name: sales_team_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sales_team_members (
+    account_id uuid NOT NULL,
+    role text NOT NULL,
+    active boolean DEFAULT true NOT NULL,
+    updated_by uuid,
+    version bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT sales_team_members_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT sales_team_members_role_check CHECK ((role = ANY (ARRAY['manager'::text, 'rep'::text]))),
+    CONSTRAINT sales_team_members_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT sales_team_members_version_check CHECK ((version > 0))
 );
 
 
@@ -60031,6 +60347,7 @@ CREATE TABLE public.sandbox_sessions (
     task_output bytea,
     egress_allow text[],
     egress_deny text[],
+    placed_node_id text,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
     CONSTRAINT sandbox_sessions_image_ref_check CHECK (((image_ref IS NULL) OR ((char_length(image_ref) >= 1) AND (char_length(image_ref) <= 512)))),
@@ -61060,6 +61377,39 @@ CREATE TABLE public.status_observation_buckets (
     CONSTRAINT status_observation_buckets_component_chk CHECK ((component = ANY (ARRAY['api_console'::text, 'deployments'::text, 'app_execution'::text, 'networking'::text, 'observability'::text]))),
     CONSTRAINT status_observation_buckets_five_minute_chk CHECK ((mod((EXTRACT(epoch FROM bucket_at))::bigint, (300)::bigint) = 0)),
     CONSTRAINT status_observation_buckets_status_chk CHECK ((status = ANY (ARRAY['operational'::text, 'maintenance'::text, 'degraded'::text, 'partial_outage'::text, 'major_outage'::text, 'unknown'::text])))
+);
+
+
+--
+-- Name: storage_grant_audit; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.storage_grant_audit (
+    id bigint NOT NULL,
+    node_id uuid NOT NULL,
+    subject_class text NOT NULL,
+    subject_id uuid NOT NULL,
+    app_id uuid,
+    access text NOT NULL,
+    objects integer NOT NULL,
+    granted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT storage_grant_audit_access_check CHECK ((access = ANY (ARRAY['read'::text, 'write'::text]))),
+    CONSTRAINT storage_grant_audit_objects_check CHECK (((objects > 0) AND (objects <= 64))),
+    CONSTRAINT storage_grant_audit_subject_class_check CHECK ((subject_class = ANY (ARRAY['deployment'::text, 'sandbox_account'::text, 'job'::text, 'build'::text])))
+);
+
+
+--
+-- Name: storage_grant_audit_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.storage_grant_audit ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.storage_grant_audit_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -63468,11 +63818,43 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 
 --
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_pkey PRIMARY KEY (approval_id);
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_run_callbacks agent_run_callbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.agent_run_callbacks
     ADD CONSTRAINT agent_run_callbacks_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_pkey PRIMARY KEY (run_id);
 
 
 --
@@ -63489,6 +63871,14 @@ ALTER TABLE ONLY public.agent_run_outputs
 
 ALTER TABLE ONLY public.agent_run_usage
     ADD CONSTRAINT agent_run_usage_pkey PRIMARY KEY (run_id);
+
+
+--
+-- Name: agent_runs agent_runs_deadline_credit_max_sec_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_runs
+    ADD CONSTRAINT agent_runs_deadline_credit_max_sec_check CHECK (((deadline_credit_max_sec >= 0) AND (deadline_credit_max_sec <= 3600))) NOT VALID;
 
 
 --
@@ -63521,6 +63911,14 @@ ALTER TABLE ONLY public.agent_sandbox_task_calls
 
 ALTER TABLE ONLY public.agent_undo_records
     ADD CONSTRAINT agent_undo_records_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: agent_versions agent_versions_capability_policy_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.agent_versions
+    ADD CONSTRAINT agent_versions_capability_policy_check CHECK (((capability_policy IS NULL) OR (jsonb_typeof(capability_policy) = 'object'::text))) NOT VALID;
 
 
 --
@@ -63633,6 +64031,30 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: analytics_cohort_members analytics_cohort_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_pkey PRIMARY KEY (cohort_id, customer_id);
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_env_key_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_env_key_uniq UNIQUE (environment_id, key);
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_pkey PRIMARY KEY (id);
 
 
 --
@@ -69004,6 +69426,22 @@ ALTER TABLE ONLY public.hosted_task_rehearsal_plans
 
 
 --
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_pkey PRIMARY KEY (account_id, id);
+
+
+--
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_run_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_run_id_key UNIQUE (run_id);
+
+
+--
 -- Name: hosted_task_source_intents hosted_task_source_intents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -70588,6 +71026,14 @@ ALTER TABLE ONLY public.managed_postgres_creation_receipts
 
 
 --
+-- Name: managed_postgres_custom_roles managed_postgres_custom_roles_default_for_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_custom_roles
+    ADD CONSTRAINT managed_postgres_custom_roles_default_for_check CHECK (((default_for <@ ARRAY['read_only'::text, 'read_write'::text]) AND (default_for <@ granted_to))) NOT VALID;
+
+
+--
 -- Name: managed_postgres_custom_roles managed_postgres_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71321,6 +71767,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_valkey_caches managed_valkey_caches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -75148,6 +75602,14 @@ ALTER TABLE ONLY public.referral_attributions
 
 
 --
+-- Name: referral_credit_changes referral_credit_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_credit_changes
+    ADD CONSTRAINT referral_credit_changes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: referral_links referral_links_owner_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75908,6 +76370,22 @@ ALTER TABLE ONLY public.sales_activities
 
 
 --
+-- Name: sales_commission_agreements sales_commission_agreements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_commission_payouts sales_commission_payouts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_payouts
+    ADD CONSTRAINT sales_commission_payouts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sales_inquiries sales_inquiries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -75985,6 +76463,14 @@ ALTER TABLE ONLY public.sales_qualifications
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_team_members sales_team_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_pkey PRIMARY KEY (account_id);
 
 
 --
@@ -76081,6 +76567,14 @@ ALTER TABLE public.sandbox_sessions
 
 ALTER TABLE ONLY public.sandbox_sessions
     ADD CONSTRAINT sandbox_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sandbox_sessions sandbox_sessions_placed_node_id_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.sandbox_sessions
+    ADD CONSTRAINT sandbox_sessions_placed_node_id_check CHECK (((placed_node_id IS NULL) OR ((char_length(placed_node_id) >= 1) AND (char_length(placed_node_id) <= 128)))) NOT VALID;
 
 
 --
@@ -76681,6 +77175,14 @@ ALTER TABLE ONLY public.status_incidents
 
 ALTER TABLE ONLY public.status_observation_buckets
     ADD CONSTRAINT status_observation_buckets_pkey PRIMARY KEY (component, bucket_at);
+
+
+--
+-- Name: storage_grant_audit storage_grant_audit_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.storage_grant_audit
+    ADD CONSTRAINT storage_grant_audit_pkey PRIMARY KEY (id);
 
 
 --
@@ -77834,6 +78336,13 @@ CREATE INDEX agent_run_ai_reservations_run_idx ON public.agent_run_ai_reservatio
 
 
 --
+-- Name: agent_run_approvals_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_approvals_run_idx ON public.agent_run_approvals USING btree (run_id, created_at);
+
+
+--
 -- Name: agent_run_callbacks_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77852,6 +78361,13 @@ CREATE INDEX agent_run_callbacks_endpoint_idx ON public.agent_run_callbacks USIN
 --
 
 CREATE INDEX agent_run_callbacks_undelivered_idx ON public.agent_run_callbacks USING btree (created_at) WHERE (delivered_at IS NULL);
+
+
+--
+-- Name: agent_run_capability_decisions_run_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_run_capability_decisions_run_idx ON public.agent_run_capability_decisions USING btree (run_id, created_at);
 
 
 --
@@ -78125,6 +78641,20 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 --
 
 CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: analytics_cohort_members_customer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_cohort_members_customer_idx ON public.analytics_cohort_members USING btree (customer_id);
+
+
+--
+-- Name: analytics_cohorts_refresh_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX analytics_cohorts_refresh_idx ON public.analytics_cohorts USING btree (refresh_requested_at);
 
 
 --
@@ -84481,6 +85011,13 @@ CREATE INDEX managed_realtime_subscription_tickets_principal ON public.managed_r
 
 
 --
+-- Name: managed_valkey_caches_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_valkey_caches_account_idx ON public.managed_valkey_caches USING btree (account_id);
+
+
+--
 -- Name: mcp_oauth_retirements_account_history; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -87155,6 +87692,13 @@ CREATE INDEX referral_attributions_link ON public.referral_attributions USING bt
 
 
 --
+-- Name: referral_credit_changes_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX referral_credit_changes_account ON public.referral_credit_changes USING btree (account_id, created_at);
+
+
+--
 -- Name: referral_links_share_code_unique; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -87799,6 +88343,27 @@ CREATE INDEX sales_activities_page ON public.sales_activities USING btree (lead_
 
 
 --
+-- Name: sales_commission_agreements_current; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_commission_agreements_current ON public.sales_commission_agreements USING btree (account_id, effective_from DESC, created_at DESC);
+
+
+--
+-- Name: sales_commission_payouts_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sales_commission_payouts_live ON public.sales_commission_payouts USING btree (account_id) WHERE (voided_at IS NULL);
+
+
+--
+-- Name: sales_commission_payouts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sales_commission_payouts_owner ON public.sales_commission_payouts USING btree (owner_id, paid_on);
+
+
+--
 -- Name: sales_inquiries_active_email; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -88346,6 +88911,20 @@ CREATE INDEX status_incidents_timeline_idx ON public.status_incidents USING btre
 --
 
 CREATE INDEX status_observation_buckets_day_idx ON public.status_observation_buckets USING btree ((((bucket_at AT TIME ZONE 'UTC'::text))::date), component);
+
+
+--
+-- Name: storage_grant_audit_node_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_grant_audit_node_idx ON public.storage_grant_audit USING btree (node_id, granted_at);
+
+
+--
+-- Name: storage_grant_audit_subject_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX storage_grant_audit_subject_idx ON public.storage_grant_audit USING btree (subject_id, granted_at);
 
 
 --
@@ -89655,6 +90234,13 @@ CREATE TRIGGER accounts_billing_mail_revision_guard BEFORE UPDATE OF status, pas
 --
 
 CREATE TRIGGER accounts_deployment_mail_revision_guard BEFORE UPDATE OF email, status, deletion_requested_at, deployment_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_deployment_mail_revision();
+
+
+--
+-- Name: accounts accounts_erase_referral_subject; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_erase_referral_subject AFTER DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.erase_referral_subject();
 
 
 --
@@ -95114,6 +95700,13 @@ CREATE TRIGGER orgs_deletion_requested_at BEFORE INSERT OR UPDATE OF deleted_pen
 
 
 --
+-- Name: orgs orgs_erase_referral_subject; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER orgs_erase_referral_subject AFTER DELETE ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.erase_referral_subject();
+
+
+--
 -- Name: orgs orgs_plan_changed_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -97201,6 +97794,38 @@ ALTER TABLE ONLY public.agent_run_ai_spend
 
 
 --
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approval_decisions agent_run_approval_decisions_approval_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approval_decisions
+    ADD CONSTRAINT agent_run_approval_decisions_approval_id_fkey FOREIGN KEY (approval_id) REFERENCES public.agent_run_approvals(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_approvals agent_run_approvals_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_approvals
+    ADD CONSTRAINT agent_run_approvals_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
 -- Name: agent_run_callbacks agent_run_callbacks_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -97222,6 +97847,38 @@ ALTER TABLE ONLY public.agent_run_callbacks
 
 ALTER TABLE ONLY public.agent_run_callbacks
     ADD CONSTRAINT agent_run_callbacks_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_decisions agent_run_capability_decisions_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_decisions
+    ADD CONSTRAINT agent_run_capability_decisions_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_run_capability_summaries agent_run_capability_summaries_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_run_capability_summaries
+    ADD CONSTRAINT agent_run_capability_summaries_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.agent_runs(id) ON DELETE CASCADE;
 
 
 --
@@ -97478,6 +98135,38 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohort_members analytics_cohort_members_cohort_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_cohort_id_fkey FOREIGN KEY (cohort_id) REFERENCES public.analytics_cohorts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohort_members analytics_cohort_members_customer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohort_members
+    ADD CONSTRAINT analytics_cohort_members_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: analytics_cohorts analytics_cohorts_environment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.analytics_cohorts
+    ADD CONSTRAINT analytics_cohorts_environment_id_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE;
 
 
 --
@@ -104097,6 +104786,14 @@ ALTER TABLE ONLY public.hosted_task_rehearsal_plans
 
 
 --
+-- Name: hosted_task_rehearsal_runs hosted_task_rehearsal_runs_account_id_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosted_task_rehearsal_runs
+    ADD CONSTRAINT hosted_task_rehearsal_runs_account_id_id_fkey FOREIGN KEY (account_id, id) REFERENCES public.hosted_task_rehearsal_plans(account_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: hosted_task_source_intents hosted_task_source_intents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -106678,6 +107375,14 @@ ALTER TABLE ONLY public.managed_realtime_worker_credentials
 
 ALTER TABLE ONLY public.managed_realtime_worker_heartbeats
     ADD CONSTRAINT managed_realtime_worker_heartbeats_group_id_fkey FOREIGN KEY (group_id) REFERENCES public.managed_realtime_consumer_groups(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_valkey_caches managed_valkey_caches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_valkey_caches
+    ADD CONSTRAINT managed_valkey_caches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
@@ -111473,14 +112178,6 @@ ALTER TABLE ONLY public.recent_build_claims
 
 
 --
--- Name: referral_attributions referral_attributions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.referral_attributions
-    ADD CONSTRAINT referral_attributions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
-
-
---
 -- Name: referral_attributions referral_attributions_code_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -111489,11 +112186,27 @@ ALTER TABLE ONLY public.referral_attributions
 
 
 --
+-- Name: referral_attributions referral_attributions_namespace_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_attributions
+    ADD CONSTRAINT referral_attributions_namespace_fk FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
 -- Name: referral_attributions referral_attributions_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.referral_attributions
     ADD CONSTRAINT referral_attributions_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: referral_credit_changes referral_credit_changes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.referral_credit_changes
+    ADD CONSTRAINT referral_credit_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.referral_attributions(account_id) ON DELETE CASCADE;
 
 
 --
@@ -112361,6 +113074,30 @@ ALTER TABLE ONLY public.sales_activities
 
 
 --
+-- Name: sales_commission_agreements sales_commission_agreements_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_commission_agreements sales_commission_agreements_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_agreements
+    ADD CONSTRAINT sales_commission_agreements_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_commission_payouts sales_commission_payouts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_commission_payouts
+    ADD CONSTRAINT sales_commission_payouts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.referral_attributions(account_id) ON DELETE CASCADE;
+
+
+--
 -- Name: sales_inquiries sales_inquiries_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -112478,6 +113215,22 @@ ALTER TABLE ONLY public.sales_tasks
 
 ALTER TABLE ONLY public.sales_tasks
     ADD CONSTRAINT sales_tasks_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_team_members sales_team_members_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_team_members sales_team_members_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sales_team_members
+    ADD CONSTRAINT sales_team_members_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --

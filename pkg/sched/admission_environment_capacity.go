@@ -50,7 +50,13 @@ func (l *NodeLedger) servingCapacityLocked(appID, key string, production bool, c
 	}
 	// App-only scopes have no independent catalog policy. Their configured
 	// ceiling is shared; retained catalog environments use the plan budget.
-	if key == "" || strings.HasPrefix(key, "scope:") {
+	// Production (the empty key) has its own configured ceiling in limit and
+	// the plan budget as its shared ceiling, like a catalog environment: a
+	// warm stage instance must not consume production's only configured slot
+	// (prod 2026-11-19: max_concurrency 1, a staging instance answered every
+	// production request 429 app_concurrency_reached for 12 min after a
+	// promotion and 8.6 min after its rollback).
+	if strings.HasPrefix(key, "scope:") || (key == "" && !production) {
 		capacity.sharedLimit = configuredLimit
 	}
 	// While production has no instance, a non-production environment never

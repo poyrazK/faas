@@ -66,7 +66,7 @@ LIMITATIONS = [
 SOURCE_REASONS = {
     "source_" + reason for reason in (
         "invalid_url", "cancelled", "timeout", "transport_unavailable", "unauthorized", "forbidden",
-        "endpoint_not_found", "rate_limited", "redirect_rejected", "server_error", "http_error",
+        "endpoint_not_found", "rate_limited", "runtime_busy", "redirect_rejected", "server_error", "http_error",
         "response_read_failed", "response_too_large", "invalid_response", "unavailable", "stale",
     )
 }
@@ -248,6 +248,8 @@ def project_runtime_builds(raw, role, release, after, attempts=None, started_at=
             if not role:
                 allowed = {"expected_role_not_selected"}
             require(state == "unknown" and isinstance(reason, str) and reason in allowed)
+            if reason == "source_runtime_busy":
+                require(out.get("source_http_status") == 429)
             require(integer(raw.get("envelope_omitted_items", 0), PREVIEW_MAX) == 0)
         else:
             evidence = project_evidence(raw["evidence"], role, release, after, dt.datetime.now(dt.timezone.utc))
@@ -608,6 +610,8 @@ def project_build_event(raw, role, release, after, times, observations):
             out["process"] = evidence["process"]
     else:
         require(state == "unknown" and isinstance(reason, str) and reason in SOURCE_REASONS | {"source_invalid_response", "awaiting_evidence"})
+        if reason == "source_runtime_busy":
+            require(out.get("source_http_status") == 429)
     return history_codec.project_encoding(out, original)
 
 

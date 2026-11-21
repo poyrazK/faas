@@ -17,6 +17,7 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
@@ -2653,3 +2654,13 @@ func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map
 }
 
 var SyntheticCheckAuthWarning = syntheticCheckAuthWarning
+
+// Managed Redis Compose helpers (ADR-20261116192126).
+var (
+	ComposeRedisCacheName = composeRedisCacheName
+	ComposeRedisValue     = composeRedisValue
+)
+
+func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
+	return &s.runtimeBuildAdmission
+}

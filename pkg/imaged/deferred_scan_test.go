@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func deferredPreparationHandler(t *testing.T, store state.Store, builder *fakeBuilder, notif Notifier, grype func(context.Context, string) (*ScanResult, error)) *Handler {
@@ -87,28 +89,52 @@ func TestDeferredDeployScanRunsOnceAcrossCrash(t *testing.T) {
 	}
 }
 
+// enrollmentStore answers an organization app's standard enrollment.
+type enrollmentStore struct {
+	MemStore   *state.MemStore
+	enrollment state.ApplicationStandardEnrollment
+	err        error
+}
+
+func (s *enrollmentStore) GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error) {
+	return s.enrollment, s.err
+}
+
 func TestDeployScanGatesHandoff(t *testing.T) {
 	store, app, dep := imagePreparationFixture(t, "memory")
-	deferring := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithDeferredDeployScans()
-	serial := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger())
+	mem := store.(*state.MemStore)
+	enrolled := func(e state.ApplicationStandardEnrollment, err error) state.Store {
+		return statetest.NewMem(&enrollmentStore{MemStore: mem, enrollment: e, err: err})
+	}
+	inOrg := func(a *state.App) { a.OrgID = "00000000-0000-4000-8000-000000000001" }
 	for _, tc := range []struct {
 		name   string
-		h      *Handler
+		store  state.Store
+		serial bool
 		mutate func(*state.App)
 		gates  bool
 	}{
-		{"off defers", deferring, func(*state.App) {}, false},
-		{"warn defers", deferring, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyWarn }, false},
-		{"enforce gates", deferring, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyEnforce }, true},
-		{"signed images gate", deferring, func(a *state.App) { a.RequireSigned = true }, true},
-		{"an organization's app gates", deferring, func(a *state.App) { a.OrgID = "00000000-0000-4000-8000-000000000001" }, true},
-		{"an unanswered producer lookup gates", deferring, func(a *state.App) { a.AccountID = "" }, true},
-		{"without deferral every scan gates", serial, func(*state.App) {}, true},
+		{"off defers", store, false, func(*state.App) {}, false},
+		{"warn defers", store, false, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyWarn }, false},
+		{"enforce gates", store, false, func(a *state.App) { a.SecurityPolicy = api.AppSecurityPolicyEnforce }, true},
+		{"signed images gate", store, false, func(a *state.App) { a.RequireSigned = true }, true},
+		// ADR-075 amendment 2026-11-19: an organization's app defers unless a
+		// standard admits its instances natively.
+		{"an organization's app without an enrollment defers", store, false, inOrg, false},
+		{"an organization's app under no standard defers", enrolled(state.ApplicationStandardEnrollment{State: "persisted"}, nil), false, inOrg, false},
+		{"an organization's app under a native standard gates", enrolled(state.ApplicationStandardEnrollment{PersistedRevision: 1}, nil), false, inOrg, true},
+		{"an unanswered enrollment read gates", enrolled(state.ApplicationStandardEnrollment{}, errors.New("database unavailable")), false, inOrg, true},
+		{"an unanswered producer lookup gates", store, false, func(a *state.App) { a.AccountID = "" }, true},
+		{"without deferral every scan gates", store, true, func(*state.App) {}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			h := New(tc.store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger())
+			if !tc.serial {
+				h = h.WithDeferredDeployScans()
+			}
 			a := app
 			tc.mutate(&a)
-			if got := tc.h.deployScanGatesHandoff(t.Context(), a, dep); got != tc.gates {
+			if got := h.deployScanGatesHandoff(t.Context(), a, dep); got != tc.gates {
 				t.Fatalf("gates=%t want %t", got, tc.gates)
 			}
 		})

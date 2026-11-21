@@ -110,6 +110,13 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
 }
 
+// MarkSandboxPlaced records the node schedd placed the session on, before
+// it boots (ADR-20261117190000).
+func (s *Store) MarkSandboxPlaced(ctx context.Context, id, token, nodeID string) error {
+	n, err := s.q.MarkSandboxSessionPlaced(ctx, s.pool, sqlc.MarkSandboxSessionPlacedParams{NodeID: nodeID, SessionID: id, LeaseToken: token})
+	return fenced(n, err, "mark session placed")
+}
+
 // MarkSandboxReady records where the session's VM runs and moves it to
 // ready.
 func (s *Store) MarkSandboxReady(ctx context.Context, id, token, nodeID, instanceID string) error {

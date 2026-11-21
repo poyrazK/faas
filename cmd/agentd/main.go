@@ -210,6 +210,9 @@ func configFromEnv(getenv func(string) string) (agentd.Config, string, *tls.Conf
 		}
 		cfg.LeaseTTL = d
 	}
+	// ADR-20261027090016 amendment 3: off until every node's guest accepts
+	// the higher timeout ceiling.
+	cfg.ApprovalDeadlineCredit = strings.TrimSpace(getenv("FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT")) == "1"
 	target := strings.TrimSpace(getenv("FAAS_AGENTD_SCHEDD_TARGET"))
 	if target == "" {
 		target = "unix:///run/faas/schedd.sock"

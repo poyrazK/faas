@@ -103,3 +103,35 @@ func TestLinkCheckoutAfterProjectDeploy(t *testing.T) {
 		t.Fatalf("missing relink hint: %q", out.String())
 	}
 }
+
+type fakeEnvironmentEndpoints struct {
+	fakeProjectAppReader
+	state api.ProjectEnvironmentStateResponse
+}
+
+func (f fakeEnvironmentEndpoints) GetProjectEnvironmentState(context.Context, string, string) (api.ProjectEnvironmentStateResponse, error) {
+	return f.state, nil
+}
+
+// prod 2026-11-19: `deploy --project --env staging` listed bh3-web's
+// production URL under Endpoints; staging answers on its own URL.
+func TestRenderProjectEndpointsForNamesTheEnvironmentURLs(t *testing.T) {
+	t.Setenv("FAAS_APPS_DOMAIN", "")
+	client := fakeEnvironmentEndpoints{
+		fakeProjectAppReader: fakeProjectAppReader{"bh3-web": {Slug: "bh3-web"}},
+		state: api.ProjectEnvironmentStateResponse{Workloads: []api.ProjectEnvironmentStateWorkloadResponse{
+			{WorkloadSlug: "bh3-web", Release: api.ProjectEnvironmentReleaseWorkloadResponse{URL: "https://env-abc-web.gregale.dev"}},
+		}},
+	}
+	apply := api.ApplyResponse{Apps: []api.ApplyResponseApp{{Slug: "bh3-web"}}}
+	var out bytes.Buffer
+	renderProjectEndpointsFor(context.Background(), &out, client, apply, "proj", "staging")
+	if got := out.String(); !strings.Contains(got, "Endpoints (environment staging):") || !strings.Contains(got, "https://env-abc-web.gregale.dev") || strings.Contains(got, "https://bh3-web.gregale.dev") {
+		t.Fatalf("staging endpoints = %q; want the environment URL, not production's", got)
+	}
+	out.Reset()
+	renderProjectEndpointsFor(context.Background(), &out, client, apply, "proj", "")
+	if got := out.String(); !strings.Contains(got, "https://bh3-web.gregale.dev") {
+		t.Fatalf("production endpoints = %q; want the app URL", got)
+	}
+}

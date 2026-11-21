@@ -1,0 +1,64 @@
+// Customer-facing filter for the build command's output. Build-tag free so
+// the unit tests run on every platform; the linux builder wires it in
+// main_linux.go.
+
+package main
+
+import (
+	"bytes"
+	"io"
+	"strings"
+)
+
+// buildOutputFilter forwards the build command's output to the build console
+// minus lines the platform's own build tooling causes and the customer cannot
+// act on. Railpack's Node provider sets NPM_CONFIG_PRODUCTION=false, so every
+// npm step printed "npm warn config production Use `--omit=dev` instead."
+// (prod 2026-11-20). The unfiltered output still reaches the build failure
+// tail.
+type buildOutputFilter struct {
+	out     io.Writer
+	partial []byte
+}
+
+func newBuildOutputFilter(out io.Writer) *buildOutputFilter {
+	return &buildOutputFilter{out: out}
+}
+
+// Write never fails because of the filter: it reports len(p) so a slow or
+// broken console cannot stall the build.
+func (f *buildOutputFilter) Write(p []byte) (int, error) {
+	f.partial = append(f.partial, p...)
+	for {
+		i := bytes.IndexByte(f.partial, '\n')
+		if i < 0 {
+			break
+		}
+		line := f.partial[:i+1]
+		if !platformBuildNoise(string(line[:i])) {
+			_, _ = f.out.Write(line)
+		}
+		f.partial = f.partial[i+1:]
+	}
+	// Progress output without newlines (spinners, \r updates) passes
+	// through once it grows past 64 KiB.
+	if len(f.partial) > 64<<10 {
+		_, _ = f.out.Write(f.partial)
+		f.partial = f.partial[:0]
+	}
+	return len(p), nil
+}
+
+// Flush writes a final line that has no trailing newline.
+func (f *buildOutputFilter) Flush() {
+	if len(f.partial) > 0 && !platformBuildNoise(string(f.partial)) {
+		_, _ = f.out.Write(f.partial)
+	}
+	f.partial = f.partial[:0]
+}
+
+// platformBuildNoise matches npm's deprecation of the production config,
+// with or without buildctl's "#12 0.534 " step prefix.
+func platformBuildNoise(line string) bool {
+	return strings.HasSuffix(strings.TrimRight(line, "\r"), "npm warn config production Use `--omit=dev` instead.")
+}

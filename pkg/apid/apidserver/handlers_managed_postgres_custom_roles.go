@@ -22,8 +22,12 @@ func managedPostgresCustomRoleView(role managedpostgres.CustomRole) api.ManagedP
 		grants = append(grants, string(grant))
 	}
 	memberOf := append([]string{}, role.MemberOf...)
+	defaults := make([]string, 0, len(role.DefaultFor))
+	for _, access := range role.DefaultFor {
+		defaults = append(defaults, string(access))
+	}
 	return api.ManagedPostgresCustomRole{
-		DatabaseID: role.DatabaseID, Name: role.Name, BypassRLS: role.BypassRLS, GrantedTo: grants, MemberOf: memberOf,
+		DatabaseID: role.DatabaseID, Name: role.Name, BypassRLS: role.BypassRLS, GrantedTo: grants, MemberOf: memberOf, DefaultFor: defaults,
 		State: string(role.State), LastErrorCode: role.LastError,
 		CreatedAt: role.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: role.UpdatedAt.UTC().Format(time.RFC3339Nano),
 	}
@@ -68,6 +72,11 @@ func customRoleProblem(w http.ResponseWriter, err error) {
 	case errors.Is(err, managedpostgres.ErrCustomRolesUnsupported):
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "postgres_custom_roles_unsupported", "Custom roles unsupported",
 			"This database's backend does not support custom roles."))
+	case errors.Is(err, managedpostgres.ErrCustomRoleDefaultTaken):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "postgres_custom_role_default_taken", "Default role already set",
+			"Another custom role is already the default role of that access mode; a login starts as at most one role.").
+			WithHint("Remove it there first (gregale postgres roles create <database> <role> --default-for '' on that role).").
+			WithDocs("https://gregale.dev/docs/postgres-custom-roles"))
 	case errors.Is(err, managedpostgres.ErrQuotaExceeded):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "postgres_custom_roles_limit", "Custom role limit reached",
 			"A database can declare at most 16 custom roles.").WithHint("Delete a role you no longer need (gregale postgres roles delete)."))
@@ -93,6 +102,26 @@ func (s *server) listManagedPostgresCustomRoles(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, api.ManagedPostgresCustomRoleList{Items: items})
 }
 
+func accessModes(values []string) []managedpostgres.CredentialAccess {
+	out := make([]managedpostgres.CredentialAccess, 0, len(values))
+	for _, value := range values {
+		out = append(out, managedpostgres.CredentialAccess(value))
+	}
+	return out
+}
+
+func customRoleSaveRequest(accountID, databaseID, name string, req api.PutManagedPostgresCustomRoleRequest) managedpostgres.SaveCustomRoleRequest {
+	request := managedpostgres.SaveCustomRoleRequest{
+		AccountID: accountID, DatabaseID: databaseID, Name: name,
+		BypassRLS: req.BypassRLS, GrantedTo: accessModes(req.GrantedTo), MemberOf: req.MemberOf,
+	}
+	if req.DefaultFor != nil {
+		defaults := accessModes(*req.DefaultFor)
+		request.DefaultFor = &defaults
+	}
+	return request
+}
+
 func (s *server) putManagedPostgresCustomRole(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	service, ok := s.customRolesService(w, acct, true)
 	if !ok {
@@ -102,21 +131,14 @@ func (s *server) putManagedPostgresCustomRole(w http.ResponseWriter, r *http.Req
 	if !decodeJSONLimit(w, r, &req, customRolesBodyLimit) {
 		return
 	}
-	grants := make([]managedpostgres.CredentialAccess, 0, len(req.GrantedTo))
-	for _, grant := range req.GrantedTo {
-		grants = append(grants, managedpostgres.CredentialAccess(grant))
-	}
-	role, err := service.Save(r.Context(), managedpostgres.SaveCustomRoleRequest{
-		AccountID: acct.ID, DatabaseID: r.PathValue("id"), Name: r.PathValue("name"),
-		BypassRLS: req.BypassRLS, GrantedTo: grants, MemberOf: req.MemberOf,
-	})
+	role, err := service.Save(r.Context(), customRoleSaveRequest(acct.ID, r.PathValue("id"), r.PathValue("name"), req))
 	if err != nil {
 		customRoleProblem(w, err)
 		return
 	}
 	s.audit.Emit(r.Context(), "managed_postgres.custom_role.saved", &acct.ID, map[string]any{
 		"database_id": role.DatabaseID, "name": role.Name, "bypass_rls": role.BypassRLS,
-		"granted_to": req.GrantedTo, "member_of": role.MemberOf, "state": string(role.State),
+		"granted_to": req.GrantedTo, "member_of": role.MemberOf, "default_for": role.DefaultFor, "state": string(role.State),
 	})
 	status := http.StatusOK
 	if role.State != managedpostgres.CustomRoleReady {

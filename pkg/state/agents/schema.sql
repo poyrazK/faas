@@ -67,6 +67,7 @@ CREATE TABLE agent_versions (
  ai_budget_millicents bigint,
  deliveries jsonb NOT NULL DEFAULT '[]',
  pause_during_model_calls boolean NOT NULL DEFAULT true,
+ capability_policy jsonb,
  PRIMARY KEY (agent_id, version)
 );
 CREATE TABLE agent_runs (
@@ -82,6 +83,7 @@ CREATE TABLE agent_runs (
  state text NOT NULL DEFAULT 'queued',
  ram_mb integer,
  timeout_sec integer NOT NULL,
+ deadline_credit_max_sec integer NOT NULL DEFAULT 0,
  attempt integer NOT NULL DEFAULT 1,
  lease_token text,
  lease_expires_at timestamptz,
@@ -237,6 +239,7 @@ CREATE TABLE sandbox_sessions (
  lease_token text,
  lease_expires_at timestamptz,
  node_id text,
+ placed_node_id text CHECK (placed_node_id IS NULL OR (char_length(placed_node_id) >= 1 AND char_length(placed_node_id) <= 128)),
  instance_id text,
  close_requested_at timestamptz,
  last_activity_at timestamptz NOT NULL DEFAULT now(),
@@ -368,4 +371,23 @@ CREATE TABLE sandbox_templates (
  created_at timestamptz NOT NULL DEFAULT now(),
  updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE (account_id, name)
+);
+CREATE TABLE agent_run_approvals (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ run_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ tool text NOT NULL,
+ arguments_sha256 text NOT NULL,
+ arguments_summary text NOT NULL DEFAULT '',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ expires_at timestamptz NOT NULL,
+ released_at timestamptz
+);
+CREATE TABLE agent_run_approval_decisions (
+ approval_id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ decision text NOT NULL,
+ note text NOT NULL DEFAULT '',
+ decided_by text NOT NULL DEFAULT '',
+ decided_at timestamptz NOT NULL DEFAULT now()
 );

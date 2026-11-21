@@ -39,6 +39,8 @@ var cliTreeVerbs = []string{
 	"branch",
 	// undo: reverse what an agent changed (ADR-20261112080601).
 	"undo",
+	// deny: refuse a hosted agent run's call (ADR-20261027090016 amendment 2).
+	"deny",
 }
 
 // A path may end with a noun it lists or shows (`app instances`).
@@ -102,7 +104,8 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 	enableEveryCLIFeature(t)
 	nouns := map[string]bool{}
 	for _, noun := range *main.CliTreeNouns {
-		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" {
+		// postgres and redis are product names, not plurals.
+		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" && noun.Name != "redis" {
 			t.Errorf("noun %q must be singular", noun.Name)
 		}
 		nouns[noun.Name] = true

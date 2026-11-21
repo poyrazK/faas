@@ -167,6 +167,7 @@ type InspectAppSummary = inspectAppSummary
 type InspectHealthSummary = inspectHealthSummary
 type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
+type InspectRuntimeWarning = inspectRuntimeWarning
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
 type InspectRecommendation = inspectRecommendation
@@ -555,6 +556,7 @@ var GitMetadataTimeout = &gitMetadataTimeout
 var GitSlowNoticeAfter = &gitSlowNoticeAfter
 var GitPipeWaitDelay = &gitPipeWaitDelay
 var WithProjectWaitProgress = withProjectWaitProgress
+var ProjectBuildStepInterval = &projectBuildStepInterval
 var WaitForProjectApplyTimeouts = waitForProjectApplyTimeouts
 var OsStdin = &osStdin
 var OsStdout = &osStdout
@@ -718,6 +720,7 @@ var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
 var CmdReleaseGates = cmdReleaseGates
+var CmdRedis = cmdRedis
 var CmdApprovals = cmdApprovals
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
@@ -1790,6 +1793,7 @@ var RenderDeploymentProgress = renderDeploymentProgress
 var RenderDeploymentReleaseSummary = renderDeploymentReleaseSummary
 var RenderDeploymentRow = renderDeploymentRow
 var RenderDeploymentRowWide = renderDeploymentRowWide
+var RenderDeploymentHeader = renderDeploymentHeader
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage
@@ -2789,6 +2793,7 @@ var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
 
 // Deploy preflights (#6625, #6631).
 var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var GregaleStateHome = gregaleStateHome
 var SourceCapLookupBudgets = &sourceCapLookupBudgets
 var SourceUploadLimitError = sourceUploadLimitError
 
@@ -2979,4 +2984,10 @@ var ExplainPerInstanceConcurrencyRefusal = explainPerInstanceConcurrencyRefusal
 // UncommittedProjectFile exposes the HEAD-deploy project-file check.
 func UncommittedProjectFile(porcelain, repoRoot, sourceDir string) (string, bool) {
 	return uncommittedProjectFile(porcelain, repoRoot, sourceDir)
+}
+
+// BucketUploadContentType returns the content type an upload would store.
+func BucketUploadContentType(args []string) (string, error) {
+	o, err := parseBucketTransfer(args)
+	return o.contentType, err
 }

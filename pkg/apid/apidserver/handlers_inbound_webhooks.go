@@ -467,7 +467,7 @@ func verifyInboundWebhook(_ context.Context, endpoint state.InboundWebhookEndpoi
 		if !anySecretVerifies(secrets, func(secret string) bool {
 			return verifyGenericInboundWebhookSignature(headers.Get(api.InboundWebhookTimestampHeader), headers.Get(api.InboundWebhookSignatureHeader), eventID, eventType, body, secret, now)
 		}) {
-			return "", "", api.ErrInboundWebhookBadSignature()
+			return "", "", api.ErrInboundWebhookBadGenericSignature()
 		}
 		return eventID, eventType, nil
 	default:

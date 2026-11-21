@@ -79,6 +79,18 @@ const deploymentRowFmtWide = "%-32s %-6s %-32s %-12s %-10s %-16s %-6s %-24s %-41
 // commands_test.go for the equivalent helper). The Fprintf return is
 // intentionally discarded: writer failures (closed pipe, broken TTY)
 // are unrecoverable here, matching writeStatus / output.go's convention.
+// renderDeploymentHeader names the columns. Only a terminal gets it:
+// scripts scrape the headerless table (prod 2026-11-19: `release list`
+// printed two unlabeled 32-hex columns and no version, so the app ID read as
+// a second deployment ID).
+func renderDeploymentHeader(w io.Writer, wide bool) {
+	if wide {
+		_, _ = fmt.Fprintf(w, deploymentRowFmtWide, "DEPLOYMENT", "REV", "APP ID", "STATUS", "KIND", "BY", "PR", "TAG", "REASON", "CREATED")
+		return
+	}
+	_, _ = fmt.Fprintf(w, deploymentRowFmt, "DEPLOYMENT", "APP ID", "STATUS", "KIND", "CREATED")
+}
+
 func renderDeploymentRow(w io.Writer, d api.DeploymentResponse) {
 	_, _ = fmt.Fprintf(w, deploymentRowFmt, d.ID, d.AppID, d.Status, d.Kind, d.CreatedAt)
 }
@@ -258,7 +270,11 @@ func cmdDeployments(args []string) int {
 		return 0
 	}
 	parked := parkedAppsForDeployments(ctx, client, *app, page.Items)
+	if stdoutIsTTY() {
+		renderDeploymentHeader(osStdout, *wide)
+	}
 	for _, d := range page.Items {
+		d.Status = listedReleaseStatus(d)
 		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
 			d.Status = parkedReleaseStatus(d.Status)
 		}

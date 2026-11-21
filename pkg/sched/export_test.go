@@ -1084,6 +1084,22 @@ var CronDue = cronDue
 // XRunCronHistoryRetention runs the hourly cron history sweep once.
 func (l *Loop) XRunCronHistoryRetention(ctx context.Context) { l.runCronHistoryRetention(ctx) }
 
+// XRunCronPrewakeRetention runs the hourly cron pre-wake intent sweep once.
+func (l *Loop) XRunCronPrewakeRetention(ctx context.Context) { l.runCronPrewakeRetention(ctx) }
+
+// XCronPrewakeFires exposes cronPrewakeFires: per app the fire time and cron
+// ID it would pre-wake for, and the apps it leaves to a fire under way.
+func XCronPrewakeFires(crons []state.Cron, now time.Time, lead time.Duration) (map[string]time.Time, map[string]string, map[string]bool) {
+	fires, busy := cronPrewakeFires(crons, now, lead)
+	at := map[string]time.Time{}
+	ids := map[string]string{}
+	for app, f := range fires {
+		at[app] = f.at
+		ids[app] = f.cron.ID
+	}
+	return at, ids, busy
+}
+
 // XEventJobContinue is the recovery and backfill sweeps' failure decision.
 // adr: 20261028095548 — a job whose own work failed was backed off, so the
 // sweep goes on to the next one.
@@ -1441,3 +1457,15 @@ var XInitPrimePath = initPrimePath
 func PollStoredTriggerReplays(records []sqlc.TriggerRecord, t sqlc.Trigger) PollResult {
 	return (&storedTriggerReplaySource{records: records, kind: t.Kind}).Poll(context.Background(), t)
 }
+
+// DrainQueuePushLane runs one push lane over dispatch (ADR-972 amendment
+// 2026-11-19).
+func DrainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	return drainQueuePushLane(ctx, dispatch)
+}
+
+// ReportTriggerPoll records a poll's record count, as dispatchOneTrigger does.
+func ReportTriggerPoll(ctx context.Context, records int) { reportTriggerPoll(ctx, records) }
+
+// ErrTriggerGatewayDispatch marks a batch the gateway could not take.
+var ErrTriggerGatewayDispatch = errTriggerGatewayDispatch

@@ -53,3 +53,24 @@ func TestPostgresCommandsResolveDatabaseNames(t *testing.T) {
 		t.Fatalf("get by ID = %d, requests %v; an ID must skip the catalog lookup", code, paths)
 	}
 }
+
+// TestPostgresGetMissingNameIsNotFound: a name no database carries is
+// not_found (exit 4), not invalid_request (exit 1). Production 2026-11-19:
+// TestManagedPostgres/purge_restored waited ten minutes for a purged database
+// to report not_found while the CLI kept answering invalid_request.
+func TestPostgresGetMissingNameIsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/postgres/databases" {
+			_, _ = w.Write([]byte(`{"items":[]}`))
+			return
+		}
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		http.Error(w, `{"status":500}`, http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_test")
+	if code := main.CmdPostgresGet([]string{"purged"}); code != 4 {
+		t.Fatalf("postgres get purged = %d, want 4 (not_found)", code)
+	}
+}

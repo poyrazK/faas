@@ -160,6 +160,7 @@ type MemStore struct {
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
 	hostedTaskBindings             map[string]HostedTaskBindingRecord
 	hostedTaskRehearsals           map[string]hostedTaskRehearsalRecord
+	hostedTaskRehearsalRuns        map[string]HostedTaskRehearsalRun
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -580,6 +581,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource
@@ -9522,6 +9524,10 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	}
 	d.RolloutAbortedReason = abortedReason
 	m.putDeploymentLocked(id, d)
+	if d.RolloutState == "aborted" {
+		m.rebalanceAbortedTrafficLocked(d)
+		d = m.deployments[id]
+	}
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }
@@ -18059,7 +18065,24 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snaps
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	snap.RecoveryGeneration = generation
+	// WithReplacedSnapshot: retire the replaced row and publish under one
+	// lock, restoring it if the publication fails.
+	replacedIdx := -1
+	if replaced := replacedSnapshotID(ctx); replaced != "" {
+		for i := range m.snapshots {
+			if m.snapshots[i].ID == replaced {
+				replacedIdx = i
+			}
+		}
+		if replacedIdx < 0 {
+			return Snapshot{}, ErrNotFound
+		}
+		m.snapshots[replacedIdx].Stale = true
+	}
 	stored, err := m.createSnapshotLocked(snap)
+	if err != nil && replacedIdx >= 0 {
+		m.snapshots[replacedIdx].Stale = false
+	}
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {
 			m.snapshotRuntimeConfigReceipts = map[string]RuntimeConfigInputs{}
@@ -25363,6 +25386,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, record := range m.hostedTaskRehearsals {
 		if record.Plan.AccountID == id {
 			delete(m.hostedTaskRehearsals, key)
+			delete(m.hostedTaskRehearsalRuns, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

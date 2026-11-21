@@ -35,7 +35,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -385,6 +385,20 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
+	case "dlq_replay", "workflow_recovery", "monitoring_change":
+		return m.runAsyncOperation(ctx, p)
+	case "run_command":
+		return m.runCommand(ctx, p)
+	case "edge_change":
+		return m.runEdgeChange(ctx, p, retry)
+	case "preview_change":
+		return m.runPreviewChange(ctx, p, retry)
+	case "event_change":
+		return m.runEventChange(ctx, p)
+	case "consumer_change":
+		return m.runConsumerChange(ctx, p)
+	case "workflow_publish":
+		return m.runWorkflowPublish(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}

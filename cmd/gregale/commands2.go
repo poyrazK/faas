@@ -1087,7 +1087,7 @@ func cmdAppsRm(args []string) int {
 			return 130
 		}
 	}
-	var revoked []string
+	var revoked, keptDatabases []string
 	if *deleteBindings {
 		ctx := context.Background()
 		app, err := client.GetApp(ctx, slug)
@@ -1102,6 +1102,7 @@ func cmdAppsRm(args []string) int {
 		if err != nil {
 			return printErr("Could not revoke a database binding", err)
 		}
+		keptDatabases = boundDatabaseNames(bindings)
 	}
 	if err := client.DeleteApp(context.Background(), slug); err != nil {
 		if !*deleteBindings && strings.Contains(err.Error(), "app_has_postgres_bindings") {
@@ -1117,11 +1118,13 @@ func cmdAppsRm(args []string) int {
 		}
 		if *deleteBindings {
 			out["revoked_bindings"] = revoked
+			out["kept_databases"] = keptDatabases
 		}
 		return jsonOut(writeJSON(out))
 	}
 	if len(revoked) > 0 {
 		PrintOK(osStdout, "Revoked %d database binding(s) and deleted %s", len(revoked), slug)
+		printKeptDatabases(osStdout, keptDatabases)
 		return 0
 	}
 	PrintOK(osStdout, "Deleted %s", slug)
@@ -1759,7 +1762,19 @@ func errNegativePerInstanceConcurrency(value int) error {
 // caller: the setting is not enabled for this account yet.
 func explainPerInstanceConcurrencyRefusal(err error, requested bool) error {
 	if requested && err != nil && strings.Contains(err.Error(), "unknown field(s): per_instance_concurrency") {
-		return fmt.Errorf("--per-instance-concurrency is in early access and not enabled for this account; leave it unset to use the plan's concurrency per VM (%w)", err)
+		const detail = "--per-instance-concurrency is in early access and not enabled for this account"
+		const hint = "leave it unset to use the plan's concurrency per VM"
+		// printErr renders the APIError it finds in the chain, so a wrapped
+		// explanation never reached the screen (prod 2026-11-19 showed the
+		// raw "unknown field(s)"). Rewrite the problem itself.
+		var ae *APIError
+		if errors.As(err, &ae) {
+			explained := *ae
+			explained.Problem.Detail = detail
+			explained.Problem.Hint = hint
+			return &explained
+		}
+		return fmt.Errorf("%s; %s (%w)", detail, hint, err)
 	}
 	return err
 }
@@ -2342,6 +2357,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	createOnly := fs.Bool("create-only", false, "create or reserve the app without uploading a deployment")
 	waitTimeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, fmt.Sprintf("maximum wait (seconds or a duration such as 10m) for deploy completion (default %d)", defaultDeployWaitTimeoutSeconds))
 	idempotencyKey := fs.String("idempotency-key", "", "stable logical retry key for this deployment (optional)")
+	// Hosted MCP passes this only when retrying one approved upload commit.
+	resumeUploadID := fs.String("resume-upload-id", "", "require this existing resumable upload on retry")
 	// --secret-scan toggles the pkg/secretscan pre-pack pass that
 	// drops credential-shaped lines (Stripe live keys, GitHub PATs, AWS
 	// access keys, OpenAI, Anthropic, Google API, PEM private keys, and
@@ -2451,6 +2468,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// from a customer-supplied value before authentication or source I/O.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if explicit["resume-upload-id"] {
+		if *resumeUploadID == "" || *idempotencyKey == "" || *sourcePath == "" || *createOnly ||
+			*image != "" || *repo != "" || *simplePlan || *dryRun || *diff || *serverDiff || *explainFiles {
+			return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a directory deploy with its original idempotency key"))
+		}
+	}
 	if *explainFiles {
 		return cmdDeploySourceFiles(ctx, deploySourceFilesOptions{path: *sourcePath, source: *sourceMode, worktree: *worktree,
 			function: *function, app: *app, project: *projectDeploy || *projectSlug != "", runtime: *runtime,
@@ -2570,6 +2593,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// through to the single-app upload path and were ignored.
 	projectRequested := *deployOnly != "" || *deployExclude != "" ||
 		*deployPersistExclude || *deployShowAffected || explicit["project-slug"] || *projectDeploy
+	if *resumeUploadID != "" && (projectRequested || developerSync != nil) {
+		return printErr("Invalid upload retry", errors.New("--resume-upload-id requires a single app upload"))
+	}
 	if sourceMapErr := validateDeployIssueSourceMaps(explicit, *issueSourceMaps, *issueSourceMapDirectory,
 		*trafficPercent == 0, projectRequested || *image != "" || *repo != "" || *templateName != "" || *githubSnippet ||
 			*simplePlan || *dryRun || *diff || *serverDiff || *createOnly || developerSync != nil ||
@@ -4061,6 +4087,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return runDiff(ctx, client, opts)
 	}
 
+	if *resumeUploadID != "" && *tarball == "" {
+		return printErr("Invalid upload retry", errors.New("no source archive was resolved for the original upload"))
+	}
+
 	// Phase 3 (repo decomposition) one-key provision path. Triggered
 	// by any project scope control (--project, --project-slug, --only,
 	// --exclude, --persist-exclude, or --show-affected) on a --tarball /
@@ -4249,7 +4279,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		code := renderProjectDeployReceiptAfterWait(plan, apply, projectSession, projectWaitTimeouts)
 		if !jsonOutput {
-			renderProjectEndpoints(ctx, osStdout, client, apply)
+			renderProjectEndpointsFor(ctx, osStdout, client, apply, *projectSlug, *environment)
 		}
 		return code
 	}
@@ -4329,12 +4359,18 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
+			creating := false
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
 				}
+				_, getErr := client.GetApp(ctx, slug)
+				creating = isNotFound(getErr)
 			}
 			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if err == nil && creating {
+				rememberCreatedApp(contextDir, slug)
+			}
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
@@ -4598,6 +4634,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			var uploadErr error
 			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
+			if *resumeUploadID != "" {
+				uploadCtx = context.WithValue(uploadCtx, requiredUploadIDKey{}, *resumeUploadID)
+			}
 			if err := execution.preparingSubmission(deployKey, "resumable", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)
 			}
@@ -4613,6 +4652,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				return submissionFailed("Source submission failed", dep, uploadErr, deployKey)
 			}
 		} else {
+			if *resumeUploadID != "" {
+				return submissionFailed("Source submission failed", dep, errors.New("the deploy no longer supports its original resumable upload"), deployKey)
+			}
 			var deployErr error
 			if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
 				return printErr("Could not save source submission", err)
@@ -5698,6 +5740,14 @@ func cmdDomains(args []string) int {
 				return 1
 			}
 			*domain = fs.Arg(0)
+		} else if fs.NArg() == 2 && *slug == "" {
+			// prod 2026-11-20: `domain add <app> <domain>` printed only the
+			// usage line. Name the form that works.
+			app, name := fs.Arg(0), fs.Arg(1)
+			if strings.Contains(app, ".") && !strings.Contains(name, ".") {
+				app, name = name, app
+			}
+			return printErr("Unexpected argument", fmt.Errorf("pass the app with --app: gregale domain create %s --app %s", name, app))
 		} else if fs.NArg() != 0 {
 			PrintUsage(os.Stderr, "usage: gregale domain create <domain> --app <slug> [--env <environment>]", "domains")
 			return 1
@@ -5722,7 +5772,9 @@ func cmdDomains(args []string) int {
 		fmt.Printf("\nKeep them in place: the certificate is issued and renewed automatically.\n")
 		fmt.Printf("Then run 'gregale domain list' to see when verification completes.\n")
 		return 0
-	case subRm:
+	case subRm, "remove":
+		// `domain add` works, so `domain remove` was the natural undo and
+		// answered "Did you mean move?" (prod 2026-11-19).
 		// --yes / -y may come before or after the domain, like the other
 		// deletes; without it the CLI asks. It rejected a trailing --yes and
 		// deleted with no prompt (Hunt 32 H32-14).
@@ -6357,8 +6409,14 @@ func cmdKeys(args []string) int {
 		PrintOK(osStdout, "New API key (shown ONCE):\n  %s", k.Plaintext)
 		return 0
 	case subRm:
+		// Every other delete takes --yes; scripts that passed it here got
+		// only the usage line and left the key active (prod 2026-11-19).
+		// key delete does not prompt, so the confirmation flags are no-ops.
+		args = slices.DeleteFunc(slices.Clone(args), func(arg string) bool {
+			return arg == "--yes" || arg == "-y" || arg == "--quiet" || arg == "-q"
+		})
 		if len(args) != 2 {
-			PrintUsage(os.Stderr, "usage: gregale key delete <id>", "keys")
+			PrintUsage(os.Stderr, "usage: gregale key delete <id> [--yes]", "keys")
 			return 1
 		}
 		client, err := authedClient()
@@ -8387,6 +8445,9 @@ func terminalExitForDeploymentWithFailureContext(ctx context.Context, c *Client,
 	}
 	code := renderDeployFailure(d)
 	printBuildFailureExcerpt(ctx, c, os.Stderr, appSlug, d)
+	if c != nil {
+		printReleaseTaskOutput(ctx, c, os.Stderr, appSlug, d)
+	}
 	return code
 }
 

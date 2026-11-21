@@ -189,6 +189,15 @@ var (
 // denylist on the box itself tries to catch — the user-space check is the
 // belt-and-braces duplicate the financial model relies on: a bug in either
 // layer still leaves the other holding).
+//
+// The name is resolved once, every returned address is checked against the
+// policy, and only those checked addresses are dialled, so a second lookup
+// can never swap in a denied one (DNS rebinding). They are tried in turn,
+// the way net.Dialer tries a host's addresses: the next starts when the
+// previous fails or after parent.FallbackDelay (300 ms by default; negative
+// waits for the failure), and the first connection wins. A host with a
+// broken address family (an IPv6 address the host cannot route, sorted
+// first by the resolver) therefore still connects over the other.
 func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	if parent == nil {
 		parent = &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
@@ -197,19 +206,34 @@ func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, ad
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
+	return newEgressDialContext(parent.Timeout, parent.FallbackDelay, resolver.LookupIPAddr, parent.DialContext)
+}
+
+// egressDialFunc is the shape of net.Dialer.DialContext.
+type egressDialFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+
+// egressFallbackDelay is how long a connection attempt runs before the next
+// address is tried alongside it (RFC 8305 §5; the same default as net.Dialer).
+const egressFallbackDelay = 300 * time.Millisecond
+
+// newEgressDialContext builds EgressDialContext's dialer from its seams: the
+// resolver lookup and the dial of one checked address, which tests replace.
+func newEgressDialContext(timeout, fallbackDelay time.Duration,
+	lookup func(ctx context.Context, host string) ([]net.IPAddr, error), dial egressDialFunc,
+) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		// Include DNS in the dial budget; net.Dialer.Timeout alone starts
 		// after this explicit, policy-checked resolution.
-		if parent.Timeout > 0 {
+		if timeout > 0 {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, parent.Timeout)
+			ctx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
 		}
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return nil, fmt.Errorf("oci: egress: bad addr %q: %w", addr, err)
 		}
-		ips, err := resolver.LookupIPAddr(ctx, host)
+		ips, err := lookup(ctx, host)
 		if err != nil {
 			return nil, fmt.Errorf("oci: egress: resolve %s: %w", host, err)
 		}
@@ -219,6 +243,7 @@ func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, ad
 		// Reject the whole dial if ANY returned address is denied — a hostname
 		// that resolves to both a public and a private IP would otherwise be
 		// race-able, and the §11 policy is the conservative deny.
+		checked := make([]netip.Addr, 0, len(ips))
 		for _, ipa := range ips {
 			addr, ok := netip.AddrFromSlice(ipa.IP)
 			if !ok {
@@ -250,11 +275,147 @@ func EgressDialContext(parent *net.Dialer) func(ctx context.Context, network, ad
 				return nil, fmt.Errorf("%w: %w: address %s (%s)",
 					ErrImageEgressDenied, ErrEgressDenied, host, addr)
 			}
+			checked = append(checked, addr)
 		}
-		// Dial the first public IP explicitly to defeat DNS rebinding across
-		// the resolution/dial gap.
-		return parent.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+		// Dial only the checked addresses, by IP, to defeat DNS rebinding
+		// across the resolution/dial gap.
+		return dialChecked(ctx, dial, network, host, port, checked, fallbackDelay)
 	}
+}
+
+// dialChecked connects to the first of addrs (all already checked against
+// the egress policy) that accepts, trying them in the order of
+// interleaveFamilies. Each attempt after the first starts when the one
+// before it fails, or after fallbackDelay (zero means egressFallbackDelay,
+// negative means only after a failure), and attempts already running keep
+// going. The first connection wins; the others are cancelled and any that
+// still connect are closed. network narrows addrs to the family a "tcp4" or
+// "tcp6" dial asks for.
+func dialChecked(ctx context.Context, dial egressDialFunc, network, host, port string, addrs []netip.Addr, fallbackDelay time.Duration) (net.Conn, error) {
+	addrs = interleaveFamilies(addrsForNetwork(addrs, network))
+	if len(addrs) == 0 {
+		return nil, fmt.Errorf("oci: egress: no %s addresses for %s", network, host)
+	}
+	if fallbackDelay == 0 {
+		fallbackDelay = egressFallbackDelay
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	results := make(chan dialAttempt, len(addrs))
+	next, running := 0, 0
+	launch := func() {
+		target := net.JoinHostPort(addrs[next].String(), port)
+		next++
+		running++
+		go func() {
+			conn, err := dial(ctx, network, target)
+			results <- dialAttempt{conn, err}
+		}()
+	}
+	var errs []error
+	launch()
+	for running > 0 {
+		var delay <-chan time.Time
+		var timer *time.Timer
+		if next < len(addrs) && fallbackDelay > 0 {
+			timer = time.NewTimer(fallbackDelay)
+			delay = timer.C
+		}
+		select {
+		case r := <-results:
+			running--
+			if r.err == nil {
+				if timer != nil {
+					timer.Stop()
+				}
+				cancel()
+				go closeLosers(results, running)
+				return r.conn, nil
+			}
+			errs = append(errs, r.err)
+			if next < len(addrs) && ctx.Err() == nil {
+				launch()
+			}
+		case <-delay:
+			launch()
+		}
+		if timer != nil {
+			timer.Stop()
+		}
+	}
+	if len(errs) == 1 {
+		return nil, errs[0]
+	}
+	return nil, fmt.Errorf("oci: egress: dial %s: %w", host, errors.Join(errs...))
+}
+
+// dialAttempt is the outcome of dialling one checked address.
+type dialAttempt struct {
+	conn net.Conn
+	err  error
+}
+
+// closeLosers closes the connections of the n attempts still running when
+// another won: one that connected before its cancellation landed.
+func closeLosers(results <-chan dialAttempt, n int) {
+	for ; n > 0; n-- {
+		if r := <-results; r.conn != nil {
+			_ = r.conn.Close()
+		}
+	}
+}
+
+// addrsForNetwork keeps the addresses a dial on network can use: "tcp4" and
+// "udp4" take IPv4 only, "tcp6" and "udp6" IPv6 only, the rest both.
+func addrsForNetwork(addrs []netip.Addr, network string) []netip.Addr {
+	if network == "" {
+		return addrs
+	}
+	var keep func(netip.Addr) bool
+	switch network[len(network)-1] {
+	case '4':
+		keep = netip.Addr.Is4
+	case '6':
+		keep = netip.Addr.Is6
+	default:
+		return addrs
+	}
+	out := make([]netip.Addr, 0, len(addrs))
+	for _, a := range addrs {
+		if keep(a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// interleaveFamilies orders addrs the way RFC 8305 §4 asks: the resolver's
+// first address leads, then the families alternate, each in the resolver's
+// own order, so one family that cannot connect delays the other by one
+// attempt rather than by all of its addresses.
+func interleaveFamilies(addrs []netip.Addr) []netip.Addr {
+	if len(addrs) < 2 {
+		return addrs
+	}
+	var primary, other []netip.Addr
+	for _, a := range addrs {
+		if a.Is4() == addrs[0].Is4() {
+			primary = append(primary, a)
+		} else {
+			other = append(other, a)
+		}
+	}
+	out := make([]netip.Addr, 0, len(addrs))
+	for i := 0; i < len(primary) || i < len(other); i++ {
+		if i < len(primary) {
+			out = append(out, primary[i])
+		}
+		if i < len(other) {
+			out = append(out, other[i])
+		}
+	}
+	return out
 }
 
 // NewEgressHTTPClient returns an *http.Client that uses EgressDialContext as

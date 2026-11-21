@@ -900,6 +900,12 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 	listen := net.JoinHostPort(controlPlaneAddress, computeEdgePrivatePort)
 	var b strings.Builder
 	b.WriteString("faas_edge_on_compute_nodes: true\n")
+	// ADR-20261102081618 step 6: entry direct runs no tunnel connector. The
+	// compute roles remove it and the control plane's Prometheus stops
+	// scraping it, so the verify gate and the edge alerts stop expecting it.
+	if !edge.Tunnel() {
+		b.WriteString("faas_edge_tunnel: false\n")
+	}
 	switch role {
 	case roleControlPlane:
 		fmt.Fprintf(&b, "faas_edge_private_listen_addr: %q\n", listen)
