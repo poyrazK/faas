@@ -1,49 +1,11 @@
 # Support access: Terms, Privacy and DPA text
 
-Status: **approved by the owner 2026-11-17 and in the documents**, effective
-**2026-12-20** (`pkg/legal/legal.json`). Customer-granted support access
-(ADR-20261116163508) stays dark behind the `support_grants` platform flag until
-then.
-
-Terms section 13 promises account owners an email and a dashboard notice at
-least 30 days before a material change takes effect:
-
-- Dashboard: `change_notice` in `pkg/legal/legal.json` shows in every signed-in
-  dashboard page's banner until the effective date, once the release carrying
-  it is deployed. Clear the field after 2026-12-20.
-- Email: send the text below to every account owner **by 2026-11-20**. If it
-  goes out later, move `effective_date` (and the date in `change_notice`) so it
-  stays at least 30 days after the send.
-- Turn on `support_grants` for customers on or after 2026-12-20.
-
-## Notice email
-
-Subject: Changes to Gregale's Terms, Privacy Policy and DPA on 20 December 2026
-
-> Hello,
->
-> On 20 December 2026 we are updating our Terms of Service, Privacy Policy
-> and Data Processing Agreement to describe a new, optional feature: support
-> access.
->
-> When you cannot deploy or need a hand, an owner or admin of your account
-> or organization can let Gregale support deploy your connected repository's
-> production branch, retry, cancel or roll back a deployment, and restart
-> your apps. You choose the apps and how long (at most 7 days). Support can
-> never read your secrets or configuration, change members, keys or billing,
-> upload code, or delete anything. Every action is recorded in your activity
-> log, your owners and admins are emailed, and you can revoke access at any
-> time. Nothing changes unless you grant access.
->
-> Read the updated documents: https://gregale.dev/terms,
-> https://gregale.dev/privacy and https://gregale.dev/docs/dpa.
->
-> If you do not agree, you can close your account before 20 December 2026.
-> Continuing to use Gregale after that date means you accept the changes.
->
-> Questions: reply to this email or write to gregale@gregale.dev.
->
-> The Gregale team
+Status: **approved by the owner 2026-11-17, in the documents and effective
+2026-11-21** (`pkg/legal/legal.json`). Gregale had no customers yet, so the
+owner skipped the 30-day notice of Terms section 13 (2026-11-21) and the
+change took effect at once. Customer-granted support access
+(ADR-20261116163508) is still released per organization by the
+`support_grants` platform flag.
 
 ## The text, as added
 
