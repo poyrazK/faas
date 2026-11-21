@@ -229,6 +229,25 @@ func Kernel(fcVersion string) string {
 	return "kernel/" + fcVersion
 }
 
+// KernelForDigest is the content-addressed key of a Firecracker kernel:
+// kernel/<fcVersion>-<sha256 hex> (ADR-20261112030000 amendment 1). A kernel
+// key holds one immutable object, so a kernel whose bytes change under the
+// same Firecracker version needs its own key. One path segment keeps the key
+// a valid OCI tag (71 characters for a 64-hex digest). The digest may carry a
+// "sha256:" prefix and any case; anything that is not 64 hex characters
+// returns "", so a caller falls back to Kernel rather than inventing a key.
+func KernelForDigest(fcVersion, digest string) string {
+	d := strings.ToLower(strings.TrimSpace(digest))
+	d = strings.TrimPrefix(d, "sha256:")
+	if fcVersion == "" || len(d) != 64 {
+		return ""
+	}
+	if _, err := hex.DecodeString(d); err != nil {
+		return ""
+	}
+	return Kernel(fcVersion) + "-" + d
+}
+
 // IsParentBase reports whether storageKey names the parent ext4 for an
 // arch the box supports. It is the gRPC allow-list for vmmd's
 // MountParentExt4ReadOnly: anything else (an app base, a layer, an

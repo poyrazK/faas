@@ -715,8 +715,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// empty and let the rest of startup proceed — every snapshot will
 	// be marked stale and every wake will cold-boot, which is the
 	// correct cold-boot-always-works behaviour (ADR-005).
+	//
+	// With kernel_digest set (ADR-20261112030000 amendment 1) the key is
+	// content-addressed, kernel/<fc_version>-<digest>, so a release that
+	// changes the kernel's bytes publishes a new object instead of
+	// colliding with the old one. Snapshots captured on another kernel are
+	// refused by the backing check (ADR-510) and cold-boot.
 	if cfg.KernelKey == "" && fcVersion != "" {
 		cfg.KernelKey = storagekey.Kernel(fcVersion)
+		if cfg.KernelDigest != "" {
+			cfg.KernelKey = storagekey.KernelForDigest(fcVersion, cfg.KernelDigest)
+		}
 	}
 
 	// ADR-20261024225612: every guest boots with cfg.CPUTemplate, which

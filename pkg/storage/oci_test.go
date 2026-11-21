@@ -467,6 +467,25 @@ func TestPlan_KernelKey(t *testing.T) {
 	}
 }
 
+// The content-addressed kernel key (ADR-20261112030000 amendment 1) is one
+// segment and must round-trip through an OCI tag, or remote-only nodes could
+// not fetch the kernel.
+func TestPlan_ContentAddressedKernelKey(t *testing.T) {
+	o := &OCIRegistryStorageBackend{prefix: "faas"}
+	key := "kernel/1.17.0-" + strings.Repeat("0f", 32)
+	repo, tag, err := o.plan(key)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if repo != "kernel" || tag != strings.TrimPrefix(key, "kernel/") {
+		t.Fatalf("got (%q,%q), want (kernel, %q)", repo, tag, strings.TrimPrefix(key, "kernel/"))
+	}
+	back, ok := o.unplan(repo, tag)
+	if !ok || back != key {
+		t.Fatalf("unplan(%q, %q) = %q, %t; want %q", repo, tag, back, ok, key)
+	}
+}
+
 func TestPlan_SignatureKey(t *testing.T) {
 	o := &OCIRegistryStorageBackend{prefix: "faas"}
 	key := "sigs/apps/my-app/550e8400-e29b-41d4-a716-446655440000.ext4.sig"

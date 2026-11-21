@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 func TestNormalizeArtifactDigest(t *testing.T) {
@@ -182,6 +183,41 @@ func TestPublishArtifactIsImmutableAndIdempotent(t *testing.T) {
 
 	if _, err := publishArtifact(context.Background(), be, "kernel/1.7.0", strings.Repeat("0", 64), path); err == nil {
 		t.Fatal("publish with a mismatched release digest unexpectedly succeeded")
+	}
+}
+
+// ADR-20261112030000 amendment 1: a release whose kernel bytes change under
+// the same Firecracker version publishes a new content-addressed key and
+// keeps the earlier kernel at the version-only alias for N-1 nodes. Before,
+// the alias collision failed the release (rc.338).
+func TestPublishLegacyKernelAliasKeepsAnEarlierKernel(t *testing.T) {
+	ctx := context.Background()
+	write := func(body string) (path, digest string) {
+		sum := sha256.Sum256([]byte(body))
+		path = filepath.Join(t.TempDir(), "vmlinux")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+		return path, hex.EncodeToString(sum[:])
+	}
+	be := newMemoryArtifactBackend()
+	oldPath, oldDigest := write("rc.337 kernel")
+	newPath, newDigest := write("no-module kernel")
+
+	if state, err := publishLegacyKernelAlias(ctx, be, "kernel/1.17.0", oldDigest, oldPath); err != nil || state != "published" {
+		t.Fatalf("first alias publish = %q, %v; want published", state, err)
+	}
+	if state, err := publishLegacyKernelAlias(ctx, be, "kernel/1.17.0", oldDigest, oldPath); err != nil || state != "present" {
+		t.Fatalf("repeat alias publish = %q, %v; want present", state, err)
+	}
+	if _, err := publishArtifact(ctx, be, storagekey.KernelForDigest("1.17.0", newDigest), newDigest, newPath); err != nil {
+		t.Fatalf("content-addressed publish of a changed kernel: %v", err)
+	}
+	if state, err := publishLegacyKernelAlias(ctx, be, "kernel/1.17.0", newDigest, newPath); err != nil || state != "kept" {
+		t.Fatalf("alias publish of a changed kernel = %q, %v; want kept", state, err)
+	}
+	if _, err := verifyArtifact(ctx, be, "kernel/1.17.0", oldDigest); err != nil {
+		t.Fatalf("the alias no longer holds the earlier kernel: %v", err)
 	}
 }
 

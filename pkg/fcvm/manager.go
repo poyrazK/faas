@@ -4760,6 +4760,19 @@ func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance,
 // DestroyWait is what the engine passes for the per-task cap + 90s
 // grace; pass EffectiveDestroyWait(req.TaskTimeoutSec) at the call
 // site.
+// jobKernelKey resolves the kernel a job VM boots. schedd names the
+// version-only key storagekey.Kernel(fcVersion); this node may boot a
+// content-addressed key instead (ADR-20261112030000 amendment 1), and a job
+// must boot the same kernel as the node's app VMs, so that alias maps to the
+// node's own key. Any other key (a test fixture, an operator pin) is kept.
+func (m *Manager) jobKernelKey(requested string) string {
+	if requested != "" && m.paths.Kernel != "" && m.fcVersion != "" &&
+		requested == storagekey.Kernel(m.fcVersion) {
+		return m.paths.Kernel
+	}
+	return requested
+}
+
 func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance, err error) {
 	if m.vmm == nil {
 		return nil, fmt.Errorf("manager: BootJob: nil vmm")
@@ -4895,7 +4908,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// manifest write; the manager just brokers the lease + netns
 	// and stamps the live record.
 	spec := JobColdBootSpec{
-		KernelKey:      req.KernelKey,
+		KernelKey:      m.jobKernelKey(req.KernelKey),
 		BaseKey:        req.BaseKey,
 		ImageRef:       req.ImageRef,
 		Command:        req.Command,
