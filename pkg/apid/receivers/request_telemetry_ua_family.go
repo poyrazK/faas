@@ -3,7 +3,7 @@ package receivers
 import "github.com/onebox-faas/faas/pkg/state"
 
 // requestTelemetryUAFamilies is the set request_telemetry's ua_family CHECK
-// allows (migration 20261121133646100): the gateway's browser and tool
+// allows (migration 20261121130352100, #7736): the gateway's browser and tool
 // families, the sentinels, and "gregale-<source>" for each invocation source
 // the platform delivers.
 var requestTelemetryUAFamilies = func() map[string]bool {

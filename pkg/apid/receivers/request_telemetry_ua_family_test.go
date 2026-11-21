@@ -28,7 +28,7 @@ func TestRequestTelemetryUAFamilyNeverRefusesARow(t *testing.T) {
 // The receiver's set must stay inside the column's CHECK: a family the Go
 // set passes but the database refuses fails the batch again.
 func TestRequestTelemetryUAFamiliesMatchTheMigration(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "20261121133646100_request_telemetry_invocation_ua_families.sql"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "20261121130352100_request_telemetry_invocation_ua_family.sql"))
 	if err != nil {
 		t.Fatal(err)
 	}
