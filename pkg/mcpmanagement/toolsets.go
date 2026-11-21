@@ -249,6 +249,13 @@ var toolsetOf = map[string]string{
 	"gregale_list_notification_channels":       ToolsetOperate,
 	"gregale_test_notification_channel":        ToolsetOperate,
 	"gregale_list_org_members":                 ToolsetOperate,
+	"gregale_plan_experiment_change":           ToolsetRelease,
+	"gregale_apply_reviewed_change":            ToolsetRelease,
+	"gregale_list_event_schemas":               ToolsetDiagnose,
+	"gregale_plan_event_schema_registration":   ToolsetOperate,
+	"gregale_save_workflow_draft":              ToolsetRelease,
+	"gregale_plan_workflow_publish":            ToolsetRelease,
+	"gregale_diagnose_domain":                  ToolsetDiagnose,
 
 	"gregale_plan_domain":     ToolsetProvision,
 	"gregale_plan_bucket":     ToolsetProvision,
@@ -277,6 +284,8 @@ func toolsetIncludes(name, selected string) bool {
 		return selected == ToolsetCore
 	case "gregale_apply_operation":
 		return selected == ToolsetProvision
+	case "gregale_apply_reviewed_change":
+		return selected == ToolsetOperate
 	}
 	return false
 }

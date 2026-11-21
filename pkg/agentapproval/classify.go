@@ -163,9 +163,19 @@ var production = map[string]Target{
 	"POST /v1/workflows/runs/{}/steps/{}/retry":     TargetNone,
 
 	// Pausing a subscription stops event processing, and a recovery
-	// replays matched events through the app's code (ADR-20261118160000).
+	// replays matched events through the app's code (ADR-20261118161500).
 	"POST /v1/apps/{}/event-subscriptions/{}/delivery-control/pause": TargetApp,
 	"POST /v1/apps/{}/event-recoveries":                              TargetApp,
+
+	// ADR-20261119190000: starting or shipping an experiment changes what a
+	// flag serves; publishing a saved workflow changes what runs; schema
+	// versions decide which events a subscription takes. Registering a
+	// schema is account-wide, so it asks on every account.
+	"POST /v1/projects/{}/environments/{}/experiments/{}/start": TargetNone,
+	"POST /v1/projects/{}/environments/{}/experiments/{}/ship":  TargetNone,
+	"POST /v1/apps/{}/workflows/stored/{}/publish":              TargetApp,
+	"PUT /v1/apps/{}/event-subscriptions/{}/schema-versions":    TargetApp,
+	"POST /v1/event-schemas":                                    TargetNone,
 
 	// Flag publishes change what an environment's code does at its next
 	// request (ADR-20261117215858 §3). The kill route stays ungated: it
@@ -206,7 +216,7 @@ var billing = map[string]bool{
 	"POST /v1/account/platform-tenants/{}/plan-assignments": true,
 	"POST /v1/apps/{}/consumers/{}/plan-assignments":        true,
 	"PUT /v1/apps/{}/consumer-billing-policy":               true,
-	// A consumer spend cap is a spending setting (ADR-20261118160000).
+	// A consumer spend cap is a spending setting (ADR-20261118161500).
 	"PUT /v1/apps/{}/consumers/{}/spend-cap": true,
 }
 
@@ -232,6 +242,10 @@ var budgetRoutes = map[string]bool{
 	"POST /v1/apps/{}/deployments/source-ref":     true,
 	"POST /v1/apps/{}/deployments/source-tarball": true,
 	"POST /v1/uploads/{}/commit":                  true,
+	// A cron wakes its app on schedule, so one that fires more often than
+	// the app idles keeps it running (cost-control review 2026-11-19, N3).
+	"POST /v1/crons":     true,
+	"PATCH /v1/crons/{}": true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's

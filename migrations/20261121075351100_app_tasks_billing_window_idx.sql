@@ -1,4 +1,4 @@
--- filename: 20261120015158892_app_tasks_billing_window_idx.sql
+-- filename: 20261121075351100_app_tasks_billing_window_idx.sql
 -- migration-compat: expand
 -- Cost-control review 2026-11-19 (N16): meterd bills app task VMs from their
 -- started_at/finished_at window each minute. This index finds the tasks that

@@ -44,6 +44,21 @@ const FlagSDKTrackV2Capability = "track-v2"
 // FlagEventsRequest is POST /v1/runtime/flags/events.
 type FlagEventsRequest struct {
 	Events []FlagEvent `json:"events"`
+	// Exposures are subject experiment exposures (ADR 20261119173702 §1),
+	// at most FlagExposuresPerRequest; they do not count against the event
+	// quota.
+	Exposures []FlagExposure `json:"exposures,omitempty"`
+}
+
+// FlagExposure is one end user's exposure to a subject experiment's rule.
+// Only the subject's hash is stored.
+type FlagExposure struct {
+	Flag       string    `json:"flag"`
+	RuleID     string    `json:"rule_id"`
+	Variant    string    `json:"variant"`
+	CustomerID string    `json:"customer_id"`
+	Subject    string    `json:"subject"`
+	At         time.Time `json:"at,omitempty"`
 }
 
 // FlagEventsDropped counts a batch's dropped events by reason.
@@ -83,6 +98,17 @@ type FlagExperimentCreateRequest struct {
 	Funnel    *FlagExperimentFunnel    `json:"funnel,omitempty"`
 	Retention *FlagExperimentRetention `json:"retention,omitempty"`
 	Cuped     *bool                    `json:"cuped,omitempty"`
+	// Unit is customer (the default) or subject; Layer and Traffic (basis
+	// points) place the experiment in an exclusive layer slice; Allocation
+	// is fixed (the default) or bandit; DenominatorEvent is a ratio
+	// metric's denominator and Percentile a percentile metric's percentile
+	// (ADR 20261119173702).
+	Unit             string `json:"unit,omitempty"`
+	Layer            string `json:"layer,omitempty"`
+	Traffic          int    `json:"traffic,omitempty"`
+	Allocation       string `json:"allocation,omitempty"`
+	DenominatorEvent string `json:"denominator_event,omitempty"`
+	Percentile       int    `json:"percentile,omitempty"`
 }
 
 // FlagExperimentFunnel is a funnel metric: 2 to 6 steps completed within
@@ -188,6 +214,16 @@ type FlagExperiment struct {
 	Funnel    *FlagExperimentFunnel    `json:"funnel,omitempty"`
 	Retention *FlagExperimentRetention `json:"retention,omitempty"`
 	Cuped     bool                     `json:"cuped"`
+	// Unit, Allocation, the layer slice held while running, and the ratio
+	// or percentile settings (ADR 20261119173702).
+	Unit             string `json:"unit"`
+	Allocation       string `json:"allocation"`
+	Layer            string `json:"layer,omitempty"`
+	Traffic          int    `json:"traffic,omitempty"`
+	LayerFrom        *int   `json:"layer_from,omitempty"`
+	LayerTo          *int   `json:"layer_to,omitempty"`
+	DenominatorEvent string `json:"denominator_event,omitempty"`
+	Percentile       int    `json:"percentile,omitempty"`
 }
 
 // FlagExperimentList is the experiments of an environment.
@@ -221,6 +257,36 @@ type FlagExperimentVariantResult struct {
 	// Unadjusted is the comparison without CUPED when the lift above is
 	// CUPED-adjusted.
 	Unadjusted *FlagExperimentComparison `json:"unadjusted,omitempty"`
+	// BestProbability and ExpectedLoss are a bandit arm's posterior
+	// (ADR 20261119173702 §4).
+	BestProbability *float64 `json:"best_probability,omitempty"`
+	ExpectedLoss    *float64 `json:"expected_loss,omitempty"`
+}
+
+// FlagExperimentBandit is a bandit's posterior per arm, control included,
+// and when it last re-weighted the rule.
+type FlagExperimentBandit struct {
+	Arms       []FlagExperimentBanditArm `json:"arms"`
+	WeightedAt *time.Time                `json:"weighted_at,omitempty"`
+}
+
+// FlagExperimentBanditArm is one arm's best-arm probability and expected
+// loss (the conversion rate given up by choosing it).
+type FlagExperimentBanditArm struct {
+	Variant         string  `json:"variant"`
+	Weight          int     `json:"weight"`
+	BestProbability float64 `json:"best_probability"`
+	ExpectedLoss    float64 `json:"expected_loss"`
+}
+
+// FlagExperimentSegment is the results of a cohort's members, or of
+// everyone else, with Benjamini–Hochberg adjusted p-values. Segments are
+// exploratory and never drive the recommendation.
+type FlagExperimentSegment struct {
+	Cohort   string                        `json:"cohort"`
+	Members  bool                          `json:"members"`
+	Control  FlagExperimentArm             `json:"control"`
+	Variants []FlagExperimentVariantResult `json:"variants"`
 }
 
 // FlagExperimentResults is GET .../experiments/{key}/results.
@@ -239,6 +305,60 @@ type FlagExperimentResults struct {
 	Latency        []FlagExperimentLatency      `json:"latency"`
 	Recommendation FlagExperimentRecommendation `json:"recommendation"`
 	Cuped          FlagExperimentCuped          `json:"cuped"`
+	// FixedHorizon marks a percentile metric's bootstrap results, which
+	// have no sequential guarantee; Bandit is a bandit's posterior and
+	// Segments the results split by ?segment=COHORT (ADR 20261119173702).
+	FixedHorizon bool                    `json:"fixed_horizon,omitempty"`
+	Bandit       *FlagExperimentBandit   `json:"bandit,omitempty"`
+	Segments     []FlagExperimentSegment `json:"segments,omitempty"`
+}
+
+// FlagExperimentLayer is an environment's experiment layer and the slices
+// its running experiments hold.
+type FlagExperimentLayer struct {
+	Key    string                     `json:"key"`
+	Slices []FlagExperimentLayerSlice `json:"slices"`
+	// Free is the basis points no experiment holds.
+	Free int `json:"free"`
+}
+
+// FlagExperimentLayerSlice is the [From, To) slice an experiment holds.
+type FlagExperimentLayerSlice struct {
+	Experiment string `json:"experiment"`
+	From       int    `json:"from"`
+	To         int    `json:"to"`
+}
+
+// FlagExperimentLayerList is GET .../experiment-layers.
+type FlagExperimentLayerList struct {
+	Layers []FlagExperimentLayer `json:"layers"`
+}
+
+// FlagExperimentLayerRequest creates a layer.
+type FlagExperimentLayerRequest struct {
+	Key string `json:"key"`
+}
+
+// FlagExperimentHoldout is the environment holdout: BasisPoints of
+// customers see every experiment's control.
+type FlagExperimentHoldout struct {
+	BasisPoints int `json:"basis_points"`
+}
+
+// FlagExperimentHoldoutReport compares held-out customers with everyone
+// else active in the range on one event: conversion rates, their difference
+// and a 95% interval.
+type FlagExperimentHoldoutReport struct {
+	Event       string            `json:"event"`
+	From        time.Time         `json:"from"`
+	Until       time.Time         `json:"until"`
+	BasisPoints int               `json:"basis_points"`
+	Held        FlagExperimentArm `json:"held"`
+	Exposed     FlagExperimentArm `json:"exposed"`
+	Difference  float64           `json:"difference"`
+	Low         float64           `json:"low"`
+	High        float64           `json:"high"`
+	Truncated   bool              `json:"truncated"`
 }
 
 // FlagExperimentGuardrail is one guardrail across the variants. Status is
@@ -285,7 +405,10 @@ type FlagExperimentRecommendation struct {
 
 // FlagEventsResponse answers a runtime event batch.
 type FlagEventsResponse struct {
-	Accepted int               `json:"accepted"`
-	Dropped  FlagEventsDropped `json:"dropped"`
-	Month    FlagEventsMonth   `json:"month"`
+	Accepted int `json:"accepted"`
+	// Exposures is how many subject exposures matched a running subject
+	// experiment (ADR 20261119173702 §1).
+	Exposures int               `json:"exposures,omitempty"`
+	Dropped   FlagEventsDropped `json:"dropped"`
+	Month     FlagEventsMonth   `json:"month"`
 }

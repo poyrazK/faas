@@ -20,4 +20,4 @@ Preview first: the dry run says what Gregale will do with this source and which 
 Notes:
 - A Compose file or several services: see `gregale guide compose-project`.
 - A private URL can return 401 without credentials after a successful deploy. release verify checks the exact deployment using owner access; it does not verify anonymous public access.
-- A source build must answer HTTP GET /healthz on its port; see `gregale guide health-checks`.
+- Readiness: a health route found in the source (or hosting.health) must answer 2xx; with none, an open port is enough. Do not pass / as the health path. An app that checks the Host header (Django ALLOWED_HOSTS) needs the health route answered first; see `gregale guide health-checks`.

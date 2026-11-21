@@ -27,5 +27,13 @@ export type FlagExperimentVariantResult = (FlagExperimentArm & {
   p_value?: number;
   status: 'significant' | 'not_significant' | 'insufficient_data' | 'sample_ratio_mismatch';
   unadjusted?: FlagExperimentComparison;
+  /**
+   * A bandit arm's posterior probability of being best; bandits report no p-values.
+   */
+  best_probability?: number;
+  /**
+   * Conversion rate a bandit gives up by choosing this arm.
+   */
+  expected_loss?: number;
 });
 

@@ -7278,7 +7278,7 @@ ADR-20261118140000.
 
 ## Events, audit trail, budgets and API consumers
 
-ADR-20261118160000.
+ADR-20261118161500.
 
 - Events (toolset `diagnose`): `gregale_list_event_subscriptions`,
   `gregale_get_event_subscription_health`, `gregale_list_event_deliveries`
@@ -7315,6 +7315,27 @@ ADR-20261119110000.
   `…@example.com`); the rest of a webhook URL is often its credential.
 - `gregale_list_org_members` (toolset `operate`) lists an organization's
   members, roles and pending invitations.
+
+## Experiments, saved workflows, event schemas and domains
+
+ADR-20261119190000.
+
+- Experiments (toolset `release`): `gregale_plan_experiment_change` reviews
+  creating (never started by create), starting, stopping or shipping a flag
+  experiment; apply with `gregale_apply_reviewed_change`. Production starts
+  and ships ask a person first.
+- Saved workflows (toolset `release`): `gregale_save_workflow_draft` saves a
+  draft (it runs nothing); `gregale_plan_workflow_publish` reviews publishing
+  it and refuses unless the draft's saved tests passed on that version.
+  Production publishes ask a person first.
+- Event schemas: `gregale_list_event_schemas` (toolset `diagnose`) and
+  `gregale_plan_event_schema_registration` (toolset `operate`), which previews
+  which subscriptions accept the new version and validates samples. It needs
+  a connection to every app and asks a person first. Pin or reset a
+  subscription's schema versions with `gregale_plan_event_change`
+  (`set_schema_versions`, `reset_schema_versions`).
+- `gregale_diagnose_domain` (toolset `diagnose`) explains why a custom domain
+  does or does not serve, with the record to change.
 
 ## Read product analytics
 

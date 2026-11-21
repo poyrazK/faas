@@ -53,6 +53,7 @@ CREATE TABLE invoices(id uuid PRIMARY KEY,account_id uuid NOT NULL,status text N
 		}
 	}
 	applyCheckoutMigration(t, pool)
+	applySalesRolesMigrations(t, pool)
 	owner, other := uuid.NewString(), uuid.NewString()
 	if _, err = pool.Exec(ctx, "INSERT INTO accounts(id,email) VALUES ($1,'rep@example.com'),($2,'other@example.com')", owner, other); err != nil {
 		t.Fatal(err)
@@ -273,5 +274,33 @@ func applyCheckoutMigration(t *testing.T, pool *pgxpool.Pool) {
 	// Keep the DO guard intact; this migration has no concurrent index build.
 	if _, err := pool.Exec(t.Context(), up); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// applySalesRolesMigrations adds the organization and namespace tables the
+// roles/agreements migrations reference, seeding a namespace for every new
+// account or organization as production's triggers do, then applies them.
+func applySalesRolesMigrations(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := t.Context()
+	_, err := pool.Exec(ctx, `CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);
+CREATE TABLE orgs (id uuid PRIMARY KEY, slug text NOT NULL DEFAULT 'acme', name text NOT NULL DEFAULT 'Acme',
+ personal_org boolean NOT NULL DEFAULT false, plan text NOT NULL DEFAULT 'free', status text NOT NULL DEFAULT 'active',
+ stripe_subscription_item text, deleted_pending boolean NOT NULL DEFAULT false);
+CREATE FUNCTION seed_test_namespace() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN INSERT INTO resource_namespaces(id) VALUES (NEW.id) ON CONFLICT DO NOTHING; RETURN NEW; END';
+CREATE TRIGGER accounts_seed_namespace BEFORE INSERT ON accounts FOR EACH ROW EXECUTE FUNCTION seed_test_namespace();
+CREATE TRIGGER orgs_seed_namespace BEFORE INSERT ON orgs FOR EACH ROW EXECUTE FUNCTION seed_test_namespace();
+INSERT INTO resource_namespaces(id) SELECT id FROM accounts;`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"20261120181326259_sales_team_agreements.sql", "20261120181327631_sales_org_attribution.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = pgtest.ExecMigration(ctx, t, pool, string(raw), true); err != nil {
+			t.Fatal(name, err)
+		}
 	}
 }

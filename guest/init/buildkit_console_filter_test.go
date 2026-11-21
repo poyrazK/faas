@@ -15,11 +15,12 @@ func TestBuildkitConsoleFilterDropsDebugAndStackFrames(t *testing.T) {
 		"\tgithub.com/moby/buildkit/solver/jobs.go:1248\n" +
 		"time=\"2026-11-19T19:17:19Z\" level=debug msg=\"session finished: <nil>\" spanID=c7ab\n" +
 		"  debug continuation\n" +
-		"time=\"2026-11-19T19:17:19Z\" level=warning msg=\"failed check for fsverity support\"\n" +
+		"time=\"2026-11-19T19:17:19Z\" level=warning msg=\"failed check for fsverity support\" error=\"enable fsverity failed\" path=/build/cache\n" +
+		"time=\"2026-11-19T19:17:19Z\" level=warning msg=\"cache export slow\"\n" +
 		"npm error code E404\n" +
 		"ERROR: process \"npm install\" did not complete successfully: exit code: 1\n"
 	want := "#6 importing cache manifest from local:3630261811984277240\n" +
-		"time=\"2026-11-19T19:17:19Z\" level=warning msg=\"failed check for fsverity support\"\n" +
+		"time=\"2026-11-19T19:17:19Z\" level=warning msg=\"cache export slow\"\n" +
 		"npm error code E404\n" +
 		"ERROR: process \"npm install\" did not complete successfully: exit code: 1\n"
 	var out bytes.Buffer

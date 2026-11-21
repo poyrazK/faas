@@ -266,6 +266,26 @@ if bash "$helper" host-restart-script "/tmp/elsewhere" "$test_root/x.sh" 2>/dev/
 bash "$helper" cleanup "$remote_stage"
 unset HOST_CONFIG_DIR
 
+# 7b. host-state: a control plane rebuilt from backups has no active release
+#     before its first activation; it reports nulls (so a full release
+#     converges every role) instead of failing. A link to a release without
+#     its manifest is a broken host and still fails.
+export HOST_CONFIG_DIR="$test_root/bootstrap" HOST_CURRENT_RELEASE="$test_root/opt/current"
+state="$(bash "$helper" host-state)" || fail "host-state failed on a host with no active release"
+jq -e --arg c "$contract" '.current == null and .base_git_sha == null and .manifest_hash == null
+  and .record.group == "control_plane" and .contract == $c' <<<"$state" >/dev/null \
+  || fail "host-state on a fresh host: $state"
+mkdir -p "$test_root/opt/releases/2222222222222222222222222222222222222222"
+ln -s "$test_root/opt/releases/2222222222222222222222222222222222222222" "$HOST_CURRENT_RELEASE"
+if bash "$helper" host-state >/dev/null 2>&1; then fail "host-state accepted an active release without release-manifest.json"; fi
+jq -n '{git_sha: "2222222222222222222222222222222222222222", manifest_hash: ("sha256:" + ("d" * 64))}' \
+  > "$test_root/opt/releases/2222222222222222222222222222222222222222/release-manifest.json"
+state="$(bash "$helper" host-state)" || fail "host-state failed on a host with an active release"
+jq -e '.current == "2222222222222222222222222222222222222222" and .base_git_sha == "2222222222222222222222222222222222222222"
+  and (.manifest_hash | startswith("sha256:d"))' <<<"$state" >/dev/null || fail "host-state on an active host: $state"
+if HOST_CURRENT_RELEASE="/opt/faas/current;rm" bash "$helper" host-state 2>/dev/null; then fail "host-state accepted an unsafe link path"; fi
+unset HOST_CONFIG_DIR HOST_CURRENT_RELEASE
+
 # 8. preflight-state: the deploy lock and Prometheus's active alerts, as one
 #    JSON object, whatever the remote could not read.
 cat > "$stub/flock" <<'EOF'

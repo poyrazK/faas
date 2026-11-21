@@ -83,6 +83,7 @@ CREATE TABLE agent_runs (
  state text NOT NULL DEFAULT 'queued',
  ram_mb integer,
  timeout_sec integer NOT NULL,
+ deadline_credit_max_sec integer NOT NULL DEFAULT 0,
  attempt integer NOT NULL DEFAULT 1,
  lease_token text,
  lease_expires_at timestamptz,
@@ -379,7 +380,8 @@ CREATE TABLE agent_run_approvals (
  arguments_sha256 text NOT NULL,
  arguments_summary text NOT NULL DEFAULT '',
  created_at timestamptz NOT NULL DEFAULT now(),
- expires_at timestamptz NOT NULL
+ expires_at timestamptz NOT NULL,
+ released_at timestamptz
 );
 CREATE TABLE agent_run_approval_decisions (
  approval_id uuid PRIMARY KEY,

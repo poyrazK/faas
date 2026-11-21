@@ -417,3 +417,117 @@ run deadlines pause during a wait.
    - Slack as an approval channel (open question 2);
    - showing approvals in the dashboard.
 
+
+## Amendment 3 (2026-11-20) · The run deadline pauses while a person decides
+
+Amendment 2 left the run's deadline running during an approval wait, so a
+seller who takes ten minutes to answer can cost a run with a 600 s timeout
+its whole budget. The owner chose to close that gap (2026-11-20). This
+amendment also corrects amendment 2.
+
+### Correction to amendment 2
+
+Amendment 2 said the guest's timers stop while the model-wait pause holds the
+VM. They do not: ADR-20261027090012 §3 records that the guest clock is not
+stepped on resume and keeps host time (ADR-906), so a guest timer that would
+have expired during the pause expires at resume. Two timers matter:
+- **The harness's tool timeout.** agentd's preset wiring (PR #7683) sets it
+  to `AgentRunApprovalTimeoutSec + 120` s for codex and claude-code. A seller
+  image sets its own.
+- **The run's timeout** in the guest and in vmmd. This amendment extends it.
+
+### The rule
+
+A run's deadline is `running_at + timeout_sec + credit`, where **credit** is
+the wall time during which at least one of the run's approvals was waiting,
+capped at `AgentRunApprovalCreditMaxSec`. Overlapping approvals count once.
+An approval waits from `created_at` until the first of:
+- its decision;
+- its expiry;
+- `released_at`, when outboundd stopped holding the call (the harness went
+  away, or the call ended for any other reason).
+
+Credit is wall time, paused or not. Where the model-wait pause is off the
+wait is billed, as amendment 2 says; the credit only moves the deadline.
+
+### Who enforces it
+
+- **vmmd holds the deadline.** `AgentRunStart.deadline_sec` carries the
+  seller's `timeout_sec` beside the request, whose own `timeout_sec` is now
+  the guest ceiling. vmmd's host timer and the exchange's context start at
+  `deadline_sec` and move to `deadline_sec + credit` when agentd says so,
+  never past the ceiling. At the deadline vmmd resumes the guest and sends
+  the cancel frame, and it reports the run as `timed_out`, not `cancelled`.
+  An older vmmd reads only the request and so gives the run the whole
+  ceiling; the release order below keeps that from happening.
+- **agentd computes credit.** While a run's version has an `approve` tool,
+  agentd reads the run's credit every `AgentRunApprovalCreditPollSec` and,
+  when it grew, sends `AgentRunExtend{credit_ms}` on the RunAgent stream. The
+  value is the run's total, so a repeated or reordered frame does no harm.
+  schedd forwards it to vmmd unchanged. agentd only reads approval rows;
+  outboundd still writes them.
+- **The guest timer is a ceiling.** The guest kills the harness at the
+  request's `timeout_sec`, which it validates against
+  `agentrunproto.MaxTimeoutSec`. For a version with an `approve` tool,
+  agentd sends `min(timeout_sec + AgentRunApprovalCreditMaxSec,
+  MaxTimeoutSec)`, and vmmd enforces the real deadline. `MaxTimeoutSec`
+  rises from 3,600 to 7,200 so a Scale run at its 3,600 s plan limit can
+  still earn credit.
+- **outboundd's expiry** becomes the first of `now +
+  AgentRunApprovalTimeoutSec` and `running_at + least(timeout_sec +
+  deadline_credit_max_sec, MaxTimeoutSec) − AgentRunApprovalDeadlineMarginSec`.
+  While a call waits it earns credit one second per second until the cap, so
+  the deadline stays the same distance ahead until the cap is reached; the
+  cap's deadline is therefore the last moment a wait can end. With no credit
+  (`deadline_credit_max_sec = 0`) this is amendment 2's expiry. An expiry
+  that leaves 1 s or less still refuses the call.
+
+The margin (30 s) is more than five times the poll (5 s), so agentd extends
+the deadline before vmmd reaches it.
+
+### Data
+
+- `agent_run_approvals.released_at timestamptz NULL`, written by outboundd
+  when the held call ends. An older outboundd leaves it null, and the wait
+  then ends at the decision or the expiry.
+- `agent_runs.deadline_credit_max_sec integer NOT NULL DEFAULT 0`, written by
+  agentd when the run starts running: the credit this run may earn, 0 when
+  the switch is off or the version has no `approve` tool. outboundd reads it
+  for the expiry, so outboundd needs no switch of its own.
+
+Both are expand-only.
+
+### Bounds
+
+- A run outlives its `timeout_sec` by at most `AgentRunApprovalCreditMaxSec`.
+- A paused VM keeps its memory on the node for the whole wait. Measured
+  admission (ADR-909) already counts it; the cap bounds it.
+- Approval waits are the only source of credit. A model call is not.
+
+### Limits (`pkg/api/limits.go`)
+
+| Name | Value |
+|---|---|
+| `AgentRunApprovalCreditMaxSec` | 3,600 |
+| `AgentRunApprovalCreditPollSec` | 5 |
+| `agentrunproto.MaxTimeoutSec` | 7,200 (was 3,600) |
+
+### Release order
+
+Units release independently (docs/release-compatibility.md), so each step
+works beside the previous release:
+1. This amendment.
+2. Guest: `MaxTimeoutSec` 7,200. An older agentd never sends more than 3,600.
+3. Data and outboundd: both columns, `released_at` writes and the new
+   expiry, which is unchanged while every run's credit cap is 0.
+4. schedd and vmmd: the `AgentRunExtend` frame and the movable deadline. An
+   older schedd or vmmd ignores the frame, as both ignore unknown frames
+   today, and the run keeps its plain deadline.
+5. agentd: the credit poll and the guest ceiling, behind the switch
+   `FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT` (off). It goes on after steps 2–4
+   are live on every node, because an older guest refuses a `timeout_sec`
+   above 3,600.
+
+### Metrics
+
+`agent_run_deadline_credit_seconds_total`: credit agentd sent to vmmd.

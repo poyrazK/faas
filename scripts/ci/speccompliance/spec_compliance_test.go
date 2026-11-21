@@ -124,6 +124,7 @@ var previewFields = map[string]map[string]bool{
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
@@ -1202,6 +1203,7 @@ var schemaSpecOnly = map[string]bool{
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
 	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,

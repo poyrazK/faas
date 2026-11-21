@@ -77,6 +77,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
+	{"agent", "Approve or deny the tool calls hosted agent runs wait on", "Agents"},
 	{"account", "Manage your account, MFA and data exports", "Account"},
 	{"org", "Manage orgs, members and invitations", "Account"},
 	{"key", "Manage your account's API keys", "Account"},
@@ -213,6 +214,12 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
+	{"flag experiment layer list", "flags experiments layers list"},
+	{"flag experiment layer create", "flags experiments layers create"},
+	{"flag experiment layer delete", "flags experiments layers delete"},
+	{"flag experiment holdout get", "flags experiments holdout get"},
+	{"flag experiment holdout set", "flags experiments holdout set"},
+	{"flag experiment holdout report", "flags experiments holdout report"},
 	{"flag", "flags"},
 	// ADR 20261117084505: product analytics; `analytics` is request analytics.
 	{"insight event list", "insights events"},
@@ -369,6 +376,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client status", "mcp task-get"},
 	{"mcp client wait", "mcp task-wait"},
 	{"mcp client cancel", "mcp task-cancel"},
+	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+	{"agent run approval list", "agents runs approvals"},
+	{"agent run approve", "agents runs approve"},
+	{"agent run deny", "agents runs deny"},
 
 	// Account.
 	{"account mfa", "mfa"},

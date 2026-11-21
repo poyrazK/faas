@@ -7164,7 +7164,8 @@ haveApp:
 		return
 	}
 	// A preview runs unreviewed code: the credential a platform gate just
-	// verified does not reach it (ADR-20261102100001).
+	// verified does not reach it (ADR-20261102100001), and no app receives
+	// a verified Gregale API key (ADR-20261120060000).
 	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.

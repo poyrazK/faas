@@ -5470,6 +5470,14 @@ func ErrInboundWebhookBadSignature() *Problem {
 		"Invalid webhook signature", "the Stripe-Signature header did not verify")
 }
 
+// ErrInboundWebhookBadGenericSignature is the generic provider's refusal; it
+// used the Stripe wording and named the Stripe-Signature header (prod
+// 2026-11-20).
+func ErrInboundWebhookBadGenericSignature() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
+		"Invalid webhook signature", "the X-Gregale-Signature header did not verify; send sha256= and the hex HMAC-SHA256, keyed with the signing secret, of X-Gregale-Timestamp, X-Gregale-Event-ID and X-Gregale-Event-Type each followed by a newline, then the raw body; the timestamp must be within 5 minutes")
+}
+
 func ErrInboundWebhookTooLarge() *Problem {
 	return NewProblem(http.StatusRequestEntityTooLarge, CodeInboundWebhookTooLarge,
 		"Webhook body too large", "the webhook body exceeds 1 MiB")

@@ -21279,6 +21279,7 @@
       "checkout_commit",
       "checkout_installation_id",
       "checkout_repository",
+      "deadline_credit_max_sec",
       "dedupe_key",
       "exit_code",
       "finished_at",
@@ -21478,6 +21479,7 @@
       "created_at",
       "expires_at",
       "id",
+      "released_at",
       "run_id",
       "tool"
     ],
@@ -21680,7 +21682,9 @@
       "hold_days",
       "note",
       "referred_reward_cents",
+      "selected_by",
       "stage",
+      "subject_kind",
       "updated_at",
       "updated_by"
     ],
@@ -21823,6 +21827,66 @@
       "updated_at",
       "updated_by",
       "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_team_members",
+    "columns": [
+      "account_id",
+      "active",
+      "created_at",
+      "role",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_agreements",
+    "columns": [
+      "account_id",
+      "commission_bps",
+      "created_at",
+      "created_by",
+      "effective_from",
+      "id",
+      "note"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_credit_changes",
+    "columns": [
+      "account_id",
+      "changed_by",
+      "created_at",
+      "from_commission_bps",
+      "from_owner_id",
+      "id",
+      "reason",
+      "to_commission_bps",
+      "to_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_payouts",
+    "columns": [
+      "account_id",
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "note",
+      "owner_id",
+      "paid_on",
+      "recorded_by",
+      "reference",
+      "void_reason",
+      "voided_at",
+      "voided_by"
     ],
     "kind": "account_identity"
   },
@@ -22265,6 +22329,7 @@
       "converted_at",
       "crossed",
       "customer_id",
+      "den_sum",
       "errors",
       "experiment_id",
       "first_exposed_at",
@@ -22272,6 +22337,8 @@
       "pre_value",
       "requests",
       "slow_requests",
+      "subject_hash",
+      "unit_customer_id",
       "value_sum",
       "variant"
     ],
@@ -22281,23 +22348,31 @@
     "table": "flag_experiments",
     "columns": [
       "account_id",
+      "allocation",
+      "bandit",
+      "bandit_weighted_at",
       "breach",
       "control",
       "created_at",
       "created_by",
       "cuped",
+      "denominator_event",
       "environment_id",
       "flag_key",
       "guardrails",
       "id",
       "key",
       "latency_threshold_ms",
+      "layer",
+      "layer_from",
+      "layer_to",
       "metric_definition",
       "metric_event",
       "metric_kind",
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "percentile",
       "project_id",
       "rule_id",
       "started_at",
@@ -22305,6 +22380,8 @@
       "stop_reason",
       "stopped_at",
       "telemetry_cursor",
+      "traffic",
+      "unit",
       "value_through_day",
       "weights"
     ],

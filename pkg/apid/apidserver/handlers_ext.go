@@ -4630,6 +4630,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
 	}
+	commitBudget, answered := s.chargeAgentBudget(w, r, acct.Plan, 0,
+		cronStandingMillicents(app, acct.Plan, req.Schedule, timezone, enabled, cronCommand, commandTimeoutSeconds, time.Now().UTC()))
+	if answered {
+		return
+	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
 		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
@@ -4651,6 +4656,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"created","app_id":"`+app.ID+`"}`)
 	s.log.Info("cron created", "cron", c.ID, "app", app.ID, "account", acct.ID)
 	// IAM-4 (issue #291): record the cron schedule so a stolen CI
@@ -4837,6 +4843,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
+	commitBudget, answered := s.chargeCronUpdate(w, r, acct.Plan, app, c, req, timezonePatch)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if errors.Is(err, state.ErrConflict) {
 		api.WriteProblem(w, api.ErrCronConflict())
@@ -4846,6 +4856,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"updated","cron":"`+id+`"}`)
 	// IAM-4 (issue #291): record what changed and to what. We
 	// capture only the fields the caller actually sent (req.X != nil)

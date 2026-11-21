@@ -80,7 +80,11 @@ BINDIR  := bin
 # the operator invokes make.
 ANSIBLE_CONFIG ?= $(CURDIR)/deploy/ansible/ansible.cfg
 ANSIBLE_INVENTORY ?= deploy/ansible/inventory/hosts.ini
-ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
+# ANSIBLE_VARS_FILE: operator variables kept outside the repository (what CD
+# passes as --ansible-vars-file from CP_ANSIBLE_VARS_B64), e.g. for a control
+# plane rebuilt from backups (docs/runbooks/ControlPlaneStateBackup.md).
+ANSIBLE_VARS_FILE ?=
+ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook $(if $(ANSIBLE_VARS_FILE),-e @$(ANSIBLE_VARS_FILE))
 
 .DEFAULT_GOAL := help
 

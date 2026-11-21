@@ -129,6 +129,11 @@ count. Past the limit, creating a key fails with `409 api_key_limit_exceeded`.
 For keys an organization owns, see
 [organization API keys](account.md#organization-api-keys).
 
+Your code never sees a Gregale API key: once a private app's key requirement
+or `bearer` mode has verified one, Gregale strips the `Authorization` header,
+since the key belongs to the caller's account. A `basic` password is passed
+on, as is any `Authorization` header no gate reads.
+
 ### Expiry and rotation
 
 Every new key expires one year after it is made. Agent keys expire after 90

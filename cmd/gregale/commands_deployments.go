@@ -274,6 +274,7 @@ func cmdDeployments(args []string) int {
 		renderDeploymentHeader(osStdout, *wide)
 	}
 	for _, d := range page.Items {
+		d.Status = listedReleaseStatus(d)
 		if parkedApp, ok := parked[d.ID]; ok && parkedApp.ID == d.AppID {
 			d.Status = parkedReleaseStatus(d.Status)
 		}

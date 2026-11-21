@@ -7,9 +7,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.flag_experiment_allocation import FlagExperimentAllocation, check_flag_experiment_allocation
 from ..models.flag_experiment_metric_kind import FlagExperimentMetricKind, check_flag_experiment_metric_kind
 from ..models.flag_experiment_status import FlagExperimentStatus, check_flag_experiment_status
 from ..models.flag_experiment_stop_reason import FlagExperimentStopReason, check_flag_experiment_stop_reason
+from ..models.flag_experiment_unit import FlagExperimentUnit, check_flag_experiment_unit
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,6 +35,8 @@ class FlagExperiment:
     control: str
     metric_event: str
     metric_kind: FlagExperimentMetricKind
+    unit: FlagExperimentUnit
+    allocation: FlagExperimentAllocation
     cuped: bool
     """Whether results are adjusted with CUPED."""
     status: FlagExperimentStatus
@@ -40,6 +44,14 @@ class FlagExperiment:
     weights: FlagExperimentWeights
     created_by: str
     created_at: datetime.datetime
+    layer: str | Unset = UNSET
+    traffic: int | Unset = UNSET
+    layer_from: int | Unset = UNSET
+    """Start of the layer slice held while running."""
+    layer_to: int | Unset = UNSET
+    """End (exclusive) of the layer slice held while running."""
+    denominator_event: str | Unset = UNSET
+    percentile: int | Unset = UNSET
     funnel: FlagExperimentFunnel | Unset = UNSET
     """A funnel metric: a customer converts when it completes the steps in order within the window after its first
     exposure."""
@@ -71,6 +83,10 @@ class FlagExperiment:
 
         metric_kind: str = self.metric_kind
 
+        unit: str = self.unit
+
+        allocation: str = self.allocation
+
         cuped = self.cuped
 
         status: str = self.status
@@ -82,6 +98,18 @@ class FlagExperiment:
         created_by = self.created_by
 
         created_at = self.created_at.isoformat()
+
+        layer = self.layer
+
+        traffic = self.traffic
+
+        layer_from = self.layer_from
+
+        layer_to = self.layer_to
+
+        denominator_event = self.denominator_event
+
+        percentile = self.percentile
 
         funnel: dict[str, Any] | Unset = UNSET
         if not isinstance(self.funnel, Unset):
@@ -127,6 +155,8 @@ class FlagExperiment:
                 "control": control,
                 "metric_event": metric_event,
                 "metric_kind": metric_kind,
+                "unit": unit,
+                "allocation": allocation,
                 "cuped": cuped,
                 "status": status,
                 "mixing_lift": mixing_lift,
@@ -135,6 +165,18 @@ class FlagExperiment:
                 "created_at": created_at,
             }
         )
+        if layer is not UNSET:
+            field_dict["layer"] = layer
+        if traffic is not UNSET:
+            field_dict["traffic"] = traffic
+        if layer_from is not UNSET:
+            field_dict["layer_from"] = layer_from
+        if layer_to is not UNSET:
+            field_dict["layer_to"] = layer_to
+        if denominator_event is not UNSET:
+            field_dict["denominator_event"] = denominator_event
+        if percentile is not UNSET:
+            field_dict["percentile"] = percentile
         if funnel is not UNSET:
             field_dict["funnel"] = funnel
         if retention is not UNSET:
@@ -177,6 +219,10 @@ class FlagExperiment:
 
         metric_kind = check_flag_experiment_metric_kind(d.pop("metric_kind"))
 
+        unit = check_flag_experiment_unit(d.pop("unit"))
+
+        allocation = check_flag_experiment_allocation(d.pop("allocation"))
+
         cuped = d.pop("cuped")
 
         status = check_flag_experiment_status(d.pop("status"))
@@ -188,6 +234,18 @@ class FlagExperiment:
         created_by = d.pop("created_by")
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        layer = d.pop("layer", UNSET)
+
+        traffic = d.pop("traffic", UNSET)
+
+        layer_from = d.pop("layer_from", UNSET)
+
+        layer_to = d.pop("layer_to", UNSET)
+
+        denominator_event = d.pop("denominator_event", UNSET)
+
+        percentile = d.pop("percentile", UNSET)
 
         _funnel = d.pop("funnel", UNSET)
         funnel: FlagExperimentFunnel | Unset
@@ -254,12 +312,20 @@ class FlagExperiment:
             control=control,
             metric_event=metric_event,
             metric_kind=metric_kind,
+            unit=unit,
+            allocation=allocation,
             cuped=cuped,
             status=status,
             mixing_lift=mixing_lift,
             weights=weights,
             created_by=created_by,
             created_at=created_at,
+            layer=layer,
+            traffic=traffic,
+            layer_from=layer_from,
+            layer_to=layer_to,
+            denominator_event=denominator_event,
+            percentile=percentile,
             funnel=funnel,
             retention=retention,
             started_at=started_at,

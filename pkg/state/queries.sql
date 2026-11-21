@@ -26634,6 +26634,10 @@ ORDER BY window_start, method, path;
 -- default-scope canary and a serving predecessor. apid probes the default
 -- path on both so a quiet canary is judged on evidence. An app with several
 -- serving predecessors returns several rows and is skipped by the caller.
+-- A function is probed only on paths it declares in release_probe_paths:
+-- every path of a function is its handler, so a default GET / ran a queue or
+-- cron handler with a synthetic event about 20 times a minute for the whole
+-- canary (prod 2026-11-20, ADR-1446 amendment).
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
  d.id::text AS candidate_id, s.id::text AS stable_id,
  coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
@@ -26647,6 +26651,7 @@ JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND
 WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
  AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
  AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ AND (a.type <> 'function' OR jsonb_array_length(coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)) > 0)
 ORDER BY a.id, d.id, s.id
 LIMIT sqlc.arg(batch_limit)::int;
 

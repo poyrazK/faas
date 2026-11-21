@@ -167,6 +167,7 @@ type InspectAppSummary = inspectAppSummary
 type InspectHealthSummary = inspectHealthSummary
 type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
+type InspectRuntimeWarning = inspectRuntimeWarning
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
 type InspectRecommendation = inspectRecommendation
@@ -518,6 +519,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
@@ -2792,6 +2794,7 @@ var RenderSimpleAppPlanWithWarnings = renderSimpleAppPlanWithWarnings
 
 // Deploy preflights (#6625, #6631).
 var PreflightDeploySessionStorage = preflightDeploySessionStorage
+var GregaleStateHome = gregaleStateHome
 var SourceCapLookupBudgets = &sourceCapLookupBudgets
 var SourceUploadLimitError = sourceUploadLimitError
 
