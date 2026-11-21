@@ -2214,6 +2214,17 @@ func (s *server) scanService(
 	if nonProductionEnvironment {
 		planEnvironmentID = s.projectEnvironmentID(r.Context(), acct, req.ProjectSlug, req.Environment)
 	}
+	// Values the project environment shares with every service are set, so
+	// the plan does not list them under "Needs a value". A failed read keeps
+	// the app-only check: the list is advice, not admission.
+	var sharedEnvKeys map[string]bool
+	if reader, ok := s.store.(projectsetup.ProjectEnvKeyReader); ok {
+		keys, err := projectsetup.ProjectEnvironmentKeys(r.Context(), reader, acct.ID, projectID, planScope)
+		if err != nil {
+			slog.Default().Warn("project plan: shared environment keys unavailable", "project", req.ProjectSlug, "err", err)
+		}
+		sharedEnvKeys = keys
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
@@ -2263,6 +2274,7 @@ func (s *server) scanService(
 		if err != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
 		}
+		unset = projectsetup.WithoutKeys(unset, sharedEnvKeys)
 		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits, s.privateServiceHTTPS(acct))
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
 			withoutRedisProvidedKeys(w.Name, withoutProvidedKeys(w.Name, unset, composePostgres), composeRedis), envImport)

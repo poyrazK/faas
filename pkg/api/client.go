@@ -2927,6 +2927,14 @@ func (c *Client) RecoverRollout(ctx context.Context, slug, action, reason string
 	return c.RecoverRolloutAndIdempotencyKey(ctx, slug, action, reason, "")
 }
 
+// RecoverRolloutAtStep is RecoverRollout guarded by the canary step the
+// caller observed (advance and promote only).
+func (c *Client) RecoverRolloutAtStep(ctx context.Context, slug, action, reason string, expectedStep int) (RolloutTransitionResponse, error) {
+	var out RolloutTransitionResponse
+	body := RecoverRolloutRequest{Action: action, Reason: reason, ExpectedStep: &expectedStep}
+	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/apps/"+slug+"/rollouts/recover", body, &out, "")
+}
+
 // RecoverRolloutAndIdempotencyKey is the safe-release internal variant that
 // lets meterd share a rollout-scoped idempotency key across alert rules.
 // An empty key preserves the normal SDK auto-mint behavior.

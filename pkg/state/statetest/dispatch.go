@@ -3435,6 +3435,7 @@ func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.Inv
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"LiveDeployments": true,
 	"RequestTelemetryAnalyticsTimeseriesGrouped": true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
@@ -3685,6 +3686,15 @@ func (s *Store) ListApps(p0 context.Context, p1 string) ([]state.App, error) {
 		return o.ListApps(p0, p1)
 	}
 	return s.Store.ListApps(p0, p1)
+}
+
+func (s *Store) LiveDeployments(p0 context.Context, p1 string) ([]state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		LiveDeployments(context.Context, string) ([]state.Deployment, error)
+	}); ok {
+		return o.LiveDeployments(p0, p1)
+	}
+	return s.Store.LiveDeployments(p0, p1)
 }
 
 func (s *Store) ListDeploymentsForApp(p0 context.Context, p1 string, p2 int, p3 int) ([]state.Deployment, error) {

@@ -131,6 +131,10 @@ Source defaults to committed HEAD when origin exists; otherwise local files. Use
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
+Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+
+Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+
 | Flag | Meaning | |
 |---|---|---|
 | `--atomic` | publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project |  |
