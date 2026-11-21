@@ -44321,6 +44321,75 @@ CREATE TABLE public.instance_quiet_pauses (
 
 
 --
+-- Name: instance_resource_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_resource_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    samples integer NOT NULL,
+    mem_start_mb integer NOT NULL,
+    mem_peak_mb integer NOT NULL,
+    mem_end_mb integer NOT NULL,
+    mem_limit_mb integer NOT NULL,
+    cpu_ms bigint NOT NULL,
+    cpu_peak_millicores integer NOT NULL,
+    cpu_limit_millicores integer NOT NULL,
+    CONSTRAINT instance_resource_minutes_check CHECK ((mem_peak_mb >= mem_start_mb)),
+    CONSTRAINT instance_resource_minutes_check1 CHECK (((mem_end_mb >= 0) AND (mem_end_mb <= mem_peak_mb))),
+    CONSTRAINT instance_resource_minutes_cpu_limit_millicores_check CHECK ((cpu_limit_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_ms_check CHECK ((cpu_ms >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_peak_millicores_check CHECK ((cpu_peak_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_resource_minutes_mem_limit_mb_check CHECK ((mem_limit_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_mem_start_mb_check CHECK ((mem_start_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_resource_minutes_samples_check CHECK ((samples >= 1))
+);
+
+
+--
+-- Name: TABLE instance_resource_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_resource_minutes IS 'Per-instance app cgroup memory and CPU per minute; written by apid from vmmd, swept by meterd (ADR-20261121170000).';
+
+
+--
+-- Name: instance_route_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_route_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    account_id uuid NOT NULL,
+    requests bigint NOT NULL,
+    busy_ms bigint NOT NULL,
+    max_latency_ms integer NOT NULL,
+    CONSTRAINT instance_route_minutes_busy_ms_check CHECK ((busy_ms >= 0)),
+    CONSTRAINT instance_route_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_route_minutes_max_latency_ms_check CHECK ((max_latency_ms >= 0)),
+    CONSTRAINT instance_route_minutes_method_check CHECK ((octet_length(method) <= 16)),
+    CONSTRAINT instance_route_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_route_minutes_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT instance_route_minutes_route_check CHECK (((octet_length(route) >= 1) AND (octet_length(route) <= 256)))
+);
+
+
+--
+-- Name: TABLE instance_route_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_route_minutes IS 'Per-instance route activity per minute; written by apid from gateways, swept by meterd (ADR-20261121170000).';
+
+
+--
 -- Name: instance_snapshot_recovery; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -69743,6 +69812,22 @@ ALTER TABLE ONLY public.instance_quiet_pauses
 
 
 --
+-- Name: instance_resource_minutes instance_resource_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_resource_minutes
+    ADD CONSTRAINT instance_resource_minutes_pkey PRIMARY KEY (app_id, minute, instance_id);
+
+
+--
+-- Name: instance_route_minutes instance_route_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_route_minutes
+    ADD CONSTRAINT instance_route_minutes_pkey PRIMARY KEY (app_id, minute, instance_id, route, method);
+
+
+--
 -- Name: instance_runtime_config_receipts instance_runtime_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -83300,6 +83385,20 @@ CREATE INDEX instance_quiet_pauses_open ON public.instance_quiet_pauses USING bt
 --
 
 CREATE INDEX instance_quiet_pauses_started_at ON public.instance_quiet_pauses USING btree (started_at);
+
+
+--
+-- Name: instance_resource_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_resource_minutes_minute_idx ON public.instance_resource_minutes USING btree (minute);
+
+
+--
+-- Name: instance_route_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_route_minutes_minute_idx ON public.instance_route_minutes USING btree (minute);
 
 
 --
