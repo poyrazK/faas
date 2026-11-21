@@ -15,6 +15,7 @@ import (
 func recordForState(entry sched.RuntimeSnapshot) state.RuntimeSnapshotRecord {
 	key, _ := entry.Identity.Key()
 	return state.RuntimeSnapshotRecord{
+		FCVersion:           entry.Identity.FCVersion,
 		Profile:             entry.Identity.Profile,
 		CatalogKey:          key,
 		Runtime:             entry.Identity.Runtime,

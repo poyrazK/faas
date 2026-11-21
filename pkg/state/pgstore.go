@@ -4178,9 +4178,12 @@ func (s *PgStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID,
 		      select 1 from compute_nodes n
 		       where n.id = instances.node_id
 		         and ((n.active = true and n.last_heartbeat_at >= $3)
-		           or (instances.app_id is not null and n.lifecycle in ('draining', 'force_draining', 'unavailable', 'recovering')))
+		           -- The recovery arbiter owns app rows on a managed node
+		           -- only while a handoff can still succeed.
+		           or (instances.app_id is not null and n.lifecycle in ('draining', 'force_draining', 'unavailable', 'recovering')
+		               and n.last_heartbeat_at >= clock_timestamp() - make_interval(secs => $4)))
 		    )`,
-		instanceID, nodeID, threshold)
+		instanceID, nodeID, threshold, float64(api.DeadNodeRecoveryHandoffMaxSeconds))
 	if err != nil {
 		return fmt.Errorf("state: fail running instance on dead node: %w", err)
 	}
@@ -19700,7 +19703,8 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		 from instances i
 		 left join compute_nodes n on n.id = i.node_id
 		 where i.state = 'running'
-		   and (n.id is null or i.app_id is null or n.lifecycle not in ('draining', 'force_draining', 'unavailable', 'recovering'))
+		   and (n.id is null or i.app_id is null or n.lifecycle not in ('draining', 'force_draining', 'unavailable', 'recovering')
+		        or n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3))
 		   and (n.id is null or n.active = false or n.last_heartbeat_at < $1)
 		 -- Tie-break on instance id so a capped query is
 		 -- deterministic when many rows share the same heartbeat
@@ -19710,7 +19714,7 @@ func (s *PgStore) ListRunningInstancesOnDeadNodes(ctx context.Context, threshold
 		 -- an extra tick between runs of identical input.
 		 order by n.last_heartbeat_at asc nulls first, i.id asc
 		 limit $2`,
-		threshold, limit)
+		threshold, limit, float64(api.DeadNodeRecoveryHandoffMaxSeconds))
 	if err != nil {
 		return nil, fmt.Errorf("state: list running instances on dead nodes: %w", err)
 	}
@@ -23132,22 +23136,40 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 // second is billed once; the result is capped to the requested window length.
 // It is intentionally an optional PgStore surface (not part of Store) so older
 // in-memory/custom stores retain the legacy minute-snapshot test seam.
+//
+// An instance whose node has stopped heartbeating (older than
+// api.DeadNodeReconcilerStalenessSeconds when the minute is rolled) is billed
+// only up to that node's last heartbeat. Its row can stay billable for hours
+// after the node dies: the dead-node sweep leaves app rows on a draining or
+// recovering node to the recovery arbiter, and the interval closes only when
+// some path finally moves the row. Without the clamp the customer paid for an
+// outage as resident time (account usage audit 2026-11-21: 6 GB × ~24 h on one
+// app). A node that comes back refreshes its heartbeat, so later rolls bill
+// normally; a clamped minute stays unbilled (customer-favourable).
 func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Time) (map[string]int64, error) {
 	if !start.Before(end) {
 		return map[string]int64{}, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`select instance_id::text,
+		`select b.instance_id::text,
 		        least(ceil(extract(epoch from ($2::timestamptz - $1::timestamptz)))::bigint,
-		              ceil(sum(extract(epoch from
-		                least(coalesce(ended_at, $2::timestamptz), $2::timestamptz)
-		                - greatest(started_at, $1::timestamptz))))::bigint) as resident_seconds
-		   from instance_billing_intervals
-		  where started_at < $2
+		              ceil(sum(greatest(0, extract(epoch from
+		                least(coalesce(b.ended_at, $2::timestamptz), $2::timestamptz,
+		                      coalesce(dead.last_heartbeat_at, 'infinity'::timestamptz))
+		                - greatest(b.started_at, $1::timestamptz)))))::bigint) as resident_seconds
+		   from instance_billing_intervals b
+		   left join lateral (
+		        select n.last_heartbeat_at
+		          from instances i
+		          join compute_nodes n on n.id = i.node_id
+		         where i.id = b.instance_id
+		           and n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3)
+		   ) dead on true
+		  where b.started_at < $2
 		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
 		    -- spelled so instance_billing_intervals_ended_idx serves it.
-		    and (ended_at > $1 or ended_at is null)
-		  group by instance_id`, start.UTC(), end.UTC())
+		    and (b.ended_at > $1 or b.ended_at is null)
+		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds))
 	if err != nil {
 		return nil, err
 	}

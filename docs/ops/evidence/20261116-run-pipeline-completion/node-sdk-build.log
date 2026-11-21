@@ -1,0 +1,7 @@
+
+> @gregale/sdk-node@0.1.0 build
+> tsc -p tsconfig.json
+
+
+> @gregale/sdk-node@0.1.0 test:build
+> tsc -p tsconfig.test.json

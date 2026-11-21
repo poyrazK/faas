@@ -13156,6 +13156,10 @@ type RecoverRolloutRequest struct {
 	// the recovery transaction; other recovery actions retain legacy behavior.
 	DeploymentID                    string `json:"deployment_id,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id,omitempty"`
+	// ExpectedStep, for advance and promote, is the canary step the caller
+	// observed; the recovery is refused with canary_step_conflict when the
+	// running canary is elsewhere, as `deployment advance` does.
+	ExpectedStep *int `json:"expected_step,omitempty"`
 }
 
 // RecoverDeploymentRolloutRequest is the loopback deployment-addressed variant

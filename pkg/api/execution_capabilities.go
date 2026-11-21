@@ -34,13 +34,31 @@ type ExecutionCapabilityLimits struct {
 // ExecutionCapabilitiesResponse gives an authenticated caller the Runs
 // admission switch, supported request contract, and plan-resolved limits.
 type ExecutionCapabilitiesResponse struct {
-	Plan                string                       `json:"plan"`
-	AdmissionAvailable  bool                         `json:"admission_available"`
-	PlanEntitled        bool                         `json:"plan_entitled"`
-	ControlPlaneEnabled bool                         `json:"control_plane_enabled"`
-	UnavailableReasons  []string                     `json:"unavailable_reasons,omitempty"`
-	Runtimes            []ExecutionRuntime           `json:"runtimes"`
-	Profiles            []ExecutionProfileCapability `json:"profiles"`
-	NetworkModes        []ExecutionNetworkMode       `json:"network_modes"`
-	Limits              *ExecutionCapabilityLimits   `json:"limits,omitempty"`
+	ArtifactDeliveries     bool                         `json:"artifact_deliveries,omitempty"`
+	TaskPipelines          bool                         `json:"task_pipelines,omitempty"`
+	RunControls            *RunControlCapabilities      `json:"run_controls,omitempty"`
+	EnvironmentRuntimes    []ExecutionRuntime           `json:"environment_runtimes,omitempty"`
+	EnvironmentLimits      *ExecutionEnvironmentLimits  `json:"environment_limits,omitempty"`
+	ExecutionClasses       []ExecutionClassCapability   `json:"execution_classes,omitempty"`
+	CustomEnvironments     bool                         `json:"custom_environments,omitempty"`
+	ExtendedAdmissions     bool                         `json:"extended_admissions,omitempty"`
+	FileLimits             *ExecutionFileLimits         `json:"file_limits,omitempty"`
+	MaxContractSchemaBytes int                          `json:"max_contract_schema_bytes,omitempty"`
+	Plan                   string                       `json:"plan"`
+	AdmissionAvailable     bool                         `json:"admission_available"`
+	PlanEntitled           bool                         `json:"plan_entitled"`
+	ControlPlaneEnabled    bool                         `json:"control_plane_enabled"`
+	UnavailableReasons     []string                     `json:"unavailable_reasons,omitempty"`
+	Runtimes               []ExecutionRuntime           `json:"runtimes"`
+	Profiles               []ExecutionProfileCapability `json:"profiles"`
+	NetworkModes           []ExecutionNetworkMode       `json:"network_modes"`
+	Limits                 *ExecutionCapabilityLimits   `json:"limits,omitempty"`
+}
+
+type ExecutionClassCapability struct {
+	Class              ExecutionClass `json:"execution_class"`
+	DefaultTimeoutMS   int            `json:"default_timeout_ms"`
+	MaxTimeoutMS       int            `json:"max_timeout_ms"`
+	MaxConcurrent      int            `json:"max_concurrent_runs"`
+	AdmissionAvailable bool           `json:"admission_available"`
 }

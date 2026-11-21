@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
@@ -45,7 +46,17 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	return loadLocalOCIArchiveContext(context.Background(), archivePath)
 }
 
+type localOCIProvenance struct {
+	Evidence *imagechain.Evidence
+	Image    imagechain.Image
+	Digest   string
+	Streams  []*imagechain.LayerStream
+}
+
 func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
+	return loadLocalOCIArchiveWithProvenance(ctx, archivePath, nil)
+}
+func loadLocalOCIArchiveWithProvenance(ctx context.Context, archivePath string, proof *localOCIProvenance) (oci.Config, []io.ReadCloser, func(), error) {
 	archive, err := openLocalOCIArchive(archivePath)
 	if err != nil {
 		return oci.Config{}, nil, func() {}, err
@@ -79,7 +90,7 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 		layerFiles = append(layerFiles, f)
 	}
 
-	configBytes, err := extractVerifiedLocalOCIBlobs(ctx, archive, manifest, layerFiles)
+	configBytes, err := extractVerifiedLocalOCIBlobs(ctx, archive, manifest.Manifest, layerFiles)
 	if err != nil {
 		return fail(err)
 	}
@@ -101,6 +112,23 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 	readers := make([]io.ReadCloser, len(layerFiles))
 	for i, f := range layerFiles {
 		readers[i] = f
+		if proof != nil {
+			d := manifest.Layers[i]
+			stream, err := imagechain.NewLayerStream(ctx, f, imagechain.Descriptor{MediaType: d.MediaType, Digest: d.Digest, Size: d.Size}, config.DiffIDs[i], i)
+			if err != nil {
+				return fail(err)
+			}
+			readers[i] = stream
+			proof.Streams = append(proof.Streams, stream)
+		}
+	}
+	if proof != nil {
+		proof.Digest = manifest.digest
+		proof.Evidence = &imagechain.Evidence{SourceManifest: bytes.Clone(manifest.raw), Config: bytes.Clone(configBytes)}
+		proof.Image, err = imagechain.Validate(proof.Evidence, proof.Digest, proof.Digest)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	return config, readers, cleanup, nil
 }
@@ -160,36 +188,42 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 	}
 }
 
+type verifiedLocalOCIManifest struct {
+	oci.Manifest
+	digest string
+	raw    []byte
+}
+
 // readVerifiedLocalOCIManifest reads an archive's single image manifest
 // through its index and checks the manifest against its descriptor and the
 // local OCI format limits.
-func readVerifiedLocalOCIManifest(ctx context.Context, archive io.ReadSeeker) (oci.Manifest, error) {
+func readVerifiedLocalOCIManifest(ctx context.Context, archive io.ReadSeeker) (verifiedLocalOCIManifest, error) {
 	indexBytes, err := readLocalOCIEntryFrom(ctx, archive, "index.json", api.LocalOCIMaxIndexBytes)
 	if err != nil {
-		return oci.Manifest{}, fmt.Errorf("read OCI index: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("read OCI index: %w", err)
 	}
 	var index localOCIIndex
 	if err := json.Unmarshal(indexBytes, &index); err != nil {
-		return oci.Manifest{}, fmt.Errorf("decode OCI index: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("decode OCI index: %w", err)
 	}
 	if len(index.Manifests) != 1 {
-		return oci.Manifest{}, fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests))
+		return verifiedLocalOCIManifest{}, fmt.Errorf("OCI index has %d manifests, want exactly one", len(index.Manifests))
 	}
 	if index.SchemaVersion != 2 || (index.MediaType != "" && index.MediaType != "application/vnd.oci.image.index.v1+json") {
-		return oci.Manifest{}, errors.New("unsupported OCI index format")
+		return verifiedLocalOCIManifest{}, errors.New("unsupported OCI index format")
 	}
 	manifestBytes, err := readLocalOCIDescriptor(ctx, archive, index.Manifests[0], api.LocalOCIMaxManifestBytes)
 	if err != nil {
-		return oci.Manifest{}, fmt.Errorf("read OCI manifest: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("read OCI manifest: %w", err)
 	}
 	var manifest oci.Manifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
-		return oci.Manifest{}, fmt.Errorf("decode OCI manifest: %w", err)
+		return verifiedLocalOCIManifest{}, fmt.Errorf("decode OCI manifest: %w", err)
 	}
 	if err := validateLocalOCIManifest(index.Manifests[0], manifest); err != nil {
-		return oci.Manifest{}, err
+		return verifiedLocalOCIManifest{}, err
 	}
-	return manifest, nil
+	return verifiedLocalOCIManifest{Manifest: manifest, digest: index.Manifests[0].Digest, raw: manifestBytes}, nil
 }
 
 // loadLocalOCIConfigContext reads and verifies only a builderd OCI export's

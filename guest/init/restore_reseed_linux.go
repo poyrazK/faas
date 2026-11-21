@@ -76,8 +76,16 @@ func reseedRestoredWorkloads() (restoreReseedStats, error) {
 // A sandbox session guest holds it like an agent run: every command arrives
 // after the restore (ADR-20261027090013 §2).
 func restoreReseedContractHolds() bool {
-	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || agentRunGuest.Load() || sandboxGuest.Load()
+	return activeRestoreReseedBarrier.Load() != nil || warmBuilderEnabled.Load() || agentRunGuest.Load() || sandboxGuest.Load() || executionGuest.Load()
 }
 
 // agentRunGuest is set by agent mode before it can be captured.
 var agentRunGuest atomic.Bool
+
+// Execution snapshots contain no interpreter or request. The first payload
+// revokes this fence; only the pristine listener can acknowledge a restore.
+var executionGuest atomic.Bool
+
+// Unlike the pristine flag, mode remains set once the payload is accepted.
+// It lets the resume listener reject a snapshot taken after dispatch.
+var executionGuestMode atomic.Bool

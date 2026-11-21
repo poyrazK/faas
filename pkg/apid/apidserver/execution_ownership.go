@@ -9,6 +9,7 @@ import (
 )
 
 type executionAccess struct {
+	controlWide bool
 	broad       bool
 	principalID string
 	principal   *string
@@ -22,7 +23,7 @@ func executionAccessForRequest(r *http.Request) (executionAccess, *api.Problem) 
 		return executionAccess{}, api.ErrCapacity("execution authorization context is unavailable")
 	}
 	if key == nil {
-		return executionAccess{broad: true}, nil
+		return executionAccess{broad: true, controlWide: true}, nil
 	}
 	access := executionAccess{principalID: key.RunsPrincipalID}
 	for _, scope := range key.Scopes {
@@ -31,6 +32,12 @@ func executionAccessForRequest(r *http.Request) (executionAccess, *api.Problem) 
 			break
 		}
 	}
+	for _, scope := range key.Scopes {
+		if scope == api.ScopeAdmin || scope == api.ScopeDeployWrite {
+			access.controlWide = true
+		}
+	}
+	access.controlWide = access.controlWide && key.AppID == "" && !key.ProjectLimited && key.PlatformTenantID == "" && key.HostingSiteID == ""
 	if key.RunsPrincipalID != "" {
 		principalID := key.RunsPrincipalID
 		access.principal = &principalID

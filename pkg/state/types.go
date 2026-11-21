@@ -4307,6 +4307,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // fan-out matching.
 type AppWebhookEvent string
 
+const AppWebhookEventExecutionFinished AppWebhookEvent = api.ExecutionFinishedWebhookEvent
+
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"
 	AppWebhookEventConsumerSignedUp                        AppWebhookEvent = "consumer.signed_up"

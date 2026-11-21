@@ -59,7 +59,7 @@ func TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope(t *testing.T) {
 			FCVersion:           "1.10.0",
 		},
 	}
-	identity := RuntimeSnapshotIdentity{
+	identity := RuntimeSnapshotIdentity{FCVersion: "1.10.0",
 		Runtime:             api.ExecutionRuntimeNode22,
 		Architecture:        archAMD64,
 		KernelDigest:        strings.Repeat("a", 64),

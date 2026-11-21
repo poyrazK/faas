@@ -692,6 +692,12 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // defaults filled in. A missing file is not an error if defaults suffice;
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
+	return loadConfig(path, os.ReadFile)
+}
+
+// Release checks parse the exact config bytes whose digest they verified.
+// The daemon keeps its existing file reader and all normalization/overrides.
+func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, error) {
 	// Size the node from the machine it is on, not from the single-box
 	// constants. The old defaults advertised 56,000 MB / 47,600 MB on every
 	// host regardless of hardware, so a 16 GiB compute node told schedd it
@@ -786,7 +792,7 @@ func LoadConfig(path string) (*Config, error) {
 		},
 	}
 	preparedNetworksSet := false
-	b, err := os.ReadFile(path)
+	b, err := readConfig(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("vmmd: read %q: %w", path, err)

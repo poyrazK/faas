@@ -25,6 +25,8 @@ func (i *DeviceFDIdentity) UnmarshalJSON(data []byte) error {
 // Child descriptors are fixed: gate=3, original root=4, mount namespace=5,
 // pidfd=6, original TUN=7. ParentFDs record only the producer's own copies.
 type DeviceSetupScope struct {
+	// Version 2 is KVM-only: descriptor 7 repeats the pinned root, never TUN.
+	Version         int              `json:"version,omitempty"`
 	Generation      string           `json:"generation"`
 	BootID          string           `json:"boot_id"`
 	PID             int              `json:"pid"`
@@ -44,7 +46,11 @@ type DeviceSetupScope struct {
 }
 
 func (s *DeviceSetupScope) UnmarshalJSON(data []byte) error {
-	fields, err := deviceObjectFields(data, []string{"generation", "boot_id", "pid", "start_time", "uid", "gid", "parent_pid", "parent_start_time", "parent_fds", "root", "namespace", "pid_handle", "tun", "root_mount_id", "tun_mount_id", "tun_mode"})
+	names := []string{"generation", "boot_id", "pid", "start_time", "uid", "gid", "parent_pid", "parent_start_time", "parent_fds", "root", "namespace", "pid_handle", "tun", "root_mount_id", "tun_mount_id", "tun_mode"}
+	fields, err := deviceObjectFields(data, names)
+	if err != nil {
+		fields, err = deviceObjectFields(data, append(names, "version"))
+	}
 	if err != nil {
 		return err
 	}
@@ -63,8 +69,15 @@ func (s DeviceSetupScope) Validate() error {
 			return errors.New("native jail device scope: invalid generation or kernel boot")
 		}
 	}
-	if s.PID <= 0 || s.StartTime == 0 || s.ParentPID <= 0 || s.ParentStartTime == 0 || s.UID < 20000 || s.UID > 29999 || s.GID != s.UID || s.RootMountID == 0 || s.TunMountID == 0 || s.TunMode&^0o777 != 0 || s.TunMode&0o006 != 0o006 {
+	if s.PID <= 0 || s.StartTime == 0 || s.ParentPID <= 0 || s.ParentStartTime == 0 || s.UID < 20000 || s.UID > 29999 || s.GID != s.UID || s.RootMountID == 0 || s.TunMountID == 0 {
 		return errors.New("native jail device scope: incomplete original task, mounts or lease")
+	}
+	if s.Version == 2 {
+		if s.Tun != s.Root || s.TunMountID != s.RootMountID || s.TunMode != 0 {
+			return errors.New("native jail device scope: KVM-only authority includes TUN")
+		}
+	} else if s.Version != 0 || s.TunMode&^0o777 != 0 || s.TunMode&0o006 != 0o006 {
+		return errors.New("native jail device scope: invalid device version or TUN mode")
 	}
 	seen := make(map[int]bool)
 	for _, fd := range s.ParentFDs {
@@ -105,8 +118,15 @@ func (r DeviceSetupReceipt) Validate(expected DeviceSetupScope) error {
 	if err := r.Scope.Validate(); err != nil {
 		return err
 	}
-	if r.Scope != expected || r.DevMountID == 0 || r.TunMountID == 0 || r.DevMountID == r.TunMountID || r.KVM.Inode == 0 || r.KVMAPI != 12 || !r.TunAccessible {
+	if r.Scope != expected || r.DevMountID == 0 || r.KVM.Inode == 0 || r.KVMAPI != 12 {
 		return errors.New("native jail device receipt: original scope or device-access proof is incomplete")
+	}
+	if expected.Version == 2 {
+		if r.TunMountID != 0 || r.TunAccessible {
+			return errors.New("native jail device receipt: KVM-only jail gained TUN")
+		}
+	} else if r.TunMountID == 0 || r.DevMountID == r.TunMountID || !r.TunAccessible {
+		return errors.New("native jail device receipt: TUN access proof missing")
 	}
 	return nil
 }

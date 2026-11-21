@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from ..models.release_freeze import ReleaseFreeze
     from ..models.release_restore_point import ReleaseRestorePoint
     from ..models.rollback_crossed_release import RollbackCrossedRelease
+    from ..models.run_budget_refusal import RunBudgetRefusal
     from ..models.secret_finding import SecretFinding
 
 
@@ -55,6 +56,8 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode."""
+    run_budget: RunBudgetRefusal | Unset = UNSET
+    """Budget limit that prevented admission and the current usage against it."""
     current_sequence: int | Unset = UNSET
     """Observed channel head on realtime_sequence_conflict."""
     agent_approval: AgentApprovalPendingInfo | Unset = UNSET
@@ -177,6 +180,10 @@ class Problem:
         status = self.status
 
         code = self.code
+
+        run_budget: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.run_budget, Unset):
+            run_budget = self.run_budget.to_dict()
 
         current_sequence = self.current_sequence
 
@@ -311,6 +318,8 @@ class Problem:
                 "code": code,
             }
         )
+        if run_budget is not UNSET:
+            field_dict["run_budget"] = run_budget
         if current_sequence is not UNSET:
             field_dict["current_sequence"] = current_sequence
         if agent_approval is not UNSET:
@@ -396,6 +405,7 @@ class Problem:
         from ..models.release_freeze import ReleaseFreeze
         from ..models.release_restore_point import ReleaseRestorePoint
         from ..models.rollback_crossed_release import RollbackCrossedRelease
+        from ..models.run_budget_refusal import RunBudgetRefusal
         from ..models.secret_finding import SecretFinding
 
         d = dict(src_dict)
@@ -404,6 +414,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _run_budget = d.pop("run_budget", UNSET)
+        run_budget: RunBudgetRefusal | Unset
+        if isinstance(_run_budget, Unset):
+            run_budget = UNSET
+        else:
+            run_budget = RunBudgetRefusal.from_dict(_run_budget)
 
         current_sequence = d.pop("current_sequence", UNSET)
 
@@ -566,6 +583,7 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            run_budget=run_budget,
             current_sequence=current_sequence,
             agent_approval=agent_approval,
             condition_field=condition_field,

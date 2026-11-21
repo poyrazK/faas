@@ -119,6 +119,9 @@ func TestSessionListens_RequiresALISTEN(t *testing.T) {
 			t.Fatal(err)
 		}
 		if ok {
+			if stale, err := sessionListensSince(ctx, pool, "e2etest-probe", time.Now().Add(time.Minute)); err != nil || stale {
+				t.Fatalf("an older subscription satisfied a new daemon's readiness: %v, %v", stale, err)
+			}
 			return
 		}
 		if time.Now().After(deadline) {

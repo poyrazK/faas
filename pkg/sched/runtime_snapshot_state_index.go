@@ -36,6 +36,7 @@ func (i *StateRuntimeSnapshotIndex) LookupRuntimeSnapshot(ctx context.Context, c
 		return RuntimeSnapshot{}, err
 	}
 	identity := RuntimeSnapshotIdentity{
+		FCVersion:           record.FCVersion,
 		Profile:             record.Profile,
 		Runtime:             record.Runtime,
 		Architecture:        record.Architecture,
