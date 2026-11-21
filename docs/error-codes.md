@@ -714,6 +714,12 @@ HTTP 409 Conflict · Debugging unavailable
 
 HTTP 429 Too Many Requests · Too many debugger sessions
 
+### `dev_postgres_database_url_secret`
+
+HTTP 409 Conflict · A database variable is already set in this developer environment
+
+See [`gregale dev`](gregale-dev.md).
+
 ### `dev_session_tearing_down`
 
 HTTP 409 Conflict · Developer environment is being removed
