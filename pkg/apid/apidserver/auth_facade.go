@@ -31,6 +31,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/objectaccess"
@@ -628,7 +630,13 @@ func (s *server) authorizeNamedApp(r *http.Request, acct state.Account, app stat
 // plan gates that answer before the app lookup keep their shape.
 func (s *server) namedAppAs(r *http.Request, acct state.Account, ref string, bySlug bool) (state.App, state.Account, *api.Problem) {
 	missing := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
-	app, err := s.store.AppByID(r.Context(), ref)
+	// A slug never reaches the uuid-typed ID lookup: Postgres logged
+	// "invalid input syntax for type uuid" for every slug-named create on
+	// prod (34 on 2026-11-21).
+	app, err := state.App{}, state.ErrNotFound
+	if _, parseErr := uuid.Parse(ref); parseErr == nil {
+		app, err = s.store.AppByID(r.Context(), ref)
+	}
 	if err != nil && bySlug {
 		app, err = s.store.AppBySlug(r.Context(), ref)
 	}
