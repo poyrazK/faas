@@ -208,6 +208,11 @@
     # before control_plane_service so apid's first start finds them.
     - role: geoip
       when: faas_cp_converge_roles | default(none) is none or 'geoip' in faas_cp_converge_roles
+    # apid's managed PostgreSQL provider registry, before control_plane_service
+    # so apid's first start finds it. A no-op while
+    # faas_managed_postgres_config is empty.
+    - role: managed_postgres_config
+      when: faas_cp_converge_roles | default(none) is none or 'managed_postgres_config' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
     - role: seal_domains
