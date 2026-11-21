@@ -149,7 +149,7 @@ func (m *MemStore) PauseCronIfFailing(_ context.Context, cronID string, runs int
 		if inv.CronID == nil || *inv.CronID != cronID || inv.Source != InvocationCron || !inv.CreatedAt.After(lastPause) {
 			continue
 		}
-		if inv.State == InvocationCompleted || ((inv.State == InvocationFailed || inv.State == InvocationDeadLetter) && inv.ReceivedAt != nil) {
+		if inv.State == InvocationCompleted || ((inv.State == InvocationFailed || inv.State == InvocationDeadLetter) && inv.ReceivedAt != nil && !PlatformFailedBeforeApp(inv.LastError)) {
 			recent = append(recent, inv)
 		}
 	}

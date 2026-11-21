@@ -21,3 +21,15 @@ faas_managed_postgres_config_path: /etc/faas/managed-postgres.json
 # catalog is not this host's local `faas` database.
 faas_managed_postgres_config_verify_catalog: true
 faas_managed_postgres_config_catalog_dsn: "postgres:///faas?host=/run/postgresql"
+
+# Extra EnvironmentFile= lines for apid holding backend secrets, for keys kept
+# outside sealed.env (GCP prod kept the Neon key in
+# /etc/faas/secrets/managed-postgres/provider.env). Each must exist under
+# /etc/faas/secrets and not be world-readable; secret_env variables may be set
+# in sealed.env or any of these.
+faas_managed_postgres_env_files: []
+
+# The operator policy (provisioning switch, per-account limit, fleet, usage
+# ceilings and rates, production approval) is not set here: it is hot
+# runtime configuration, `gregalectl config set -key managed_postgres_policy`
+# (ADR-20261121120000), and overrides whatever the file holds.

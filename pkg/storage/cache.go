@@ -260,6 +260,13 @@ type LocalCacheBackend struct {
 	// (cache_generation.go, ADR-20261026181418). Guarded by routesMu.
 	routesMu sync.RWMutex
 	routes   map[string]string
+	// fills holds the in-flight background fill of each immutable key
+	// (cache_detached_fill.go, ADR-20261121220000). Guarded by fillsMu.
+	fillsMu sync.Mutex
+	fills   map[string]*detachedFill
+	// detachedFillTimeout bounds one background fill; zero is
+	// DefaultDetachedFillTimeout.
+	detachedFillTimeout time.Duration
 }
 
 // ReclaimFreeBytes evicts the oldest unpinned entries, beyond the byte budget,
@@ -673,7 +680,16 @@ func (c *LocalCacheBackend) fetch(ctx context.Context, key, parentKey string, re
 		if cached, ok := c.openCache(key); ok {
 			return cached, nil
 		}
+		if detachedFillKey(key) {
+			return c.fetchDetached(ctx, key, parentKey)
+		}
 	}
+	return c.fetchFromParent(ctx, key, parentKey, refresh)
+}
+
+// fetchFromParent reads parentKey under the caller's context and installs it
+// as key's entry.
+func (c *LocalCacheBackend) fetchFromParent(ctx context.Context, key, parentKey string, refresh bool) (io.ReadCloser, error) {
 	rc, err := c.parent.Get(ctx, parentKey)
 	if err != nil {
 		// A refresh is an explicit integrity operation (used when

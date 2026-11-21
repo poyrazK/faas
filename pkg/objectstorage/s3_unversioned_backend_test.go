@@ -220,3 +220,96 @@ func TestRegistryValidatesBackendVersioning(t *testing.T) {
 		})
 	}
 }
+
+// The S3 gateway sends presigned requests with its own client, so their
+// responses never pass s3ResponseTransport. NormalizeProviderResponse and
+// the write acknowledgment must drop a versionless backend's version IDs
+// there too, or every gateway PUT latches recovery_versions_observed (OVH
+// production smoke, rc.364, 2026-11-21).
+//
+// adr: 20261121150000
+func TestNormalizeProviderResponseDropsVersionlessVersionIDs(t *testing.T) {
+	versioned, err := NewS3(testBackend(), testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	versionlessConfig := testBackend()
+	versionlessConfig.Versioning = BackendVersioningUnsupported
+	versionless, err := NewS3(versionlessConfig, testCredentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name        string
+		provider    Provider
+		wantVersion string
+	}{
+		{"versionless S3 drops the IDs", versionless, ""},
+		{"versioned S3 keeps them", versioned, ovhVersionID},
+		{"provider without the capability keeps them", nil, ovhVersionID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			response := &http.Response{Header: http.Header{
+				"Etag":                         {`"etag"`},
+				"X-Amz-Version-Id":             {ovhVersionID},
+				"X-Amz-Copy-Source-Version-Id": {ovhVersionID},
+			}}
+			ack, err := VerifyProviderObjectWriteAcknowledgment(tc.provider, response.Header)
+			if err != nil || ack.ProviderVersionID != tc.wantVersion || ack.ETag != `"etag"` {
+				t.Fatalf("acknowledgment = %+v, %v; want version %q", ack, err, tc.wantVersion)
+			}
+			if response.Header.Get("X-Amz-Version-Id") != ovhVersionID {
+				t.Fatal("acknowledgment changed the caller's headers")
+			}
+			NormalizeProviderResponse(tc.provider, response)
+			if got := response.Header.Get("X-Amz-Version-Id"); got != tc.wantVersion {
+				t.Fatalf("X-Amz-Version-Id = %q, want %q", got, tc.wantVersion)
+			}
+			if got := response.Header.Get("X-Amz-Copy-Source-Version-Id"); got != tc.wantVersion {
+				t.Fatalf("X-Amz-Copy-Source-Version-Id = %q, want %q", got, tc.wantVersion)
+			}
+		})
+	}
+	NormalizeProviderResponse(versionless, nil)
+	NormalizeProviderResponse(versionless, &http.Response{})
+}
+
+// OVH ends every ListParts with NextPartNumberMarker set to the last part it
+// returned, truncated or not (production capture, 2026-11-21). Rejecting that
+// made ListParts and every gateway CompleteMultipartUpload answer 503.
+func TestS3ListPartsAcceptsAFinalPageNamingItsLastPart(t *testing.T) {
+	part := func(n string) string {
+		return `<Part><PartNumber>` + n + `</PartNumber><LastModified>2026-11-21T20:42:14.000Z</LastModified><ETag>"a24cd6b7281be99a7c4cc025369abe76"</ETag><Size>1048576</Size></Part>`
+	}
+	for _, tc := range []struct {
+		name      string
+		marker    int32
+		body      string
+		wantParts int
+		wantErr   bool
+	}{
+		{"OVH final page names its last part", 0, `<IsTruncated>false</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>` + part("1") + part("2"), 2, false},
+		{"final page without a marker", 0, `<IsTruncated>false</IsTruncated>` + part("1"), 1, false},
+		{"final page with marker 0", 0, `<IsTruncated>false</IsTruncated><NextPartNumberMarker>0</NextPartNumberMarker>` + part("1"), 1, false},
+		{"empty final page repeats the request marker", 3, `<IsTruncated>false</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker>`, 0, false},
+		{"final page marker past its last part", 0, `<IsTruncated>false</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker>` + part("1") + part("2"), 0, true},
+		{"empty final page marker past the request", 1, `<IsTruncated>false</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>`, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := unversionedTestProvider(t, true, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/xml")
+				_, _ = io.WriteString(w, `<?xml version='1.0' encoding='UTF-8'?><ListPartsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Bucket>physical</Bucket><Key>key</Key><UploadId>upload</UploadId><StorageClass>STANDARD</StorageClass><MaxParts>1000</MaxParts>`+tc.body+`</ListPartsResult>`)
+			}))
+			page, err := p.ListMultipartParts(t.Context(), "physical", MultipartListPartsRequest{Key: "key", ProviderUploadID: "upload", PartNumberMarker: tc.marker, Limit: 1000})
+			if tc.wantErr {
+				if !errors.Is(err, ErrUnavailable) {
+					t.Fatalf("accepted a final page that claims unreturned parts: %+v, %v", page, err)
+				}
+				return
+			}
+			if err != nil || len(page.Items) != tc.wantParts || page.NextPartNumberMarker != 0 {
+				t.Fatalf("page = %+v, %v; want %d parts and no continuation", page, err, tc.wantParts)
+			}
+		})
+	}
+}

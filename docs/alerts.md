@@ -358,6 +358,21 @@ held by route health" create them with `gt 0` over 15 minutes. Each needs its
 feature released for the account: production route monitoring for incidents,
 the route health canary guard for holds.
 
+## Out-of-memory kills
+
+`oom_kills` counts the app's instances the kernel killed for running out of
+memory within the window: the kills `gregale debug status` lists. One kill now
+and then can be a traffic spike; repeated kills mean the app needs more memory
+than its plan gives it, and requests fail while instances restart.
+
+```bash
+gregale alert create --app shop --name "Out of memory" \
+  --metric oom_kills --comparison gt --threshold 0 --window-spec 1h \
+  --channel OPS_EMAIL_ID
+```
+
+The rule needs an app and accepts every alert window and action.
+
 ## AI budget alerts
 
 `ai_budget_alerts` counts the AI budget thresholds crossed within the window

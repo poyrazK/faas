@@ -501,6 +501,24 @@ func copyProjectEnvironmentRows(ctx context.Context, tx pgx.Tx, clone ProjectEnv
 		if err := sqlc.New().CopyProjectEnvironmentSecretSuppressions(ctx, tx, sqlc.CopyProjectEnvironmentSecretSuppressionsParams{AccountID: mustPgUUID(clone.AccountID), ProjectID: mustPgUUID(clone.ProjectID), SourceSlug: clone.SourceSlug, TargetSlug: clone.TargetSlug, ValueScopes: clone.sourceValueScopesJSON}); err != nil {
 			return result, mapErr(err)
 		}
+	} else if clone.CloneOperationID != "" {
+		// A durable clone writes the shared secrets it captured
+		// (ADR-20261104120000 amendment 2026-11-21).
+		records, err := cloneWorkloadRecordsDB(ctx, tx, clone.AccountID, clone.ProjectID, clone.CloneOperationID)
+		if err != nil {
+			return result, err
+		}
+		if len(records) > 0 {
+			shared, err := capturedCloneSharedSecrets(records)
+			if err != nil {
+				return result, err
+			}
+			if shared != nil {
+				if result.ProjectSecretsCopied, result.SecretReferencesCopied, err = materializeCloneSharedSecretsTx(ctx, tx, clone, *shared); err != nil {
+					return result, err
+				}
+			}
+		}
 	}
 	if err := tx.QueryRow(ctx, `
 		with copied as (

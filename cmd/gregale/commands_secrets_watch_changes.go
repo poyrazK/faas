@@ -180,7 +180,7 @@ func emitSecretWatchChangesHuman(app, scope, class, olderThan, delivery string, 
 		printEmptySecretList(app, scope, class, olderThan, delivery, keys...)
 	}
 	printSecretKeyHints(app, scope, hints)
-	command := fmt.Sprintf("%s secrets list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
+	command := fmt.Sprintf("%s env list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
 	for _, key := range keys {
 		command += " --key " + recoveryArgument(key)
 	}

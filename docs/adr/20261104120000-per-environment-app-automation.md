@@ -310,3 +310,56 @@ stage's object events to production.
 2. `clone_paused` column, capture, copy, proof, registry, admission blocker.
 3. `automation/resume` and the CLI resume bucket notifications; docs and SDK
    models.
+
+## Amendment 2026-11-21: what production projects need from a full clone
+
+Status: accepted.
+
+### Problem
+
+A read-only run of the clone admission inventory over production (22
+projects; 6 hold apps, 56 of 89 live apps belong to no project) found that no
+project with apps could be cloned. The tables the sources hold rows in were,
+by projects hit: `deployment_public_build_urls` 6; `edge_rules` and
+`edge_rule_set_versions` 3; `app_service_wake_ahead` 3; `app_release_gates`,
+`app_slos` and `synthetic_checks` 2; and once each `project_environment_secrets`,
+`route_health_gates`, `alert_rules`, `api_consumers`, `consumer_keys`,
+`app_openapi_docs` and `stored_workflow_revisions`.
+
+### Decision
+
+1. **App-wide settings stay with production.** `edge_rules`,
+   `edge_rule_set_versions`, `app_service_wake_ahead`, `app_slos`,
+   `synthetic_checks`, `app_release_gates` and `route_health_gates` have no
+   environment column. A new registry strategy, `production_only`, declares
+   that a clone neither copies nor refuses them: the stage starts without
+   them. Stage hosts already take their edge rules from the environment edge
+   policy, which a clone copies. The strategy is valid only for tables owned
+   below the account (app, deployment, environment, project).
+2. **A target deployment carries its source's build URLs.** The workload
+   snapshot captures the source deployment's `deployment_public_build_urls`
+   row; attaching the target deployment writes it. The table gains `capture`
+   and `materialize`.
+3. **Shared secrets are captured sealed.** The capture records the source
+   environment's `project_environment_secrets` envelopes (ciphertext, key ID,
+   value hash, version) and every project app's
+   `app_environment_secret_refs` and `app_environment_secret_ref_suppressions`
+   in the project-level part of the snapshot, beside the project
+   configuration. The envelope is not bound to an environment, so the stage
+   gets the same ciphertext under the same key ID, as a clone without a
+   checkpoint already does; no value is opened. Materialization writes the
+   secrets and the cloned apps' references and suppressions; publication
+   proves the stage holds exactly them. The refusal
+   `source.project_secrets` (`ErrProjectSecretCloneTransferUnsupported`) is
+   removed.
+
+### Consequences
+
+- Five of the six production projects with apps pass admission; the sixth
+  still needs `alert_rules`, `api_consumers`, `consumer_keys`,
+  `app_openapi_docs` and `stored_workflow_revisions`.
+- A secret rotated in production after the clone does not reach the stage:
+  the stage holds its own copy from the clone's capture.
+- Captures made before this release carry no shared secrets and still
+  publish; N-1 capture refuses a source with shared secrets, so admission
+  stays off until every apid runs N.

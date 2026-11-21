@@ -64,7 +64,9 @@ func TestS3PartsListingRejectsIncompleteProof(t *testing.T) {
 		name, body string
 	}{
 		{"missing completeness", ``},
-		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextPartNumberMarker>2</NextPartNumberMarker>` + part},
+		// A final page may name its own last part (AWS, OVH); one past it
+		// claims parts the page did not return.
+		{"contradictory completion", `<IsTruncated>false</IsTruncated><NextPartNumberMarker>3</NextPartNumberMarker>` + part},
 		{"duplicate part", `<IsTruncated>false</IsTruncated>` + part + part},
 		{"before marker", `<IsTruncated>false</IsTruncated><Part><PartNumber>1</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>`},
 		{"out of order", `<IsTruncated>false</IsTruncated><Part><PartNumber>3</PartNumber><ETag>&quot;part&quot;</ETag><Size>10</Size></Part>` + part},

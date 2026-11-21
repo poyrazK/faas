@@ -24,7 +24,46 @@ from tasks import DurableTaskRuntime, TASK_ID_PATTERN, TaskNotFound, register_ta
 
 CURRENT_PROTOCOL = "2026-07-28"
 LEGACY_PROTOCOL = "2025-11-25"
-SUPPORTED_PROTOCOLS = {CURRENT_PROTOCOL, LEGACY_PROTOCOL}
+# Older revisions share the 2025-11-25 wire format for the tools, resources and
+# prompts this starter serves; clients pinned to them connect in legacy mode.
+OLDER_LEGACY_PROTOCOLS = ("2025-06-18", "2025-03-26")
+# A request with no version header or _meta declaration speaks 2025-03-26
+# (MCP 2025-06-18, "Protocol Version Header").
+UNVERSIONED_LEGACY_PROTOCOL = "2025-03-26"
+SUPPORTED_PROTOCOLS = {CURRENT_PROTOCOL, LEGACY_PROTOCOL, *OLDER_LEGACY_PROTOCOLS}
+
+
+def supported_protocols(legacy):
+    return [CURRENT_PROTOCOL, LEGACY_PROTOCOL, *OLDER_LEGACY_PROTOCOLS] if legacy else [CURRENT_PROTOCOL]
+
+
+def protocol_supported(version, legacy):
+    return version in supported_protocols(legacy)
+
+
+def negotiate_protocol(requested, legacy):
+    """Answer initialize with the requested revision when served, otherwise the
+    newest revision a client of that era can speak; never refuse the handshake."""
+    if protocol_supported(requested, legacy):
+        return requested
+    return LEGACY_PROTOCOL if legacy else CURRENT_PROTOCOL
+
+
+def request_protocol(headers, message, legacy):
+    """initialize negotiates from its body; other requests use the version
+    header, else their _meta declaration, else the unversioned legacy default."""
+    params = message.get("params")
+    params = params if isinstance(params, dict) else {}
+    if message.get("method") == "initialize":
+        return negotiate_protocol(params.get("protocolVersion"), legacy)
+    header = headers.get("MCP-Protocol-Version")
+    if header:
+        return header
+    meta = params.get("_meta")
+    declared = meta.get("io.modelcontextprotocol/protocolVersion") if isinstance(meta, dict) else None
+    if isinstance(declared, str) and declared:
+        return declared
+    return UNVERSIONED_LEGACY_PROTOCOL if legacy else CURRENT_PROTOCOL
 MAX_REQUEST_BYTES = 1 << 20
 MAX_RESOURCE_SUBSCRIPTIONS = 64
 MAX_RESOURCE_URI_BYTES = 16 * 1024
@@ -389,16 +428,14 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
         if protocol != CURRENT_PROTOCOL:
             return 404, rpc_error(request_id, -32601, "method not found")
         return 200, rpc_response(request_id, {
-            "supportedVersions": [CURRENT_PROTOCOL, LEGACY_PROTOCOL] if legacy else [CURRENT_PROTOCOL],
+            "supportedVersions": supported_protocols(legacy),
             "capabilities": server_capabilities(task_runtime, modern=True),
         })
     if method == "initialize":
-        requested = params.get("protocolVersion")
-        if requested not in SUPPORTED_PROTOCOLS or (requested == LEGACY_PROTOCOL and not legacy):
-            return 400, rpc_error(request_id, -32602, "unsupported protocol version")
+        negotiated = negotiate_protocol(params.get("protocolVersion"), legacy)
         return 200, rpc_response(request_id, {
-            "protocolVersion": requested,
-            "capabilities": server_capabilities(task_runtime, modern=requested == CURRENT_PROTOCOL),
+            "protocolVersion": negotiated,
+            "capabilities": server_capabilities(task_runtime, modern=negotiated == CURRENT_PROTOCOL),
             "serverInfo": {"name": "gregale-mcp-python", "version": "1.0.0"},
         })
     if method == "ping":
@@ -952,9 +989,9 @@ class MCPHandler(BaseHTTPRequestHandler):
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str) or not message["method"]:
             self.send_rpc(400, rpc_error(None, -32600, "invalid JSON-RPC request"))
             return
-        protocol = self.headers.get("MCP-Protocol-Version", CURRENT_PROTOCOL)
         legacy = self.server.app_config.get("legacy", True)
-        if len(self.headers.get_all("MCP-Protocol-Version", [])) > 1 or protocol not in SUPPORTED_PROTOCOLS or (protocol == LEGACY_PROTOCOL and not legacy):
+        protocol = request_protocol(self.headers, message, legacy)
+        if len(self.headers.get_all("MCP-Protocol-Version", [])) > 1 or not protocol_supported(protocol, legacy):
             self.send_rpc(400, rpc_error(message.get("id"), -32600, "unsupported MCP protocol version"))
             return
         if not validate_mcp_headers(self.headers, message, protocol, MCP_CATALOG):

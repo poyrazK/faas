@@ -127,6 +127,9 @@ type projectCloneWorkloadSnapshot struct {
 	// environment, copied into the stage paused (ADR-20261104120000
 	// amendment 2026-11-14).
 	EventSubscriptions *projectCloneEventSubscriptions `json:"event_subscriptions,omitempty"`
+	// PublicBuildURLs are the source deployment's recorded build URLs, which
+	// the target deployment carries (ADR-20261104120000 amendment 2026-11-21).
+	PublicBuildURLs map[string]string `json:"public_build_urls,omitempty"`
 }
 
 type projectCloneWorkloadRecord struct {
@@ -148,6 +151,11 @@ func encodeCloneWorkloadSnapshot(snapshot projectCloneWorkloadSnapshot) ([]byte,
 		snapshot.Settings.WorkPolicies = &settings
 	}
 	snapshot.Artifact = normalizeProjectCloneArtifact(snapshot.Artifact)
+	if len(snapshot.PublicBuildURLs) == 0 {
+		snapshot.PublicBuildURLs = nil
+	} else if api.ValidatePublicBuildURLs(snapshot.PublicBuildURLs) != nil {
+		return nil, "", ErrConflict
+	}
 	if snapshot.Values != nil {
 		values, err := normalizeCloneWorkloadValues(snapshot.Artifact.AppID, snapshot.Artifact.Scope, *snapshot.Values)
 		if err != nil {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgerrcode"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -392,6 +393,15 @@ type RequestAnalyticsWindowStore interface {
 	RecordRequestAnalyticsWindow(context.Context, uuid.UUID, uuid.UUID, time.Time, string) error
 }
 
+// RecordRequestAnalyticsWindow returns ErrNotFound when app no longer exists
+// (a row the gateway served just before the app was purged): no retry can
+// record it, and a retryable error dropped the gateway's whole telemetry
+// batch on prod (hunt 2026-11-21).
 func (s *PgStore) RecordRequestAnalyticsWindow(ctx context.Context, id, app uuid.UUID, at time.Time, kind string) error {
-	return sqlc.New().RecordRequestAnalyticsWindow(ctx, s.pool, sqlc.RecordRequestAnalyticsWindowParams{ID: NewPgtypeUUID(id), AppID: NewPgtypeUUID(app), BucketStart: pgtype.Timestamptz{Time: at, Valid: true}, State: kind})
+	err := sqlc.New().RecordRequestAnalyticsWindow(ctx, s.pool, sqlc.RecordRequestAnalyticsWindowParams{ID: NewPgtypeUUID(id), AppID: NewPgtypeUUID(app), BucketStart: pgtype.Timestamptz{Time: at, Valid: true}, State: kind})
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.ForeignKeyViolation {
+		return fmt.Errorf("%w: app %s for request analytics window", ErrNotFound, app)
+	}
+	return err
 }

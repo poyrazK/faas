@@ -172,8 +172,12 @@ and compute host, and the `log_archive` role writes it into
 service account (GCS); `auth: static` reads `{"key_id", "secret"}` from the
 absolute controller path in `credentials_src` (OVH, R2, MinIO), so keys never
 enter the manifest. Leaving it out keeps each host's existing envelope, and
-the role fails a public node that has none. See
-`deploy/ansible/roles/log_archive/README.md`.
+the role fails a public node that has none. `compute_write_only: true` gives
+compute-only hosts create-only archive access (`faas_log_archive_write_only`):
+with `auth: static` they stage `compute_credentials_src`, a key allowed only
+`s3:PutObject` on the bucket, instead of the control plane's read-write key;
+with `gcp_metadata` grant their service account `roles/storage.objectCreator`
+only. See `deploy/ansible/roles/log_archive/README.md`.
 
 The validator fails closed on every missing field, every
 malformed CIDR, every non-octal mode, every non-hex digest, and
