@@ -614,7 +614,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 		"event-driven":       {"event-worker", "queue-worker"},
 		"stateless-contract": {"s3-uploader", "slack-bot", "rest-api-postgres", "cron-worker", "webhook-receiver", "secret-reload-node", "customer-platform"},
 		"ai":                 {"ai-chat"},
-		"mcp":                {"mcp-node", "mcp-go", "mcp-python"},
+		"mcp":                {"mcp-node", "mcp-node-tasks", "mcp-go", "mcp-python"},
 	}
 	for cat, names := range wantPerCat {
 		for _, n := range names {

@@ -540,6 +540,7 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-node-tasks",
 	"mcp-go",
 	"mcp-python",
 	"customer-operation-export",
@@ -5622,9 +5623,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "keys", Short: "Manage org API keys", Subcommands: []cliSub{
 				{Name: "list", Short: "List org API keys", Flags: []cliFlag{orgSlugFlag}},
-				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Flags: []cliFlag{
+				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Positionals: []string{"<label>"}, Flags: []cliFlag{
 					orgSlugFlag,
-					{Name: "label", Short: "key label", Value: "TEXT", Req: true},
+					{Name: "label", Short: "key label (same as the positional label; kept for scripts)", Value: "TEXT"},
 					{Name: "scopes", Short: "comma-separated scopes (default admin)", Value: "SCOPES"},
 					{Name: "projects", Short: "limit an agent key to these projects (comma-separated slugs)", Value: "SLUG,..."},
 					{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},

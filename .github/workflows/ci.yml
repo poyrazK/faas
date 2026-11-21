@@ -1265,7 +1265,7 @@ jobs:
           FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
           FAAS_REHEARSAL_TASK_STARTER_DIR: ${{ runner.temp }}/rehearsal-task-starter
         run: |
-          cp -R cmd/gregale/templates/mcp-node "$FAAS_REHEARSAL_TASK_STARTER_DIR"
+          cp -R cmd/gregale/templates/mcp-node-tasks "$FAAS_REHEARSAL_TASK_STARTER_DIR"
           npm ci --ignore-scripts --prefix "$FAAS_REHEARSAL_TASK_STARTER_DIR"
           node -e '
             const fs = require("node:fs");

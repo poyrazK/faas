@@ -8,13 +8,15 @@ import { completable, createMcpHandler, McpServer, ResourceTemplate } from '@mod
 import * as z from 'zod/v4';
 import { createAuth, verifiedCallerIdentity } from './auth.js';
 import { createRuntimeCatalog } from './catalog.js';
-import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID, mcpTaskHandlers } from './tasks.js';
 import { createResourceUpdateHub, createSubscriptionOutput, validResourceUpdateURI } from './resource-updates.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
 const CURRENT_PROTOCOL_VERSION = '2026-07-28';
 const LEGACY_PROTOCOL_VERSION = '2025-11-25';
 const taskCallContext = new AsyncLocalStorage();
+// The durable MCP Tasks module (mcp-node-tasks' tasks.js) is passed in, so a
+// server without Tasks carries none of its code.
+const NO_TASKS = Object.freeze({ clientSupportsMcpTasks: () => false, installMcpTaskHandlers: () => {}, MCP_TASKS_EXTENSION_ID: '', mcpTaskHandlers: undefined });
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
 const MCP_SUBSCRIPTION_ID_META_KEY = 'io.modelcontextprotocol/subscriptionId';
 const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
@@ -82,7 +84,7 @@ function createCatalogServer(info, options) {
   return server;
 }
 
-function installDefaultCatalog(catalog) {
+function installDefaultCatalog(catalog, { clientSupportsMcpTasks, mcpTaskHandlers }) {
   const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   catalog.registerTool('greet', {
     description: 'Return a greeting from Gregale.', inputSchema: z.object({ name: z.string().min(1).max(100) }), annotations: readOnly,
@@ -105,7 +107,7 @@ function installDefaultCatalog(catalog) {
     }
     return { content: [{ type: 'text', text: 'Streaming complete.' }] };
   });
-  catalog.registerTool('build_report', {
+  if (mcpTaskHandlers) catalog.registerTool('build_report', {
     description: 'Build a harmless sample report; supports durable MCP Tasks when a task store is configured.',
     inputSchema: z.object({ report: z.string().min(1).max(80), steps: z.number().int().min(1).max(20), request_approval: z.boolean().optional() }),
     annotations: readOnly,
@@ -154,7 +156,9 @@ function installDefaultCatalog(catalog) {
   return { sampleCustomerRecord };
 }
 
-export function createApp(config, { keyResolver, log = console.log, taskRuntime, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+export function createApp(config, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+  const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID } = tasks;
+  if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
   if (typeof config.endpoint !== 'string' || !/^\/(?:[A-Za-z0-9._~-]+\/?)*$/.test(config.endpoint) || config.endpoint.split('/').some(s => s === '.' || s === '..')) throw new Error('Invalid MCP endpoint');
   if (!Array.isArray(config.allowed_origins)) throw new Error('Set allowed_origins explicitly');
@@ -181,7 +185,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     return normalized;
   };
   const catalog = createRuntimeCatalog({ normalizeDefinition: normalizeCatalogDefinition });
-  const { sampleCustomerRecord } = installDefaultCatalog(catalog);
+  const { sampleCustomerRecord } = installDefaultCatalog(catalog, tasks);
   function resourceAuthorized(entry, uri, authInfo, subscription = false) {
     if (typeof entry.authorize !== 'function') return !subscription;
     try { return entry.authorize(String(uri), {authInfo, config}) === true; }
