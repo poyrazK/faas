@@ -25,7 +25,7 @@ func (m *MemStore) CreateExecutionArtifactGrant(_ context.Context, params Create
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	row, ok := m.executions[params.SourceExecutionID]
-	if !ok || row.AccountID != params.AccountID || row.Status != api.ExecutionStatusSucceeded {
+	if !ok || row.AccountID != params.AccountID || row.Status != api.ExecutionStatusSucceeded || row.ResultValidation != nil && row.ResultValidation.Status == "invalid" {
 		return ExecutionArtifactGrant{}, ErrNotFound
 	}
 	found := false

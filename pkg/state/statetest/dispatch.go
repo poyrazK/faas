@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
 	"LookupEventSchemaForPublish":            true,
@@ -530,6 +531,13 @@ func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, 
 		return o.ActiveProjectReleaseSet(p0, p1, p2, p3)
 	}
 	return s.MemStore.ActiveProjectReleaseSet(p0, p1, p2, p3)
+}
+
+func (s *Mem) AdmitExecution(ctx context.Context, identity state.ExecutionAdmissionIdentity, prepare state.PrepareExecutionAdmission) (state.Execution, bool, error) {
+	if override, ok := s.over.(state.ExecutionAdmissionStore); ok {
+		return override.AdmitExecution(ctx, identity, prepare)
+	}
+	return s.MemStore.AdmitExecution(ctx, identity, prepare)
 }
 
 func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {
@@ -3435,6 +3443,7 @@ func (s *Pg) WithInvocationVersionSnapshot(p0 context.Context, p1 func(state.Inv
 
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
+	"LiveDeployments": true,
 	"RequestTelemetryAnalyticsTimeseriesGrouped": true,
 	"ListAllApps":                                   true,
 	"ListAllInstances":                              true,
@@ -3685,6 +3694,15 @@ func (s *Store) ListApps(p0 context.Context, p1 string) ([]state.App, error) {
 		return o.ListApps(p0, p1)
 	}
 	return s.Store.ListApps(p0, p1)
+}
+
+func (s *Store) LiveDeployments(p0 context.Context, p1 string) ([]state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		LiveDeployments(context.Context, string) ([]state.Deployment, error)
+	}); ok {
+		return o.LiveDeployments(p0, p1)
+	}
+	return s.Store.LiveDeployments(p0, p1)
 }
 
 func (s *Store) ListDeploymentsForApp(p0 context.Context, p1 string, p2 int, p3 int) ([]state.Deployment, error) {

@@ -290,6 +290,21 @@ func (d *DiskDrift) Tick(ctx context.Context) (drift int, tickErr error) {
 		return 0, fmt.Errorf("disk-drift: list retained snapshots: %w", err)
 	}
 
+	if reader, ok := d.store.(state.RuntimeSnapshotRetentionReader); ok {
+		templates, err := reader.RuntimeSnapshotRecords(ctx)
+		if err != nil {
+			return 0, fmt.Errorf("disk-drift: list runtime templates: %w", err)
+		}
+		for _, template := range templates {
+			row := state.SnapshotForGC{DeploymentID: uuid.Nil.String(), StorageKey: template.StorageKey, MemBytes: template.MemBytes, DiskBytes: template.VMStateBytes}
+			if template.State == state.RuntimeSnapshotStateReady {
+				rows = append(rows, row)
+			} else {
+				retained = append(retained, row)
+			}
+		}
+	}
+
 	// Build the expected set keyed by deploymentID. Map → O(1) lookup
 	// when scanning the disk tree; rows is small (~tens per box).
 	expected := make(map[string]state.SnapshotForGC, len(rows))

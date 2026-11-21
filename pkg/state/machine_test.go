@@ -180,16 +180,20 @@ func TestIsLive(t *testing.T) {
 }
 
 // TestBillable: §4.7 bills plan RAM + 8 MB per resident second, except a
-// frozen instance, which is resident but unbilled (ADR-1151).
+// frozen instance, which is resident but unbilled (ADR-1151), and the
+// platform's own park capture and migration (account usage audit 2026-11-21).
 func TestBillable(t *testing.T) {
 	for _, s := range state.States {
-		want := s.CountsForRAM() && s != state.StateFrozen
+		want := s.CountsForRAM() && s != state.StateFrozen && s != state.StateSnapshotting && s != state.StateMigrating
 		if got := s.Billable(); got != want {
 			t.Errorf("%s.Billable() = %v, want %v", s, got, want)
 		}
 	}
 	if state.StateFrozen.Billable() {
 		t.Error("frozen instances must not be billed")
+	}
+	if state.StateSnapshotting.Billable() || state.StateMigrating.Billable() {
+		t.Error("platform snapshot capture and migration must not be billed")
 	}
 	if !state.StateWarm.Billable() {
 		t.Error("warm instances stay billed: they reserve full capacity")

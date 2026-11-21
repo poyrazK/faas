@@ -86,7 +86,7 @@ func nativeDevicePIDAlive(file *os.File) error {
 }
 
 func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchRecord, root string, source nativeTunSource) (inputs nativeJailDeviceInputs, err error) {
-	if !owner.Authorized || owner.Revoked || owner.ResourcesRemoved || owner.Lease.Networkless {
+	if !owner.Authorized || owner.Revoked || owner.ResourcesRemoved {
 		return nil, errors.New("native jail device setup: original authorized task is unavailable")
 	}
 	if err := linuxNativeTunBinds(b).validateRoot(owner, root); err != nil {
@@ -169,7 +169,12 @@ func (b linuxNativeJailDevices) Prepare(ctx context.Context, owner nativeLaunchR
 			}
 			continue
 		}
-		tunFD, err := unix.Openat(rootFD, nativeTunTargetName, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		var tunFD int
+		if owner.Lease.Networkless {
+			tunFD, err = unix.FcntlInt(uintptr(rootFD), unix.F_DUPFD_CLOEXEC, 3)
+		} else {
+			tunFD, err = unix.Openat(rootFD, nativeTunTargetName, unix.O_PATH|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		}
 		if err != nil {
 			return nil, errors.Join(err, namespace.Close(), originalRoot.Close())
 		}
@@ -196,10 +201,17 @@ func nativePreparedDeviceOwner(owner nativeLaunchRecord) nativeLaunchRecord {
 }
 
 func (linuxNativeJailDevices) completeScope(p *linuxNativeJailInputs, owner nativeLaunchRecord, proc *os.File, source nativeTunSource) error {
-	actualSource, err := nativeTunFileSource(p.files[3])
-	if err != nil || actualSource != source {
-		return errors.Join(err, errors.New("native jail device setup: inherited TUN source changed"))
+	if owner.Lease.Networkless {
+		if source != (nativeTunSource{}) {
+			return errors.New("native jail device setup: KVM-only scope received TUN")
+		}
+	} else {
+		actualSource, err := nativeTunFileSource(p.files[3])
+		if err != nil || actualSource != source {
+			return errors.Join(err, errors.New("native jail device setup: inherited TUN source changed"))
+		}
 	}
+
 	if err := checkNativeImageRoot(nativeImageFDPath(p.files[0]), nativePreparedDeviceOwner(owner)); err != nil {
 		return err
 	}
@@ -211,6 +223,9 @@ func (linuxNativeJailDevices) completeScope(p *linuxNativeJailInputs, owner nati
 		return err
 	}
 	s := jailsetup.DeviceSetupScope{Generation: owner.Generation, BootID: owner.KernelBootID, PID: owner.PID, StartTime: owner.StartTime, UID: owner.Lease.UID, GID: owner.Lease.GID, ParentPID: os.Getpid(), TunMode: source.Mode}
+	if owner.Lease.Networkless {
+		s.Version = 2
+	}
 	parent, err := os.ReadFile("/proc/self/stat")
 	if err != nil {
 		return err

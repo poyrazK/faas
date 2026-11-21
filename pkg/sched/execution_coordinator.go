@@ -42,6 +42,8 @@ type ExecutionCoordinatorConfig struct {
 	Enabled       bool
 	Owner         string
 	MaxConcurrent int
+	// ExtendedConcurrent reserves a separate bounded worker lane. Zero keeps legacy unfiltered workers.
+	ExtendedConcurrent int
 	// QueueAccountLimit bounds the number of account buckets consulted for a
 	// fair claim. It is a scheduler bound, not a customer-facing quota.
 	QueueAccountLimit  int
@@ -61,15 +63,16 @@ type ExecutionCoordinatorConfig struct {
 // the disposable-VM backend. Restore must prepare a fresh jail, cgroup, and
 // scratch drive with no tenant network namespace, but must not run caller code.
 type ExecutionRestoreRequest struct {
-	Profile     api.ExecutionProfile
-	ID          string
-	AccountID   string
-	NodeID      string
-	Plan        api.Plan
-	Runtime     api.ExecutionRuntime
-	NetworkMode api.ExecutionNetworkMode
-	Limits      api.ResolvedExecutionLimits
-	DeadlineAt  time.Time
+	EnvironmentID string
+	Profile       api.ExecutionProfile
+	ID            string
+	AccountID     string
+	NodeID        string
+	Plan          api.Plan
+	Runtime       api.ExecutionRuntime
+	NetworkMode   api.ExecutionNetworkMode
+	Limits        api.ResolvedExecutionLimits
+	DeadlineAt    time.Time
 	// LeaseToken and OutboundIntegrationIDs are host-only broker metadata.
 	// They are forwarded to vmmd only when this execution has an outbound
 	// integration grant and are never copied into the guest request or manifest.
@@ -98,16 +101,17 @@ type ExecutionPayload struct {
 // guest session. Host paths, protocol frames, and backend errors must not be
 // placed in FailureMessage.
 type ExecutionOutcome struct {
-	Status          api.ExecutionStatus
-	Artifacts       []api.ExecutionArtifact
-	Result          json.RawMessage
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        *int
-	FailureCode     string
-	FailureMessage  string
-	Usage           api.ExecutionUsage
+	ResultValidation *api.ExecutionResultValidation
+	Status           api.ExecutionStatus
+	Artifacts        []api.ExecutionArtifact
+	Result           json.RawMessage
+	Stdout           string
+	Stderr           string
+	OutputTruncated  bool
+	ExitCode         *int
+	FailureCode      string
+	FailureMessage   string
+	Usage            api.ExecutionUsage
 	// OutputEventsPersisted tells the store that stdout/stderr were already
 	// appended by the live event sink and must not be emitted again during
 	// terminalization.
@@ -132,15 +136,16 @@ type ExecutionBackend interface {
 // leases, fences payload dispatch, and acknowledges terminal state only after
 // the disposable VM has been destroyed.
 type ExecutionCoordinator struct {
-	store         state.ExecutionStore
-	backend       ExecutionBackend
-	claimResolver ExecutionClaimRequestResolver
-	config        ExecutionCoordinatorConfig
-	metrics       *wire.OpsMetrics
-	log           *slog.Logger
-	now           func() time.Time
-	fairMu        sync.Mutex
-	fairCursor    string
+	store            state.ExecutionStore
+	backend          ExecutionBackend
+	claimResolver    ExecutionClaimRequestResolver
+	config           ExecutionCoordinatorConfig
+	metrics          *wire.OpsMetrics
+	log              *slog.Logger
+	now              func() time.Time
+	fairMu           sync.Mutex
+	fairCursor       string
+	fairClassCursors map[api.ExecutionClass]string
 }
 
 // ExecutionClaimRequestResolver supplies the trusted machine envelope for a
@@ -172,6 +177,12 @@ func (c *ExecutionCoordinator) WithClaimResolver(resolver ExecutionClaimRequestR
 }
 
 func normalizeExecutionCoordinatorConfig(config ExecutionCoordinatorConfig) ExecutionCoordinatorConfig {
+	if config.ExtendedConcurrent < 0 {
+		config.ExtendedConcurrent = 0
+	}
+	if config.ExtendedConcurrent > api.ExecutionExtendedDispatchWorkers {
+		config.ExtendedConcurrent = api.ExecutionExtendedDispatchWorkers
+	}
 	config.Owner = strings.TrimSpace(config.Owner)
 	if config.Owner == "" {
 		config.Owner = "schedd"
@@ -228,7 +239,7 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 		return ErrExecutionCoordinatorNotWired
 	}
 	if c.metrics != nil {
-		c.metrics.SetExecutionWorkers(c.config.MaxConcurrent)
+		c.metrics.SetExecutionWorkers(c.config.MaxConcurrent + c.config.ExtendedConcurrent)
 	}
 	if _, err := c.SweepOnce(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		c.log.Warn("schedd: execution initial recovery sweep failed", "error_class", executionErrorClass(err))
@@ -236,12 +247,19 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 	c.observeQueuePressure(ctx)
 
 	var workers sync.WaitGroup
-	workers.Add(c.config.MaxConcurrent + 1)
+	workers.Add(c.config.MaxConcurrent + c.config.ExtendedConcurrent + 1)
 	for i := 0; i < c.config.MaxConcurrent; i++ {
 		go func() {
 			defer workers.Done()
-			c.runWorker(ctx)
+			class := api.ExecutionClass("")
+			if c.config.ExtendedConcurrent > 0 {
+				class = api.ExecutionClassStandard
+			}
+			c.runWorker(ctx, class)
 		}()
+	}
+	for i := 0; i < c.config.ExtendedConcurrent; i++ {
+		go func() { defer workers.Done(); c.runWorker(ctx, api.ExecutionClassExtended) }()
 	}
 	go func() {
 		defer workers.Done()
@@ -255,10 +273,13 @@ func (c *ExecutionCoordinator) Run(ctx context.Context) error {
 // ProcessNext claims and fully handles at most one execution. The bool is
 // false when no eligible queued intent exists.
 func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
+	return c.processNextForClass(ctx, "")
+}
+func (c *ExecutionCoordinator) processNextForClass(ctx context.Context, class api.ExecutionClass) (bool, error) {
 	if c == nil || c.store == nil || c.backend == nil {
 		return false, ErrExecutionCoordinatorNotWired
 	}
-	claim, err := c.claimNext(ctx)
+	claim, err := c.claimNextForClass(ctx, class)
 	if errors.Is(err, state.ErrNotFound) {
 		return false, nil
 	}
@@ -271,14 +292,21 @@ func (c *ExecutionCoordinator) ProcessNext(ctx context.Context) (bool, error) {
 	return true, c.processClaim(ctx, claim)
 }
 
-// claimNext spreads concurrent workers across accounts when the durable store
+// claimNextForClass spreads concurrent workers across accounts when the durable store
 // exposes the queue-account extension. The cursor is process-local and only
 // chooses the starting bucket; PostgreSQL/MemStore still provide the durable
 // SKIP LOCKED claim fence. Older stores retain the global oldest-first path.
-func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionClaim, error) {
+func (c *ExecutionCoordinator) claimNextForClass(ctx context.Context, class api.ExecutionClass) (state.ExecutionClaim, error) {
 	claimedAt := c.now().UTC()
 	queueStore, ok := c.store.(state.ExecutionQueueStore)
 	if !ok {
+		if class != "" {
+			filtered, ok := c.store.(state.ExecutionClassQueueStore)
+			if !ok {
+				return state.ExecutionClaim{}, ErrExecutionCoordinatorNotWired
+			}
+			return filtered.ClaimExecutionForClass(ctx, "", c.config.Owner, class, claimedAt, c.config.LeaseDuration)
+		}
 		return c.store.ClaimExecution(ctx, c.config.Owner, claimedAt, c.config.LeaseDuration)
 	}
 	var accounts []state.ExecutionQueueAccount
@@ -286,6 +314,9 @@ func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionCl
 	if cursorStore, ok := c.store.(state.ExecutionQueueCursorStore); ok {
 		c.fairMu.Lock()
 		after := c.fairCursor
+		if class != "" {
+			after = c.fairClassCursors[class]
+		}
 		c.fairMu.Unlock()
 		accounts, err = cursorStore.ListExecutionQueueAccountsAfter(ctx, claimedAt, after, c.config.QueueAccountLimit)
 		if err == nil && len(accounts) == 0 && after != "" {
@@ -304,8 +335,18 @@ func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionCl
 		return accounts[i].AccountID < accounts[j].AccountID
 	})
 	for i := 0; i < len(accounts); i++ {
-		accountID := c.nextFairAccount(accounts)
-		claim, err := queueStore.ClaimExecutionForAccount(ctx, accountID, c.config.Owner, claimedAt, c.config.LeaseDuration)
+		accountID := c.nextFairAccountForClass(accounts, class)
+		var claim state.ExecutionClaim
+		var err error
+		if class != "" {
+			filtered, ok := c.store.(state.ExecutionClassQueueStore)
+			if !ok {
+				return state.ExecutionClaim{}, ErrExecutionCoordinatorNotWired
+			}
+			claim, err = filtered.ClaimExecutionForClass(ctx, accountID, c.config.Owner, class, claimedAt, c.config.LeaseDuration)
+		} else {
+			claim, err = queueStore.ClaimExecutionForAccount(ctx, accountID, c.config.Owner, claimedAt, c.config.LeaseDuration)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			continue
 		}
@@ -317,14 +358,18 @@ func (c *ExecutionCoordinator) claimNext(ctx context.Context) (state.ExecutionCl
 	return state.ExecutionClaim{}, state.ErrNotFound
 }
 
-func (c *ExecutionCoordinator) nextFairAccount(accounts []state.ExecutionQueueAccount) string {
+func (c *ExecutionCoordinator) nextFairAccountForClass(accounts []state.ExecutionQueueAccount, class api.ExecutionClass) string {
 	c.fairMu.Lock()
 	defer c.fairMu.Unlock()
+	cursor := c.fairCursor
+	if class != "" {
+		cursor = c.fairClassCursors[class]
+	}
 	start := 0
-	if c.fairCursor != "" {
+	if cursor != "" {
 		start = len(accounts)
 		for i, account := range accounts {
-			if account.AccountID > c.fairCursor {
+			if account.AccountID > cursor {
 				start = i
 				break
 			}
@@ -334,7 +379,14 @@ func (c *ExecutionCoordinator) nextFairAccount(accounts []state.ExecutionQueueAc
 		}
 	}
 	selected := accounts[start].AccountID
-	c.fairCursor = selected
+	if class == "" {
+		c.fairCursor = selected
+	} else {
+		if c.fairClassCursors == nil {
+			c.fairClassCursors = map[api.ExecutionClass]string{}
+		}
+		c.fairClassCursors[class] = selected
+	}
 	return selected
 }
 
@@ -638,7 +690,8 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 		failureMessage = stringPointer(outcome.FailureMessage)
 	}
 	return state.CompleteExecutionParams{
-		ID: claim.ID, LeaseToken: *claim.LeaseToken, Status: outcome.Status,
+		ResultValidation: api.CloneExecutionResultValidation(outcome.ResultValidation),
+		ID:               claim.ID, LeaseToken: *claim.LeaseToken, Status: outcome.Status,
 		Artifacts: api.CloneExecutionArtifacts(outcome.Artifacts), Result: append(json.RawMessage(nil), outcome.Result...), Stdout: outcome.Stdout, Stderr: outcome.Stderr,
 		OutputTruncated: outcome.OutputTruncated, ExitCode: outcome.ExitCode,
 		FailureCode: failureCode, FailureMessage: failureMessage, Usage: outcome.Usage, FinishedAt: finishedAt,
@@ -647,6 +700,9 @@ func completionParams(claim state.ExecutionClaim, outcome ExecutionOutcome, fini
 }
 
 func normalizeExecutionOutcome(outcome ExecutionOutcome, maxOutputBytes int) ExecutionOutcome {
+	if err := outcome.ResultValidation.Validate(); err != nil || outcome.ResultValidation != nil && outcome.Status != api.ExecutionStatusSucceeded {
+		return executionFailure("guest_protocol_error", "execution result validation is invalid")
+	}
 	if err := api.ValidateExecutionArtifacts(outcome.Artifacts); err != nil || (outcome.Status != api.ExecutionStatusSucceeded && len(outcome.Artifacts) != 0) {
 		return executionFailure("guest_protocol_error", "execution guest returned invalid artifacts")
 	}
@@ -681,9 +737,9 @@ func stringPointer(value string) *string {
 	return &copy
 }
 
-func (c *ExecutionCoordinator) runWorker(ctx context.Context) {
+func (c *ExecutionCoordinator) runWorker(ctx context.Context, class api.ExecutionClass) {
 	for ctx.Err() == nil {
-		processed, err := c.ProcessNext(ctx)
+		processed, err := c.processNextForClass(ctx, class)
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, state.ErrExecutionLeaseLost) {
 			c.log.Warn("schedd: execution worker failed", "error_class", executionErrorClass(err))
 		}

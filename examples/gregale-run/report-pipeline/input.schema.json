@@ -1,0 +1,176 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "north",
+    "south"
+  ],
+  "properties": {
+    "north": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "result"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "currency",
+            "orders",
+            "units",
+            "revenue_cents",
+            "regions"
+          ],
+          "properties": {
+            "currency": {
+              "type": "string",
+              "enum": [
+                "USD"
+              ]
+            },
+            "orders": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "units": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "revenue_cents": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "regions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "region",
+                  "orders",
+                  "units",
+                  "revenue_cents"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "orders": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "units": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "revenue_cents": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "south": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "result"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "succeeded"
+          ]
+        },
+        "result": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "currency",
+            "orders",
+            "units",
+            "revenue_cents",
+            "regions"
+          ],
+          "properties": {
+            "currency": {
+              "type": "string",
+              "enum": [
+                "USD"
+              ]
+            },
+            "orders": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "units": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "revenue_cents": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "regions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "region",
+                  "orders",
+                  "units",
+                  "revenue_cents"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "string"
+                  },
+                  "orders": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "units": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "revenue_cents": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

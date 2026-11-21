@@ -10,6 +10,7 @@ import type { ReleaseApprovalStatus } from './ReleaseApprovalStatus.js';
 import type { ReleaseFreeze } from './ReleaseFreeze.js';
 import type { ReleaseRestorePoint } from './ReleaseRestorePoint.js';
 import type { RollbackCrossedRelease } from './RollbackCrossedRelease.js';
+import type { RunBudgetRefusal } from './RunBudgetRefusal.js';
 import type { SecretFinding } from './SecretFinding.js';
 /**
  * RFC 9457 problem+json envelope. The `code` field is the stable
@@ -33,6 +34,7 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  run_budget?: RunBudgetRefusal;
   /**
    * Observed channel head on realtime_sequence_conflict.
    */

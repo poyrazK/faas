@@ -141,15 +141,17 @@ func executionOutputPayload(chunk string) json.RawMessage {
 
 func executionTerminalPayload(row Execution) json.RawMessage {
 	payload := struct {
-		Status          api.ExecutionStatus `json:"status"`
-		OutputTruncated bool                `json:"output_truncated"`
-		ExitCode        *int                `json:"exit_code,omitempty"`
-		FailureCode     *string             `json:"failure_code,omitempty"`
-		FailureMessage  *string             `json:"failure_message,omitempty"`
-		Usage           api.ExecutionUsage  `json:"usage"`
+		Status           api.ExecutionStatus            `json:"status"`
+		OutputTruncated  bool                           `json:"output_truncated"`
+		ResultValidation *api.ExecutionResultValidation `json:"result_validation,omitempty"`
+		ExitCode         *int                           `json:"exit_code,omitempty"`
+		FailureCode      *string                        `json:"failure_code,omitempty"`
+		FailureMessage   *string                        `json:"failure_message,omitempty"`
+		Usage            api.ExecutionUsage             `json:"usage"`
 	}{
 		Status: row.Status, OutputTruncated: row.OutputTruncated, ExitCode: row.ExitCode,
-		FailureCode: row.FailureCode, FailureMessage: row.FailureMessage, Usage: row.Usage,
+		ResultValidation: api.CloneExecutionResultValidation(row.ResultValidation),
+		FailureCode:      row.FailureCode, FailureMessage: row.FailureMessage, Usage: row.Usage,
 	}
 	b, _ := json.Marshal(payload)
 	return b

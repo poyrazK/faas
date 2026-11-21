@@ -796,6 +796,7 @@
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/referrals/checkout",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
         "/v1/usage",
@@ -1762,8 +1763,18 @@
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection",
       "routes": [
+        "/v1/apps/{}/run-artifact-deliveries",
         "/v1/execution-artifact-grants",
-        "/v1/executions"
+        "/v1/execution-files",
+        "/v1/execution-environments",
+        "/v2/executions",
+        "/v2/execution-workflows",
+        "/v1/execution-pipelines",
+        "/v2/execution-pipelines",
+        "/v1/executions",
+        "/v1/run-tasks",
+        "/v1/run-controls",
+        "/v1/run-history"
       ],
       "cli": [
         "run",
@@ -3257,6 +3268,7 @@
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
