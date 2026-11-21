@@ -1,4 +1,4 @@
--- filename: 20261121103715400_run_result_contracts.sql
+-- filename: 20261121104650104_run_result_contracts.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

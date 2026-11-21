@@ -1,4 +1,4 @@
--- filename: 20261121103715180_retire_base_image_producer_current_environment_keys.sql
+-- filename: 20261121104650118_retire_base_image_producer_current_environment_keys.sql
 -- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

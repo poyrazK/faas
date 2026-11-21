@@ -171,6 +171,15 @@
     "kind": "operational"
   },
   {
+    "table": "agent_budget_standing",
+    "columns": [
+      "key_id",
+      "standing_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_key_budgets",
     "columns": [
       "key_id",

@@ -1,4 +1,4 @@
--- filename: 20261121103715200_run_template_firecracker_version.sql
+-- filename: 20261121104650102_run_template_firecracker_version.sql
 -- migration-compat: expand
 
 -- +goose Up

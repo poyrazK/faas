@@ -32,7 +32,7 @@ func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, p
 		return noop, true
 	}
 	acct, key, _, ok := PrincipalFrom(r)
-	if !ok || key == nil || !ProjectLimitable(*key) || millicents <= 0 {
+	if !ok || key == nil || !ProjectLimitable(*key) || millicents == 0 {
 		return noop, false
 	}
 	budgets, ok := m.Authn.(state.AgentBudgetStore)
@@ -40,13 +40,22 @@ func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, p
 		return noop, false
 	}
 	keyID := key.ID
-	commit = func() { //nolint:contextcheck // the spend outlives the request, like the activity row.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		if err := budgets.AddAgentBudgetSpend(ctx, keyID, time.Now(), millicents); err != nil && m.Log != nil {
-			m.Log.Warn("agent_budget.record_failed", "key_id", keyID, "millicents", millicents, "error", err.Error())
+	// add records a signed change to the key's standing cost once the
+	// handler wrote it: a change that lowers cost gives budget back
+	// (cost-control review 2026-11-19, N10).
+	add := func(delta int64) func() { //nolint:contextcheck // the spend outlives the request, like the activity row.
+		return func() { //nolint:contextcheck // the spend outlives the request, like the activity row.
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			if err := budgets.AddAgentBudgetSpend(ctx, keyID, time.Now(), delta); err != nil && m.Log != nil {
+				m.Log.Warn("agent_budget.record_failed", "key_id", keyID, "millicents", delta, "error", err.Error())
+			}
 		}
 	}
+	if millicents < 0 {
+		return add(millicents), false
+	}
+	commit = add(millicents)
 	ctx := r.Context()
 	note, _ := ctx.Value(agentActivityNoteKey{}).(*agentActivityNote)
 	if note != nil && note.approvalID != "" {
@@ -61,12 +70,26 @@ func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, p
 	if !view.Limited {
 		return commit, false
 	}
+	if note != nil {
+		// Reserve before the handler writes (N9): two concurrent requests
+		// can no longer both pass a check of the same total. The middleware
+		// releases the reservation after the handler unless it commits.
+		reserved, err := budgets.ReserveAgentBudget(ctx, keyID, millicents, view.Cents*api.MillicentsPerCent)
+		if err != nil {
+			m.storeUnavailable(w, r, err, "could not load the agent's budget; retry shortly")
+			return noop, true
+		}
+		if reserved {
+			note.reservedBudget += millicents
+			return func() { note.reservedBudget -= millicents }, false
+		}
+	}
 	spent, err := budgets.AgentBudgetSpent(ctx, key.ID, time.Now())
 	if err != nil {
 		m.storeUnavailable(w, r, err, "could not load the agent's budget; retry shortly")
 		return noop, true
 	}
-	if spent+millicents <= view.Cents*api.MillicentsPerCent {
+	if note == nil && spent+millicents <= view.Cents*api.MillicentsPerCent {
 		return commit, false
 	}
 	gate, ok := m.Authn.(AgentApprovalGate)
@@ -112,6 +135,26 @@ func (m *Middleware) decideBudget(ctx context.Context, gate AgentApprovalGate, a
 		return AgentGateDecision{Problem: m.approvalOutcomeProblem(acct, key, outcome)}, nil
 	}
 	return m.requestApproval(ctx, gate, acct, key, agentapproval.Rule{Category: api.AgentApprovalBudget}, binding, reason, cost, why)
+}
+
+// releaseAgentBudget gives back budget a handler reserved but did not keep:
+// it refused the change, failed, or answered before writing (cost-control
+// review 2026-11-19, N9).
+func (m *Middleware) releaseAgentBudget(keyID string, note *agentActivityNote) {
+	if note == nil || note.reservedBudget <= 0 {
+		return
+	}
+	budgets, ok := m.Authn.(state.AgentBudgetStore)
+	if !ok {
+		return
+	}
+	released := note.reservedBudget
+	note.reservedBudget = 0
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := budgets.AddAgentBudgetSpend(ctx, keyID, time.Now(), -released); err != nil && m.Log != nil {
+		m.Log.Warn("agent_budget.release_failed", "key_id", keyID, "millicents", released, "error", err.Error())
+	}
 }
 
 // usd formats cents as dollars.
