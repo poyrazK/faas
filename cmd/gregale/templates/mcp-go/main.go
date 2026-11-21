@@ -224,11 +224,8 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		writeRPCError(w, json.RawMessage("null"), -32600, "invalid JSON-RPC request", http.StatusBadRequest)
 		return
 	}
-	version := r.Header.Get("MCP-Protocol-Version")
-	if version == "" {
-		version = currentProtocol
-	}
-	if len(r.Header.Values("MCP-Protocol-Version")) > 1 || (version != currentProtocol && (version != legacyProtocol || !config.Legacy)) {
+	version := requestProtocol(r.Header, request, config.Legacy)
+	if len(r.Header.Values("MCP-Protocol-Version")) > 1 || !protocolSupported(version, config.Legacy) {
 		writeRPCError(w, request.ID, -32600, "unsupported MCP protocol version", http.StatusBadRequest)
 		return
 	}
@@ -326,13 +323,11 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 			ProtocolVersion string `json:"protocolVersion"`
 		}
 		_ = json.Unmarshal(request.Params, &params)
-		if params.ProtocolVersion != currentProtocol && (params.ProtocolVersion != legacyProtocol || !config.Legacy) {
-			writeRPCError(w, request.ID, -32602, "unsupported protocol version", http.StatusBadRequest)
-			return
-		}
+		negotiated := negotiateProtocol(params.ProtocolVersion, config.Legacy)
+		w.Header().Set("MCP-Protocol-Version", negotiated)
 		writeRPCResult(w, request.ID, map[string]any{
-			"protocolVersion": params.ProtocolVersion,
-			"capabilities":    serverCapabilities(tasks, params.ProtocolVersion == currentProtocol),
+			"protocolVersion": negotiated,
+			"capabilities":    serverCapabilities(tasks, negotiated == currentProtocol),
 			"serverInfo":      map[string]string{"name": "gregale-mcp-go", "version": "1.0.0"},
 		})
 	case "ping":
