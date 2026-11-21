@@ -255,7 +255,9 @@ for host, port in [("169.254.169.254", 80), ("10.100.0.1", 22), ("192.168.1.1", 
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := int64(api.BillableRAMMB(1024)) << 20; max != want {
+		// The VM's memory.max carries Firecracker's own headroom on top of
+		// the billable RAM (ADR-20261116191801).
+		if want := int64(api.AppVMMemoryMaxMB(1024)) << 20; max != want {
 			t.Fatalf("memory.max %d, want %d", max, want)
 		}
 		// Root asks for twice the VM's memory; the guest's own kernel
