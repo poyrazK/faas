@@ -1,39 +1,35 @@
 # group_vars/control_plane/managed_postgres.yml — production's managed
 # PostgreSQL provider registry (managed_postgres_config role).
 #
+# Only what needs a restart lives here: the backend (its settings are every
+# database's placement fingerprint) and whether usage metering runs. The
+# operator policy — provisioning switch, per-account limit, fleet, usage
+# ceilings and rates, production approval — is hot runtime config:
+#   gregalectl config show -key managed_postgres_policy
+# (ADR-20261121120000). Its values override the file's.
+#
 # Recreated 2026-11-21 after the GCP -> OVH move lost the hand-installed
-# /etc/faas/managed-postgres-canary.json. The backend is GCP prod's, rebuilt
-# from its recorded placement fingerprint:
+# file. The backend is GCP prod's, rebuilt from its recorded placement
+# fingerprint:
 #   neon-production-canary 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
 # (snapbox-db's; the role refuses any change that would strand a database).
-# Opened to every account 2026-11-21 (owner): fleet 80 databases (Neon Launch
-# allows 100 projects) and $500/month provider cost; per-account usage
-# ceilings sit above Scale's overage ceiling so plans set the real limits.
-# max_databases_per_account and the CU rate are GCP prod's 2026-11-04 values;
-# the other rates are Neon Launch list prices.
 faas_managed_postgres_config:
   default_region: us-east-2
   defaults: {us-east-2: neon-production-canary}
-  max_databases_per_account: 10
-  provisioning_enabled: true
+  # Closed unless managed_postgres_policy opens it.
+  provisioning_enabled: false
   health: {enabled: true, interval_seconds: 60, stale_after_seconds: 300}
-  fleet:
-    max_databases: 80
-    max_monthly_cost_millicents: 50000000         # $500/month provider cost
   usage:
     enabled: true
     collection_interval_seconds: 300
     window_seconds: 3600
     stale_after_seconds: 10800
-    max_monthly_cost_millicents: 50000000
-    max_monthly_compute_unit_seconds: 2700000      # 750 CU-h
-    max_monthly_storage_byte_seconds: 1000000000000000000  # ~360 GiB for a month
-    max_monthly_history_byte_seconds: 1000000000000000000
-    max_monthly_egress_bytes: 1099511627776        # 1 TiB
-    compute_unit_hour_millicents: 10600            # Neon Launch $0.106 / CU-h
-    storage_gib_hour_millicents: 48                # $0.35 / GB-month
-    history_gib_hour_millicents: 27                # $0.20 / GB-month
-    egress_gib_millicents: 10000                   # $0.10 / GB
+    # Metering on needs monthly ceilings to load. These are the strictest
+    # fallback; managed_postgres_policy sets the real ones.
+    max_monthly_cost_millicents: 1
+    max_monthly_compute_unit_seconds: 1
+    max_monthly_storage_byte_seconds: 1
+    max_monthly_egress_bytes: 1
   backends:
     - id: neon-production-canary
       driver: neon
@@ -49,11 +45,3 @@ faas_managed_postgres_config:
 # The Neon key lives here on prod (in the cp-state bundle), not in sealed.env.
 faas_managed_postgres_env_files:
   - /etc/faas/secrets/managed-postgres/provider.env
-
-# Production provisioning approval (owner, 2026-11-21: 90 days). Renew before
-# `until` or new databases close (existing ones keep working).
-faas_managed_postgres_production_approval:
-  backend: neon-production-canary
-  fingerprint: 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
-  approved_at: "2026-11-21T10:23:57Z"
-  until: "2027-02-19T10:23:57Z"

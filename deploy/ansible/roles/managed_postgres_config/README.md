@@ -77,30 +77,31 @@ FROM managed_postgres_databases WHERE state <> 'deleted' GROUP BY 1, 2;
 `files/managed-postgres-config-check.py CONFIG --fingerprints` prints a
 candidate's fingerprints for comparison.
 
-## Secrets outside sealed.env, approval and cap switches
+## Keys outside sealed.env
 
-The same drop-in also carries what GCP prod kept in a hand-made
-`zzzz-managed-postgres-canary.conf`:
+`faas_managed_postgres_env_files` adds `EnvironmentFile=` lines to the same
+drop-in. Production's Neon key is in
+`/etc/faas/secrets/managed-postgres/provider.env` (part of the cp-state
+bundle). Each file must exist under `/etc/faas/secrets` and not be
+world-readable; `secret_env` variables may be set there or in `sealed.env`.
+Another apid drop-in that sets the config path or that file would override
+the role, so the converge refuses until it is removed.
 
-- `faas_managed_postgres_env_files`: extra `EnvironmentFile=` lines (prod's
-  Neon key is in `/etc/faas/secrets/managed-postgres/provider.env`, part of
-  the cp-state bundle). Each must exist under `/etc/faas/secrets` and not be
-  world-readable; `secret_env` variables may be set there or in `sealed.env`.
-- `faas_managed_postgres_production_approval`: `backend`, `fingerprint`,
-  `approved_at`, `until` render `FAAS_MANAGED_POSTGRES_PRODUCTION_*`
-  (ADR-20261028103115). It is the owner's go-live decision for new databases.
-  The role refuses one apid would reject: not the default backend, not its
-  current fingerprint, a window over 90 days, or already expired.
-  `files/managed-postgres-config-check.py CONFIG --fingerprints` prints the
-  fingerprint.
-- `faas_managed_postgres_cap_enforcement` /
-  `faas_managed_postgres_storage_cap_enforcement`: `on`, `shadow` or `off`
-  (empty keeps apid's default, shadow).
+## Limits and the production approval are not here
 
-A `sealed.env` line or another apid drop-in setting any of these would
-override the role, so the converge refuses until they are removed.
+The provisioning switch, per-account limit, fleet, usage ceilings and rates,
+and the production approval are hot runtime config,
+`gregalectl config set -key managed_postgres_policy`
+(ADR-20261121120000), and override the file. Keep the file to what needs a
+restart: backends, usage metering on/off and its timing, health. With
+metering on the file must still hold monthly ceilings; production's are the
+strictest values (1), so a missing live policy fails closed.
 
-Production's values are in `group_vars/control_plane/managed_postgres.yml`.
+A converge rewrites `zz-faas-managed-postgres.conf`. If an approval was
+hand-set there (`FAAS_MANAGED_POSTGRES_PRODUCTION_*`), put it in
+`managed_postgres_policy` first, or new databases close.
+
+Production's file is `group_vars/control_plane/managed_postgres.yml`.
 
 ## Turning it off
 

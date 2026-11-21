@@ -29,19 +29,7 @@ faas_managed_postgres_config_catalog_dsn: "postgres:///faas?host=/run/postgresql
 # in sealed.env or any of these.
 faas_managed_postgres_env_files: []
 
-# Production provisioning approval (ADR-20261028103115). Empty: no approval
-# rendered, so in production new databases stay closed (existing ones keep
-# working). An owner decision: set all four, e.g.
-#   backend: neon-production-canary
-#   fingerprint: <managed-postgres-qualify --check-production, or
-#                 managed-postgres-config-check.py CONFIG --fingerprints>
-#   approved_at: "2026-11-21T12:00:00Z"
-#   until: "2026-11-28T12:00:00Z"          # at most 90 days after approved_at
-# The role refuses an approval apid would reject: another backend, a stale
-# fingerprint, a window over 90 days, or one already expired.
-faas_managed_postgres_production_approval: {}
-
-# FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT / _STORAGE_CAP_ENFORCEMENT for apid
-# (ADR-20261025094915): "" leaves apid's default (shadow); on, shadow or off.
-faas_managed_postgres_cap_enforcement: ""
-faas_managed_postgres_storage_cap_enforcement: ""
+# The operator policy (provisioning switch, per-account limit, fleet, usage
+# ceilings and rates, production approval) is not set here: it is hot
+# runtime configuration, `gregalectl config set -key managed_postgres_policy`
+# (ADR-20261121120000), and overrides whatever the file holds.

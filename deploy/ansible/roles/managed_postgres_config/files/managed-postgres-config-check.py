@@ -3,7 +3,6 @@
 
 Usage: managed-postgres-config-check.py CONFIG [--catalog-dsn DSN]
        managed-postgres-config-check.py CONFIG --fingerprints
-       managed-postgres-config-check.py CONFIG --production BACKEND FINGERPRINT APPROVED_AT UNTIL
 
 It refuses a config that would strand an existing database: apid resolves a
 database only through the backend ID and fingerprint the catalog recorded at
@@ -16,14 +15,7 @@ secret_env.
 With --catalog-dsn it reads every non-deleted database's (backend_id,
 backend_fingerprint) through psql and fails unless each resolves. Exit 0 on
 success; otherwise prints why and exits 1.
-
-With --production it checks a production provisioning approval the way apid
-does (pkg/managedpostgres/production_gate.go ProductionReadiness): the
-backend is the default region's backend, the fingerprint is its current one,
-both times are RFC 3339 with a zone, UNTIL is after APPROVED_AT by at most 90
-days, and UNTIL has not passed (an expired approval renders a closed gate).
 """
-import datetime
 import hashlib
 import json
 import re
@@ -98,37 +90,6 @@ def problems(config):
     return errs
 
 
-MAX_APPROVAL = datetime.timedelta(days=90)
-
-
-def parse_rfc3339(value):
-    try:
-        parsed = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo else None
-
-
-def approval_problems(config, backend_id, fp, approved_at, until, now=None):
-    errs = []
-    default_id = (config.get("defaults") or {}).get(config.get("default_region"), "")
-    if backend_id != default_id:
-        errs.append(f"production approval names backend {backend_id}, but the default backend is {default_id or 'unset'}")
-    else:
-        backend = next((b for b in config.get("backends") or [] if b.get("id") == backend_id), {})
-        current = fingerprint(backend, backend.get("settings"))
-        if fp != current:
-            errs.append(f"production approval fingerprint {fp[:12]}… is not backend {backend_id}'s current {current[:12]}…")
-    start, end = parse_rfc3339(approved_at), parse_rfc3339(until)
-    if start is None or end is None:
-        errs.append("production approval approved_at and until must be RFC 3339 times with a zone")
-    elif not end > start or end - start > MAX_APPROVAL:
-        errs.append("production approval until must be after approved_at by at most 90 days")
-    elif end <= (now or datetime.datetime.now(datetime.timezone.utc)):
-        errs.append("production approval has expired: renew it (new approved_at and until) or remove it")
-    return errs
-
-
 def catalog_placements(dsn):
     out = subprocess.run(
         ["psql", "-X", "-A", "-t", "-F", " ", dsn, "-c",
@@ -146,13 +107,6 @@ def main(argv):
                 for fp in sorted(prints):
                     print(bid, fp)
         return 0
-    if len(argv) == 7 and argv[2] == "--production":
-        with open(argv[1], encoding="utf-8") as handle:
-            config = json.load(handle)
-        errs = problems(config) or approval_problems(config, *argv[3:7])
-        for err in errs:
-            print(f"managed postgres config: {err}", file=sys.stderr)
-        return 1 if errs else 0
     if len(argv) not in (2, 4) or (len(argv) == 4 and argv[2] != "--catalog-dsn"):
         print(__doc__, file=sys.stderr)
         return 2

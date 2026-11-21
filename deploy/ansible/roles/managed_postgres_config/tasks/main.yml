@@ -55,50 +55,38 @@
       {{ out }}
   when: faas_managed_postgres_config | length > 0
 
-# The approval and enforcement switches were hand-set on GCP in a
-# zzzz-managed-postgres-canary.conf drop-in. A later-sorting drop-in or a
-# sealed.env line would silently win over what this role renders.
-- name: managed_postgres_config — look for managed Postgres settings outside the role's drop-in
+# GCP prod set the config path and the key file in a hand-made
+# zzzz-managed-postgres-canary.conf; a later-sorting drop-in would silently
+# win over what this role renders.
+- name: managed_postgres_config — look for another apid drop-in setting the config or key file
   ansible.builtin.shell: |
-    set -o pipefail
-    { grep -HE '^(export )?FAAS_MANAGED_POSTGRES_(PRODUCTION_|CAP_ENFORCEMENT=|STORAGE_CAP_ENFORCEMENT=)' /etc/faas/sealed.env 2>/dev/null || true
-      for f in /etc/systemd/system/faas-apid.service.d/*.conf; do
-        [ -e "$f" ] && [ "$(basename "$f")" != zz-faas-managed-postgres.conf ] || continue
-        grep -HE 'FAAS_MANAGED_POSTGRES_(CONFIG=|PRODUCTION_|CAP_ENFORCEMENT=|STORAGE_CAP_ENFORCEMENT=)|managed-postgres/provider\.env' "$f" || true
-      done; } | sed -E 's/=.*/=…/'
+    for f in /etc/systemd/system/faas-apid.service.d/*.conf; do
+      [ -e "$f" ] && [ "$(basename "$f")" != zz-faas-managed-postgres.conf ] || continue
+      grep -HE 'FAAS_MANAGED_POSTGRES_CONFIG=|managed-postgres/provider\.env' "$f" | sed -E 's/=.*/=…/'
+    done; true
   args:
     executable: /bin/bash
   register: faas_mpg_foreign_settings
   changed_when: false
   when: faas_managed_postgres_config | length > 0
 
-- name: managed_postgres_config — refuse managed Postgres settings the role would not own
+- name: managed_postgres_config — refuse a drop-in that would override the role's
   ansible.builtin.assert:
     that:
       - faas_mpg_foreign_settings.stdout | length == 0
     fail_msg: >-
-      These set managed PostgreSQL environment outside
-      zz-faas-managed-postgres.conf and would override or duplicate it:
-      {{ faas_mpg_foreign_settings.stdout_lines | join('; ') }}. Move the
-      values into faas_managed_postgres_* group_vars, delete those lines or
-      drop-ins, and converge again.
+      Another apid drop-in sets the managed PostgreSQL config or key file and
+      would override zz-faas-managed-postgres.conf:
+      {{ faas_mpg_foreign_settings.stdout_lines | join('; ') }}. Delete it and
+      converge again.
   when: faas_managed_postgres_config | length > 0
 
-- name: managed_postgres_config — check the extra env files and enforcement values
+- name: managed_postgres_config — check the extra env files
   ansible.builtin.assert:
     that:
       - faas_managed_postgres_env_files is sequence and faas_managed_postgres_env_files is not string
       - faas_managed_postgres_env_files | reject('match', '^/etc/faas/secrets/[A-Za-z0-9._/-]+$') | list | length == 0
-      - faas_managed_postgres_cap_enforcement in ['', 'on', 'shadow', 'off']
-      - faas_managed_postgres_storage_cap_enforcement in ['', 'on', 'shadow', 'off']
-      - faas_managed_postgres_production_approval is mapping
-      - faas_managed_postgres_production_approval | length == 0 or
-        (['backend', 'fingerprint', 'approved_at', 'until'] | difference(faas_managed_postgres_production_approval.keys() | list) | length == 0)
-    fail_msg: >-
-      faas_managed_postgres_env_files must list files under /etc/faas/secrets;
-      the cap enforcement values must be '', on, shadow or off; and
-      faas_managed_postgres_production_approval is empty or sets backend,
-      fingerprint, approved_at and until.
+    fail_msg: faas_managed_postgres_env_files must list files under /etc/faas/secrets.
   when: faas_managed_postgres_config | length > 0
 
 - name: managed_postgres_config — stat the extra env files
@@ -156,20 +144,6 @@
   become_user: "{{ 'postgres' if (faas_managed_postgres_config_verify_catalog | bool) else 'root' }}"
   changed_when: false
   when: faas_managed_postgres_config | length > 0
-
-- name: managed_postgres_config — check the production approval against the config
-  ansible.builtin.script:
-    cmd: >-
-      managed-postgres-config-check.py /run/faas-managed-postgres-config.candidate.json --production
-      {{ faas_managed_postgres_production_approval.backend | string | quote }}
-      {{ faas_managed_postgres_production_approval.fingerprint | string | quote }}
-      {{ faas_managed_postgres_production_approval.approved_at | string | quote }}
-      {{ faas_managed_postgres_production_approval.until | string | quote }}
-    executable: python3
-  changed_when: false
-  when:
-    - faas_managed_postgres_config | length > 0
-    - faas_managed_postgres_production_approval | length > 0
 
 - name: managed_postgres_config — remove the candidate
   ansible.builtin.file:

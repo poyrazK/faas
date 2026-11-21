@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 )
 
 // The managed_postgres_config Ansible role refuses a config whose backend
@@ -86,50 +85,5 @@ func TestAnsibleConfigCheckFingerprintsMatch(t *testing.T) {
 	result, err = exec.Command(python, ansibleConfigCheck, path).CombinedOutput()
 	if err == nil || !strings.Contains(string(result), "must be a string") {
 		t.Fatalf("numeric setting accepted (%v): %s", err, result)
-	}
-}
-
-// The role refuses a production approval apid would reject
-// (ProductionReadiness): another backend, a stale fingerprint, a window over
-// 90 days, or one already expired.
-func TestAnsibleConfigCheckProductionApproval(t *testing.T) {
-	python, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 not on PATH")
-	}
-	backend := BackendConfig{ID: "neon-production-canary", Driver: "neon", Region: "us-east-2", Namespace: "org-abc-123",
-		Settings:  map[string]string{"region_id": "aws-us-east-2", "database_name": "gregale", "max_storage_bytes": "107374182400", "max_restore_window_seconds": "604800"},
-		SecretEnv: map[string]string{"api-key": "FAAS_NEON_API_KEY"}}
-	raw, err := json.Marshal(Config{DefaultRegion: "us-east-2", Defaults: map[string]string{"us-east-2": backend.ID}, Backends: []BackendConfig{backend}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(t.TempDir(), "config.json")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	fp := fingerprint(backend)
-	start := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
-	week := time.Now().UTC().Add(7 * 24 * time.Hour).Format(time.RFC3339)
-	for _, tc := range []struct {
-		name, backend, fp, start, until, want string
-	}{
-		{"valid", backend.ID, fp, start, week, ""},
-		{"other backend", "neon-us", fp, start, week, "default backend is neon-production-canary"},
-		{"stale fingerprint", backend.ID, strings.Repeat("0", 64), start, week, "is not backend"},
-		{"over 90 days", backend.ID, fp, start, time.Now().UTC().Add(91 * 24 * time.Hour).Format(time.RFC3339), "at most 90 days"},
-		{"expired", backend.ID, fp, "2026-11-04T11:28:50Z", "2026-11-11T11:28:50Z", "has expired"},
-		{"no zone", backend.ID, fp, "2026-11-04T11:28:50", week, "RFC 3339"},
-	} {
-		out, err := exec.Command(python, ansibleConfigCheck, path, "--production", tc.backend, tc.fp, tc.start, tc.until).CombinedOutput()
-		if tc.want == "" {
-			if err != nil {
-				t.Errorf("%s: refused (%v): %s", tc.name, err, out)
-			}
-			continue
-		}
-		if err == nil || !strings.Contains(string(out), tc.want) {
-			t.Errorf("%s: want refusal containing %q, got (%v): %s", tc.name, tc.want, err, out)
-		}
 	}
 }
