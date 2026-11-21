@@ -21,20 +21,24 @@ app, under the same edge rules, until you switch it to redirect.
 
 ## 1. Cloudflare and the control plane (no traffic yet)
 
-1. Create a Cloudflare Origin CA certificate for `gregale.app` and
+1. Set gregale.app's SSL/TLS mode to Full (strict) and turn on Always Use
+   HTTPS.
+2. Create a Cloudflare Origin CA certificate for `gregale.app` and
    `*.gregale.app`. Install it on the control plane as
-   `/etc/caddy/tls/cloudflare-origin-gregale.app.{pem,key}` (mode 0600,
-   owner caddy). gregale.dev keeps its existing certificate.
-2. Add the Worker route and tunnel ingress for the new zone:
-
-   ```sh
-   APPS_DOMAIN=gregale.app APPS_DOMAIN_ALIASES=gregale.dev \
-     deploy/scripts/cloudflare-app-edge-tunnel.sh
-   ```
-
-3. If edgednsd will manage the new zone, give its Cloudflare token
-   (`FAAS_EDGEDNS_CF_TOKEN_FILE`) Zone > DNS: Edit on gregale.app and note
-   the zone id.
+   `/etc/caddy/tls/cloudflare-origin-gregale.app.{pem,key}` (root:caddy,
+   0444 and 0440, like the gregale.dev pair). The control-plane deploy
+   refuses to run without it once the domains split. gregale.dev keeps its
+   existing certificate.
+3. Point the new zone's app hosts where gregale.dev's point today. On the
+   OVHcloud fleet app traffic goes straight to the compute nodes' entry
+   addresses (front: none), not through a tunnel: copy gregale.dev's
+   DNS-only `*` record (and add `@` if wanted) into gregale.app, DNS-only.
+   TLS fails on these names until edgednsd's `*.gregale.app` certificate is
+   stored after the release; no customer has the URLs yet.
+   (`deploy/scripts/cloudflare-app-edge-tunnel.sh` names the GCP nodes;
+   do not run it against the OVHcloud fleet.)
+4. Make sure edgednsd's Cloudflare token (the `EDGEDNSD_CF_TOKEN` deploy
+   secret) has Zone > DNS: Edit on gregale.app, and note the zone id.
 
 ## 2. The manifest
 
@@ -50,12 +54,14 @@ public_edge:
   # ...unchanged...
   dns:
     zone_id: <gregale.app zone id>
-    names: ["*.gregale.app"]
+    names: ["direct-pilot.gregale.app"]   # the managed pilot name
     certificate:
-      names: ["gregale.app", "*.gregale.app"]
-      ca: letsencrypt-staging      # step 3 moves it to letsencrypt
+      names: ["*.gregale.app"]
+      ca: letsencrypt                     # proven on the gregale.dev pilot
+      serve: letsencrypt
       transparency:
         domain: gregale.app
+        allow_names: ["gregale.app", "*.gregale.app"]   # Cloudflare Universal SSL
 ```
 
 `gregalectl manifest validate --file <manifest>` refuses any certificate name, or DNS-only
@@ -75,19 +81,22 @@ grep -h 'faas_platform_domain\|gatewayd_apps_domain\|faas_apps_domain_aliases\|f
 1. Release in the usual order (data, control plane, edge and nodes,
    runtime). New URLs, emails and the dashboard now use gregale.app for
    apps; gregale.dev app URLs keep serving.
-2. Watch edgednsd order the staging certificate (FaasEdgeCertificate.md),
-   then set `certificate.ca: letsencrypt`, release, and once the production
-   certificate is stored set `certificate.serve: letsencrypt` and release
-   again. Moving `ca` and `serve` together would take every edge out of DNS
-   until the new order lands.
-3. Remove the old gregale.dev direct records by hand. edgednsd reconciles
-   only the names it still manages, so the pilot's DNS-only records (comment
-   `edgednsd (ADR-20261102081618)`, e.g. `direct-pilot.gregale.dev`) stay
-   pointing at the nodes. Delete them in the gregale.dev zone, or replace
-   them with the proxied tunnel record.
+2. Watch edgednsd order the `*.gregale.app` certificate
+   (FaasEdgeCertificate.md) and check `https://<slug>.gregale.app/` serves
+   with a trusted certificate. With `ca` and `serve` already on
+   letsencrypt the edges keep serving the stored `*.gregale.dev`
+   certificate until the new one lands, so none leaves DNS.
+3. Move the old gregale.dev app hosts behind Cloudflare, before the stored
+   `*.gregale.dev` certificate expires (edgednsd no longer renews it; it is
+   short-lived): in the gregale.dev zone switch the `*` record to proxied
+   and point it at the control plane (the same target as `api.`). Caddy on
+   the control plane already serves `*.gregale.dev` with the Origin CA
+   certificate, and gatewayd-public maps each alias host to its gregale.app
+   app. Delete the pilot's DNS-only records too: edgednsd reconciles only
+   the names it still manages, so `direct-pilot.gregale.dev` (comment
+   `edgednsd (ADR-20261102081618)`) stays pointing at the nodes otherwise.
 4. Revoke the old `*.gregale.dev` Let's Encrypt certificate once no edge
-   serves it, then move the Certificate Transparency watch's allow list if
-   needed. From here no compute node holds a gregale.dev key.
+   serves it. From here no compute node holds a gregale.dev key.
 
 Check a few apps on both names:
 
@@ -119,5 +128,6 @@ values above.
 
 Before step 3.3, revert the manifest's `dns:` and `public_edge.dns:` blocks
 and release: apps go back to gregale.dev, which never stopped serving. After
-the old direct records are gone, roll back the same way and restore them (or
-keep gregale.dev behind Cloudflare until a new certificate is ordered).
+step 3.3, roll back the same way and leave `*.gregale.dev` proxied to the
+control plane until edgednsd has stored a new `*.gregale.dev` certificate,
+then return the record to DNS-only.
