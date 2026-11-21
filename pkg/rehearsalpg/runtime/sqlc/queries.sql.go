@@ -315,24 +315,24 @@ func (q *Queries) FormatGrantTaskConnect(ctx context.Context, db DBTX, arg Forma
 	return column_1, err
 }
 
-const formatGrantTaskTables = `-- name: FormatGrantTaskTables :one
+const formatGrantTaskObjects = `-- name: FormatGrantTaskObjects :one
 SELECT (pg_catalog.format('GRANT SELECT ON TABLE %s TO %I',
  (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest($1::text[]) AS name),
  $2::text) ||
  CASE WHEN cardinality($3::text[])>0 THEN
- pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I',
+ pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I; GRANT USAGE ON SEQUENCE public.gregale_mcp_task_claim_order_seq TO %I',
  (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest($3::text[]) AS name),
- $2::text) ELSE '' END)::text
+ $2::text,$2::text) ELSE '' END)::text
 `
 
-type FormatGrantTaskTablesParams struct {
+type FormatGrantTaskObjectsParams struct {
 	ReadTables  []string
 	RoleName    string
 	WriteTables []string
 }
 
-func (q *Queries) FormatGrantTaskTables(ctx context.Context, db DBTX, arg FormatGrantTaskTablesParams) (string, error) {
-	row := db.QueryRow(ctx, formatGrantTaskTables, arg.ReadTables, arg.RoleName, arg.WriteTables)
+func (q *Queries) FormatGrantTaskObjects(ctx context.Context, db DBTX, arg FormatGrantTaskObjectsParams) (string, error) {
+	row := db.QueryRow(ctx, formatGrantTaskObjects, arg.ReadTables, arg.RoleName, arg.WriteTables)
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -608,21 +608,25 @@ func (q *Queries) SupportedExtensions(ctx context.Context, db DBTX) (pgtype.Bool
 	return column_1, err
 }
 
-const taskGrantTablesReady = `-- name: TaskGrantTablesReady :one
-SELECT count(*)=cardinality($1::text[])
+const taskGrantObjectsReady = `-- name: TaskGrantObjectsReady :one
+SELECT (count(*) FILTER (WHERE c.relkind='r' AND c.relname::text=ANY($1::text[]))
+ =cardinality($1::text[])
+ AND (NOT $2::boolean OR count(*) FILTER (
+   WHERE c.relkind='S' AND c.relname='gregale_mcp_task_claim_order_seq'
+ )=1))::boolean
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
 JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner
-WHERE n.nspname='public' AND c.relkind='r' AND c.relpersistence='p'
- AND owner.rolname=$2::text AND c.relname::text=ANY($1::text[])
+WHERE n.nspname='public' AND c.relpersistence='p' AND owner.rolname=$3::text
 `
 
-type TaskGrantTablesReadyParams struct {
-	TableNames []string
-	OwnerRole  string
+type TaskGrantObjectsReadyParams struct {
+	TableNames        []string
+	RequireClaimOrder bool
+	OwnerRole         string
 }
 
-func (q *Queries) TaskGrantTablesReady(ctx context.Context, db DBTX, arg TaskGrantTablesReadyParams) (bool, error) {
-	row := db.QueryRow(ctx, taskGrantTablesReady, arg.TableNames, arg.OwnerRole)
+func (q *Queries) TaskGrantObjectsReady(ctx context.Context, db DBTX, arg TaskGrantObjectsReadyParams) (bool, error) {
+	row := db.QueryRow(ctx, taskGrantObjectsReady, arg.TableNames, arg.RequireClaimOrder, arg.OwnerRole)
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -633,6 +637,9 @@ WITH relations AS (
   SELECT c.oid,c.relname,c.relkind,c.relpersistence,c.relowner,n.nspname
   FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
   WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+), claim_order AS (
+  SELECT oid,relowner FROM relations
+  WHERE nspname='public' AND relname='gregale_mcp_task_claim_order_seq' AND relkind='S' AND relpersistence='p'
 ), public_schema AS (
   SELECT oid,nspowner FROM pg_catalog.pg_namespace WHERE nspname='public'
 )
@@ -663,10 +670,19 @@ SELECT EXISTS (
         AND pg_catalog.has_table_privilege(r.oid,c.oid,'UPDATE')
         AND pg_catalog.has_table_privilege(r.oid,c.oid,'DELETE')
     )
+    -- Runtime roles advance the starter's claim counter. The observer has no sequence access.
+    AND (cardinality($4::text[])=0 OR EXISTS (
+      SELECT 1 FROM claim_order c
+      WHERE c.relowner=owner.oid AND pg_catalog.has_sequence_privilege(r.oid,c.oid,'USAGE')
+    ))
     AND NOT EXISTS (
       SELECT 1 FROM relations c
       WHERE CASE WHEN c.relkind='S' THEN
-        pg_catalog.has_sequence_privilege(r.oid,c.oid,'SELECT,USAGE,UPDATE')
+        pg_catalog.has_sequence_privilege(r.oid,c.oid,CASE
+          WHEN cardinality($4::text[])>0 AND c.relowner=owner.oid
+            AND c.oid IN (SELECT oid FROM claim_order)
+          THEN 'SELECT,UPDATE,USAGE WITH GRANT OPTION'
+          ELSE 'SELECT,USAGE,UPDATE' END)
       WHEN c.relkind IN ('r','p','v','m','f') THEN
         c.relowner=r.oid
         OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE,REFERENCES,TRIGGER')

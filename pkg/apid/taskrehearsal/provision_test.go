@@ -160,6 +160,9 @@ func TestPostgresRealTaskWorkloadProvisioner(t *testing.T) {
 					t.Fatal("could not install controlled Task grant fixture")
 				}
 			}
+			if _, err := migration.Exec(ctx, "CREATE SEQUENCE public.gregale_mcp_task_claim_order_seq"); err != nil {
+				t.Fatal("could not install controlled Task claim sequence")
+			}
 			err = prepared.BindRuntime(ctx)
 			if scenario.failAt != "" {
 				if err == nil {

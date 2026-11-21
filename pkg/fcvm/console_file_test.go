@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -91,12 +92,26 @@ func TestConsoleFileDiscardBeforeStartJailer(t *testing.T) {
 	}
 }
 
-// Without the log directory the VM still starts, without the file copy.
+// A missing log directory is created; one that cannot be created leaves the
+// VM to start without the file copy.
 func TestConsoleFileMissingDirectory(t *testing.T) {
 	v := &JailerVMM{consoleLogDir: t.TempDir() + "/absent"}
+	discard := v.preopenConsoleFile("i1")
+	f := v.takeConsoleFile("i1")
+	discard()
+	if f == nil {
+		t.Fatal("takeConsoleFile did not create the missing directory")
+	}
+	_ = f.Close()
+
+	blocked := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v = &JailerVMM{consoleLogDir: filepath.Join(blocked, "faas")}
 	defer v.preopenConsoleFile("i1")()
 	if f := v.takeConsoleFile("i1"); f != nil {
 		_ = f.Close()
-		t.Fatal("takeConsoleFile opened a file in a missing directory")
+		t.Fatal("takeConsoleFile opened a file under a regular file")
 	}
 }

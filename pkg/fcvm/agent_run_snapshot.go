@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -92,6 +93,11 @@ func (v *JailerVMM) waitConsoleMarker(ctx context.Context, instance, marker stri
 	v.mu.Unlock()
 	if rec == nil {
 		return fmt.Errorf("vmm: wait for %q: instance %s not found", marker, instance)
+	}
+	// The console file is created before the VM starts; without it the
+	// marker can never appear (the ring drops guest-init's stage lines).
+	if _, err := os.Stat(rec.consolePath); err != nil {
+		return fmt.Errorf("vmm: wait for %q: no console file for %s: %w", marker, instance, err)
 	}
 	timer := time.NewTimer(deadline)
 	defer timer.Stop()
