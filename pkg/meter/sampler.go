@@ -1010,6 +1010,15 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if !floorAvailable {
 				continue
 			}
+			if exactResidency {
+				held, heldErr := s.floorHeld(ctx, app.ID, floorDeployment, minute)
+				if heldErr != nil {
+					return out, heldErr
+				}
+				if !held {
+					continue
+				}
+			}
 			// A floor instance runs the deployment's sidecars too, so it is
 			// priced like a live instance of that deployment
 			// (ADR-20261103131742 amendment 2).
@@ -1063,6 +1072,35 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	}
 	s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 	return out, nil
+}
+
+// floorHeld reports whether the platform is holding appID's min-instances
+// floor in minute, so its synthetic gap may be billed: some instance of the
+// app was resident within api.MinInstancesFloorUnheldGrace before the minute
+// ends, or the floor's deployment is younger than the grace (billed from t=0,
+// ADR-060). A store without the residency ledger keeps the old behaviour.
+func (s *Sampler) floorHeld(ctx context.Context, appID, deploymentID string, minute time.Time) (bool, error) {
+	ledger, ok := s.store.(state.AppFloorResidencyStore)
+	if !ok {
+		return true, nil
+	}
+	end := minute.Add(time.Minute)
+	since := minute.Add(-api.MinInstancesFloorUnheldGrace)
+	resident, err := ledger.AppResidentSince(ctx, appID, since, end)
+	if err != nil {
+		return false, fmt.Errorf("meter: floor residency %s: %w", appID, err)
+	}
+	if resident || deploymentID == "" {
+		return true, nil
+	}
+	dep, err := s.store.DeploymentByID(ctx, deploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("meter: floor deployment %s: %w", deploymentID, err)
+	}
+	return !dep.CreatedAt.IsZero() && dep.CreatedAt.After(since), nil
 }
 
 // billableFloorDeployment reports whether an app has capacity that is live or
