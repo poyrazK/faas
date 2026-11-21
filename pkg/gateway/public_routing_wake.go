@@ -177,7 +177,7 @@ func (h *Handler) writePublicRoutingWakeError(w http.ResponseWriter, r *http.Req
 		if reason, ok := wakeNotDispatchedReason(err); ok {
 			markNotDispatched(w, r, reason)
 		}
-		writeWakeError(w, err)
+		writeRequestWakeError(w, r, err)
 	}
 	h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 }

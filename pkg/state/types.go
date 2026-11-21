@@ -3961,6 +3961,10 @@ const (
 	// the app's bound integrations within the window (ADR 20261027132936
 	// amendment 2).
 	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
+	// AlertMetricOOMKills counts the app's instances the kernel killed for
+	// running out of memory within the window (Observe audit 2026-11-21,
+	// finding 18).
+	AlertMetricOOMKills AlertMetric = "oom_kills"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.

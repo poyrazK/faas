@@ -23,6 +23,14 @@ func TestLogArchiveValidation(t *testing.T) {
 		{name: "static without keys", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static"}, want: "log_archive.credentials_src"},
 		{name: "static relative keys", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static", CredentialsSrc: "keys.json"}, want: "log_archive.credentials_src"},
 		{name: "keyless with keys", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "gcp_metadata", CredentialsSrc: "/k.json"}, want: "log_archive.credentials_src"},
+		// Observe audit 2026-11-21 (finding 7): compute hosts take a
+		// create-only key.
+		{name: "static compute write-only", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static", CredentialsSrc: "/rw.json", ComputeWriteOnly: true, ComputeCredentialsSrc: "/put.json"}},
+		{name: "keyless compute write-only", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "gcp_metadata", ComputeWriteOnly: true}},
+		{name: "static write-only without compute key", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static", CredentialsSrc: "/rw.json", ComputeWriteOnly: true}, want: "log_archive.compute_credentials_src"},
+		{name: "compute key without write-only", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static", CredentialsSrc: "/rw.json", ComputeCredentialsSrc: "/put.json"}, want: "log_archive.compute_credentials_src"},
+		{name: "compute key with keyless auth", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "gcp_metadata", ComputeWriteOnly: true, ComputeCredentialsSrc: "/put.json"}, want: "log_archive.compute_credentials_src"},
+		{name: "relative compute key", l: LogArchive{Bucket: "logs", Endpoint: gcs.Endpoint, Auth: "static", CredentialsSrc: "/rw.json", ComputeWriteOnly: true, ComputeCredentialsSrc: "put.json"}, want: "log_archive.compute_credentials_src"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			errs := tc.l.validate()

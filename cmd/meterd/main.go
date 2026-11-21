@@ -1213,11 +1213,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	dashboardURL := dashboardBaseURL(deps.getenv, appsDomain)
+	evaluator.SetDashboardBaseURL(dashboardURL)
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
-	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log)
+	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log, dashboardURL, release)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))

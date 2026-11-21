@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "49dcf705f1b6fb79fc896c5b64e928bfef3db503b90e208a8fa2766ae5dd0b33",
+      "revision": "d1dd6994eb8e358e698808d533c52b4de89b0deb9f6f643d928a1f66c908d597",
       "files": [
         "faas.rules.yml"
       ],
@@ -2737,6 +2737,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "3aace6503603e03792ea6909043e54297aa8575d677c1c83cbe78dbc524e5ffb"
+          }
+        },
+        {
+          "id": "5609de43bb384fe8f5cdd06e7fe3b22ef548cc5bb24dc6b2cd332ef0b4001c82",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasPlatformAlertEmailsFailing",
+          "definition": {
+            "expression_hash": "a65a50755a93fb55035194fccce2738d53bb0ac8e6fa887776a30bf6141bd250",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a5e24f2d25bc7ba3149d1d1710bc0254d29dc55b49b6e62ef3fc60207b94cc57"
           }
         },
         {
@@ -6120,6 +6133,19 @@
           }
         },
         {
+          "id": "d176101fb9b91970d784362a4b9e56c27b637534f5053b4d43ed0494628d48af",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasGuestSpansWritesFailing",
+          "definition": {
+            "expression_hash": "fde69aae5b8d123d7ea7819eb550deedc7262614dc789ae31e6c4e4b37593ac0",
+            "labels_hash": "58b55ec27daf555765f1382469e0fa7634aa9f6f9cc1dfe1f35c4af32913a9b1",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "044f2f3bc22a9732224ffb00e35b93599cc220800d293b0af53ab11a6cad220f"
+          }
+        },
+        {
           "id": "d1b3c0e89a609b5ee536a8c1dd8cb08da3bda8fd67352a7ff66050a01cef578a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -7488,7 +7514,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "707180ec9fdc603c6e60308798b6a11bda07133b725a7f1b75dda1440afad461",
+      "revision": "f1c5fdca7aa6bc91f5038366ae17f422a3dbbd0e854dd74cf1a38514509373f5",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -10329,6 +10355,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "3aace6503603e03792ea6909043e54297aa8575d677c1c83cbe78dbc524e5ffb"
+          }
+        },
+        {
+          "id": "5609de43bb384fe8f5cdd06e7fe3b22ef548cc5bb24dc6b2cd332ef0b4001c82",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasPlatformAlertEmailsFailing",
+          "definition": {
+            "expression_hash": "a65a50755a93fb55035194fccce2738d53bb0ac8e6fa887776a30bf6141bd250",
+            "labels_hash": "baf3254f31226170fd41d129ca13fbeb71df85ea84878f43959023d5ed3bb091",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a5e24f2d25bc7ba3149d1d1710bc0254d29dc55b49b6e62ef3fc60207b94cc57"
           }
         },
         {
@@ -13865,6 +13904,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "8ed7e5b9fd1dc209fb31c22becde62a41c0217fb68f3ca050947e35891a0d7c5"
+          }
+        },
+        {
+          "id": "d176101fb9b91970d784362a4b9e56c27b637534f5053b4d43ed0494628d48af",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_customer_observability",
+          "rule_name": "FaasGuestSpansWritesFailing",
+          "definition": {
+            "expression_hash": "fde69aae5b8d123d7ea7819eb550deedc7262614dc789ae31e6c4e4b37593ac0",
+            "labels_hash": "58b55ec27daf555765f1382469e0fa7634aa9f6f9cc1dfe1f35c4af32913a9b1",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "044f2f3bc22a9732224ffb00e35b93599cc220800d293b0af53ab11a6cad220f"
           }
         },
         {

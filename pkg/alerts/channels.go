@@ -2,6 +2,7 @@ package alerts
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,17 @@ const (
 // SetChannels wires ADR-749 channel delivery after construction, for
 // callers (cmd/meterd) that build the mail transport separately. Call it
 // before the first RunOnce; outcome must be safe for concurrent use.
+// SetDashboardBaseURL sets the dashboard origin ("https://gregale.dev") that
+// channel notifications and stand-downs link to. meterd never passed
+// EvaluatorOptions.DashboardBaseURL, so every Slack, PagerDuty and email alert
+// went out without its dashboard and log-search links.
+func (e *Evaluator) SetDashboardBaseURL(base string) {
+	if e == nil {
+		return
+	}
+	e.dashboardBaseURL = strings.TrimRight(base, "/")
+}
+
 func (e *Evaluator) SetChannels(sender ChannelSender, outcome func(kind, outcome string)) {
 	if e == nil {
 		return

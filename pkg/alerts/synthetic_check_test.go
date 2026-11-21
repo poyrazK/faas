@@ -137,3 +137,28 @@ func TestEvaluator_SyntheticLatencyP95(t *testing.T) {
 		t.Fatalf("stats = %+v; want one fire", stats)
 	}
 }
+
+// Observe audit 2026-11-21 (finding 16): a latency rule on a check whose every
+// run timed out read unknown, exactly when the check was slowest. It now reads
+// the check's timeout; fast failures still read unknown.
+func TestEvaluator_SyntheticLatencyP95AllTimeouts(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, tc := range []struct {
+		class string
+		fired int
+	}{{"timeout", 1}, {"status", 0}} {
+		t.Run(tc.class, func(t *testing.T) {
+			store := state.NewMemStore()
+			_, check, ident := seedSyntheticRule(t, store, state.AlertMetricSyntheticLatencyP95, state.AlertGt, 1000)
+			for i := range 3 {
+				run := state.SyntheticCheckRun{CheckID: check.ID, StartedAt: now.Add(-time.Duration(i) * 5 * time.Minute), ErrorClass: tc.class, LatencyMS: 5000}
+				if err := store.RecordSyntheticCheckRun(context.Background(), run); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if stats := evaluateSynthetic(t, store, ident, now); stats.Fired != tc.fired {
+				t.Fatalf("%s runs: stats = %+v; want %d fires", tc.class, stats, tc.fired)
+			}
+		})
+	}
+}

@@ -243,7 +243,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
-		body += renderLogArchiveVars(m.LogArchive)
+		body += renderLogArchiveVars(m.LogArchive, host.Role == roleComputeOnly)
 		probeVars, probeErr := renderServingProbeVars(m.ServingProbes, m.Fleet.Hosts)
 		if probeErr != nil {
 			return nil, probeErr
@@ -420,7 +420,9 @@ func renderServingProbeVars(p *manifest.ServingProbes, hosts []manifest.Host) (s
 // renderLogArchiveVars hands the manifest's archive bucket to the log_archive
 // role on every host, which writes it into archive-creds.json. Absent emits
 // nothing, so a converge never rewrites an envelope the operator provisioned.
-func renderLogArchiveVars(l manifest.LogArchive) string {
+// With compute_write_only a compute-only host gets the write-only envelope
+// and, with static auth, the create-only key pair.
+func renderLogArchiveVars(l manifest.LogArchive, computeOnly bool) string {
 	if !l.Configured() {
 		return ""
 	}
@@ -432,11 +434,19 @@ func renderLogArchiveVars(l manifest.LogArchive) string {
 	fmt.Fprintf(&b, "faas_log_archive_bucket: %q\n", l.Bucket)
 	fmt.Fprintf(&b, "faas_log_archive_endpoint: %q\n", l.Endpoint)
 	fmt.Fprintf(&b, "faas_log_archive_region: %q\n", region)
+	writeOnly := computeOnly && l.ComputeWriteOnly
 	if l.Auth == "static" {
+		credentials := l.CredentialsSrc
+		if writeOnly {
+			credentials = l.ComputeCredentialsSrc
+		}
 		b.WriteString("faas_log_archive_auth_mode: \"\"\n")
-		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", l.CredentialsSrc)
+		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", credentials)
 	} else {
 		fmt.Fprintf(&b, "faas_log_archive_auth_mode: %q\n", l.Auth)
+	}
+	if writeOnly {
+		b.WriteString("faas_log_archive_write_only: true\n")
 	}
 	return b.String()
 }

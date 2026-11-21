@@ -41,6 +41,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
@@ -1121,6 +1123,8 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 			return 0, false, skipDegraded
 		}
 		return float64(n), compareFloat(float64(n), rule.Comparison, rule.Threshold), ""
+	case state.AlertMetricOOMKills:
+		return e.observeOOMKills(ctx, rule)
 	case state.AlertMetricFailedDeployments:
 		// Postgres-backed. Issue #1233 / ADR-123.
 		// Walks the deployments table per migration 00349.
@@ -1363,6 +1367,33 @@ func ratioMetric(m state.AlertMetric) bool {
 		return true
 	}
 	return false
+}
+
+// observeOOMKills counts the app's OOM kills within the rule window from the
+// workload events vmmd records (ADR-121 amendment). The store reads them only
+// when it implements state.WorkloadOOMKillLister; one without it degrades the
+// rule instead of reporting zero kills.
+func (e *Evaluator) observeOOMKills(ctx context.Context, rule state.AlertRule) (float64, bool, string) {
+	lister, ok := e.store.(state.WorkloadOOMKillLister)
+	if !ok || rule.AppID == "" {
+		return 0, false, skipDegraded
+	}
+	now := e.now()
+	rows, err := lister.ListAppWorkloadOOMKills(ctx, sqlc.ListAppWorkloadOOMKillsParams{
+		Since:    pgtype.Timestamptz{Time: e.windowStart(rule.WindowSpec, now), Valid: true},
+		Until:    pgtype.Timestamptz{Time: now, Valid: true},
+		AppID:    rule.AppID,
+		RowLimit: 1,
+	})
+	if err != nil {
+		e.log.Warn("alerts: count OOM kills", "rule", rule.ID, "err", err)
+		return 0, false, skipDegraded
+	}
+	n := 0.0
+	if len(rows) > 0 {
+		n = float64(rows[0].Total)
+	}
+	return n, compareFloat(n, rule.Comparison, rule.Threshold), ""
 }
 
 // summariseFailed walks every alertable InvocationSource value and sums
