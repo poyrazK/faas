@@ -32,6 +32,9 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	if !limits.DevelopmentAllowed {
 		return nil, managedpostgres.ErrQuotaExceeded
 	}
+	if err := s.devPostgresDatabaseURLFree(ctx, acct, app); err != nil {
+		return nil, err
+	}
 	ctx, err := postgresaccess.PersonalContext(ctx, s.store, acct.ID)
 	if err != nil {
 		return nil, err
@@ -60,7 +63,7 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 	}
 	spec := managedpostgres.Spec{
 		Region:               region,
-		PostgresMajor:        16,
+		PostgresMajor:        api.ManagedPostgresDefaultMajor,
 		Class:                managedpostgres.ClassDevelopment,
 		Availability:         managedpostgres.AvailabilitySingleZone,
 		ScaleToZero:          true,
@@ -74,6 +77,9 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		if request.Region == "" {
 			spec = existing.Spec
 		}
+		// A database made when dev databases were PostgreSQL 16 keeps its
+		// major; only new ones take the current default.
+		spec.PostgresMajor = existing.Spec.PostgresMajor
 	}
 	if spec.StorageLimitBytes > limits.StorageLimitBytes {
 		return nil, managedpostgres.ErrQuotaExceeded
@@ -116,6 +122,29 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		BindingState:   string(binding.State),
 		EnvironmentKey: binding.EnvironmentKey,
 	}, nil
+}
+
+// errDevPostgresDatabaseURLSecret reports a customer DATABASE_URL secret in
+// the developer app's default scope.
+var errDevPostgresDatabaseURLSecret = errors.New("developer app already holds a DATABASE_URL secret")
+
+// devPostgresDatabaseURLFree refuses --postgres while the developer app holds
+// a DATABASE_URL secret that no managed binding owns. The binding's credential
+// write only replaces a row the same binding owns, so it would fail and retry
+// hourly while the app kept the old value, and nothing would tell the
+// developer. The binding's own row (a renewal) is fine.
+func (s *server) devPostgresDatabaseURLFree(ctx context.Context, acct state.Account, app state.App) error {
+	secret, err := s.store.GetAppSecret(ctx, acct.ID, app.ID, devPostgresEnvironmentKey)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read developer DATABASE_URL secret: %w", err)
+	}
+	if secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+		return nil
+	}
+	return errDevPostgresDatabaseURLSecret
 }
 
 // describeDevPostgres returns the safe state of the automatically named

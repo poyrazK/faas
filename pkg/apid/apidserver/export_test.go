@@ -2162,6 +2162,10 @@ func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Accoun
 	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
 }
 
+// ErrDevPostgresDatabaseURLSecret is ensureDevPostgres's refusal when the
+// developer app already holds its own DATABASE_URL secret.
+var ErrDevPostgresDatabaseURLSecret = errDevPostgresDatabaseURLSecret
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).

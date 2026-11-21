@@ -441,7 +441,12 @@ limit, together with your other databases (see
 `--postgres` fails before anything is created; delete a database you no longer
 need, stop another developer environment that has one, or run without
 `--postgres`. `--postgres` provides `DATABASE_URL`, so it cannot be combined
-with a `DATABASE_URL` in `--env-file` or `--service-override-file`.
+with a `DATABASE_URL` in `--env-file` or `--service-override-file`. It also
+stops (`dev_postgres_database_url_secret`) when the developer environment
+already has a `DATABASE_URL` secret, for example from an earlier
+`--env-file` run: remove it with `gregale env unset --app <dev app> DATABASE_URL`
+and start again. New developer databases use the default PostgreSQL major
+(17); one created earlier keeps its major.
 
 `--postgres-seed` (or `dev.postgres_seed`) loads development data into that
 database. The CLI never receives database credentials, so the command runs
