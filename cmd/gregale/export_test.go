@@ -3004,8 +3004,5 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 	renderInspectFailureDetails(w, inspectSummary{App: inspectAppSummary{Slug: slug}, Failure: inspectPersistedFailure(&failed, nil)})
 }
 
-// AppScalePlanWarnings returns the checks `app scale --plan` prints.
-var AppScalePlanWarnings = appScalePlanWarnings
-
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
