@@ -28,43 +28,44 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Schedd_Wake_FullMethodName                    = "/onebox.faas.schedd.v1.Schedd/Wake"
-	Schedd_AdmitInstance_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
-	Schedd_ReportActivity_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
-	Schedd_ReportFrameworkReady_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportFrameworkReady"
-	Schedd_ParkInstance_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
-	Schedd_ForceColdBootNextWake_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/ForceColdBootNextWake"
-	Schedd_ForceRestartInstance_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ForceRestartInstance"
-	Schedd_ListInstanceStats_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ListInstanceStats"
-	Schedd_StreamAppLogs_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/StreamAppLogs"
-	Schedd_StreamWarmHints_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/StreamWarmHints"
-	Schedd_ReportCapacity_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ReportCapacity"
-	Schedd_ReportLivenessFailed_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
-	Schedd_EnsureWake_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
-	Schedd_ReportWorkloadOOM_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
-	Schedd_RunAgent_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/RunAgent"
-	Schedd_RunSandbox_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/RunSandbox"
-	Schedd_ReportMemoryPressure_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
-	Schedd_ReportSlowRequest_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
-	Schedd_ProvisionDatabase_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
-	Schedd_WakeDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/WakeDatabase"
-	Schedd_ParkDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ParkDatabase"
-	Schedd_TouchDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/TouchDatabase"
-	Schedd_DatabaseAdmin_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/DatabaseAdmin"
-	Schedd_DeleteDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/DeleteDatabase"
-	Schedd_GetDatabase_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
-	Schedd_SetDatabaseAlwaysOn_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
-	Schedd_RestoreDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
-	Schedd_DatabaseUsage_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
-	Schedd_ResizeDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
-	Schedd_UpgradeDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/UpgradeDatabase"
-	Schedd_ImportDatabase_FullMethodName          = "/onebox.faas.schedd.v1.Schedd/ImportDatabase"
-	Schedd_DatabaseImportStatus_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/DatabaseImportStatus"
-	Schedd_CaptureDatabaseSnapshot_FullMethodName = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
-	Schedd_GetDatabaseSnapshot_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/GetDatabaseSnapshot"
-	Schedd_DeleteDatabaseSnapshot_FullMethodName  = "/onebox.faas.schedd.v1.Schedd/DeleteDatabaseSnapshot"
-	Schedd_HoldDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/HoldDatabase"
-	Schedd_SetDatabaseComputeQuota_FullMethodName = "/onebox.faas.schedd.v1.Schedd/SetDatabaseComputeQuota"
+	Schedd_Wake_FullMethodName                      = "/onebox.faas.schedd.v1.Schedd/Wake"
+	Schedd_AdmitInstance_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/AdmitInstance"
+	Schedd_ReportActivity_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ReportActivity"
+	Schedd_ReportFrameworkReady_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/ReportFrameworkReady"
+	Schedd_ParkInstance_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/ParkInstance"
+	Schedd_ForceColdBootNextWake_FullMethodName     = "/onebox.faas.schedd.v1.Schedd/ForceColdBootNextWake"
+	Schedd_ForceRestartInstance_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/ForceRestartInstance"
+	Schedd_ListInstanceStats_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/ListInstanceStats"
+	Schedd_StreamAppLogs_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/StreamAppLogs"
+	Schedd_StreamWarmHints_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/StreamWarmHints"
+	Schedd_ReportCapacity_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ReportCapacity"
+	Schedd_ReportLivenessFailed_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/ReportLivenessFailed"
+	Schedd_EnsureWake_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/EnsureWake"
+	Schedd_ReportWorkloadOOM_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/ReportWorkloadOOM"
+	Schedd_RunAgent_FullMethodName                  = "/onebox.faas.schedd.v1.Schedd/RunAgent"
+	Schedd_RunSandbox_FullMethodName                = "/onebox.faas.schedd.v1.Schedd/RunSandbox"
+	Schedd_ReportMemoryPressure_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/ReportMemoryPressure"
+	Schedd_ReportSlowRequest_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/ReportSlowRequest"
+	Schedd_ProvisionDatabase_FullMethodName         = "/onebox.faas.schedd.v1.Schedd/ProvisionDatabase"
+	Schedd_WakeDatabase_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/WakeDatabase"
+	Schedd_ParkDatabase_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/ParkDatabase"
+	Schedd_TouchDatabase_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/TouchDatabase"
+	Schedd_DatabaseAdmin_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/DatabaseAdmin"
+	Schedd_DeleteDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/DeleteDatabase"
+	Schedd_GetDatabase_FullMethodName               = "/onebox.faas.schedd.v1.Schedd/GetDatabase"
+	Schedd_SetDatabaseAlwaysOn_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/SetDatabaseAlwaysOn"
+	Schedd_RestoreDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/RestoreDatabase"
+	Schedd_DatabaseUsage_FullMethodName             = "/onebox.faas.schedd.v1.Schedd/DatabaseUsage"
+	Schedd_ResizeDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ResizeDatabase"
+	Schedd_UpgradeDatabase_FullMethodName           = "/onebox.faas.schedd.v1.Schedd/UpgradeDatabase"
+	Schedd_ImportDatabase_FullMethodName            = "/onebox.faas.schedd.v1.Schedd/ImportDatabase"
+	Schedd_DatabaseImportStatus_FullMethodName      = "/onebox.faas.schedd.v1.Schedd/DatabaseImportStatus"
+	Schedd_CaptureDatabaseSnapshot_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/CaptureDatabaseSnapshot"
+	Schedd_GetDatabaseSnapshot_FullMethodName       = "/onebox.faas.schedd.v1.Schedd/GetDatabaseSnapshot"
+	Schedd_DeleteDatabaseSnapshot_FullMethodName    = "/onebox.faas.schedd.v1.Schedd/DeleteDatabaseSnapshot"
+	Schedd_HoldDatabase_FullMethodName              = "/onebox.faas.schedd.v1.Schedd/HoldDatabase"
+	Schedd_SetDatabaseComputeQuota_FullMethodName   = "/onebox.faas.schedd.v1.Schedd/SetDatabaseComputeQuota"
+	Schedd_InterruptHostedTaskWorker_FullMethodName = "/onebox.faas.schedd.v1.Schedd/InterruptHostedTaskWorker"
 )
 
 // ScheddClient is the client API for Schedd service.
@@ -451,6 +452,9 @@ type ScheddClient interface {
 	// "database_compute_quota"). DatabaseUsage reads the month's compute.
 	// apid only.
 	SetDatabaseComputeQuota(ctx context.Context, in *SetDatabaseComputeQuotaRequest, opts ...grpc.CallOption) (*DatabaseRuntime, error)
+	// InterruptHostedTaskWorker is available only on the local scheduler socket.
+	// The private acceptance caller must first observe an exact live Task lease.
+	InterruptHostedTaskWorker(ctx context.Context, in *InterruptHostedTaskWorkerRequest, opts ...grpc.CallOption) (*InterruptHostedTaskWorkerResponse, error)
 }
 
 type scheddClient struct {
@@ -858,6 +862,16 @@ func (c *scheddClient) SetDatabaseComputeQuota(ctx context.Context, in *SetDatab
 	return out, nil
 }
 
+func (c *scheddClient) InterruptHostedTaskWorker(ctx context.Context, in *InterruptHostedTaskWorkerRequest, opts ...grpc.CallOption) (*InterruptHostedTaskWorkerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(InterruptHostedTaskWorkerResponse)
+	err := c.cc.Invoke(ctx, Schedd_InterruptHostedTaskWorker_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ScheddServer is the server API for Schedd service.
 // All implementations must embed UnimplementedScheddServer
 // for forward compatibility.
@@ -1242,6 +1256,9 @@ type ScheddServer interface {
 	// "database_compute_quota"). DatabaseUsage reads the month's compute.
 	// apid only.
 	SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error)
+	// InterruptHostedTaskWorker is available only on the local scheduler socket.
+	// The private acceptance caller must first observe an exact live Task lease.
+	InterruptHostedTaskWorker(context.Context, *InterruptHostedTaskWorkerRequest) (*InterruptHostedTaskWorkerResponse, error)
 	mustEmbedUnimplementedScheddServer()
 }
 
@@ -1362,6 +1379,9 @@ func (UnimplementedScheddServer) HoldDatabase(context.Context, *HoldDatabaseRequ
 }
 func (UnimplementedScheddServer) SetDatabaseComputeQuota(context.Context, *SetDatabaseComputeQuotaRequest) (*DatabaseRuntime, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetDatabaseComputeQuota not implemented")
+}
+func (UnimplementedScheddServer) InterruptHostedTaskWorker(context.Context, *InterruptHostedTaskWorkerRequest) (*InterruptHostedTaskWorkerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method InterruptHostedTaskWorker not implemented")
 }
 func (UnimplementedScheddServer) mustEmbedUnimplementedScheddServer() {}
 func (UnimplementedScheddServer) testEmbeddedByValue()                {}
@@ -2003,6 +2023,24 @@ func _Schedd_SetDatabaseComputeQuota_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Schedd_InterruptHostedTaskWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InterruptHostedTaskWorkerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ScheddServer).InterruptHostedTaskWorker(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Schedd_InterruptHostedTaskWorker_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ScheddServer).InterruptHostedTaskWorker(ctx, req.(*InterruptHostedTaskWorkerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Schedd_ServiceDesc is the grpc.ServiceDesc for Schedd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2137,6 +2175,10 @@ var Schedd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetDatabaseComputeQuota",
 			Handler:    _Schedd_SetDatabaseComputeQuota_Handler,
+		},
+		{
+			MethodName: "InterruptHostedTaskWorker",
+			Handler:    _Schedd_InterruptHostedTaskWorker_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

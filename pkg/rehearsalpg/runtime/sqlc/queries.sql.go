@@ -436,6 +436,36 @@ func (q *Queries) ObserveTaskClaim(ctx context.Context, db DBTX, arg ObserveTask
 	return exists, err
 }
 
+const observeTaskResult = `-- name: ObserveTaskResult :one
+SELECT count(*) AS task_rows,
+       count(*) FILTER (WHERE status = 'completed' AND result_encrypted IS NOT NULL) AS completed_result_rows,
+       coalesce(max(attempt_count) FILTER (
+           WHERE task_id = $1::uuid AND tool_name = 'build_report'
+             AND status = 'completed' AND result_encrypted IS NOT NULL AND expires_at > clock_timestamp()
+       ), 0)::integer AS attempt
+  FROM public.gregale_mcp_tasks
+ WHERE namespace = $2::text
+`
+
+type ObserveTaskResultParams struct {
+	TaskID    pgtype.UUID
+	Namespace string
+}
+
+type ObserveTaskResultRow struct {
+	TaskRows            int64
+	CompletedResultRows int64
+	Attempt             int32
+}
+
+// Read only counts and the exact completed Task attempt, never its payload.
+func (q *Queries) ObserveTaskResult(ctx context.Context, db DBTX, arg ObserveTaskResultParams) (ObserveTaskResultRow, error) {
+	row := db.QueryRow(ctx, observeTaskResult, arg.TaskID, arg.Namespace)
+	var i ObserveTaskResultRow
+	err := row.Scan(&i.TaskRows, &i.CompletedResultRows, &i.Attempt)
+	return i, err
+}
+
 const otherSessions = `-- name: OtherSessions :one
 SELECT count(*)::bigint FROM pg_catalog.pg_stat_activity WHERE datname=$1::text AND pid<>$2::integer
 `

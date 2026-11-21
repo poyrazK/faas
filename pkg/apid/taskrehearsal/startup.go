@@ -71,7 +71,7 @@ func (r *Runner) RunStartup(ctx context.Context, p *Provisioner, account state.A
 	if startup == nil {
 		return StartupEvidence{}, state.ErrInvalidArgument
 	}
-	var observe pgruntime.TaskClaimObserver
+	var observe pgruntime.TaskObservation
 	execution, err := r.run(ctx, p, account, run, web, worker, policy, &observe)
 	if err != nil {
 		return StartupEvidence{}, err
@@ -82,7 +82,7 @@ func (r *Runner) RunStartup(ctx context.Context, p *Provisioner, account state.A
 	}
 	target.expiresAt = run.ReservedAt.Add(leaseDuration)
 	bounded, cancel := context.WithDeadline(ctx, target.expiresAt)
-	evidence, err := r.startAndObserve(bounded, target, target.smokeScope(run.PlanSHA256, execution), startup, observe)
+	evidence, err := r.startAndObserve(bounded, target, target.smokeScope(run.PlanSHA256, execution), startup, observe.Claim)
 	cancel()
 	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer stop()
@@ -104,39 +104,18 @@ func (r *Runner) startAndObserve(ctx context.Context, target *Prepared, scope ta
 	if observe == nil {
 		return evidence, state.ErrInvalidArgument
 	}
-	if err := waitFor(ctx, func(ctx context.Context) (bool, error) {
-		return r.startupDeploymentsReady(ctx, target, scope, d.Store)
-	}); err != nil {
-		return evidence, fmt.Errorf("wait for contained runtime deployments: %w", err)
-	}
-	web, port, err := d.wakeWeb(ctx, scope)
+	session, err := r.openStartupSession(ctx, target, scope, d)
 	if err != nil {
-		return evidence, fmt.Errorf("wake pinned rehearsal web deployment: %w", err)
+		return evidence, err
 	}
-	evidence.WebInstanceID = web.ID
-	// Worker deployments start through the existing imaged/schedd prime.
-	// Wait for that exact worker before submitting a once-only MCP call.
-	if err := waitFor(ctx, func(ctx context.Context) (bool, error) {
-		return d.workerRunning(ctx, scope)
-	}); err != nil {
-		return evidence, fmt.Errorf("wait for contained worker: %w", err)
-	}
-	if ready, err := r.startupDeploymentsReady(ctx, target, scope, d.Store); err != nil || !ready {
-		return evidence, errors.Join(state.ErrConflict, err)
-	}
-	logsCtx, stop := context.WithCancel(ctx)
-	defer stop()
-	submittedAt := time.Now()
-	logs, err := d.OpenClaimLogs(logsCtx, scope.WorkerAppID, scope.WorkerDeploymentID, submittedAt, claimEvent)
-	if err != nil {
-		return evidence, fmt.Errorf("open contained worker log stream: %w", err)
-	}
-	taskID, err := submitReport(ctx, d.Forward(web, port))
+	defer session.close()
+	evidence.WebInstanceID = session.web.ID
+	taskID, err := submitReport(ctx, d.Forward(session.web, session.port))
 	if err != nil {
 		return evidence, err
 	}
 	evidence.TaskID = taskID
-	evidence.Initial, err = d.observeClaim(ctx, scope, logs, observe, taskID, submittedAt)
+	evidence.Initial, err = d.observeClaim(ctx, scope, session.logs, observe, taskID, session.submittedAt)
 	if err != nil {
 		return evidence, err
 	}
@@ -144,6 +123,44 @@ func (r *Runner) startAndObserve(ctx context.Context, target *Prepared, scope ta
 		return evidence, errors.Join(state.ErrConflict, err)
 	}
 	return evidence, nil
+}
+
+type startupSession struct {
+	web         state.Instance
+	port        int
+	logs        ClaimLogStream
+	submittedAt time.Time
+	close       context.CancelFunc
+}
+
+func (r *Runner) openStartupSession(ctx context.Context, target *Prepared, scope tasktoolrehearsal.SmokeScope, d *NativeStartup) (startupSession, error) {
+	if err := waitFor(ctx, func(ctx context.Context) (bool, error) {
+		return r.startupDeploymentsReady(ctx, target, scope, d.Store)
+	}); err != nil {
+		return startupSession{}, fmt.Errorf("wait for contained runtime deployments: %w", err)
+	}
+	web, port, err := d.wakeWeb(ctx, scope)
+	if err != nil {
+		return startupSession{}, fmt.Errorf("wake pinned rehearsal web deployment: %w", err)
+	}
+	// Worker deployments start through the existing imaged/schedd prime.
+	// Wait for that exact worker before submitting a once-only MCP call.
+	if err := waitFor(ctx, func(ctx context.Context) (bool, error) {
+		return d.workerRunning(ctx, scope)
+	}); err != nil {
+		return startupSession{}, fmt.Errorf("wait for contained worker: %w", err)
+	}
+	if ready, err := r.startupDeploymentsReady(ctx, target, scope, d.Store); err != nil || !ready {
+		return startupSession{}, errors.Join(state.ErrConflict, err)
+	}
+	logsCtx, stop := context.WithCancel(ctx)
+	submittedAt := time.Now()
+	logs, err := d.OpenClaimLogs(logsCtx, scope.WorkerAppID, scope.WorkerDeploymentID, submittedAt, claimEvent)
+	if err != nil {
+		stop()
+		return startupSession{}, fmt.Errorf("open contained worker log stream: %w", err)
+	}
+	return startupSession{web: web, port: port, logs: logs, submittedAt: submittedAt, close: stop}, nil
 }
 
 func (r *Runner) startupDeploymentsReady(ctx context.Context, prepared *Prepared, scope tasktoolrehearsal.SmokeScope, store startupStore) (bool, error) {
@@ -223,58 +240,84 @@ type claimReceipt struct {
 	Attempt     int    `json:"attempt"`
 	WorkerID    string `json:"worker_id"`
 	LeaseSHA256 string `json:"lease_sha256"`
+	Checkpoint  bool   `json:"at_checkpoint,omitempty"`
 }
 
 func (d *NativeStartup) observeClaim(ctx context.Context, scope tasktoolrehearsal.SmokeScope, logs ClaimLogStream, observe pgruntime.TaskClaimObserver, taskID string, submittedAt time.Time) (tasktoolrehearsal.WorkerClaim, error) {
+	claim, err := d.readClaim(ctx, scope, logs, observe, taskID, submittedAt, 1)
+	return claim.worker, err
+}
+
+type observedClaim struct {
+	worker     tasktoolrehearsal.WorkerClaim
+	lease      pgruntime.TaskClaim
+	instance   state.Instance
+	writtenAt  time.Time
+	checkpoint bool
+}
+
+func (d *NativeStartup) readClaim(ctx context.Context, scope tasktoolrehearsal.SmokeScope, logs ClaimLogStream, observe pgruntime.TaskClaimObserver, taskID string, since time.Time, attempt int) (observedClaim, error) {
 	for {
 		if err := ctx.Err(); err != nil {
-			return tasktoolrehearsal.WorkerClaim{}, err
+			return observedClaim{}, err
 		}
 		frame, err := logs()
 		if err != nil {
-			return tasktoolrehearsal.WorkerClaim{}, fmt.Errorf("read contained worker claim receipt: %w", err)
+			return observedClaim{}, fmt.Errorf("read contained worker claim receipt: %w", err)
 		}
 		var claim claimReceipt
-		if frame.IsGap || frame.Stream != "stdout" || frame.WrittenAt.Before(submittedAt) ||
+		if frame.IsGap || frame.Stream != "stdout" || frame.WrittenAt.Before(since) ||
 			frame.DeploymentID != scope.WorkerDeploymentID || len(frame.Line) > 1024 ||
 			json.Unmarshal([]byte(frame.Line), &claim) != nil || claim.Event != claimEvent ||
-			claim.Namespace != scope.Namespace || claim.TaskID != taskID || claim.Attempt != 1 {
+			claim.Namespace != scope.Namespace || claim.TaskID != taskID || claim.Attempt != attempt {
 			continue
 		}
 		ins, err := d.Store.InstanceByID(ctx, frame.InstanceID)
 		if err != nil {
-			return tasktoolrehearsal.WorkerClaim{}, err
+			return observedClaim{}, err
 		}
 		if ins.NodeID != d.NodeID || !runningInstance(ins, frame.InstanceID, scope.WorkerAppID, scope.WorkerDeploymentID, state.InstanceModeWorker) ||
 			frame.WrittenAt.Before(ins.StartedAt) {
-			return tasktoolrehearsal.WorkerClaim{}, state.ErrConflict
+			return observedClaim{}, state.ErrConflict
 		}
-		ok, err := observe(ctx, pgruntime.TaskClaim{
+		lease := pgruntime.TaskClaim{
 			TaskID: taskID, DeploymentID: scope.WorkerDeploymentID, WorkerID: claim.WorkerID, LeaseSHA256: claim.LeaseSHA256, Attempt: claim.Attempt,
-		})
+		}
+		ok, err := observe(ctx, lease)
 		if err != nil || !ok {
-			return tasktoolrehearsal.WorkerClaim{}, errors.Join(errors.New("worker receipt has no matching live PostgreSQL lease"), err)
+			return observedClaim{}, errors.Join(errors.New("worker receipt has no matching live PostgreSQL lease"), err)
 		}
 		current, err := d.Store.InstanceByID(ctx, ins.ID)
 		if err != nil || !runningInstance(current, ins.ID, scope.WorkerAppID, scope.WorkerDeploymentID, state.InstanceModeWorker) ||
 			current.NodeID != ins.NodeID || current.WakeID != ins.WakeID {
-			return tasktoolrehearsal.WorkerClaim{}, errors.Join(state.ErrConflict, err)
+			return observedClaim{}, errors.Join(state.ErrConflict, err)
 		}
-		return tasktoolrehearsal.WorkerClaim{TaskID: taskID, Namespace: scope.Namespace, DeploymentID: scope.WorkerDeploymentID, InstanceID: ins.ID, Status: "running", Attempt: claim.Attempt}, nil
+		return observedClaim{
+			worker: tasktoolrehearsal.WorkerClaim{TaskID: taskID, Namespace: scope.Namespace, DeploymentID: scope.WorkerDeploymentID, InstanceID: ins.ID, Status: "running", Attempt: attempt},
+			lease:  lease, instance: current, writtenAt: frame.WrittenAt, checkpoint: claim.Checkpoint,
+		}, nil
 	}
 }
 
-func submitReport(ctx context.Context, transport http.RoundTripper) (string, error) {
+func openRehearsalMCP(ctx context.Context, transport http.RoundTripper) (*mcphosting.Client, error) {
 	if transport == nil {
-		return "", state.ErrInvalidArgument
+		return nil, state.ErrInvalidArgument
 	}
 	client, err := mcphosting.NewClient("http://127.0.0.1/mcp", "", api.MCPProtocolVersion)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	client.HTTP.Transport = transport
 	if err := client.OpenStateless(ctx); err != nil {
-		return "", errors.New("initialize the pinned rehearsal MCP endpoint")
+		return nil, errors.New("initialize the pinned rehearsal MCP endpoint")
+	}
+	return client, nil
+}
+
+func submitReport(ctx context.Context, transport http.RoundTripper) (string, error) {
+	client, err := openRehearsalMCP(ctx, transport)
+	if err != nil {
+		return "", err
 	}
 	// The exact fixture tool has no HTTP parameter headers.
 	tool := mcphosting.Tool{Name: "build_report", InputSchema: map[string]any{"type": "object"}}

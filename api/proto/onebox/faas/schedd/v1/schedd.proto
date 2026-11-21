@@ -413,6 +413,10 @@ service Schedd {
   // "database_compute_quota"). DatabaseUsage reads the month's compute.
   // apid only.
   rpc SetDatabaseComputeQuota(SetDatabaseComputeQuotaRequest) returns (DatabaseRuntime);
+
+  // InterruptHostedTaskWorker is available only on the local scheduler socket.
+  // The private acceptance caller must first observe an exact live Task lease.
+  rpc InterruptHostedTaskWorker(InterruptHostedTaskWorkerRequest) returns (InterruptHostedTaskWorkerResponse);
 }
 
 message LivenessFailedReport {
@@ -1867,3 +1871,24 @@ message DatabaseAdminResponse {
 }
 
 message DeleteDatabaseResponse {}
+
+
+// Identity fence for a freshly observed first-attempt rehearsal lease.
+// Carries no guest credential or lease token.
+message InterruptHostedTaskWorkerRequest {
+  string account_id = 1;
+  string run_id = 2;
+  string plan_sha256 = 3;
+  string task_id = 4;
+  string app_id = 5;
+  string deployment_id = 6;
+  string instance_id = 7;
+  string node_id = 8;
+  string wake_id = 9;
+  google.protobuf.Timestamp observed_at = 10;
+}
+
+message InterruptHostedTaskWorkerResponse {
+  string instance_id = 1;
+  string deployment_id = 2;
+}

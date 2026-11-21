@@ -26,7 +26,7 @@ func (p *Prepared) BindRuntime(ctx context.Context) error {
 	return nil
 }
 
-func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment, observer *pgruntime.TaskClaimObserver) error {
+func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment, observer *pgruntime.TaskObservation) error {
 	for _, role := range workloads {
 		if role.name == Migration {
 			continue
@@ -52,7 +52,7 @@ func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment, obse
 			return fmt.Errorf("bind rehearsal %s credential: %w", role.name, err)
 		}
 		if observer != nil && role.name == Observer {
-			*observer, err = p.provisioner.Postgres.TaskObserver(ctx, p.account.ID, member.RunID, app.ID, connection)
+			*observer, err = p.provisioner.Postgres.TaskObservations(ctx, p.account.ID, member.RunID, app.ID, connection)
 			if err != nil {
 				return fmt.Errorf("open contained Task observer: %w", err)
 			}
