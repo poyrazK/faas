@@ -92,3 +92,18 @@ dropped right after each gateway `Do`. `VerifyProviderObjectWriteAcknowledgment`
 also drops them for a versionless provider, so a new dispatch path that
 forgets the call still records no version. The rule stays in one helper; the
 gateway's five dispatch sites each call it once.
+
+## Amendment 2026-11-21: OVH's final ListParts page
+
+A live run of every launch capability against OVH also found that OVH ends
+every `ListParts` page with `NextPartNumberMarker` set to the last part it
+returned, even when `IsTruncated` is false. That is the marker's documented
+meaning on AWS. Gregale treated any non-zero marker on a final page as
+contradictory provider evidence, so gateway `ListParts` and every gateway
+`CompleteMultipartUpload` (which lists parts first) answered 503.
+
+A final page may now name its own last part (or, when empty, the request's
+marker). A marker past the last returned part still claims parts the page did
+not return and is still refused, so the provider-evidence rule of #6670 keeps
+its intent. The other S3 listings Gregale reads end without next markers on
+OVH (captured the same day) and are unchanged.
