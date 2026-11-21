@@ -12,6 +12,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
 	builderdpkg "github.com/onebox-faas/faas/pkg/builderd"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -130,6 +131,11 @@ type Config struct {
 	// failed production builds (see builderd.prepareWarmBuilder). The
 	// environment override FAAS_BUILDER_WARM_BUILDERS=true wins.
 	WarmBuilders bool `toml:"warm_builders"`
+	// BuilderReservedSlots is the guaranteed builder slots this node is
+	// provisioned with: FAAS_BUILDER_RESERVED_SLOTS, which node_join writes
+	// beside the build slice and tenant fence it sizes for them
+	// (ADR-20261118154632 amendment 1). Environment only; default 1.
+	BuilderReservedSlots int `toml:"-"`
 	// StuckBuildSweepInterval is the cadence of the stuck-running
 	// build reaper (issue #195 B1.4). Zero falls back to 10 minutes
 	// in main.go — slow enough to not hammer the DB, fast enough to
@@ -305,6 +311,7 @@ func warmIdleWithEnv(configured time.Duration, env func(string) string) time.Dur
 func (c *Config) applyEnvironmentOverrides() {
 	c.WarmIdle = warmIdleWithEnv(c.WarmIdle, os.Getenv)
 	c.WarmBuilders = warmBuildersWithEnv(c.WarmBuilders, os.Getenv)
+	c.BuilderReservedSlots = builderslots.ReservedFromEnv(os.Getenv)
 }
 
 // warmBuildersWithEnv resolves the warm-builder opt-in. Only an explicit
