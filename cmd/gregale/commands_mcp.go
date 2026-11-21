@@ -445,7 +445,11 @@ func cmdMCPRemote(command string, args []string) int {
 	name := fs.String("name", "gregale", "connection name (config)")
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
-	taskID := fs.String("task-id", "", "opaque task ID (task-get or task-cancel)")
+	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
+	var metadataOnly bool
+	if command == "task-get" {
+		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
+	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
 	// (production-us hunt #5, H5-3).
@@ -524,6 +528,9 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("MCP endpoint", err)
 	}
 	c.HTTP.Timeout = timeoutValue
+	if metadataOnly {
+		return runMCPTaskMetadataStatus(ctx, c, *taskID)
+	}
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)

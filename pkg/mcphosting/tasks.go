@@ -66,6 +66,15 @@ type Task struct {
 	Error         json.RawMessage             `json:"error,omitempty"`
 }
 
+// PollDelay returns the bounded delay before reading this task again.
+func (t Task) PollDelay() time.Duration {
+	if t.PollInterval == nil {
+		return defaultTaskPollInterval
+	}
+	milliseconds := min(max(*t.PollInterval, minTaskPollInterval.Milliseconds()), maxTaskPollInterval.Milliseconds())
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
 // TaskInputRequest is a server-to-client request surfaced while a task waits
 // for user input. The CLI currently supports form-mode elicitation only.
 type TaskInputRequest struct {
@@ -677,14 +686,7 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 				return task, err
 			}
 		}
-		wait := defaultTaskPollInterval
-		if task.PollInterval != nil {
-			wait = time.Duration(*task.PollInterval) * time.Millisecond
-		}
-		if wait < minTaskPollInterval {
-			wait = minTaskPollInterval
-		}
-		if err := waitForTaskPoll(ctx, wait); err != nil {
+		if err := waitForTaskPoll(ctx, task.PollDelay()); err != nil {
 			return task, fmt.Errorf("wait for MCP task ended: %w", err)
 		}
 		updated, _, err := c.GetTask(ctx, task.TaskID)
