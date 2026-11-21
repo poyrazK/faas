@@ -2645,6 +2645,15 @@ func PlatformOwnedDomain(apps, platform, domain string) bool {
 
 var FinancialBudgetProblem = financialBudgetProblem
 
+// DriveExecutionPipelineForTest exercises the production continuation adapter.
+func (s *server) DriveExecutionPipelineForTest(ctx context.Context, claim state.ExecutionWorkflowJobClaim) error {
+	return s.pipelineWorker().Drive(ctx, claim)
+}
+
+func (s *server) DeliverPipelineCallbacksForTest(ctx context.Context) (int, error) {
+	return s.agentAPI.DeliverPipelineCallbacks(ctx)
+}
+
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
 

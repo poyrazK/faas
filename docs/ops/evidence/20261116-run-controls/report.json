@@ -1,0 +1,51 @@
+{
+  "cohort": "controls",
+  "controls_witness": {
+    "active": 0,
+    "attribution": true,
+    "budget_refusals": 2,
+    "history": true,
+    "inbox_records": 1,
+    "invocations": 1,
+    "reserved_mb_ms": 0,
+    "runs": 1,
+    "used_mb_ms": 89760
+  },
+  "functional_pass": true,
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "boot_id_sha256": "042afa9d28179bf5e202b9645a87e63c20defd71720b9eff8b9d9982929571b9",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "machine_id_sha256": "99573da60c00297ef565cd9915d7154c4851fbf1f4834bd613a16204f98332f8",
+    "virtualization": "google"
+  },
+  "limitations": [
+    "node24 on the operator-selected Google KVM fixture; native production release eligibility is separate",
+    "continuation inbox and fresh apid readers; customer model invocation is outside this compute qualification"
+  ],
+  "process_exits": {
+    "controls": 0,
+    "leakcheck_after": 0,
+    "leakcheck_before": 0
+  },
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-controls-functional/v1",
+  "sha256": {
+    "controls.jsonl": "1cb14c13b4c894205b640626fc364051876e45ab8fe3bce0314455a251ecf1b5",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "process-exits.json": "a9b0599cbcf7466a4f6c088dc4f94bb783558b6089b3edf8b25a044bc305ebce"
+  },
+  "source": {
+    "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "source_files": 55536,
+    "source_manifest_sha256": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522"
+  },
+  "tests": [
+    "TestSourceRunControlsContinuationMetal"
+  ]
+}

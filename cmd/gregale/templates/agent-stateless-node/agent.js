@@ -47,7 +47,7 @@ export async function runSlice(message, { store, model, platform, tools }) {
       // Issued before commit: if issuing fails, nothing is persisted and the
       // consumer group retries the message.
       const callback = await platform.issueCallback(message.endpointId, message.threadId);
-      const call = { tool: step.call.tool, input: step.call.input, callback_url: callback.url,
+      const call = { id: assistantID(message.messageId), provider_call_id: step.call.provider_call_id ?? assistantID(message.messageId), tool: step.call.tool, input: step.call.input, callback_url: callback.url,
         expires_at: callback.expires_at, dispatched: false };
       await tx.append(assistantID(message.messageId), "assistant", { tool_call: call });
       return { pending: call };

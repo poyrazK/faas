@@ -13,16 +13,21 @@ import (
 
 // Some clients refuse a server that lists more than 128 tools (OpenAI's
 // function limit), and every listed schema costs context on every turn. When
-// the selected catalog is larger than Options.MaxListedTools the server lists
-// core tools plus gregale_find_tools; a search adds its matches to the
-// listing and the SDK sends notifications/tools/list_changed
-// (ADR-20261121140000). The other tools keep their handlers and checks; they
-// are only absent from tools/list until found.
+// the selected catalog is larger than Options.MaxListedTools each session
+// lists core tools plus gregale_find_tools; a search adds its matches to that
+// session's listing and the SDK sends notifications/tools/list_changed
+// (ADR-20261121140000, amended by ADR-20261121190000). Every selected tool
+// stays registered with its handler and checks, so a known name can be called
+// directly; the cap applies to what tools/list shows.
 const (
 	findToolsName = "gregale_find_tools"
 	// DefaultMaxListedTools is the cap the CLI and hosted bridge apply.
 	DefaultMaxListedTools = 128
 	maxFoundTools         = 20
+	// capabilityRefresh is how often tools/list re-reads the account's
+	// capabilities, so a capability released or withdrawn during a long
+	// connection adds or removes its tools.
+	capabilityRefresh = 5 * time.Minute
 )
 
 type queuedTool struct {
@@ -32,15 +37,24 @@ type queuedTool struct {
 }
 
 type toolCatalog struct {
-	mu        sync.Mutex
-	pending   []queuedTool
+	mu      sync.Mutex
+	pending []queuedTool
+	// deferring is set when the selected catalog exceeds limit; core counts
+	// the tools every session lists, gregale_find_tools included.
 	deferring bool
 	limit     int
 	core      int
-	deferred  map[string]queuedTool
-	// enabled lists found tools, oldest first; the oldest leave the listing
-	// when a search would exceed the limit.
-	enabled []queuedTool
+	// findable are the registered non-core tools a session lists once found.
+	findable map[string]queuedTool
+	// found lists each session's found tools, oldest first; the oldest
+	// leave its listing when a search would pass the limit.
+	found map[*mcp.ServerSession][]string
+	// gated are the selected capability-gated tools; hidden are those whose
+	// capability is off for the account and are not registered.
+	gated        map[string]queuedTool
+	hidden       map[string]bool
+	capsReadAt   time.Time
+	refreshEvery time.Duration
 }
 
 func (m *management) queueTool(name, description string, add func()) {
@@ -67,18 +81,14 @@ var toolCapability = map[string]string{
 }
 
 // unavailableCapabilities reads the account's hidden and disabled
-// capabilities. A failed read hides nothing: apid still refuses the calls.
-//
-//nolint:contextcheck // Server construction has no request context; the read is bounded by its own timeout.
-func (m *management) unavailableCapabilities() map[string]bool {
-	if !m.opts.HideUnavailableCapabilities {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// capabilities. ok is false when the read failed; the caller then keeps
+// what it showed, and apid still refuses calls to an unavailable feature.
+func (m *management) unavailableCapabilities(ctx context.Context) (map[string]bool, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	c, err := m.client.GetCapabilities(ctx)
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	out := map[string]bool{}
 	for _, id := range c.HiddenCapabilities {
@@ -89,55 +99,144 @@ func (m *management) unavailableCapabilities() map[string]bool {
 			out[capability.Key] = true
 		}
 	}
-	return out
+	return out, true
 }
 
-// publishCatalog adds the queued tools, deferring all but core above the cap.
-// Agent-key servers select toolsets per request and list them all.
+// publishCatalog registers the queued tools and, above the cap, lists only
+// core per session. Agent-key servers select toolsets per request and list
+// them all. A capability read happens only when a gated tool is selected,
+// so a core catalog starts without an API request.
+//
+//nolint:contextcheck // Server construction has no request context; the read is bounded by its own timeout.
 func (m *management) publishCatalog(s *mcp.Server) {
 	c := &m.catalog
-	// Read capabilities only when a gated tool is selected, so a core
-	// catalog starts without an API request.
-	var unavailable map[string]bool
-	if slices.ContainsFunc(c.pending, func(t queuedTool) bool { return toolCapability[t.name] != "" }) {
-		unavailable = m.unavailableCapabilities()
-	}
 	c.mu.Lock()
-	pending := slices.DeleteFunc(c.pending, func(t queuedTool) bool {
-		if unavailable[toolCapability[t.name]] {
-			delete(m.toolNames, t.name)
-			return true
-		}
-		return false
-	})
+	pending := c.pending
 	c.pending = nil
-	limit := m.opts.MaxListedTools
-	if limit <= 0 || len(pending) <= limit || m.opts.agentKeyToolsetSelection {
-		c.mu.Unlock()
+	c.gated, c.hidden, c.found, c.refreshEvery = map[string]queuedTool{}, map[string]bool{}, map[*mcp.ServerSession][]string{}, capabilityRefresh
+	if m.opts.HideUnavailableCapabilities {
 		for _, t := range pending {
-			t.add()
-		}
-		return
-	}
-	c.deferring, c.limit, c.deferred = true, limit, map[string]queuedTool{}
-	var listed []queuedTool
-	for _, t := range pending {
-		if toolsetIncludes(t.name, ToolsetCore) {
-			listed = append(listed, t)
-		} else {
-			c.deferred[t.name] = t
+			if toolCapability[t.name] != "" {
+				c.gated[t.name] = t
+			}
 		}
 	}
-	c.core = len(listed) + 1
 	c.mu.Unlock()
-	for _, t := range listed {
+	if len(c.gated) > 0 {
+		unavailable, _ := m.unavailableCapabilities(context.Background())
+		c.mu.Lock()
+		c.capsReadAt = time.Now()
+		for name := range c.gated {
+			if unavailable[toolCapability[name]] {
+				c.hidden[name] = true
+			}
+		}
+		c.mu.Unlock()
+	}
+	available := slices.DeleteFunc(pending, func(t queuedTool) bool { return c.hidden[t.name] })
+	limit := m.opts.MaxListedTools
+	c.deferring = limit > 0 && len(available) > limit && !m.opts.agentKeyToolsetSelection
+	c.limit, c.findable = limit, map[string]queuedTool{}
+	for _, t := range available {
+		if c.deferring && !toolsetIncludes(t.name, ToolsetCore) {
+			c.findable[t.name] = t
+		} else {
+			c.core++
+		}
 		t.add()
 	}
-	m.toolNames[findToolsName] = true
-	m.toolWrites[findToolsName] = false
-	destructive := false
-	mcp.AddTool(s, &mcp.Tool{Name: findToolsName, Description: "Find Gregale tools that are not listed yet and add them to this connection's tool list. This server lists core tools first because the full catalog is larger than many clients accept. Search by task words (for example: postgres schema, cron, domain, rollout, flags, budget); call the returned tools after your client refreshes its tool list.", OutputSchema: registeredToolOutputSchema(findToolsName), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &destructive, IdempotentHint: true}},
-		toolHandler(m, findToolsName, true, func(ctx context.Context, a findToolsArgs) (any, error) { return m.findTools(s, a) }))
+	if c.deferring {
+		c.core++
+		m.toolNames[findToolsName] = true
+		m.toolWrites[findToolsName] = false
+		destructive := false
+		mcp.AddTool(s, &mcp.Tool{Name: findToolsName, Description: "Find Gregale tools that are not listed yet and add them to this connection's tool list. This server lists core tools first because the full catalog is larger than many clients accept. Search by task words (for example: postgres schema, cron, domain, rollout, flags, budget); call the returned tools after your client refreshes its tool list.", OutputSchema: registeredToolOutputSchema(findToolsName), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &destructive, IdempotentHint: true}},
+			toolHandler(m, findToolsName, true, func(ctx context.Context, a findToolsArgs) (any, error) { return m.findTools(ctx, s, a) }))
+	}
+	if c.deferring || len(c.gated) > 0 {
+		s.AddReceivingMiddleware(m.catalogMiddleware(s))
+	}
+}
+
+// catalogMiddleware refreshes capability-gated tools and narrows each
+// session's tools/list page to core plus the tools it found.
+func (m *management) catalogMiddleware(s *mcp.Server) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method != "tools/list" {
+				return next(ctx, method, req)
+			}
+			m.refreshCapabilities(ctx, s)
+			result, err := next(ctx, method, req)
+			page, ok := result.(*mcp.ListToolsResult)
+			if err != nil || !ok || !m.catalog.deferring {
+				return result, err
+			}
+			session, _ := req.GetSession().(*mcp.ServerSession)
+			c := &m.catalog
+			c.mu.Lock()
+			found := c.found[session]
+			filtered := *page
+			filtered.Tools = make([]*mcp.Tool, 0, len(page.Tools))
+			for _, tool := range page.Tools {
+				if _, deferred := c.findable[tool.Name]; !deferred || slices.Contains(found, tool.Name) {
+					filtered.Tools = append(filtered.Tools, tool)
+				}
+			}
+			c.mu.Unlock()
+			return &filtered, nil
+		}
+	}
+}
+
+// refreshCapabilities re-reads capabilities once per refresh interval and
+// registers or removes gated tools whose capability changed. Registering or
+// removing a tool sends notifications/tools/list_changed.
+func (m *management) refreshCapabilities(ctx context.Context, s *mcp.Server) {
+	c := &m.catalog
+	c.mu.Lock()
+	due := len(c.gated) > 0 && time.Since(c.capsReadAt) >= c.refreshEvery
+	if due {
+		c.capsReadAt = time.Now()
+	}
+	c.mu.Unlock()
+	if !due {
+		return
+	}
+	unavailable, ok := m.unavailableCapabilities(ctx)
+	if !ok {
+		return
+	}
+	var shown []queuedTool
+	var removed []string
+	c.mu.Lock()
+	for name, t := range c.gated {
+		off := unavailable[toolCapability[name]]
+		switch {
+		case off && !c.hidden[name]:
+			c.hidden[name] = true
+			removed = append(removed, name)
+			delete(c.findable, name)
+			for session, found := range c.found {
+				c.found[session] = slices.DeleteFunc(found, func(n string) bool { return n == name })
+			}
+		case !off && c.hidden[name]:
+			delete(c.hidden, name)
+			shown = append(shown, t)
+			if c.deferring && !toolsetIncludes(name, ToolsetCore) {
+				c.findable[name] = t
+			}
+		}
+	}
+	c.mu.Unlock()
+	if len(removed) > 0 {
+		s.RemoveTools(removed...)
+	}
+	// Gated names stay in m.toolNames from registration, so telemetry keeps
+	// labeling them without a write here.
+	for _, t := range shown {
+		t.add()
+	}
 }
 
 type findToolsArgs struct {
@@ -158,7 +257,7 @@ type findToolsResult struct {
 	Note      string      `json:"note"`
 }
 
-func (m *management) findTools(s *mcp.Server, a findToolsArgs) (any, error) {
+func (m *management) findTools(ctx context.Context, s *mcp.Server, a findToolsArgs) (any, error) {
 	words := strings.Fields(strings.ToLower(a.Query))
 	if len(words) == 0 || len(a.Query) > 200 {
 		return nil, invalid("invalid_query", "query must name the task in at most 200 characters")
@@ -167,53 +266,72 @@ func (m *management) findTools(s *mcp.Server, a findToolsArgs) (any, error) {
 	if limit <= 0 {
 		limit = 8
 	}
-	limit = min(limit, maxFoundTools)
+	var session *mcp.ServerSession
+	if req, ok := ctx.Value(toolRequestKey{}).(*mcp.CallToolRequest); ok {
+		session = req.Session
+	}
 	c := &m.catalog
 	c.mu.Lock()
-	limit = min(limit, c.limit-c.core)
-	matches := matchTools(c.deferred, words, max(limit, 0))
-	var removed []queuedTool
-	for len(c.enabled) > 0 && c.core+len(c.enabled)+len(matches) > c.limit {
-		removed = append(removed, c.enabled[0])
-		c.deferred[c.enabled[0].name] = c.enabled[0]
-		c.enabled = c.enabled[1:]
+	m.pruneClosedSessionsLocked(s)
+	found := c.found[session]
+	limit = max(min(limit, maxFoundTools, c.limit-c.core), 0)
+	candidates := map[string]queuedTool{}
+	for name, t := range c.findable {
+		if !slices.Contains(found, name) {
+			candidates[name] = t
+		}
+	}
+	matches := matchTools(candidates, words, limit)
+	var removed []string
+	for len(found) > 0 && c.core+len(found)+len(matches) > c.limit {
+		removed = append(removed, found[0])
+		found = found[1:]
 	}
 	for _, t := range matches {
-		delete(c.deferred, t.name)
-		c.enabled = append(c.enabled, t)
+		found = append(found, t.name)
 	}
-	remaining := len(c.deferred)
+	c.found[session] = found
+	remaining := len(c.findable) - len(found)
 	c.mu.Unlock()
-	out := findToolsResult{Tools: []foundTool{}, Remaining: remaining}
-	for _, t := range removed {
-		out.Removed = append(out.Removed, t.name)
-	}
-	if len(out.Removed) > 0 {
-		s.RemoveTools(out.Removed...)
-	}
+	out := findToolsResult{Tools: []foundTool{}, Removed: removed, Remaining: remaining}
 	for _, t := range matches {
+		// Re-adding a registered tool replaces it unchanged and sends
+		// notifications/tools/list_changed, so this session lists again.
 		t.add()
 		set, _ := ToolsetOf(t.name)
 		out.Tools = append(out.Tools, foundTool{Name: t.name, Toolset: set, Description: firstSentence(t.description)})
 	}
-	switch {
-	case len(out.Tools) == 0:
+	if len(out.Tools) == 0 {
 		out.Note = "No unlisted tool matches; listed tools already cover it, or try other words."
-	default:
-		out.Note = "Added to this connection's tool list (notifications/tools/list_changed). If your client does not refresh, reconnect with --toolsets " + toolsetsOf(out.Tools) + "."
+	} else {
+		out.Note = "Added to this session's tool list (notifications/tools/list_changed). If your client does not refresh, call the tools by name or reconnect with --toolsets " + toolsetsOf(out.Tools) + "."
 	}
 	return out, nil
 }
 
+// pruneClosedSessionsLocked forgets the found tools of closed sessions, so a
+// long-lived hosted server does not accumulate them.
+func (m *management) pruneClosedSessionsLocked(s *mcp.Server) {
+	live := map[*mcp.ServerSession]bool{}
+	for session := range s.Sessions() {
+		live[session] = true
+	}
+	for session := range m.catalog.found {
+		if !live[session] {
+			delete(m.catalog.found, session)
+		}
+	}
+}
+
 // matchTools ranks unlisted tools: an exact name first, then name words, then
-// description words. Listed tools are not returned again.
-func matchTools(deferred map[string]queuedTool, words []string, limit int) []queuedTool {
+// description words.
+func matchTools(candidates map[string]queuedTool, words []string, limit int) []queuedTool {
 	type scored struct {
 		t     queuedTool
 		score int
 	}
 	var ranked []scored
-	for name, t := range deferred {
+	for name, t := range candidates {
 		score := 0
 		description := strings.ToLower(t.description)
 		for _, w := range words {

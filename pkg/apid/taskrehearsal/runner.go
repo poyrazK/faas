@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
@@ -56,6 +57,11 @@ func MigrationCommand() []string { return slices.Clone(migrationCommand) }
 
 func (r *Runner) Run(ctx context.Context, p *Provisioner, account state.Account, run state.HostedTaskRehearsalRun,
 	web, worker []byte, policy tasktoolbinding.Policy) (Execution, error) {
+	return r.run(ctx, p, account, run, web, worker, policy, nil)
+}
+
+func (r *Runner) run(ctx context.Context, p *Provisioner, account state.Account, run state.HostedTaskRehearsalRun,
+	web, worker []byte, policy tasktoolbinding.Policy, observer *pgruntime.TaskClaimObserver) (Execution, error) {
 	if !r.AdmissionEnabled || p == nil || r.Store == nil || r.Submit == nil || r.RemoveSource == nil || len(web) == 0 || len(worker) == 0 {
 		return Execution{}, state.ErrInvalidArgument
 	}
@@ -69,7 +75,7 @@ func (r *Runner) Run(ctx context.Context, p *Provisioner, account state.Account,
 	}
 	execute, stop := context.WithDeadline(ctx, target.expiresAt)
 	defer stop()
-	result, err := r.execute(execute, target, env, web, worker)
+	result, err := r.execute(execute, target, env, web, worker, observer)
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
@@ -81,7 +87,7 @@ func (r *Runner) Run(ctx context.Context, p *Provisioner, account state.Account,
 	return result, err
 }
 
-func (r *Runner) execute(ctx context.Context, p *Prepared, env *runnerEnvironment, web, worker []byte) (Execution, error) {
+func (r *Runner) execute(ctx context.Context, p *Prepared, env *runnerEnvironment, web, worker []byte, observer *pgruntime.TaskClaimObserver) (Execution, error) {
 	var result Execution
 	migration, err := r.submit(ctx, p, Migration, worker)
 	if err != nil {
@@ -118,7 +124,7 @@ func (r *Runner) execute(ctx context.Context, p *Prepared, env *runnerEnvironmen
 	if err := r.RemoveSource(ctx, migration.BuildID); err != nil {
 		return Execution{}, fmt.Errorf("retire rehearsal migration source: %w", err)
 	}
-	if err := p.bindRuntime(ctx, env); err != nil {
+	if err := p.bindRuntime(ctx, env, observer); err != nil {
 		return Execution{}, err
 	}
 	webBuild, err := r.submit(ctx, p, Web, web)

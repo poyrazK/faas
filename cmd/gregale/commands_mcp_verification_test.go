@@ -227,7 +227,7 @@ func newMCPVerificationFixture(t *testing.T, badInitialize bool, latency time.Du
 func writeMCPVerificationConfig(t *testing.T, count int) (string, string, mcphosting.Config) {
 	t.Helper()
 	root := t.TempDir()
-	body, err := os.ReadFile("templates/mcp-node/gregale-mcp.json")
+	body, err := os.ReadFile("templates/mcp-node-tasks/gregale-mcp.json")
 	if err != nil {
 		t.Fatal(err)
 	}

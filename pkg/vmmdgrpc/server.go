@@ -292,7 +292,8 @@ type Server struct {
 	sandboxUsageEvery time.Duration
 	// sandboxStorage keeps persisted sandbox workspaces (ADR-20261027090013
 	// step 7); nil persists none. See WithSandboxWorkspaces.
-	sandboxStorage storage.StorageBackend
+	sandboxStorage       storage.StorageBackend
+	executionFileStorage storage.StorageBackend
 
 	vmm VmmdAPI
 	ops *wire.OpsMetrics
@@ -1018,6 +1019,9 @@ func (s *Server) ExecuteExecution(ctx context.Context, req *vmmdpb.ExecuteExecut
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	if wireReq.UsesFileTransport() {
+		return nil, status.Error(codes.InvalidArgument, "stored files require ExecuteExecutionFiles or the broker stream")
+	}
 	result, err := executionVMM.ExecuteExecution(ctx, req.GetInstance(), wireReq)
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
@@ -1053,6 +1057,9 @@ func (s *Server) RestoreExecution(ctx context.Context, req *vmmdpb.RestoreExecut
 	inst, err := executionVMM.WakeExecution(ctx, wakeReq)
 	s.ops.Observe(op, time.Since(start), err)
 	if err != nil {
+		// This envelope is payload-free. Keep the operator's preparation cause
+		// before schedd turns it into the bounded public restore_failed result.
+		s.log.Warn("vmmd: execution restore failed", "instance", wakeReq.Instance, "err", err)
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	if inst == nil {

@@ -1,0 +1,89 @@
+{
+  "checks": {
+    "acceptance_verdict": {
+      "log_sha256": "39467b2ac32acf33e4b2c3ce5acda64abe101be5a428e08c94eb45a91c705501",
+      "passed": true,
+      "scope": "Acceptance result and resource-leak verdict contracts",
+      "tests_passed": 18
+    },
+    "api_spec": {
+      "log_sha256": "f8f8b17ec167bbba10cad4d3ae96fef38393a5493c2d348af8626cc500ecdd59",
+      "passed": true,
+      "scope": "API specification compliance"
+    },
+    "environment_contract": {
+      "log_sha256": "67d5c5eec31e793c7edb77cd193c5a15341188acb044eb05ecf37c913d9753d3",
+      "passed": true,
+      "scope": "Environment variable contract and generated documentation"
+    },
+    "go_sdk": {
+      "log_sha256": "405b6aeaed7b1f9918dce00d924b25b00ff6c0ca55d3b200ebae1885035660ae",
+      "passed": true,
+      "scope": "Standalone Go SDK packages; TestVersionedTaskRetryWireContract"
+    },
+    "local_template_database_state": {
+      "limitation": "The encompassing local command later failed to build API/CLI packages after shared Go cache files disappeared. Those packages passed separately on Linux. The node isolated-schema fixture cannot run legacy public-schema billing triggers.",
+      "log_sha256": "56cdfada72c3ef7e9065270c841598bb68ff63bc5b90ed9a1291a0ce8d1a510a",
+      "passed": true,
+      "scope": "Scoped pkg/state legacy admission and versioned-task contracts in the local template-database lane"
+    },
+    "migration_policy": {
+      "log_sha256": "24908e468b32c53bf99575b2379bb8528808820328e94cf8ed6a9f6993bb82f1",
+      "passed": true,
+      "scope": "Expand/contract policy for the full 32-migration uncommitted Run stack"
+    },
+    "node_sdk": {
+      "log_sha256": "6853ea121abb80254a15910da26425982513f8099f9d2bec6ba34b11aece4e03",
+      "passed": true,
+      "scope": "Task, Run and environment diagnostics wire contracts",
+      "tests_passed": 9
+    },
+    "problem_detail_policy": {
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "passed": true,
+      "scope": "API problem-detail policy"
+    },
+    "public_sdk_projection": {
+      "passed": true,
+      "spec_sha256": "19fcc0a17e4a69b1011fd4e6358409d5f9226b96f8136e3ee7ff71b50f38ccac"
+    },
+    "python_sdk": {
+      "log_sha256": "0811b0516f9b4a05966a2819e8efb1129dc3713f3df995b7c44bca37d68e91f1",
+      "passed": true,
+      "scope": "Task and Run wire contracts",
+      "tests_passed": 9
+    },
+    "sdk_coverage": {
+      "log_sha256": "b7baa181959265608258f954de0a674753285b85d12506c337f2e76a5c83e100",
+      "passed": true,
+      "scope": "SDK route coverage; existing unmatched helper warnings remain"
+    },
+    "seal_domains": {
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "passed": true,
+      "scope": "Account sealed-column registry and plaintext-hash baseline"
+    },
+    "stateless_agent_starter": {
+      "log_sha256": "703e0b98abf0d1fe23c10e7271f3b8f6f8bc19e367902dff24e545bdb768bbbd",
+      "passed": true,
+      "scope": "Two-slice continuation, stable call identity, lost acknowledgement, duplicate completion and scoped reads",
+      "tests_passed": 8
+    },
+    "task_domain": {
+      "log_sha256": "d403f5206ff17b24d83523fff2fac8d7d3b2de8ed5d829029352a266c3c9f346",
+      "passed": true,
+      "scope": "Task definition, scratch budget and fingerprint contracts"
+    },
+    "teststore_policy": {
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "passed": true,
+      "scope": "Test-store policy"
+    }
+  },
+  "notes": [
+    "Check statuses were observed from completed commands; log hashes preserve provenance. Raw logs remain private.",
+    "Local lint could not complete because shared Go cache files disappeared; final Linux lint is recorded separately.",
+    "A proposed temporary PostgreSQL CREATEDB login was rejected by automatic approval review and was never created. Existing database fixtures were used."
+  ],
+  "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+}
