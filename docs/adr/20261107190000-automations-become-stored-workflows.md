@@ -101,3 +101,13 @@ One branch, landed as one PR, in reviewable commits:
 3. Event and alert kinds in producers, the evaluator and docs.
 4. CLI noun, help, generated reference and command-tree baselines.
 5. Go package renames, dashboard section, docs.
+
+## Amendment 2026-11-21: beta for every customer
+
+The `stored-workflows` capability moves from `internal` to `beta` on the Hobby,
+Pro and Scale plans, so its platform flag is on for every account by tier
+default. The customer page `/docs/stored-workflows` is published; its
+installation and rollout notes moved to
+[docs/ops/stored-workflows-operator-notes.md](../ops/stored-workflows-operator-notes.md).
+An operator value already stored for the `stored_workflows` flag still wins
+over the tier default.
