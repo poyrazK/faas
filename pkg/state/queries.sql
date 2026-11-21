@@ -1907,6 +1907,17 @@ where ($1 = '' or actor = $1)
 order by at desc, id desc
 limit $5::int8;
 
+-- name: ListEventsByKindSince :many
+-- The operator wake-latency report (ADR-20261121200409): one kind's rows at
+-- or after since, newest first, as a backward scan of events_kind_at_idx
+-- (kind, at DESC). The caller asks for one row more than it keeps to learn
+-- whether the window was cut.
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = sqlc.arg(kind)::text AND at >= sqlc.arg(since)::timestamptz
+ORDER BY at DESC
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on

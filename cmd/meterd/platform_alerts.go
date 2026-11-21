@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -14,7 +15,7 @@ import (
 // startPlatformAlerts emails accounts about outages and paused failing crons
 // that no alert rule of theirs covers (ADR-20261115194000). Without a mail
 // transport the notices wait; without Prometheus only cron notices send.
-func startPlatformAlerts(ctx context.Context, store any, m mail.Sender, prom any, reg prometheus.Registerer, log *slog.Logger) {
+func startPlatformAlerts(ctx context.Context, store any, m mail.Sender, prom any, reg prometheus.Registerer, log *slog.Logger, dashboardURL string, release *observeRelease) {
 	alertStore, ok := store.(platformalerts.Store)
 	if !ok || m == nil {
 		log.Info("meterd: platform alerts off", "store", ok, "mail", m != nil)
@@ -37,9 +38,28 @@ func startPlatformAlerts(ctx context.Context, store any, m mail.Sender, prom any
 		Mail:    meterdChannelMailer{m},
 		Log:     log,
 		Outcome: func(kind, outcome string) { c.WithLabelValues(kind, outcome).Inc() },
+		// The links and gates meterd's own alert work uses.
+		DashboardURL: dashboardURL,
+	}
+	if release != nil {
+		w.CheckReleased, w.SLOReleased = release.Synthetic, release.SLO
 	}
 	if metrics, ok := prom.(platformalerts.Metrics); ok && metrics != nil {
 		w.Metrics = metrics
 	}
 	go w.Run(ctx)
+}
+
+// dashboardBaseURL is the origin customer notifications link to: the platform
+// domain that serves the dashboard (ADR-20261026100000), else the apps domain
+// of the shared layout.
+func dashboardBaseURL(getenv func(string) string, appsDomain string) string {
+	domain := strings.TrimSpace(getenv("FAAS_PLATFORM_DOMAIN"))
+	if domain == "" {
+		domain = appsDomain
+	}
+	if domain == "" {
+		return ""
+	}
+	return "https://" + domain
 }

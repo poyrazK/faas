@@ -30,7 +30,10 @@ type flagsCustomer struct {
 
 // flagsJourney is the state TestFlagsAndExperiments' steps share.
 type flagsJourney struct {
-	tg        *target
+	tg *target
+	// runtime is the probe's language: node, python or go (flagsProbes).
+	runtime   string
+	count     int // verified customers to register
 	project   string
 	app       string
 	base      string
@@ -55,7 +58,7 @@ func TestFlagsAndExperiments(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
 	skipFlagsUnreleased(t, tg)
-	j := &flagsJourney{tg: tg, project: tg.slug("flags")}
+	j := &flagsJourney{tg: tg, runtime: "node", count: flagsCustomers, project: tg.slug("flags")}
 	j.app = j.project + "-web"
 	tg.ownApp(t, j.app)
 	t.Cleanup(func() {
@@ -107,15 +110,15 @@ func skipFlagsUnreleased(t *testing.T, tg *target) {
 
 func (j *flagsJourney) deploy(t *testing.T) {
 	tg := j.tg
-	src := fixtureSource(t, "flags-checkout")
-	sdk, err := os.ReadFile(filepath.Join("..", "..", "sdk", "node", "src", "flags.ts"))
-	if err != nil {
-		t.Fatalf("read the Node flags SDK source: %v", err)
+	probe, ok := flagsProbes[j.runtime]
+	if !ok {
+		t.Fatalf("no flags probe for runtime %q", j.runtime)
 	}
+	src := fixtureSource(t, probe.fixture)
+	probe.addSDK(t, filepath.Join(src, "web"))
 	config, _ := json.Marshal(map[string]string{"apiURL": tg.api})
 	files := map[string][]byte{
-		filepath.Join("web", "gregale-flags.mts"): sdk,
-		filepath.Join("web", "config.json"):       config,
+		filepath.Join("web", "config.json"): config,
 		// Flags are read by project apps: a one-service Compose project.
 		"compose.yaml": []byte(fmt.Sprintf("services:\n  %s:\n    build: ./web\n    ports: [\"8080:8080\"]\n", j.app)),
 	}
@@ -146,15 +149,19 @@ func (j *flagsJourney) deploy(t *testing.T) {
 // so runs reuse them instead of adding new ones.
 func (j *flagsJourney) makeCustomers(t *testing.T) {
 	tg := j.tg
-	for i := range flagsCustomers {
+	for i := range j.count {
 		ref := fmt.Sprintf("e2ej-flags-customer-%d", i)
+		if j.runtime != "node" {
+			// Parallel journeys never add the same tenant at once.
+			ref = fmt.Sprintf("e2ej-flags-%s-customer-%d", j.runtime, i)
+		}
 		tenant := str(object(t, tg.ok(t, time.Minute, "api", "tenant", "add", "--external-ref", ref, "--name", "E2E flags customer "+fmt.Sprint(i)).stdout), "id")
 		consumer := str(object(t, tg.ok(t, time.Minute, "api", "consumer", "create", j.app, "--external-ref", ref, "--name", ref).stdout), "id")
 		if tenant == "" || consumer == "" {
 			t.Fatalf("customer %d: tenant %q consumer %q", i, tenant, consumer)
 		}
 		tg.ok(t, time.Minute, "api", "tenant", "consumer", "link", "--id", tenant, "--consumer-id", consumer)
-		out := tg.ok(t, time.Minute, "api", "consumer", "key", "create", j.app, consumer, "--name", tg.slug(fmt.Sprintf("flags-key-%d", i)), "--scopes", "read")
+		out := tg.ok(t, time.Minute, "api", "consumer", "key", "create", j.app, consumer, "--name", tg.slug(fmt.Sprintf("flags-%s-key-%d", j.runtime, i)), "--scopes", "read")
 		key := consumerKeyRe.FindString(string(out.stdout))
 		if key == "" {
 			t.Fatalf("customer %d: key create printed no ck_ key", i)
@@ -345,7 +352,9 @@ func (j *flagsJourney) analytics(t *testing.T) {
 	eventually(t, "order_completed events are queryable", 5*time.Minute, 15*time.Second, func() (bool, string) {
 		res := j.tg.run(t, time.Minute, "--json", "insight", "event", "list", "order_completed", "--project", j.project)
 		if res.exit != 0 {
-			if strings.Contains(res.problem(), "product analytics") {
+			// Off for the account, the insights routes refuse (403); off
+			// everywhere, the capability gate hides them (404 no such route).
+			if strings.Contains(res.problem(), "product analytics") || strings.Contains(res.problem(), "no such API route") {
 				t.Skipf("product analytics is not enabled for this account: %s", res.problem())
 			}
 			return false, res.problem()

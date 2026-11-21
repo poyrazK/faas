@@ -48,7 +48,7 @@ for (const failure of ['network', 'http', 'json', 'jwks']) {
     for (let i = 0; i < 20; i++) assert.equal(await authenticate(auth, token), 401);
     assert.equal(fetches, 1);
     unavailable = false;
-    now += 29_999;
+    now += 999;
     assert.equal(await authenticate(auth, token), 401);
     assert.equal(fetches, 1);
     now++;
@@ -103,7 +103,7 @@ test('JWKS streams are capped at 1 MiB and oversized refreshes cool down', async
   assert.equal(cancelled, true);
   for (let i = 0; i < 10; i++) assert.equal(await authenticate(auth, token), 401);
   assert.equal(fetches, 1);
-  now += 30_000;
+  now += 1_000;
   assert.equal(await authenticate(auth, token), 200);
   assert.equal(fetches, 2);
 });
