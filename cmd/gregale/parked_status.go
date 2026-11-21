@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -54,12 +55,19 @@ func listedReleaseStatus(d api.DeploymentResponse) string {
 	if d.Status == "live" && d.RolloutState == api.DebugRolloutAborted && d.TrafficPercent == 0 {
 		return "aborted"
 	}
+	// A canary at 1% and the release it replaces at 99% both listed as plain
+	// "live", so the list could not say which one served (boa multi-service
+	// deploy, 2026-11-21). The share rides in the STATUS cell, as "parked"
+	// does, so the default table keeps its column layout for scripts.
+	if d.Status == "live" && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
+		return fmt.Sprintf("live/%d%%", d.TrafficPercent)
+	}
 	return d.Status
 }
 
 func parkedReleaseStatus(status string) string {
-	if status == "live" {
-		return "live/parked"
+	if status == "live" || strings.HasPrefix(status, "live/") {
+		return status + "/parked"
 	}
 	return status
 }

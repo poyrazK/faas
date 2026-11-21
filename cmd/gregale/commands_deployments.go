@@ -566,8 +566,18 @@ func cmdDeploymentWait(args []string) int {
 				}
 				if *rollout {
 					PrintOK(osStdout, "Deployment %s rollout is complete.", d.ID)
-				} else {
+				} else if deploymentRolloutComplete(d) && d.TrafficPercent >= 100 {
 					PrintOK(osStdout, "Deployment %s is live.", d.ID)
+				} else {
+					// A canary at 1% is "live" while the previous release
+					// serves the rest: saying only "is live" hid a broken
+					// v1 serving 99% (boa multi-service deploy, 2026-11-21).
+					PrintOK(osStdout, "Deployment %s is live but serves %s; other releases serve the rest.", d.ID, deploymentTrafficShare(d))
+					if deploymentRolloutComplete(d) {
+						PrintWarn(osStderr, "Not at 100%% traffic: see `%s release traffic status <app>`.", recoveryCLI())
+					} else {
+						PrintWarn(osStderr, "Its rollout is still in progress: wait for 100%% traffic with `%s release wait %s --rollout`, or see `%s release traffic status <app>`.", recoveryCLI(), d.ID, recoveryCLI())
+					}
 				}
 				return 0
 			}
@@ -586,6 +596,16 @@ func cmdDeploymentWait(args []string) int {
 		case <-timer.C:
 		}
 	}
+}
+
+// deploymentTrafficShare names a live deployment's share of traffic and, for
+// a canary, its ladder position.
+func deploymentTrafficShare(d api.DeploymentResponse) string {
+	share := fmt.Sprintf("%d%% of traffic", d.TrafficPercent)
+	if d.CanaryTotalSteps > 0 {
+		share += fmt.Sprintf(" (canary step %d of %d)", d.CanaryStep, d.CanaryTotalSteps)
+	}
+	return share
 }
 
 // deploymentWaitTransientRetries bounds consecutive transient read failures

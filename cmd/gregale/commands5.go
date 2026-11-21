@@ -830,7 +830,7 @@ func cmdAppScale(slug string, args []string) int {
 	// out of help, completions, man pages and the generated reference until
 	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
 	// answers an unlisted account as for an unknown field.
-	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = the platform default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")

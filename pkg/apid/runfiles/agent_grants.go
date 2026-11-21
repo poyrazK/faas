@@ -44,7 +44,7 @@ type AgentFileSigner struct{ seal cipher.AEAD }
 
 func NewAgentFileSigner(bindingKey []byte) (*AgentFileSigner, error) {
 	if len(bindingKey) < 32 {
-		return nil, errors.New("Run Agent file signing key unavailable")
+		return nil, errors.New("agent file signing key is unavailable")
 	}
 	key, err := hkdf.Key(sha256.New, bindingKey, nil, "gregale scoped Agent file input v1", 32)
 	if err != nil {
@@ -84,7 +84,8 @@ func (s *AgentFileSigner) Issue(file state.ExecutionFile, scope AgentFileScope, 
 	if err != nil {
 		return api.AgentExecutionFileGrant{}, err
 	}
-	token := agentInputPrefix + base64.RawURLEncoding.EncodeToString(s.seal.Seal(nil, nil, raw, binding))
+	sealed := s.seal.Seal(nil, nil, raw, binding) //nolint:gosec // G407: NewGCMWithRandomNonce generates and prepends a random nonce.
+	token := agentInputPrefix + base64.RawURLEncoding.EncodeToString(sealed)
 	if len(token) > api.AgentExecutionFileGrantMaxBytes {
 		return api.AgentExecutionFileGrant{}, api.ErrValidation("the encoded Run input path is too large")
 	}

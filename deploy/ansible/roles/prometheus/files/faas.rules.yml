@@ -3544,7 +3544,7 @@ groups:
           family: build_queue
         annotations:
           summary: "Build queue p95 wait > 5m"
-          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to one VM under the 5 GiB parent slice; check whether arrival rate exceeds that safe drain rate."
+          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to each node's reserved builder slots (builder_reserved_slots), the builders its build slice is sized for; check whether arrival rate exceeds that safe drain rate."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuilderSliceOOMKill
@@ -3557,7 +3557,7 @@ groups:
           public_status: internal
         annotations:
           summary: "The builder parent cgroup OOM-killed an active build"
-          description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
+          description: "builderd attributed a new faas-cp-build.slice oom_kill to the build that was the slice's only builder. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
 
       # Elastic builder slots (ADR-20261118154632): a node that keeps giving
@@ -5821,7 +5821,7 @@ groups:
           public_status: internal
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
-          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
+          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to each node's reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuildQueueTelemetryUnavailable

@@ -4945,6 +4945,11 @@ type ResumeEnvironmentAutomationResponse struct {
 	// 2026-11-14).
 	EventSubscriptionsResumed int      `json:"event_subscriptions_resumed"`
 	EventSubscriptionIDs      []string `json:"event_subscription_ids"`
+	// BucketNotificationsResumed and BucketIDs are the buckets whose copied
+	// notification rules the call resumed (ADR-20261104120000 amendment
+	// 2026-11-16).
+	BucketNotificationsResumed int      `json:"bucket_notifications_resumed"`
+	BucketIDs                  []string `json:"bucket_ids"`
 }
 
 // CreateCronRequest creates either a scheduled HTTP request or a
@@ -13144,6 +13149,10 @@ type RecoverRolloutRequest struct {
 	// the recovery transaction; other recovery actions retain legacy behavior.
 	DeploymentID                    string `json:"deployment_id,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id,omitempty"`
+	// ExpectedStep, for advance and promote, is the canary step the caller
+	// observed; the recovery is refused with canary_step_conflict when the
+	// running canary is elsewhere, as `deployment advance` does.
+	ExpectedStep *int `json:"expected_step,omitempty"`
 }
 
 // RecoverDeploymentRolloutRequest is the loopback deployment-addressed variant

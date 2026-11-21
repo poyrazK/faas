@@ -4901,6 +4901,11 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorRead(s.obsListNodes)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/detail",
 		s.authLimited(s.requireOperatorSessionRead(s.obsNodeDetail)))
+	// ADR-20261121161842: running instances across the fleet, and one by id.
+	mux.HandleFunc("GET /v1/admin/obs/instances",
+		s.authLimited(s.requireOperatorSessionRead(s.obsListInstances)))
+	mux.HandleFunc("GET /v1/admin/obs/instances/{id}",
+		s.authLimited(s.requireOperatorSessionRead(s.obsGetInstance)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

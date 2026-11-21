@@ -96,6 +96,7 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 		}
 		applyCapabilityRuntimeAvailability(&capabilities.Capabilities[i], available)
 	}
+	applyParentRuntimeAvailability(capabilities.Capabilities)
 	capabilities.HiddenCapabilities = s.hiddenCapabilities(flagSubject(r, acct))
 	writeJSON(w, http.StatusOK, capabilities)
 }
@@ -158,6 +159,37 @@ func (s *server) capabilityRuntimeReady(key string) bool {
 		return s.managedPostgres != nil && s.managedPostgresBindings != nil && s.notif != nil
 	}
 	return true
+}
+
+// applyParentRuntimeAvailability marks a capability unavailable when an
+// ancestor in the catalog is unavailable on this installation: bucket CORS,
+// versioning, lifecycle and the rest were listed as available while
+// object-storage itself was not, and every one of their requests failed
+// (prod hunt 2026-11-21). Only the runtime reason is inherited; a child's
+// own plan list still decides plan access.
+func applyParentRuntimeAvailability(capabilities []api.CapabilityStatus) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		return
+	}
+	parent := make(map[string]string, len(catalog.Capabilities))
+	for _, c := range catalog.Capabilities {
+		parent[c.ID] = c.Parent
+	}
+	runtimeOff := map[string]bool{}
+	for _, c := range capabilities {
+		if !c.Enabled && c.UnavailableReason == api.CapabilityUnavailableRuntime {
+			runtimeOff[c.Key] = true
+		}
+	}
+	for i := range capabilities {
+		for id, depth := parent[capabilities[i].Key], 0; id != "" && depth < 8; id, depth = parent[id], depth+1 {
+			if runtimeOff[id] {
+				applyCapabilityRuntimeAvailability(&capabilities[i], false)
+				break
+			}
+		}
+	}
 }
 
 // Plan restrictions take precedence when both gates deny access. Runtime

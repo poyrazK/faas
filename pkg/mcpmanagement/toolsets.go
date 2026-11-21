@@ -141,6 +141,7 @@ var toolsetOf = map[string]string{
 	"gregale_apply_env_change":                  ToolsetCore,
 	"gregale_promote_deployment":                ToolsetCore,
 	"gregale_plan_rollback":                     ToolsetCore,
+	"gregale_plan_promotion":                    ToolsetCore,
 	"gregale_apply_rollback":                    ToolsetCore,
 	"gregale_get_rollback":                      ToolsetCore,
 	"gregale_request_secret":                    ToolsetCore,
@@ -404,6 +405,10 @@ func defaultConnectionToolsets(maximum []string) []string {
 
 // toolListed reports whether the connection's toolsets include name.
 func (m *management) toolListed(name string) bool {
+	if name == findToolsName {
+		// Listed only when the catalog is deferred (tool_catalog.go).
+		return m.catalog.deferring
+	}
 	if m.opts.agentKey && m.opts.AllowedApps != nil {
 		// App-bound native credentials deliberately cannot enumerate global
 		// inventory or operate on project/environment registries.

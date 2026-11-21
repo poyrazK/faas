@@ -1,0 +1,76 @@
+# ADR-20261121150000: Unversioned S3 backends read the null version
+
+Date: 2026-11-21
+Status: Accepted
+Related: ADR-20261025115958 (deletions wait only for work on their own key),
+ADR-20261029174627 (one provider project per backend)
+
+## Context
+
+The first production smoke of customer object storage on OVH
+(`ovh-bhs-prod-v1`, 2026-11-21) created a bucket, uploaded one object and
+then could not delete it: every delete answered `OperationAborted`.
+
+OVH returns a version ID for every object it stores, even in a bucket whose
+versioning was never enabled. `PutObject` answered
+`x-amz-version-id: 1795265333.741474`, and `ListObjectVersions` listed the
+object under the same ID, while `GetBucketVersioning` reported no status.
+AWS S3, R2 and MinIO answer an unversioned bucket with no header and list
+the object as the `"null"` version.
+
+The adapter reads any ID other than empty or `"null"` as proof that the
+provider keeps history: it sets `recovery_versions_observed` and the
+version references' `versions_observed`. A deletion on a bucket with
+observed versions but no versioning status is refused, because Gregale
+cannot prove what the delete would leave behind
+(`pgstore_object_deletions.go`). Every OVH bucket would therefore become
+undeletable after its first write.
+
+Gregale cannot version buckets on OVH either: the provider has no
+`*Version*` object actions, so the gateway policy
+(`deploy/ovh/customer-object-storage-policies/`) cannot address one version.
+
+## Decision
+
+A backend may declare `"versioning": "unsupported"` in the object-storage
+registry (`BackendConfig.Versioning`). It is valid only for an S3 backend
+without Object Lock. For such a backend the S3 adapter:
+
+1. drops `X-Amz-Version-Id` and `X-Amz-Copy-Source-Version-Id` from every
+   provider response, in the response transport, before the SDK or any
+   caller reads them;
+2. reads every listed object version as the `"null"` version, and resumes a
+   listing by key marker alone (one version per key);
+3. keeps the IDs of listed delete markers, which an unversioned bucket never
+   has, so they still trip the versions-observed latch;
+4. refuses `PutBucketVersioning` with `ErrUnsupported`.
+
+`GetBucketVersioning` still reports the provider's real status. A deletion
+compares it with the recorded status before it dispatches, so versioning
+enabled outside Gregale (with the bucket-admin key) still fails closed.
+
+`ovh-bhs-prod-v1` sets `"versioning": "unsupported"`. The backend
+fingerprint does not include the field, so changing it does not fence
+existing buckets.
+
+## Consequences
+
+- OVH buckets behave like unversioned AWS buckets: overwrites and deletes
+  work, and customers see no version IDs.
+- Object versioning, version listings by ID and Object Lock stay unavailable
+  on that backend. Their capability flags stay unreleased for customers.
+- Rows already marked `versions_observed` by the old reading stay marked.
+  The one such production bucket (the smoke bucket) is cleaned up by hand.
+- Versioning enabled at OVH outside Gregale would keep noncurrent versions
+  of overwritten objects that Gregale neither lists nor bills. The bucket-admin
+  key never leaves the control plane, and deletions refuse the bucket.
+
+## Alternatives considered
+
+- **Trust OVH's IDs.** Every bucket becomes undeletable after its first
+  write.
+- **Look up versioning status on every write.** One more provider request
+  per PUT, for an answer Gregale already controls.
+- **Normalize IDs at each call site.** About fifteen read sites and their
+  response validators would each need the rule; one transport and three
+  listings keep it in one place.

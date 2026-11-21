@@ -35,8 +35,12 @@ func (s *PgStore) GetObjectBucketNotifications(ctx context.Context, account, app
 	}
 	return readObjectNotifications(ctx, s.pool, b)
 }
-func pgNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotificationTarget) (QueueBinding, error) {
-	bindings, err := sqlc.New().ObjectNotificationTargetQueue(ctx, db, sqlc.ObjectNotificationTargetQueueParams{AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID), QueueName: t.QueueName})
+func pgNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.ObjectNotificationTarget, env notificationEnvironment) (QueueBinding, error) {
+	if env.Gone {
+		return QueueBinding{}, ErrNotFound
+	}
+	bindings, err := sqlc.New().ObjectNotificationTargetQueue(ctx, db, sqlc.ObjectNotificationTargetQueueParams{AccountID: mustPgUUID(t.AccountID), AppID: mustPgUUID(t.AppID), QueueName: t.QueueName,
+		Scope: env.Scope, EnvironmentID: nullablePgUUID(env.ID)})
 	if err != nil {
 		return QueueBinding{}, mapErr(err)
 	}
@@ -97,6 +101,13 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 	if request != nil {
 		validateRules = managedObjectNotificationRules(next)
 	}
+	env, err := pgObjectBucketNotificationEnvironment(ctx, tx, b.ID)
+	if err != nil {
+		return p, err
+	}
+	if env.Gone && len(validateRules) > 0 {
+		return p, ErrObjectNotificationInvalid
+	}
 	for _, r := range validateRules {
 		t, e := notificationTarget(r, b)
 		if e != nil || !notificationEntitled(owner.Plan, t.Kind) {
@@ -104,6 +115,11 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 		}
 		if _, e = q.ObjectNotificationTargetApp(ctx, tx, sqlc.ObjectNotificationTargetAppParams{ID: mustPgUUID(t.AppID), AccountID: mustPgUUID(account)}); e != nil {
 			return p, mapNotificationDestinationError(e)
+		}
+		if t.Kind == "function" && env.ID != "" {
+			if _, e = q.ObjectNotificationLockQueueEnvironment(ctx, tx, sqlc.ObjectNotificationLockQueueEnvironmentParams{EnvironmentID: mustPgUUID(env.ID), DeploymentScope: env.Scope, AppID: mustPgUUID(t.AppID), AccountID: mustPgUUID(account)}); e != nil {
+				return p, mapNotificationDestinationError(e)
+			}
 		}
 		if producer := objectNotificationProducer(b); producer != "" {
 			inReach, e := q.ObjectNotificationTargetInReach(ctx, tx, sqlc.ObjectNotificationTargetInReachParams{AccountID: mustPgUUID(account), Producer: producer, TargetAppID: t.AppID})
@@ -115,12 +131,16 @@ func (s *PgStore) changeObjectBucketNotifications(ctx context.Context, account, 
 			}
 		}
 		if t.Kind == "queue" {
-			if _, e = pgNotificationQueue(ctx, tx, t); e != nil {
+			if _, e = pgNotificationQueue(ctx, tx, t, env); e != nil {
 				return p, mapNotificationDestinationError(e)
 			}
 		}
 	}
 	if sameObjectNotificationPolicy(p, next) {
+		// An explicit write of identical rules still clears a clone's pause.
+		if err := q.ObjectNotificationsClearClonePause(ctx, tx, mustPgUUID(bucket)); err != nil {
+			return p, mapErr(err)
+		}
 		return p, tx.Commit(ctx)
 	}
 	if p.Revision >= api.MaxObjectStoragePolicyValue {
@@ -154,12 +174,21 @@ func captureObjectNotifications(ctx context.Context, db sqlc.DBTX, account, iden
 	if pgUUIDString(r.AccountID) != account {
 		return ErrObjectNotificationInvalid
 	}
+	if r.ClonePaused {
+		return nil
+	}
 	p, err := decodeObjectNotificationPolicy(d.BucketID, r.Revision, r.Rules)
 	if err != nil {
 		return err
 	}
 	b := ObjectBucket{ID: d.BucketID, AccountID: account, AppID: pgUUIDString(r.AppID), Name: r.Name, Region: r.Region}
-	recipients, err := notificationRecipients(b, p, typ, d, func(t api.ObjectNotificationTarget) (QueueBinding, error) { return pgNotificationQueue(ctx, db, t) })
+	env, err := pgObjectBucketNotificationEnvironment(ctx, db, d.BucketID)
+	if err != nil {
+		return err
+	}
+	recipients, err := notificationRecipients(b, env, p, typ, d, func(t api.ObjectNotificationTarget, env notificationEnvironment) (QueueBinding, error) {
+		return pgNotificationQueue(ctx, db, t, env)
+	})
 	if err != nil || len(recipients) == 0 {
 		return err
 	}
@@ -206,6 +235,14 @@ func (s *PgStore) EnqueueObjectNotification(ctx context.Context, in Invocation, 
 	}
 	if !notificationEntitled(owner.Plan, t.Kind) {
 		return ErrObjectNotificationCapacity
+	}
+	// A function target of a stage bucket runs as the stage's work while the
+	// stage exists (ADR-20261104120000 amendment 2026-11-16).
+	if t.Kind == "function" && snapshot.EnvironmentID != "" {
+		if _, e := q.ObjectNotificationLockQueueEnvironment(ctx, tx, sqlc.ObjectNotificationLockQueueEnvironmentParams{EnvironmentID: mustPgUUID(snapshot.EnvironmentID), DeploymentScope: snapshot.DeploymentScope, AppID: mustPgUUID(in.AppID), AccountID: mustPgUUID(in.AccountID)}); e != nil {
+			return mapErr(e)
+		}
+		in.DeploymentScope = snapshot.DeploymentScope
 	}
 	if t.Kind == "queue" {
 		binding, e := pgCapturedNotificationQueue(ctx, tx, t, snapshot.QueueBindingID)
@@ -259,4 +296,25 @@ func pgCapturedNotificationQueue(ctx context.Context, db sqlc.DBTX, t api.Object
 		return QueueBinding{}, ErrNotFound
 	}
 	return binding, nil
+}
+
+// pgObjectBucketNotificationEnvironment is the bucket's environment for its
+// notification rules: production, a stage, or a stage that is gone.
+func pgObjectBucketNotificationEnvironment(ctx context.Context, db sqlc.DBTX, bucketID string) (notificationEnvironment, error) {
+	q := sqlc.New()
+	id, err := q.ObjectBucketEventEnvironment(ctx, db, mustPgUUID(bucketID))
+	if errors.Is(mapErr(err), ErrNotFound) || err == nil && id == "" {
+		return notificationEnvironment{}, nil
+	}
+	if err != nil {
+		return notificationEnvironment{}, mapErr(err)
+	}
+	slug, err := q.ObjectNotificationEnvironmentSlug(ctx, db, mustPgUUID(id))
+	if errors.Is(mapErr(err), ErrNotFound) {
+		return notificationEnvironment{Gone: true}, nil
+	}
+	if err != nil {
+		return notificationEnvironment{}, mapErr(err)
+	}
+	return notificationEnvironment{Scope: slug, ID: id}, nil
 }

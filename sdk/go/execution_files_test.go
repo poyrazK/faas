@@ -93,7 +93,7 @@ func TestExecutionFilesEmptyUploadHasFixedLength(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = client.UploadExecutionFile(t.Context(), id, bytes.NewReader(nil), 0, digest); err != nil {
+	if _, err = client.UploadExecutionFile(context.Background(), id, bytes.NewReader(nil), 0, digest); err != nil {
 		t.Fatal(err)
 	}
 }

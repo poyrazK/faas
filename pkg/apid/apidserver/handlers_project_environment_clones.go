@@ -233,6 +233,10 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return cloneSourceRefusal("source.work_policies", "work policies scoped to the source environment", "isolation_unavailable")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneCronCaptureUnavailable):
 		return cloneSourceRefusal("source.crons", "crons only on workloads deployed in the source environment", "workload_not_deployed")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneEventSubscriptionCaptureUnavailable):
+		return cloneSourceRefusal("source.event_subscriptions", "event subscriptions only on workloads deployed in the source environment", "workload_not_deployed")
+	case errors.Is(err, state.ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable):
+		return cloneSourceRefusal("source.bucket_notifications", "bucket notification destinations among the copied workloads and their queues", "object_notification_destination_unavailable")
 	case errors.Is(err, state.ErrNotFound):
 		return projectEnvironmentNotFound(projectSlug, source)
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):

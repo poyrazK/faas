@@ -37,5 +37,11 @@ func (e *PrivateExecutor) CleanupHostedTaskRehearsal(ctx context.Context, accoun
 	if provisioner == nil {
 		return state.ErrConflict
 	}
-	return provisioner.Cleanup(ctx, accountID, runID)
+	if err := provisioner.Cleanup(ctx, accountID, runID); err != nil {
+		return err
+	}
+	if e.opts.TaskRehearsalRunner != nil {
+		return e.opts.TaskRehearsalRunner.RemoveRunSources(ctx, runID)
+	}
+	return nil
 }

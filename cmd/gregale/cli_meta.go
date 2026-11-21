@@ -540,6 +540,7 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-node-tasks",
 	"mcp-go",
 	"mcp-python",
 	"customer-operation-export",
@@ -3103,6 +3104,10 @@ var cliCommands = []cliCommand{
 		HelpNotes: []string{
 			"Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.",
 			resourceProfileHelpNote,
+			// One line each: compact help stays within 30 lines, so the
+			// project and rollout flags are named here, not listed.
+			"Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.",
+			"Retry a project's failed workloads: gregale release attempt retry SESSION_ID",
 		},
 		Subcommands: []cliSub{deploymentCheckCommand(), {Name: "resolve-contract", Short: "Record checks and a verified roll-forward after failed cleanup", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "replacement-attempt", Short: "verified corrected deployment attempt", Value: "ID"}, {Name: "task-id", Short: "inspected original cleanup task", Value: "ID"}, {Name: "generation", Short: "inspected cleanup generation", Value: "N"}, {Name: "request-id", Short: "reuse after a lost recovery response", Value: "ID"}, {Name: "evidence-hash", Short: "SHA256 of private SQL/execution evidence", Value: "SHA256"}, {Name: "database-state-checked", Short: "attest database inspection/repair", Bool: true}, {Name: "execution-quiescent", Short: "attest original cleanup execution has stopped", Bool: true}}}, {Name: "contract", Short: "Run planned schema cleanup after retained versions and work drain", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this contract identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "status", Short: "Inspect an atomic project attempt and available recovery actions", Positionals: []string{"ATTEMPT_ID"}}, {Name: "abort", Short: "Stop a progressive rollout and request guarded baseline restoration", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "recover", Short: "Retry baseline health verification for a blocked progressive deploy", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "retry", Short: "Rebuild confirmed failed workloads from a saved project deploy", Positionals: []string{"SESSION_ID"}, Examples: []string{"gregale release attempt retry SESSION_ID --path . --source=worktree --yes", "gregale release attempt retry SESSION_ID --tarball source.tar.gz --yes"}, Flags: []cliFlag{
 			{Name: "tarball", Short: "source archive to rebuild", Value: "PATH"},
@@ -4842,7 +4847,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
-			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons and event subscriptions the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons, event subscriptions and bucket notifications the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
@@ -5637,9 +5642,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "keys", Short: "Manage org API keys", Subcommands: []cliSub{
 				{Name: "list", Short: "List org API keys", Flags: []cliFlag{orgSlugFlag}},
-				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Flags: []cliFlag{
+				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Positionals: []string{"<label>"}, Flags: []cliFlag{
 					orgSlugFlag,
-					{Name: "label", Short: "key label", Value: "TEXT", Req: true},
+					{Name: "label", Short: "key label (same as the positional label; kept for scripts)", Value: "TEXT"},
 					{Name: "scopes", Short: "comma-separated scopes (default admin)", Value: "SCOPES"},
 					{Name: "projects", Short: "limit an agent key to these projects (comma-separated slugs)", Value: "SLUG,..."},
 					{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},
@@ -6839,6 +6844,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "action", Short: "recover action", ClosedSet: []string{"advance", "promote", "abort"}, Req: true},
 			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)", Value: "text"},
+			{Name: "expected-step", Short: "observed canary step; refuse if the canary moved (advance, promote)", Value: "N"},
 			{Name: "deployment", Short: "exact deployment for abort", Value: "ID|vN"},
 			{Name: "expected-predecessor", Short: "exact retained predecessor to restore (requires --deployment)", Value: "ID|vN"},
 		},

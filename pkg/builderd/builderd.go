@@ -7,7 +7,9 @@
 // produced app layer to imaged via the existing snapshot_prime handshake.
 //
 // Build slots (CLAUDE.md "Builder slots"):
-//   - 1 slot — lives in the 5 GiB faas-cp-build.slice parent fence.
+//   - The node's provisioned reserved slots (FAAS_BUILDER_RESERVED_SLOTS,
+//     default 1) — they live in faas-cp-build.slice, which node_join sizes
+//     for exactly that many builders (ADR-20261118154632 amendment 1).
 //   - Local overcommit is disabled; another compute node adds capacity.
 //
 // The VM spawn itself is `//go:build metal`; this file holds the pure-Go
@@ -24,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -48,8 +51,8 @@ type Notifier interface {
 
 // ResidencyProbe reports live tenant-RAM residency. schedd's Ledger is the
 // authoritative source; builderd retains this probe for admission telemetry
-// and future capacity-aware placement. A nil probe is safe for the current
-// single-slot allocator.
+// and future capacity-aware placement. A nil probe is safe: it keeps only the
+// reserved slots open.
 type ResidencyProbe interface {
 	ResidentMB() int
 }
@@ -66,8 +69,8 @@ type ResidencyProbe interface {
 var ErrNotMetal = errors.New("builderd: VM spawn is metal-only; use a fake VM in unit tests")
 
 // ErrNoSlot is returned when the slot allocator (DecideSlot) rules
-// the build out — the single local builder slot is fully
-// consumed by other in-flight builds (spec §14). processClaimedBuild
+// the build out — every local builder slot is consumed by other
+// in-flight builds (spec §14). processClaimedBuild
 // REQUEUES the row (preserving FIFO position) before returning
 // ErrNoSlot, so the durability-net worker (cmd/builderd/main.go::workerLoop)
 // and any later LISTEN-driven caller both observe the row as
@@ -212,9 +215,10 @@ type Builderd struct {
 	// ResidencyProbe rig. nil falls back to DecideSlot(b.resid, …)
 	// inside processClaimedBuild.
 	slotDecide func(ResidencyProbe, int) SlotDecision
-	// slotMu and activeSlots enforce the process-wide single builder budget
-	// required by the 5 GiB production parent cgroup. DecideSlot still reports
-	// future opportunistic eligibility but cannot bypass this host fence.
+	// slotMu and activeSlots enforce the process-wide builder budget the
+	// node's faas-cp-build.slice is sized for (its reserved slots).
+	// DecideSlot still reports opportunistic eligibility but cannot bypass
+	// this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
 	// activeReserved counts the slots in faas-cp-build.slice (the fixed
@@ -224,6 +228,13 @@ type Builderd struct {
 	activeReserved int
 	activeBorrowed int
 	borrowedBuilds map[string]*borrowedBuild
+	// provisionedReserved is the node's reserved builder slots
+	// (FAAS_BUILDER_RESERVED_SLOTS; 0 means one), and sliceBuilds marks the
+	// builds in faas-cp-build.slice that shared it with another builder, whose
+	// slice-wide oom_kill delta is then not theirs alone
+	// (ADR-20261118154632 amendment 1). sliceBuilds is under slotMu.
+	provisionedReserved int
+	sliceBuilds         map[string]*atomic.Bool
 	// elastic is elastic builder slots; nil or off keeps the fixed
 	// allocator.
 	elastic *ElasticSlots
@@ -1205,6 +1216,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	vmReq := VMRequest{
 		Borrowed:               slot.Label == slotLabelBorrowed,
+		SliceShared:            b.sliceSharedProbe(build.ID),
 		BuildDependencyDigest:  buildDependencyDigest,
 		PublicBuildURLs:        publicURLs,
 		DockerfileBuild:        dockerfileBuild,

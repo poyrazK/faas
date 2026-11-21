@@ -429,11 +429,16 @@ validation and includes the option in its copy-paste start command.
 
 `--postgres` provisions one development-class, scale-to-zero PostgreSQL
 database for this local workspace and binds its sealed credential to the
-developer app as `DATABASE_URL`. The database is reused on later starts, and
-the binding is refreshed asynchronously if the provider is still provisioning.
-The safe database and binding states appear in human output and `--json`
-receipts; credentials and connection URLs never do. `--stop` and the developer
-lease clean up the binding and database together.
+developer app as `DATABASE_URL`. That is a `read_write` login, which cannot
+create or change tables, so the database also gets a `migration` credential
+as `MIGRATION_DATABASE_URL`. As in production, only the app's release task
+receives it: create your schema in a release command (for example
+`release: npx prisma migrate deploy` in a Procfile), and the serving app and
+`--postgres-seed` keep `DATABASE_URL`. The database is reused on later starts,
+and the bindings are refreshed asynchronously if the provider is still
+provisioning. The safe database and binding states appear in human output and
+`--json` receipts; credentials and connection URLs never do. `--stop` and the
+developer lease clean up the bindings and database together.
 
 A developer database counts toward your plan's managed PostgreSQL database
 limit, together with your other databases (see
@@ -441,7 +446,12 @@ limit, together with your other databases (see
 `--postgres` fails before anything is created; delete a database you no longer
 need, stop another developer environment that has one, or run without
 `--postgres`. `--postgres` provides `DATABASE_URL`, so it cannot be combined
-with a `DATABASE_URL` in `--env-file` or `--service-override-file`.
+with a `DATABASE_URL` in `--env-file` or `--service-override-file`. It also
+stops (`dev_postgres_database_url_secret`) when the developer environment
+already has a `DATABASE_URL` or `MIGRATION_DATABASE_URL` secret, for example
+from an earlier `--env-file` run: remove it with
+`gregale env unset --app <dev app> <KEY>` and start again. New developer databases use the default PostgreSQL major
+(17); one created earlier keeps its major.
 
 `--postgres-seed` (or `dev.postgres_seed`) loads development data into that
 database. The CLI never receives database credentials, so the command runs

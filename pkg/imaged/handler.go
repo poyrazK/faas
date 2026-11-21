@@ -2277,7 +2277,7 @@ func (h *Handler) handoffSnapshotPrime(ctx context.Context, app state.App, dep s
 		}
 		h.retireOutpacedReleases(ctx, dep)
 		wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
-		if err != nil || wait {
+		if err != nil || wait || state.HostedTaskRehearsalMigrationRelease(task) {
 			return err
 		}
 	}
@@ -2467,7 +2467,7 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 		return fmt.Errorf("imaged: release-gated deployment %s is in %q", dep.ID, dep.Status)
 	}
 	wait, err := h.applyReleaseTaskOutcome(ctx, dep, task)
-	if err != nil || wait {
+	if err != nil || wait || state.HostedTaskRehearsalMigrationRelease(task) {
 		return err
 	}
 	return h.notifySnapshotPrime(ctx, dep.AppID, dep.ID)

@@ -11,7 +11,10 @@ T = TypeVar("T", bound="ResumeEnvironmentAutomationResponse")
 
 @_attrs_define
 class ResumeEnvironmentAutomationResponse:
-    """Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone."""
+    """Crons, event subscriptions and bucket notifications enabled by resuming a stage's automation after a full
+    environment clone.
+
+    """
 
     environment: str
     """Stage whose paused automation was enabled."""
@@ -23,6 +26,10 @@ class ResumeEnvironmentAutomationResponse:
     """Number of event subscriptions enabled."""
     event_subscription_ids: list[str]
     """Event subscriptions enabled by this call."""
+    bucket_notifications_resumed: int
+    """Number of buckets whose copied notification rules were resumed."""
+    bucket_ids: list[str]
+    """Buckets whose notification rules this call resumed."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -36,6 +43,10 @@ class ResumeEnvironmentAutomationResponse:
 
         event_subscription_ids = self.event_subscription_ids
 
+        bucket_notifications_resumed = self.bucket_notifications_resumed
+
+        bucket_ids = self.bucket_ids
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -45,6 +56,8 @@ class ResumeEnvironmentAutomationResponse:
                 "cron_ids": cron_ids,
                 "event_subscriptions_resumed": event_subscriptions_resumed,
                 "event_subscription_ids": event_subscription_ids,
+                "bucket_notifications_resumed": bucket_notifications_resumed,
+                "bucket_ids": bucket_ids,
             }
         )
 
@@ -63,12 +76,18 @@ class ResumeEnvironmentAutomationResponse:
 
         event_subscription_ids = cast(list[str], d.pop("event_subscription_ids"))
 
+        bucket_notifications_resumed = d.pop("bucket_notifications_resumed")
+
+        bucket_ids = cast(list[str], d.pop("bucket_ids"))
+
         resume_environment_automation_response = cls(
             environment=environment,
             crons_resumed=crons_resumed,
             cron_ids=cron_ids,
             event_subscriptions_resumed=event_subscriptions_resumed,
             event_subscription_ids=event_subscription_ids,
+            bucket_notifications_resumed=bucket_notifications_resumed,
+            bucket_ids=bucket_ids,
         )
 
         resume_environment_automation_response.additional_properties = d

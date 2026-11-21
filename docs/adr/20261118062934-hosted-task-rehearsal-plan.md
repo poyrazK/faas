@@ -52,3 +52,34 @@ Failure cleanup also removes the app-local credentials and tombstones the
 workloads. A restarted executor can clean the same account and run without
 recovering archives or credentials. Claim replay never allocates resources
 or takes ownership of an existing run.
+
+## Candidate builds and guest migration
+
+The private runner checks for the reviewed Node starter's migration entry
+before spending the approval. It submits the worker archive to the normal
+isolated builder under the migration workload's identity and pins
+`node tasks-migrate.js apply` as its contained release command. That workload
+can run the release command and is ineligible for priming an ordinary app VM.
+The starter receives the reserved queue namespace, the disposable schema
+owner URL and newly generated Task keys. The exact archive and all three
+build identities are tied to the original run, and every deployment sets
+traffic explicitly to zero.
+
+The runner verifies the successful, retired guest command receipt against
+the exact run, deployment, command and build artifact. It then retires the
+migration deployment and removes its credentials. Once PostgreSQL grants
+the restricted web, worker and observer logins, it submits the reviewed web
+and worker archives with independent runtime credentials. The two runtime
+builds must succeed before the runner returns their deployment identities.
+Build and migration completion leave runtime protocol and Task smoke
+evidence to the next stage.
+
+The reserved workload lease bounds the operation. Abort cleanup and the
+existing preview teardown recover the owned spool and source objects and
+app-local ephemeral credentials. The existing fixture teardown drops the
+disposable database and roles. An approval replay never resumes an
+interrupted build or migration.
+
+Roll out the imaged and scheduler prime fences before connecting a caller to
+the private runner. These owners must agree that the migration workload may
+execute its release task without starting an ordinary app VM.

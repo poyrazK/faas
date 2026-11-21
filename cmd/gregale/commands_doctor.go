@@ -1204,6 +1204,8 @@ func renderDoctorHumanExit(w io.Writer, rep doctorReport, failing bool) {
 		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy.")
 	} else {
 		_, _ = fmt.Fprintln(w)
-		_, _ = fmt.Fprintln(w, "Fix the above findings before deploy, or run with --strict to fail in CI.")
+		// Only warnings: deploy goes ahead, and `deploy --dry-run` follows
+		// this with "No blocking findings" (prod hunt 2026-11-21).
+		_, _ = fmt.Fprintln(w, "The warnings above do not block a deploy; review them, or run with --strict to fail on them in CI.")
 	}
 }

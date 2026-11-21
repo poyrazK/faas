@@ -420,6 +420,17 @@ func applyAppScaleSavedPlan(slug string, plan appScaleSavedPlan) int {
 	return 0
 }
 
+// appRequestConcurrencyBound is the largest per_instance_concurrency the API
+// accepts for app: the concurrency_per_vm it reports, which follows the
+// platform's app_request_concurrency_max (ADR-20261101215228), else the
+// plan's compiled bound from an apid that reports none.
+func appRequestConcurrencyBound(app api.AppResponse, limits api.Limits) int {
+	if app.ConcurrencyPerVMBound > 0 {
+		return app.ConcurrencyPerVMBound
+	}
+	return limits.ConcurrencyPerVMBound
+}
+
 func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, plan api.Plan, limits api.Limits) []string {
 	var warnings []string
 	maxVMs := app.MaxConcurrency
@@ -488,8 +499,8 @@ func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, pla
 		if policy.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 			warnings = append(warnings, fmt.Sprintf("Cold-wake queue wait exceeds the limit of %d seconds.", api.WakeQueueMaxWaitSeconds))
 		}
-		if policy.PerInstanceConcurrency > limits.ConcurrencyPerVMBound {
-			warnings = append(warnings, fmt.Sprintf("Requests per instance %d exceeds this plan's concurrency per VM of %d.", policy.PerInstanceConcurrency, limits.ConcurrencyPerVMBound))
+		if bound := appRequestConcurrencyBound(app, limits); policy.PerInstanceConcurrency > bound {
+			warnings = append(warnings, fmt.Sprintf("Requests per instance %d exceeds the maximum of %d.", policy.PerInstanceConcurrency, bound))
 		}
 	}
 	if minInstances > 0 && !limits.MinInstancesAllowed {
@@ -500,6 +511,13 @@ func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, pla
 	}
 	if minInstances > limits.MaxMinInstances {
 		warnings = append(warnings, fmt.Sprintf("Requested minimum instances %d exceeds the plan limit of %d.", minInstances, limits.MaxMinInstances))
+	}
+	// The API refuses an idle timeout outside the reaper's range; the
+	// preview showed `--idle 5` as a clean change (prod hunt 2026-11-21).
+	if request.IdleTimeoutS != nil && *request.IdleTimeoutS != 0 {
+		if floor, ceiling := limits.IdleTimeoutBounds(); *request.IdleTimeoutS < floor || *request.IdleTimeoutS > ceiling {
+			warnings = append(warnings, fmt.Sprintf("Idle timeout %d s is outside %d..%d s for this plan; 0 uses the plan default.", *request.IdleTimeoutS, floor, ceiling))
+		}
 	}
 	if minInstances > maxVMs {
 		warnings = append(warnings, fmt.Sprintf("Requested minimum instances %d exceeds the app's maximum concurrency of %d.", minInstances, maxVMs))

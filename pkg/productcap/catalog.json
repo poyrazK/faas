@@ -796,6 +796,7 @@
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/referrals/checkout",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
         "/v1/usage",
@@ -3267,6 +3268,7 @@
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
@@ -4474,6 +4476,23 @@
       "parent": "service-bindings",
       "consumers": [
         "githubd"
+      ]
+    },
+    {
+      "id": "product-analytics",
+      "name": "Product analytics",
+      "category": "observability",
+      "description": "Keep raw track() events and serve event series, funnels, retention, cohorts and request breakdowns by a flag's served value.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261117084505-product-analytics-events-funnels-retention",
+      "acceptance_test": "pkg/apid/insights/insights_test.go::TestFunnelOrderWindowAndFlagBreakdown",
+      "parent": "feature-flags",
+      "routes": [
+        "/v1/projects/{}/environments/{}/insights/events",
+        "/v1/projects/{}/environments/{}/insights/funnel",
+        "/v1/projects/{}/environments/{}/insights/requests",
+        "/v1/projects/{}/environments/{}/insights/retention"
       ]
     },
     {
