@@ -122,6 +122,7 @@ func TestReleasesConnectionsEligibility(t *testing.T) {
 	}
 }
 
+// adr: 20261121160000
 func TestInheritedReleaseWarnLimiter(t *testing.T) {
 	w := &warnLimiter{every: time.Minute}
 	start := time.Unix(1_000, 0)
