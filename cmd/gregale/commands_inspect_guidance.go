@@ -18,7 +18,13 @@ func renderInspectFailureDetails(w io.Writer, summary inspectSummary) {
 	}
 	_, _ = fmt.Fprintln(w, "\nFailure details")
 	renderInspectFailureOverview(w, &failure)
-	printDeploymentLogCommand(w, summary.App.Slug, failure.DeploymentID)
+	if failure.CrashedSince != "" {
+		// The deployment log ends with the crash verdict and never holds the
+		// app's own output (prod hunt 2026-11-21).
+		_, _ = fmt.Fprintf(w, "  What the app printed before it exited (POSIX shells):\n    %s logs %s --since %s\n", recoveryCLI(), recoveryArgument(summary.App.Slug), failure.CrashedSince)
+	} else {
+		printDeploymentLogCommand(w, summary.App.Slug, failure.DeploymentID)
+	}
 	_, _, primary := inspectAttention(summary)
 	details := recoveryCLI() + " deployment get " + recoveryArgument(failure.DeploymentID)
 	if details != primary {

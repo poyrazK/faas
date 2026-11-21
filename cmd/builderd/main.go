@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -120,11 +121,22 @@ func builderNotificationChannels() []string {
 const (
 	// The durable worker remains the recovery path, so the fast path can use a
 	// small fixed queue without allowing notification volume to become process
-	// memory. Two workers match builderd's maximum VM build concurrency while
-	// still allowing one worker to handle a cache hit or cancellation promptly.
+	// memory. Two workers match a one-slot node's maximum VM build concurrency
+	// while still allowing one worker to handle a cache hit or cancellation
+	// promptly; a node with more reserved slots runs one per reserved slot
+	// (notificationWorkers).
 	buildNotificationQueueCapacity = 64
 	buildNotificationWorkers       = 2
 )
+
+// notificationWorkers is the build and cancellation notification worker
+// count for a node with reserved guaranteed builder slots: one per reserved
+// slot, and never fewer than buildNotificationWorkers. With the durable
+// worker that covers the fixed allocator's reserved slots plus its
+// opportunistic one.
+func notificationWorkers(reserved int) int {
+	return max(buildNotificationWorkers, reserved)
+}
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// DEPLOY-1 / ADR-075 capdecl gate. builderd is unprivileged —
@@ -168,6 +180,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return fmt.Errorf("builderd: source storage: %w", err)
 		}
 		log.Info("source storage enabled", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
+	}
+	var environmentStorage storage.StorageBackend
+	if os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1" {
+		environmentStorage, err = storage.BackendFromEnvContext(ctx)
+		if err != nil {
+			return fmt.Errorf("builderd: Run environment storage: %w", err)
+		}
 	}
 	// Gate-B box-role gate. builderd is a compute-only daemon —
 	// it refuses to start under RoleControlPlane. The role is
@@ -352,7 +371,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// "default-local" in LoadConfig; multi-node deployments
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
-	}, log).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry()).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
+	}, log).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry()).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithExecutionEnvironments(os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1", environmentStorage).WithValidatorBuild(validatorArtifacts.Build)
+	// ADR-20261118154632 amendment 1: the guaranteed builds this node's build
+	// slice and tenant fence are sized for.
+	b.WithReservedSlots(cfg.BuilderReservedSlots)
+	log.Info("builderd: reserved builder slots", "reserved", cfg.BuilderReservedSlots, "env", builderslots.ReservedSlotsEnv)
 	publisher, err := loadBuildPublisher()
 	if err != nil {
 		return err
@@ -416,7 +439,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer stopRun()
 	notificationCtx, stopNotificationWorkers := context.WithCancel(runCtx)
 	defer stopNotificationWorkers()
-	buildQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
+	buildQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, notificationWorkers(cfg.BuilderReservedSlots), func(workCtx context.Context, buildID string) {
 		if _, err := b.ProcessOne(workCtx, buildID); err != nil {
 			if errors.Is(err, builderdpkg.ErrCoalesced) {
 				log.Debug("builderd: build deferred behind an identical build", "build", buildID)
@@ -428,7 +451,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			log.Warn("builderd: process", "build", buildID, "err", err)
 		}
 	})
-	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
+	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, notificationWorkers(cfg.BuilderReservedSlots), func(workCtx context.Context, buildID string) {
 		cancelBuild(workCtx, driver, ops, buildID, log)
 	})
 	registerIDWorkQueueMetrics(ops.Registry(), buildQueue, cancelQueue)

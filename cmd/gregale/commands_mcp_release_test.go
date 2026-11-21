@@ -401,7 +401,7 @@ func TestMCPReleasePolicyPreflight(t *testing.T) {
 }
 
 func TestMCPTaskDefaultsMatchAPI(t *testing.T) {
-	body, err := os.ReadFile("templates/mcp-node/task-limits.json")
+	body, err := os.ReadFile("templates/mcp-node-tasks/task-limits.json")
 	if err != nil {
 		t.Fatal(err)
 	}

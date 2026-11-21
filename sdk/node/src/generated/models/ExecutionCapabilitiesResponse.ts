@@ -3,7 +3,11 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ExecutionCapabilityLimits } from './ExecutionCapabilityLimits.js';
+import type { ExecutionClassCapability } from './ExecutionClassCapability.js';
+import type { ExecutionEnvironmentLimits } from './ExecutionEnvironmentLimits.js';
+import type { ExecutionFileLimits } from './ExecutionFileLimits.js';
 import type { ExecutionProfileCapability } from './ExecutionProfileCapability.js';
+import type { RunControlCapabilities } from './RunControlCapabilities.js';
 /**
  * Supported Runs admission contract for the authenticated account.
  * admission_available reports plan entitlement and the control-plane
@@ -12,6 +16,25 @@ import type { ExecutionProfileCapability } from './ExecutionProfileCapability.js
  *
  */
 export type ExecutionCapabilitiesResponse = {
+  /**
+   * New Run artifact deliveries are currently admitted into configured app upload routes.
+   */
+  artifact_deliveries?: boolean;
+  /**
+   * Whether new version-pinned task pipelines and batches are enabled.
+   */
+  task_pipelines?: boolean;
+  run_controls?: RunControlCapabilities;
+  custom_environments?: boolean;
+  environment_runtimes?: Array<'node22' | 'node24' | 'python312' | 'python313'>;
+  environment_limits?: ExecutionEnvironmentLimits;
+  execution_classes?: Array<ExecutionClassCapability>;
+  /**
+   * New standalone contract and stored-file admissions are enabled.
+   */
+  extended_admissions?: boolean;
+  file_limits?: ExecutionFileLimits;
+  max_contract_schema_bytes?: number;
   /**
    * Account plan identifier.
    */

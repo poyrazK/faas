@@ -78,6 +78,9 @@ fleet:
       entry_ipv4: 51.222.39.227
       # Samsung PM9A3 960 GB, the disk the OS is not on.
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104409
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
     - name: bhs-3
       role: compute-only
       address: bhs-3.gregale.dev:50051
@@ -87,6 +90,9 @@ fleet:
       # Additional IP routed to ns5012238, as on bhs-2.
       entry_ipv4: 51.222.39.228
       storage_device: /dev/disk/by-id/nvme-SAMSUNG_MZQL2960HCJR-00A07_S64FNE0T104422
+      # Two guaranteed builder slots (ADR-20261118154632 amendment 1): 16
+      # threads and 128 GB carry two 2-vCPU builders beside tenants.
+      builder_reserved_slots: 2
 
 daemons:
   schedd:
@@ -251,15 +257,20 @@ public_edge:
   # apply the per-client limits themselves. Names not listed under dns stay
   # on the tunnel, untouched.
   front: none
-  # ADR-20261103163954 pilot: edgednsd keeps direct-pilot.gregale.dev's
+  # ADR-20261103163954 pilot: edgednsd keeps direct-pilot.gregale.app's
   # DNS-only A records (TTL 60) pointed at the edges that are ready. An edge
   # is ready only once it has loaded the certificate below, so no record
   # points at an edge that cannot serve it. edgednsd runs on the control
   # plane, so one fleet writes these records at a time: GCP's until the
   # switchover promotes this one.
+  # ADR-20261112114642: direct entry lives in the apps zone (gregale.app)
+  # only, so no compute node holds a browser-trusted key for the platform
+  # domain (gregale.dev: site, dashboard, api., s3., operations.). The
+  # gregale.dev pilot record edgednsd kept is removed by hand at the move
+  # (docs/runbooks/AppsDomainMove.md): edgednsd manages only these names.
   dns:
-    zone_id: c0baeb8d33b48ec1704766edcb695394
-    names: ["direct-pilot.gregale.dev"]
+    zone_id: c04f636b34d3c83b7e05e4327cac75e7
+    names: ["direct-pilot.gregale.app"]
     live: true
     # §3: edgednsd orders the apps domains' certificate from Let's Encrypt
     # with DNS-01 and stores it with its key sealed to the edge-tls seal
@@ -267,20 +278,18 @@ public_edge:
     # is retried after 1 h, doubling to 12 h; meanwhile the pilot host has no
     # records and nothing else changes.
     certificate:
-      names: ["*.gregale.dev"]
+      names: ["*.gregale.app"]
       ca: letsencrypt
       serve: letsencrypt
-      # Pages on a publicly trusted certificate under gregale.dev that
-      # edgednsd did not issue. Allowed, as Certificate Transparency listed
-      # them on 2026-11-04: Cloudflare's Universal SSL certificate
-      # (gregale.dev, *.gregale.dev), which the proxied platform hosts use, a
-      # certificate for the apex alone, and operations.gregale.dev's (Vercel).
-      # sales.gregale.dev, the sales frontend on Vercel
-      # (ADR-20261111113147), was added on 2026-11-13: its certificate
-      # (Google Trust Services, issued 2026-11-12) is the one the site serves.
+      # Pages on a publicly trusted certificate under gregale.app that
+      # edgednsd did not issue. Allowed: Cloudflare's Universal SSL
+      # certificate (gregale.app, *.gregale.app), which the proxied app hosts
+      # on the tunnel use. The watch reads one domain; it followed direct
+      # entry from gregale.dev, whose hosts no compute node can now answer
+      # for.
       transparency:
-        domain: gregale.dev
-        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev", "sales.gregale.dev"]
+        domain: gregale.app
+        allow_names: ["gregale.app", "*.gregale.app"]
 
 # Request- and wake-path switches on the compute nodes, each measured on
 # production by hand before it moved here (2026-11-06): the node journals
@@ -324,11 +333,21 @@ log_archive:
 # post-deployment monitoring gate qualifies releases on these results. Keep
 # cron and synthetic checks off the probe app so it parks between probes.
 serving_probes:
-  urls: ["https://serving-probe.gregale.dev/"]
+  # gregale.app since the apps-domain move (ADR-20261026100000): the
+  # gregale.dev name is an alias that redirect mode will answer with a 308.
+  urls: ["https://serving-probe.gregale.app/"]
   expected_body: gregale-serving-probe-ok
 
 dns:
-  apps_domain: gregale.dev
+  # ADR-20261026100000: apps (and PR and deployment previews) move to
+  # gregale.app; the site, dashboard, API, emails and webhooks stay on
+  # gregale.dev, which keeps serving the old app URLs as an alias.
+  # docs/runbooks/AppsDomainMove.md. Switch the alias to redirect only after
+  # customers have moved.
+  platform_domain: gregale.dev
+  apps_domain: gregale.app
+  deploy_domain: gregale.app
+  apps_domain_aliases: [gregale.dev]
   mode: cloudflare
   # ADR-20261103172551: the control plane's platform site admits Cloudflare's
   # address ranges, which every Cloudflare zone uses. any_zone keeps admitting

@@ -1,0 +1,9 @@
+External IP address was not found; defaulting to using IAP tunneling.
+WARNING:
+
+To increase the performance of the tunnel, consider installing NumPy. For instructions,
+please see https://cloud.google.com/iap/docs/using-tcp-forwarding#increasing_the_tcp_upload_bandwidth
+
+{"sdk_sync_verified_files": 6}
+{"postgres_qualification_pid": 1535827, "remaining_owned_test_databases": []}
+{"checked_files": 368, "differences": []}

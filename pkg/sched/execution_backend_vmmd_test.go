@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -262,4 +263,57 @@ func (t *recordingExecutionTransport) Execute(_ context.Context, request executi
 func (t *recordingExecutionTransport) Destroy(context.Context) error {
 	t.destroyCalls++
 	return nil
+}
+
+// adr: 20261114010000 — terminal acknowledgement requires completed transport retirement.
+type retryExecutionRetirement struct {
+	calls            atomic.Int32
+	entered, release chan struct{}
+}
+
+func (*retryExecutionRetirement) Execute(context.Context, executionproto.Request) (executionproto.Result, error) {
+	return executionproto.Result{}, nil
+}
+func (r *retryExecutionRetirement) Destroy(context.Context) error {
+	if r.calls.Add(1) == 1 {
+		close(r.entered)
+		<-r.release
+		return errors.New("stop acknowledgement lost")
+	}
+	return nil
+}
+
+// adr: 20261114010000 — failed or in-flight stops cannot become a successful cached acknowledgement.
+func TestExecutionSessionDestroyRequiresConfirmedRetirement(t *testing.T) {
+	transport := &retryExecutionRetirement{entered: make(chan struct{}), release: make(chan struct{})}
+	backend := sched.NewVmmdExecutionBackend(func(context.Context, sched.ExecutionRestoreRequest) (sched.VmmdExecutionTransport, error) {
+		return transport, nil
+	}, func(context.Context, []byte, string) (string, json.RawMessage, error) { return "", nil, nil })
+	session, err := backend.Restore(t.Context(), sched.ExecutionRestoreRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := make(chan error, 1), make(chan error, 1)
+	go func() { first <- session.Destroy(t.Context()) }()
+	<-transport.entered
+	go func() { second <- session.Destroy(t.Context()) }()
+	select {
+	case err := <-second:
+		close(transport.release)
+		t.Fatalf("in-flight stop acknowledged before retirement: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+	close(transport.release)
+	if err := <-first; err == nil {
+		t.Fatal("lost stop acknowledgement returned success")
+	}
+	if err := <-second; err != nil {
+		t.Fatal(err)
+	}
+	if err := session.Destroy(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if transport.calls.Load() != 2 {
+		t.Fatalf("stop calls=%d, want failed attempt plus confirmed retry", transport.calls.Load())
+	}
 }

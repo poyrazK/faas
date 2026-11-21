@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // A failed submission does not always establish whether the mutation happened.
@@ -25,6 +28,9 @@ func printRunSubmissionError(title string, err error, inspectCommand string, key
 func runSubmissionUncertain(err error) bool {
 	var apiErr *APIError
 	if errors.As(err, &apiErr) {
+		if apiErr.Problem.Status == http.StatusNotImplemented && apiErr.Problem.Code == api.CodeNotImplemented {
+			return false
+		}
 		// An explicit rejection retains its existing server remediation.
 		return apiErr.Problem.Status >= 500 || apiErr.Problem.Status == 408
 	}

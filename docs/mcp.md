@@ -12,6 +12,8 @@ https://api.gregale.dev/mcp
 - **claude.ai and the Claude apps:** add it as a custom connector.
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
+- **Cursor and VS Code:** `gregale mcp connect --client cursor` (or
+  `vscode`) adds the server; sign in when the editor asks.
 
 For **Antigravity**, add a remote server named `gregale` with
 `"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
@@ -243,7 +245,7 @@ key takes the same limit:
 
 ```sh
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
-gregale org keys add --org acme --label ci-agent --scopes agent --projects api
+gregale org key create ci-agent --org acme --scopes agent --projects api
 ```
 
 A limited agent reaches the apps of those projects, including apps added to
@@ -381,6 +383,19 @@ both default to `core`; hosted connections also select their catalog during
 onboarding. Existing connections without a saved selection use `core` when the
 operator permits it, or the operator's narrower selection. An explicitly empty
 selection stays empty.
+
+A selection larger than 128 tools (for example `all` with writes) lists the
+core tools and `gregale_find_tools` instead, because some clients refuse more
+than 128 tools. Call `gregale_find_tools` with words for the task, such as
+`postgres schema` or `cron`. It adds up to 20 matching tools to the
+connection's list and sends `notifications/tools/list_changed`. If your client
+does not refresh its list, reconnect with the toolsets the result names.
+Found tools have the same checks as listed ones (ADR-20261121140000).
+
+Log search, incidents and product analytics tools are listed only while the
+capability is enabled for your account (`gregale feature list`). The server
+reads this when it starts, so a capability released later appears on the next
+connection.
 Plan receipt and verification tools accompany `core`, `release`, `provision`
 and `operate`. Core includes saved-plan review, checks and retained action
 history and outcome lookups, as well as `gregale_get_restart` for configuration
@@ -416,7 +431,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
-| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
+| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. For a parked app it reads the newest instance's retained logs (`source: archive`). |
 | `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
 | `gregale_get_request` | Exact retained public request, telemetry-row or trace ID: status, deployment, route, timing and bounded guest execution summary. Requires separate per-app diagnostic consent remotely. |
 | `gregale_list_requests` | One bounded retained-request page, filtered by lookback, route, HTTP status, deployment, minimum latency or cold boot. Reuses diagnostic consent; continue with `next_arguments`. |
@@ -457,6 +472,8 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_plan_source_deploy` | Connected GitHub source review: exact commit, repository/install identities and target configuration. |
 | `gregale_plan_deploy` | Preview a digest-pinned image release; creates no deployment. |
 | `gregale_plan_rollback` | Preview rollback to an exact retained release; changes no traffic. |
+| `gregale_plan_promotion` | Preview sending 100% traffic to a deployment already staged at 0%; changes no traffic. |
+| `gregale_find_tools` | Listed only above 128 tools: find unlisted tools and add them to the connection. |
 | `gregale_plan_workload_rollout` | Review native service/worker activation, retained image redeployment or retained GitHub commit rebuild. |
 | `gregale_plan_service_abort` | Review exact service reverse handoff to its pinned predecessor. |
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
@@ -3990,6 +4007,13 @@ The image release workflow is:
    original serving release still owns production traffic. A concurrent release
    returns `traffic_serving_changed`; the adapter never retries without the guard.
 
+To promote a revision staged by the CLI, another session, or a client that has
+since restarted, call `gregale_plan_promotion` with the app, the staged
+`deployment_id` and a reason. The deployment must be live at 0% traffic and
+be the app's latest revision. Then call `gregale_promote_deployment` with the
+returned `plan_id`; it applies the same guards, and production still asks a
+person.
+
 For rollback, call `gregale_plan_rollback` with the app, exact
 `target_deployment_id`, and reason, then review and apply its `plan_id` through
 `gregale_apply_rollback`. Checked rollback verifies the current release, artifact
@@ -4911,6 +4935,13 @@ Choose another starter language with `gregale mcp server init --language go --pa
 ./my-mcp-go` or `gregale mcp init --language python --path ./my-mcp-python`.
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
+
+The Node starter answers every tool call in its response and carries no durable
+Task code. For Node tools that return durable MCP Task handles, start from
+`gregale init --template mcp-node-tasks --path ./my-mcp` (Tasks off until you
+bind PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Tasks starter's
+`tasks-release.js`.
 
 In another terminal:
 
@@ -7215,7 +7246,8 @@ database bound to an app (ADR-20261117215858):
 
 - `gregale_get_postgres_schema` lists the tables and views of one schema
   (default `public`) with their columns, types, NOT NULL, primary keys and
-  indexes.
+  indexes. A large schema is listed by name with column counts; name up to
+  20 tables in `tables` for their detail.
 - `gregale_query_postgres` runs one statement and returns up to `max_rows`
   rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
   cap stopped reading.
@@ -7293,7 +7325,10 @@ ADR-20261118161500.
   `gregale_get_spend_forecast`, `gregale_list_budgets`,
   `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
   and update only budgets that notify; enforcing budgets stay with people.
-  Every budget write asks a person first.
+  Every budget write asks a person first. The forecast leaves out per-usage
+  allocations; read one app's costs with `gregale_get_costs`. Budget and flag
+  plans live only in the server's memory: after a release restarts the hosted
+  server, plan again.
 - API consumers (toolset `operate`): `gregale_list_api_consumers`,
   `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
   revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans

@@ -20361,7 +20361,7 @@ SET status = 'restoring',
     updated_at = $4
 FROM candidate
 WHERE execution.id = candidate.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionClaimNextParams struct {
@@ -20419,6 +20419,11 @@ func (q *Queries) ExecutionClaimNext(ctx context.Context, db DBTX, arg Execution
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -20444,7 +20449,7 @@ SET status = 'restoring',
     updated_at = $4
 FROM candidate
 WHERE execution.id = candidate.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionClaimNextForAccountParams struct {
@@ -20504,6 +20509,104 @@ func (q *Queries) ExecutionClaimNextForAccount(ctx context.Context, db DBTX, arg
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
+	)
+	return i, err
+}
+
+const executionClaimNextForClass = `-- name: ExecutionClaimNextForClass :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE ($5::uuid IS NULL OR executions.account_id = $5::uuid)
+    AND executions.execution_class = $6
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= $4::timestamptz
+    AND executions.deadline_at > $4::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = $1,
+    lease_owner = $2,
+    lease_expires_at = LEAST($3::timestamptz, candidate.deadline_at),
+    updated_at = $4
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
+`
+
+type ExecutionClaimNextForClassParams struct {
+	LeaseToken     pgtype.UUID
+	LeaseOwner     pgtype.Text
+	LeaseExpiresAt pgtype.Timestamptz
+	ClaimedAt      pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	ExecutionClass string
+}
+
+func (q *Queries) ExecutionClaimNextForClass(ctx context.Context, db DBTX, arg ExecutionClaimNextForClassParams) (Execution, error) {
+	row := db.QueryRow(ctx, executionClaimNextForClass,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.LeaseExpiresAt,
+		arg.ClaimedAt,
+		arg.AccountID,
+		arg.ExecutionClass,
+	)
+	var i Execution
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Runtime,
+		&i.Status,
+		&i.NetworkMode,
+		&i.TimeoutMs,
+		&i.MemoryMb,
+		&i.CpuMillicores,
+		&i.EphemeralDiskMb,
+		&i.MaxOutputBytes,
+		&i.PidsMax,
+		&i.SourceBytes,
+		&i.InputBytes,
+		&i.DeadlineAt,
+		&i.LeaseToken,
+		&i.LeaseOwner,
+		&i.LeaseExpiresAt,
+		&i.CancelRequestedAt,
+		&i.Result,
+		&i.ResultBytes,
+		&i.Stdout,
+		&i.Stderr,
+		&i.OutputTruncated,
+		&i.ExitCode,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.WallTimeMs,
+		&i.CpuTimeMs,
+		&i.PeakMemoryMb,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Artifacts,
+		&i.Profile,
+		&i.RuntimeImageDigest,
+		&i.RunsPrincipalID,
+		&i.WorkflowID,
+		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -20516,6 +20619,18 @@ WHERE account_id = $1
 
 func (q *Queries) ExecutionCountActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	row := db.QueryRow(ctx, executionCountActive, accountID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const executionCountExtendedActive = `-- name: ExecutionCountExtendedActive :one
+SELECT count(*) FROM executions WHERE account_id = $1
+AND execution_class = 'extended' AND status IN ('queued', 'restoring', 'running')
+`
+
+func (q *Queries) ExecutionCountExtendedActive(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, executionCountExtendedActive, accountID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -20535,7 +20650,7 @@ SET status = 'timed_out', finished_at = $1, updated_at = $1,
     failure_code = 'deadline_exceeded', failure_message = 'execution deadline elapsed before dispatch'
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionExpireQueuedParams struct {
@@ -20592,6 +20707,11 @@ func (q *Queries) ExecutionExpireQueued(ctx context.Context, db DBTX, arg Execut
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20622,7 +20742,7 @@ SET status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'cancelled' ELSE 'ti
     finished_at = $1, updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionFinishExpiredRestoresParams struct {
@@ -20679,6 +20799,11 @@ func (q *Queries) ExecutionFinishExpiredRestores(ctx context.Context, db DBTX, a
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20719,7 +20844,7 @@ SET status = CASE
     finished_at = $1, updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionFinishExpiredRunsParams struct {
@@ -20776,6 +20901,11 @@ func (q *Queries) ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg E
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -20788,7 +20918,7 @@ func (q *Queries) ExecutionFinishExpiredRuns(ctx context.Context, db DBTX, arg E
 }
 
 const executionGetForAccount = `-- name: ExecutionGetForAccount :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1 AND id = $2
 `
 
@@ -20840,45 +20970,54 @@ func (q *Queries) ExecutionGetForAccount(ctx context.Context, db DBTX, arg Execu
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionInsert = `-- name: ExecutionInsert :one
 INSERT INTO executions (
-  account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
+  account_id, runtime, profile, execution_class, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
   source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
-  workflow_id, step_label
+  workflow_id, step_label, max_artifact_bytes, input_file_bytes, environment_id, runtime_image_digest
 ) VALUES (
-  $1, $2, $3, 'queued', $4,
-  $5, $6, $7,
-  $8, $9, $10,
-  $11, $12, $13,
-  $14, $14, $15::uuid,
-  $16, $17
+  $1, $2, $3, $4, 'queued', $5,
+  $6, $7, $8,
+  $9, $10, $11,
+  $12, $13, $14,
+  $15, $15, $16::uuid,
+  $17, $18, $19::bigint, $20::bigint, $21::uuid, (SELECT 'sha256:' || image_digest FROM execution_environments WHERE id=$21::uuid)
 )
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionInsertParams struct {
-	AccountID       pgtype.UUID
-	Runtime         string
-	Profile         string
-	NetworkMode     string
-	TimeoutMs       int32
-	MemoryMb        int32
-	CpuMillicores   int32
-	EphemeralDiskMb int32
-	MaxOutputBytes  int32
-	PidsMax         int32
-	SourceBytes     int32
-	InputBytes      int32
-	DeadlineAt      pgtype.Timestamptz
-	AdmittedAt      pgtype.Timestamptz
-	RunsPrincipalID pgtype.UUID
-	WorkflowID      pgtype.Text
-	StepLabel       pgtype.Text
+	AccountID        pgtype.UUID
+	Runtime          string
+	Profile          string
+	ExecutionClass   string
+	NetworkMode      string
+	TimeoutMs        int32
+	MemoryMb         int32
+	CpuMillicores    int32
+	EphemeralDiskMb  int32
+	MaxOutputBytes   int32
+	PidsMax          int32
+	SourceBytes      int32
+	InputBytes       int32
+	DeadlineAt       pgtype.Timestamptz
+	AdmittedAt       pgtype.Timestamptz
+	RunsPrincipalID  pgtype.UUID
+	WorkflowID       pgtype.Text
+	StepLabel        pgtype.Text
+	MaxArtifactBytes pgtype.Int8
+	InputFileBytes   pgtype.Int8
+	EnvironmentID    pgtype.UUID
 }
 
 func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionInsertParams) (Execution, error) {
@@ -20886,6 +21025,7 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		arg.AccountID,
 		arg.Runtime,
 		arg.Profile,
+		arg.ExecutionClass,
 		arg.NetworkMode,
 		arg.TimeoutMs,
 		arg.MemoryMb,
@@ -20900,6 +21040,9 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		arg.RunsPrincipalID,
 		arg.WorkflowID,
 		arg.StepLabel,
+		arg.MaxArtifactBytes,
+		arg.InputFileBytes,
+		arg.EnvironmentID,
 	)
 	var i Execution
 	err := row.Scan(
@@ -20942,12 +21085,17 @@ func (q *Queries) ExecutionInsert(ctx context.Context, db DBTX, arg ExecutionIns
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionListForAccount = `-- name: ExecutionListForAccount :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $3::int OFFSET $2::int
@@ -21008,6 +21156,11 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21020,7 +21173,7 @@ func (q *Queries) ExecutionListForAccount(ctx context.Context, db DBTX, arg Exec
 }
 
 const executionListForAccountPrincipal = `-- name: ExecutionListForAccountPrincipal :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND runs_principal_id = $2
 ORDER BY created_at DESC, id DESC
@@ -21088,6 +21241,11 @@ func (q *Queries) ExecutionListForAccountPrincipal(ctx context.Context, db DBTX,
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21100,7 +21258,7 @@ func (q *Queries) ExecutionListForAccountPrincipal(ctx context.Context, db DBTX,
 }
 
 const executionListForAccountPrincipalStatus = `-- name: ExecutionListForAccountPrincipalStatus :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND runs_principal_id = $2
   AND status = $3
@@ -21171,6 +21329,11 @@ func (q *Queries) ExecutionListForAccountPrincipalStatus(ctx context.Context, db
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21183,7 +21346,7 @@ func (q *Queries) ExecutionListForAccountPrincipalStatus(ctx context.Context, db
 }
 
 const executionListForAccountStatus = `-- name: ExecutionListForAccountStatus :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1
   AND status = $2
 ORDER BY created_at DESC, id DESC
@@ -21251,6 +21414,11 @@ func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, ar
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21263,7 +21431,7 @@ func (q *Queries) ExecutionListForAccountStatus(ctx context.Context, db DBTX, ar
 }
 
 const executionListForWorkflow = `-- name: ExecutionListForWorkflow :many
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1::uuid
   AND workflow_id = $2::text
   AND ($3::uuid IS NULL OR runs_principal_id = $3::uuid)
@@ -21337,6 +21505,11 @@ func (q *Queries) ExecutionListForWorkflow(ctx context.Context, db DBTX, arg Exe
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -21365,7 +21538,7 @@ func (q *Queries) ExecutionLockAccount(ctx context.Context, db DBTX, accountID p
 }
 
 const executionLockForAccount = `-- name: ExecutionLockForAccount :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE account_id = $1 AND id = $2
 FOR UPDATE
 `
@@ -21418,12 +21591,17 @@ func (q *Queries) ExecutionLockForAccount(ctx context.Context, db DBTX, arg Exec
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
 
 const executionLockForLease = `-- name: ExecutionLockForLease :one
-SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label FROM executions
+SELECT id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id FROM executions
 WHERE id = $1
   AND status IN ('restoring', 'running')
   AND lease_token = $2
@@ -21478,6 +21656,11 @@ func (q *Queries) ExecutionLockForLease(ctx context.Context, db DBTX, arg Execut
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21491,8 +21674,8 @@ WHERE id = $2
   AND lease_expires_at > $1
   AND cancel_requested_at IS NULL
   AND deadline_at > $1
-  AND (profile = 'standard' OR runtime_image_digest IS NOT NULL)
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+  AND (profile = 'standard' AND environment_id IS NULL OR runtime_image_digest IS NOT NULL)
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionMarkRunningParams struct {
@@ -21544,6 +21727,11 @@ func (q *Queries) ExecutionMarkRunning(ctx context.Context, db DBTX, arg Executi
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21557,40 +21745,42 @@ SET status = $1,
     result = NULLIF($2::text, '')::jsonb,
     result_bytes = $3,
     artifacts = $4,
-    stdout = $5,
-    stderr = $6,
-    output_truncated = $7,
-    exit_code = $8,
-    failure_code = NULLIF($9, ''),
-    failure_message = NULLIF($10, ''),
-    wall_time_ms = $11,
-    cpu_time_ms = $12,
-    peak_memory_mb = $13,
-    finished_at = $14,
-    updated_at = $14
-WHERE id = $15
+    result_validation = $5::jsonb,
+    stdout = $6,
+    stderr = $7,
+    output_truncated = $8,
+    exit_code = $9,
+    failure_code = NULLIF($10, ''),
+    failure_message = NULLIF($11, ''),
+    wall_time_ms = $12,
+    cpu_time_ms = $13,
+    peak_memory_mb = $14,
+    finished_at = $15,
+    updated_at = $15
+WHERE id = $16
   AND status IN ('restoring', 'running')
-  AND lease_token = $16
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+  AND lease_token = $17
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionMarkTerminalParams struct {
-	TerminalStatus  string
-	ResultJson      string
-	ResultBytes     int32
-	Artifacts       []byte
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        pgtype.Int4
-	FailureCode     interface{}
-	FailureMessage  interface{}
-	WallTimeMs      int64
-	CpuTimeMs       int64
-	PeakMemoryMb    int32
-	FinishedAt      pgtype.Timestamptz
-	ExecutionID     pgtype.UUID
-	LeaseToken      pgtype.UUID
+	TerminalStatus   string
+	ResultJson       string
+	ResultBytes      int32
+	Artifacts        []byte
+	ResultValidation []byte
+	Stdout           string
+	Stderr           string
+	OutputTruncated  bool
+	ExitCode         pgtype.Int4
+	FailureCode      interface{}
+	FailureMessage   interface{}
+	WallTimeMs       int64
+	CpuTimeMs        int64
+	PeakMemoryMb     int32
+	FinishedAt       pgtype.Timestamptz
+	ExecutionID      pgtype.UUID
+	LeaseToken       pgtype.UUID
 }
 
 func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg ExecutionMarkTerminalParams) (Execution, error) {
@@ -21599,6 +21789,7 @@ func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg Execut
 		arg.ResultJson,
 		arg.ResultBytes,
 		arg.Artifacts,
+		arg.ResultValidation,
 		arg.Stdout,
 		arg.Stderr,
 		arg.OutputTruncated,
@@ -21653,6 +21844,11 @@ func (q *Queries) ExecutionMarkTerminal(ctx context.Context, db DBTX, arg Execut
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -21760,7 +21956,7 @@ WHERE id = $3 AND status = 'restoring'
   AND lease_expires_at > $2 AND deadline_at > $2
   AND cancel_requested_at IS NULL
   AND (runtime_image_digest IS NULL OR runtime_image_digest = $1)
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionPinRuntimeParams struct {
@@ -21818,6 +22014,11 @@ func (q *Queries) ExecutionPinRuntime(ctx context.Context, db DBTX, arg Executio
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -22018,7 +22219,7 @@ SET status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
     updated_at = $1
 WHERE id = $2
   AND status IN ('queued', 'restoring', 'running')
-RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label
+RETURNING id, account_id, runtime, status, network_mode, timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max, source_bytes, input_bytes, deadline_at, lease_token, lease_owner, lease_expires_at, cancel_requested_at, result, result_bytes, stdout, stderr, output_truncated, exit_code, failure_code, failure_message, wall_time_ms, cpu_time_ms, peak_memory_mb, started_at, finished_at, created_at, updated_at, artifacts, profile, runtime_image_digest, runs_principal_id, workflow_id, step_label, result_validation, max_artifact_bytes, input_file_bytes, execution_class, environment_id
 `
 
 type ExecutionRequestCancelParams struct {
@@ -22069,6 +22270,11 @@ func (q *Queries) ExecutionRequestCancel(ctx context.Context, db DBTX, arg Execu
 		&i.RunsPrincipalID,
 		&i.WorkflowID,
 		&i.StepLabel,
+		&i.ResultValidation,
+		&i.MaxArtifactBytes,
+		&i.InputFileBytes,
+		&i.ExecutionClass,
+		&i.EnvironmentID,
 	)
 	return i, err
 }
@@ -22090,7 +22296,7 @@ SET status = 'queued', lease_token = NULL, lease_owner = NULL, lease_expires_at 
     updated_at = $1
 FROM candidates
 WHERE execution.id = candidates.id
-RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label
+RETURNING execution.id, execution.account_id, execution.runtime, execution.status, execution.network_mode, execution.timeout_ms, execution.memory_mb, execution.cpu_millicores, execution.ephemeral_disk_mb, execution.max_output_bytes, execution.pids_max, execution.source_bytes, execution.input_bytes, execution.deadline_at, execution.lease_token, execution.lease_owner, execution.lease_expires_at, execution.cancel_requested_at, execution.result, execution.result_bytes, execution.stdout, execution.stderr, execution.output_truncated, execution.exit_code, execution.failure_code, execution.failure_message, execution.wall_time_ms, execution.cpu_time_ms, execution.peak_memory_mb, execution.started_at, execution.finished_at, execution.created_at, execution.updated_at, execution.artifacts, execution.profile, execution.runtime_image_digest, execution.runs_principal_id, execution.workflow_id, execution.step_label, execution.result_validation, execution.max_artifact_bytes, execution.input_file_bytes, execution.execution_class, execution.environment_id
 `
 
 type ExecutionRequeueExpiredRestoresParams struct {
@@ -22147,6 +22353,11 @@ func (q *Queries) ExecutionRequeueExpiredRestores(ctx context.Context, db DBTX, 
 			&i.RunsPrincipalID,
 			&i.WorkflowID,
 			&i.StepLabel,
+			&i.ResultValidation,
+			&i.MaxArtifactBytes,
+			&i.InputFileBytes,
+			&i.ExecutionClass,
+			&i.EnvironmentID,
 		); err != nil {
 			return nil, err
 		}
@@ -36941,6 +37152,30 @@ func (q *Queries) InsertPrivateNetworkTransportIdentity(ctx context.Context, db 
 	var vni int32
 	err := row.Scan(&vni)
 	return vni, err
+}
+
+const insertProjectEnvironmentCloneBucketNotifications = `-- name: InsertProjectEnvironmentCloneBucketNotifications :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules, clone_paused)
+VALUES ($1::uuid, $2::bigint, $3::jsonb, $4::jsonb, true)
+ON CONFLICT (bucket_id) DO NOTHING
+`
+
+type InsertProjectEnvironmentCloneBucketNotificationsParams struct {
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+}
+
+// A full clone's target bucket gets its source's configuration paused.
+func (q *Queries) InsertProjectEnvironmentCloneBucketNotifications(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneBucketNotificationsParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneBucketNotifications,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
+	return err
 }
 
 const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
@@ -73995,6 +74230,17 @@ func (q *Queries) ObjectNodeSettlementStats(ctx context.Context, db DBTX) (Objec
 	return i, err
 }
 
+const objectNotificationEnvironmentSlug = `-- name: ObjectNotificationEnvironmentSlug :one
+SELECT slug FROM project_environments WHERE id = $1::uuid
+`
+
+func (q *Queries) ObjectNotificationEnvironmentSlug(ctx context.Context, db DBTX, environmentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectNotificationEnvironmentSlug, environmentID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
 const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
 SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1
 `
@@ -74144,17 +74390,31 @@ func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, 
 }
 
 const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :many
-SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2
+SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1::uuid AND app_id=$2::uuid
+  AND queue_name=$3::text AND enabled AND retired_at IS NULL
+  AND deployment_scope = $4::text
+  AND environment_id IS NOT DISTINCT FROM $5::uuid
+LIMIT 2
 `
 
 type ObjectNotificationTargetQueueParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	QueueName string
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	QueueName     string
+	Scope         string
+	EnvironmentID pgtype.UUID
 }
 
+// A rule's queue resolves in its bucket's environment (ADR-20261104120000
+// amendment 2026-11-16): production's unscoped binding, or the stage's.
 func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error) {
-	rows, err := db.Query(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	rows, err := db.Query(ctx, objectNotificationTargetQueue,
+		arg.AccountID,
+		arg.AppID,
+		arg.QueueName,
+		arg.Scope,
+		arg.EnvironmentID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -74226,8 +74486,17 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 	return result.RowsAffected(), nil
 }
 
+const objectNotificationsClearClonePause = `-- name: ObjectNotificationsClearClonePause :exec
+UPDATE object_bucket_notifications SET clone_paused = false WHERE bucket_id = $1::uuid AND clone_paused
+`
+
+func (q *Queries) ObjectNotificationsClearClonePause(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectNotificationsClearClonePause, bucketID)
+	return err
+}
+
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id, n.clone_paused
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
@@ -74240,6 +74509,7 @@ type ObjectNotificationsGetRow struct {
 	Region       string
 	AccountID    pgtype.UUID
 	AppID        pgtype.UUID
+	ClonePaused  bool
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -74253,13 +74523,14 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 		&i.Region,
 		&i.AccountID,
 		&i.AppID,
+		&i.ClonePaused,
 	)
 	return i, err
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
 INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules, clone_paused=false
 `
 
 type ObjectNotificationsSaveParams struct {
@@ -74269,6 +74540,8 @@ type ObjectNotificationsSaveParams struct {
 	ManagedRules []byte
 }
 
+// Any explicit write of the rules clears a clone's pause (ADR-20261104120000
+// amendment 2026-11-16).
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
 	_, err := db.Exec(ctx, objectNotificationsSave,
 		arg.BucketID,
@@ -90031,7 +90304,7 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, d
 }
 
 const readProjectEnvironmentCloneObjectBuckets = `-- name: ReadProjectEnvironmentCloneObjectBuckets :many
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
@@ -90054,7 +90327,13 @@ SELECT jsonb_build_object(
         SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
         FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
     ), '[]'::jsonb)
-) AS definition, (b.state = 'ready')::boolean AS ready
+) || coalesce((
+    -- ADR-20261104120000 amendment 2026-11-16: present only when the bucket
+    -- has a notification configuration, as the Go capture omits it.
+    SELECT jsonb_build_object('notifications', jsonb_build_object('revision', n.revision, 'rules', n.rules,
+        'managed_rule_ids', (SELECT coalesce(jsonb_agg(m->>'id' ORDER BY m->>'id'), '[]'::jsonb) FROM jsonb_array_elements(n.managed_rules) m)))
+    FROM object_bucket_notifications n WHERE n.bucket_id = b.id
+), '{}'::jsonb))::jsonb AS definition, (b.state = 'ready')::boolean AS ready
 FROM object_buckets b
 WHERE b.account_id = $1::uuid AND b.app_id = $2::uuid
   AND b.scope = $3::text AND b.state <> 'deleted'
@@ -91536,6 +91815,58 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context,
 	var artifact []byte
 	err := row.Scan(&artifact)
 	return artifact, err
+}
+
+const readProjectEnvironmentCloneTargetBucketNotifications = `-- name: ReadProjectEnvironmentCloneTargetBucketNotifications :many
+SELECT b.id AS bucket_id, (n.bucket_id IS NOT NULL)::boolean AS present, coalesce(n.revision, 0)::bigint AS revision,
+    coalesce(n.rules, '[]'::jsonb)::jsonb AS rules, coalesce(n.managed_rules, '[]'::jsonb)::jsonb AS managed_rules,
+    coalesce(n.clone_paused, false)::boolean AS clone_paused
+FROM object_buckets b LEFT JOIN object_bucket_notifications n ON n.bucket_id = b.id
+WHERE b.environment_clone_operation_id = $1::uuid AND b.account_id = $2::uuid
+  AND b.environment_clone_source_bucket_id = $3::uuid AND b.state <> 'deleted'
+ORDER BY b.id
+`
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsParams struct {
+	OperationID    pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsRow struct {
+	BucketID     pgtype.UUID
+	Present      bool
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	ClonePaused  bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetBucketNotifications(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetBucketNotificationsParams) ([]ReadProjectEnvironmentCloneTargetBucketNotificationsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneTargetBucketNotifications, arg.OperationID, arg.AccountID, arg.SourceBucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneTargetBucketNotificationsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneTargetBucketNotificationsRow
+		if err := rows.Scan(
+			&i.BucketID,
+			&i.Present,
+			&i.Revision,
+			&i.Rules,
+			&i.ManagedRules,
+			&i.ClonePaused,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneTargetOperationID = `-- name: ReadProjectEnvironmentCloneTargetOperationID :one
@@ -104587,6 +104918,42 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 	return result.RowsAffected(), nil
 }
 
+const resumeEnvironmentClonePausedBucketNotifications = `-- name: ResumeEnvironmentClonePausedBucketNotifications :many
+UPDATE object_bucket_notifications n SET clone_paused = false
+FROM object_buckets b JOIN project_environment_clone_operations o ON o.id = b.environment_clone_operation_id
+WHERE n.bucket_id = b.id AND n.clone_paused AND b.account_id = $1::uuid
+  AND o.project_id = $2::uuid AND b.scope = $3::text
+RETURNING n.bucket_id
+`
+
+type ResumeEnvironmentClonePausedBucketNotificationsParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+// Resumes the notifications a full clone paused on its target buckets in one
+// stage.
+func (q *Queries) ResumeEnvironmentClonePausedBucketNotifications(ctx context.Context, db DBTX, arg ResumeEnvironmentClonePausedBucketNotificationsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedBucketNotifications, arg.AccountID, arg.ProjectID, arg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const resumeEnvironmentClonePausedCrons = `-- name: ResumeEnvironmentClonePausedCrons :many
 UPDATE crons SET enabled = true
 WHERE environment_id = $1::uuid AND clone_paused AND NOT enabled
@@ -107425,7 +107792,7 @@ func (q *Queries) RuntimeConfigReceiptRequired(ctx context.Context, db DBTX, arg
 }
 
 const runtimeSnapshotByCatalogKey = `-- name: RuntimeSnapshotByCatalogKey :one
-SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile FROM runtime_snapshots
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version FROM runtime_snapshots
 WHERE catalog_key = $1
 `
 
@@ -107454,30 +107821,32 @@ func (q *Queries) RuntimeSnapshotByCatalogKey(ctx context.Context, db DBTX, cata
 		&i.PublishedAt,
 		&i.RetiredAt,
 		&i.Profile,
+		&i.FcVersion,
 	)
 	return i, err
 }
 
 const runtimeSnapshotInsert = `-- name: RuntimeSnapshotInsert :one
 INSERT INTO runtime_snapshots (
-    catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
+    fc_version, catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
     base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
     storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
     payload_free, state, created_at, published_at, retired_at
 )
 VALUES (
-    $1, $2, $3, $4,
-    $5, $6,
-    $7, $8, $9,
-    $10, $11, $12,
-    $13, $14, $15,
-    $16, $17, $18,
-    $19, $20
+    $1, $2, $3, $4, $5,
+    $6, $7,
+    $8, $9, $10,
+    $11, $12, $13,
+    $14, $15, $16,
+    $17, $18, $19,
+    $20, $21
 )
-RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile
+RETURNING id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version
 `
 
 type RuntimeSnapshotInsertParams struct {
+	FcVersion           string
 	CatalogKey          string
 	Runtime             string
 	Profile             string
@@ -107504,6 +107873,7 @@ type RuntimeSnapshotInsertParams struct {
 // Publication is insert-only; retirement is the sole mutable transition.
 func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg RuntimeSnapshotInsertParams) (RuntimeSnapshot, error) {
 	row := db.QueryRow(ctx, runtimeSnapshotInsert,
+		arg.FcVersion,
 		arg.CatalogKey,
 		arg.Runtime,
 		arg.Profile,
@@ -107548,8 +107918,57 @@ func (q *Queries) RuntimeSnapshotInsert(ctx context.Context, db DBTX, arg Runtim
 		&i.PublishedAt,
 		&i.RetiredAt,
 		&i.Profile,
+		&i.FcVersion,
 	)
 	return i, err
+}
+
+const runtimeSnapshotRecords = `-- name: RuntimeSnapshotRecords :many
+SELECT id, catalog_key, runtime, architecture, kernel_digest, guest_executor_digest, base_image_digest, memory_mb, ephemeral_disk_mb, format_version, storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized, payload_free, state, created_at, published_at, retired_at, profile, fc_version FROM runtime_snapshots ORDER BY catalog_key
+`
+
+// Both ready and retired entries retain their immutable native objects.
+func (q *Queries) RuntimeSnapshotRecords(ctx context.Context, db DBTX) ([]RuntimeSnapshot, error) {
+	rows, err := db.Query(ctx, runtimeSnapshotRecords)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RuntimeSnapshot{}
+	for rows.Next() {
+		var i RuntimeSnapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.CatalogKey,
+			&i.Runtime,
+			&i.Architecture,
+			&i.KernelDigest,
+			&i.GuestExecutorDigest,
+			&i.BaseImageDigest,
+			&i.MemoryMb,
+			&i.EphemeralDiskMb,
+			&i.FormatVersion,
+			&i.StorageKey,
+			&i.SnapshotDigest,
+			&i.MemBytes,
+			&i.VmStateBytes,
+			&i.Sanitized,
+			&i.PayloadFree,
+			&i.State,
+			&i.CreatedAt,
+			&i.PublishedAt,
+			&i.RetiredAt,
+			&i.Profile,
+			&i.FcVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const runtimeSnapshotRetire = `-- name: RuntimeSnapshotRetire :execrows

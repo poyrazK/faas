@@ -24,7 +24,11 @@ func (c *Client) StreamExecution(ctx context.Context, id string, after int64) (i
 // returns an account-scoped receipt without echoing source or input.
 func (c *Client) CreateExecution(ctx context.Context, req CreateExecutionRequest) (ExecutionResponse, error) {
 	var out ExecutionResponse
-	return out, c.do(ctx, "POST", "/v1/executions", req, &out)
+	path := "/v1/executions"
+	if req.UsesExtendedExecution() {
+		path = "/v2/executions"
+	}
+	return out, c.do(ctx, "POST", path, req, &out)
 }
 
 // GetExecutionCapabilities returns the authenticated account's Runs admission
@@ -85,7 +89,17 @@ func (c *Client) GetExecutionWorkflow(ctx context.Context, workflowID string) (E
 // the control plane admit later Runs after this client disconnects.
 func (c *Client) CreateManagedExecutionWorkflow(ctx context.Context, req CreateManagedExecutionWorkflowRequest) (ManagedExecutionWorkflowResponse, error) {
 	var out ManagedExecutionWorkflowResponse
-	return out, c.do(ctx, "POST", "/v1/execution-workflows", req, &out)
+	path := "/v1/execution-workflows"
+	if req.Pipeline != nil || req.Batch != nil {
+		path = "/v2/execution-workflows"
+	}
+	for _, step := range req.Steps {
+		if step.Task != nil || step.Retry != nil || step.Request.UsesExtendedExecution() {
+			path = "/v2/execution-workflows"
+			break
+		}
+	}
+	return out, c.do(ctx, "POST", path, req, &out)
 }
 
 // CancelExecution requests cancellation. Cancellation is idempotent: queued
@@ -94,4 +108,10 @@ func (c *Client) CreateManagedExecutionWorkflow(ctx context.Context, req CreateM
 func (c *Client) CancelExecution(ctx context.Context, id string) (ExecutionResponse, error) {
 	var out ExecutionResponse
 	return out, c.do(ctx, "DELETE", "/v1/executions/"+id, nil, &out)
+}
+
+// CancelExecutionPipeline stops new admissions and cancels admitted Runs.
+func (c *Client) CancelExecutionPipeline(ctx context.Context, workflowID string) (ExecutionWorkflowResponse, error) {
+	var out ExecutionWorkflowResponse
+	return out, c.do(ctx, "POST", "/v1/execution-workflows/"+url.PathEscape(workflowID)+"/cancel", nil, &out)
 }

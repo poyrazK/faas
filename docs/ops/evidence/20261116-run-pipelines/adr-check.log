@@ -1,0 +1,18 @@
+::error::adr-number-uniqueness: ADR number(s) duplicated by this change
+  ADR-20261104120000:
+    20261104120000-network-revocation-and-attachment-recovery.md
+    20261104120000-per-environment-app-automation.md
+  ADR-20261111130000:
+    20261111130000-native-customer-support.md
+    20261111130000-org-notices-and-inviter-authority.md
+
+  Pick the next free number. `ls docs/adr/` alone is not enough — also check
+  open PR titles, because a PR can claim a number between your check and your
+  merge:
+
+    gh pr list --state open --limit 80 --json title \
+      --jq '.[] | select(.title|test("ADR-")) | .title'
+
+  Renaming after a rebase? Scope the rename to the references your branch
+  introduced. Shared files (api/openapi.yaml, pkg/api/dto.go, pkg/api/limits.go)
+  document many ADRs at once, so a blanket sed rewrites other people's.

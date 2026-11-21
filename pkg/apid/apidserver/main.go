@@ -21,10 +21,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/apid/background"
-	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
-	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
-	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 	"log/slog"
 	"net"
 	"net/http"
@@ -37,6 +33,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/background"
+	"github.com/onebox-faas/faas/pkg/apid/certexpiry"
+	"github.com/onebox-faas/faas/pkg/apid/credentialkeys"
+	"github.com/onebox-faas/faas/pkg/apid/mcpreadiness"
 
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/receivers"
 	"github.com/onebox-faas/faas/pkg/apid/routeinsights"
+	"github.com/onebox-faas/faas/pkg/apid/runfiles"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/auth"
 	"github.com/onebox-faas/faas/pkg/authcode"
@@ -915,6 +917,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimePush(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.realtime.RunManagedRealtimeDrainWorker(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedExecutionWorkflowWorker(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.runExecutionFileGC(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunAlarms(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunDurableEntityRegistryCleanup(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.durable.RunOutbox(ctx) })
@@ -1628,6 +1631,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
+		WithExecutionV2Enabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_V2_ENABLED")) == "1").
+		WithExecutionTasksEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_TASKS_ENABLED")) == "1").
+		WithExecutionPipelinesEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_PIPELINES_ENABLED")) == "1").
+		WithExtendedExecutionsEnabled(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_EXTENDED_ENABLED")) == "1").
+		WithExecutionEnvironments(strings.TrimSpace(deps.getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED")) == "1", executionEnvironmentBases(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithListenersEnabled(strings.TrimSpace(deps.getenv("FAAS_TCP_LISTENERS_ENABLED")) == "1", strings.TrimSpace(deps.getenv("FAAS_UDP_LISTENERS_ENABLED")) == "1").
 		WithReleasePhaseEnabled(releasePhaseEnabledFromEnv(deps.getenv)).
@@ -1837,6 +1845,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1700: report what this apid applies so the console shows
 	// convergence per consumer, not only the database acknowledgement.
 	srv.runtimeConfig.enableReceipts("apid")
+	// The managed PostgreSQL operator policy is hot runtime configuration;
+	// bind it before the durable reconcile so the stored policy, not the
+	// file's, serves the first request.
+	// A stored policy this registry refuses (for example after a backend
+	// change) must not stop apid: it keeps the file's values and says so.
+	if err := srv.runtimeConfig.bindManagedPostgresPolicy(managedPostgresService.Registry()); err != nil {
+		log.Error("managed postgres policy refused; serving the provider registry file's values", "error", err)
+	}
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it
@@ -1945,7 +1961,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("apid: load SBOM storage backend: %w", err)
 	}
-	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage)
+	srv.WithSBOMRoot(deps.getenv("FAAS_SBOM_ROOT")).WithSBOMStorage(sbomStorage).WithExecutionFileStorage(sbomStorage)
 	srv.withAgentOutputFiles(sbomStorage)
 	srv.WithOperationArtifactStorage(sbomStorage)
 	if signPubPath := strings.TrimSpace(deps.getenv("FAAS_SIGN_PUB")); signPubPath != "" {
@@ -2453,7 +2469,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// sync-invoke 5 s / 30 s) become children of the budget via
 	// reqbudget.WithCeiling — the budget tightens the cap, never
 	// loosens it.
-	httpSrv := deps.newSrv(listenBind, budgetCfg.Middleware(srv.handler()), cfg)
+	publicHandler, err := runfiles.BudgetedHandler(srv.handler(), budgetCfg)
+	if err != nil {
+		return fmt.Errorf("apid: Run file request budget: %w", err)
+	}
+	httpSrv := deps.newSrv(listenBind, publicHandler, cfg)
 
 	l, err := deps.listen("tcp", listenBind)
 	if err != nil {

@@ -88,6 +88,7 @@ func AsProblem(err error) *Problem {
 // §Conventions, UX spec §7). Every limit error carries the limit, the observed
 // value, and a docs URL so the surface never has to invent copy.
 type Problem struct {
+	RunBudget        *RunBudgetRefusal   `json:"run_budget,omitempty"`
 	ConditionField   string              `json:"condition_field,omitempty"`
 	ConditionIndex   *int                `json:"condition_index,omitempty"`
 	FieldExists      *bool               `json:"field_exists,omitempty"`
@@ -949,6 +950,11 @@ const (
 	// that its lease or `gregale dev --stop` is already tearing down. The
 	// environment comes back on the first start after the teardown finishes.
 	CodeDevSessionTearingDown = "dev_session_tearing_down"
+	// CodeDevPostgresDatabaseURLSecret refuses `gregale dev --postgres` while
+	// the developer environment holds a DATABASE_URL or MIGRATION_DATABASE_URL
+	// secret of its own (from an earlier --env-file or by hand): the managed
+	// binding cannot replace it, so the app would keep the old database.
+	CodeDevPostgresDatabaseURLSecret = "dev_postgres_database_url_secret"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
 	// pool, job, app task, builder, private network member, pending waitUntil
@@ -2889,6 +2895,17 @@ func ErrDevSessionTearingDown() *Problem {
 	return NewProblem(http.StatusConflict, CodeDevSessionTearingDown,
 		"Developer environment is being removed",
 		"its lease ended or it was stopped, and its database and buckets are being cleaned up; run gregale dev again in a minute to start it fresh").
+		WithDocs(docsBase + "/dev")
+}
+
+// ErrDevPostgresDatabaseURLSecret is returned when `gregale dev --postgres`
+// meets a DATABASE_URL or MIGRATION_DATABASE_URL secret the developer
+// environment already holds; key names which.
+func ErrDevPostgresDatabaseURLSecret(appSlug, key string) *Problem {
+	return NewProblem(http.StatusConflict, CodeDevPostgresDatabaseURLSecret,
+		"A database variable is already set in this developer environment",
+		fmt.Sprintf("--postgres provides DATABASE_URL and MIGRATION_DATABASE_URL, but this environment already has a %s secret (from an earlier --env-file or set by hand), and the app would keep using that database", key)).
+		WithHint(fmt.Sprintf("Remove it with `gregale env unset --app %s %s` and run gregale dev --postgres again, or drop --postgres to keep your own database.", appSlug, key)).
 		WithDocs(docsBase + "/dev")
 }
 
@@ -5988,7 +6005,7 @@ func ErrPlanLimitEnvVars(l Limits, observed int) *Problem {
 func ErrAPIKeyExpired() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
 		"API key expired",
-		"the bearer key has expired; rotate it and use the new plaintext").
+		"this API key has expired; create a new one with `gregale key create`, or rotate keys before they expire with `gregale key rotate`").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
@@ -6000,7 +6017,7 @@ func ErrAPIKeyExpired() *Problem {
 func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
-		"the bearer key has been revoked; mint a new one via POST /v1/keys").
+		"this API key has been revoked; create a new one with `gregale key create`").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
@@ -6474,6 +6491,23 @@ func ErrTrafficChangeDuringCanary() *Problem {
 		"Canary rollout controls traffic",
 		"traffic cannot be changed directly while a canary rollout is pending or running. `gregale release traffic status` shows the canary's current step; to stop the rollout and return its traffic to the release it replaced, run `gregale release traffic rollback <app>`.").
 		WithDocs(docsBase + "/rollouts#how-a-rollout-proceeds")
+}
+
+// ErrTrafficChangeDuringCanaryFor is ErrTrafficChangeDuringCanary naming the
+// running canary and the exact commands that move it on. The refusal pointed
+// only at `release traffic status`, so a caller replacing a broken baseline
+// needed a second call to learn the step (boa multi-service deploy,
+// 2026-11-21). An empty deploymentID returns the generic refusal.
+func ErrTrafficChangeDuringCanaryFor(appSlug, deploymentID string, step int) *Problem {
+	problem := ErrTrafficChangeDuringCanary()
+	if deploymentID == "" {
+		return problem
+	}
+	hint := fmt.Sprintf("Advance canary %s one step: gregale deployment advance %s --expected-step %d.", deploymentID, deploymentID, step)
+	if appSlug != "" {
+		hint += fmt.Sprintf(" Or send it all traffic now: gregale rollouts recover %s --action promote --expected-step %d.", appSlug, step)
+	}
+	return problem.WithHint(hint)
 }
 
 // ErrMCPTaskCompatibilityGate returns a conflict with the observer detail so

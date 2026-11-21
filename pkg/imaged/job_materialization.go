@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -170,6 +171,14 @@ func (h *Handler) materializeClaimedJobWork(ctx context.Context, images state.Jo
 	be, err := h.storageFor()
 	if err != nil {
 		return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("storage backend: %v", err))
+	}
+	// Jobs boot the generic drive0 even when no ordinary app has ever been
+	// deployed to this node. Publish readiness only after its producer has
+	// staged that base, using the same gate as plain-image deployments.
+	if h.runtimeBaseStagingEnabled {
+		if _, err := h.EnsureMinimalBase(ctx, oci.ImageArchitecture, os.Getenv); err != nil {
+			return h.failJobMaterialization(ctx, images, job, owner, fmt.Sprintf("ensure job boot base: %v", err))
+		}
 	}
 	key := storagekey.JobLayerAttempt(job.ID, uuid.NewString())
 	if _, err := h.builder.BuildFullRootfs(ctx, rootfs.BuildFullRootfsInput{

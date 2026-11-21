@@ -643,8 +643,7 @@ gregale deploy            # the setting applies from the next deploy
 
 or `concurrency: 16` in a `functions:` entry. Each worker then takes up to
 16 requests at once, and a second worker starts only when the first is full.
-The value can be up to your plan's per-instance concurrency (`gregale app
-<slug> --concurrency`: Free 4, Hobby 5, Pro 25, Scale 80).
+The value can be up to your plan's limit: Free 4, Hobby 5, Pro 25, Scale 80.
 
 - Requests on one worker share its module state. Keep per-request data in
   local variables, not globals.

@@ -101,6 +101,11 @@ func TestManagedPostgresProvisioningClosedIsNotAnOutage(t *testing.T) {
 	if !strings.Contains(problem.Detail, "not open for this account") || strings.Contains(problem.Detail, "temporarily unavailable") {
 		t.Fatalf("detail = %q", problem.Detail)
 	}
+	// prod hunt 2026-11-21: with no hint, the CLI added "ask its operator
+	// to enable it" beside "retry later or contact support".
+	if !strings.Contains(problem.Hint, "contact support") || strings.Contains(problem.Hint, "operator") {
+		t.Fatalf("hint = %q", problem.Hint)
+	}
 	if problem.DocsURL != "https://gregale.dev/docs/managed-postgres" {
 		t.Fatalf("docs_url = %q", problem.DocsURL)
 	}

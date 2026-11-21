@@ -98,4 +98,36 @@ export class RunsService {
       },
     });
   }
+  /**
+   * Stop pipeline admissions and request cancellation of active Runs.
+   * Idempotent for an existing pipeline. Cancellation closes the durable admission fence before responding; the continuation worker cancels admitted Runs and waits for their terminal settlement. Available with writer gates disabled. Runs-only keys are limited to their stable key family. Requires runs:write, deploy:write, or admin.
+   * @returns ExecutionWorkflowResponse Pipeline cancellation requested; inspect managed pipeline metadata for completion.
+   * @throws ApiError
+   */
+  public static cancelExecutionPipeline({
+    workflowId,
+  }: {
+    /**
+     * Caller-supplied workflow identifier for the pipeline to cancel.
+     */
+    workflowId: string,
+  }): CancelablePromise<ExecutionWorkflowResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/execution-workflows/{workflow_id}/cancel',
+      path: {
+        'workflow_id': workflowId,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
 }

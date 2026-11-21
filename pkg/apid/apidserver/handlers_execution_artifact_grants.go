@@ -68,7 +68,7 @@ func (s *server) createExecutionArtifactGrant(w http.ResponseWriter, r *http.Req
 	if !requireExecutionOwnership(w, s, access, row) {
 		return
 	}
-	if row.Status != api.ExecutionStatusSucceeded {
+	if row.Status != api.ExecutionStatusSucceeded || row.ResultValidation != nil && row.ResultValidation.Status == "invalid" {
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Artifact source is not ready", "grants can only be created for artifacts from successful executions"))
 		return
 	}

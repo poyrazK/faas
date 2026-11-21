@@ -215,3 +215,98 @@ The follow-up the previous amendment named.
   (`object_bucket_setting_unavailable`): their queue destinations resolve
   through environment-bound queue bindings, so a paused copy needs its own
   design. Deployment and database events stay production's.
+
+## Amendment 2026-11-16: bucket notification copies
+
+Status: accepted (owner's choices of 2026-11-16). Closes the "not yet" above
+for bucket notification rules.
+
+### Problem
+
+A rule's destination is an ARN that names an app and, for a queue, a queue
+name (`arn:gregale:sqs:REGION:ACCOUNT:APP/QUEUE`,
+`arn:gregale:lambda:REGION:ACCOUNT:function:APP`). Neither names an
+environment.
+
+- **Queues.** Delivery resolves the ARN to the one enabled queue binding of
+  that app and name, across every environment. Full clones copy queue
+  bindings into the stage, so once a stage holds a queue of the same name the
+  lookup finds two and resolves to none: production's own bucket
+  notifications to that queue stop resolving. This is latent while full
+  clones are dark and is fixed by the first decision below.
+- **Functions.** A notification always invokes the app's production
+  deployment, even when the event came from a stage bucket.
+
+That is why `object_bucket_notifications` is `unavailable` in the clone
+registry (`object_bucket_setting_unavailable`): a copied rule would deliver a
+stage's object events to production.
+
+### Decision
+
+1. **Destinations resolve in the bucket's environment.** The bucket's
+   environment is the one its events carry (amendment 2026-11-14): a branch's
+   copy bucket or a clone's target bucket belongs to its stage, every other
+   bucket to production. An ARN is resolved there:
+   - a queue ARN to the enabled binding of that app and queue name **in that
+     environment** (production: `deployment_scope = ''`), never another
+     environment's;
+   - a function ARN to that app's work in that environment: the recipient
+     carries the environment and is delivered as stage work, pinned to the
+     stage's live release, as event-subscription recipients are (amendment
+     2026-11-12).
+   The ARN format does not change, and a rule copied verbatim reaches the
+   stage's own queue or deployment. Rule writes (`PutBucketNotification`,
+   compute-trigger reconcile) validate destinations in the bucket's
+   environment the same way. A stage bucket whose environment is gone
+   resolves nothing.
+2. **Full clones copy the configuration, paused as a whole.** The clone
+   copies each captured bucket's `rules` and `managed_rules` (manifest compute
+   triggers stay managed) into its target bucket with the source revision,
+   and sets `object_bucket_notifications.clone_paused`. While it is set the
+   rules are stored and readable but match no event, so nothing is delivered.
+   It is cleared by `automation/resume` (`gregale env resume-automation`),
+   which then reports `bucket_notifications_resumed` and the bucket IDs, and
+   by any explicit write of the rules (PUT, delete, or a stage manifest deploy
+   reconciling its compute triggers): the customer has decided. A source
+   bucket that is itself clone-paused copies paused.
+3. **Missing destinations refuse the clone.** Capture checks every rule's
+   destination against the stage-to-be: a queue must be one of the captured
+   workloads' queues and a function one of the captured workloads' apps.
+   Anything else refuses admission with a named blocker
+   (`object_notification_destination_unavailable`), as crons and subscriptions
+   refuse apps outside the captured workloads. Destinations in another
+   account or region are already invalid.
+4. **Proof.** Publication checks that each target bucket holds exactly the
+   captured rules and managed rule IDs and is still `clone_paused`.
+5. **Registry.** `object_bucket_notifications` gains `clone_paused` and moves
+   from `unavailable` to `capture` + `materialize`. CORS, lifecycle,
+   encryption, Object Lock, upload routes and per-version protection keep
+   blocking.
+
+### Consequences
+
+- Environment branches benefit without copying anything: a branch's copy
+  bucket created with rules resolves them in the branch. (Branches do not copy
+  notification rules today; that stays a separate choice.)
+- Plan entitlement is unchanged: queue targets still need queue depth and
+  function targets async invoke on the bucket's plan.
+- No resume quota: notification rules have no plan cap of their own, and the
+  queues and functions they reach are already counted.
+- A production bucket no longer reaches a queue that exists only in a stage:
+  before, the environment-blind lookup resolved it there. Stage queues are
+  dark with full clones, so no production rule is expected to rely on it.
+- Release compatibility. The environment-scoped lookup and the pause are read
+  by every writer that captures notification work (apid and the object
+  gateway). An N-1 writer resolves environment-blind and ignores
+  `clone_paused`, so it would deliver a paused copy: full clones must stay off
+  until every such writer runs N. The migration adds `clone_paused boolean
+  NOT NULL DEFAULT false`, expand-only; the writers clear it on any explicit
+  rules write, identical rules included.
+
+### Slices
+
+1. Environment-scoped destination resolution and validation (fixes the
+   production ambiguity on its own; shippable first).
+2. `clone_paused` column, capture, copy, proof, registry, admission blocker.
+3. `automation/resume` and the CLI resume bucket notifications; docs and SDK
+   models.

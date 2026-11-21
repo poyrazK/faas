@@ -56,6 +56,9 @@ func (v *JailerVMM) captureNativeRuntimeSnapshot(ctx context.Context, lease Leas
 	authority := nativeRuntimeCaptureAuthority{Version: 1, InstanceID: lease.Instance, DeploymentID: req.DeploymentID,
 		NativeGeneration: physical.Generation, KernelBootID: physical.KernelBootID, NativeLease: physicalLease,
 		Keys: nativeRuntimeCaptureKeys(spec.StorageKey), AcceptedAt: now, Deadline: deadline.UTC()}
+	if req.ExecutionTemplate {
+		authority.Version = 2
+	}
 	if spec.VMStateStorageKey != authority.Keys.VMState {
 		return info, errors.New("native runtime capture: device state must use the coupled v2 key")
 	}

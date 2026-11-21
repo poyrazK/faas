@@ -15,6 +15,68 @@ does not require suspend/resume gates, the metal pause prerequisite or its image
 environment variables. Native KVM, matching installed source, the shared lock,
 independent app deletion and clean leakchecks remain required.
 
+## Hosted Task fixture and receipt
+
+Prepare the reviewed Node web and worker archives offline with the
+[hosted Task rehearsal plan](adr/20261118062934-hosted-task-rehearsal-plan.md).
+
+```bash
+python3 scripts/ci/rehearsal-native.py --journey hosted-task --prepare-only \
+  --out /var/tmp/hosted-task-UNIQUE
+```
+
+The directory contains `fixture/web.tar.gz`, `fixture/worker.tar.gz` and
+`preparation.json` with the archive and reviewed source tree SHA-256s and the
+exact `build_report` invocation. Both archives use the pinned Node starter
+and dependency lockfile. The web process accepts Tasks and the dedicated
+worker executes them. The worker archive also carries the stock Task
+migration command.
+
+The private smoke entry in `pkg/apid/toolregistry` checks the host through
+its in-process adapter before consuming the owner's approval. It scopes the
+smoke run to the exact contained deployments and their original lease, and
+cleans up an owned run even if the smoke is cancelled. Claim replay returns
+the reserved run identity.
+
+The first-claim entry is `StartHostedTaskRehearsal`. The operator wires its
+adapter with `pkg/tasktoolrehearsal/native.Startup` and checks the enrolled
+account, node and platform revision before spending the approval. Supply the
+`source_sha256` values from trusted offline preparation. The private entry
+compares both with the retained review before claiming the run.
+
+The ordinary deployment pipeline starts the worker. The adapter wakes the
+exact web deployment and forwards MCP only to that instance using the
+private gateway forwarder. Both deployments stay at zero traffic. The worker
+fixture logs a digest of the claim token, and the scheduler attributes the
+line to the VM. The restricted observer checks the live lease, Task, worker
+registration and deployment in PostgreSQL. The entry then disposes of the
+fixture. It returns first-claim evidence and leaves full acceptance to the
+recovery run.
+
+Complete the recovery run with a scheduler-owned stop and an observed
+replacement lease. Collect the following in `hosted-task-receipt.json` in the
+same private evidence directory.
+
+| Field | Source and expected value |
+| --- | --- |
+| `version`, `archive_sha256`, `run_id`, `task_id` | Version 1, the prepared archive hashes, the reserved run UUID and the Task UUID returned by MCP |
+| `initial`, `recovered` | Each records `task_id`, `status: running`, `attempt` (1 and 2), `deployment_id` and `instance_id`. Both observations use the same worker deployment and distinct VM instances. |
+| `stopped_instance_id` | The original worker instance confirmed stopped by the platform |
+| `result` | The submitted `task_id`, `status: completed` and expected `text` from the MCP result |
+| `observer` | Read-only PostgreSQL observation with `namespace: rehearsal-<run_id>`, the submitted `task_id`, `attempt: 2`, `task_rows: 1` and `completed_result_rows: 1`. Count all Task rows in the isolated namespace and completed rows with a stored result. |
+| `cleanup` | `workloads_remaining: 0`, `database_present: false`, `logins_remaining: 0`, `secrets_remaining: 0`, and `sources_remaining: 0` from independent cleanup checks on the reserved resources |
+
+```bash
+python3 scripts/ci/rehearsal-native.py --verify-hosted-task /var/tmp/hosted-task-UNIQUE
+```
+
+The verifier checks the consistency of these observations and the prepared
+archive hashes. It reports `native_qualified: false`. The committed effect
+for this fixture is the single durable report result. Record evidence only
+from operator-controlled collectors on the dedicated native host.
+
+## Native host setup
+
 Use a dedicated native x86_64 Linux KVM acceptance host with root, no customer
 workloads, a Pro acceptance account, and a complete installation of the exact
 clean checkout being qualified. The public API origin must route to that

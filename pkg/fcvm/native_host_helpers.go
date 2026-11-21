@@ -108,7 +108,7 @@ func (r nativeHostHelperRecord) validate(owner nativeLaunchRecord) error {
 		if err := s.Validate(); err != nil {
 			return err
 		}
-		if !owner.Authorized || owner.Lease.Networkless || s.Generation != owner.Generation || s.BootID != owner.KernelBootID || s.PID != owner.PID || s.StartTime != owner.StartTime || s.UID != owner.Lease.UID || s.GID != owner.Lease.GID || r.Launch.Authorized && !r.JailDevice.InputsClosed || r.Launch.ResourcesRemoved && !r.JailDevice.InputsClosed {
+		if !owner.Authorized || owner.Lease.Networkless != (s.Version == 2) || s.Generation != owner.Generation || s.BootID != owner.KernelBootID || s.PID != owner.PID || s.StartTime != owner.StartTime || s.UID != owner.Lease.UID || s.GID != owner.Lease.GID || r.Launch.Authorized && !r.JailDevice.InputsClosed || r.Launch.ResourcesRemoved && !r.JailDevice.InputsClosed {
 			return errors.New("native helper: original jail device or input retirement authority changed")
 		}
 		if r.JailDevice.Receipt != nil {
@@ -752,7 +752,7 @@ func validateNativeHostHelperAuthority(owner nativeLaunchRecord, purpose nativeH
 		}
 		return errors.New("native helper: cleanup command exceeds the original lease")
 	case nativeHostHelperJailDevices:
-		if owner.Revoked || !owner.Authorized || owner.Lease.Networkless || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"}) {
+		if owner.Revoked || !owner.Authorized || hasInput || !slices.Equal(argv, []string{"vmmd-host-helper", "--launch-jail-device-setup", "3"}) {
 			return errors.New("native jail device setup: command lacks original authorized lease")
 		}
 	case nativeHostHelperSnapshotOutputs:

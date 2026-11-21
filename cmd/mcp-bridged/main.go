@@ -159,7 +159,7 @@ func serve(ctx context.Context, log *slog.Logger, cfg config) error {
 	telemetry := mcpmanagement.NewTelemetry()
 	service, err := mcpmanagement.NewHTTPService(mcpmanagement.HTTPOptions{
 		Lifecycle: lifecycle, Telemetry: telemetry, AuditLogger: log, Onboarding: "browser", APIBase: cfg.apiBase, ResourceURL: cfg.resourceURL,
-		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowTaskInspection: cfg.allowTaskInspection, AllowWrites: true, Toolsets: cfg.toolsets,
+		RedirectURIs: cfg.redirects, Version: wire.Version, Timeout: cfg.timeout, AllowToolInvocation: cfg.allowToolInvocation, AllowPrivateToolInvocation: cfg.allowPrivateToolInvocation, AllowToolPublishing: cfg.allowToolPublishing, AllowTaskInspection: cfg.allowTaskInspection, AllowWrites: true, Toolsets: cfg.toolsets, MaxListedTools: mcpmanagement.DefaultMaxListedTools, HideUnavailableCapabilities: true,
 		StateStore: store, Hosted: true, AgentKeys: true, AgentKeyToolsetSelection: true, ClientMetadataDocuments: true, UploadDir: cfg.uploadDir, CLIRunner: mcpmanagement.HostedCLIRunner(cfg.cliPath, cfg.apiBase, cfg.uploadDir),
 	})
 	if err != nil {

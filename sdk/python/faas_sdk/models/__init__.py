@@ -841,12 +841,44 @@ from .event_workflow_recovery_plan import EventWorkflowRecoveryPlan
 from .event_workflow_recovery_target import EventWorkflowRecoveryTarget
 from .execution_artifact_input import ExecutionArtifactInput
 from .execution_file import ExecutionFile
+from .execution_file_input import ExecutionFileInput
+from .execution_finished_webhook_payload import ExecutionFinishedWebhookPayload
 from .execution_limit_request import ExecutionLimitRequest
 from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
 from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
+from .execution_limit_request_execution_class import ExecutionLimitRequestExecutionClass
 from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
+from .execution_pipeline_artifact_ref import ExecutionPipelineArtifactRef
+from .execution_pipeline_attempt_response import ExecutionPipelineAttemptResponse
+from .execution_pipeline_attempt_response_status import ExecutionPipelineAttemptResponseStatus
+from .execution_pipeline_completed_attempt import ExecutionPipelineCompletedAttempt
+from .execution_pipeline_completed_attempt_status import ExecutionPipelineCompletedAttemptStatus
+from .execution_pipeline_completed_step import ExecutionPipelineCompletedStep
+from .execution_pipeline_completed_step_outcome import ExecutionPipelineCompletedStepOutcome
+from .execution_pipeline_completed_step_result_validation import ExecutionPipelineCompletedStepResultValidation
+from .execution_pipeline_completion import ExecutionPipelineCompletion
+from .execution_pipeline_completion_outcome import ExecutionPipelineCompletionOutcome
+from .execution_pipeline_completion_version import ExecutionPipelineCompletionVersion
+from .execution_pipeline_finished_webhook_payload import ExecutionPipelineFinishedWebhookPayload
+from .execution_pipeline_finished_webhook_payload_outcome import ExecutionPipelineFinishedWebhookPayloadOutcome
+from .execution_pipeline_options import ExecutionPipelineOptions
+from .execution_pipeline_progress import ExecutionPipelineProgress
+from .execution_pipeline_progress_status import ExecutionPipelineProgressStatus
+from .execution_pipeline_receipt import ExecutionPipelineReceipt
+from .execution_pipeline_rerun import ExecutionPipelineRerun
+from .execution_pipeline_response import ExecutionPipelineResponse
+from .execution_pipeline_reused_step import ExecutionPipelineReusedStep
+from .execution_pipeline_step_progress import ExecutionPipelineStepProgress
+from .execution_pipeline_step_progress_reason import ExecutionPipelineStepProgressReason
+from .execution_pipeline_step_progress_state import ExecutionPipelineStepProgressState
+from .execution_pipeline_step_response import ExecutionPipelineStepResponse
+from .execution_retry_policy import ExecutionRetryPolicy
+from .execution_task_batch import ExecutionTaskBatch
+from .execution_task_batch_item import ExecutionTaskBatchItem
+from .execution_task_ref import ExecutionTaskRef
+from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .execution_workflow_response import ExecutionWorkflowResponse
 from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
@@ -1018,6 +1050,7 @@ from .invoice_refresh_response import InvoiceRefreshResponse
 from .invoice_refresh_response_provider import InvoiceRefreshResponseProvider
 from .invoice_refresh_response_source_gap import InvoiceRefreshResponseSourceGap
 from .invoice_status import InvoiceStatus
+from .invoke_execution_task_request import InvokeExecutionTaskRequest
 from .invoke_request import InvokeRequest
 from .invoke_request_headers import InvokeRequestHeaders
 from .invoke_request_payload import InvokeRequestPayload
@@ -2206,6 +2239,9 @@ from .route_monitor_webhook_escalation import RouteMonitorWebhookEscalation
 from .route_monitor_webhook_payload import RouteMonitorWebhookPayload
 from .route_monitor_webhook_payload_status import RouteMonitorWebhookPayloadStatus
 from .route_row import RouteRow
+from .run_budget_kind import RunBudgetKind
+from .run_budget_refusal import RunBudgetRefusal
+from .run_budget_refusal_metric import RunBudgetRefusalMetric
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -3557,12 +3593,44 @@ __all__ = (
     "EventWorkflowRecoveryTarget",
     "ExecutionArtifactInput",
     "ExecutionFile",
+    "ExecutionFileInput",
+    "ExecutionFinishedWebhookPayload",
     "ExecutionLimitRequest",
     "ExecutionLimitRequestCpuMillicores",
     "ExecutionLimitRequestEphemeralDiskMb",
+    "ExecutionLimitRequestExecutionClass",
     "ExecutionLimitRequestMemoryMb",
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
+    "ExecutionPipelineArtifactRef",
+    "ExecutionPipelineAttemptResponse",
+    "ExecutionPipelineAttemptResponseStatus",
+    "ExecutionPipelineCompletedAttempt",
+    "ExecutionPipelineCompletedAttemptStatus",
+    "ExecutionPipelineCompletedStep",
+    "ExecutionPipelineCompletedStepOutcome",
+    "ExecutionPipelineCompletedStepResultValidation",
+    "ExecutionPipelineCompletion",
+    "ExecutionPipelineCompletionOutcome",
+    "ExecutionPipelineCompletionVersion",
+    "ExecutionPipelineFinishedWebhookPayload",
+    "ExecutionPipelineFinishedWebhookPayloadOutcome",
+    "ExecutionPipelineOptions",
+    "ExecutionPipelineProgress",
+    "ExecutionPipelineProgressStatus",
+    "ExecutionPipelineReceipt",
+    "ExecutionPipelineRerun",
+    "ExecutionPipelineResponse",
+    "ExecutionPipelineReusedStep",
+    "ExecutionPipelineStepProgress",
+    "ExecutionPipelineStepProgressReason",
+    "ExecutionPipelineStepProgressState",
+    "ExecutionPipelineStepResponse",
+    "ExecutionRetryPolicy",
+    "ExecutionTaskBatch",
+    "ExecutionTaskBatchItem",
+    "ExecutionTaskRef",
+    "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExecutionWorkflowResponse",
     "ExecutionWorkflowStatusCounts",
@@ -3734,6 +3802,7 @@ __all__ = (
     "InvoiceRefreshResponseProvider",
     "InvoiceRefreshResponseSourceGap",
     "InvoiceStatus",
+    "InvokeExecutionTaskRequest",
     "InvokeRequest",
     "InvokeRequestHeaders",
     "InvokeRequestPayload",
@@ -4788,6 +4857,9 @@ __all__ = (
     "RouteMonitorWebhookPayload",
     "RouteMonitorWebhookPayloadStatus",
     "RouteRow",
+    "RunBudgetKind",
+    "RunBudgetRefusal",
+    "RunBudgetRefusalMetric",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",

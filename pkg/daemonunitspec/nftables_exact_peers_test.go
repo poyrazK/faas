@@ -71,10 +71,48 @@ func TestHostFirewallWithoutExactListsIsUnchanged(t *testing.T) {
 // sources: the control plane's exact addresses and the peers, with the wider
 // FAAS_PRIVATE_INGRESS_CIDRS kept for a vmmd that predates them.
 func TestVmmdDropInCarriesExactPeers(t *testing.T) {
-	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
-		t.Skip("python3 with jinja2 required for firewall rendering")
+	out := renderVmmdEgressDropIn(t, vmmdPeerVars(nil))
+	for _, want := range []string{
+		`Environment="FAAS_PRIVATE_INGRESS_CIDRS=10.20.0.0/24"`,
+		`Environment="FAAS_PRIVATE_CONTROL_INGRESS_CIDRS=10.20.0.1/32"`,
+		`Environment="FAAS_PRIVATE_PEER_INGRESS_CIDRS=10.20.0.9/32,10.20.0.3/32"`,
+		`Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS=50051,9091"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("drop-in lacks %q:\n%s", want, out)
+		}
 	}
-	path := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "vmmd_service", "templates", "99-faas-egress.conf.j2")
+}
+
+// With the app edge on, the boot policy admits peers to gatewayd-internal for
+// the compute-pool fallback (ADR-1343). vmmd rebuilds the whole ruleset after
+// every VM change, so its peer ports must carry that port too: without it a
+// drained node's edge could not reach the other nodes and answered 503
+// (rc.364 rollout, 2026-11-21).
+func TestVmmdDropInKeepsTheEdgePeerPort(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		extra map[string]any
+		want  string
+	}{
+		{"edge off", nil, "50051,9091"},
+		{"edge on", map[string]any{"faas_edge_on_compute_nodes": true, "faas_edge_peer_cidrs": []string{"10.20.0.0/24"}}, "50051,9091,8080"},
+		{"edge on without peers", map[string]any{"faas_edge_on_compute_nodes": true}, "50051,9091"},
+		{"edge on, port already listed", map[string]any{"faas_edge_on_compute_nodes": true, "faas_edge_peer_cidrs": []string{"10.20.0.0/24"}, "faas_compute_peer_ports": []int{50051, 9091, 8080}}, "50051,9091,8080"},
+		{"edge on, custom port", map[string]any{"faas_edge_on_compute_nodes": "true", "faas_edge_peer_cidrs": []string{"10.20.0.0/24"}, "faas_edge_peer_gateway_port": 8085}, "50051,9091,8085"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := renderVmmdEgressDropIn(t, vmmdPeerVars(tc.extra))
+			want := `Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS=` + tc.want + `"`
+			if !strings.Contains(out, want) {
+				t.Errorf("drop-in lacks %q:\n%s", want, out)
+			}
+		})
+	}
+}
+
+// vmmdPeerVars is a compute host with one resolved peer, plus extra.
+func vmmdPeerVars(extra map[string]any) map[string]any {
 	vars := exactPeerVars(map[string]any{
 		"cp": map[string]any{"faas_private_address": "10.20.0.1"},
 		"c2": map[string]any{"faas_private_dns_address": "10.20.0.3"},
@@ -83,6 +121,19 @@ func TestVmmdDropInCarriesExactPeers(t *testing.T) {
 	vars["public_iface"] = "eno1"
 	vars["masquerade_cidr"] = "10.100.0.0/16"
 	vars["ansible_default_ipv4"] = map[string]string{"interface": "eno1"}
+	for k, v := range extra {
+		vars[k] = v
+	}
+	return vars
+}
+
+// renderVmmdEgressDropIn renders vmmd's 99-faas-egress.conf with vars.
+func renderVmmdEgressDropIn(t *testing.T, vars map[string]any) string {
+	t.Helper()
+	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
+		t.Skip("python3 with jinja2 required for firewall rendering")
+	}
+	path := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "vmmd_service", "templates", "99-faas-egress.conf.j2")
 	encoded, err := json.Marshal(vars)
 	if err != nil {
 		t.Fatal(err)
@@ -95,16 +146,7 @@ print(Template(pathlib.Path(sys.argv[1]).read_text(), trim_blocks=True).render(*
 	if err != nil {
 		t.Fatalf("render: %v: %s", err, out)
 	}
-	for _, want := range []string{
-		`Environment="FAAS_PRIVATE_INGRESS_CIDRS=10.20.0.0/24"`,
-		`Environment="FAAS_PRIVATE_CONTROL_INGRESS_CIDRS=10.20.0.1/32"`,
-		`Environment="FAAS_PRIVATE_PEER_INGRESS_CIDRS=10.20.0.9/32,10.20.0.3/32"`,
-		`Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS=50051,9091"`,
-	} {
-		if !strings.Contains(string(out), want) {
-			t.Errorf("drop-in lacks %q:\n%s", want, out)
-		}
-	}
+	return string(out)
 }
 
 // The resolver is copied into both templates; they must not drift.

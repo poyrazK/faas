@@ -5,12 +5,12 @@
   "operator_country": "",
   "governing_law": "",
   "courts": "",
-  "effective_date": "2026-12-20",
+  "effective_date": "2026-11-21",
   "minimum_age": 16,
   "contact_email": "gregale@gregale.dev",
   "privacy_email": "gregale@gregale.dev",
   "abuse_email": "gregale@gregale.dev",
   "security_email": "gregale@gregale.dev",
   "support_email": "gregale@gregale.dev",
-  "change_notice": "On 2026-12-20 our Terms of Service, Privacy Policy and Data Processing Agreement change to describe support access: owners and admins can let Gregale support deploy, roll back and restart chosen apps for up to 7 days. Support never reads your environment values, and you can revoke access at any time."
+  "change_notice": ""
 }

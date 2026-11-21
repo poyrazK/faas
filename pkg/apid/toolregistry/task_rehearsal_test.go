@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -243,6 +244,20 @@ func exerciseHostedTaskRehearsalCandidate(t *testing.T, store state.Store, pool 
 	if _, err := journal.ChangeHostedTaskRehearsal(ctx, f.account.ID, id, state.DecideHostedTaskRehearsal, in); err != nil {
 		t.Fatal(err)
 	}
+	runnerOpts := opts
+	runnerOpts.TaskRehearsalProvisioner = &taskrehearsal.Provisioner{AdmissionEnabled: true}
+	runnerOpts.TaskRehearsalRunner = &taskrehearsal.Runner{AdmissionEnabled: true}
+	runner := toolregistry.NewPrivateExecutor(store, runnerOpts)
+	t.Cleanup(runner.Close)
+	hostErr := errors.New("acceptance host unavailable")
+	host := &smokeHostCheck{err: hostErr}
+	blocked, evidence, err := runner.SmokeHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256, host)
+	if !errors.Is(err, hostErr) || blocked.ID != "" || evidence != (tasktoolrehearsal.SmokeEvidence{}) || host.accountID != f.account.ID {
+		t.Fatalf("host rejection must occur before consuming approval: %v", err)
+	}
+	if out, _, err := runner.RunHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256); !errors.Is(err, state.ErrConflict) || out.ID != "" {
+		t.Fatalf("runner claimed a source without a reviewed migration entry: %v", err)
+	}
 	if out, err := f.executor.ClaimHostedTaskRehearsalCandidate(ctx, f.account.ID, id, other, plan.PlanSHA256); !errors.Is(err, state.ErrConflict) || out.Run.ID != "" {
 		t.Fatalf("another owner received the candidate: %v", err)
 	}
@@ -305,6 +320,39 @@ func exerciseHostedTaskRehearsalCandidate(t *testing.T, store state.Store, pool 
 	if err != nil || replay.Run.ID != plan.TargetID || len(replay.WebArchive) != 0 || len(replay.WorkerArchive) != 0 {
 		t.Fatalf("replay attempted to reopen retained source: %v", err)
 	}
+
+	// A provisioner with no store would fail if called. Even a fresh
+	// executor can replay only the original reservation.
+	opts.TaskRehearsalProvisioner = &taskrehearsal.Provisioner{AdmissionEnabled: true}
+	restarted := toolregistry.NewPrivateExecutor(f.store, opts)
+	t.Cleanup(restarted.Close)
+	reserved := replay.Run
+	runReplay, execution, err := runner.RunHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256)
+	if err != nil || runReplay.ID != reserved.ID || execution != (taskrehearsal.Execution{}) {
+		t.Fatalf("runner replay started work for an existing reservation: %v", err)
+	}
+	host.err = nil
+	smokeReplay, evidence, err := runner.SmokeHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256, host)
+	if err != nil || smokeReplay.ID != reserved.ID || evidence != (tasktoolrehearsal.SmokeEvidence{}) {
+		t.Fatalf("smoke replay exercised an existing rehearsal: %v", err)
+	}
+	replayed, target, err := restarted.ProvisionHostedTaskRehearsal(ctx, f.account, id, owner, plan.PlanSHA256)
+	if err != nil || target != nil || replayed.Run.ID != reserved.ID || replayed.Run.PlanSHA256 != reserved.PlanSHA256 ||
+		!replayed.Run.ReservedAt.Equal(reserved.ReservedAt) || !replayed.Run.ApprovalExpiresAt.Equal(reserved.ApprovalExpiresAt) ||
+		len(replayed.WebArchive) != 0 || len(replayed.WorkerArchive) != 0 {
+		t.Fatalf("provisioning replay did more than return its reservation: %v", err)
+	}
+}
+
+type smokeHostCheck struct {
+	tasktoolrehearsal.SmokeDriver
+	accountID string
+	err       error
+}
+
+func (d *smokeHostCheck) CheckHost(_ context.Context, accountID string) error {
+	d.accountID = accountID
+	return d.err
 }
 
 func assertHostedTaskRunReservationRollback(ctx context.Context, t *testing.T, pool *pgxpool.Pool, journal state.HostedTaskRehearsalStore, plan api.HostedTaskRehearsalPlan, claim state.HostedTaskRehearsalChange) {

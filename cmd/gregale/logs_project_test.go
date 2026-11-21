@@ -95,6 +95,19 @@ func TestProjectLogsSelectServicesAndReportParked(t *testing.T) {
 	}
 }
 
+// prod hunt 2026-11-21: `gregale logs --project` with no lines printed
+// nothing and exited 0, while `gregale logs <app>` explains an empty read.
+func TestProjectLogsSayWhenNothingCameBack(t *testing.T) {
+	client := &fakeProjectLogs{calls: map[string]int{}, streams: map[string][]string{}}
+	var out, errOut bytes.Buffer
+	if code := main.RunProjectLogs(context.Background(), client, "shop", nil, false, api.LogFilter{}, &out, &errOut, time.Millisecond); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "No log lines from api, billing_api in project shop") {
+		t.Fatalf("empty project read:\n%s", out.String())
+	}
+}
+
 func TestProjectLogJSON(t *testing.T) {
 	if got := main.ProjectLogJSON("api", `{"msg":"ready","level":"info"}`); got != `{"level":"info","msg":"ready","service":"api"}` {
 		t.Fatalf("object line = %s", got)

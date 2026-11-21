@@ -308,6 +308,11 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		_, _ = f.Write([]byte{VsockResumeAckMessageType})
 		return
 	}
+	if executionGuestMode.Load() && !executionGuest.Load() {
+		log.Warn("execution resume rejected after payload admission")
+		_, _ = f.Write([]byte{VsockResumeAckNack})
+		return
+	}
 	bodyLen := binary.BigEndian.Uint32(hdr[4:8])
 	// Guard against a malicious peer pinning the guest on a giant body.
 	// The cap mirrors vmmd's 8 KiB resumeHookMaxBodyBytes and is deliberately
@@ -433,14 +438,16 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	// barrier could not reach.
 	if n, runtimes := unregisteredRuntimeProcesses(); n > 0 {
 		timings.ReseedUnregistered, timings.ReseedUnregisteredRuntimes = n, strings.Join(runtimes, ",")
+		// The line lands in the customer's logs on every wake; it named no
+		// remedy (prod hunt 2026-11-21, a plain Go net/http app).
 		log.Warn("restore: processes not covered by the userspace RNG reseed may repeat random values across wakes",
-			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes)
+			"processes", n, "runtimes", timings.ReseedUnregisteredRuntimes, "docs", reseedDocsURL)
 	}
 	// ADR-20261110170000: Go ID libraries keep per-process random state that
 	// nothing outside the program can reset.
 	if libs := goIDLibraryModules("/proc", os.Getpid()); len(libs) > 0 {
 		log.Warn("restore: Go ID libraries in this app may generate the same IDs in instances restored from one snapshot",
-			"modules", strings.Join(libs, ","))
+			"modules", strings.Join(libs, ","), "docs", reseedDocsURL)
 	}
 	stage = time.Now()
 	resumeGuestProfiles()

@@ -386,6 +386,19 @@ type ObsInvocationRow struct {
 	LastError   string     `json:"last_error,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// InstanceID is the instance that ran the invocation, once one claimed it.
+	InstanceID string `json:"instance_id,omitempty"`
+}
+
+// ObsInstanceListResponse answers GET /v1/admin/obs/instances
+// (ADR-20261121161842): resident instances across every compute node, most
+// recently used first. UnavailableNodes names nodes whose instances could not
+// be read; Truncated means more instances matched than Limit.
+type ObsInstanceListResponse struct {
+	Items            []ObsInstanceRow `json:"items"`
+	Limit            int              `json:"limit"`
+	Truncated        bool             `json:"truncated"`
+	UnavailableNodes []string         `json:"unavailable_nodes,omitempty"`
 }
 
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.
