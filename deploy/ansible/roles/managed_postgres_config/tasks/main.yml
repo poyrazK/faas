@@ -60,9 +60,10 @@
 # win over what this role renders.
 - name: managed_postgres_config — look for another apid drop-in setting the config or key file
   ansible.builtin.shell: |
+    set -o pipefail
     for f in /etc/systemd/system/faas-apid.service.d/*.conf; do
       [ -e "$f" ] && [ "$(basename "$f")" != zz-faas-managed-postgres.conf ] || continue
-      grep -HE 'FAAS_MANAGED_POSTGRES_CONFIG=|managed-postgres/provider\.env' "$f" | sed -E 's/=.*/=…/'
+      { grep -HE 'FAAS_MANAGED_POSTGRES_CONFIG=|managed-postgres/provider\.env' "$f" || true; } | sed -E 's/=.*/=…/'
     done; true
   args:
     executable: /bin/bash
