@@ -97,11 +97,12 @@ type LayerBuilder interface {
 // advances a deployment row through the build pipeline until a snapshot row
 // exists, at which point schedd picks it up on the next reaper tick.
 type Handler struct {
-	validatorArtifactCheck func(context.Context, string, string) error
-	store                  state.Store
-	notif                  Notifier
-	oci                    oci.Puller
-	builder                LayerBuilder
+	executionEnvironmentsEnabled bool
+	validatorArtifactCheck       func(context.Context, string, string) error
+	store                        state.Store
+	notif                        Notifier
+	oci                          oci.Puller
+	builder                      LayerBuilder
 	// layerDigests remembers the digest of each layer this process just
 	// published, so the deploy scan does not hash the same bytes again.
 	layerDigests *publishedLayerDigests

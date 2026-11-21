@@ -236,6 +236,9 @@ func (v *JailerVMM) prepareNativeLease(ctx context.Context, lease Lease) error {
 	if err := r.acquireDaemonOwnership(ctx); err != nil {
 		return err
 	}
+	if err := r.journal.requireExecutionTemplateLaunch(ctx, lease); err != nil {
+		return err
+	}
 	ctx, err := r.repairProducerContext(ctx, lease)
 	if err != nil {
 		return err

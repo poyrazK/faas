@@ -1,0 +1,12 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+export type ExecutionFileLimits = {
+  max_file_bytes: number;
+  max_input_bytes: number;
+  max_output_bytes: number;
+  max_stored_bytes: number;
+  max_files: number;
+};
+

@@ -5,19 +5,7 @@
 // is kept open between messages, so a parked agent holds no connection and
 // a VM snapshot never captures a socket.
 import pg from "pg";
-
-const schema = `
-CREATE TABLE IF NOT EXISTS agent_messages (
-  thread_id  text        NOT NULL CHECK (length(thread_id) BETWEEN 1 AND 64),
-  message_id text        NOT NULL CHECK (length(message_id) BETWEEN 1 AND 160),
-  seq        bigserial   NOT NULL,
-  role       text        NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
-  content    jsonb       NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (thread_id, message_id)
-);
-CREATE INDEX IF NOT EXISTS agent_messages_thread_seq ON agent_messages (thread_id, seq);
-`;
+import { agentSchema } from "./schema.js";
 
 export class PostgresStore {
   constructor(connectionString = process.env.DATABASE_URL) {
@@ -31,7 +19,7 @@ export class PostgresStore {
     await client.connect();
     try {
       if (!this.ready) {
-        await client.query(schema);
+        await client.query(agentSchema);
         this.ready = true;
       }
       return await fn(client);

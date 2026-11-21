@@ -717,3 +717,25 @@ export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgm
   type EventAcknowledgmentIntentRecoveryWorkerMetricsSnapshot } from './event-acknowledgment-intent-worker-metrics.js';
 export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
   type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';
+
+export { prepareExecutionFile, uploadPreparedExecutionFile, downloadExecutionFile, type PreparedExecutionFile } from './execution-files.js';
+
+export { watchExecutionEnvironment, type EnvironmentDiagnostic, type WatchEnvironmentOptions } from './execution-environments.js';
+
+export type { ExecutionPipelineOptions } from './generated/models/ExecutionPipelineOptions.js';
+export type { ExecutionRetryPolicy } from './generated/models/ExecutionRetryPolicy.js';
+export type { ExecutionTaskBatch } from './generated/models/ExecutionTaskBatch.js';
+export type { ExecutionTaskBatchItem } from './generated/models/ExecutionTaskBatchItem.js';
+export type { ExecutionPipelineResponse } from './generated/models/ExecutionPipelineResponse.js';
+export type { ExecutionPipelineStepResponse } from './generated/models/ExecutionPipelineStepResponse.js';
+export type { ExecutionPipelineAttemptResponse } from './generated/models/ExecutionPipelineAttemptResponse.js';
+
+export type { CreateManagedExecutionWorkflowRequest } from './generated/models/CreateManagedExecutionWorkflowRequest.js';
+export type { CreateManagedExecutionWorkflowStep } from './generated/models/CreateManagedExecutionWorkflowStep.js';
+export type { ManagedExecutionWorkflowResponse } from './generated/models/ManagedExecutionWorkflowResponse.js';
+export type { ManagedExecutionWorkflowArtifactInput } from './generated/models/ManagedExecutionWorkflowArtifactInput.js';
+
+export { watchExecutionPipeline, type PipelineProgressEvent, type WatchPipelineOptions } from './execution-pipeline-progress.js';
+
+export { Task, TaskRun, TaskExecutionError, TaskDeliveryError, TaskSubmissionError } from './task.js';
+export type { TaskOptions, TaskWaitOptions, TaskIntent, TaskDestination, TaskResult } from './task.js';

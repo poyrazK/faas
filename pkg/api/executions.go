@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/runfile"
+
 	"github.com/google/uuid"
 )
 
@@ -55,11 +57,13 @@ type ExecutionNetworkPolicy struct {
 // ExecutionLimitRequest contains caller-selectable limits. Zero means use the
 // plan default; negative values are always invalid.
 type ExecutionLimitRequest struct {
-	TimeoutMS       int `json:"timeout_ms,omitempty"`
-	MemoryMB        int `json:"memory_mb,omitempty"`
-	CPUMillicores   int `json:"cpu_millicores,omitempty"`
-	EphemeralDiskMB int `json:"ephemeral_disk_mb,omitempty"`
-	MaxOutputBytes  int `json:"max_output_bytes,omitempty"`
+	Class            ExecutionClass `json:"execution_class,omitempty"`
+	MaxArtifactBytes int64          `json:"max_artifact_bytes,omitempty"`
+	TimeoutMS        int            `json:"timeout_ms,omitempty"`
+	MemoryMB         int            `json:"memory_mb,omitempty"`
+	CPUMillicores    int            `json:"cpu_millicores,omitempty"`
+	EphemeralDiskMB  int            `json:"ephemeral_disk_mb,omitempty"`
+	MaxOutputBytes   int            `json:"max_output_bytes,omitempty"`
 }
 
 // ExecutionFile is one regular file in an ephemeral source bundle. Content
@@ -98,6 +102,7 @@ const (
 // ExecutionArtifact is an explicitly selected output file. Content is base64
 // in JSON; its complete serialized metadata and content share MaxOutputBytes.
 type ExecutionArtifact struct {
+	FileID    string `json:"file_id,omitempty"`
 	Name      string `json:"name"`
 	SizeBytes int    `json:"size_bytes"`
 	SHA256    string `json:"sha256"`
@@ -107,8 +112,12 @@ type ExecutionArtifact struct {
 // CreateExecutionRequest is the caller-authored one-shot execution contract.
 // Source and input are never included in ExecutionResponse.
 type CreateExecutionRequest struct {
-	WorkflowID string `json:"workflow_id,omitempty"`
-	StepLabel  string `json:"step_label,omitempty"`
+	CustomerRef     string                   `json:"customer_ref,omitempty"`
+	EnvironmentID   string                   `json:"environment_id,omitempty"`
+	InputFiles      []ExecutionFileInput     `json:"input_files,omitempty"`
+	ArtifactStorage ExecutionArtifactStorage `json:"artifact_storage,omitempty"`
+	WorkflowID      string                   `json:"workflow_id,omitempty"`
+	StepLabel       string                   `json:"step_label,omitempty"`
 	// IntegrationIDs requests explicit control-plane grants for this Run. It
 	// is intentionally absent from ResolvedExecutionRequest and the guest payload.
 	IntegrationIDs []string                 `json:"integration_ids,omitempty"`
@@ -120,6 +129,8 @@ type CreateExecutionRequest struct {
 	ArtifactInputs []ExecutionArtifactInput `json:"artifact_inputs,omitempty"`
 	OutputFiles    []string                 `json:"output_files,omitempty"`
 	Input          json.RawMessage          `json:"input,omitempty"`
+	InputSchema    json.RawMessage          `json:"input_schema,omitempty"`
+	ResultSchema   json.RawMessage          `json:"result_schema,omitempty"`
 	Limits         *ExecutionLimitRequest   `json:"limits,omitempty"`
 	Network        *ExecutionNetworkPolicy  `json:"network,omitempty"`
 }
@@ -127,26 +138,33 @@ type CreateExecutionRequest struct {
 // ResolvedExecutionLimits is the immutable envelope admitted by apid and
 // enforced independently by the scheduler, VMM cgroup, and guest executor.
 type ResolvedExecutionLimits struct {
-	TimeoutMS       int `json:"timeout_ms"`
-	MemoryMB        int `json:"memory_mb"`
-	CPUMillicores   int `json:"cpu_millicores"`
-	EphemeralDiskMB int `json:"ephemeral_disk_mb"`
-	MaxOutputBytes  int `json:"max_output_bytes"`
-	PIDsMax         int `json:"pids_max"`
+	Class            ExecutionClass `json:"execution_class,omitempty"`
+	MaxArtifactBytes int64          `json:"max_artifact_bytes,omitempty"`
+	TimeoutMS        int            `json:"timeout_ms"`
+	MemoryMB         int            `json:"memory_mb"`
+	CPUMillicores    int            `json:"cpu_millicores"`
+	EphemeralDiskMB  int            `json:"ephemeral_disk_mb"`
+	MaxOutputBytes   int            `json:"max_output_bytes"`
+	PIDsMax          int            `json:"pids_max"`
 }
 
 // ResolvedExecutionRequest is the normalized form persisted as execution
 // intent. Input is always valid JSON and Network.Mode is always explicit.
 type ResolvedExecutionRequest struct {
-	Profile     ExecutionProfile
-	Runtime     ExecutionRuntime
-	Source      string
-	Entrypoint  string
-	Files       []ExecutionFile
-	OutputFiles []string
-	Input       json.RawMessage
-	Limits      ResolvedExecutionLimits
-	Network     ExecutionNetworkPolicy
+	EnvironmentID   string
+	StoredInputs    []runfile.Ref
+	StoredOutputs   []runfile.Ref
+	ArtifactStorage ExecutionArtifactStorage
+	Profile         ExecutionProfile
+	Runtime         ExecutionRuntime
+	Source          string
+	Entrypoint      string
+	Files           []ExecutionFile
+	OutputFiles     []string
+	Input           json.RawMessage
+	ResultSchema    json.RawMessage
+	Limits          ResolvedExecutionLimits
+	Network         ExecutionNetworkPolicy
 }
 
 // SourceBytes returns the admitted source footprint for state accounting. It
@@ -222,6 +240,11 @@ func NormalizeExecutionIntegrationIDs(ids []string) ([]string, error) {
 // Resolve validates a caller request against the selected plan and fills every
 // default. No persistence, scheduling, or VM work may occur before this gate.
 func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *Problem) {
+	for _, schema := range []json.RawMessage{r.InputSchema, r.ResultSchema} {
+		if len(schema) > ExecutionContractSchemaMaxBytes || len(schema) > 0 && !json.Valid(schema) {
+			return ResolvedExecutionRequest{}, executionInvalid("execution_contract_invalid", "schemas must be valid JSON and at most 64 KiB each")
+		}
+	}
 	if _, err := NormalizeExecutionIntegrationIDs(r.IntegrationIDs); err != nil {
 		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
 	}
@@ -230,6 +253,12 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 	}
 	if len(r.ArtifactInputs) != 0 {
 		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "artifact_inputs must be resolved before execution admission")
+	}
+	if r.EnvironmentID != "" {
+		id, err := uuid.Parse(r.EnvironmentID)
+		if err != nil || id == uuid.Nil || id.String() != r.EnvironmentID || r.Profile.Normalized() != ExecutionProfileStandard {
+			return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionRuntimeInvalid, "environment_id requires a canonical UUID and the standard profile")
+		}
 	}
 	if err := r.Profile.Validate(r.Runtime); err != nil {
 		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionRuntimeInvalid, err.Error())
@@ -309,21 +338,56 @@ func (r CreateExecutionRequest) Resolve(plan Plan) (ResolvedExecutionRequest, *P
 		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, err.Error())
 	}
 
+	if r.ArtifactStorage != "" && r.ArtifactStorage != ExecutionArtifactInline && r.ArtifactStorage != ExecutionArtifactStored {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "artifact_storage must be inline or stored")
+	}
+	if len(r.InputFiles) > ExecutionFileMaxInputs {
+		return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "too many input_files")
+	}
+	seenInputs := map[string]bool{}
+	for _, file := range r.InputFiles {
+		if !runfile.ValidPath(file.Path, ExecutionBundleMaxPathSize) || seenInputs[file.Path] || (file.FileID == "") == (file.GrantToken == "") || file.FileID != "" && !runfile.ValidID(file.FileID) {
+			return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "input_files require unique relative paths and exactly one file_id or grant_token")
+		}
+		for p := range seenInputs {
+			if strings.HasPrefix(file.Path, p+"/") || strings.HasPrefix(p, file.Path+"/") {
+				return ResolvedExecutionRequest{}, executionInvalid(CodeExecutionPayloadInvalid, "input file paths must not overlap")
+			}
+		}
+		seenInputs[file.Path] = true
+	}
 	limits, problem := resolveExecutionLimits(r.Limits, planLimits)
 	if problem != nil {
 		return ResolvedExecutionRequest{}, problem
 	}
 
+	if r.Limits != nil && r.Limits.MaxArtifactBytes < 0 {
+		return ResolvedExecutionRequest{}, executionLimitInvalid("max_artifact_bytes", "cannot be negative")
+	}
+	if r.ArtifactStorage == ExecutionArtifactStored && len(r.OutputFiles) > 0 {
+		limits.MaxArtifactBytes = plan.ExecutionFileLimits().MaxOutputBytes
+		if r.Limits != nil && r.Limits.MaxArtifactBytes != 0 {
+			limits.MaxArtifactBytes = r.Limits.MaxArtifactBytes
+		}
+		if limits.MaxArtifactBytes > plan.ExecutionFileLimits().MaxOutputBytes {
+			return ResolvedExecutionRequest{}, executionLimitExceeded("max_artifact_bytes", int(plan.ExecutionFileLimits().MaxOutputBytes), int(limits.MaxArtifactBytes))
+		}
+	} else if r.Limits != nil && r.Limits.MaxArtifactBytes != 0 {
+		return ResolvedExecutionRequest{}, executionLimitInvalid("max_artifact_bytes", "requires stored output_files")
+	}
 	return ResolvedExecutionRequest{
-		Profile:     r.Profile.Normalized(),
-		Runtime:     r.Runtime,
-		Source:      source,
-		Entrypoint:  entrypoint,
-		Files:       files,
-		OutputFiles: append([]string(nil), r.OutputFiles...),
-		Input:       append(json.RawMessage(nil), input...),
-		Limits:      limits,
-		Network:     network,
+		EnvironmentID:   r.EnvironmentID,
+		ArtifactStorage: r.ArtifactStorage,
+		Profile:         r.Profile.Normalized(),
+		Runtime:         r.Runtime,
+		Source:          source,
+		Entrypoint:      entrypoint,
+		Files:           files,
+		OutputFiles:     append([]string(nil), r.OutputFiles...),
+		Input:           append(json.RawMessage(nil), input...),
+		ResultSchema:    append(json.RawMessage(nil), r.ResultSchema...),
+		Limits:          limits,
+		Network:         network,
 	}, nil
 }
 
@@ -418,7 +482,23 @@ func cloneExecutionFiles(files []ExecutionFile) []ExecutionFile {
 }
 
 func resolveExecutionLimits(requested *ExecutionLimitRequest, plan ExecutionPlanLimits) (ResolvedExecutionLimits, *Problem) {
+	var class ExecutionClass
+	if requested != nil {
+		class = requested.Class
+	}
+	if !class.Valid() {
+		return ResolvedExecutionLimits{}, executionLimitInvalid("execution_class", "must be standard or extended")
+	}
+	plan = plan.ForClass(class)
+	if class.Normalized() == ExecutionClassStandard {
+		class = ""
+	}
+	if !plan.Allowed {
+		return ResolvedExecutionLimits{}, executionLimitInvalid("execution_class", "is unavailable for this plan")
+	}
+
 	limits := ResolvedExecutionLimits{
+		Class:           class,
 		TimeoutMS:       plan.DefaultTimeoutMS,
 		MemoryMB:        plan.DefaultMemoryMB,
 		CPUMillicores:   plan.DefaultCPUMillicores,
@@ -579,26 +659,30 @@ type ExecutionFailure struct {
 // ExecutionResponse intentionally omits source and input. Result, stdout, and
 // stderr share the admitted MaxOutputBytes budget.
 type ExecutionResponse struct {
-	WorkflowID         string                  `json:"workflow_id,omitempty"`
-	StepLabel          string                  `json:"step_label,omitempty"`
-	Profile            ExecutionProfile        `json:"profile"`
-	RuntimeImageDigest string                  `json:"runtime_image_digest,omitempty"`
-	Packages           map[string]string       `json:"packages,omitempty"`
-	ID                 string                  `json:"id"`
-	Status             ExecutionStatus         `json:"status"`
-	Runtime            ExecutionRuntime        `json:"runtime"`
-	Limits             ResolvedExecutionLimits `json:"limits"`
-	Artifacts          []ExecutionArtifact     `json:"artifacts,omitempty"`
-	Result             json.RawMessage         `json:"result,omitempty"`
-	Stdout             string                  `json:"stdout,omitempty"`
-	Stderr             string                  `json:"stderr,omitempty"`
-	OutputTruncated    bool                    `json:"output_truncated"`
-	ExitCode           *int                    `json:"exit_code,omitempty"`
-	Usage              *ExecutionUsage         `json:"usage,omitempty"`
-	Failure            *ExecutionFailure       `json:"failure,omitempty"`
-	CreatedAt          string                  `json:"created_at"`
-	StartedAt          *string                 `json:"started_at,omitempty"`
-	FinishedAt         *string                 `json:"finished_at,omitempty"`
+	Attribution        *RunAttribution            `json:"attribution,omitempty"`
+	Task               *ExecutionTaskRef          `json:"task,omitempty"`
+	EnvironmentID      string                     `json:"environment_id,omitempty"`
+	WorkflowID         string                     `json:"workflow_id,omitempty"`
+	StepLabel          string                     `json:"step_label,omitempty"`
+	Profile            ExecutionProfile           `json:"profile"`
+	RuntimeImageDigest string                     `json:"runtime_image_digest,omitempty"`
+	Packages           map[string]string          `json:"packages,omitempty"`
+	ID                 string                     `json:"id"`
+	Status             ExecutionStatus            `json:"status"`
+	Runtime            ExecutionRuntime           `json:"runtime"`
+	Limits             ResolvedExecutionLimits    `json:"limits"`
+	Artifacts          []ExecutionArtifact        `json:"artifacts,omitempty"`
+	Result             json.RawMessage            `json:"result,omitempty"`
+	ResultValidation   *ExecutionResultValidation `json:"result_validation,omitempty"`
+	Stdout             string                     `json:"stdout,omitempty"`
+	Stderr             string                     `json:"stderr,omitempty"`
+	OutputTruncated    bool                       `json:"output_truncated"`
+	ExitCode           *int                       `json:"exit_code,omitempty"`
+	Usage              *ExecutionUsage            `json:"usage,omitempty"`
+	Failure            *ExecutionFailure          `json:"failure,omitempty"`
+	CreatedAt          string                     `json:"created_at"`
+	StartedAt          *string                    `json:"started_at,omitempty"`
+	FinishedAt         *string                    `json:"finished_at,omitempty"`
 }
 
 // ExecutionWorkflowStatusCounts counts runs in each lifecycle state within

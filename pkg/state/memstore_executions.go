@@ -38,6 +38,15 @@ type executionUsageLedgerRow struct {
 }
 
 func cloneExecution(row Execution) Execution {
+	if row.Attribution != nil {
+		a := *row.Attribution
+		row.Attribution = &a
+	}
+	if row.Task != nil {
+		ref := *row.Task
+		row.Task = &ref
+	}
+	row.ResultValidation = api.CloneExecutionResultValidation(row.ResultValidation)
 	row.Result = append([]byte(nil), row.Result...)
 	row.Artifacts = api.CloneExecutionArtifacts(row.Artifacts)
 	if row.RunsPrincipalID != nil {
@@ -84,6 +93,12 @@ func cloneExecution(row Execution) Execution {
 }
 
 func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionParams) (Execution, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createExecutionLocked(params)
+}
+
+func (m *MemStore) createExecutionLocked(params CreateExecutionParams) (Execution, error) {
 	normalizedIntegrationIDs, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs)
 	if err != nil {
 		return Execution{}, fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
@@ -92,11 +107,12 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 	if err := validateCreateExecution(params); err != nil {
 		return Execution{}, err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	account, ok := m.accounts[params.AccountID]
 	if !ok {
 		return Execution{}, ErrNotFound
+	}
+	if err := m.validatePipelineAdmissionLocked(params); err != nil {
+		return Execution{}, err
 	}
 	planLimits, planOK := account.Plan.ExecutionLimits()
 	if !planOK {
@@ -123,14 +139,38 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 			return Execution{}, ErrExecutionOutboundIntegrationUnavailable
 		}
 	}
-	active := 0
+	taskVersion, err := m.validateTaskAdmissionLocked(params)
+	if err != nil {
+		return Execution{}, err
+	}
+	var environment ExecutionEnvironment
+	if params.Request.EnvironmentID != "" {
+		environment, err = m.executionEnvironmentLocked(params.AccountID, params.Request.EnvironmentID)
+		principal := ""
+		if params.RunsPrincipalID != nil {
+			principal = *params.RunsPrincipalID
+		}
+		if err != nil || !environmentUsable(environment, params.AccountID, principal, params.FilesAccountWide || params.Task != nil, params.Request.Runtime) {
+			return Execution{}, ErrExecutionEnvironmentUnavailable
+		}
+	}
+	active, extended := 0, 0
 	for _, row := range m.executions {
 		if row.AccountID == params.AccountID && !row.Status.Terminal() {
 			active++
+			if row.Limits.Class == api.ExecutionClassExtended {
+				extended++
+			}
 		}
+	}
+	if params.Request.Limits.Class == api.ExecutionClassExtended && extended >= planLimits.MaxExtendedConcurrent {
+		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxExtendedConcurrent, Observed: extended + 1}
 	}
 	if active >= planLimits.MaxConcurrent {
 		return Execution{}, &ExecutionQuotaError{Limit: planLimits.MaxConcurrent, Observed: active + 1}
+	}
+	if err := m.validateExecutionFilesLocked(params, account.Plan); err != nil {
+		return Execution{}, err
 	}
 	seenGrants := make(map[string]struct{}, len(params.ArtifactGrantRedemptions))
 	for _, redemption := range params.ArtifactGrantRedemptions {
@@ -144,23 +184,36 @@ func (m *MemStore) CreateExecution(_ context.Context, params CreateExecutionPara
 			return Execution{}, ErrExecutionArtifactGrantUnavailable
 		}
 	}
-	row := Execution{
-		Profile:         params.Request.Profile.Normalized(),
-		ID:              uuid.NewString(),
-		AccountID:       params.AccountID,
-		WorkflowID:      params.WorkflowID,
-		StepLabel:       params.StepLabel,
-		RunsPrincipalID: cloneStringPtr(params.RunsPrincipalID),
-		Runtime:         params.Request.Runtime,
-		Status:          api.ExecutionStatusQueued,
-		NetworkMode:     params.Request.Network.Mode,
-		Limits:          params.Request.Limits,
-		SourceBytes:     params.SourceBytes,
-		InputBytes:      params.InputBytes,
-		DeadlineAt:      params.DeadlineAt.UTC(),
-		CreatedAt:       params.AdmittedAt.UTC(),
-		UpdatedAt:       params.AdmittedAt.UTC(),
+	reservation, policies, err := m.prepareRunControlsLocked(params, taskVersion)
+	if err != nil {
+		return Execution{}, err
 	}
+	row := Execution{
+		EnvironmentID:      params.Request.EnvironmentID,
+		RuntimeImageDigest: environment.ImageDigest,
+		Profile:            params.Request.Profile.Normalized(),
+		ID:                 uuid.NewString(),
+		AccountID:          params.AccountID,
+		WorkflowID:         params.WorkflowID,
+		StepLabel:          params.StepLabel,
+		RunsPrincipalID:    cloneStringPtr(params.RunsPrincipalID),
+		Runtime:            params.Request.Runtime,
+		Status:             api.ExecutionStatusQueued,
+		NetworkMode:        params.Request.Network.Mode,
+		Limits:             params.Request.Limits,
+		SourceBytes:        params.SourceBytes,
+		InputBytes:         params.InputBytes,
+		InputFileBytes:     storedInputBytes(params.Request.StoredInputs),
+		DeadlineAt:         params.DeadlineAt.UTC(),
+		CreatedAt:          params.AdmittedAt.UTC(),
+		UpdatedAt:          params.AdmittedAt.UTC(),
+	}
+	if row.RuntimeImageDigest != "" {
+		row.RuntimeImageDigest = "sha256:" + row.RuntimeImageDigest
+	}
+	m.addTaskInvocationLocked(params, &row, taskVersion)
+	m.addRunControlsLocked(&row, reservation, policies)
+	m.addExecutionFilesLocked(params, row.ID)
 	m.executions[row.ID] = row
 	m.executionOutboundIntegrationIDs[row.ID] = append([]string(nil), params.OutboundIntegrationIDs...)
 	m.executionPayloads[row.ID] = executionPayload{
@@ -423,17 +476,17 @@ func (m *MemStore) ListExecutionQueueAccountsAfter(_ context.Context, at time.Ti
 }
 
 func (m *MemStore) ClaimExecution(_ context.Context, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
-	return m.claimExecution(owner, "", claimedAt, leaseDuration)
+	return m.claimExecution(owner, "", claimedAt, leaseDuration, "")
 }
 
 // ClaimExecutionForAccount is the fair-queue variant used by the production
 // coordinator. The account filter is applied while holding the same store lock
 // as the claim, so a selected queue head cannot be displaced by another worker.
 func (m *MemStore) ClaimExecutionForAccount(_ context.Context, accountID, owner string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
-	return m.claimExecution(owner, strings.TrimSpace(accountID), claimedAt, leaseDuration)
+	return m.claimExecution(owner, strings.TrimSpace(accountID), claimedAt, leaseDuration, "")
 }
 
-func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, leaseDuration time.Duration) (ExecutionClaim, error) {
+func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, leaseDuration time.Duration, class api.ExecutionClass) (ExecutionClaim, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" || claimedAt.IsZero() || leaseDuration <= 0 {
 		return ExecutionClaim{}, fmt.Errorf("%w: claim owner, time, and positive lease are required", ErrExecutionInvalid)
@@ -444,7 +497,7 @@ func (m *MemStore) claimExecution(owner, accountID string, claimedAt time.Time, 
 	for _, stored := range m.executions {
 		row := stored
 		if row.Status != api.ExecutionStatusQueued || row.CancelRequested != nil ||
-			(accountID != "" && row.AccountID != accountID) ||
+			(accountID != "" && row.AccountID != accountID) || (class != "" && row.Limits.Class.Normalized() != class.Normalized()) ||
 			row.CreatedAt.After(claimedAt) || !row.DeadlineAt.After(claimedAt) {
 			continue
 		}
@@ -492,7 +545,7 @@ func (m *MemStore) MarkExecutionRunning(_ context.Context, executionID, leaseTok
 		return Execution{}, ErrExecutionLeaseLost
 	}
 	startedAt = startedAt.UTC()
-	if row.Profile.Normalized() != api.ExecutionProfileStandard && row.RuntimeImageDigest == "" {
+	if (row.EnvironmentID != "" || row.Profile.Normalized() != api.ExecutionProfileStandard) && row.RuntimeImageDigest == "" {
 		return Execution{}, ErrExecutionRuntimeUnpinned
 	}
 	row.Status = api.ExecutionStatusRunning
@@ -556,12 +609,16 @@ func (m *MemStore) CompleteExecution(_ context.Context, params CompleteExecution
 	if params.FinishedAt.Before(row.CreatedAt) || (row.StartedAt != nil && params.FinishedAt.Before(*row.StartedAt)) {
 		return Execution{}, fmt.Errorf("%w: finish time predates execution lifecycle", ErrExecutionInvalidTerminal)
 	}
+	if err := m.completeExecutionFilesLocked(row, params); err != nil {
+		return Execution{}, err
+	}
 	finishedAt := params.FinishedAt.UTC()
 	row.Status = params.Status
 	row.LeaseToken = nil
 	row.LeaseOwner = nil
 	row.LeaseExpiresAt = nil
 	row.Result = append([]byte(nil), params.Result...)
+	row.ResultValidation = api.CloneExecutionResultValidation(params.ResultValidation)
 	row.Artifacts = api.CloneExecutionArtifacts(params.Artifacts)
 	row.Stdout = params.Stdout
 	row.Stderr = params.Stderr
@@ -592,6 +649,7 @@ func (m *MemStore) recordExecutionUsageLocked(row Execution) {
 	if _, exists := m.executionUsageLedger[row.ID]; exists {
 		return
 	}
+	m.enqueueExecutionFinishedLocked(row)
 	startedAt := cloneTimePtr(row.StartedAt)
 	m.executionUsageLedger[row.ID] = executionUsageLedgerRow{
 		ExecutionID:  row.ID,
@@ -739,6 +797,16 @@ func (m *MemStore) SweepExecutions(_ context.Context, at time.Time, limit int) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	result := ExecutionSweepResult{}
+	prunedAdmissions := 0
+	for key, entry := range m.executionAdmissions {
+		if prunedAdmissions >= limit {
+			break
+		}
+		if !entry.expiresAt.After(at) {
+			delete(m.executionAdmissions, key)
+			prunedAdmissions++
+		}
+	}
 
 	expiredQueued := executionCandidateIDs(m.executions, limit, func(row Execution) (time.Time, bool) {
 		return row.DeadlineAt, row.Status == api.ExecutionStatusQueued && !row.DeadlineAt.After(at)
@@ -862,4 +930,11 @@ func finishExecutionForSweep(row *Execution, status api.ExecutionStatus, at time
 		row.FailureCode = &code
 		row.FailureMessage = &message
 	}
+}
+
+func (m *MemStore) ClaimExecutionForClass(_ context.Context, account, owner string, class api.ExecutionClass, at time.Time, ttl time.Duration) (ExecutionClaim, error) {
+	if class == "" || !class.Valid() {
+		return ExecutionClaim{}, ErrExecutionInvalid
+	}
+	return m.claimExecution(owner, strings.TrimSpace(account), at, ttl, class)
 }

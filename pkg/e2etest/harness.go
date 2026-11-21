@@ -2654,9 +2654,15 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// settle keeps this from racing a healthy daemon that has not yet
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
+	h.RequireDaemonsAlive(t)
+}
 
+// RequireDaemonsAlive fails a waiter promptly when one of its daemons exits.
+// Deliberate harness kills are excluded; teardown remains the sole reaper.
+func (h *Harness) RequireDaemonsAlive(t *testing.T) {
+	t.Helper()
 	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
-		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
+		t.Fatalf("e2etest: %s exited; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
 	}
@@ -2666,14 +2672,14 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 // whatever it managed to write. Split from requireDaemonsAlive so the decision
 // is testable without a *testing.T to fail.
 //
-// Signal(0) rather than Wait: it asks the kernel whether the pid is still
-// deliverable without reaping, so stop()'s Wait stays the only one.
+// Probe without reaping, so stop()'s Wait stays the only one. Signal(0) alone
+// accepts an unreaped zombie on Linux, where WNOWAIT is also required.
 func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
 	for _, p := range procs {
 		if p == nil || p.Process == nil {
 			continue
 		}
-		if err := p.Process.Signal(syscall.Signal(0)); err == nil {
+		if !daemonProcessExited(p.Process) {
 			continue
 		}
 		out := ""
@@ -3101,29 +3107,44 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // deployments older than staleDeploymentThreshold (2h). A session named
 // faas-imaged-direct whose last statement is a LISTEN is the subscription
 // itself, and proves imaged keeps that session off its ordinary query pool.
-func (h *Harness) waitImagedListens(d time.Duration) error {
+func (h *Harness) waitImagedListens(d time.Duration, startedAt time.Time, metricsAddr string) error {
 	h.T.Helper()
 	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
+	client := &http.Client{Timeout: time.Second}
 	for time.Now().Before(deadline) {
-		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")
+		h.RequireDaemonsAlive(h.T)
+		ok, err := sessionListensSince(context.Background(), h.Pool, "faas-imaged-direct", startedAt)
 		if err == nil && ok {
-			return nil
+			// Other subscribers can LISTEN during boot. The boot-staging
+			// readiness gate must also pass before requests may be sent.
+			resp, readyErr := client.Get("http://" + metricsAddr + "/readyz")
+			if readyErr == nil {
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("no application_name='faas-imaged-direct' session holding a LISTEN in pg_stat_activity within %s", d)
+	return fmt.Errorf("imaged did not become ready with a current LISTEN subscription within %s", d)
 }
 
 // sessionListens reports whether a session with the given application_name
 // has issued a LISTEN — the shape of a daemon's notify subscription.
 func sessionListens(ctx context.Context, pool *pgxpool.Pool, appName string) (bool, error) {
+	return sessionListensSince(ctx, pool, appName, time.Time{})
+}
+
+func sessionListensSince(ctx context.Context, pool *pgxpool.Pool, appName string, startedAt time.Time) (bool, error) {
 	var ok bool
 	err := pool.QueryRow(ctx,
 		`SELECT EXISTS (
 		   SELECT 1 FROM pg_stat_activity
 		    WHERE application_name = $1 AND query ILIKE 'LISTEN %'
-		 )`, appName).Scan(&ok)
+		      AND datname = current_database() AND backend_start >= $2
+		 )`, appName, startedAt).Scan(&ok)
 	return ok, err
 }
 
@@ -3545,6 +3566,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
+	// Retain a known, private control address for /readyz. A LISTEN alone
+	// can belong to an early startup subscriber while bases are still staging.
+	metricsAddr := freeTCPAddr(t)
+	env = append(env, "FAAS_IMAGED_METRICS_ADDR="+metricsAddr)
+	imagedStart := time.Now()
 	h.procs = append(h.procs, startProc(t, bin, "imaged", env))
 	// imaged is not ready when its process is up. It stages the builder
 	// base first — 70s on faas-acceptance-1 in smoke run 35157946150 —
@@ -3556,14 +3582,13 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// subscription itself, not the process. Restaging a base whose guest init
 	// changed takes close to three minutes on a two-vCPU shared host, so the
 	// wait leaves headroom beyond that.
-	imagedStart := time.Now()
 	// A test that stages a large base at startup (the agent base is about
 	// 1 GB, scanned by Grype) can allow imaged longer.
 	ready := 10 * time.Minute
 	if v, err := time.ParseDuration(os.Getenv("FAAS_E2E_IMAGED_READY_TIMEOUT")); err == nil && v > ready {
 		ready = v
 	}
-	if err := h.waitImagedListens(ready); err != nil {
+	if err := h.waitImagedListens(ready, imagedStart, metricsAddr); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run

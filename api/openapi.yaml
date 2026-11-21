@@ -12894,6 +12894,646 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+
+  /v2/executions:
+    post:
+      tags: [runs]
+      operationId: createExecutionV2
+      summary: Execute source with stored files or standalone contracts.
+      description: |
+        Queues one bounded Node.js or Python source execution. Source and
+        input are sealed by the control plane before dispatch; the guest has
+        loopback-only networking and an internal ephemeral scratch filesystem.
+        The VM is always destroyed before a terminal result is persisted.
+        This endpoint is an explicit opt-in on the control plane and may return
+        501 while the host isolation gate is disabled. Requires `deploy:write`,
+        `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
+        under its stable key-family identity, which is preserved during key
+        rotation. Agent workflow step labels beginning with `gwf:` are unique
+        within the same workflow and key family; retry clients should reload
+        the existing workflow receipt after a 409.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExecutionRequest' }
+      responses:
+        '202':
+          description: Execution admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: An agent workflow step with this workflow ID and step label already has a Run receipt. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v2/execution-workflows:
+    post:
+      tags: [runs]
+      operationId: createManagedExecutionWorkflowV2
+      summary: Submit a server-managed Runs DAG.
+      description: |
+        Stores a bounded dependency graph encrypted with the host age identity
+        and admits each step as a separate disposable Run after its dependencies
+        succeed. Independent steps may run in parallel up to the submitted
+        workflow limit and the account's concurrent Run limit. Continuation is
+        owned by the control plane and survives CLI disconnects and the API
+        restarts. Source and input are never returned; the encrypted plan is
+        erased when the workflow reaches a terminal state. Requires
+        `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
+        plane with the host age recipient and identity configured. Each account
+        may have at most 16 active managed workflows; terminal workflows
+        release their encrypted plan and queue slot.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateManagedExecutionWorkflowRequest' }
+      responses:
+        '202':
+          description: Encrypted DAG accepted for control-plane continuation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedExecutionWorkflowResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: This workflow identifier already has a different managed plan for the caller's Runs principal. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/run-tasks:
+    post:
+      tags:
+      - runs
+      operationId: publishExecutionTask
+      summary: Publish an immutable account-owned task version. Requires deploy write
+        authority.
+      security:
+      - bearerAuth: []
+      responses:
+        '201':
+          description: Task receipt or metadata. Source and invocation input are never
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTaskVersionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublishExecutionTaskRequest'
+    get:
+      tags:
+      - runs
+      operationId: listExecutionTasks
+      summary: List account task metadata, including retirement tombstones.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Task receipt or metadata. Source and invocation input are never
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTaskListResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      parameters:
+      - in: query
+        name: cursor
+        schema:
+          type: string
+  /v1/run-tasks/{name}/versions/{version}:
+    parameters:
+    - in: path
+      name: name
+      required: true
+      schema:
+        type: string
+    - in: path
+      name: version
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+    get:
+      tags:
+      - runs
+      operationId: getExecutionTask
+      summary: Read task metadata without retained code.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Task receipt or metadata. Source and invocation input are never
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionTaskVersionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+    delete:
+      tags:
+      - runs
+      operationId: retireExecutionTask
+      summary: Erase retained code and retire a task version; admitted Runs remain readable.
+        Requires deploy write authority.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Retired
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+  /v1/run-tasks/invoke:
+    post:
+      tags:
+      - runs
+      operationId: invokeExecutionTask
+      summary: Invoke an explicit task version with key-family-scoped inputs and receipt.
+        Requires a stable Idempotency-Key.
+      security:
+      - bearerAuth: []
+      responses:
+        '202':
+          description: Task receipt or metadata. Source and invocation input are never
+            returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvokeExecutionTaskRequest'
+      parameters:
+      - in: header
+        name: Idempotency-Key
+        required: true
+        schema:
+          type: string
+          maxLength: 256
+
+  /v1/execution-environments:
+    post:
+      tags: [runs]
+      operationId: createExecutionEnvironment
+      summary: Build an immutable dependency environment in an isolated builder VM.
+      description: Public registry dependencies only. Python requires exact versions and SHA-256 hashes; npm requires lockfile v3 integrity and disables install scripts. Matching recipes reuse the same account and key-family environment. Runtime base images are operator-pinned. Requires Runs write access and the environment preview gate.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExecutionEnvironmentRequest' }
+      responses:
+        '202':
+          description: Durable environment build receipt; poll until ready before selecting it on a Run.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [runs]
+      operationId: listExecutionEnvironments
+      summary: List retained dependency environments visible to this principal.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Most recent environments, up to 100.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [environments]
+                properties:
+                  environments:
+                    type: array
+                    items: { $ref: '#/components/schemas/ExecutionEnvironmentResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/execution-environments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [runs]
+      operationId: getExecutionEnvironment
+      summary: Read a dependency environment receipt without returning manifests or storage keys.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Environment metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionEnvironmentResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [runs]
+      operationId: deleteExecutionEnvironment
+      summary: Retire an environment; reclaim storage after active Runs and leases finish.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '202':
+          description: Retirement accepted. New Runs cannot select this environment.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, enum: [retiring] }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/execution-environments/{id}/events:
+    get:
+      tags: [runs]
+      operationId: getExecutionEnvironmentEvents
+      summary: Read resumable, bounded dependency-build diagnostics.
+      description: Uses environment ownership. Poll during a build; sequences survive API restarts. A gap explicitly reports an evicted retained tail. Reads remain available after writer gates are disabled.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: after
+          in: query
+          schema: { type: integer, format: int64, minimum: 0, default: 0 }
+      responses:
+        '200':
+          description: Retained diagnostics and current build status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionEnvironmentEventsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+
+  /v1/apps/{slug}/run-artifact-deliveries/{route}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application receiving the Run artifact., schema: { type: string } }
+      - { name: route, in: path, required: true, description: Configured upload route admitting this delivery., schema: { type: string } }
+    post:
+      tags: [runs]
+      operationId: deliverRunArtifact
+      summary: Deliver a verified Run artifact into an app-owned upload route
+      description: Requires account deploy authority and a bucket write grant, or a live production workload identity for the destination app. New delivery checks the source Run or delegated Agent receipt. The explicit delivery key deduplicates storage writes independently of execution. Replay survives source expiry, thread revocation and disabled Run writers. Pending outcomes are resolved by the existing object upload recovery worker without reuploading or rerunning code.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeliverRunArtifactRequest' }
+      responses:
+        '200':
+          description: Settled delivery receipt. Failed storage outcomes remain explicit in status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunArtifactDelivery' }
+        '202':
+          description: Provider write outcome is pending; poll the returned receipt URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunArtifactDelivery' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: The existing object storage budget refuses a new write or download capability. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: Delivery identity conflicts or the write is not completed. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Delivery or destination storage is unavailable. }
+
+  /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application owning the delivery receipt., schema: { type: string } }
+      - { name: route, in: path, required: true, description: Upload route under which the receipt was created., schema: { type: string } }
+      - { name: delivery, in: path, required: true, description: Durable storage delivery receipt UUID., schema: { type: string, format: uuid } }
+    get:
+      tags: [runs]
+      operationId: getRunArtifactDelivery
+      summary: Read a durable app-owned artifact delivery receipt
+      description: Current app ownership and bucket write authority apply independently of Run-file retention or the original Agent thread grant.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Settled delivery receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunArtifactDelivery' }
+        '202':
+          description: Delivery awaits exact provider confirmation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RunArtifactDelivery' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: The delivery receipt store cannot be read. }
+
+  /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url:
+    parameters:
+      - { name: slug, in: path, required: true, description: Application authorizing the customer download., schema: { type: string } }
+      - { name: route, in: path, required: true, description: Upload route locating the delivered customer object., schema: { type: string } }
+      - { name: delivery, in: path, required: true, description: Completed delivery UUID to sign for download., schema: { type: string, format: uuid } }
+    post:
+      tags: [runs]
+      operationId: signRunArtifactDelivery
+      summary: Issue a short-lived app-owned report download capability
+      description: Requires current app and bucket read authority and a completed delivery. Uses existing branded object GET capabilities with a five-minute expiry and the retained public version when available. Applications authenticate their customers before issuing a URL and keep it out of Agent transcripts.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Short-lived, revocable object GET capability.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectSignedRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { description: The object storage budget refuses this download capability. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: The delivery must complete before its object can be downloaded. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: The destination object download service is unavailable. }
+
+  /v1/execution-files:
+    post:
+      tags: [runs]
+      operationId: prepareExecutionFile
+      summary: Prepare a stable immutable upload identity without reserving quota.
+      description: File IDs are scoped to account and Runs key family plus checksum and size. Check Run admission replay before uploading missing bytes. Preparing a file does not admit a Run or reserve storage.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateExecutionFileRequest' }
+      responses:
+        '200':
+          description: Authenticated Run file metadata. No storage key or credential is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionFileResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: File upload is busy or inputs are not published. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/execution-files/{id}:
+    get:
+      tags: [runs]
+      operationId: getExecutionFile
+      summary: Read account and key-family scoped file metadata.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Authenticated Run file metadata. No storage key or credential is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionFileResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: File upload is busy or inputs are not published. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [runs]
+      operationId: deleteExecutionFile
+      summary: Revoke future imports and schedule physical cleanup.
+      description: Returns after revocation. Active admitted readers remain protected and quota is released only after storage confirms deletion.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '202':
+          description: Cleanup scheduled; physical deletion is asynchronous.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [cleanup_scheduled] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: File upload is busy or inputs are not published. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/execution-files/{id}/agent-grants:
+    post:
+      tags: [runs]
+      operationId: createAgentExecutionFileGrant
+      summary: Delegate a private uploaded file to one Agent task call.
+      description: |
+        Requires account-wide deploy authority, access to the endpoint's app and an active task version delegated to that endpoint. Submit the returned opaque token in the gregale_task arguments.file_grants array. A grant names one endpoint, thread, logical tool call, task version and guest input path. It expires within 15 minutes or when the file expires, whichever comes first. The grant authorizes staging for that call only. Set step_label to bind the upload to one explicit gregale_pipeline step. Omit it for gregale_task.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAgentExecutionFileGrantRequest' }
+      responses:
+        '201':
+          description: Private staging grant. Retain the same token for dispatch retries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentExecutionFileGrant' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Task admission or private file grants are unavailable. }
+
+  /v1/execution-files/{id}/content:
+    put:
+      tags: [runs]
+      operationId: uploadExecutionFile
+      summary: Stream a bounded immutable Run input file.
+      description: Requires Content-Length and X-Content-SHA256 matching the prepared file. Reserves account storage before transfer. Length and SHA-256 must verify before publication; ready objects are never overwritten. No Run is admitted by this call.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Content-SHA256
+          in: header
+          required: true
+          schema: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Authenticated Run file metadata. No storage key or credential is returned.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionFileResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: File upload is busy or inputs are not published. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    get:
+      tags: [runs]
+      operationId: downloadExecutionFile
+      summary: Download a retained file using account and key-family authorization.
+      description: Verify downloaded size and checksum against metadata before publishing the local file. File IDs are locators and never bearer capabilities.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Verified retained file bytes.
+          headers:
+            X-Content-SHA256:
+              schema: { type: string }
+              description: SHA-256 of the plaintext file.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '410': { description: File retention expired or content is unavailable. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: File upload is busy or inputs are not published. }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/executions:
     get:
       tags: [runs]
@@ -13058,6 +13698,83 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/execution-pipelines/{id}/events:
+    get:
+      tags: [runs]
+      operationId: getExecutionPipelineEvents
+      summary: Read durable observed pipeline progress.
+      description: Metadata-only cursor pages with a retained-tail gap and current snapshot. Runs-only credentials are scoped to their original key family. Observation remains available with writer gates off. Accept text/event-stream for SSE; closing a watch does not cancel work.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+        - {name: after, in: query, schema: {type: integer, format: int64, minimum: 0, default: 0}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 256, default: 256}}
+        - {name: Last-Event-ID, in: header, schema: {type: string}}
+      responses:
+        '200':
+          description: Progress page or resumable SSE; terminal is true only once the returned page drains the journal.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ExecutionPipelineEventsResponse'}
+            text/event-stream:
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /v2/execution-pipelines/{id}/reruns:
+    post:
+      tags: [runs]
+      operationId: rerunExecutionPipeline
+      summary: Create a new execution of failed branches and affected descendants.
+      description: Requires the original manifest and key family. Every previously started affected step must be acknowledged in repeat_steps. Healthy independent outputs are reused only with intact fingerprints, contracts and owned unexpired artifacts. The original receipt stays immutable. New attempts use normal budgets. An exact child workflow_id replay returns its receipt even with writers off or outputs subsequently unavailable. Agent callback pipelines require a new delegated invocation.
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RerunExecutionPipelineRequest'}
+      responses:
+        '202':
+          description: New rerun or existing exact replay.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedExecutionWorkflowResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /v1/execution-workflows/{workflow_id}/cancel:
+    post:
+      tags: [runs]
+      operationId: cancelExecutionPipeline
+      summary: Stop pipeline admissions and request cancellation of active Runs.
+      description: Idempotent for an existing pipeline. Cancellation closes the durable admission fence before responding; the continuation worker cancels admitted Runs and waits for their terminal settlement. Available with writer gates disabled. Runs-only keys are limited to their stable key family. Requires runs:write, deploy:write, or admin.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: workflow_id
+          in: path
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 96 }
+      responses:
+        '200':
+          description: Pipeline cancellation requested; inspect managed pipeline metadata for completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExecutionWorkflowResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/executions/{id}:
     parameters:
@@ -71383,6 +72100,293 @@ paths:
               schema:
                 $ref: '#/components/schemas/Problem'
 
+  /v1/run-controls/budgets/{kind}/{ref}:
+    parameters:
+    - in: path
+      name: kind
+      required: true
+      schema:
+        $ref: '#/components/schemas/RunBudgetKind'
+    - in: path
+      name: ref
+      required: true
+      schema:
+        type: string
+        maxLength: 96
+        pattern: ^[A-Za-z0-9_.:-]+$
+    get:
+      tags:
+      - runs
+      operationId: getRunBudget
+      summary: Read an account-owned customer or task budget and current UTC-day usage.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Revisioned Run control or payload-free history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunBudgetPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+    put:
+      tags:
+      - runs
+      operationId: setRunBudget
+      summary: Replace a Run budget using its expected revision. Zero limits refuse new work; omitted
+        limits add no restriction.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Revisioned Run control or payload-free history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunBudgetPolicy'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRunBudgetRequest'
+  /v1/run-controls/bindings/{kind}/{id}:
+    parameters:
+    - in: path
+      name: kind
+      required: true
+      schema:
+        $ref: '#/components/schemas/RunBindingKind'
+    - in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - runs
+      operationId: getRunAttributionBinding
+      summary: Read an attribution binding by public API key or owned Agent endpoint ID.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Revisioned Run control or payload-free history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunAttributionBinding'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+    put:
+      tags:
+      - runs
+      operationId: setRunAttributionBinding
+      summary: Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Revisioned Run control or payload-free history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunAttributionBinding'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetRunAttributionBindingRequest'
+    delete:
+      tags:
+      - runs
+      operationId: deleteRunAttributionBinding
+      summary: Disable a binding while retaining its revision tombstone.
+      security:
+      - bearerAuth: []
+      responses:
+        '204':
+          description: Revisioned Run control or payload-free history.
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      parameters:
+      - in: query
+        name: expected_revision
+        required: true
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+  /v1/run-history:
+    get:
+      tags:
+      - runs
+      operationId: listRunHistory
+      summary: Read metadata-only invocation history under existing account/key-family visibility.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Revisioned Run control or payload-free history.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunHistoryResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/CapacityUnavailable'
+      parameters:
+      - in: query
+        name: task_name
+        required: false
+        schema:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+      - in: query
+        name: task_version
+        required: false
+        schema:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+      - in: query
+        name: customer_ref
+        required: false
+        schema:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+      - in: query
+        name: agent_ref
+        required: false
+        schema:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+      - in: query
+        name: status
+        required: false
+        schema:
+          type: string
+          enum:
+          - queued
+          - restoring
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - out_of_memory
+          - cancelled
+      - in: query
+        name: since
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: until
+        required: false
+        schema:
+          type: string
+          format: date-time
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          type: string
+
 components:
 
   securitySchemes:
@@ -72246,6 +73250,311 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    RunBudgetRefusal:
+      type: object
+      required: [kind, ref, metric]
+      properties:
+        kind: { $ref: '#/components/schemas/RunBudgetKind' }
+        ref: { type: string, maxLength: 96 }
+        metric: { type: string, enum: [enabled, concurrent, invocations, compute_mb_ms] }
+    RunBudgetKind:
+      type: string
+      enum:
+      - customer
+      - task
+    RunBindingKind:
+      type: string
+      enum:
+      - api_key
+      - agent_endpoint
+    RunAttribution:
+      type: object
+      required:
+      - customer_ref
+      properties:
+        customer_ref:
+          type: string
+          maxLength: 96
+        agent_ref:
+          type: string
+          maxLength: 96
+    RunControlCapabilities:
+      type: object
+      required:
+      - configuration_available
+      - max_customers
+      - max_bindings
+      - history_page_size
+      properties:
+        configuration_available:
+          type: boolean
+        max_customers:
+          type: integer
+          format: int64
+          minimum: 0
+        max_bindings:
+          type: integer
+          format: int64
+          minimum: 0
+        history_page_size:
+          type: integer
+          format: int64
+          minimum: 0
+    RunBudgetLimits:
+      type: object
+      required: []
+      properties:
+        max_concurrent:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 32
+        max_invocations_per_day:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000
+        max_compute_mb_ms_per_day:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 1000000000000000
+    SetRunBudgetRequest:
+      type: object
+      required:
+      - expected_revision
+      - enabled
+      - limits
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        enabled:
+          type: boolean
+        limits:
+          $ref: '#/components/schemas/RunBudgetLimits'
+    RunBudgetUsage:
+      type: object
+      required:
+      - day
+      - active
+      - invocations
+      - compute_used_mb_ms
+      - compute_reserved_mb_ms
+      properties:
+        day:
+          type: string
+          format: date
+        active:
+          type: integer
+          format: int64
+          minimum: 0
+        invocations:
+          type: integer
+          format: int64
+          minimum: 0
+        compute_used_mb_ms:
+          type: integer
+          format: int64
+          minimum: 0
+        compute_reserved_mb_ms:
+          type: integer
+          format: int64
+          minimum: 0
+    RunBudgetAlert:
+      type: object
+      required:
+      - event_id
+      - kind
+      - ref
+      - day
+      - metric
+      - threshold_percent
+      - limit
+      - observed
+      - created_at
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/RunBudgetKind'
+        ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        day:
+          type: string
+          format: date
+        metric:
+          type: string
+          enum:
+          - concurrent
+          - invocations
+          - compute_mb_ms
+        threshold_percent:
+          type: integer
+          format: int64
+          minimum: 0
+          enum:
+          - 80
+          - 100
+        limit:
+          type: integer
+          format: int64
+          minimum: 1
+        observed:
+          type: integer
+          format: int64
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+    RunBudgetPolicy:
+      type: object
+      required:
+      - kind
+      - ref
+      - revision
+      - enabled
+      - limits
+      - usage
+      - alerts
+      properties:
+        kind:
+          $ref: '#/components/schemas/RunBudgetKind'
+        ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        enabled:
+          type: boolean
+        limits:
+          $ref: '#/components/schemas/RunBudgetLimits'
+        usage:
+          $ref: '#/components/schemas/RunBudgetUsage'
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunBudgetAlert'
+    SetRunAttributionBindingRequest:
+      type: object
+      required:
+      - expected_revision
+      - customer_ref
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        agent_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+    RunAttributionBinding:
+      type: object
+      required:
+      - enabled
+      - subject_kind
+      - subject_id
+      - customer_ref
+      - revision
+      properties:
+        enabled:
+          type: boolean
+        subject_kind:
+          $ref: '#/components/schemas/RunBindingKind'
+        subject_id:
+          type: string
+          format: uuid
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        agent_ref:
+          type: string
+          maxLength: 96
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+    RunHistoryEntry:
+      type: object
+      required:
+      - id
+      - status
+      - runtime
+      - created_at
+      - elapsed_ms
+      - receipt_url
+      properties:
+        result_validation_status:
+          type: string
+          enum: [valid, invalid]
+        id:
+          type: string
+          format: uuid
+        task:
+          $ref: '#/components/schemas/ExecutionTaskRef'
+        attribution:
+          $ref: '#/components/schemas/RunAttribution'
+        status:
+          type: string
+          enum:
+          - queued
+          - restoring
+          - running
+          - succeeded
+          - failed
+          - timed_out
+          - out_of_memory
+          - cancelled
+        runtime:
+          type: string
+          enum:
+          - node22
+          - node24
+          - python312
+          - python313
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+        elapsed_ms:
+          type: integer
+          format: int64
+          minimum: 0
+        usage:
+          $ref: '#/components/schemas/ExecutionUsage'
+        failure_code:
+          type: string
+        receipt_url:
+          type: string
+    RunHistoryResponse:
+      type: object
+      required:
+      - runs
+      properties:
+        runs:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunHistoryEntry'
+        next_cursor:
+          type: string
     SupportContext:
       type: object
       additionalProperties: false
@@ -121290,6 +122599,21 @@ components:
       type: object
       required: [plan, admission_available, plan_entitled, control_plane_enabled, runtimes, profiles, network_modes]
       properties:
+        artifact_deliveries: { type: boolean, description: New Run artifact deliveries are currently admitted into configured app upload routes. }
+        task_pipelines: { type: boolean, description: Whether new version-pinned task pipelines and batches are enabled. }
+        run_controls:
+          $ref: '#/components/schemas/RunControlCapabilities'
+        custom_environments: { type: boolean }
+        environment_runtimes:
+          type: array
+          items: { type: string, enum: [node22, node24, python312, python313] }
+        environment_limits: { $ref: '#/components/schemas/ExecutionEnvironmentLimits' }
+        execution_classes:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionClassCapability' }
+        extended_admissions: { type: boolean, description: New standalone contract and stored-file admissions are enabled. }
+        file_limits: { $ref: '#/components/schemas/ExecutionFileLimits' }
+        max_contract_schema_bytes: { type: integer, minimum: 0 }
         plan: { type: string, description: Account plan identifier. }
         admission_available: { type: boolean, description: True when the account is entitled and the control-plane admission gate is enabled. }
         plan_entitled: { type: boolean, description: Whether the account plan allows Runs. }
@@ -121346,6 +122670,84 @@ components:
         max_output_files: { type: integer, minimum: 0 }
         max_artifact_path_bytes: { type: integer, minimum: 0 }
 
+    ExecutionEnvironmentLimits:
+      type: object
+      required: [max_environments, max_artifact_bytes, max_recipe_bytes, max_packages]
+      properties:
+        max_environments: { type: integer }
+        max_artifact_bytes: { type: integer, format: int64 }
+        max_recipe_bytes: { type: integer }
+        max_packages: { type: integer }
+    CreateExecutionEnvironmentRequest:
+      type: object
+      description: Immutable public language dependencies and exact Wolfi system package pins built inside an isolated builder VM.
+      additionalProperties: false
+      required: [runtime]
+      properties:
+        runtime: { type: string, enum: [node22, node24, python312, python313] }
+        system_packages:
+          type: array
+          maxItems: 32
+          description: Exact NAME=VERSION-rN Wolfi package pins. Uses only the installer image repositories. May be used without language dependencies; direct pins and the installer image enter the recipe identity.
+          items: { type: string, maxLength: 128, pattern: '^[a-z0-9][a-z0-9+_.-]*=[0-9][A-Za-z0-9+_.~]*-r[0-9]+$' }
+        requirements: { type: string, maxLength: 1048576, description: "Exact Python pins and SHA-256 hashes. All transitive dependencies must be pinned. No URLs or index options." }
+        package_json: { type: string, maxLength: 1048576, description: "npm dependency manifest as JSON text. No workspace or registry overrides." }
+        package_lock: { type: string, maxLength: 1048576, description: "npm lockfile v3 as JSON text; public npm registry and SHA-512 integrity only. The combined recipe is at most 1 MiB." }
+    ExecutionEnvironmentEvent:
+      type: object
+      required: [sequence, stage, message, attempt, created_at]
+      properties:
+        sequence: { type: integer, format: int64 }
+        stage: { type: string }
+        code: { type: string }
+        message: { type: string }
+        attempt: { type: integer }
+        created_at: { type: string }
+    ExecutionEnvironmentEventsResponse:
+      type: object
+      required: [events, next_sequence, status]
+      properties:
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/ExecutionEnvironmentEvent' }
+        next_sequence: { type: integer, format: int64 }
+        gap: { type: boolean }
+        status: { type: string }
+    ExecutionFinishedWebhookPayload:
+      type: object
+      required: [event_id, execution_id, status, runtime, finished_at, receipt_url]
+      properties:
+        event_id: { type: string }
+        execution_id: { type: string }
+        status: { type: string }
+        runtime: { type: string }
+        finished_at: { type: string }
+        receipt_url: { type: string }
+        environment_id: { type: string }
+        workflow_id: { type: string }
+        result_validation_status: { type: string }
+    ExecutionEnvironmentResponse:
+      type: object
+      required: [id, runtime, status, recipe_digest, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        runtime: { type: string, enum: [node22, node24, python312, python313] }
+        status: { type: string, enum: [queued, building, built, imaging, ready, failed, retiring, deleted] }
+        recipe_digest: { type: string }
+        image_digest: { type: string }
+        artifact_bytes: { type: integer, format: int64, minimum: 0 }
+        failure_code: { type: string }
+        created_at: { type: string, format: date-time }
+    ExecutionClassCapability:
+      type: object
+      required: [execution_class, default_timeout_ms, max_timeout_ms, max_concurrent_runs, admission_available]
+      properties:
+        execution_class: { type: string, enum: [standard, extended] }
+        default_timeout_ms: { type: integer }
+        max_timeout_ms: { type: integer }
+        max_concurrent_runs: { type: integer }
+        admission_available: { type: boolean }
+
     CreateExecutionRequest:
       description: |
         Source and JSON input for one disposable execution. Send either the
@@ -121372,6 +122774,27 @@ components:
             - required: [artifact_inputs]
       additionalProperties: false
       properties:
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        environment_id: { type: string, format: uuid, description: "Immutable ready dependency environment; requires v2 admission and the standard profile." }
+        input_schema:
+          description: Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Input is validated before quota consumption.
+          oneOf:
+            - { type: object, additionalProperties: true }
+            - { type: boolean }
+        result_schema:
+          description: Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Validation metadata is separate from execution status and never retries execution.
+          oneOf:
+            - { type: object, additionalProperties: true }
+            - { type: boolean }
+        input_files:
+          type: array
+          maxItems: 8
+          description: Retained data staged below context.input_dir. Requires v2 admission.
+          items: { $ref: '#/components/schemas/ExecutionFileInput' }
+        artifact_storage: { type: string, enum: [inline, stored], description: "Stored outputs require v2 admission; default inline preserves the original output budget." }
         workflow_id:
           type: string
           minLength: 1
@@ -121519,22 +122942,25 @@ components:
         revoked_at: { type: string, format: date-time }
 
     ExecutionArtifact:
-      description: An explicitly exported file. Its compact JSON metadata and base64 contents share the execution output budget.
+      description: An explicitly exported file. Inline base64 content shares the JSON output budget. Stored artifacts contain a file_id, null content, and independently budgeted bytes accessible through authenticated file endpoints.
       type: object
       required: [name, size_bytes, sha256, content]
       additionalProperties: false
       properties:
+        file_id: { type: string, format: uuid, description: "Authenticated retained file locator for stored artifacts." }
         name: { type: string, minLength: 1, maxLength: 256 }
         size_bytes: { type: integer, minimum: 0 }
         sha256: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
-        content: { type: string, format: byte, description: "File bytes encoded as base64." }
+        content: { type: [string, "null"], format: byte, description: "File bytes encoded as base64." }
 
     ExecutionLimitRequest:
       description: Caller-selected execution resource limits; zero selects the plan default.
       type: object
       additionalProperties: false
       properties:
-        timeout_ms: { type: integer, minimum: 0, maximum: 30000, description: "Zero uses the plan default." }
+        execution_class: { type: string, enum: [standard, extended], description: "Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms and a smaller shared concurrency cap." }
+        max_artifact_bytes: { type: integer, format: int64, minimum: 0, maximum: 67108864, description: "Independent stored output byte budget; requires stored output_files. Zero selects the plan default constrained by scratch headroom." }
+        timeout_ms: { type: integer, minimum: 0, maximum: 300000, description: "Zero uses the class default: standard 5000 ms, extended 300000 ms. Standard plan maxima remain unchanged." }
         memory_mb: { type: integer, enum: [0, 128, 256, 512, 1024] }
         cpu_millicores: { type: integer, enum: [0, 250, 500, 1000] }
         ephemeral_disk_mb: { type: integer, enum: [0, 64, 128, 256, 512, 1024, 2048] }
@@ -121553,6 +122979,8 @@ components:
       type: object
       required: [timeout_ms, memory_mb, cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max]
       properties:
+        execution_class: { type: string, enum: [standard, extended], description: "Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms and a smaller shared concurrency cap." }
+        max_artifact_bytes: { type: integer, format: int64, minimum: 0, maximum: 67108864 }
         timeout_ms: { type: integer, minimum: 100 }
         memory_mb: { type: integer, minimum: 1 }
         cpu_millicores: { type: integer, minimum: 1 }
@@ -121577,6 +123005,133 @@ components:
         code: { type: string, description: Stable caller-safe failure vocabulary. }
         message: { type: string, description: Host paths and VM command lines are never exposed. }
 
+    ExecutionTaskRef:
+      type: object
+      required:
+      - id
+      - name
+      - version
+      - digest
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        version:
+          type: integer
+        digest:
+          type: string
+    PublishExecutionTaskRequest:
+      type: object
+      required:
+      - name
+      - version
+      - definition
+      properties:
+        name:
+          type: string
+          maxLength: 63
+        version:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        definition:
+          $ref: '#/components/schemas/CreateExecutionRequest'
+        agent_endpoint_ids:
+          type: array
+          maxItems: 16
+          items:
+            type: string
+            format: uuid
+    InvokeExecutionTaskRequest:
+      type: object
+      required:
+      - name
+      - version
+      properties:
+        customer_ref:
+          type: string
+          maxLength: 96
+          pattern: ^[A-Za-z0-9_.:-]+$
+        name:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        input: {}
+        input_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionFileInput'
+        artifact_inputs:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionArtifactInput'
+        workflow_id:
+          type: string
+        step_label:
+          type: string
+    ExecutionTaskVersionResponse:
+      allOf:
+      - $ref: '#/components/schemas/ExecutionTaskRef'
+      - type: object
+        required:
+        - runtime
+        - profile
+        - limits
+        - status
+        - created_at
+        properties:
+          runtime:
+            type: string
+          profile:
+            type: string
+          environment_id:
+            type: string
+            format: uuid
+          limits:
+            $ref: '#/components/schemas/ResolvedExecutionLimits'
+          input_schema: {}
+          result_schema: {}
+          integration_ids:
+            type: array
+            items:
+              type: string
+          output_files:
+            type: array
+            items:
+              type: string
+          artifact_storage:
+            type: string
+            enum:
+            - inline
+            - stored
+          agent_endpoint_ids:
+            type: array
+            items:
+              type: string
+              format: uuid
+          status:
+            type: string
+            enum:
+            - active
+            - retired
+          created_at:
+            type: string
+            format: date-time
+    ExecutionTaskListResponse:
+      type: object
+      required:
+      - tasks
+      properties:
+        tasks:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionTaskVersionResponse'
+        next_cursor:
+          type: string
+
     ExecutionResponse:
       description: |
         Disposable execution receipt. Runs-only keys can read only receipts
@@ -121587,6 +123142,11 @@ components:
       type: object
       required: [id, status, runtime, limits, output_truncated, created_at]
       properties:
+        attribution:
+          $ref: '#/components/schemas/RunAttribution'
+        task: { $ref: '#/components/schemas/ExecutionTaskRef' }
+        environment_id: { type: string, format: uuid, description: "Immutable ready dependency environment; requires v2 admission and the standard profile." }
+        result_validation: { $ref: '#/components/schemas/ExecutionResultValidation' }
         profile: { type: string, enum: [standard, python-data-v1] }
         runtime_image_digest: { type: string, pattern: '^sha256:[a-f0-9]{64}$', description: "Scheduler-pinned base image digest, recorded before dispatch of a dependency profile." }
         packages:
@@ -121660,7 +123220,7 @@ components:
         and the account's concurrent Run limit. The full JSON body must not
         exceed 4 MiB. An account can have at most 16 active managed workflows.
       type: object
-      required: [workflow_id, version, steps]
+      required: [workflow_id, version]
       additionalProperties: false
       properties:
         workflow_id:
@@ -121684,6 +123244,8 @@ components:
           enum: [fail_fast, continue_independent]
           default: fail_fast
           description: Stop new admissions on a failed Run, or continue steps independent of failed branches.
+        pipeline: { $ref: '#/components/schemas/ExecutionPipelineOptions' }
+        batch: { $ref: '#/components/schemas/ExecutionTaskBatch' }
         steps:
           type: array
           minItems: 1
@@ -121693,7 +123255,7 @@ components:
     CreateManagedExecutionWorkflowStep:
       description: One disposable Run in the DAG and its dependency, result, and artifact handoff rules.
       type: object
-      required: [label, request]
+      required: [label]
       additionalProperties: false
       properties:
         label: { type: string, minLength: 1, maxLength: 96 }
@@ -121726,6 +123288,8 @@ components:
           oneOf:
             - type: object
             - type: boolean
+        task: { $ref: '#/components/schemas/InvokeExecutionTaskRequest' }
+        retry: { $ref: '#/components/schemas/ExecutionRetryPolicy' }
         request:
           $ref: '#/components/schemas/CreateExecutionRequest'
           description: Must not include workflow_id, step_label, or artifact_inputs.
@@ -121756,6 +123320,7 @@ components:
       type: object
       required: [workflow_id, plan_id, status, step_count, next_step, created_at]
       properties:
+        id: {type: string, format: uuid}
         workflow_id: { type: string, maxLength: 96 }
         plan_id: { type: string, pattern: '^[0-9a-f]{24}$' }
         status: { type: string, enum: [queued, running, succeeded, failed] }
@@ -121763,6 +123328,211 @@ components:
         next_step: { type: integer, minimum: 0, maximum: 16 }
         error: { type: string, maxLength: 2048 }
         created_at: { type: string, format: date-time }
+        pipeline: { $ref: '#/components/schemas/ExecutionPipelineResponse' }
+
+    ExecutionPipelineReceipt:
+      description: App-scoped RAP pipeline receipt. Completion is absent while the pipeline is pending. Reads require the owning endpoint and a live original thread grant.
+      type: object
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }
+        completion: { $ref: '#/components/schemas/ExecutionPipelineCompletion' }
+    ExecutionPipelineCompletion:
+      description: Immutable v1 terminal manifest. Metadata and scoped references only; result and artifact bytes retain their ordinary Run receipt permissions and expiry. Completion identity is stable across delivery retries and redrive. Aggregate wall/CPU time sums every attempt; peak memory is the maximum attempt peak, not simultaneous residency or an invoice.
+      type: object
+      required: [version, completion_id, workflow_id, outcome, finished_at, receipt, usage, steps]
+      properties:
+        rerun: {$ref: '#/components/schemas/ExecutionPipelineRerun'}
+        version: { type: string, enum: [v1] }
+        completion_id: { type: string, format: uuid }
+        workflow_id: { type: string }
+        outcome: { type: string, enum: [succeeded, failed, cancelled, deadline_exceeded] }
+        finished_at: { type: string, format: date-time }
+        receipt: { type: string }
+        usage: { $ref: '#/components/schemas/ExecutionUsage' }
+        steps:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ExecutionPipelineCompletedStep' }
+    ExecutionPipelineCompletedStep:
+      type: object
+      required: [label, outcome, attempts]
+      properties:
+        reused_run_id: {type: string, format: uuid}
+        output_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        label: { type: string }
+        task: { $ref: '#/components/schemas/ExecutionTaskRef' }
+        outcome: { type: string, enum: [succeeded, failed, cancelled, timed_out, out_of_memory, contract_failed, blocked, not_started] }
+        result_validation: { type: string, enum: [valid, invalid] }
+        attempts:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ExecutionPipelineCompletedAttempt' }
+    ExecutionPipelineCompletedAttempt:
+      type: object
+      required: [run_id, attempt, status, receipt, usage, artifacts]
+      properties:
+        run_id: { type: string, format: uuid }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        status: { type: string, enum: [succeeded, failed, timed_out, out_of_memory, cancelled] }
+        failure_code: { type: string }
+        receipt: { type: string }
+        usage: { $ref: '#/components/schemas/ExecutionUsage' }
+        artifacts:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ExecutionPipelineArtifactRef' }
+    ExecutionPipelineArtifactRef:
+      type: object
+      required: [name, size_bytes, sha256, url]
+      properties:
+        name: { type: string }
+        size_bytes: { type: integer }
+        sha256: { type: string }
+        url: { type: string }
+    ExecutionPipelineFinishedWebhookPayload:
+      description: Account webhook metadata for execution.pipeline.finished. Receivers fetch the authorized workflow receipt for the complete manifest. Uses existing signed delivery, retries, dead-letter and redrive.
+      type: object
+      required: [event_id, workflow_id, outcome, finished_at, receipt_url]
+      properties:
+        event_id: { type: string, format: uuid }
+        workflow_id: { type: string }
+        outcome: { type: string, enum: [succeeded, failed, cancelled, deadline_exceeded] }
+        finished_at: { type: string, format: date-time }
+        receipt_url: { type: string }
+    ExecutionPipelineProgress:
+      type: object
+      required: [status, steps]
+      properties:
+        status: {type: string, enum: [queued, running, succeeded, failed, cancelled, deadline_exceeded]}
+        steps: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineStepProgress'}}
+    ExecutionPipelineStepProgress:
+      type: object
+      required: [label, state]
+      properties:
+        label: {type: string}
+        state: {type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled, retrying, blocked, contract_failed, reused]}
+        reason: {type: string, enum: [pending, dependencies, parallel_limit, capacity, budget_concurrency, retry_backoff, admissions_disabled, admission_refused, fail_fast, plan_identity, cancelling]}
+        attempt: {type: integer, minimum: 0, maximum: 3}
+        run_id: {type: string, format: uuid}
+        retry_at: {type: string, format: date-time}
+        events_url: {type: string}
+    ExecutionPipelineEvent:
+      type: object
+      required: [sequence, type, created_at]
+      properties:
+        sequence: {type: integer, format: int64, minimum: 1}
+        type: {type: string, enum: [pipeline, step]}
+        status: {type: string}
+        step: {$ref: '#/components/schemas/ExecutionPipelineStepProgress'}
+        created_at: {type: string, format: date-time}
+    ExecutionPipelineEventsResponse:
+      type: object
+      required: [pipeline_id, events, next_sequence, terminal]
+      properties:
+        pipeline_id: {type: string, format: uuid}
+        events: {type: array, maxItems: 256, items: {$ref: '#/components/schemas/ExecutionPipelineEvent'}}
+        next_sequence: {type: integer, format: int64, minimum: 0}
+        gap: {type: boolean}
+        terminal: {type: boolean}
+        progress: {$ref: '#/components/schemas/ExecutionPipelineProgress'}
+    RerunExecutionPipelineRequest:
+      type: object
+      additionalProperties: false
+      required: [workflow_id, original]
+      properties:
+        workflow_id: {type: string, minLength: 1, maxLength: 96}
+        original: {$ref: '#/components/schemas/CreateManagedExecutionWorkflowRequest'}
+        repeat_steps: {type: array, uniqueItems: true, maxItems: 16, items: {type: string}}
+    ExecutionPipelineRerun:
+      type: object
+      required: [parent_id, parent_workflow_id, parent_plan_id, reused]
+      properties:
+        parent_id: {type: string, format: uuid}
+        parent_workflow_id: {type: string}
+        parent_plan_id: {type: string}
+        reused: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineReusedStep'}}
+    ExecutionPipelineReusedStep:
+      type: object
+      required: [label, run_id, output_sha256]
+      properties:
+        label: {type: string}
+        run_id: {type: string, format: uuid}
+        output_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+    ExecutionPipelineOptions:
+      type: object
+      additionalProperties: false
+      description: Preview; v2 only. Enables durable task steps, batch expansion and explicit retries. Submit exactly one of steps or batch. Requires FAAS_EXECUTION_PIPELINES_ENABLED plus v2 and tasks gates. Queueing and backoff count toward the deadline.
+      properties:
+        total_timeout_ms: { type: integer, minimum: 1, maximum: 86400000, default: 3600000 }
+    ExecutionRetryPolicy:
+      type: object
+      additionalProperties: false
+      required: [max_attempts]
+      description: Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and lease_expired are retried. Each attempt has a separate Run and budget reservation; external side effects may repeat.
+      properties:
+        max_attempts: { type: integer, minimum: 1, maximum: 3 }
+        backoff_ms: { type: integer, minimum: 1000, maximum: 60000, default: 1000 }
+        safe_to_repeat: { type: boolean, default: false }
+    ExecutionTaskBatch:
+      type: object
+      additionalProperties: false
+      required: [name, version, items]
+      description: Expands into independent steps for one immutable task version. Cannot be combined with steps. Item labels must be unique. Account and customer/task budgets still apply to every physical attempt.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 63 }
+        version: { type: integer, minimum: 1 }
+        customer_ref: { type: string, maxLength: 96 }
+        retry: { $ref: '#/components/schemas/ExecutionRetryPolicy' }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ExecutionTaskBatchItem' }
+    ExecutionTaskBatchItem:
+      type: object
+      additionalProperties: false
+      required: [label]
+      properties:
+        label: { type: string, minLength: 1, maxLength: 96 }
+        input: { description: JSON input for this batch item. }
+        input_files:
+          type: array
+          maxItems: 8
+          items: { $ref: '#/components/schemas/ExecutionFileInput' }
+    ExecutionPipelineResponse:
+      type: object
+      required: [deadline_at, steps]
+      properties:
+        progress: {$ref: '#/components/schemas/ExecutionPipelineProgress'}
+        rerun: {$ref: '#/components/schemas/ExecutionPipelineRerun'}
+        completion: { $ref: '#/components/schemas/ExecutionPipelineCompletion' }
+        deadline_at: { type: string, format: date-time }
+        cancel_requested: { type: boolean }
+        steps:
+          type: array
+          maxItems: 16
+          items: { $ref: '#/components/schemas/ExecutionPipelineStepResponse' }
+    ExecutionPipelineStepResponse:
+      type: object
+      required: [label, max_attempts, attempts]
+      properties:
+        label: { type: string }
+        task: { $ref: '#/components/schemas/ExecutionTaskRef' }
+        max_attempts: { type: integer, minimum: 1, maximum: 3 }
+        attempts:
+          type: array
+          maxItems: 3
+          items: { $ref: '#/components/schemas/ExecutionPipelineAttemptResponse' }
+    ExecutionPipelineAttemptResponse:
+      type: object
+      required: [run_id, attempt, status]
+      properties:
+        run_id: { type: string, format: uuid }
+        attempt: { type: integer, minimum: 1, maximum: 3 }
+        previous_run_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, restoring, running, succeeded, failed, timed_out, out_of_memory, cancelled] }
+        failure_code: { type: string }
 
     ExecutionListResponse:
       description: |
@@ -122847,6 +124617,8 @@ components:
         observed: null
         docs_url: "https://gregale.dev/docs/errors/validation_failed"
       properties:
+        run_budget:
+          $ref: '#/components/schemas/RunBudgetRefusal'
         current_sequence: { type: integer, format: int64, minimum: 0, description: 'Observed channel head on realtime_sequence_conflict.' }
         agent_approval: { $ref: '#/components/schemas/AgentApprovalPendingInfo' }
         condition_field: { type: string }
@@ -127351,9 +129123,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 8
+          maxItems: 12
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied", "execution.finished", "execution.budget.threshold", "execution.pipeline.finished"] }
         retry_policy: { type: string, enum: [default, aggressive, none], default: default }
         delivery_format: { type: string, enum: [json, cloudevents], default: json }
         enabled: { type: boolean, default: true }
@@ -127529,9 +129301,9 @@ components:
         event_filter:
           type: array
           minItems: 1
-          maxItems: 8
+          maxItems: 12
           uniqueItems: true
-          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied"] }
+          items: { type: string, enum: ["deployment.live", "deployment.failed", "rollout.completed", "rollout.aborted", "environment.gitops.changed", "agent.approval.requested", "agent.approval.approved", "agent.approval.denied", "execution.finished", "execution.budget.threshold", "execution.pipeline.finished"] }
         retry_policy: { type: string, enum: [default, aggressive, none] }
         delivery_format: { type: string, enum: [json, cloudevents] }
         enabled: { type: boolean }
@@ -138817,6 +140589,113 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DataPipeline'
+
+    ExecutionResultValidation:
+      type: object
+      additionalProperties: false
+      required: [status]
+      description: Host validation of a successful result. Invalid contracts preserve execution status, original result, artifacts, and usage; dependent workflows fail and CLI waits return nonzero.
+      properties:
+        status: { type: string, enum: [valid, invalid] }
+        message: { type: string, enum: [Run result does not match result_schema] }
+
+    ExecutionFileInput:
+      type: object
+      additionalProperties: false
+      required: [path]
+      description: Exactly one file_id or single-use artifact grant_token. Data is staged in the fresh guest input directory and is excluded from the source bundle budget.
+      properties:
+        file_id: { type: string, format: uuid }
+        grant_token: { type: string, writeOnly: true }
+        path: { type: string, minLength: 1, maxLength: 256 }
+
+    CreateAgentExecutionFileGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [endpoint_id, thread_id, tool_call_id, task_name, version, path]
+      properties:
+        endpoint_id: { type: string, format: uuid }
+        thread_id: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._:-]+$' }
+        tool_call_id: { type: string, minLength: 1, maxLength: 64, pattern: '^[A-Za-z0-9._:-]+$' }
+        task_name: { type: string, minLength: 1, maxLength: 63 }
+        version: { type: integer, minimum: 1 }
+        step_label: { type: string, minLength: 1, maxLength: 96, description: Exact pipeline step label. Omit for a standalone Agent task call. }
+        path: { type: string, minLength: 1, maxLength: 256, description: Normalized relative path in the guest input directory. }
+    AgentExecutionFileGrant:
+      type: object
+      required: [grant_token, expires_at]
+      properties:
+        grant_token: { type: string, maxLength: 1536, description: Opaque private staging token for the authorized logical call. }
+        expires_at: { type: string, format: date-time }
+    CreateExecutionFileRequest:
+      type: object
+      additionalProperties: false
+      required: [size_bytes, sha256]
+      properties:
+        size_bytes: { type: integer, format: int64, minimum: 0, maximum: 67108864 }
+        sha256: { type: string, pattern: '^sha256:[a-f0-9]{64}$' }
+
+    DeliverRunArtifactRequest:
+      type: object
+      description: Exact Run output and stable storage intent to promote into an application upload route.
+      additionalProperties: false
+      required: [idempotency_key, execution_id, artifact_name, size_bytes, sha256, content_type]
+      properties:
+        idempotency_key: { type: string, minLength: 1, maxLength: 128, description: Stable app/route delivery identity. Reuse after an uncertain response; a new key explicitly requests a new storage attempt without executing code. }
+        execution_id: { type: string, format: uuid }
+        artifact_name: { type: string, minLength: 1, maxLength: 256 }
+        size_bytes: { type: integer, format: int64, minimum: 0, maximum: 67108864 }
+        sha256: { type: string, pattern: '^(sha256:)?[0-9a-f]{64}$' }
+        content_type: { type: string }
+
+    RunArtifactObject:
+      type: object
+      description: App-owned object locator governed by the destination bucket retention and access policy.
+      additionalProperties: false
+      required: [bucket_id, key]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        key: { type: string }
+        version_id: { type: string, description: Immutable public version when the backend supplies one. Unversioned objects retain normal app-owned mutation and lifecycle semantics. }
+
+    RunArtifactDelivery:
+      type: object
+      description: Durable storage write receipt independent of source Run file retention and Agent thread lifetime.
+      additionalProperties: false
+      required: [id, status, size_bytes, content_type, receipt_url, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, completed, failed] }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        content_type: { type: string }
+        error_code: { type: string }
+        receipt_url: { type: string, description: Authenticated app-owned receipt locator, not a bearer capability. }
+        object: { $ref: '#/components/schemas/RunArtifactObject' }
+        created_at: { type: string, format: date-time }
+
+    ExecutionFileResponse:
+      type: object
+      additionalProperties: false
+      required: [id, status, size_bytes, content_url]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [missing, expired, uploading, pending, ready, failed, deleting] }
+        size_bytes: { type: integer, format: int64, minimum: 0 }
+        sha256: { type: string }
+        content_url: { type: string, description: Relative authenticated content endpoint, never a signed object URL. }
+        expires_at: { type: string, format: date-time }
+        upload_required: { type: boolean }
+
+    ExecutionFileLimits:
+      type: object
+      required: [max_file_bytes, max_input_bytes, max_output_bytes, max_stored_bytes, max_files]
+      properties:
+        max_file_bytes: { type: integer, format: int64, minimum: 0 }
+        max_input_bytes: { type: integer, format: int64, minimum: 0 }
+        max_output_bytes: { type: integer, format: int64, minimum: 0 }
+        max_stored_bytes: { type: integer, format: int64, minimum: 0 }
+        max_files: { type: integer, minimum: 0 }
+
 
   responses:
     SupportInvalid:

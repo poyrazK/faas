@@ -191,6 +191,10 @@ var registry = []Spec{
 		// apid seals a managed workflow's plan and its workflow worker
 		// opens it; schedd never reads it.
 		cols("agent_execution_workflows", "sealed_plan"),
+		// apid wraps each immutable Run object key; schedd receives only scoped
+		// delegated data keys inside its Delivery envelope (ADR 20261114030000).
+		cols("execution_files", "sealed_key"),
+		cols("execution_task_versions", "sealed_definition"),
 		cols("account_billing_connections", "sealed_secret"),
 		cols("inbound_webhook_endpoints", "signing_secret_sealed", "previous_signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),

@@ -78,6 +78,8 @@ service Vmmd {
   // It carries bounded stdout/stderr chunks as they arrive, followed by one
   // terminal response. The unary RPC remains available for older schedulers.
   rpc ExecuteExecutionStream(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
+  // File-capable execution fails closed on vmmds that lack this RPC.
+  rpc ExecuteExecutionFiles(ExecuteExecutionRequest) returns (stream ExecuteExecutionEvent);
 
   // ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
   // the one-shot execution exchange. The first client frame must be start;
@@ -90,6 +92,8 @@ service Vmmd {
   // The envelope contains only immutable machine/artifact metadata; caller
   // source and input cross the boundary later through ExecuteExecution.
   rpc RestoreExecution(RestoreExecutionRequest) returns (RestoreExecutionResponse);
+  // Captures a new platform guest before any execution stream exists.
+  rpc CaptureExecutionTemplate(CaptureExecutionTemplateRequest) returns (CaptureExecutionTemplateResponse);
 
   // RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
   // streams the run's output. The first client frame must be start; a later
@@ -2864,6 +2868,11 @@ message ExecuteExecutionRequest {
   // integration IDs or identity material; vmmd still authorizes each call
   // from the live restore grant.
   bool outbound_enabled = 14;
+  // Private bounded manifest: object keys never enter guest JSON.
+  bytes private_file_manifest = 15;
+  int64 max_artifact_bytes = 16;
+  string execution_class = 17;
+  string environment_id = 18;
 }
 
 message ExecutionSourceFile {
@@ -2872,6 +2881,7 @@ message ExecutionSourceFile {
 }
 
 message ExecutionArtifact {
+  string file_id = 5;
   string name = 1;
   int32 size_bytes = 2;
   string sha256 = 3;
@@ -4253,4 +4263,20 @@ message BaseGenerationReadiness {
   bool adoptable = 3;
   // reason explains a false adoptable; empty otherwise.
   string reason = 4;
+}
+
+// Schedd-only producer envelope. No caller source, input, secrets or existing VM.
+message CaptureExecutionTemplateRequest {
+  string account_id = 1;
+  string runtime = 2;
+  string base_key = 3;
+  string layer_key = 4;
+  int32 memory_mb = 5;
+  int32 ephemeral_disk_mb = 6;
+  string kernel_digest = 7;
+  string base_digest = 8;
+}
+message CaptureExecutionTemplateResponse {
+  SnapshotRef snapshot = 1;
+  int64 vmstate_bytes = 2;
 }

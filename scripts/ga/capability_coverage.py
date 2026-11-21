@@ -307,7 +307,7 @@ RULES = [
     (r"crash-snapshot|crashsnapshot", "Crash snapshots"),
     (r"fork", "Production forks"),
     (r"mcp", "MCP hosting"),
-    (r"execution|disposable|image-run|interactive-run", "Disposable isolated runs"),
+    (r"execution|disposable|image-run|interactive-run|run-artifact-deliver|run-(tasks|controls|history)|gregale-run-roadmap|^run(env|file|filestore|task)$", "Disposable isolated runs"),
     (r"companion|sidecar|extension", "Application companions"),
     (r"reserved-concurrency|eviction-priority", "Reserved concurrency"),
     (r"warm-pool|warm-snapshot|warmpool", "Warm pool"),

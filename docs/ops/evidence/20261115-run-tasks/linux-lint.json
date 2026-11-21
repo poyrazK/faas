@@ -1,0 +1,61 @@
+{
+  "additional_check": {
+    "complete": true,
+    "exit_code": 0,
+    "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "packages": [
+      "pkg/api",
+      "pkg/apid/executionadmission",
+      "cmd/sdk-coverage"
+    ],
+    "patch_sha256": "927ccbcb70504f6a85b154394fe09f3b78afd335c31ff2fbbabe21491ae92b2e",
+    "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+  },
+  "checks": [
+    {
+      "exit_code": 0,
+      "group": "core",
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/runtask",
+        "pkg/apid/runtasks",
+        "pkg/apid/agents",
+        "pkg/state",
+        "pkg/apid/apidserver",
+        "cmd/gregale"
+      ]
+    },
+    {
+      "exit_code": 0,
+      "group": "metal",
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/e2etest/runlifecycle"
+      ]
+    }
+  ],
+  "complete": true,
+  "earlier_attempt": {
+    "log_sha256": "81ff2de3b9f14a98b26c0230721d14a4c3016dbffaa361f3ef077b13a9aae4b2",
+    "record": {
+      "complete": true,
+      "exit_code": 4,
+      "log_sha256": "81ff2de3b9f14a98b26c0230721d14a4c3016dbffaa361f3ef077b13a9aae4b2",
+      "packages": [
+        "pkg/runtask",
+        "pkg/apid/runtasks",
+        "pkg/apid/agents",
+        "pkg/state",
+        "pkg/apid/apidserver",
+        "cmd/gregale",
+        "pkg/e2etest/runlifecycle"
+      ],
+      "patch_sha256": "b889f260b4c65507208a60cedf0e9cbee25034069b56af8f051e20325bb39cd9",
+      "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+    },
+    "result": "combined metal-tagged package loading exceeded the 15-minute deadline; retried in separate serial core and metal groups"
+  },
+  "exit_code": 0,
+  "patch_sha256": "b889f260b4c65507208a60cedf0e9cbee25034069b56af8f051e20325bb39cd9",
+  "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+}

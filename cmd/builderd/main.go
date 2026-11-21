@@ -167,6 +167,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		log.Info("source storage enabled", "backend", os.Getenv("FAAS_STORAGE_BACKEND"))
 	}
+	var environmentStorage storage.StorageBackend
+	if os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1" {
+		environmentStorage, err = storage.BackendFromEnvContext(ctx)
+		if err != nil {
+			return fmt.Errorf("builderd: Run environment storage: %w", err)
+		}
+	}
 	// Gate-B box-role gate. builderd is a compute-only daemon —
 	// it refuses to start under RoleControlPlane. The role is
 	// set from TOML or FAAS_BUILDERD_ROLE at deploy time;
@@ -335,7 +342,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// "default-local" in LoadConfig; multi-node deployments
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
-	}, log).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry()).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
+	}, log).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry()).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithExecutionEnvironments(os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1", environmentStorage).WithValidatorBuild(validatorArtifacts.Build)
 	publisher, err := loadBuildPublisher()
 	if err != nil {
 		return err

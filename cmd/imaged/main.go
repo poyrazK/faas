@@ -547,6 +547,7 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		WithPostgresPoolSizingRelease(releases.postgresPoolSizing).
 		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
+		WithExecutionEnvironments(os.Getenv("FAAS_EXECUTION_ENVIRONMENTS_ENABLED") == "1").
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
 		WithReleasePrestage(prestageOnlyFromEnv(getenv)).

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -70,7 +71,18 @@ type Handler struct {
 	Sleeps SleepSchedules
 	// RunCallbacks lists and settles finished gregale_run runs (run_tool.go);
 	// without it no apid delivers them.
-	RunCallbacks RunCallbackStore
+	RunCallbacks           RunCallbackStore
+	PipelineCallbacks      state.ExecutionPipelineCallbackStore
+	StartPipeline          PipelineStarter
+	PipelineToolEnabled    bool
+	pipelineDeliveryMu     sync.Mutex
+	pipelineCallbackCursor string
+	TaskCallbacks          TaskCallbackStore
+	TaskExecutions         TaskExecutionReader
+	StartTask              TaskStarter
+	TaskToolEnabled        bool
+	taskDeliveryMu         sync.Mutex
+	taskCallbackCursor     string
 	// GitHubSubscriptions holds gregale_github_subscribe's subscriptions
 	// (github_subscribe_tool.go); nil leaves the tool unavailable.
 	GitHubSubscriptions GitHubSubscriptionStore

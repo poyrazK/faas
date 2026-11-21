@@ -1,0 +1,663 @@
+{
+  "bare_metal_host": false,
+  "checks": {
+    "native-helper-checks": {
+      "package_elapsed_seconds": 3.1,
+      "passed_tests": [
+        "TestNativeHostHelperCancellationJoinsRunningChild",
+        "TestNativeHostHelperCgroupEvidenceRejectsAmbiguity",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/boot",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/duplicate_group",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/missing_group",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/missing_revocation",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/null_group",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/owner",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/path",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/trailing",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/unknown_generation",
+        "TestNativeHostHelperCorruptOrUnknownOwnershipCannotDisappear/untrusted_file",
+        "TestNativeHostHelperDaemonDeathBeforePublicationClosesGate",
+        "TestNativeHostHelperFailedPublicationNeverExecutesAndStillJoins",
+        "TestNativeHostHelperFailedPublicationNeverExecutesAndStillJoins/incarnation",
+        "TestNativeHostHelperFailedPublicationNeverExecutesAndStillJoins/inode",
+        "TestNativeHostHelperFailedPublicationNeverExecutesAndStillJoins/start_time",
+        "TestNativeHostHelperProducerCrashFixture",
+        "TestNativeHostHelperProducerLockSpansForkPublicationAndGate",
+        "TestNativeHostHelperPublishesIncarnationBeforeExecutionAndJoins",
+        "TestNativeHostHelperUncertainRetirementFencesAcknowledgementAndReplacement",
+        "TestNativeHostHelperWrapperRequiresLocalProducerAndNeverBypassesGate"
+      ]
+    },
+    "template-auth-checks": {
+      "package_elapsed_seconds": 1.152,
+      "passed_tests": [
+        "TestCallerPolicy",
+        "TestCallerPolicyAllowList",
+        "TestCallerPolicyCoversEveryMethod"
+      ]
+    },
+    "template-clones": {
+      "package_elapsed_seconds": 347.402,
+      "passed_tests": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/crash_after_capture",
+        "TestSourceNativeRecoveryMetal/crash_after_pause",
+        "TestSourceNativeRecoveryMetal/crash_after_pristine_ack",
+        "TestSourceNativeRecoveryMetal/crash_before_boot",
+        "TestSourceNativeRecoveryMetal/crash_during_publication",
+        "TestSourceNativeRecoveryMetal/payload_erasure_and_single_usage_entry",
+        "TestSourceNativeRecoveryMetal/published_template_survives_owner_restart",
+        "TestSourceNativeRecoveryMetal/schedd_crash_during_capture",
+        "TestSourceNativeRecoveryMetal/schedd_restart_never_reexecutes_running_work",
+        "TestSourceNativeRecoveryMetal/vmmd_restart_never_reexecutes_running_work",
+        "TestSourceTemplateClonesMetal",
+        "TestSourceTemplateClonesMetal/automatic_capture_and_publication",
+        "TestSourceTemplateClonesMetal/cancelling_one_clone_spares_its_peer",
+        "TestSourceTemplateClonesMetal/catalog_retention_and_orphan_gc",
+        "TestSourceTemplateClonesMetal/corrupt_backing_cold_fallback",
+        "TestSourceTemplateClonesMetal/corrupt_drive_cold_fallback",
+        "TestSourceTemplateClonesMetal/failed_capture_never_publishes",
+        "TestSourceTemplateClonesMetal/four_live_clones_are_isolated",
+        "TestSourceTemplateClonesMetal/idempotent_publication_after_restart",
+        "TestSourceTemplateClonesMetal/template_unchanged_and_usage_settled",
+        "TestSourceWarmRestoreOOMMetal",
+        "TestSourceWarmRestoreOOMMetal/cold_real_oom",
+        "TestSourceWarmRestoreOOMMetal/corrupt_memory_cold_fallback",
+        "TestSourceWarmRestoreOOMMetal/corrupt_vmstate_cold_fallback",
+        "TestSourceWarmRestoreOOMMetal/payload_erasure_and_single_usage_entry",
+        "TestSourceWarmRestoreOOMMetal/payload_free_capture",
+        "TestSourceWarmRestoreOOMMetal/repeated_restores_are_clean",
+        "TestSourceWarmRestoreOOMMetal/warm_real_oom_and_recovery"
+      ]
+    },
+    "template-device-checks": {
+      "package_elapsed_seconds": 2.037,
+      "passed_tests": [
+        "TestAwaitLaunchGateRejectsUnrecordedChildren",
+        "TestDeviceFDMountIdentityRefusesAmbiguity",
+        "TestDeviceNamespaceMembershipAndAccessProof",
+        "TestDeviceNetTraversableWithPrivateUmask",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN/TUN_input",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN/TUN_mode",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN/TUN_mount",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN/legacy",
+        "TestDeviceScopeKVMOnlyRequiresAbsentTUN/version",
+        "TestDeviceScopeStrictDecodingAndReceiptIdentity",
+        "TestSnapshotOutputReceiptRequiresOriginalCompletePrivateMounts",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/adopted_target",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/boot",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/capture",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/cross_output_alias",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/duplicate_epoch",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/duplicate_fd",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/duplicate_output",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/generation",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/gid",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/missing_fd",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/missing_input",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/missing_target",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/parent",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/pid",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/start",
+        "TestSnapshotOutputScopeRefusesForeignOrIncompleteCohort/uid"
+      ]
+    },
+    "template-publisher-checks": {
+      "package_elapsed_seconds": 9.243,
+      "passed_tests": [
+        "TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope",
+        "TestExecutionClaimResolverMissingSnapshotColdBootsSameIdentity",
+        "TestExecutionClaimResolverRequiresNodeAndTrustedArtifacts",
+        "TestExecutionProfileSnapshotSurvivesDurableCatalog",
+        "TestExecutionSessionDestroyRequiresConfirmedRetirement",
+        "TestExecutionTemplateLostAcknowledgementKeepsTheWinner",
+        "TestExecutionTemplatePartialCaptureCannotPublish",
+        "TestExecutionTemplatePublicationIsCompleteAndIdempotent",
+        "TestExecutionTemplatePublicationRaceRetiresOnlyItsLoser",
+        "TestExecutionTemplateUnknownCommitRetainsArtifacts",
+        "TestMemoryRuntimeSnapshotIndexConcurrentPublication",
+        "TestMemoryRuntimeSnapshotIndexPublishesImmutably",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/bad_artifact_digest",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/not_sanitized",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/payload-bearing",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/unknown_state",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/unsafe_storage_path",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/zero_memory_bytes",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/backing",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/drive",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/mem",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/vmstate",
+        "TestRuntimeSnapshotCatalogDoesNotFallbackOnMalformedRequest",
+        "TestRuntimeSnapshotCatalogFallsBackSafely",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/artifact_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/catalog_unwired",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/incompatible",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/index_marks_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/index_unavailable",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/metadata_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/missing",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/retired",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/verifier_unavailable",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/verifier_unwired",
+        "TestRuntimeSnapshotCatalogNilReceiverFallsBackAfterIdentityValidation",
+        "TestRuntimeSnapshotCatalogPreservesContextOnLookup",
+        "TestRuntimeSnapshotCatalogRejectsUnsupportedRequestFormat",
+        "TestRuntimeSnapshotCatalogResolvesCompatibleSnapshot",
+        "TestRuntimeSnapshotCatalogRestoresOnlyVerifiedStoragePair",
+        "TestRuntimeSnapshotDigestIsLengthDelimited",
+        "TestRuntimeSnapshotEntryValidateRequiresCanonicalStorageKey",
+        "TestRuntimeSnapshotErrorsRemainSentinels",
+        "TestRuntimeSnapshotIdentityKeyIsCanonical",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/architecture",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/disk_shape",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/format",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/memory_shape",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/runtime",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/short_digest",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/uppercase_digest",
+        "TestRuntimeSnapshotPlanColdBootKeepsIdentity",
+        "TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects",
+        "TestRuntimeSnapshotPublisherPreservesCancellation",
+        "TestRuntimeSnapshotPublisherPublishesVerifiedPair",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/invalid_size",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/missing_reader",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/not_sanitized",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/payload-bearing",
+        "TestRuntimeSnapshotReaderIsReadOnlyAndPrefersNative",
+        "TestRuntimeSnapshotVerifierGetsValidatedEntryOnly",
+        "TestStateRuntimeSnapshotIndexMapsMissingRows",
+        "TestStateRuntimeSnapshotIndexResolvesAndRetires",
+        "TestStorageRuntimeSnapshotVerifierAuthenticatesPair",
+        "TestStorageRuntimeSnapshotVerifierPreservesTransientAndCancellation",
+        "TestStorageRuntimeSnapshotVerifierRejectsMissingAndWrongSize",
+        "TestVMMClientDestroyWaitsForReconnectWithoutReplaying",
+        "TestVMMClientDestroyWaitsForReconnectWithoutReplaying/deadline",
+        "TestVMMClientDestroyWaitsForReconnectWithoutReplaying/reconnect",
+        "TestVMMClientDestroyWaitsForReconnectWithoutReplaying/uncertain",
+        "TestVMMClientExecutionRestoreWaitsForReconnectWithoutReplaying",
+        "TestVMMClientExecutionRestoreWaitsForReconnectWithoutReplaying/deadline",
+        "TestVMMClientExecutionRestoreWaitsForReconnectWithoutReplaying/reconnect",
+        "TestVMMClientExecutionRestoreWaitsForReconnectWithoutReplaying/uncertain",
+        "TestVmmdExecutionBackendDecryptsOnlyAfterRestoreAndMapsResult",
+        "TestVmmdExecutionBackendRequiresBothWiringFunctions"
+      ]
+    },
+    "template-retention-checks": {
+      "package_elapsed_seconds": 1.151,
+      "passed_tests": [
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans",
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans/ready",
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans/retired"
+      ]
+    },
+    "template-runtime-checks": {
+      "package_elapsed_seconds": 5.06,
+      "passed_tests": [
+        "TestAdoptionStateInventoryClassifiesEveryInstanceField",
+        "TestAdoptionStateInventoryClassifiesEveryMap",
+        "TestExecutionTemplateCannotAcceptAnExecution",
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture",
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture/networked",
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture/tenant_namespace",
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture/uncoupled",
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture/warm_prefix",
+        "TestExecutionTemplateNativeFlightFencesLaunchAndRequiresRetirement",
+        "TestExecutionTemplateNativeFlightRejectsCorruptionAndReplacement",
+        "TestExecutionTemplateNativeModeRemainsOptIn",
+        "TestExecutionTemplateNativeRecoveryRequiresDeadOriginalAndPreservesObjects",
+        "TestExecutionTemplatePrivatePublicationCannotOverwriteOrEscape",
+        "TestManagerRequestsNativeRuntimeCaptureOnlyForOrdinaryCaptures",
+        "TestNativeImageAnchorRemovalAcknowledgementIsRetryable",
+        "TestNativeImageExclusiveWritableAndStaleGeneration",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/1",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/2",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/3",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/4",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/5",
+        "TestNativeImageInterruptedPublicationRecoversWithoutGrantLoss/6",
+        "TestNativeImageInventoryLoadsAnEpochPublishedAfterItsDirectorySnapshot",
+        "TestNativeImageManagerStagingUsesOriginalOwnerAndRefusesUnjournaledCopies",
+        "TestNativeImageMountProofRejectsChangedAccessAndAmbiguousMounts",
+        "TestNativeImageNewEpochReadsBaselineAfterPreviousEpochRetirement",
+        "TestNativeImagePublishesPermissionIntentBeforeEffects",
+        "TestNativeImageRecordsRejectMissingAndDuplicateAuthority",
+        "TestNativeImageSharedAliasesRestoreOnlyAfterLastOwner",
+        "TestNativeImageSourceTransitionBlocksConcurrentRevocation",
+        "TestNativeJailDeviceFrameRejectsAmbiguousOrExcessAuthority",
+        "TestNativeJailDeviceHandoffClosesInputsBeforeAuthorizationAndRequiresReceipt",
+        "TestNativeJailDeviceNamespaceAndParentInputsHoldCleanup",
+        "TestNativeJailDeviceNetworklessScopeCannotBorrowTUNAuthority",
+        "TestNativeJailDevicePinningHoldsOriginalProducerLock",
+        "TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope",
+        "TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope/authorized",
+        "TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope/cgroup",
+        "TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope/closed",
+        "TestNativeJailDevicePublicationFailuresRetainRecoverableOriginalScope/planned",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation/generation",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation/namespace",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation/pid",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation/revoked",
+        "TestNativeJailDeviceReceiptCannotBorrowAnotherScopeOrSurviveRevocation/root",
+        "TestNativeJailDeviceRecoveryCannotAcknowledgeOpenProducerInputs",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/another_instance's_live_VM",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/holder_launch_retired_too",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/pid_differs",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/retired_instance_itself",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/start_time_differs",
+        "TestNativeJailDeviceRecycledNamespaceIdentityReleasesOnlyAnotherLiveLaunch/unknown_instance",
+        "TestNativeLaunchOwnerChangedLocalIdentityRefused",
+        "TestNativeLaunchOwnerNamesThisDaemon",
+        "TestNativeLaunchOwnerProvesEarlierGenerationExit",
+        "TestNativeLaunchOwnerRecordShape",
+        "TestNativeLaunchOwnerRecordShape/legacy_with_owner",
+        "TestNativeLaunchOwnerRecordShape/missing_owner",
+        "TestNativeLaunchOwnerRecordShape/no_incarnation",
+        "TestNativeLaunchOwnerRecordShape/owner_and_producer",
+        "TestNativeLaunchOwnerRecordShape/repair_protocol",
+        "TestNativeLaunchOwnerRecordShape/repair_with_owner",
+        "TestNativeLaunchOwnerRecordShape/unknown_protocol",
+        "TestNativeRecoveryDaemonDeathConfirmsVMExitButRetainsUnknownHelpers",
+        "TestNativeRecoveryDisabledModeCannotBypassExistingJournal",
+        "TestNativeRecoveryDiscoveryDoesNotCollapseFailedScanIntoAbsence",
+        "TestNativeRecoveryDiscoveryKeepsExactIncarnationsAndDuplicateIDs",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/duplicate_id",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/foreign_cgroup",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/missing_cmdline",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/missing_start",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/mixed_uid",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/path_id",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/trailing_id",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/uid_range",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/unreadable_cmdline",
+        "TestNativeRecoveryDiscoveryRejectsIncompleteOwnership/wrong_pid",
+        "TestNativeRecoveryDiscoveryRootJailerBeforePrivilegeDrop",
+        "TestNativeRecoveryLegacyChrootAndReappearedResourcesBlockAdmission",
+        "TestNativeRecoveryLegacyChrootAndReappearedResourcesBlockAdmission/legacy_chroot",
+        "TestNativeRecoveryLegacyChrootAndReappearedResourcesBlockAdmission/reappeared_resource",
+        "TestNativeRecoveryNetworkInventoryRefusesUnknownOrNetworklessResources",
+        "TestNativeRecoveryOnlyOneDaemonCanOwnTheAllocatorRoot",
+        "TestNativeRecoveryOnlyRegisteredProducerCanUseRestoreFallback",
+        "TestNativeRecoveryPreparedCacheCannotCreateUnjournaledOwnership",
+        "TestNativeRecoveryRecoveredBuilderPreservesUnprovenArtifacts",
+        "TestNativeRecoveryRetirementJoinsDisappearanceAndDoesNotSignalReusedPID",
+        "TestNativeRecoveryRetirementPinsEveryExactMatchAndWaitsForExit",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes/close",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes/deadline",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes/open",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes/signal",
+        "TestNativeRecoveryRetirementPreservesUncertainOutcomes/wait",
+        "TestNativeRecoveryRetirementRejectsPIDReuseBeforeSignalling",
+        "TestNativeRecoveryRetirementRejectsPIDReuseBeforeSignalling/cgroup",
+        "TestNativeRecoveryRetirementRejectsPIDReuseBeforeSignalling/instance",
+        "TestNativeRecoveryRetirementRejectsPIDReuseBeforeSignalling/start_time",
+        "TestNativeRecoveryRetirementRejectsPIDReuseBeforeSignalling/uid",
+        "TestNativeRecoveryRetirementWaitsEvenWhenSignalReportsGone",
+        "TestNativeRecoverySlotsExcludeEveryObservedUIDAndDuplicateID",
+        "TestNativeRecoverySlotsRejectConflictsAtomically",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/corrupt",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/duplicate_slot",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/live_id",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/live_slot",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/missing_free",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/prepared_id",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/prepared_slot",
+        "TestNativeRecoverySlotsRejectConflictsAtomically/recovered_slot",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/another_deployment",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/builder_lease",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/deadline_beyond_the_limit",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/expired_before_acceptance",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/init_capture",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/lease_of_another_VM",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/legacy_namespace",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/no_native_generation",
+        "TestNativeRuntimeCaptureAuthorityRequiresAFreshCoupledNamespace/uncoupled_device_state",
+        "TestNativeRuntimeCaptureIDComesFromTheV2Namespace",
+        "TestNativeRuntimeCaptureIDComesFromTheV2Namespace/empty",
+        "TestNativeRuntimeCaptureIDComesFromTheV2Namespace/init",
+        "TestNativeRuntimeCaptureIDComesFromTheV2Namespace/legacy",
+        "TestNativeRuntimeCaptureIDComesFromTheV2Namespace/warm",
+        "TestNativeRuntimeCaptureJournalRejectsAnotherKernelBoot",
+        "TestNativeRuntimeCaptureJournalStartsCompletesAndNeverReplays",
+        "TestNativeRuntimeCaptureRequiresTheNativeTree",
+        "TestNativeSnapshotCapturePermitChecksTheDurableRuntimeStart",
+        "TestNativeSnapshotCapturePermitServesEitherAuthority"
+      ]
+    },
+    "template-wiring-checks": {
+      "package_elapsed_seconds": 1.149,
+      "passed_tests": [
+        "TestExecutionTemplateShapesFailClosed"
+      ]
+    },
+    "warm-oom-executor-checks": {
+      "package_elapsed_seconds": 1.085,
+      "passed_tests": [
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_regressed",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_unavailable",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/kernel_OOM",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_SIGKILL",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_exit",
+        "TestGuestOOMCounterRequiresValidEvidence"
+      ]
+    },
+    "warm-oom-guest-checks": {
+      "package_elapsed_seconds": 1.1280000000000001,
+      "passed_tests": [
+        "TestExecutionPayloadRevokesPristineRestoreFence",
+        "TestResumeCapabilityAdvertisement",
+        "TestResumeCapabilityAdvertisement/app_guest_whose_barrier_never_started",
+        "TestResumeCapabilityAdvertisement/app_guest_with_barrier",
+        "TestResumeCapabilityAdvertisement/pristine_execution_listener",
+        "TestResumeCapabilityAdvertisement/warm_builder",
+        "TestResumeWithoutEntropyNacks",
+        "TestServeExecutionOnceHandlesOneRequest"
+      ]
+    }
+  },
+  "execution_ledger_assertions": {
+    "native_recovery_customer_runs": 11,
+    "retained_payload_rows": 0,
+    "template_account_runs": 0,
+    "template_cohort_customer_runs": 9,
+    "total_customer_runs": 27,
+    "usage_entries_per_customer_run": 1,
+    "warm_oom_customer_runs": 7
+  },
+  "firecracker_version": "1.7.0",
+  "fixture_hashes": {
+    "base_sha256": "f261f14b338eedc52dd863cf22151210cf13f223d5bcbda22f0b4d3fe613cabc",
+    "guest_init_sha256": "2d76624b8d8c8726c5c6e6d547385a317d1d194b3829d029a92605d8e57e94b7",
+    "kernel_sha256": "178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b"
+  },
+  "functional_pass": true,
+  "guest_clone_witnesses": [
+    {
+      "cancelled": false,
+      "count": 4,
+      "overlapping": true,
+      "unique_rng": 4
+    },
+    {
+      "cancelled": true,
+      "count": 2,
+      "overlapping": true,
+      "unique_rng": 1
+    }
+  ],
+  "guest_kernel_oom_witnesses": [
+    {
+      "after": 1,
+      "before": 0
+    },
+    {
+      "after": 1,
+      "before": 0
+    }
+  ],
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "virtualization": "google"
+  },
+  "limits": [
+    "node24 standard 256 MiB / 64 MiB scratch only",
+    "four simultaneous same-node networkless clones only",
+    "local artifact backend only",
+    "production publisher code uses operator-provided release pins and a dedicated platform account",
+    "fixture scan is not image provenance or vulnerability evidence",
+    "cross-node/CPU-cohort behavior, other profiles, full billing and native release qualification remain open",
+    "native_runtime_capture and native_launch_owner_records are required",
+    "interrupted captures are retired, never promoted or replayed; incomplete native capture journals remain audit evidence",
+    "host reboot, cross-node recovery, rollback to older readers, other profiles and production image provenance remain separate gates",
+    "Google virtualization does not satisfy repository native acceptance requirements",
+    "full native-process recovery is functionally exercised only in the explicit native capture/owner profile; default quarantine-only recovery is separate"
+  ],
+  "native_kvm_only_device_receipts": 27,
+  "native_recovery_witnesses": [
+    {
+      "assertions": {
+        "catalog_ready": "false",
+        "cold_fallback": "true",
+        "orphan_collected": "true",
+        "physical_retired": "true"
+      },
+      "phase": "flight"
+    },
+    {
+      "assertions": {
+        "catalog_ready": "false",
+        "cold_fallback": "true",
+        "orphan_collected": "true",
+        "physical_retired": "true"
+      },
+      "phase": "pristine"
+    },
+    {
+      "assertions": {
+        "catalog_ready": "false",
+        "cold_fallback": "true",
+        "orphan_collected": "true",
+        "physical_retired": "true"
+      },
+      "phase": "paused"
+    },
+    {
+      "assertions": {
+        "catalog_ready": "false",
+        "cold_fallback": "true",
+        "orphan_collected": "true",
+        "physical_retired": "true"
+      },
+      "phase": "memory_published"
+    },
+    {
+      "assertions": {
+        "catalog_ready": "false",
+        "cold_fallback": "true",
+        "orphan_collected": "true",
+        "physical_retired": "true"
+      },
+      "phase": "complete"
+    },
+    {
+      "assertions": {
+        "fresh_publication": "true",
+        "old_capture_promoted": "false",
+        "physical_retired": "true"
+      },
+      "phase": "schedd_capture"
+    },
+    {
+      "assertions": {
+        "catalog_unchanged": "true",
+        "restored": "true"
+      },
+      "phase": "published_restart"
+    },
+    {
+      "assertions": {
+        "guest_executions": "1",
+        "original_receipt": "true",
+        "physical_retired": "true"
+      },
+      "phase": "running_vmmd"
+    },
+    {
+      "assertions": {
+        "guest_executions": "1",
+        "original_receipt": "true",
+        "physical_retired": "true"
+      },
+      "phase": "running_schedd"
+    }
+  ],
+  "p0_3_complete": false,
+  "post_capture_crash_leakchecks": 5,
+  "pre_teardown_leakchecks": 3,
+  "process_exits": {
+    "leakcheck_after": 0,
+    "leakcheck_before": 0,
+    "native_recovery": 0
+  },
+  "production_captures": [
+    {
+      "memory_bytes": 268435456,
+      "private_drive_sha256": "599af78ddd9738b4daba28703c6f8174a6e583df1d92b5358a1ebeed02371201",
+      "snapshot_digest": "2812fac821037a2c9c50e47dc841c09481a1e4809b95dfe826707212e4a7024f",
+      "vmstate_bytes": 13716
+    },
+    {
+      "memory_bytes": 268435456,
+      "private_drive_sha256": "cb1fddbca8332a77865ea58c317ddb0065e07d22eddcc1cb4fa2fc74f88de749",
+      "snapshot_digest": "b89e7fc6ca33408028270d54b1baeb59ddeee82c51e6d6693b1ea447b8c45a8e",
+      "vmstate_bytes": 13716
+    },
+    {
+      "memory_bytes": 268435456,
+      "private_drive_sha256": "cb59736e960f69a61b0186c2e9b3cf8828092d580beccb8986aaf683fb7dde54",
+      "snapshot_digest": "dc4b6fbc118360d424327bc55e59b2d82bcfd28eed52342f1985054025521103",
+      "vmstate_bytes": 13716
+    }
+  ],
+  "raw_evidence_sha256": {
+    "artifacts.sha256": "ab94590af8bf1dc9df9574d3e3cf0ac9994ff248567c111c9944880c1b6f2244",
+    "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+    "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "linux-lint-pkg-e2etest-runlifecycle.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-e2etest.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-fcvm.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-jailsetup.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-sched.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-vmmdgrpc.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-progress.json": "bd9f6b2c025ea7ee7c839200ec813978444b6e7cd829791374c209d48a1db61e",
+    "linux-lint-result.json": "bf7ff07896e8057cd183e12543686adce6aa4a256b7812862b7e107bd24b10da",
+    "native-helper-checks.jsonl": "309db28372edc1c18e13b2f4ce6459aab7645d8ab35019765876d07abca855ff",
+    "native-helper-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "process-exits.json": "2f61c2f51c82a61d431b297a7f77050b56945a77db749c0d208209540d632cea",
+    "report.json": "b39f1e0d18856060f1bb624cef48dd3c785e5cfd0d899e3c87bf5ea6dc19bcd1",
+    "source.json": "1a50c48acaec2953c4f25af6cba777f6f9aafaff1b921d7113ecf664c124534e",
+    "template-auth-checks.jsonl": "e52bc80b32c298345adab2dd0278d81ab02942f3f937584d146a58ae871f1815",
+    "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-clones.jsonl": "96175c4c6c8b6e9fc1508917b1c587064ccf92f37207b013ba6cf472bbc9afb3",
+    "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-device-checks.jsonl": "4b40ca21645c59b148ae35f55fa7aa75bbcd38ad26f9ac8dcca0f5f08872a633",
+    "template-device-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-publisher-checks.jsonl": "8bb90621ad50428e73bd916e21cda7125d6e9447147e1078fcd28a599d4cc53d",
+    "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-retention-checks.jsonl": "f0dd836281fdce8e73b342430ab17408cce801ea62a833dea9c2a32be7ac72ea",
+    "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-runtime-checks.jsonl": "8619a35af59517931d57a5268cdcc75fc7f4e199db97544513d114d5a99c2ba8",
+    "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-wiring-checks.jsonl": "5eaf67af27054a4b8ae8f59c3f8149da9c62a502a11d363cadc0d3144737a1b6",
+    "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom-executor-checks.jsonl": "b4bd20e07f39587b3b6719ff2fce45ff13cfd2eef725484fb5273921b8041790",
+    "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom-guest-checks.jsonl": "0574f1dbb20ef25317a01c7f82cfe6f73708afd695be12252bb9160e5518700a",
+    "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "raw_report_schema": "gregale.run-native-recovery-functional/v1",
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-native-recovery-summary/v1",
+  "simultaneous_native_isolation": [
+    {
+      "live": 4,
+      "unique_cgroups": 4,
+      "unique_jail_uids": 4,
+      "unique_roots": 4,
+      "unique_writable_drives": 4
+    },
+    {
+      "live": 2,
+      "unique_cgroups": 2,
+      "unique_jail_uids": 2,
+      "unique_roots": 2,
+      "unique_writable_drives": 2
+    }
+  ],
+  "source": {
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "snapshot_commit": "432e6058ab21b335c2aea7bd633fe8e8df06bb68"
+  },
+  "source_recovery_profile": "native_process_recovery_owner_v3",
+  "validation": {
+    "grpc_and_database_schema_changes": false,
+    "independent_hash_and_coverage_check": "passed on node; only whitelisted summary exported",
+    "linux_changed_code_lint": {
+      "checks": [
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-fcvm.log",
+          "package": "./pkg/fcvm"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-jailsetup.log",
+          "package": "./pkg/jailsetup"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-e2etest.log",
+          "package": "./pkg/e2etest"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-e2etest-runlifecycle.log",
+          "package": "./pkg/e2etest/runlifecycle"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-vmmdgrpc.log",
+          "package": "./pkg/vmmdgrpc"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-sched.log",
+          "package": "./pkg/sched"
+        }
+      ],
+      "execution": "six changed packages separately, concurrency=1, tests enabled, metal tag",
+      "exit_code": 0,
+      "go_memory_limit_gib": 9,
+      "memory_max_gib": 12,
+      "patch_sha256": "efbce939f9483520dab0a93e32a28278bb6dd0f1688e184fae58373c246b6980",
+      "scope": "new issues since qualified template/clone snapshot 3fc785dde80e, on Linux amd64",
+      "source_snapshot": "432e6058ab21b335c2aea7bd633fe8e8df06bb68"
+    },
+    "native_journal_protocol_changes": [
+      "template_flight_v1",
+      "nested_runtime_authority_v2",
+      "kvm_only_device_scope_v2"
+    ],
+    "schema_unchanged_from_qualified_snapshot": {
+      "sha256": {
+        "pkg/state/project_environment_clone_schema_registry.json": "c223f653191935a87847227f2fc9d41996b8124ccaae0e6a89cb9e09faf7570e",
+        "schema.sql": "ba6523d3e368cb00e2a09f90c3ac1af539767a0da36e3fee29eb3d93524bdd1f",
+        "schema.sql.migrations.sha256": "96fd4d3cb3114a357ef05db8f24ea3439826a3d9faea08b9733e51ae0136abac"
+      },
+      "snapshot": "3fc785dde80e849430b8d4ba7f10dcc3001785c5"
+    }
+  },
+  "wake_witness_counts": {
+    "cold_boot": 10,
+    "restore": 17
+  }
+}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sharedruntime"
@@ -45,7 +46,17 @@ func loadLocalOCIArchive(archivePath string) (oci.Config, []io.ReadCloser, func(
 	return loadLocalOCIArchiveContext(context.Background(), archivePath)
 }
 
+type localOCIProvenance struct {
+	Evidence *imagechain.Evidence
+	Image    imagechain.Image
+	Digest   string
+	Streams  []*imagechain.LayerStream
+}
+
 func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Config, []io.ReadCloser, func(), error) {
+	return loadLocalOCIArchiveWithProvenance(ctx, archivePath, nil)
+}
+func loadLocalOCIArchiveWithProvenance(ctx context.Context, archivePath string, proof *localOCIProvenance) (oci.Config, []io.ReadCloser, func(), error) {
 	archive, err := openLocalOCIArchive(archivePath)
 	if err != nil {
 		return oci.Config{}, nil, func() {}, err
@@ -122,6 +133,23 @@ func loadLocalOCIArchiveContext(ctx context.Context, archivePath string) (oci.Co
 	readers := make([]io.ReadCloser, len(layerFiles))
 	for i, f := range layerFiles {
 		readers[i] = f
+		if proof != nil {
+			d := manifest.Layers[i]
+			stream, err := imagechain.NewLayerStream(ctx, f, imagechain.Descriptor{MediaType: d.MediaType, Digest: d.Digest, Size: d.Size}, config.DiffIDs[i], i)
+			if err != nil {
+				return fail(err)
+			}
+			readers[i] = stream
+			proof.Streams = append(proof.Streams, stream)
+		}
+	}
+	if proof != nil {
+		proof.Digest = index.Manifests[0].Digest
+		proof.Evidence = &imagechain.Evidence{SourceManifest: bytes.Clone(manifestBytes), Config: bytes.Clone(configBytes)}
+		proof.Image, err = imagechain.Validate(proof.Evidence, proof.Digest, proof.Digest)
+		if err != nil {
+			return fail(err)
+		}
 	}
 	return config, readers, cleanup, nil
 }

@@ -170,6 +170,8 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	executionEnvironmentsEnabled bool
+	executionEnvironmentStorage  storage.StorageBackend
 	// releasePaused reports the break-glass release pause (ADR
 	// 20261022140000); while it is true no queued build is claimed.
 	releasePaused  func() bool
@@ -649,7 +651,7 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 	b.pipeline.observeClaim(ctx, "poll", err)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			return BuildResult{}, state.ErrNotFound
+			return b.processNextEnvironment(ctx)
 		}
 		return BuildResult{}, fmt.Errorf("builderd: claim next build: %w", err)
 	}

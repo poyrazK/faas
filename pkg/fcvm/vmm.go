@@ -6486,10 +6486,21 @@ func (v *JailerVMM) waitForJailerChroot(ctx context.Context, instance string) (i
 // a fresh /dev and /dev/kvm for the jailed uid. Executions and agent runs
 // have no network, so their Firecracker must never be able to open
 // /dev/net/tun. Under native process recovery the journaled helper owns jail
-// devices, and networkless boots there are left as they were.
+// devices through a KVM-only receipt, without inheriting or creating TUN.
 func (v *JailerVMM) prepareNetworklessJailDevices(ctx context.Context, root, instance string, uid, gid int) error {
 	if v.nativeRecovery != nil {
-		return nil
+		if !v.nativeRecovery.journal.owners {
+			return errors.New("native jail device setup: networkless guests require native launch owner records")
+		}
+		owner, err := v.nativeRecovery.journal.read(instance)
+		if err != nil {
+			return err
+		}
+		if !owner.Lease.Networkless {
+			return errors.New("native jail device setup: networkless owner required")
+		}
+		_, err = v.bindNativeJailDevices(ctx, owner, root, instance, uid, gid)
+		return err
 	}
 	pid, _, err := v.waitForJailerChroot(ctx, instance)
 	if err != nil {

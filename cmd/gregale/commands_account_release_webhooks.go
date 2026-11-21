@@ -58,8 +58,8 @@ func cmdAccountReleaseWebhooks(args []string) int {
 	if len(events) > 0 {
 		seen := make(map[string]bool, len(events))
 		for _, event := range events {
-			if !strInSlice(event, api.AllowedAccountReleaseWebhookEvents) || seen[event] {
-				return printErr("Invalid --event", fmt.Errorf("expected distinct account events: %s", strings.Join(api.AllowedAccountReleaseWebhookEvents, ", ")))
+			if !strInSlice(event, api.AllowedAccountWebhookEvents) || seen[event] {
+				return printErr("Invalid --event", fmt.Errorf("expected distinct account events: %s", strings.Join(api.AllowedAccountWebhookEvents, ", ")))
 			}
 			seen[event] = true
 		}

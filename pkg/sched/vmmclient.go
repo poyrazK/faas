@@ -237,7 +237,15 @@ func (c *VMMClient) RestoreExecution(ctx context.Context, req ExecutionRestoreRe
 			MemBytes: req.Snapshot.MemBytes,
 		}
 	}
-	resp, err := c.cli.RestoreExecution(ctx, wireReq)
+	// A restarted daemon can leave the cached channel in transient failure.
+	// Queue this first send within the existing RPC deadline; do not retry an
+	// RPC that returns an uncertain result after it reached the server.
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, wire.DefaultGRPCDeadline())
+		defer cancel()
+	}
+	resp, err := c.cli.RestoreExecution(ctx, wireReq, grpc.WaitForReady(true))
 	if err != nil {
 		return nil, liftErr(err)
 	}
@@ -914,20 +922,23 @@ func (c *VMMClient) ExecuteExecution(ctx context.Context, instance string, req e
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	resp, err := c.cli.ExecuteExecution(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Profile:         string(req.Profile),
-		Instance:        instance,
-		Version:         uint32(req.Version),
-		ExecutionId:     req.ExecutionID,
-		Runtime:         string(req.Runtime),
-		Source:          req.Source,
-		Entrypoint:      req.Entrypoint,
-		Files:           executionFilesToProto(req.Files),
-		OutputFiles:     append([]string(nil), req.OutputFiles...),
-		Input:           append([]byte(nil), req.Input...),
-		TimeoutMs:       int32(req.TimeoutMS),
-		MaxOutputBytes:  int32(req.MaxOutput),
-		NetworkMode:     string(req.NetworkMode),
-		OutboundEnabled: req.OutboundEnabled,
+		Profile:             string(req.Profile),
+		Instance:            instance,
+		Version:             uint32(req.Version),
+		ExecutionId:         req.ExecutionID,
+		Runtime:             string(req.Runtime),
+		Source:              req.Source,
+		Entrypoint:          req.Entrypoint,
+		Files:               executionFilesToProto(req.Files),
+		OutputFiles:         append([]string(nil), req.OutputFiles...),
+		Input:               append([]byte(nil), req.Input...),
+		EnvironmentId:       req.EnvironmentID,
+		ExecutionClass:      string(req.Class),
+		TimeoutMs:           int32(req.TimeoutMS),
+		MaxOutputBytes:      int32(req.MaxOutput),
+		NetworkMode:         string(req.NetworkMode),
+		OutboundEnabled:     req.OutboundEnabled,
+		PrivateFileManifest: executionFileManifestBytes(req), MaxArtifactBytes: req.MaxArtifactBytes,
 	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
@@ -946,21 +957,28 @@ func (c *VMMClient) ExecuteExecutionWithOutput(ctx context.Context, instance str
 	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	stream, err := c.cli.ExecuteExecutionStream(ctx, &vmmdpb.ExecuteExecutionRequest{
-		Profile:         string(req.Profile),
-		Instance:        instance,
-		Version:         uint32(req.Version),
-		ExecutionId:     req.ExecutionID,
-		Runtime:         string(req.Runtime),
-		Source:          req.Source,
-		Entrypoint:      req.Entrypoint,
-		Files:           executionFilesToProto(req.Files),
-		OutputFiles:     append([]string(nil), req.OutputFiles...),
-		Input:           append([]byte(nil), req.Input...),
-		TimeoutMs:       int32(req.TimeoutMS),
-		MaxOutputBytes:  int32(req.MaxOutput),
-		NetworkMode:     string(req.NetworkMode),
-		OutboundEnabled: req.OutboundEnabled,
+	call := c.cli.ExecuteExecutionStream
+	if req.UsesFileTransport() {
+		call = c.cli.ExecuteExecutionFiles
+	}
+	stream, err := call(ctx, &vmmdpb.ExecuteExecutionRequest{
+		Profile:             string(req.Profile),
+		Instance:            instance,
+		Version:             uint32(req.Version),
+		ExecutionId:         req.ExecutionID,
+		Runtime:             string(req.Runtime),
+		Source:              req.Source,
+		Entrypoint:          req.Entrypoint,
+		Files:               executionFilesToProto(req.Files),
+		OutputFiles:         append([]string(nil), req.OutputFiles...),
+		Input:               append([]byte(nil), req.Input...),
+		EnvironmentId:       req.EnvironmentID,
+		ExecutionClass:      string(req.Class),
+		TimeoutMs:           int32(req.TimeoutMS),
+		MaxOutputBytes:      int32(req.MaxOutput),
+		NetworkMode:         string(req.NetworkMode),
+		OutboundEnabled:     req.OutboundEnabled,
+		PrivateFileManifest: executionFileManifestBytes(req), MaxArtifactBytes: req.MaxArtifactBytes,
 	}, grpc.MaxCallRecvMsgSize(executionproto.MaxFrameBytes))
 	if err != nil {
 		return zero, liftErr(err)
@@ -1032,8 +1050,9 @@ func (c *VMMClient) ExecuteExecutionWithBroker(ctx context.Context, instance str
 		ExecutionId: req.ExecutionID, Runtime: string(req.Runtime), Source: req.Source,
 		Entrypoint: req.Entrypoint, Files: executionFilesToProto(req.Files),
 		OutputFiles: append([]string(nil), req.OutputFiles...), Input: append([]byte(nil), req.Input...),
-		TimeoutMs: int32(req.TimeoutMS), MaxOutputBytes: int32(req.MaxOutput), NetworkMode: string(req.NetworkMode),
-		OutboundEnabled: req.OutboundEnabled,
+		EnvironmentId: req.EnvironmentID, ExecutionClass: string(req.Class), TimeoutMs: int32(req.TimeoutMS), MaxOutputBytes: int32(req.MaxOutput), NetworkMode: string(req.NetworkMode),
+		OutboundEnabled:     req.OutboundEnabled,
+		PrivateFileManifest: executionFileManifestBytes(req), MaxArtifactBytes: req.MaxArtifactBytes,
 	}
 	if err := stream.Send(&vmmdpb.ExecuteExecutionBrokerRequest{Frame: &vmmdpb.ExecuteExecutionBrokerRequest_Start{Start: start}}); err != nil {
 		return zero, liftErr(err)
@@ -1119,7 +1138,7 @@ func executionResultFromResponse(resp *vmmdpb.ExecuteExecutionResponse) executio
 func mergeExecutionResponse(result executionproto.Result, resp *vmmdpb.ExecuteExecutionResponse) executionproto.Result {
 	result.Status = api.ExecutionStatus(resp.GetStatus())
 	for _, artifact := range resp.GetArtifacts() {
-		result.Artifacts = append(result.Artifacts, api.ExecutionArtifact{Name: artifact.GetName(), SizeBytes: int(artifact.GetSizeBytes()), SHA256: artifact.GetSha256(), Content: append([]byte{}, artifact.GetContent()...)})
+		result.Artifacts = append(result.Artifacts, api.ExecutionArtifact{Name: artifact.GetName(), SizeBytes: int(artifact.GetSizeBytes()), SHA256: artifact.GetSha256(), Content: append([]byte{}, artifact.GetContent()...), FileID: artifact.GetFileId()})
 	}
 	result.Result = append([]byte(nil), resp.GetResult()...)
 	result.OutputTruncated = resp.GetOutputTruncated()
@@ -1353,7 +1372,14 @@ func (c *VMMClient) FrameworkReady(ctx context.Context, instance string, warmupM
 func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	if _, err := c.cli.Destroy(ctx, &vmmdpb.DestroyRequest{Instance: instance}); err != nil {
+	// The idempotent stop must reach the successor even while a cached
+	// channel reconnects after daemon death. Keep the caller's cleanup budget.
+	if _, bounded := ctx.Deadline(); !bounded {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, wire.DefaultGRPCDeadline())
+		defer cancel()
+	}
+	if _, err := c.cli.Destroy(ctx, &vmmdpb.DestroyRequest{Instance: instance}, grpc.WaitForReady(true)); err != nil {
 		return liftErr(err)
 	}
 	return nil
@@ -2276,4 +2302,12 @@ func (c *VMMClient) confirmSecretAliasSupport(ctx context.Context, app AppSpec, 
 	defer cancel()
 	_, cleanupErr := c.cli.Destroy(cleanupCtx, &vmmdpb.DestroyRequest{Instance: instance})
 	return errors.Join(errors.New("sched: vmmd boot did not acknowledge secret alias support"), cleanupErr)
+}
+
+func executionFileManifestBytes(req executionproto.Request) []byte {
+	if req.Manifest == nil {
+		return nil
+	}
+	data, _ := json.Marshal(req.Manifest)
+	return data
 }

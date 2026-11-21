@@ -28,7 +28,6 @@ from .. import (
     ErrNotFound,
     ErrRateLimited,
     ErrUnauthorized,
-    FaaSClient,
     FaaSClientOptions,
     FaasError,
     FaasProblemError,
@@ -96,7 +95,7 @@ from ._event_deadline_policy import (
     EventDeadlineRatioOptions,
     EventDeadlineTarget,
 )
-from ._wrapper import FaaSClient
+from ._wrapper import FaaSClient as FaaSClient
 from .ai_gateway import (
     AI_CALL_HEADER,
     AI_SESSION_HEADER,
@@ -290,6 +289,7 @@ from .event_deadline_watch import (
     EventDeadlineWatchOptions,
     awatch_event_subscription_deadlines,
 )
+from .execution_environments import awatch_execution_environment, watch_execution_environment
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .flags import (
     GREGALE_FLAG_CONTEXT_HEADER,
@@ -415,6 +415,16 @@ from .realtime_workers import (
     consume_realtime_consumer_group,
     consume_realtime_consumer_group_with_credential,
 )
+from .tasks import (
+    Task,
+    TaskDeliveryError,
+    TaskDestination,
+    TaskExecutionError,
+    TaskIntent,
+    TaskResult,
+    TaskRun,
+    TaskSubmissionError,
+)
 
 __all__ = (
     *_PACKAGE_ALL,
@@ -448,9 +458,12 @@ __all__ = (
     "CrashSnapshotResult",
     "capture_crash_snapshot",
     "acapture_crash_snapshot",
+    "Task", "TaskRun", "TaskIntent", "TaskResult", "TaskDestination", "TaskExecutionError", "TaskSubmissionError", "TaskDeliveryError",
     "ExecutionEvent",
     "ExecutionID",
     "watch_execution",
+    "watch_execution_environment",
+    "awatch_execution_environment",
     "awatch_execution",
     "decode_execution_artifact",
     "DEV_BRIDGE_CONTEXT_HEADER",

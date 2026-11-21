@@ -6,6 +6,7 @@ package apidserver
 // apid boundary and are never returned by customer reads.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,9 +16,9 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/executionpayload"
+	"github.com/onebox-faas/faas/pkg/apid/runcontrols"
+	"github.com/onebox-faas/faas/pkg/apid/runfiles"
 	"github.com/onebox-faas/faas/pkg/executionprofiles"
-	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -51,6 +52,10 @@ func requireExecutionEntitlement(w http.ResponseWriter, acct state.Account) bool
 // source and input never enter this projection.
 func executionResponse(row state.Execution) api.ExecutionResponse {
 	resp := api.ExecutionResponse{
+		Attribution:        row.Attribution,
+		Task:               row.Task,
+		EnvironmentID:      row.EnvironmentID,
+		ResultValidation:   api.CloneExecutionResultValidation(row.ResultValidation),
 		WorkflowID:         row.WorkflowID,
 		StepLabel:          row.StepLabel,
 		Profile:            row.Profile.Normalized(),
@@ -102,108 +107,52 @@ func executionResponse(row state.Execution) api.ExecutionResponse {
 	return resp
 }
 
-// createExecution handles POST /v1/executions. It performs every caller-
-// controlled check before sealing or writing durable state, then persists the
-// immutable deadline and encrypted payload in one store call.
+// createExecution handles POST /v1/executions. Keyed admissions replay before
+// preparation and commit their identity with the Run (ADR-20261113010000).
 func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !requireExecutionEntitlement(w, acct) {
+	if !requireExecutionEntitlement(w, acct) || !s.requireExecutionAPI(w) {
 		return
 	}
-	if !s.requireExecutionAPI(w) {
+	access, problem := executionAccessForRequest(r)
+	if problem != nil {
+		writeExecutionAccessError(w, problem)
 		return
 	}
-	access, accessProblem := executionAccessForRequest(r)
-	if accessProblem != nil {
-		writeExecutionAccessError(w, accessProblem)
-		return
-	}
-
 	var request api.CreateExecutionRequest
 	if err := decodeJSONSized(r, &request, api.ExecutionSealedPayloadMaxBytes); err != nil {
 		var maxErr *http.MaxBytesError
 		if errors.As(err, &maxErr) {
 			api.WriteProblem(w, api.ErrRequestBodyTooLarge(api.ExecutionSealedPayloadMaxBytes, api.ExecutionSealedPayloadMaxBytes+1))
-			return
+		} else {
+			api.WriteProblem(w, api.ErrValidation("invalid execution request body"))
 		}
-		api.WriteProblem(w, api.ErrValidation("invalid execution request body"))
 		return
 	}
-	if err := api.ValidateExecutionWorkflowMetadata(request.WorkflowID, request.StepLabel); err != nil {
-		api.WriteProblem(w, api.NewProblem(
-			http.StatusUnprocessableEntity,
-			api.CodeExecutionPayloadInvalid,
-			"Invalid workflow metadata",
-			err.Error(),
-		))
+	var artifactGrants []state.ExecutionArtifactGrant
+	if request.UsesExtendedExecution() && r.URL.Path != "/v2/executions" {
+		api.WriteProblem(w, api.ErrValidation("stored files and standalone contracts require POST /v2/executions"))
 		return
 	}
-	artifactGrants, problem := s.resolveExecutionArtifactInputs(r.Context(), acct, access, &request)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
+	prepare := func(ctx context.Context, reader state.ExecutionAdmissionReader) (state.CreateExecutionParams, error) {
+		params, grants, err := s.prepareExecutionAdmission(ctx, reader, acct, access, request)
+		artifactGrants = grants
+		return params, err
 	}
-	resolved, problem := request.Resolve(acct.Plan)
-	if problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
-	integrationIDs, err := api.NormalizeExecutionIntegrationIDs(request.IntegrationIDs)
+	row, replayed, err := s.admitSourceExecution(r, acct, access, request, prepare)
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation("integration_ids must contain at most 25 distinct UUIDs"))
-		return
-	}
-
-	recipients, kid, err := executionPayloadRecipients()
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("execution payload recipient is not loaded; refusing to seal execution payload"))
-		return
-	}
-	sealed, err := executionpayload.SealRequestTo(recipients, resolved)
-	if err != nil {
-		if errors.Is(err, executionpayload.ErrInvalid) {
-			api.WriteProblem(w, api.NewProblem(
-				http.StatusUnprocessableEntity,
-				api.CodeExecutionPayloadInvalid,
-				"Invalid execution payload",
-				"source or input could not be sealed under the execution payload contract",
-			).WithDocs("https://gregale.dev/docs/executions#request"))
-			return
+		if errors.Is(err, state.ErrExecutionAdmissionConflict) {
+			s.idempotencyMetrics.observeKeyReused(r)
 		}
-		if s.log != nil {
-			s.log.Error("execution payload sealing failed", "account_id", acct.ID, "err", logsanitize.FieldAny(err))
-		}
-		api.WriteProblem(w, api.ErrCapacity("execution payload could not be sealed on this host"))
-		return
-	}
-
-	admittedAt := time.Now().UTC()
-	params := state.CreateExecutionParams{
-		AccountID:              acct.ID,
-		WorkflowID:             request.WorkflowID,
-		StepLabel:              request.StepLabel,
-		OutboundIntegrationIDs: integrationIDs,
-		RunsPrincipalID:        access.principal,
-		Request:                resolved,
-		SourceBytes:            resolved.SourceBytes(),
-		InputBytes:             len(resolved.Input),
-		AdmittedAt:             admittedAt,
-		DeadlineAt:             admittedAt.Add(time.Duration(resolved.Limits.TimeoutMS) * time.Millisecond),
-		SealedPayload:          sealed,
-		PayloadKID:             kid,
-	}
-	for _, grant := range artifactGrants {
-		params.ArtifactGrantRedemptions = append(params.ArtifactGrantRedemptions, state.ExecutionArtifactGrantRedemption{
-			GrantID: grant.ID, TokenHash: grant.TokenHash,
-		})
-	}
-	row, err := s.store.CreateExecution(r.Context(), params)
-	if err != nil {
 		s.writeExecutionCreateError(w, acct, err)
 		return
 	}
-	s.auditExecutionRequest(r, acct.ID, "execution.created", row)
-	for _, grant := range artifactGrants {
-		s.auditExecutionArtifactGrant(r, acct.ID, "execution.artifact_grant_redeemed", grant, row.ID)
+	if replayed {
+		w.Header().Set("Idempotent-Replayed", "true")
+	} else {
+		s.auditExecutionRequest(r, acct.ID, "execution.created", row)
+		for _, grant := range artifactGrants {
+			s.auditExecutionArtifactGrant(r, acct.ID, "execution.artifact_grant_redeemed", grant, row.ID)
+		}
 	}
 	writeJSON(w, http.StatusAccepted, executionResponse(row))
 }
@@ -330,7 +279,29 @@ func (s *server) listExecutions(w http.ResponseWriter, r *http.Request, acct sta
 }
 
 func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Account, err error) {
+	var budget *state.RunBudgetError
+	if errors.As(err, &budget) || errors.Is(err, state.ErrRunAttributionDenied) {
+		api.WriteProblem(w, runcontrols.Problem(err))
+		return
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		api.WriteProblem(w, problem)
+		return
+	}
 	switch {
+	case errors.Is(err, state.ErrExecutionFileNotReady):
+		api.WriteProblem(w, runfiles.Problem(err))
+		return
+	case errors.Is(err, state.ErrExecutionAdmissionConflict):
+		api.WriteProblem(w, api.ErrIdempotencyKeyReused())
+		return
+	case errors.Is(err, state.ErrExecutionAdmissionKeyChanged):
+		api.WriteProblem(w, api.ErrCapacity("the original execution admission signing key is unavailable; restore that key before retrying"))
+		return
+	case errors.Is(err, state.ErrExecutionAdmissionLegacy):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Legacy execution key", "this key was used before atomic admission; inspect existing Runs for its receipt before submitting new work"))
+		return
 	case errors.Is(err, state.ErrExecutionArtifactGrantUnavailable):
 		api.WriteProblem(w, artifactGrantUnavailableProblem())
 		return
@@ -350,11 +321,19 @@ func (s *server) writeExecutionCreateError(w http.ResponseWriter, acct state.Acc
 			"this agent workflow step already has a Run receipt; read the existing workflow before retrying",
 		))
 		return
+	case errors.Is(err, state.ErrExecutionEnvironmentUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Run environment unavailable", "a ready environment is required"))
+		return
 	case errors.Is(err, state.ErrExecutionsNotAllowed):
 		api.WriteProblem(w, api.ErrExecutionsNotAllowed(acct.Plan))
 		return
 	case errors.Is(err, state.ErrNotFound):
 		s.notFound(w, "no such account")
+		return
+	}
+	var fileQuota *state.ExecutionFileQuotaError
+	if errors.As(err, &fileQuota) {
+		api.WriteProblem(w, runfiles.Problem(err))
 		return
 	}
 	var quota *state.ExecutionQuotaError

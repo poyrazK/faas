@@ -2501,3 +2501,12 @@ func ProjectEnvironmentPlanURLs(t *testing.T) (string, map[string]string, api.Pl
 var ProjectEnvironmentWorkloadURL = projectEnvironmentWorkloadURL
 
 var FinancialBudgetProblem = financialBudgetProblem
+
+// DriveExecutionPipelineForTest exercises the production continuation adapter.
+func (s *server) DriveExecutionPipelineForTest(ctx context.Context, claim state.ExecutionWorkflowJobClaim) error {
+	return s.pipelineWorker().Drive(ctx, claim)
+}
+
+func (s *server) DeliverPipelineCallbacksForTest(ctx context.Context) (int, error) {
+	return s.agentAPI.DeliverPipelineCallbacks(ctx)
+}

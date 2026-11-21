@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"google.golang.org/grpc"
 	"net"
 	"testing"
 
@@ -109,6 +110,8 @@ func TestCallerPolicyAllowList(t *testing.T) {
 		{"gateway parks", "gatewayd.faas", vmmdpb.Vmmd_PauseAndSnapshot_FullMethodName, nil, codes.PermissionDenied},
 		{"gateway opens egress", "gatewayd.faas", vmmdpb.Vmmd_UpdateEgressAllowlist_FullMethodName, nil, codes.PermissionDenied},
 		{"schedd parks", "schedd.faas", vmmdpb.Vmmd_PauseAndSnapshot_FullMethodName, nil, codes.OK},
+		{"schedd captures Run template", "schedd.faas", vmmdpb.Vmmd_CaptureExecutionTemplate_FullMethodName, nil, codes.OK},
+		{"gateway cannot capture Run template", "gatewayd.faas", vmmdpb.Vmmd_CaptureExecutionTemplate_FullMethodName, nil, codes.PermissionDenied},
 		{"builderd stops its builder", "builderd.faas", vmmdpb.Vmmd_StopInstance_FullMethodName, &vmmdpb.StopInstanceRequest{Instance: "build-abc"}, codes.OK},
 		{"builderd stops a tenant", "builderd.faas", vmmdpb.Vmmd_StopInstance_FullMethodName, &vmmdpb.StopInstanceRequest{Instance: "7f6c2a8e"}, codes.PermissionDenied},
 		{"builderd pings", "builderd.faas", vmmdpb.Vmmd_Ping_FullMethodName, nil, codes.OK},
@@ -122,6 +125,41 @@ func TestCallerPolicyAllowList(t *testing.T) {
 	} {
 		if got := status.Code(authorizeCaller(tlsPeer(tc.cn), tc.method, tc.req)); got != tc.want {
 			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestBuilderLogReadsRequireDecodedBuilderIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		instance string
+		want     codes.Code
+	}{{"build-01a184ea-be8e-7751-925f-b531d8e501d8", codes.OK}, {"01a184ea-be8e-7751-925f-b531d8e501d8", codes.PermissionDenied}, {"", codes.PermissionDenied}, {"build-", codes.PermissionDenied}} {
+		if got := status.Code(authorizeCaller(tlsPeer("builderd.faas"), vmmdpb.Vmmd_Logs_FullMethodName, &vmmdpb.LogsRequest{Instance: tc.instance})); got != tc.want {
+			t.Fatal(tc.instance, got, tc.want)
+		}
+	}
+}
+
+type decodedLogStream struct {
+	grpc.ServerStream
+	ctx      context.Context
+	instance string
+}
+
+func (s *decodedLogStream) Context() context.Context { return s.ctx }
+func (s *decodedLogStream) RecvMsg(value any) error {
+	value.(*vmmdpb.LogsRequest).Instance = s.instance
+	return nil
+}
+func TestBuilderStreamingLogsReauthorizeDecodedRequest(t *testing.T) {
+	for _, tc := range []struct {
+		instance string
+		want     codes.Code
+	}{{"build-01a184ea-be8e-7751-925f-b531d8e501d8", codes.OK}, {"01a184ea-be8e-7751-925f-b531d8e501d8", codes.PermissionDenied}} {
+		stream := &decodedLogStream{ctx: tlsPeer("builderd.faas"), instance: tc.instance}
+		err := CallerPolicyStreamInterceptor()(nil, stream, &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_Logs_FullMethodName}, func(_ any, checked grpc.ServerStream) error { return checked.RecvMsg(&vmmdpb.LogsRequest{}) })
+		if status.Code(err) != tc.want {
+			t.Fatal(tc.instance, err)
 		}
 	}
 }

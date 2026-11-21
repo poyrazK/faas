@@ -161,7 +161,7 @@ internal hosting service and Gregale Agents are already unreachable.
 | 50 | Warm pool and warm snapshots | app `warm_pool_size` | **MISSING** | plan: `WarmPoolAllowed` (Hobby+) | beta |
 | 51 | Reserved concurrency and eviction priority | app `eviction_priority` | **MISSING** | plan: `ReservedConcurrencyPerAccount` | preview |
 | 52 | Application companions (sidecars) | `sidecars` | `companions` preview | — | preview |
-| 53 | Disposable isolated runs, execution workflows, artifact grants | `/v1/executions` | `disposable-runs` preview | `env: FAAS_EXECUTION_API_ENABLED=0` | preview |
+| 53 | Disposable isolated runs, execution workflows, artifact grants and durable output delivery | `/v1/executions`, `/v1/apps/{slug}/run-artifact-deliveries` | `disposable-runs` preview | `env: FAAS_EXECUTION_API_ENABLED=0` | preview |
 | 54 | MCP hosting: readiness, catalog monitor, OAuth, tasks | `mcp-*` | `mcp-hosting` preview | — | preview |
 | 55 | Production forks | `forks` | `production-forks` preview | `env: FAAS_APP_FORKS` | preview |
 | 56 | Crash snapshots | `crash-snapshots` | `crash-snapshots` preview | `env: FAAS_CRASH_SNAPSHOTS` | preview |

@@ -27,6 +27,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AdmitExecution":                         true,
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
 	"ListEdgeRulesForApp":                    true,
@@ -516,6 +517,13 @@ func (s *Mem) ActiveProjectReleaseSet(p0 context.Context, p1 string, p2 string, 
 		return o.ActiveProjectReleaseSet(p0, p1, p2, p3)
 	}
 	return s.MemStore.ActiveProjectReleaseSet(p0, p1, p2, p3)
+}
+
+func (s *Mem) AdmitExecution(ctx context.Context, identity state.ExecutionAdmissionIdentity, prepare state.PrepareExecutionAdmission) (state.Execution, bool, error) {
+	if override, ok := s.over.(state.ExecutionAdmissionStore); ok {
+		return override.AdmitExecution(ctx, identity, prepare)
+	}
+	return s.MemStore.AdmitExecution(ctx, identity, prepare)
 }
 
 func (s *Mem) AdmitPublishedEventRecipient(p0 context.Context, p1 state.PublishedEventRoutingClaim) (state.PublishedEventRoutingResult, error) {

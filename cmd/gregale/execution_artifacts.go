@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -38,7 +39,7 @@ func cmdRunsArtifacts(args []string) int {
 	if receipt.Status != api.ExecutionStatusSucceeded {
 		return printErr("Artifacts unavailable", fmt.Errorf("run has status %s", receipt.Status))
 	}
-	if err := saveExecutionArtifacts(receipt, *dir); err != nil {
+	if err := saveExecutionArtifactsWithClient(context.Background(), client, receipt, *dir); err != nil {
 		return printErr("Could not save artifacts", err)
 	}
 	if jsonOutput {
@@ -51,6 +52,9 @@ func cmdRunsArtifacts(args []string) int {
 // Save only on explicit request, validate all bytes before writing, and never
 // overwrite a file. os.Root confines directory traversal even during races.
 func saveExecutionArtifacts(receipt api.ExecutionResponse, dir string) error {
+	return saveExecutionArtifactsWithClient(context.Background(), nil, receipt, dir)
+}
+func saveExecutionArtifactsWithClient(ctx context.Context, client *api.Client, receipt api.ExecutionResponse, dir string) error {
 	if dir == "" || receipt.Status != api.ExecutionStatusSucceeded {
 		return nil
 	}
@@ -78,7 +82,20 @@ func saveExecutionArtifacts(receipt api.ExecutionResponse, dir string) error {
 		if err != nil {
 			return fmt.Errorf("create artifact %q: %w", artifact.Name, err)
 		}
-		_, writeErr := file.Write(artifact.Content)
+		var writeErr error
+		if artifact.FileID != "" {
+			if client == nil {
+				writeErr = fmt.Errorf("stored artifacts require an authenticated client")
+			} else {
+				var meta api.ExecutionFileResponse
+				meta, writeErr = client.DownloadExecutionFile(ctx, artifact.FileID, file)
+				if writeErr == nil && (meta.SizeBytes != int64(artifact.SizeBytes) || meta.SHA256 != artifact.SHA256) {
+					writeErr = fmt.Errorf("stored artifact metadata mismatch")
+				}
+			}
+		} else {
+			_, writeErr = io.Copy(file, strings.NewReader(string(artifact.Content)))
+		}
 		closeErr := file.Close()
 		if writeErr != nil || closeErr != nil {
 			_ = root.Remove(artifact.Name)

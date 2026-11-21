@@ -52,6 +52,7 @@ var callerClasses = map[string]vmmdCaller{
 // boundary: every daemon runs as one uid, so peer credentials cannot tell
 // them apart until daemons get distinct uids (H45).
 var vmmdCallerPolicy = map[string]vmmdCaller{
+	vmmdpb.Vmmd_CaptureExecutionTemplate_FullMethodName:                callerSchedd,
 	vmmdpb.Vmmd_MountParentExt4ReadOnly_FullMethodName:                 callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeParentExt4_FullMethodName:                   callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeVerifiedParentExt4_FullMethodName:           callerSchedd | callerImaged,
@@ -89,6 +90,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_ExecuteAppTaskStream_FullMethodName:                    callerSchedd,
 	vmmdpb.Vmmd_ExecuteExecution_FullMethodName:                        callerSchedd,
 	vmmdpb.Vmmd_ExecuteExecutionBrokerStream_FullMethodName:            callerSchedd,
+	vmmdpb.Vmmd_ExecuteExecutionFiles_FullMethodName:                   callerSchedd,
 	vmmdpb.Vmmd_ExecuteExecutionStream_FullMethodName:                  callerSchedd,
 	vmmdpb.Vmmd_ExecuteOperatorPark_FullMethodName:                     callerSchedd,
 	vmmdpb.Vmmd_ExecuteOperatorRestartDestroy_FullMethodName:           callerSchedd,
@@ -107,7 +109,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_JobColdBoot_FullMethodName:                             callerSchedd,
 	vmmdpb.Vmmd_JobColdBootHeld_FullMethodName:                         callerSchedd,
 	vmmdpb.Vmmd_ListDatabaseVolumes_FullMethodName:                     callerSchedd,
-	vmmdpb.Vmmd_Logs_FullMethodName:                                    callerSchedd | callerGateway,
+	vmmdpb.Vmmd_Logs_FullMethodName:                                    callerSchedd | callerGateway | callerBuilder,
 	vmmdpb.Vmmd_MaterializeRuntimeScan_FullMethodName:                  callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MountOverlayParent_FullMethodName:                      callerSchedd | callerImaged,
 	vmmdpb.Vmmd_PauseAndSnapshot_FullMethodName:                        callerSchedd,
@@ -177,7 +179,7 @@ func CallerPolicyStreamInterceptor() grpc.StreamServerInterceptor {
 		if err := authorizeCaller(ss.Context(), info.FullMethod, nil); err != nil {
 			return err
 		}
-		return handler(srv, ss)
+		return handler(srv, &callerCheckedStream{ServerStream: ss, method: info.FullMethod})
 	}
 }
 
@@ -221,8 +223,22 @@ func builderMayCall(method string, req any) bool {
 	}
 	named, ok := req.(interface{ GetInstance() string })
 	if !ok || named.GetInstance() == "" {
-		return method != vmmdpb.Vmmd_Destroy_FullMethodName && method != vmmdpb.Vmmd_StopInstance_FullMethodName
+		return method != vmmdpb.Vmmd_Destroy_FullMethodName && method != vmmdpb.Vmmd_StopInstance_FullMethodName && (method != vmmdpb.Vmmd_Logs_FullMethodName || req == nil)
 	}
 	id, found := strings.CutPrefix(named.GetInstance(), builderInstancePrefix)
 	return found && id != ""
+}
+
+// Streaming callers are checked again after decoding the instance identity;
+// authorizing only the nil request would grant a builder tenant-log access.
+type callerCheckedStream struct {
+	grpc.ServerStream
+	method string
+}
+
+func (s *callerCheckedStream) RecvMsg(message any) error {
+	if err := s.ServerStream.RecvMsg(message); err != nil {
+		return err
+	}
+	return authorizeCaller(s.Context(), s.method, message)
 }

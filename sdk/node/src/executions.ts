@@ -10,6 +10,8 @@ import { RunsService } from './generated/services/RunsService.js';
 import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
 import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
 import { streamSse, type SseEvent } from './sse.js';
+import { prepareExecutionFile, uploadPreparedExecutionFile } from './execution-files.js';
+import { mintIdempotencyKey } from './idempotency.js';
 
 /** Event names emitted by `/v1/executions/{id}/events`. */
 export type ExecutionEventType =
@@ -61,6 +63,8 @@ export interface WatchExecutionOptions {
 
 /** Options for `FaaSClient.runExecution`. */
 export interface RunExecutionOptions extends WatchExecutionOptions {
+  /** Local immutable data files staged below context.input_dir. */
+  files?: Readonly<Record<string, Blob>>;
   /** Stable key for replaying the create request, when desired. */
   idempotencyKey?: string;
   /** Called in stream order for every status, output, and terminal event. */
@@ -248,17 +252,29 @@ export async function runExecution(
   requestBody: CreateExecutionRequest,
   options: RunExecutionOptions = {},
 ): Promise<ExecutionResponse> {
-  const { idempotencyKey, onEvent, ...watchOptions } = options;
+  const { idempotencyKey: requestedKey, files, onEvent, ...watchOptions } = options;
+  const idempotencyKey = requestedKey ?? mintIdempotencyKey();
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
 
-  const createRequest = RunsService.createExecution({ requestBody, idempotencyKey });
-  const onAbort = () => createRequest.cancel();
-  watchOptions.signal?.addEventListener('abort', onAbort, { once: true });
+  const entries = Object.entries(files ?? {});
+  if (entries.length + (requestBody.input_files?.length ?? 0) > 8) throw new Error('At most 8 Run input files are allowed');
+  const prepared = [];
+  for (const [path, file] of entries) prepared.push({ path, prepared: await prepareExecutionFile(file, watchOptions.signal) });
+  if (prepared.length) requestBody = { ...requestBody, input_files: [...(requestBody.input_files ?? []), ...prepared.map(({ path, prepared }) => ({ path, file_id: prepared.metadata.id }))] };
+  const extended = !!requestBody.environment_id || requestBody.limits?.execution_class === 'extended' || requestBody.input_schema !== undefined || requestBody.result_schema !== undefined || !!requestBody.input_files?.length || requestBody.artifact_storage === 'stored';
+  const create = async () => {
+    watchOptions.signal?.throwIfAborted();
+    const pending = (extended ? RunsService.createExecutionV2 : RunsService.createExecution)({ requestBody, idempotencyKey });
+    const abort = () => pending.cancel(); watchOptions.signal?.addEventListener('abort', abort, { once: true });
+    try { return await pending; } finally { watchOptions.signal?.removeEventListener('abort', abort); }
+  };
   let receipt: ExecutionResponse;
-  try {
-    receipt = await createRequest;
-  } finally {
-    watchOptions.signal?.removeEventListener('abort', onAbort);
+  try { receipt = await create(); }
+  catch (error) {
+    const problem = error as { status?: number; body?: { code?: string }; problem?: { code?: string } };
+    if (!prepared.length || problem.status !== 409 || (problem.problem?.code ?? problem.body?.code) !== 'execution_files_not_ready') throw error;
+    for (const { prepared: file } of prepared) if (file.metadata.upload_required) await uploadPreparedExecutionFile(file, watchOptions.signal);
+    receipt = await create();
   }
 
   for await (const event of watchExecution(receipt.id, watchOptions)) {

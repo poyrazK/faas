@@ -109,7 +109,7 @@ func TestRuntimeSnapshotCatalogRestoresOnlyVerifiedStoragePair(t *testing.T) {
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
 		Architecture: sched.ArchAMD64, KernelDigest: strings.Repeat("a", 64),
 		GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
-		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: 1,
 	})
 	if err != nil || plan.Mode != sched.RuntimeSnapshotRestore || plan.Snapshot == nil {
 		t.Fatalf("catalog plan = %#v, err=%v", plan, err)
@@ -119,7 +119,7 @@ func TestRuntimeSnapshotCatalogRestoresOnlyVerifiedStoragePair(t *testing.T) {
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
 		Architecture: sched.ArchAMD64, KernelDigest: strings.Repeat("a", 64),
 		GuestExecutorDigest: strings.Repeat("b", 64), BaseImageDigest: strings.Repeat("c", 64),
-		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: 1,
 	})
 	if err != nil || plan.Mode != sched.RuntimeSnapshotColdBoot || plan.FallbackReason != sched.RuntimeSnapshotFallbackCorrupt {
 		t.Fatalf("tampered catalog plan = %#v, err=%v", plan, err)
@@ -131,7 +131,7 @@ func validStorageRuntimeSnapshot(memory, vmstate []byte) sched.RuntimeSnapshot {
 		Runtime: api.ExecutionRuntimeNode22, Architecture: sched.ArchAMD64,
 		KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64),
 		BaseImageDigest: strings.Repeat("c", 64), MemoryMB: 128, EphemeralDiskMB: 64,
-		FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion: 1,
 	}
 	return sched.RuntimeSnapshot{
 		Identity: identity, StorageKey: "execution-snapshots/node22/mem",

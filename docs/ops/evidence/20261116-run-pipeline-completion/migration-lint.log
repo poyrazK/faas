@@ -1,0 +1,2 @@
+::warning::migration-lint: no v* release tag is an ancestor of e74c7cfc6e5b; checking references against the base
+migration-lint: OK - 7 new migration(s) are expand/contract safe against e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1

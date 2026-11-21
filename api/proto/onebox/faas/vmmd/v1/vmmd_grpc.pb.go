@@ -45,8 +45,10 @@ const (
 	Vmmd_ReleaseJobStart_FullMethodName                         = "/onebox.faas.vmmd.v1.Vmmd/ReleaseJobStart"
 	Vmmd_ExecuteExecution_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecution"
 	Vmmd_ExecuteExecutionStream_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionStream"
+	Vmmd_ExecuteExecutionFiles_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionFiles"
 	Vmmd_ExecuteExecutionBrokerStream_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/ExecuteExecutionBrokerStream"
 	Vmmd_RestoreExecution_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/RestoreExecution"
+	Vmmd_CaptureExecutionTemplate_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/CaptureExecutionTemplate"
 	Vmmd_RunAgent_FullMethodName                                = "/onebox.faas.vmmd.v1.Vmmd/RunAgent"
 	Vmmd_CaptureAgentSnapshot_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/CaptureAgentSnapshot"
 	Vmmd_CaptureSandboxSnapshot_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/CaptureSandboxSnapshot"
@@ -195,6 +197,8 @@ type VmmdClient interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error)
+	// File-capable execution fails closed on vmmds that lack this RPC.
+	ExecuteExecutionFiles(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error)
 	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
 	// the one-shot execution exchange. The first client frame must be start;
 	// subsequent client frames carry responses to host-authorized outbound
@@ -205,6 +209,8 @@ type VmmdClient interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(ctx context.Context, in *RestoreExecutionRequest, opts ...grpc.CallOption) (*RestoreExecutionResponse, error)
+	// Captures a new platform guest before any execution stream exists.
+	CaptureExecutionTemplate(ctx context.Context, in *CaptureExecutionTemplateRequest, opts ...grpc.CallOption) (*CaptureExecutionTemplateResponse, error)
 	// RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
 	// streams the run's output. The first client frame must be start; a later
 	// cancel frame asks the guest to stop the harness. The run payload reaches
@@ -1026,9 +1032,28 @@ func (c *vmmdClient) ExecuteExecutionStream(ctx context.Context, in *ExecuteExec
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamClient = grpc.ServerStreamingClient[ExecuteExecutionEvent]
 
+func (c *vmmdClient) ExecuteExecutionFiles(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteExecutionFiles_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecuteExecutionRequest, ExecuteExecutionEvent]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionFilesClient = grpc.ServerStreamingClient[ExecuteExecutionEvent]
+
 func (c *vmmdClient) ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1049,9 +1074,19 @@ func (c *vmmdClient) RestoreExecution(ctx context.Context, in *RestoreExecutionR
 	return out, nil
 }
 
+func (c *vmmdClient) CaptureExecutionTemplate(ctx context.Context, in *CaptureExecutionTemplateRequest, opts ...grpc.CallOption) (*CaptureExecutionTemplateResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureExecutionTemplateResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureExecutionTemplate_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) RunAgent(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunAgentRequest, RunAgentEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_RunAgent_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_RunAgent_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1124,7 +1159,7 @@ func (c *vmmdClient) ExecForkCommand(ctx context.Context, in *ExecuteAppTaskRequ
 
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1143,7 +1178,7 @@ type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTask
 
 func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_AttachAppTask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_AttachAppTask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1156,7 +1191,7 @@ type Vmmd_AttachAppTaskClient = grpc.BidiStreamingClient[AttachAppTaskRequest, A
 
 func (c *vmmdClient) SandboxCall(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[SandboxCallRequest, SandboxCallEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_SandboxCall_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_SandboxCall_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1169,7 +1204,7 @@ type Vmmd_SandboxCallClient = grpc.BidiStreamingClient[SandboxCallRequest, Sandb
 
 func (c *vmmdClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_RunSandbox_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_RunSandbox_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1562,7 +1597,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1581,7 +1616,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1594,7 +1629,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[10], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1607,7 +1642,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[11], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1620,7 +1655,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[12], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1823,7 +1858,7 @@ func (c *vmmdClient) DatabaseArchiveHold(ctx context.Context, in *DatabaseArchiv
 
 func (c *vmmdClient) ExportDatabaseVolume(ctx context.Context, in *ExportDatabaseVolumeRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[DatabaseVolumeChunk], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[13], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_ExportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1842,7 +1877,7 @@ type Vmmd_ExportDatabaseVolumeClient = grpc.ServerStreamingClient[DatabaseVolume
 
 func (c *vmmdClient) ImportDatabaseVolume(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DatabaseVolumeChunk, ImportDatabaseVolumeResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[14], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[15], Vmmd_ImportDatabaseVolume_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1895,7 +1930,7 @@ func (c *vmmdClient) DatabaseControl(ctx context.Context, in *DatabaseControlReq
 
 func (c *vmmdClient) DatabaseSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[15], Vmmd_DatabaseSession_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_DatabaseSession_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1908,7 +1943,7 @@ type Vmmd_DatabaseSessionClient = grpc.BidiStreamingClient[DatabaseSessionFrame,
 
 func (c *vmmdClient) DatabaseReplication(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[DatabaseSessionFrame, DatabaseSessionFrame], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[16], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[17], Vmmd_DatabaseReplication_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2011,6 +2046,8 @@ type VmmdServer interface {
 	// It carries bounded stdout/stderr chunks as they arrive, followed by one
 	// terminal response. The unary RPC remains available for older schedulers.
 	ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error
+	// File-capable execution fails closed on vmmds that lack this RPC.
+	ExecuteExecutionFiles(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error
 	// ExecuteExecutionBrokerStream adds the Runs outbound capability broker to
 	// the one-shot execution exchange. The first client frame must be start;
 	// subsequent client frames carry responses to host-authorized outbound
@@ -2021,6 +2058,8 @@ type VmmdServer interface {
 	// The envelope contains only immutable machine/artifact metadata; caller
 	// source and input cross the boundary later through ExecuteExecution.
 	RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error)
+	// Captures a new platform guest before any execution stream exists.
+	CaptureExecutionTemplate(context.Context, *CaptureExecutionTemplateRequest) (*CaptureExecutionTemplateResponse, error)
 	// RunAgent boots one agent run VM (ADR-20261027090010 §6), sends it the run, and
 	// streams the run's output. The first client frame must be start; a later
 	// cancel frame asks the guest to stop the harness. The run payload reaches
@@ -2683,11 +2722,17 @@ func (UnimplementedVmmdServer) ExecuteExecution(context.Context, *ExecuteExecuti
 func (UnimplementedVmmdServer) ExecuteExecutionStream(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteExecutionStream not implemented")
 }
+func (UnimplementedVmmdServer) ExecuteExecutionFiles(*ExecuteExecutionRequest, grpc.ServerStreamingServer[ExecuteExecutionEvent]) error {
+	return status.Error(codes.Unimplemented, "method ExecuteExecutionFiles not implemented")
+}
 func (UnimplementedVmmdServer) ExecuteExecutionBrokerStream(grpc.BidiStreamingServer[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]) error {
 	return status.Error(codes.Unimplemented, "method ExecuteExecutionBrokerStream not implemented")
 }
 func (UnimplementedVmmdServer) RestoreExecution(context.Context, *RestoreExecutionRequest) (*RestoreExecutionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreExecution not implemented")
+}
+func (UnimplementedVmmdServer) CaptureExecutionTemplate(context.Context, *CaptureExecutionTemplateRequest) (*CaptureExecutionTemplateResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureExecutionTemplate not implemented")
 }
 func (UnimplementedVmmdServer) RunAgent(grpc.BidiStreamingServer[RunAgentRequest, RunAgentEvent]) error {
 	return status.Error(codes.Unimplemented, "method RunAgent not implemented")
@@ -3322,6 +3367,17 @@ func _Vmmd_ExecuteExecutionStream_Handler(srv interface{}, stream grpc.ServerStr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_ExecuteExecutionStreamServer = grpc.ServerStreamingServer[ExecuteExecutionEvent]
 
+func _Vmmd_ExecuteExecutionFiles_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(ExecuteExecutionRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(VmmdServer).ExecuteExecutionFiles(m, &grpc.GenericServerStream[ExecuteExecutionRequest, ExecuteExecutionEvent]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_ExecuteExecutionFilesServer = grpc.ServerStreamingServer[ExecuteExecutionEvent]
+
 func _Vmmd_ExecuteExecutionBrokerStream_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(VmmdServer).ExecuteExecutionBrokerStream(&grpc.GenericServerStream[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent]{ServerStream: stream})
 }
@@ -3343,6 +3399,24 @@ func _Vmmd_RestoreExecution_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).RestoreExecution(ctx, req.(*RestoreExecutionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureExecutionTemplate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureExecutionTemplateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureExecutionTemplate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureExecutionTemplate_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureExecutionTemplate(ctx, req.(*CaptureExecutionTemplateRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -4805,6 +4879,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_RestoreExecution_Handler,
 		},
 		{
+			MethodName: "CaptureExecutionTemplate",
+			Handler:    _Vmmd_CaptureExecutionTemplate_Handler,
+		},
+		{
 			MethodName: "CaptureAgentSnapshot",
 			Handler:    _Vmmd_CaptureAgentSnapshot_Handler,
 		},
@@ -5094,6 +5172,11 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "ExecuteExecutionStream",
 			Handler:       _Vmmd_ExecuteExecutionStream_Handler,
+			ServerStreams: true,
+		},
+		{
+			StreamName:    "ExecuteExecutionFiles",
+			Handler:       _Vmmd_ExecuteExecutionFiles_Handler,
 			ServerStreams: true,
 		},
 		{
