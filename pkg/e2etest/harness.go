@@ -92,7 +92,7 @@ import (
 // Fields are exported for test consumption: H.APIDURL, H.GatewayURL, H.Pool.
 type Harness struct {
 	// grants is the store-grants world (StorageGrantsEnv), nil when off.
-	grants *storageGrants
+	grants     *storageGrants
 	T          *testing.T
 	Pool       *pgxpool.Pool
 	TmpDir     string
