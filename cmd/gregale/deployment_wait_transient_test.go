@@ -70,3 +70,51 @@ func TestDeploymentWaitRidesOutTransientFailures(t *testing.T) {
 		})
 	}
 }
+
+type deploymentWaitTransport func(*http.Request) (*http.Response, error)
+
+func (f deploymentWaitTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+func TestReleaseWaitRolloutRequiresFullDefaultScopeTraffic(t *testing.T) {
+	const id = "8172d1f855c149d6b01de3d0a4e41de2"
+	for _, tc := range []struct {
+		name, scope string
+		traffic     int
+		complete    bool
+	}{
+		{name: "parked", traffic: 0},
+		{name: "split", traffic: 30},
+		{name: "fully serving", traffic: 100, complete: true},
+		{name: "named environment", scope: "staging", complete: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = old })
+			http.DefaultTransport = deploymentWaitTransport(func(r *http.Request) (*http.Response, error) {
+				w := httptest.NewRecorder()
+				if r.URL.Path != "/v1/deployments/"+id {
+					http.NotFound(w, r)
+				} else {
+					_ = json.NewEncoder(w).Encode(api.DeploymentResponse{
+						ID: id, Status: "live", Scope: tc.scope, TrafficPercent: tc.traffic, RolloutState: "complete",
+					})
+				}
+				return w.Result(), nil
+			})
+			t.Setenv("FAAS_API", "https://release-test.invalid")
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			stdout, readStderr, restore := main.SwapIO(t)
+			defer restore()
+			code := main.Run([]string{"release", "wait", id, "--rollout", "--timeout", "1"})
+			if tc.complete {
+				if code != 0 || !strings.Contains(stdout.String(), "rollout is complete") {
+					t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, readStderr())
+				}
+			} else if code == 0 || !strings.Contains(readStderr(), "did not reach 100% traffic") {
+				t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, readStderr())
+			}
+		})
+	}
+}

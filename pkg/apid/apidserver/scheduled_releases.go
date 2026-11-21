@@ -162,32 +162,32 @@ func (sched *releaseSchedule) park(req *api.CreateDeploymentRequest) {
 	req.TrafficPercent = &zero
 }
 
-// recordReleaseSchedule stores the schedule of a release that was just
-// created parked.
-func (s *server) recordReleaseSchedule(r *http.Request, acct state.Account, app state.App, d state.Deployment, sched *releaseSchedule) *api.Problem {
-	// Every deploy path records its schedule once the deployment exists, so
-	// a deferred freeze override is audited here.
-	s.auditFreezeOverride(r, acct, d)
-	if sched == nil {
-		return nil
-	}
-	store, ok := s.scheduledReleases()
-	if !ok {
-		return api.ErrCapacity("scheduled releases are unavailable")
-	}
-	created, replaced, err := store.ScheduleRelease(r.Context(), state.ScheduledRelease{
-		AccountID: app.AccountID, AppID: app.ID, DeploymentID: d.ID, ReleaseAt: sched.at,
+func (sched *releaseSchedule) input(r *http.Request, acct state.Account, app state.App) state.ScheduledRelease {
+	return state.ScheduledRelease{
+		AccountID: app.AccountID, AppID: app.ID, ReleaseAt: sched.at,
 		Canary: schedule.Encode(sched.canary), NotifyChannelIDs: sched.notifyIDs, OverrideFreeze: sched.override,
 		OverrideFreezeIDs: sched.overrideIDs, ScheduledBy: releaseApprovalActorLabel(r, acct),
 		ScheduledByAccountID: schedulerAccountID(r, acct), ScheduledByKeyID: schedulerKeyID(r),
-	}, schedule.CodeReplaced, "a newer schedule replaced it", time.Now())
-	if err != nil {
-		logCustomerFailure(s.log, "record scheduled release", err)
-		return api.ErrInternal(fmt.Sprintf("Release %s was built without traffic, but its schedule was not recorded.", d.ID)).
-			WithHint(fmt.Sprintf("Schedule it with `gregale scheduled-releases set %s --app %s --at %s`.", d.ID, app.Slug, sched.at.Format(time.RFC3339)))
 	}
-	s.auditScheduleRecorded(r, acct, app, created, replaced)
-	return nil
+}
+
+// withDeploymentSchedule commits any schedule with the parked deployment.
+func (s *server) withDeploymentSchedule(ctx context.Context, w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, sched *releaseSchedule) (context.Context, *state.DeploymentScheduleResult, bool) {
+	if sched == nil {
+		return ctx, nil, true
+	}
+	if _, ok := s.scheduledReleaseStore(w); !ok {
+		return ctx, nil, false
+	}
+	ctx, result := state.ContextWithDeploymentSchedule(ctx, sched.input(r, acct, app), schedule.CodeReplaced, "a newer schedule replaced it")
+	return ctx, result, true
+}
+
+func (s *server) auditDeploymentSchedule(r *http.Request, acct state.Account, app state.App, d state.Deployment, result *state.DeploymentScheduleResult) {
+	s.auditFreezeOverride(r, acct, d)
+	if result != nil {
+		s.auditScheduleRecorded(r, acct, app, result.Created, result.Replaced)
+	}
 }
 
 func (s *server) auditScheduleRecorded(r *http.Request, acct state.Account, app state.App, created state.ScheduledRelease, replaced []state.ScheduledRelease) {

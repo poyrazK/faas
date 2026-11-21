@@ -945,6 +945,10 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	if !s.admitAccountDeploy(w, r, acct) {
 		return
 	}
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
+	if !ok {
+		return
+	}
 	activity := s.newDeploymentActivity(r.Context(), r, acct, app, map[string]any{
 		"source": "image", "scope": dep.Scope, "supersedes": prev.ID, "has_overrides": req.Overrides != nil,
 	})
@@ -953,12 +957,12 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	var err error
 	if activity != nil {
 		if activityStore, ok := s.store.(state.OrgActivityDeploymentMutationStore); ok {
-			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(r.Context(), dep, *activity)
+			d, activityOutboxID, err = activityStore.CreateDeploymentWithActivity(deployCtx, dep, *activity)
 		} else {
-			d, err = s.store.CreateDeployment(r.Context(), dep)
+			d, err = s.store.CreateDeployment(deployCtx, dep)
 		}
 	} else {
-		d, err = s.store.CreateDeployment(r.Context(), dep)
+		d, err = s.store.CreateDeployment(deployCtx, dep)
 	}
 	if err != nil {
 		if writeReleaseReviewError(w, err) {
@@ -987,10 +991,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	if activityOutboxID > 0 {
 		s.deliverOrgActivityOutbox(r.Context(), activityOutboxID)
 	}
-	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	notifyAndAuditDeployment(r, s, acct, app, d, prev, &req)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }

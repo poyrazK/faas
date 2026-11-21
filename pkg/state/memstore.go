@@ -8748,6 +8748,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -9143,6 +9147,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return Deployment{}, 0, err
 		}
 		d.StagedReview = &review
+	}
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = d.ID
+		schedule.result.Created, schedule.result.Replaced = m.scheduleReleaseLocked(schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
 	}
 	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil

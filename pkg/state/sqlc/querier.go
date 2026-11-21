@@ -4415,7 +4415,7 @@ type Querier interface {
 	// ADR-1445: post-release watch.
 	// Completed live releases that kept automatic rollback, finished within the
 	// watch window (plus telemetry grace), are the newest deployment in their
-	// scope to have served, and have a superseded predecessor created before them.
+	// scope to have served, and have a predecessor created before them.
 	// Being the newest to have served excludes rollback targets, which are older
 	// than what they replaced. A newer release that never served (staged with no
 	// traffic, parked for its schedule, or still building) leaves the serving
@@ -4424,7 +4424,8 @@ type Querier interface {
 	// ends when it completed.
 	// The predecessor is the release a plain rollback returns to
 	// (LatestRetainedRollbackDeployment): the one that served most recently, never
-	// a canary candidate aborted before it completed. Ordered by created_at, a
+	// a canary candidate aborted before it completed. Scheduled cutovers retain
+	// their previous release live at zero traffic. Ordered by created_at, a
 	// canary aborted between v1 and v3 (retired as superseded when v3 completed)
 	// or a build superseded before it went live was chosen, so the watch compared
 	// v3 with a release that never served and rolled back to it (release review
