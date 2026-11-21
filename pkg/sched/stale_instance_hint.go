@@ -66,16 +66,17 @@ func (e *Engine) ReconcileStaleInstanceHint(ctx context.Context, appID, instance
 	}
 	ins, err := e.store.InstanceByID(ctx, instanceID)
 	if err != nil || ins.AppID != appID || ins.State != string(state.StateRunning) {
+		e.staleHintSkipped(instanceID, "row is not this app's RUNNING instance", err)
 		return false
 	}
 	// A just-started VM may not be in vmmd's live set yet.
 	if !ins.StartedAt.IsZero() && e.clockNow().Sub(ins.StartedAt) < staleInstanceHintGrace {
+		e.staleHintSkipped(instanceID, "inside the start grace", nil)
 		return false
 	}
-	statsCtx, cancel := context.WithTimeout(ctx, staleInstanceHintTimeout)
-	defer cancel()
-	stats, err := e.vmm.Stats(statsCtx, e.nodeForRoute(ins.NodeID))
-	if err != nil || stats == nil {
+	stats, err := e.staleHintStats(ctx, ins.NodeID)
+	if err != nil {
+		e.staleHintSkipped(instanceID, "vmmd did not answer", err)
 		return false
 	}
 	for _, live := range stats.Instances {
@@ -111,5 +112,41 @@ func (e *Engine) ReconcileStaleInstanceHint(ctx context.Context, appID, instance
 			e.log.Warn("sched: stale instance hint: transition failed", "instance_id", ins.ID, "err", err)
 		}
 		return false
+	}
+}
+
+// staleHintStatsRetry is how often the hint retries a failed Stats call within
+// staleInstanceHintTimeout. The recovery admission often reaches a schedd that
+// started a moment ago and has not reached the node's vmmd yet (the gate's
+// owner_crash: the hint arrived 0.2 s after schedd listened); one failed call
+// would drop the only evidence the gateway sends.
+const staleHintStatsRetry = 200 * time.Millisecond
+
+// staleHintStats asks the node's vmmd for its live set, retrying failed calls
+// until staleInstanceHintTimeout.
+func (e *Engine) staleHintStats(ctx context.Context, nodeID string) (*StatsSnapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, staleInstanceHintTimeout)
+	defer cancel()
+	for {
+		stats, err := e.vmm.Stats(ctx, e.nodeForRoute(nodeID))
+		if err == nil && stats != nil {
+			return stats, nil
+		}
+		if err == nil {
+			err = errors.New("empty stats snapshot")
+		}
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(staleHintStatsRetry):
+		}
+	}
+}
+
+// staleHintSkipped records why a hint left the row alone; without it a hint
+// that changed nothing is indistinguishable from one never sent.
+func (e *Engine) staleHintSkipped(instanceID, reason string, err error) {
+	if e.log != nil {
+		e.log.Info("sched: stale instance hint not applied", "instance_id", instanceID, "reason", reason, "err", err)
 	}
 }
