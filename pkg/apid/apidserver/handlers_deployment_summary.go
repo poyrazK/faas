@@ -59,27 +59,50 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 	})
 }
 
-// previousAppDeployment returns the nearest older deployment by the same
-// created_at cursor contract used by GET /v1/apps/{slug}/deployments.
+// previousAppDeployment returns the nearest older deployment that served the
+// app, by the same created_at cursor contract used by GET
+// /v1/apps/{slug}/deployments. A failed or cancelled build and an aborted
+// canary never served, so the summary skips them: on prod 2026-11-21 a
+// redeploy summarized "Changes since v2" against a canary that redeploy had
+// aborted, while v1 still served 99% of traffic.
 func (s *server) previousAppDeployment(ctx context.Context, appID string, current state.Deployment) (*state.Deployment, error) {
-	var rows []state.Deployment
-	var err error
 	if current.CreatedAt.IsZero() {
 		// Zero timestamps only occur in narrow in-memory fixtures. Read two
 		// rows so the current row can be skipped without returning itself.
-		rows, err = s.store.ListDeploymentsForApp(ctx, appID, 2, 0)
-	} else {
-		rows, err = s.listDeploymentsForAppBefore(ctx, appID, current.CreatedAt, 1)
-	}
-	if err != nil {
-		return nil, err
-	}
-	for i := range rows {
-		if rows[i].ID != current.ID {
-			return &rows[i], nil
+		rows, err := s.store.ListDeploymentsForApp(ctx, appID, 2, 0)
+		if err != nil {
+			return nil, err
 		}
+		return firstServedDeployment(rows, current.ID), nil
+	}
+	const page, maxPages = 20, 10
+	before := current.CreatedAt
+	for range maxPages {
+		rows, err := s.listDeploymentsForAppBefore(ctx, appID, before, page)
+		if err != nil {
+			return nil, err
+		}
+		if found := firstServedDeployment(rows, current.ID); found != nil || len(rows) < page {
+			return found, nil
+		}
+		before = rows[len(rows)-1].CreatedAt
 	}
 	return nil, nil
+}
+
+func firstServedDeployment(rows []state.Deployment, currentID string) *state.Deployment {
+	for i := range rows {
+		if rows[i].ID != currentID && deploymentServed(rows[i]) {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+// deploymentServed reports whether d ever carried the app's traffic as its
+// release: it went live and its rollout was not aborted.
+func deploymentServed(d state.Deployment) bool {
+	return (d.Status == state.DeployLive || d.Status == state.DeploySuperseded) && d.RolloutState != "aborted"
 }
 
 // rollbackTarget reports the target the existing app rollback operation would

@@ -14,11 +14,6 @@ import (
 // plan's ProjectSecretCountMax for one project environment.
 var ErrProjectEnvironmentSecretLimit = errors.New("state: project environment secret limit reached")
 
-// ErrProjectSecretCloneTransferUnsupported refuses a durable clone capture of
-// an environment with shared secrets: the capture cannot carry them yet, and
-// a clone without them would boot its services without credentials.
-var ErrProjectSecretCloneTransferUnsupported = errors.New("durable clones of an environment with shared secrets are not supported yet; clone it without the durable checkpoint")
-
 // ProjectEnvironmentSecret is one sealed secret shared by every service of a
 // project environment (ADR-1139). Ciphertext is a single-key age envelope; it
 // is set on writes and runtime reads and left empty in listings.

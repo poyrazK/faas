@@ -119,14 +119,28 @@
         faas_join_managed_host: "{{ faas_join_managed_host_probe.rc == 0 }}"
         faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 and (faas_join_recorded_bootstrap_contract.content | default('') | b64decode | trim) == faas_join_bootstrap_contract_sha256 }}"
 
+    - name: Read the recorded compute role hashes
+      ansible.builtin.slurp:
+        src: /var/lib/faas/bootstrap/compute-roles.json
+      register: faas_join_recorded_role_record
+      failed_when: false
+
     # ADR-20261115120000: CD names the roles whose content hash differs from
     # the node's record (gregalectl deploy join --roles). Only a managed host
     # converges just those; a fresh or rebuilt one converges every role.
+    # The role hashes cover repository content only. When the manifest-
+    # rendered inventory or the operator vars moved since the record
+    # (faas_join_environment_sha256; rc.364 moved the apps domain), every
+    # role converges, as on the control plane (control_plane_converge.yml).
     - name: Select the compute roles this convergence applies
       ansible.builtin.set_fact:
         faas_join_converge_roles: >-
           {{ faas_join_converge_roles_requested
-             if (faas_join_managed_host and (faas_join_converge_roles_requested | default([]) | length > 0))
+             if (faas_join_managed_host
+                 and (faas_join_converge_roles_requested | default([]) | length > 0)
+                 and (faas_join_environment_sha256 is not defined
+                      or ((faas_join_recorded_role_record.content | default('') | b64decode | default('{}', true) | from_json).environment | default(''))
+                         == faas_join_environment_sha256))
              else none }}
 
     - name: Report the managed-host rollout decision

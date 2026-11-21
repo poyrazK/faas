@@ -257,3 +257,43 @@ func TestJWKSelectionFiltersKeyTypeBeforeAmbiguity(t *testing.T) {
 		}
 	}
 }
+
+// One failed key-set fetch (an issuer waking, a network blip) must not reject
+// valid tokens for the 30 s unknown-kid throttle: the retry backs off ~1 s.
+func TestJWKFetchFailureBacksOffBriefly(t *testing.T) {
+	key, token := verificationKeyAndToken(t)
+	var requests atomic.Int32
+	provider := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests.Add(1) == 1 {
+			http.Error(w, "issuer waking", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(jsonWebKeySet{Keys: []jsonWebKey{key}})
+	}))
+	defer provider.Close()
+	auth := testScopedAuthenticator(t, scopedAuthConfig)
+	resolver := auth.keyResolver
+	resolver.url, resolver.client = provider.URL, provider.Client()
+	if _, failure := auth.authenticate("Bearer " + token); failure == nil {
+		t.Fatal("token accepted without a key set")
+	}
+	if _, failure := auth.authenticate("Bearer " + token); failure == nil || requests.Load() != 1 {
+		t.Fatalf("immediate retry should back off without fetching: failure=%v fetches=%d", failure, requests.Load())
+	}
+	resolver.mu.Lock()
+	resolver.lastRefresh = time.Now().Add(-jwksFailureBackoff - time.Millisecond)
+	resolver.mu.Unlock()
+	if identity, failure := auth.authenticate("Bearer " + token); failure != nil || identity == nil {
+		t.Fatalf("valid token rejected after the issuer recovered: %+v", failure)
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("fetches = %d, want 2", requests.Load())
+	}
+}
+
+func TestJWKSTransportDoesNotPoolConnections(t *testing.T) {
+	transport, ok := jwksTransport().(*http.Transport)
+	if !ok || !transport.DisableKeepAlives {
+		t.Fatal("JWKS fetches must not reuse pooled connections")
+	}
+}

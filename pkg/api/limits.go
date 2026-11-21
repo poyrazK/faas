@@ -216,6 +216,19 @@ const (
 	ObsInstanceListMax     = 1000
 )
 
+// Operator wake-latency report (ADR-20261121200409). The report reads each
+// wake event kind over the window, at most ObsWakeLatencyEventsPerKind rows
+// per kind (newest first; beyond that it says it was truncated). The restore
+// target is the spec's <350 ms snapshot restore interval (§14).
+const (
+	ObsWakeLatencyRestoreTargetMS = 350
+	ObsWakeLatencyEventsPerKind   = 20000
+	ObsWakeLatencySlowestMax      = 25
+	ObsWakeLatencyAppsMax         = 25
+	ObsWakeLatencyWindowDefault   = time.Hour
+	ObsWakeLatencyWindowMax       = 24 * time.Hour
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (

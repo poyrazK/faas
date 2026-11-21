@@ -24,6 +24,17 @@ type LogArchive struct {
 	// CredentialsSrc is the controller-local JSON file holding the static key
 	// pair, {"key_id": …, "secret": …}. Keys never go in the manifest.
 	CredentialsSrc string `yaml:"credentials_src,omitempty"`
+	// ComputeWriteOnly gives compute-only hosts create-only archive access
+	// (faas_log_archive_write_only, ADR-20261110210000 slice 3l): their
+	// envelope says "access": "write-only", vmmd ships create-only parts and
+	// gatewayd-internal skips read-back there. Credentials that can read the
+	// bucket let a rooted compute node read every tenant's archived logs.
+	ComputeWriteOnly bool `yaml:"compute_write_only,omitempty"`
+	// ComputeCredentialsSrc is the controller-local key pair compute-only
+	// hosts stage instead of CredentialsSrc with static auth: a key allowed
+	// s3:PutObject on the bucket and nothing else. Required with static auth
+	// and ComputeWriteOnly (Observe audit 2026-11-21, finding 7).
+	ComputeCredentialsSrc string `yaml:"compute_credentials_src,omitempty"`
 }
 
 // Configured reports whether the manifest names an archive bucket.
@@ -51,6 +62,16 @@ func (l LogArchive) validate() Errors {
 		}
 	default:
 		errs = append(errs, Error{"log_archive.auth", fmt.Sprintf("%q must be gcp_metadata or static", l.Auth)})
+	}
+	switch {
+	case l.ComputeCredentialsSrc != "" && l.Auth != "static":
+		errs = append(errs, Error{"log_archive.compute_credentials_src", "is for static auth; gcp_metadata compute hosts use their service account's create-only grant"})
+	case l.ComputeCredentialsSrc != "" && !l.ComputeWriteOnly:
+		errs = append(errs, Error{"log_archive.compute_credentials_src", "needs compute_write_only: a create-only key cannot serve read-back"})
+	case l.ComputeCredentialsSrc != "" && !filepath.IsAbs(l.ComputeCredentialsSrc):
+		errs = append(errs, Error{"log_archive.compute_credentials_src", "must be an absolute controller path"})
+	case l.ComputeWriteOnly && l.Auth == "static" && l.ComputeCredentialsSrc == "":
+		errs = append(errs, Error{"log_archive.compute_credentials_src", "is required with compute_write_only and static auth: compute hosts would otherwise stage the read-write key"})
 	}
 	return errs
 }

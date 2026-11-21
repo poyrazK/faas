@@ -225,8 +225,6 @@ func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, ope
 		return cloneSourceRefusal("source.workloads", "a live deployment for every workload", "not_deployed")
 	case errors.Is(err, state.ErrReleaseConfigurationTransferUnsupported):
 		return cloneSourceRefusal("source.release_configuration", "deployments without a release configuration snapshot", "release_pinned")
-	case errors.Is(err, state.ErrProjectSecretCloneTransferUnsupported):
-		return cloneSourceRefusal("source.project_secrets", "no shared environment secrets", "shared_secrets")
 	case errors.Is(err, state.ErrProjectEnvironmentQueueCollectionUnavailable):
 		return cloneSourceRefusal("source.queue_bindings", "environment-owned queue bindings", "legacy_stage_bindings")
 	case errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable):
