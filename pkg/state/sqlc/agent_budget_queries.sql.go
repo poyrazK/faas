@@ -31,6 +31,26 @@ func (q *Queries) AddAgentBudgetSpend(ctx context.Context, db DBTX, arg AddAgent
 	return err
 }
 
+const adjustAgentBudgetStanding = `-- name: AdjustAgentBudgetStanding :exec
+INSERT INTO agent_budget_standing (key_id, standing_millicents, updated_at)
+VALUES ($1::uuid, GREATEST($2::bigint, 0), now())
+ON CONFLICT (key_id) DO UPDATE
+SET standing_millicents = GREATEST(agent_budget_standing.standing_millicents + $2::bigint, 0),
+    updated_at = now()
+`
+
+type AdjustAgentBudgetStandingParams struct {
+	KeyID      pgtype.UUID
+	Millicents int64
+}
+
+// A signed change: a change that lowers cost gives budget back, never below
+// zero.
+func (q *Queries) AdjustAgentBudgetStanding(ctx context.Context, db DBTX, arg AdjustAgentBudgetStandingParams) error {
+	_, err := db.Exec(ctx, adjustAgentBudgetStanding, arg.KeyID, arg.Millicents)
+	return err
+}
+
 const deleteAgentKeyBudget = `-- name: DeleteAgentKeyBudget :exec
 DELETE FROM agent_key_budgets WHERE key_id = $1::uuid
 `
@@ -57,6 +77,19 @@ func (q *Queries) GetAgentBudgetSpend(ctx context.Context, db DBTX, arg GetAgent
 	return spent_millicents, err
 }
 
+const getAgentBudgetStanding = `-- name: GetAgentBudgetStanding :one
+SELECT standing_millicents FROM agent_budget_standing WHERE key_id = $1::uuid
+`
+
+// Cost-control review 2026-11-19 (N10): the always-on cost the key's changes
+// keep running. It never resets.
+func (q *Queries) GetAgentBudgetStanding(ctx context.Context, db DBTX, keyID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, getAgentBudgetStanding, keyID)
+	var standing_millicents int64
+	err := row.Scan(&standing_millicents)
+	return standing_millicents, err
+}
+
 const getAgentKeyBudget = `-- name: GetAgentKeyBudget :one
 SELECT monthly_cents FROM agent_key_budgets WHERE key_id = $1::uuid
 `
@@ -67,6 +100,46 @@ func (q *Queries) GetAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.U
 	var monthly_cents pgtype.Int8
 	err := row.Scan(&monthly_cents)
 	return monthly_cents, err
+}
+
+const reserveAgentBudgetStanding = `-- name: ReserveAgentBudgetStanding :many
+INSERT INTO agent_budget_standing (key_id, standing_millicents, updated_at)
+SELECT $1::uuid, $2::bigint, now()
+WHERE $2::bigint <= $3::bigint
+ON CONFLICT (key_id) DO UPDATE
+SET standing_millicents = agent_budget_standing.standing_millicents + EXCLUDED.standing_millicents,
+    updated_at = now()
+WHERE agent_budget_standing.standing_millicents + EXCLUDED.standing_millicents <= $3::bigint
+RETURNING standing_millicents
+`
+
+type ReserveAgentBudgetStandingParams struct {
+	KeyID           pgtype.UUID
+	Millicents      int64
+	LimitMillicents int64
+}
+
+// Cost-control review 2026-11-19 (N9): adds millicents only while the total
+// stays within limit, in one statement, so two concurrent requests cannot
+// both pass a check of the same total. No row returned means over budget.
+func (q *Queries) ReserveAgentBudgetStanding(ctx context.Context, db DBTX, arg ReserveAgentBudgetStandingParams) ([]int64, error) {
+	rows, err := db.Query(ctx, reserveAgentBudgetStanding, arg.KeyID, arg.Millicents, arg.LimitMillicents)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []int64{}
+	for rows.Next() {
+		var standing_millicents int64
+		if err := rows.Scan(&standing_millicents); err != nil {
+			return nil, err
+		}
+		items = append(items, standing_millicents)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const upsertAgentKeyBudget = `-- name: UpsertAgentKeyBudget :exec

@@ -336,6 +336,12 @@ type AgentBudgetSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type AgentBudgetStanding struct {
+	KeyID              pgtype.UUID
+	StandingMillicents int64
+	UpdatedAt          pgtype.Timestamptz
+}
+
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
 type AgentCallbackRevocation struct {
 	EndpointID pgtype.UUID
