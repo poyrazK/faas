@@ -370,6 +370,15 @@ func uploadPath(dir, name string) (string, error) {
 	return filepath.Join(append([]string{dir}, parts...)...), nil
 }
 
+// localContextPath reports an entry under .gregale/, the CLI's local context
+// (the project link `gregale deploy` writes into every directory it deploys,
+// and env declarations). It is never part of the source: an upload of a
+// directory deployed before used to fail on its link.
+func localContextPath(name string) bool {
+	first, _, _ := strings.Cut(strings.TrimPrefix(name, "./"), "/")
+	return strings.EqualFold(first, ".gregale")
+}
+
 // writeUploadFile creates one regular file; a repeated path is refused.
 func writeUploadFile(target string, executable bool, content io.Reader, limit int64) (int64, error) {
 	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
@@ -425,7 +434,7 @@ func extractUpload(archive, dir string, limit int64) error {
 		if entries++; entries > maxUploadEntries {
 			return fmt.Errorf("the upload has more than %d entries", maxUploadEntries)
 		}
-		if h.Name == "./" || h.Name == "." {
+		if h.Name == "./" || h.Name == "." || localContextPath(h.Name) {
 			continue
 		}
 		target, err := uploadPath(dir, h.Name)
@@ -472,6 +481,9 @@ func writeInlineFiles(dir string, files []inlineFile) error {
 		return fmt.Errorf("inline files total %d bytes; the limit is %d. Use gregale_create_source_upload", total, maxInlineBytes)
 	}
 	for _, file := range files {
+		if localContextPath(file.Path) {
+			continue
+		}
 		target, err := uploadPath(dir, file.Path)
 		if err != nil {
 			return err
