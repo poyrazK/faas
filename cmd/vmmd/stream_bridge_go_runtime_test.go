@@ -7,19 +7,20 @@ import (
 	"testing"
 )
 
-// The stream bridges' Go runtime settings default to Go's own; TOML sets
-// them and FAAS_STREAM_BRIDGE_GOMAXPROCS / FAAS_STREAM_BRIDGE_GOGC override
+// The stream bridges' Go runtime settings default to GOMAXPROCS=2 and
+// GOGC=400 (the 2026-11-21 bhs-3 A/B); TOML sets them, 0 goes back to Go's
+// own, and FAAS_STREAM_BRIDGE_GOMAXPROCS / FAAS_STREAM_BRIDGE_GOGC override
 // TOML.
 func TestLoadConfig_StreamBridgeGoRuntime(t *testing.T) {
 	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.StreamBridgeGOMAXPROCS != 0 || cfg.StreamBridgeGOGC != 0 {
-		t.Fatalf("defaults = GOMAXPROCS %d GOGC %d, want 0 and 0 (Go's defaults)", cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC)
+	if cfg.StreamBridgeGOMAXPROCS != 2 || cfg.StreamBridgeGOGC != 400 {
+		t.Fatalf("defaults = GOMAXPROCS %d GOGC %d, want 2 and 400", cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC)
 	}
 	path := filepath.Join(t.TempDir(), "vmmd.toml")
-	if err := os.WriteFile(path, []byte("stream_bridge_gomaxprocs = 2\nstream_bridge_gogc = 150\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("stream_bridge_gomaxprocs = 3\nstream_bridge_gogc = 150\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tc := range []struct {
@@ -27,7 +28,7 @@ func TestLoadConfig_StreamBridgeGoRuntime(t *testing.T) {
 		gomaxprocsEnv, gogcEnv string
 		gomaxprocs, gogc       int
 	}{
-		{name: "TOML", gomaxprocs: 2, gogc: 150},
+		{name: "TOML", gomaxprocs: 3, gogc: 150},
 		{name: "env overrides", gomaxprocsEnv: "1", gogcEnv: "200", gomaxprocs: 1, gogc: 200},
 		{name: "env back to Go defaults", gomaxprocsEnv: "0", gogcEnv: "0"},
 	} {

@@ -196,6 +196,13 @@ func UnitVmmd() daemonunit.Unit {
 		// read-only OCI registry configuration used by request-serving daemons.
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			// Go's default GOGC=100 garbage collection and allocation were
+			// 5-8% of vmmd's request-path CPU (prod perf profile 2026-11-21,
+			// steady 1000 req/s). GOGC=200 is the gateways' measured setting
+			// (gatewayd_internal.go). No GOMEMLIMIT: this cgroup is mostly the
+			// jail tmpfs charge (TestUnitVmmd_NoMemoryHigh), not vmmd's heap,
+			// so a soft limit derived from MemoryMax would mean nothing.
+			{Key: "GOGC", Value: "200"},
 			{Key: "TMPDIR", Value: "/srv/fc/base"},
 			// Public half of the host X25519 age key — read by vmmd's
 			// seal path (which does NOT exist in vmmd; this env var is
