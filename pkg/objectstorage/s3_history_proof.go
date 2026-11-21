@@ -115,7 +115,7 @@ func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r O
 	// Preserve the safety latch even if a later HEAD or cursor is malformed.
 	page.VersionsObserved = len(out.DeleteMarkers) > 0
 	for _, v := range out.Versions {
-		id := aws.ToString(v.VersionId)
+		id := p.listedVersionID(aws.ToString(v.VersionId))
 		page.VersionsObserved = page.VersionsObserved || id != "" && id != "null"
 	}
 	if len(out.Versions)+len(out.DeleteMarkers)+len(out.CommonPrefixes) > api.ObjectUploadHistoryPageSize {
@@ -126,7 +126,7 @@ func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r O
 		if e != nil {
 			return page, e
 		}
-		id := aws.ToString(v.VersionId)
+		id := p.listedVersionID(aws.ToString(v.VersionId))
 		if key != r.Key || id == "null" {
 			continue
 		}
