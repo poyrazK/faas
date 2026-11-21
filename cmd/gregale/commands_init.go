@@ -449,7 +449,7 @@ func docsURLForTemplate(name string) string {
 		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
-	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-python":
+	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-go-tasks", "mcp-python", "mcp-python-tasks":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":
 		return "https://gregale.dev/docs/operations"
@@ -600,6 +600,10 @@ func nextStepsFor(tpl string) []string {
 		return []string{"cd <dest> && npm ci && npm test", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-node":
 		return []string{"cd <dest> && npm ci && npm test", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>", "gregale mcp server doctor --app <slug> --legacy --stream-tool stream_demo"}
+	case "mcp-go-tasks":
+		return []string{"cd <dest> && go test ./...", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
+	case "mcp-python-tasks":
+		return []string{"cd <dest> && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt", "python -m unittest", "Read README.md: Tasks are off until you bind PostgreSQL, set MCP_TASK_OWNER_KEY and set tasks.enabled in gregale-mcp.json.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-go":
 		return []string{"cd <dest> && go test ./...", "Review gregale-mcp.json: the sample catalog is public; configure external OAuth before adding sensitive entries.", "gregale mcp server deploy --path <dest> --name <slug>"}
 	case "mcp-python":
