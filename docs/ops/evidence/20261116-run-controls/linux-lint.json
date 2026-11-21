@@ -1,0 +1,146 @@
+{
+  "build_environment": {
+    "go_flags": "-p=1 -trimpath -buildvcs=false",
+    "gomaxprocs": "2",
+    "gomemlimit": "9GiB"
+  },
+  "checks": [
+    {
+      "exit_code": 0,
+      "group": "state",
+      "interrupted": false,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/state"
+      ]
+    },
+    {
+      "exit_code": 0,
+      "group": "apid",
+      "interrupted": false,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/apid/apidserver"
+      ]
+    },
+    {
+      "exit_code": 0,
+      "group": "cli",
+      "interrupted": false,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "cmd/gregale"
+      ]
+    },
+    {
+      "exit_code": 0,
+      "group": "domains",
+      "interrupted": false,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/api",
+        "pkg/runtask",
+        "pkg/apid/runcontrols",
+        "pkg/apid/runtasks",
+        "pkg/apid/executionadmission",
+        "pkg/apid/agents",
+        "cmd/sdk-coverage"
+      ]
+    },
+    {
+      "exit_code": 0,
+      "group": "metal",
+      "interrupted": false,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+      "packages": [
+        "pkg/e2etest/runlifecycle"
+      ]
+    }
+  ],
+  "complete": true,
+  "earlier_attempts": [
+    {
+      "checks": [
+        {
+          "exit_code": 130,
+          "group": "core",
+          "interrupted": true,
+          "log_sha256": "8ec49a706f73802d05875e4aa91dfb029768c039d2928c33ac14019ccd2edfa0",
+          "packages": [
+            "pkg/api",
+            "pkg/state",
+            "pkg/runtask",
+            "pkg/apid/runcontrols",
+            "pkg/apid/runtasks",
+            "pkg/apid/executionadmission",
+            "pkg/apid/agents",
+            "pkg/apid/apidserver",
+            "cmd/gregale",
+            "cmd/sdk-coverage"
+          ]
+        }
+      ],
+      "complete": false,
+      "exit_code": 130,
+      "interrupted": true,
+      "observed_result_exit_code": 130,
+      "patch_sha256": "b742e75774ed8fbdb6d6de4c758328881227ac2aeabefb701e3e2eeeb8077094",
+      "reason": "Stopped the combined package load before scratch exhaustion; retained shared caches and retried smaller serial groups.",
+      "source_manifest_sha256": "06c8233ca36aae1c66a5b8eb0824719a4390c9961f18c0f565682e33b91680fa"
+    },
+    {
+      "checks": [
+        {
+          "exit_code": 0,
+          "group": "state",
+          "interrupted": false,
+          "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+          "packages": [
+            "pkg/state"
+          ]
+        },
+        {
+          "exit_code": 0,
+          "group": "apid",
+          "interrupted": false,
+          "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+          "packages": [
+            "pkg/apid/apidserver"
+          ]
+        },
+        {
+          "exit_code": 0,
+          "group": "cli",
+          "interrupted": false,
+          "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+          "packages": [
+            "cmd/gregale"
+          ]
+        },
+        {
+          "exit_code": 1,
+          "group": "domains",
+          "interrupted": false,
+          "log_sha256": "6726c6e5ae4b23d6f47e5ea1fc38c5494d0c52354cfb2d0696ac8c5b414a0bf1",
+          "packages": [
+            "pkg/api",
+            "pkg/runtask",
+            "pkg/apid/runcontrols",
+            "pkg/apid/runtasks",
+            "pkg/apid/executionadmission",
+            "pkg/apid/agents",
+            "cmd/sdk-coverage"
+          ]
+        }
+      ],
+      "complete": false,
+      "exit_code": 1,
+      "patch_sha256": "b742e75774ed8fbdb6d6de4c758328881227ac2aeabefb701e3e2eeeb8077094",
+      "reason": "Domain lint found QF1001 in the reference validator; rewritten and verified against the database regex and length contract before retry.",
+      "source_manifest_sha256": "06c8233ca36aae1c66a5b8eb0824719a4390c9961f18c0f565682e33b91680fa"
+    }
+  ],
+  "exit_code": 0,
+  "patch_sha256": "acb89bc2a65aa00a71866e5bbd0e29118e3acf8c5cc0b48d83edf1c8bd1633dd",
+  "source_manifest_sha256": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522"
+}

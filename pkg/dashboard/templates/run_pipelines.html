@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  {{template "run-pipeline-styles" .}}
+</head>
+<body>
+  <header><a href="/dashboard/">Gregale</a> <a href="/dashboard/jobs">Jobs &amp; queues</a></header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <h1>Run pipelines</h1>
+    {{if .Data.Rows}}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Workflow</th><th scope="col">Status</th><th scope="col">Steps</th><th scope="col">Submitted (UTC)</th><th scope="col">Finished (UTC)</th></tr></thead>
+        <tbody>{{range .Data.Rows}}
+          <tr>
+            <th scope="row"><a href="/dashboard/run-pipelines/{{.ID}}">{{.WorkflowID}}</a>{{if .ParentID}} <small>Rerun</small>{{end}}</th>
+            <td><span class="status" data-state="{{.Outcome}}">{{.Outcome}}</span></td>
+            <td>{{.StepCount}}</td>
+            <td><time datetime="{{.CreatedAt.UTC.Format "2006-01-02T15:04:05Z"}}">{{.CreatedAt.UTC.Format "02 Jan 2006, 15:04"}}</time></td>
+            <td>{{with .FinishedAt}}<time datetime="{{.UTC.Format "2006-01-02T15:04:05Z"}}">{{.UTC.Format "02 Jan 2006, 15:04"}}</time>{{else}}—{{end}}</td>
+          </tr>
+        {{end}}</tbody>
+      </table>
+    </div>
+    {{if .Data.NextURL}}<p><a href="{{.Data.NextURL}}">Older pipelines</a></p>{{end}}
+    {{else}}<p>No Run pipelines on this page.</p>{{end}}
+  </main>
+</body>
+</html>
+{{define "run-pipeline-styles"}}
+<style nonce="{{.Nonce}}">
+  :root { color-scheme: light dark; }
+  body { font: 1rem/1.55 system-ui, sans-serif; max-inline-size: 68rem; margin: auto; padding: 0 1.25rem 2.5rem; }
+  header { display: flex; flex-wrap: wrap; gap: 1.25rem; padding: 1rem 0; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas); }
+  h1 { margin-bottom: .35rem; overflow-wrap: anywhere; }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; inline-size: 100%; margin: 1rem 0; }
+  th, td { padding: .6rem .8rem; text-align: start; vertical-align: top; border-bottom: 1px solid color-mix(in srgb, CanvasText 16%, Canvas); }
+  th:first-child, td:first-child { padding-inline-start: 0; }
+  .status { white-space: nowrap; border: 1px solid currentColor; border-radius: 1rem; padding: .12rem .5rem; font-size: .88rem; }
+  [data-state="succeeded"], [data-state="reused"] { color: light-dark(#146541, #85deb3); }
+  [data-state="failed"], [data-state="contract_failed"], [data-state="timed_out"], [data-state="out_of_memory"] { color: light-dark(#a02532, #ffa6ae); }
+  code { overflow-wrap: anywhere; }
+  small { font-size: .85rem; }
+  .assistance { margin: .5rem 0 1.25rem; }
+  input, button { font: inherit; }
+  button { padding: .35rem .7rem; }
+  input[type=file] { max-inline-size: 100%; }
+  label { display: block; margin: .6rem 0; }
+  [role=alert] { color: light-dark(#a02532, #ffa6ae); }
+  dl { margin: .4rem 0; }
+  dd { margin-inline-start: 0; margin-block-end: .6rem; }
+  .usage-summary { display: flex; flex-wrap: wrap; gap: .75rem 2rem; }
+  .usage-summary dd { font-weight: 650; }
+  ul { padding-inline-start: 1.25rem; }
+</style>
+{{end}}

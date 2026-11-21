@@ -77,3 +77,33 @@ curl -X POST <callback_url> -H "content-type: application/json" \
 ```sh
 npm test
 ```
+
+## Run task pipelines
+
+Use `GregalePipelineTools({ platform })` from `tools.js` to dispatch bounded
+version-pinned task graphs or batches through RAP `gregale_pipeline`. Publish each
+task with this app's endpoint in `agent_endpoint_ids`. Tool input contains `steps`
+or `batch` and optional pipeline limits; the platform owns workflow identity.
+Persist the call ID before dispatch, as this starter already does for tool calls.
+
+The terminal inbox result provides `completion_id`, `workflow_id`, `outcome` and a
+scoped manifest reference. `platform.pipelineReceipt(completion_id)` reads the
+complete metadata manifest; use `taskReceipt(runID)` and `taskArtifact(runID,name)`
+for referenced outputs. Existing Run output retention applies. Revoking the
+original thread grant also closes these pipeline reads. See
+[Run pipelines](../../../../docs/run-pipelines.md) for the preview contract.
+## Durable report outputs
+
+`platform.deliverRunArtifact(app, route, request)` promotes a declared successful
+Run output into a configured app-owned upload route. Its explicit delivery key
+deduplicates storage writes independently of execution. Wait for `completed`
+before persisting the final turn and revoking thread callbacks. Persist only the
+delivery receipt/object reference in the conversation. The report remains under
+app storage policy after the temporary source grant is gone.
+
+`platform.artifactDelivery(app, route, id)` reads its durable status, and
+`platform.signArtifactDelivery(app, route, id)` issues a short-lived download URL
+under app ownership. Authenticate the customer and check their report ownership
+before issuing a URL; keep the URL out of model history. See the
+[delivery guide](../../../../docs/run-artifact-delivery.md) and
+[report Agent example](../../../../examples/gregale-run/README.md).

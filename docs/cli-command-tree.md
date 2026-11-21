@@ -498,6 +498,7 @@ touch them. The tables below map each earlier name.
 | `gregale orgs agent-policy` | `gregale org agent policy` |
 | `gregale orgs invitations list-all` | `gregale org invitation list --all` |
 | `gregale orgs invitations` | `gregale org invitation` |
+| `gregale orgs keys` | `gregale org key` |
 | `gregale orgs members change-role` | `gregale org members update` |
 | `gregale orgs seat-usage` | `gregale org usage` |
 | `gregale orgs standards application` | `gregale org standards adoption get` |

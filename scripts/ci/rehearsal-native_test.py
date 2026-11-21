@@ -172,12 +172,25 @@ class HostedTaskRehearsalTests(unittest.TestCase):
                 config = json.loads(contents[role]["gregale-mcp.json"])
                 self.assertTrue(config["tasks"]["enabled"])
                 self.assertEqual(config["tasks"]["namespace_env"], "MCP_TASK_NAMESPACE")
-                starter = REPO / "cmd/gregale/templates/mcp-node"
-                for name in ("package-lock.json", "tasks-migrate.js", "tasks-worker.js", "task-store.js"):
+                starter = REPO / "cmd/gregale/templates/mcp-node-tasks"
+                for name in ("package-lock.json", "tasks-migrate.js", "task-store.js"):
                     self.assertEqual(contents[role][name], (starter / name).read_bytes())
-            self.assertEqual(set(contents["web"]), set(contents["worker"]))
+            self.assertEqual(set(contents["worker"]) - set(contents["web"]), {"rehearsal-claim.js"})
+            self.assertEqual(set(contents["web"]) - set(contents["worker"]), set())
+            worker_source = contents["worker"]["tasks-worker.js"]
+            stock_worker = (starter / "tasks-worker.js").read_bytes()
+            self.assertEqual(contents["web"]["tasks-worker.js"], stock_worker)
+            self.assertEqual(
+                worker_source,
+                b"import { createObservedStore } from './rehearsal-claim.js';\n" +
+                stock_worker.replace(
+                    b"startMcpTaskRuntime(config, { role: 'worker' })",
+                    b"startMcpTaskRuntime(config, { role: 'worker', createStore: createObservedStore })",
+                ),
+            )
+            self.assertIn(b"lease_sha256: createHash", contents["worker"]["rehearsal-claim.js"])
             self.assertEqual({name for name in contents["web"] if contents["web"][name] != contents["worker"][name]},
-                             {"package.json", "gregale.yaml"})
+                             {"package.json", "gregale.yaml", "tasks-worker.js"})
             self.assertEqual(json.loads(contents["web"]["package.json"])["scripts"]["start"],
                              "MCP_TASKS_ROLE=web node server.js")
             self.assertIn(b"start: npm run start:tasks-worker\nworker:", contents["worker"]["gregale.yaml"])

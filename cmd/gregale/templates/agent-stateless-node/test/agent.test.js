@@ -139,3 +139,101 @@ test("AGENT_MAX_ATTEMPTS defaults to the group's five attempts", () => {
   assert.equal(maxAttempts({ AGENT_MAX_ATTEMPTS: "3" }), 3);
   assert.equal(maxAttempts({ AGENT_MAX_ATTEMPTS: "99" }), 5);
 });
+
+// Platform task acknowledgements are empty RAP 200 responses.
+test("named task dispatch carries stable RAP identity and app authority", async () => {
+  const { GregaleTaskTools } = await import("../tools.js");
+  const calls = [];
+  const tools = new GregaleTaskTools({ platform: { call: async (path, body) => calls.push({ path, body }) } });
+  const call = { id: "call-1", input: { name: "report", version: 1, input: { rows: [1] } }, callback_url: "signed-callback" };
+  await tools.dispatch("thread-1", call);
+  await tools.dispatch("thread-1", call);
+  assert.deepEqual(calls[0], calls[1]);
+  assert.equal(calls[0].body.operation, "gregale_task");
+  assert.equal(calls[0].body.group_id, "thread-1");
+  assert.equal(calls[0].body.id, "call-1");
+});
+
+test("a named task persists its identity through dispatch retry and resumes the next slice once", async () => {
+  const { GregaleTaskTools } = await import("../tools.js");
+  const { deps, calls } = fixture();
+  const invocations = [];
+  deps.platform.call = async (_path, body) => { invocations.push(body); if (invocations.length === 1) throw new Error("lost acknowledgement"); };
+  deps.tools = new GregaleTaskTools({ platform: deps.platform });
+  deps.model = { next: (_history, message) => message.role === "user"
+    ? { call: { tool: "gregale_task", input: { name: "report", version: 1, input: { rows: [1, 2, 3] } } } }
+    : { text: JSON.stringify(message.content), final: true } };
+  const user = parseRecord(record("user", "request-1", { text: "report" }));
+  await assert.rejects(runSlice(user, deps), /lost acknowledgement/);
+  await runSlice(user, deps);
+  assert.deepEqual(invocations[0], invocations[1]);
+  assert.equal(invocations[0].id, "assistant:request-1");
+  assert.equal(calls.issued.length, 1);
+  const completion = parseRecord(record("tool_result", "completion-1", {
+    type: "tool_result", id: invocations[0].id,
+    text: JSON.stringify({ execution_id: "run-1", status: "succeeded", result: { rows: 3 }, receipt: "/v1/agent-tools/runs/run-1" }),
+  }));
+  await runSlice(completion, deps);
+  const replay = await runSlice(completion, deps);
+  assert.equal(replay.skipped, true);
+  assert.equal(deps.store.rows.length, 4);
+  assert.match(deps.store.rows.at(-1).content.text, /run-1/);
+});
+
+test("platform accepts empty successful task acknowledgements", async () => {
+  const { GregalePlatform } = await import("../platform.js");
+  const platform = new GregalePlatform({ apiURL: "https://api.example.test", identityURL: "https://identity.example.test",
+    fetchImpl: async (url) => String(url).startsWith("https://identity.example.test")
+      ? new Response(JSON.stringify({ access_token: "workload" })) : new Response(null, { status: 200 }) });
+  assert.equal(await platform.call("/v1/agent-tools/invoke", {}), undefined);
+});
+
+test("task result helpers read scoped paths with fresh app identity", async () => {
+  const { GregalePlatform } = await import("../platform.js");
+  const requests = [];
+  const platform = new GregalePlatform({ apiURL: "https://api.example.test", identityURL: "https://identity.example.test",
+    fetchImpl: async (url, init) => {
+      if (String(url).startsWith("https://identity.example.test")) return new Response(JSON.stringify({ access_token: "workload" }));
+      requests.push({ url: String(url), init });
+      return new Response(JSON.stringify({ id: "run" }));
+    } });
+  await platform.taskReceipt("run");
+  await platform.pipelineReceipt("pipeline");
+  await platform.pipelineEvents("pipeline",7);
+  await platform.taskArtifact("run", "reports/answer.txt");
+  assert.equal(requests[0].url, "https://api.example.test/v1/agent-tools/runs/run");
+  assert.equal(requests[1].url, "https://api.example.test/v1/agent-tools/pipelines/pipeline");
+  assert.equal(requests[2].url,"https://api.example.test/v1/agent-tools/pipelines/pipeline/events?after=7");
+  assert.equal(requests[3].url, "https://api.example.test/v1/agent-tools/runs/run/artifacts/reports/answer.txt");
+  await assert.rejects(platform.pipelineEvents("pipeline",-1),/Invalid pipeline cursor/);
+  for (const request of requests) assert.equal(request.init.headers.authorization, "Bearer workload");
+  await assert.rejects(platform.taskArtifact("run", "../secret"), /invalid output path/);
+});
+
+test("pipeline dispatch preserves logical identity", async () => {
+  const { GregalePipelineTools } = await import("../tools.js");
+  const calls = [];
+  const tools = new GregalePipelineTools({ platform: { call: async (path, body) => calls.push({ path, body }) } });
+  await tools.dispatch("thread", { id: "call", provider_call_id: "provider", input: { batch: { name: "report", version: 1, items: [{ label: "one", input: {} }] } }, callback_url: "https://api.example/callback" });
+  assert.equal(calls[0].body.operation, "gregale_pipeline");
+  assert.equal(calls[0].body.id, "call");
+  assert.equal(calls[0].body.call_id, "provider");
+  assert.equal(calls[0].body.group_id, "thread");
+});
+
+test("artifact delivery helpers use app-owned routes after continuation", async () => {
+  const { GregalePlatform } = await import("../platform.js");
+  const requests = [];
+  const platform = new GregalePlatform({ apiURL: "https://api.example.test", identityURL: "https://identity.example.test",
+    fetchImpl: async (url, init) => {
+      if (String(url).startsWith("https://identity.example.test")) return new Response(JSON.stringify({ access_token: "workload" }));
+      requests.push({ path: new URL(url).pathname, body: init.body && JSON.parse(init.body), method: init.method ?? "GET" });
+      return new Response(JSON.stringify({ id: "delivery", status: "completed" }));
+    } });
+  const intent = { idempotency_key: "completion-report", execution_id: "run", artifact_name: "report.html", sha256: "sha256:expected", size_bytes: 20, content_type: "text/html" };
+  await platform.deliverRunArtifact("reports", "reports", intent);
+  await platform.artifactDelivery("reports", "reports", "delivery");
+  await platform.signArtifactDelivery("reports", "reports", "delivery");
+  assert.deepEqual(requests.map(r => r.path), ["/v1/apps/reports/run-artifact-deliveries/reports", "/v1/apps/reports/run-artifact-deliveries/reports/delivery", "/v1/apps/reports/run-artifact-deliveries/reports/delivery/download-url"]);
+  assert.deepEqual(requests[0].body, intent);
+});

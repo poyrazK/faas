@@ -370,7 +370,16 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
 | `FAAS_EXECUTION_DISPATCH` | schedd | `default` |  |  | `` | exact opt-in for disposable execution dispatch; remains disabled until the authenticated payload decoder is wired |
+| `FAAS_EXECUTION_ENVIRONMENTS_ENABLED` | apid, builderd, imaged | `default` |  | 0 | `` | dependency environment preview: new intents, isolated builds and imaging; retained readers and physical GC remain live when disabled |
+| `FAAS_EXECUTION_ENVIRONMENT_` | apid | `default` |  |  | `` | per-runtime digest-pinned installer image refs for new immutable dependency environment recipes |
+| `FAAS_EXECUTION_EXTENDED_ENABLED` | apid | `default` |  | 0 | `` | new five-minute class admissions; requires compatible schema, scheduler, vmmd and protocol v5 guests; disabling preserves replay |
+| `FAAS_EXECUTION_PIPELINES_ENABLED` | apid | `default` |  | 0 | `` | new durable Run pipeline admissions; requires the execution API, V2 and task gates; disabling preserves observation, cancellation and cleanup |
 | `FAAS_EXECUTION_PYTHON_DATA_V1_BASE_REF` | imaged, shared | `default` |  |  | `` | optional digest-pinned linux/amd64 OCI manifest for the shared python-data-v1 execution base; unset stages no profile image; enable only after ADR-383 native acceptance |
+| `FAAS_EXECUTION_TASKS_ENABLED` | apid | `default` |  | 0 | `` | new versioned Run task publication and invocation; requires execution API and V2; disabling preserves catalog reads, retirement, replay and durable agent completion delivery |
+| `FAAS_EXECUTION_TEMPLATE_ACCOUNT_ID` | schedd | `default` |  |  | `` | dedicated platform owner for source Run pristine template capture |
+| `FAAS_EXECUTION_TEMPLATE_CAPTURE` | schedd | `default` |  |  | `` | opt-in source Run template capture; source dispatch and qualified image artifacts remain required |
+| `FAAS_EXECUTION_TEMPLATE_SHAPES` | schedd | `default` |  |  | `` | bounded runtime, RAM and scratch shapes for pristine Run templates |
+| `FAAS_EXECUTION_V2_ENABLED` | apid | `default` |  | 0 | `` | new stored-file and standalone-schema admissions; enable after compatible schema, schedd, vmmd and guest rollout; disabling preserves retained readers and GC |
 | `FAAS_EXTENSION_SOCKET` | guest | `guest` |  | /run/guest/extension.sock | `` | optional per-guest extension lifecycle endpoint; vmmd may deliver an override in the guest boot environment |
 | `FAAS_FINANCIAL_SYSTEM_ACCEPTANCE` | shared | `dev-only` |  |  | `` | opt-in dedicated financial full-system test harness; never set by ordinary production units |
 | `FAAS_FLAGS_ENABLED` | apid, shared | `default` |  |  | `int` | boot fallback for the customer_flags platform flag (ADR-1700): optional override for flags_enabled TOML; 1 releases customer Flags to every account, unset preserves the disabled default; ignored once an operator writes platform_flag.customer_flags |
@@ -1094,7 +1103,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STATIC_EGRESS_IP_ENABLED` | apid, shared | `default` |  |  | `` | boot fallback for the static_egress_ip platform flag (ADR-1700), ignored once an operator writes platform_flag.static_egress_ip |
 | `FAAS_STATUSPAGE_PATH` | apid, shared | `unit` |  |  | `` |  |
 | `FAAS_STORAGE_ACCESS` | builderd, imaged, vmmd, shared | `dropin` |  | direct | `` | ADR-20261117190000: direct (default) reaches the shared store with the daemon's own credentials; secretd makes every GCS and S3 store under the backend fetch and write each object through a 5-minute grant secretd signs for tenants placed on this node (FAAS_SECRETD_TARGET and the node's secretd client leaf). Needs FAAS_STORAGE_DELETE_MODE=defer; listing sweeps report nothing. Set by compute_only_service (faas_storage_grants) |
-| `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, shared | `envfile` |  |  | `` |  |
+| `FAAS_STORAGE_BACKEND` | builderd, imaged, vmmd, schedd, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_DIR` | imaged, shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_MAX_BYTES` | shared | `envfile` |  |  | `` |  |
 | `FAAS_STORAGE_CACHE_REFRESH` | shared | `default` |  |  | `` |  |
@@ -1139,7 +1148,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TEST_BUILDER_BASE_PATH` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_TEST_BUILDER_BASE_REF` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_TEST_DEPLOY_BASE_REF` | imaged, shared | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_TEST_EXECUTION_TEMPLATE_BARRIER_ROOT` | vmmd, shared | `dev-only` |  |  | `` | test-only root-owned template fault barrier; forbidden on production daemons |
 | `FAAS_TEST_KERNEL` | shared | `dev-only` |  |  | `` | must never be set on a production host |
+| `FAAS_TEST_RUN_FIXTURE_ROOT` | vmmd, shared | `dev-only` |  |  | `` | root-owned qualification fixture boundary; forbidden on production daemons |
 | `FAAS_TLS_CONTACT_EMAIL` | shared | `default` |  |  | `` | legacy tenant-surface certificate issuer; production public TLS is upstream |
 | `FAAS_TLS_CUTOVER_STATE_FILE` | apid, shared | `default` |  |  | `` | optional operator override for the durable issue #252 TLS cutover state path |
 | `FAAS_TLS_DIR` | vmmd | `default` |  |  | `` |  |

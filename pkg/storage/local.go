@@ -151,7 +151,13 @@ func (l *LocalStorageBackend) Put(ctx context.Context, key string, r io.Reader) 
 		return err
 	}
 	dir := filepath.Dir(full)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	var mkdirErr error
+	if strings.HasPrefix(key, "run-environments/") {
+		mkdirErr = l.prepareRunEnvironmentDirectory(key)
+	} else {
+		mkdirErr = os.MkdirAll(dir, 0o755)
+	}
+	if err := mkdirErr; err != nil {
 		return fmt.Errorf("storage: put %q: mkdir: %w", key, err)
 	}
 	// Create the atomic-rename temp file in the SAME directory as the
@@ -287,6 +293,9 @@ func (l *LocalStorageBackend) Delete(ctx context.Context, key string) error {
 	}
 	if err := os.Remove(full); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("storage: delete %q: %w", key, err)
+	}
+	if strings.HasPrefix(key, "run-environments/") {
+		l.pruneRunEnvironmentDirectories(key)
 	}
 	return nil
 }

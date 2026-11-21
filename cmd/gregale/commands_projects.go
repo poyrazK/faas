@@ -1297,6 +1297,9 @@ func renderProjectParked(project api.ProjectResponse, parked map[string]api.AppR
 // liveness-parked service no longer reads as plain "live".
 func projectWorkloadDeploymentStatus(workload api.ProjectWorkloadResponse, parked map[string]api.AppResponse) string {
 	status := orDash(workload.DeploymentStatus)
+	if status == "live" && workload.TrafficPercent > 0 && workload.TrafficPercent < 100 {
+		status = fmt.Sprintf("live/%d%%", workload.TrafficPercent)
+	}
 	if workload.Status != appStatusParked {
 		return status
 	}

@@ -36,7 +36,11 @@ func (c *PreviewClient) StreamExecutionWithLimit(ctx context.Context, id string,
 // never echoes source or input in the returned receipt.
 func (c *PreviewClient) CreateExecution(ctx context.Context, req CreateExecutionRequest) (ExecutionResponse, error) {
 	var out ExecutionResponse
-	return out, c.do(ctx, "POST", "/v1/executions", req, &out)
+	path := "/v1/executions"
+	if req.UsesExtendedExecution() {
+		path = "/v2/executions"
+	}
+	return out, c.do(ctx, "POST", path, req, &out)
 }
 
 // GetExecutionCapabilities returns the account's Runs admission contract and
@@ -114,4 +118,27 @@ func (c *PreviewClient) RevokeExecutionArtifactGrant(ctx context.Context, grantI
 	var out RevokeExecutionArtifactGrantResponse
 	path := "/v1/execution-artifact-grants/" + url.PathEscape(grantID)
 	return out, c.do(ctx, "DELETE", path, nil, &out)
+}
+
+// CreateManagedExecutionWorkflow stores an encrypted sequential plan and lets
+// the control plane admit later Runs after this client disconnects.
+func (c *Client) CreateManagedExecutionWorkflow(ctx context.Context, req CreateManagedExecutionWorkflowRequest) (ManagedExecutionWorkflowResponse, error) {
+	var out ManagedExecutionWorkflowResponse
+	path := "/v1/execution-workflows"
+	if req.Pipeline != nil || req.Batch != nil {
+		path = "/v2/execution-workflows"
+	}
+	for _, step := range req.Steps {
+		if step.Task != nil || step.Retry != nil || step.Request.UsesExtendedExecution() {
+			path = "/v2/execution-workflows"
+			break
+		}
+	}
+	return out, c.do(ctx, "POST", path, req, &out)
+}
+
+// CancelExecutionPipeline stops new admissions and cancels admitted Runs.
+func (c *Client) CancelExecutionPipeline(ctx context.Context, workflowID string) (ExecutionWorkflowResponse, error) {
+	var out ExecutionWorkflowResponse
+	return out, c.do(ctx, "POST", "/v1/execution-workflows/"+url.PathEscape(workflowID)+"/cancel", nil, &out)
 }

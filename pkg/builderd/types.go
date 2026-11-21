@@ -23,6 +23,12 @@ type VM interface {
 	Cancel(ctx context.Context, buildID string) error
 }
 
+// EnvironmentLogVM is an optional live diagnostic transport; older owners
+// retain completed-build tail diagnostics.
+type EnvironmentLogVM interface {
+	StreamEnvironmentBuildLogs(context.Context, BuildHandle, func(string, bool) error) error
+}
+
 // WarmVM is the optional transport capability for the guaranteed builder
 // slot. Keeping it separate from VM preserves the cold-build fallback for
 // older vmmd nodes and for unit-test fakes during a rolling deployment.

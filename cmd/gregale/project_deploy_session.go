@@ -38,8 +38,11 @@ type savedProjectWorkload struct {
 }
 type projectDeployReceipt struct {
 	api.ApplyResponse
-	SessionID         string                  `json:"session_id,omitempty"`
-	ResumeCommand     string                  `json:"resume_command,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	ResumeCommand string `json:"resume_command,omitempty"`
+	// RetryCommand rebuilds the workloads that failed; it is set only when
+	// some did. Resume only reconnects to the accepted attempt.
+	RetryCommand      string                  `json:"retry_command,omitempty"`
 	RecoverySaved     bool                    `json:"recovery_saved"`
 	SubmissionOutcome deploySubmissionOutcome `json:"submission_outcome,omitempty"`
 	SubmissionStatus  string                  `json:"submission_status,omitempty"`
@@ -199,6 +202,9 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 	}
 	status := summarizeProjectApply(apply)
 	status.waitTimedOut = len(timeouts)
+	if session != nil && status.buildsFailed > 0 {
+		receipt.RetryCommand = projectRetryCommand(session.record.ID)
+	}
 	code := 0
 	if jsonOutput {
 		if code = jsonOut(writeJSON(receipt)); code != 0 {
@@ -206,6 +212,9 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		}
 		if status.buildsFailed > 0 {
 			reportProjectApplyFailure(osStderr, status)
+			if receipt.RetryCommand != "" {
+				_, _ = fmt.Fprintf(osStderr, "rebuild the failed workloads with: %s\n", receipt.RetryCommand)
+			}
 			code = 1
 		} else if status.waitTimedOut > 0 {
 			reportProjectApplyWaitTimeout(osStderr, status, receipt.ResumeCommand)
@@ -214,6 +223,12 @@ func renderProjectDeployReceiptWithTimeouts(plan api.PlanResponse, apply api.App
 		code = renderProjectApplyResultWithTimeouts(osStdout, plan, apply, timeouts)
 		if session != nil {
 			PrintProgress(osStdout, "Saved project deploy %s; resume with: %s", session.record.ID, session.resumeCommand())
+		}
+		if receipt.RetryCommand != "" {
+			// Resume only reconnects; it never rebuilds what failed, so a
+			// 6-of-8 deploy left the user to find retry in --help --all
+			// (boa multi-service deploy, 2026-11-21).
+			PrintProgress(osStdout, "Rebuild the failed workloads: %s (add --source=worktree to include uncommitted changes)", receipt.RetryCommand)
 		}
 	}
 	if apply.SafeRelease != nil {
@@ -363,4 +378,10 @@ func projectSubmissionFailure(s *savedDeploySession, err error) int {
 		renderProjectApplyResult(osStdout, api.PlanResponse{}, receipt.ApplyResponse)
 	}
 	return printErr("Project submission could not be confirmed; resume with: "+s.resumeCommand(), err)
+}
+
+// projectRetryCommand is the copy-paste command that rebuilds a saved project
+// deploy's failed workloads from the current checkout.
+func projectRetryCommand(sessionID string) string {
+	return recoveryCLI() + " release attempt retry " + sessionID + " --yes"
 }

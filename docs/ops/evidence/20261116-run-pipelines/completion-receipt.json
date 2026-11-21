@@ -1,0 +1,14 @@
+{
+  "source_files_verified": 55,
+  "source_drift": [],
+  "sdk_spec_sha256": "408df8fef56fc0862c762e4774eebef16394be4ecb25f67ec81a004961340eed",
+  "linux_lint": [
+    "PASS ./pkg/apid/runpipeline",
+    "PASS ./pkg/api",
+    "PASS ./pkg/state",
+    "PASS ./pkg/apid/apidserver",
+    "PASS ./cmd/gregale"
+  ],
+  "production_deployed": false,
+  "production_gate_activated": false
+}

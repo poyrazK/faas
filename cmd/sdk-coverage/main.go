@@ -373,6 +373,10 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/agent-runs/{id}":                                true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
+	"GET /v1/agent-tools/pipelines/{id}/events":                 true, // internal app/workload Agent progress
+	"GET /v1/agent-tools/pipelines/{id}":                        true, // internal app/workload Agent continuation receipt
+	"GET /v1/agent-tools/runs/{id}":                             true,
+	"GET /v1/agent-tools/runs/{id}/artifacts/{artifact...}":     true,
 
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
@@ -1072,6 +1076,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/billing/budgets/{id}/revisions":                                   "ListFinancialBudgetRevisions",
 	"GET /v1/billing/budgets/{id}/channels":                                    "GetFinancialBudgetChannels",
 	"PUT /v1/billing/budgets/{id}/channels":                                    "SetFinancialBudgetChannels",
+	"POST /v1/execution-workflows/{workflow_id}/cancel":                        "CancelExecutionPipeline",
 	"POST /v1/execution-workflows":                                             "CreateManagedExecutionWorkflow",
 	"GET /v1/execution-workflows/{workflow_id}":                                "GetExecutionWorkflow",
 	"GET /v1/executions/capabilities":                                          "GetExecutionCapabilities",
@@ -1663,6 +1668,31 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account":                                            "Whoami",
 	"GET /v1/account/health":                                     "GetAccountHealth",
 	"GET /v1/capabilities":                                       "GetCapabilities",
+	"POST /v2/executions":                                        "CreateExecution",
+	"POST /v2/execution-workflows":                               "CreateManagedExecutionWorkflow",
+	"POST /v1/execution-files":                                   "PrepareExecutionFile",
+	"GET /v1/execution-files/{id}":                               "GetExecutionFile",
+	"DELETE /v1/execution-files/{id}":                            "DeleteExecutionFile",
+	"PUT /v1/execution-files/{id}/content":                       "UploadExecutionFile",
+	"GET /v1/execution-files/{id}/content":                       "DownloadExecutionFile",
+	"POST /v1/execution-environments":                            "CreateExecutionEnvironment",
+	"GET /v1/execution-environments":                             "ListExecutionEnvironments",
+	"GET /v1/execution-environments/{id}":                        "GetExecutionEnvironment",
+	"DELETE /v1/execution-environments/{id}":                     "DeleteExecutionEnvironment",
+	"GET /v1/execution-pipelines/{id}/events":                    "ExecutionPipelineEvents",
+	"POST /v2/execution-pipelines/{id}/reruns":                   "RerunExecutionPipeline",
+	"GET /v1/execution-environments/{id}/events":                 "ExecutionEnvironmentEvents",
+	"GET /v1/run-controls/budgets/{kind}/{ref}":                  "GetRunBudget",
+	"PUT /v1/run-controls/budgets/{kind}/{ref}":                  "SetRunBudget",
+	"GET /v1/run-controls/bindings/{kind}/{id}":                  "GetRunAttributionBinding",
+	"PUT /v1/run-controls/bindings/{kind}/{id}":                  "SetRunAttributionBinding",
+	"DELETE /v1/run-controls/bindings/{kind}/{id}":               "DeleteRunAttributionBinding",
+	"GET /v1/run-history":                                        "ListRunHistory",
+	"POST /v1/run-tasks":                                         "PublishExecutionTask",
+	"GET /v1/run-tasks":                                          "ListExecutionTasks",
+	"GET /v1/run-tasks/{name}/versions/{version}":                "GetExecutionTask",
+	"DELETE /v1/run-tasks/{name}/versions/{version}":             "RetireExecutionTask",
+	"POST /v1/run-tasks/invoke":                                  "InvokeExecutionTask",
 	"POST /v1/executions":                                        "CreateExecution",
 	"POST /v1/domains/{domain}/retry":                            "RetryDomainVerification",
 	"GET /v1/executions":                                         "ListExecutions",
@@ -3093,6 +3123,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/edge-protection/attack-mode":    "GetAppEdgeAttackMode",
 	"PUT /v1/apps/{slug}/edge-protection/attack-mode":    "EnableAppEdgeAttackMode",
 	"DELETE /v1/apps/{slug}/edge-protection/attack-mode": "DisableAppEdgeAttackMode",
+
+	"POST /v1/execution-files/{id}/agent-grants":                                   "CreateAgentExecutionFileGrant",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":                         "DeliverRunArtifact",
+	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}":               "GetRunArtifactDelivery",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url": "SignRunArtifactDelivery",
 }
 
 func main() {
@@ -3152,6 +3187,8 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
+	"StreamExecutionPipeline":              "GET /v1/execution-pipelines/{id}/events",
+	"WatchExecutionPipeline":               "GET /v1/execution-pipelines/{id}/events",
 	"CancelDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
 	"FinishDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
 	"CancelToolInvocation":                 "POST /v1/tool-invocations/{id}/{action}",

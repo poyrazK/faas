@@ -50,6 +50,10 @@ type ExecutionEventStore interface {
 // one-shot execution. Source and input deliberately live in ExecutionClaim
 // only, after a scheduler has acquired the row's lease.
 type Execution struct {
+	Attribution        *api.RunAttribution
+	Task               *api.ExecutionTaskRef
+	EnvironmentID      string
+	InputFileBytes     int64
 	Profile            api.ExecutionProfile
 	RuntimeImageDigest string
 	ID                 string
@@ -59,31 +63,32 @@ type Execution struct {
 	// RunsPrincipalID is the stable API-key family that created this run.
 	// Nil rows are legacy or dashboard-created and remain visible to
 	// account-wide principals only.
-	RunsPrincipalID *string `json:"-"`
-	Runtime         api.ExecutionRuntime
-	Status          api.ExecutionStatus
-	NetworkMode     api.ExecutionNetworkMode
-	Limits          api.ResolvedExecutionLimits
-	SourceBytes     int
-	InputBytes      int
-	DeadlineAt      time.Time
-	LeaseToken      *string
-	LeaseOwner      *string
-	LeaseExpiresAt  *time.Time
-	CancelRequested *time.Time
-	Artifacts       []api.ExecutionArtifact
-	Result          json.RawMessage
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        *int
-	FailureCode     *string
-	FailureMessage  *string
-	Usage           api.ExecutionUsage
-	StartedAt       *time.Time
-	FinishedAt      *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	RunsPrincipalID  *string `json:"-"`
+	Runtime          api.ExecutionRuntime
+	Status           api.ExecutionStatus
+	NetworkMode      api.ExecutionNetworkMode
+	Limits           api.ResolvedExecutionLimits
+	SourceBytes      int
+	InputBytes       int
+	DeadlineAt       time.Time
+	LeaseToken       *string
+	LeaseOwner       *string
+	LeaseExpiresAt   *time.Time
+	CancelRequested  *time.Time
+	Artifacts        []api.ExecutionArtifact
+	Result           json.RawMessage
+	ResultValidation *api.ExecutionResultValidation
+	Stdout           string
+	Stderr           string
+	OutputTruncated  bool
+	ExitCode         *int
+	FailureCode      *string
+	FailureMessage   *string
+	Usage            api.ExecutionUsage
+	StartedAt        *time.Time
+	FinishedAt       *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // ExecutionClaim is returned only to the schedd claim path. The encrypted
@@ -101,6 +106,11 @@ type ExecutionClaim struct {
 // its caller-payload ciphertext. AdmittedAt and DeadlineAt are supplied
 // together so queue time is part of the immutable wall-clock budget.
 type CreateExecutionParams struct {
+	Pipeline                 *ExecutionPipelineAdmission
+	CustomerRef              string
+	ControlAccountWide       bool
+	Task                     *ExecutionTaskAdmission
+	FilesAccountWide         bool
 	AccountID                string
 	WorkflowID               string
 	StepLabel                string
@@ -162,19 +172,20 @@ type ExecutionArtifactGrantStore interface {
 // an execution terminal. LeaseToken prevents a stale scheduler from
 // overwriting a row recovered by a newer owner.
 type CompleteExecutionParams struct {
-	ID              string
-	LeaseToken      string
-	Status          api.ExecutionStatus
-	Artifacts       []api.ExecutionArtifact
-	Result          json.RawMessage
-	Stdout          string
-	Stderr          string
-	OutputTruncated bool
-	ExitCode        *int
-	FailureCode     *string
-	FailureMessage  *string
-	Usage           api.ExecutionUsage
-	FinishedAt      time.Time
+	ID               string
+	LeaseToken       string
+	Status           api.ExecutionStatus
+	Artifacts        []api.ExecutionArtifact
+	Result           json.RawMessage
+	ResultValidation *api.ExecutionResultValidation
+	Stdout           string
+	Stderr           string
+	OutputTruncated  bool
+	ExitCode         *int
+	FailureCode      *string
+	FailureMessage   *string
+	Usage            api.ExecutionUsage
+	FinishedAt       time.Time
 	// OutputEventsPersisted is true when stdout/stderr were appended by the
 	// live execution stream. Terminalization must not append the same bytes a
 	// second time; false preserves the unary execution behavior.
@@ -328,14 +339,23 @@ type ExecutionPrincipalListStore interface {
 }
 
 func validateCreateExecution(params CreateExecutionParams) error {
+	if params.Pipeline == nil && strings.HasPrefix(params.StepLabel, "gwf:p2:") {
+		return ErrExecutionInvalid
+	}
 	if _, err := api.NormalizeExecutionIntegrationIDs(params.OutboundIntegrationIDs); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
 	}
 	if err := api.ValidateExecutionWorkflowMetadata(params.WorkflowID, params.StepLabel); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
 	}
+	if params.Request.EnvironmentID != "" && (!validEnvironmentID(params.Request.EnvironmentID) || params.Request.Profile.Normalized() != api.ExecutionProfileStandard) {
+		return ErrExecutionInvalid
+	}
 	if err := params.Request.Profile.Validate(params.Request.Runtime); err != nil {
 		return fmt.Errorf("%w: %w", ErrExecutionInvalid, err)
+	}
+	if err := validateStoredOutputs(params); err != nil {
+		return err
 	}
 	if params.AccountID == "" {
 		return fmt.Errorf("%w: account id is required", ErrExecutionInvalid)
@@ -344,7 +364,7 @@ func validateCreateExecution(params CreateExecutionParams) error {
 		return fmt.Errorf("%w: unsupported runtime or network mode", ErrExecutionInvalid)
 	}
 	limits := params.Request.Limits
-	if limits.TimeoutMS < api.ExecutionTimeoutMinMS || limits.TimeoutMS > api.ExecutionTimeoutHardMaxMS ||
+	if !limits.Class.ValidTimeout(limits.TimeoutMS) ||
 		!api.ValidExecutionMemoryMB(limits.MemoryMB) ||
 		!api.ValidAppCPUMillicores(limits.CPUMillicores) ||
 		!api.ValidExecutionEphemeralDiskMB(limits.EphemeralDiskMB) ||
@@ -365,15 +385,18 @@ func validateCreateExecution(params CreateExecutionParams) error {
 			return fmt.Errorf("%w: invalid artifact grant redemption", ErrExecutionInvalid)
 		}
 	}
-	if params.AdmittedAt.IsZero() || !params.DeadlineAt.After(params.AdmittedAt) ||
-		params.DeadlineAt.Sub(params.AdmittedAt) != time.Duration(limits.TimeoutMS)*time.Millisecond {
-		return fmt.Errorf("%w: deadline must equal admitted_at plus timeout_ms", ErrExecutionInvalid)
+	duration := params.DeadlineAt.Sub(params.AdmittedAt)
+	maxDuration := time.Duration(limits.TimeoutMS) * time.Millisecond
+	if params.AdmittedAt.IsZero() || duration <= 0 || duration > maxDuration || params.Pipeline == nil && duration != maxDuration {
+		return fmt.Errorf("%w: deadline must fit the execution timeout and pipeline budget", ErrExecutionInvalid)
 	}
+
 	return nil
 }
 
 func validateExecutionPlan(params CreateExecutionParams, limits api.ExecutionPlanLimits) error {
 	request := params.Request.Limits
+	limits = limits.ForClass(request.Class)
 	if !limits.Allowed || limits.MaxConcurrent <= 0 {
 		return ErrExecutionsNotAllowed
 	}
@@ -387,6 +410,9 @@ func validateExecutionPlan(params CreateExecutionParams, limits api.ExecutionPla
 }
 
 func validateCompletion(params CompleteExecutionParams, maxOutputBytes int) error {
+	if err := params.ResultValidation.Validate(); err != nil || params.ResultValidation != nil && params.Status != api.ExecutionStatusSucceeded {
+		return ErrExecutionInvalidTerminal
+	}
 	if params.ID == "" || params.LeaseToken == "" || params.FinishedAt.IsZero() || !params.Status.Terminal() {
 		return ErrExecutionInvalidTerminal
 	}
@@ -436,4 +462,10 @@ func normalizeExecutionPage(limit, offset int) (int, int) {
 		offset = 0
 	}
 	return limit, offset
+}
+
+// ExecutionClassQueueStore reserves independent dispatch capacity for short
+// and extended work. A class-aware worker never falls back to an unfiltered claim.
+type ExecutionClassQueueStore interface {
+	ClaimExecutionForClass(context.Context, string, string, api.ExecutionClass, time.Time, time.Duration) (ExecutionClaim, error)
 }

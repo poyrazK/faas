@@ -26,3 +26,28 @@ export class HTTPTools {
     if (!res.ok) throw new Error(`tool dispatch: HTTP ${res.status}`);
   }
 }
+
+// Named Run tasks return through the durable RAP inbox. The task version must
+// explicitly allow this app's endpoint; the platform supplies workload identity.
+export class GregaleTaskTools {
+  constructor({ platform }) { this.platform = platform; }
+  async dispatch(threadID, call) {
+    await this.platform.call("/v1/agent-tools/invoke", {
+      operation: "gregale_task", group_id: threadID, id: call.id,
+      call_id: call.provider_call_id ?? call.id,
+      arguments: call.input, callback_url: call.callback_url,
+    });
+  }
+}
+
+// Both task and pipeline calls use the durable Agent inbox. The caller persists
+// the same logical call ID before dispatch, as for GregaleTaskTools.
+export class GregalePipelineTools extends GregaleTaskTools {
+  async dispatch(threadID, call) {
+    await this.platform.call("/v1/agent-tools/invoke", {
+      operation: "gregale_pipeline", group_id: threadID, id: call.id,
+      call_id: call.provider_call_id ?? call.id,
+      arguments: call.input, callback_url: call.callback_url,
+    });
+  }
+}

@@ -49,6 +49,8 @@ func runAdoptionCommand(args []string, stdout, stderr io.Writer) (code int, ok b
 		return 0, false
 	}
 	switch args[0] {
+	case "run-release":
+		return runReleaseCommand(args[1:], stdout, stderr), true
 	case "adoption-check":
 		return adoptionCheckCommand(args[1:], stdout, stderr), true
 	case "adoption-report":

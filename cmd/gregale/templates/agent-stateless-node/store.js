@@ -5,6 +5,7 @@
 // is kept open between messages, so a parked agent holds no connection and
 // a VM snapshot never captures a socket.
 import pg from "pg";
+import { agentSchema } from "./schema.js";
 
 // schemaLock serializes schema creation. A new database's first slices run
 // in parallel (the trigger's max_concurrency), and concurrent CREATE TABLE IF
@@ -17,17 +18,7 @@ export const schemaLock = "0x6167656e74730002";
 
 export const schema = `
 SELECT pg_advisory_xact_lock(${schemaLock});
-CREATE TABLE IF NOT EXISTS agent_messages (
-  thread_id  text        NOT NULL CHECK (length(thread_id) BETWEEN 1 AND 64),
-  message_id text        NOT NULL CHECK (length(message_id) BETWEEN 1 AND 160),
-  seq        bigserial   NOT NULL,
-  role       text        NOT NULL CHECK (role IN ('user', 'assistant', 'tool')),
-  content    jsonb       NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (thread_id, message_id)
-);
-CREATE INDEX IF NOT EXISTS agent_messages_thread_seq ON agent_messages (thread_id, seq);
-`;
+${agentSchema}`;
 
 export class PostgresStore {
   constructor(connectionString = process.env.DATABASE_URL, { newClient } = {}) {
