@@ -103,6 +103,17 @@ type FlagExperimentAnalyticsStore interface {
 }
 
 // FlagExperimentStore keeps experiments and their per-customer units.
+// FlagExperimentStartCursor is a started experiment's first telemetry
+// cursor: just before the start's minute. Gateways collapse request telemetry
+// into rows stamped at the start of their minute
+// (FAAS_REQUEST_TELEMETRY_MINUTE_COLLAPSE), and the reconciler reads rows
+// after the cursor, so a cursor at the start instant would skip every exposure
+// in the start minute. The few requests of that minute before the start count
+// too: they were served by the same weighted rule.
+func FlagExperimentStartCursor(start time.Time) time.Time {
+	return start.UTC().Truncate(time.Minute).Add(-time.Microsecond)
+}
+
 type FlagExperimentStore interface {
 	CreateFlagExperiment(ctx context.Context, x FlagExperiment, maxExperiments int) (FlagExperiment, error)
 	GetFlagExperiment(ctx context.Context, environmentID, key string) (FlagExperiment, error)
