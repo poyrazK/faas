@@ -361,6 +361,10 @@ func (m *management) saveFlagPlan(p *flagPlan) (any, error) {
 	}
 	p.ID = hex.EncodeToString(id)
 	m.flagPlans[p.ID] = p
+	if err := m.persistMemoryPlansLocked(); err != nil {
+		delete(m.flagPlans, p.ID)
+		return nil, err
+	}
 	return *p, nil
 }
 
@@ -374,7 +378,7 @@ func (m *management) applyFlagChange(ctx context.Context, a applyArgs) (any, err
 	defer m.mu.Unlock()
 	p := m.flagPlans[a.PlanID]
 	if p == nil {
-		return nil, invalid("invalid_plan", "unknown flag plan; plans end with the connection, so review a new one")
+		return nil, invalid("invalid_plan", "unknown or expired flag plan; review a new one")
 	}
 	if p.receipt != nil {
 		return p.receipt, nil
@@ -399,6 +403,11 @@ func (m *management) applyFlagChange(ctx context.Context, a applyArgs) (any, err
 	}
 	retry := p.attempted
 	p.attempted = true
+	// Journal the attempt before the write, so a retry after a restart
+	// checks for this plan's own publish instead of refusing a conflict.
+	if err := m.persistMemoryPlansLocked(); err != nil {
+		return nil, err
+	}
 	var raw json.RawMessage
 	if p.Action == "flag_rollback" {
 		raw, err = m.client.RollbackProjectFlags(ctx, p.Project, p.Environment, p.ExpectedVersion, p.RestoreVersion)
@@ -437,6 +446,8 @@ func sameFlagConfig(a, b flags.Config) bool {
 
 func (m *management) flagReceipt(p *flagPlan, version int64) map[string]any {
 	p.receipt = map[string]any{"plan_id": p.ID, "action": p.Action, "project": p.Project, "environment": p.Environment, "result": map[string]any{"version": version, "previous_version": p.ExpectedVersion, "summaries": p.Summaries}}
+	// The write succeeded; a failed journal only costs the replayed receipt.
+	_ = m.persistMemoryPlansLocked()
 	return p.receipt
 }
 

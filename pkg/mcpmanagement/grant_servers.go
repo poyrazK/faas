@@ -134,7 +134,7 @@ func (m *management) idle(now time.Time) bool {
 			return false
 		}
 	}
-	if m.memoryPlansLive(now) {
+	if m.opts.planStore == nil && m.memoryPlansLive(now) {
 		m.mu.Unlock()
 		return false
 	}

@@ -219,6 +219,9 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if err := m.restoreEnvironmentPlans(); err != nil {
 		return nil, nil, err
 	}
+	if err := m.restoreMemoryPlans(); err != nil {
+		return nil, nil, err
+	}
 	if err := m.restoreActionHistory(); err != nil {
 		return nil, nil, err
 	}
