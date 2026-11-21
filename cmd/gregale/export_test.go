@@ -644,7 +644,6 @@ var BridgeLoopbackOnly = bridgeLoopbackOnly
 var BucketUploadCheckpointPath = bucketUploadCheckpointPath
 var BuildAppNetworkDoctorReport = buildAppNetworkDoctorReport
 var BuildAppScalePlanChanges = buildAppScalePlanChanges
-var AppScalePlanWarnings = appScalePlanWarnings
 var BuildBaseline = buildBaseline
 var BuildCanarySpec = buildCanarySpec
 var BuildCreateRequest = buildCreateRequest
