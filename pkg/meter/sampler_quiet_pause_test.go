@@ -234,3 +234,39 @@ func TestParseQuietPauseMode(t *testing.T) {
 		}
 	}
 }
+
+// A minute with no resident second bills nothing, so an open pause the
+// ledger cannot prove over-bills nothing and must not count as unproven. The
+// sampler walks an app's whole retained instance history: after the GCP-free
+// cutover (2026-11-20) 13 failed instances with pauses their retired node
+// never closed fired FaasQuietPauseUnprovenMinutes with nobody billed.
+func TestUnbilledQuietSecondsCountsOnlyResidentMinutes(t *testing.T) {
+	tests := []struct {
+		name         string
+		seconds      int64
+		paused       state.QuietPausedSeconds
+		wantBilled   int64
+		wantUnproven float64
+		wantUnbilled float64
+	}{
+		{name: "resident unproven minute counts", seconds: 60, paused: state.QuietPausedSeconds{Seconds: 20, Unproven: true}, wantBilled: 40, wantUnproven: 1, wantUnbilled: 20},
+		{name: "non-resident unproven minute does not count", seconds: 0, paused: state.QuietPausedSeconds{Seconds: 0, Unproven: true}, wantBilled: 0},
+		{name: "non-resident proven pause records nothing", seconds: 0, paused: state.QuietPausedSeconds{Seconds: 60}, wantBilled: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			sampler := NewSampler(newLedgerStore(), nil, time.Now).WithQuietPause(QuietPauseOn, prometheus.NewRegistry())
+			paused := map[string]state.QuietPausedSeconds{"ins": tc.paused}
+			if got := sampler.unbilledQuietSeconds(paused, QuietPauseOn, "ins", string(api.PlanHobby), tc.seconds); got != tc.wantBilled {
+				t.Fatalf("billed seconds = %d, want %d", got, tc.wantBilled)
+			}
+			m := sampler.quietMetrics
+			if got := testutil.ToFloat64(m.unproven.WithLabelValues(string(QuietPauseOn))); got != tc.wantUnproven {
+				t.Fatalf("unproven minutes = %v, want %v", got, tc.wantUnproven)
+			}
+			if got := testutil.ToFloat64(m.seconds.WithLabelValues(string(QuietPauseOn), string(api.PlanHobby))); got != tc.wantUnbilled {
+				t.Fatalf("unbilled seconds = %v, want %v", got, tc.wantUnbilled)
+			}
+		})
+	}
+}

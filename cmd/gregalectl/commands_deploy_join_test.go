@@ -769,17 +769,22 @@ func TestNodeJoinTakesTheDrainedEdgeOutOfTheTunnel(t *testing.T) {
 	}
 	// The connector leaves first, so Cloudflare stops sending before the
 	// socket refuses; closing the socket is what stops socket activation.
-	connector := strings.Index(outBlock, "- faas-cloudflared.service")
-	socket := strings.Index(outBlock, "- faas-gatewayd-public-edge.socket")
+	// public_edge.entry direct runs no connector (ADR-20261102081618 step 6),
+	// so both loops name it only behind faas_edge_tunnel.
+	connector := strings.Index(outBlock, "'faas-cloudflared.service'")
+	socket := strings.Index(outBlock, "'faas-gatewayd-public-edge.socket'")
 	if connector < 0 || socket < 0 || connector > socket {
 		t.Fatalf("edge take-out must stop the connector, then the socket: connector=%d socket=%d", connector, socket)
+	}
+	if !strings.Contains(outBlock, "if (faas_edge_tunnel | default(true) | bool)") {
+		t.Error("edge take-out stops the connector even without a tunnel")
 	}
 	backEnd := strings.Index(playbook[back:], "\n    - name: ")
 	if backEnd < 0 {
 		t.Fatal("edge return task has no successor")
 	}
 	backBlock := playbook[back : back+backEnd]
-	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "- faas-gatewayd-public-edge.socket", "- faas-cloudflared.service"} {
+	for _, token := range []string{"state: started", "faas_edge_on_compute_nodes | default(false) | bool", "'faas-gatewayd-public-edge.socket'", "'faas-cloudflared.service'", "if (faas_edge_tunnel | default(true) | bool)"} {
 		if !strings.Contains(backBlock, token) {
 			t.Errorf("edge return missing %q", token)
 		}

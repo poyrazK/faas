@@ -1191,9 +1191,11 @@ groups:
   - name: gcp_ops_agent
     interval: 30s
     rules:
+      # Only GCE hosts run the GCP agent: node_exporter's DMI vendor is
+      # "Google" there. The OVHcloud fleet (2026-11-20) has no agent to miss.
       - alert: FaasGCPOpsAgentMissing
         expr: |
-          up{job="node-compute"} == 1
+          (up{job="node-compute"} == 1 and on(instance) node_dmi_info{job="node-compute",system_vendor="Google"})
           unless on(instance)
           node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
         for: 5m
@@ -2584,11 +2586,17 @@ groups:
       # tunnel connection. A connector that is down exports no connection
       # series at all, so the expression counts serving nodes instead of
       # summing connections, which is empty, not 0, once every connector stops.
+      # A cell on public_edge.entry direct (ADR-20261102081618 step 6) scrapes
+      # no connector at all; there a node serves while its edge answers.
       - alert: FaasComputeEdgeUnavailable
         expr: |
           count(up{job="gatewayd-public-edge"})
             unless on()
-          (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+          (
+            (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+              or on()
+            ((count(up{job="gatewayd-public-edge"} == 1) > 0) unless on() (count(up{job="cloudflared"}) or count(cloudflared_tunnel_ha_connections{job="cloudflared"})))
+          )
         for: 2m
         labels:
           severity: page
@@ -2597,7 +2605,7 @@ groups:
           public_status: internal
         annotations:
           summary: "No compute-node app edge is serving"
-          description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+          description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeDown

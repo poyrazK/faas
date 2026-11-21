@@ -238,7 +238,9 @@ public_edge:
   local_first: false
   # ADR-20261102081618: the edges also take TLS on 443 at their entry
   # address (entry_ipv4, an OVH Additional IP), beside the Cloudflare tunnel.
-  entry: both
+  # ADR-20261102081618 step 6: the cell left the Cloudflare tunnel on the
+  # 2026-11-20 move to OVHcloud; app hosts resolve to the entry addresses.
+  entry: direct
   # ADR-20261103163954: nothing in front of the direct-entry names. Clients
   # reach the edges on their entry addresses, which take 443 from everyone
   # and nothing else (the entry-address firewall, ahead of sshd); the edges
