@@ -8,7 +8,7 @@ gregale billing status
 gregale billing portal open
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items. Where early freeze is enabled, a `between_requests` workload (functions by default) is frozen a few seconds after its last request rather than at its idle timeout, so it is billed for little more than the time it spends serving ([how frozen instances work](cold-wake.md#frozen-instances)).
+Usage is measured in GB-RAM-hours for running app instances. A one-off command (an app task, a release command or a command cron) runs in its own VM at the app's RAM and is billed the same way, from the moment the command starts until it ends, under the app it belongs to. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items. Where early freeze is enabled, a `between_requests` workload (functions by default) is frozen a few seconds after its last request rather than at its idle timeout, so it is billed for little more than the time it spends serving ([how frozen instances work](cold-wake.md#frozen-instances)).
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
@@ -107,6 +107,9 @@ When the month's overage reaches the cap:
   warm pools are parked within one scheduler tick;
 - new wakes are refused with HTTP 402 `admission_refused`; the problem body
   carries the observed overage and the cap;
+- app tasks, release commands and command crons that have not started yet
+  wait; they start once the cap lifts. A command already running finishes
+  within its timeout;
 - queued job tasks wait in the queue; they are not failed. A task already
   running finishes within the plan's task timeout;
 - new forks are refused;
