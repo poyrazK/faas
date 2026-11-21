@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
+//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-node-tasks mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -120,6 +120,7 @@ var Names = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-node-tasks",
 	"mcp-go",
 	"mcp-python",
 	"customer-operation-export",
@@ -198,6 +199,9 @@ var generatedDotfiles = map[string]map[string]string{
 			"/tools/\n",
 	},
 	"mcp-node": {
+		".gregale/env.json": "{\"optional\":[\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
+	},
+	"mcp-node-tasks": {
 		".gregale/env.json": "{\"optional\":[\"MCP_CATALOG_EXPECTED_SHA256\",\"MCP_TASK_MIGRATION_DATABASE_URL\",\"MCP_TASK_RELEASE_INPUT\",\"MCP_TELEMETRY_LOSS_ALERT\"]}\n",
 	},
 	"mcp-go": {
@@ -271,6 +275,25 @@ var generatedTemplateCopies = map[string]map[string]string{
 
 // Share the runtime catalog implementation with the owner-side permission tool.
 var sharedTemplateCopies = map[string]map[string]string{
+	// The plain Node MCP starter is the Tasks starter's server without the
+	// durable Tasks module: one copy of the shared code lives in mcp-node-tasks.
+	"mcp-node": {
+		"app.js":                           "mcp-node-tasks/app-core.js",
+		"auth.js":                          "mcp-node-tasks/auth.js",
+		"catalog.js":                       "mcp-node-tasks/catalog.js",
+		"protocol-telemetry.js":            "mcp-node-tasks/protocol-telemetry.js",
+		"resource-updates.js":              "mcp-node-tasks/resource-updates.js",
+		"tool-policy.js":                   "mcp-node-tasks/tool-policy.js",
+		"test/auth-jwks.test.js":           "mcp-node-tasks/test/auth-jwks.test.js",
+		"test/auth.test.js":                "mcp-node-tasks/test/auth.test.js",
+		"test/authorization-http.test.js":  "mcp-node-tasks/test/authorization-http.test.js",
+		"test/catalog-integrity.test.js":   "mcp-node-tasks/test/catalog-integrity.test.js",
+		"test/catalog.test.js":             "mcp-node-tasks/test/catalog.test.js",
+		"test/http-errors.test.js":         "mcp-node-tasks/test/http-errors.test.js",
+		"test/protocol-telemetry.test.js":  "mcp-node-tasks/test/protocol-telemetry.test.js",
+		"test/subscription-output.test.js": "mcp-node-tasks/test/subscription-output.test.js",
+		"test/tool-policy.test.js":         "mcp-node-tasks/test/tool-policy.test.js",
+	},
 	"data-api-support-console": {"public/csv.mjs": "data-api/csv-export.mjs"},
 	"data-api-teams": {
 		"Dockerfile":                             "data-api-starter/Dockerfile",
@@ -567,7 +590,7 @@ func CategoryFor(name string) string {
 		return "stateless-contract"
 	case "ai-chat", "agent-stateless-node", "agent-infinity-rust":
 		return "ai"
-	case "mcp-node", "mcp-go", "mcp-python":
+	case "mcp-node", "mcp-node-tasks", "mcp-go", "mcp-python":
 		return "mcp"
 	case "durable-entity-node":
 		return "durable-entities"
@@ -605,6 +628,7 @@ var summaries = map[string]string{
 	"secret-reload-node":                 "Node.js and PostgreSQL app that reloads rotated secrets",
 	"customer-platform":                  "Node.js and PostgreSQL starter for multi-tenant apps",
 	"mcp-node":                           "Node.js MCP server with sample tools and prompts",
+	"mcp-node-tasks":                     "Node.js MCP server with durable MCP Tasks on PostgreSQL",
 	"mcp-go":                             "Go MCP server with sample tools",
 	"mcp-python":                         "Python MCP server with sample tools",
 	"customer-operation-export":          "HTTP operation with a CSV export and progress page",

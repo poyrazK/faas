@@ -8,7 +8,7 @@ import stat
 import tarfile
 import uuid
 
-STARTER = Path("cmd/gregale/templates/mcp-node")
+STARTER = Path("cmd/gregale/templates/mcp-node-tasks")
 ROLES = ("web", "worker")
 FIXTURE_FILES = {
     "gregale-mcp.json", "gregale.yaml", "package.json", "package-lock.json", "task-limits.json",
