@@ -10,6 +10,70 @@ cohort evidence. Business
 logic must explicitly check a flag. Flags do not grant
 permissions or paid entitlements and are independent from deployment traffic splits.
 
+## Change one flag from the CLI
+
+The short commands read the current configuration, change one thing and
+publish it with the version they read. If someone else published in between,
+they apply the same change to the new configuration, at most three times.
+
+```bash
+gregale flag create new-export --project exports              # enabled, default false
+gregale flag rollout set new-export 10 --project exports      # 10% of customers get true
+gregale flag rule create new-export --id pilot --group pilot-customers --project exports
+gregale flag disable new-export --project exports             # also sets default false
+gregale flag list --project exports
+gregale flag create checkout --variants legacy,new --project exports
+gregale flag delete new-export --project exports
+```
+
+### Kill a flag
+
+```bash
+gregale flag kill set new-export --project exports     # every check serves the fallback in your code
+gregale flag kill unset new-export --project exports
+```
+
+A killed flag (`"killed": true`) evaluates to the **fallback your code passes**
+at the call site, with reason `killed`, whatever its default, rules or a
+decision inherited from another service say. The fallback is the behavior your
+code had before the flag existed, so a kill never turns something on.
+
+Gregale's gateway lists each environment's killed flags on every request
+(`X-Faas-Flag-Kills`), and the SDKs honor that list before their cached
+configuration, so a kill applies from the next request rather than the next
+refresh. Work that does not arrive through the gateway (queued messages, cron)
+picks the kill up on the SDK's next refresh. SDKs advertise capability
+`kill-v1`; an older SDK receives configurations without killed flags, so it
+also serves its fallback (reason `flag_missing`) after its next refresh. A kill
+is a published version like any other change, with history and rollback.
+
+`rollout set` manages a rule named `everyone-percent` that always stays last;
+`rule create` inserts new rules before it, so targeted rules win. `disable` on a
+boolean flag also sets its default to `false`, because a disabled flag serves
+its default. Use `flags apply --file` for whole-configuration changes. The earlier spellings
+(`flags on`, `off`, `percent`, `rule-add`, `rule-rm`, `kill`, `unkill`, `stale`)
+keep working.
+
+### Owners, expiry and stale flags
+
+Give each flag an owner and a removal date when you create it:
+
+```bash
+gregale flag create new-export --owner payments --expires 2027-01-31 --project exports
+gregale flag set new-export --expires never --project exports
+gregale flag stale list --project exports          # add --all for every flag
+```
+
+`flag stale list` (`GET .../flags/lifecycle`) reports, for each flag, its owner,
+expiry, the newest version that changed it (looking back 200 versions), whether
+it serves one value to everybody, and how many requests decided it in the last
+7 days when your plan keeps request telemetry. A flag needs attention when it
+is `expired`, `expires_soon` (within 7 days), `stale` (serves one value and
+unchanged for 14 days), `never_evaluated` (enabled, unchanged for a week and no
+decisions) or has `no_owner`. Gregale also checks every environment hourly and
+records one `flags.lifecycle_attention` audit event per flag, reason and
+configuration version. Owner and expiry never change evaluation.
+
 ## Publish a customer release
 
 Flags are scoped to a project and named environment. A project app's `default`
@@ -146,6 +210,44 @@ variant consistently:
 }
 ```
 
+## Target request attributes
+
+A rule's `attributes` lists conditions that must all hold, alongside its other
+constraints:
+
+```json
+{"id": "eu-pro", "attributes": [
+  {"attribute": "gregale.country", "op": "in", "values": ["DE", "FR"]},
+  {"attribute": "app.plan", "op": "in", "values": ["pro", "scale"]}
+], "value": true}
+```
+
+- `gregale.country` (ISO 3166-1 alpha-2) and `gregale.ua_family` (`chrome`,
+  `firefox`, `safari`, `bot`, ...) come from Gregale's gateway, which stamps
+  them on each request. Clients cannot set them; an unknown value is absent.
+- `app.<name>` attributes come from your application after it authenticates
+  the user: `flags.withAttributes({plan: 'pro'}, fn)` in Node,
+  `async with flags.for_attributes({"plan": "pro"})` in Python and
+  `flags.WithAttributes(ctx, map[string]string{"plan": "pro"})` in Go. Names
+  are lowercase identifiers, at most 16 per request; values are printable ASCII
+  up to 128 bytes, and an invalid value is dropped.
+- Operators are `in`, `not_in` and, for `app.*` only, `ends_with`. A condition
+  on a missing attribute never matches, including `not_in`.
+- A verified customer is still required: anonymous requests use the default.
+- Attribute values are not stored in request evidence or propagated to other
+  services.
+- Runtime SDKs need capability `attribute-targeting-v1`; older SDKs receive
+  `426 flags_sdk_capability_required` while an enabled flag uses attributes.
+
+From the CLI, `--attr country=DE,FR` means `in`, `--attr 'plan!=free'` means
+`not_in` and `--attr 'email$=@example.com'` means `ends_with`. `country` and
+`ua_family` and `cohort` are the gateway's attributes; any other bare name is `app.<name>`:
+
+```bash
+gregale flag rule create new-export --id eu-pro --attr country=DE,FR --attr plan=pro --project exports
+gregale flags inspect --project exports --key new-export --customer-id 11111111-1111-4111-8111-111111111111 --attr country=DE --attr plan=pro
+```
+
 ## Check behavior in a Node application
 
 Use `@gregale/sdk-node` in a managed Gregale VM. The workload needs the existing
@@ -213,7 +315,7 @@ fallback, with reason `configuration_stale`. Missing flags also use the fallback
 Startup during a configuration outage also permits explicit fallback behavior.
 Disabling a defined flag uses its configured default; use `default: false` for an
 off switch. Changes do not interrupt requests already using an earlier version.
-Do not use this mechanism for an instantaneous security revocation.
+Do not use this mechanism for an instantaneous security revocation; use `gregale flag kill set` for an emergency stop of application behavior.
 
 ### Use flags in a Python ASGI application
 
@@ -454,6 +556,356 @@ it does not advance a rollout or establish that a flag caused an outcome. When
 configuration or targeting rules changed during the window, rows for the same
 value may include decisions from more than one configuration version.
 
+## Run an experiment
+
+An experiment compares the variants of one weighted rule of a variant flag by
+the share of customers who, after first seeing a variant, send a conversion
+event. The flag's own allocation is the experiment: nothing else changes in
+the configuration.
+
+1. Make the behavior a variant flag with a weighted rule. An on/off test is a
+   two-variant flag (`off`, `on`); a plain percentage rollout of a boolean flag
+   cannot be an experiment, because the customers it leaves out cannot be told
+   apart from customers the rule never targeted.
+
+   ```bash
+   gregale flag create checkout --variants legacy,new --project shop
+   gregale flag rollout set checkout 100 --project shop   # everyone, split by variant weight
+   ```
+
+2. Record the conversion in the application, inside the request, for the
+   request's verified customer. Return evidence on the response as usual
+   (`flags.responseEvidence()`); exposures are read from it.
+
+   ```ts
+   await flags.runRequest(request.headers, async () => {
+     const checkout = flags.variant('checkout', 'legacy');
+     // ...
+     if (orderPlaced) flags.track('order_completed', { value: totalCents });
+   });
+   ```
+
+   Python: `flags.track("order_completed", value=total_cents)`. Go:
+   `flags.Track(ctx, "order_completed", totalCents)`. Events are sent in
+   batches every 5 s; `flush()` (Node, Python) or `Flush` (Go) sends the rest,
+   and Python's `close()` and Go's `Close()` flush first. An event without a
+   verified customer, with an invalid name (`^[a-z][a-z0-9_.-]{0,63}$`) or a
+   non-integer value is dropped and counted in `droppedEvents()`.
+
+3. Create and start the experiment, then read results whenever you like:
+
+   ```bash
+   gregale flag experiment create checkout-v2 --flag checkout --rule everyone-percent \
+     --control legacy --metric order_completed --start --project shop
+   gregale flag experiment result get checkout-v2 --project shop
+   gregale flag experiment stop checkout-v2 --project shop
+   ```
+
+Results compare each variant with control: customers exposed, customers
+converted, rate, absolute lift, a 95% confidence interval on the lift and a
+p-value. They use a sequential test (mSPRT), so looking early and often does
+not inflate false positives: a result marked `significant` stays trustworthy
+however many times you checked. A variant reports `insufficient_data` until
+each arm has 100 customers and 10 conversions. If the customers exposed do not
+match the rule's weights (`sample_ratio_mismatch`), something other than the
+flag decides who sees what, and the results are not trustworthy. Customers who
+saw more than one variant (because the rule changed) are left out and counted.
+
+Limits (`pkg/api/limits.go`): conversion events per month by plan, Free 0,
+Hobby 100,000, Pro 1,000,000, Scale 10,000,000; events over the quota are
+dropped and counted, never billed. Daily event rows are kept as long as the
+plan keeps request telemetry (Hobby 3 days, Pro 7, Scale 14); each running
+experiment keeps its own per-customer record for its whole lifetime, so
+results cover experiments longer than that. 20 running and 200 total
+experiments per environment, 100 event names per environment, one running
+experiment per rule. Units are verified customers; per-end-user (subject)
+experiments are not supported yet.
+
+### Measure a value instead of a conversion
+
+`--metric-kind mean` compares the mean event `value` per exposed customer,
+such as revenue per customer from `track('order_completed', { value:
+totalCents })`. A customer who sent nothing counts as 0. The 1% smallest and
+largest customer values are capped to the 1st and 99th percentile before the
+means are compared, so one very large order cannot decide the result. Values
+from the last two UTC days are read live; older days are folded into each
+customer's record, so results outlive the daily event rows.
+
+```bash
+gregale flag experiment create checkout-revenue --flag checkout --rule everyone-percent \
+  --control legacy --metric order_completed --metric-kind mean --start --project shop
+```
+
+### Measure a funnel or retention
+
+With product analytics on ([Analyze product events](#analyze-product-events)),
+an experiment can measure what customers do over hours or weeks
+([ADR-20261119102741](adr/20261119102741-experiment-funnel-retention-metrics-cuped-cohorts.md)):
+
+- `--metric-kind funnel` with 2 to 6 `--step` events and a `--window` (1h to
+  720h): a customer converts when it sends the first step after its first
+  exposure and each later step after the previous one, all within the window.
+- `--metric-kind retention` with `--return-event`, `--period day|week` and
+  `--period-number N` (1 to 12): a customer converts when it sends the return
+  event in period N after its first exposure.
+
+```bash
+gregale flag experiment create onboarding --flag checkout --rule everyone-percent --control legacy \
+  --metric-kind funnel --step signup --step add_to_cart --step order_completed --window 72h --start --project shop
+gregale flag experiment create week-one --flag checkout --rule everyone-percent --control legacy \
+  --metric-kind retention --return-event order_completed --period week --period-number 1 --start --project shop
+```
+
+A step or return event may carry a property filter in the API
+(`{"event": "order_completed", "where": {"plan": "pro"}}`). A customer is
+counted only once its window, or N+1 periods, after its first exposure has
+passed, so results appear that long after the experiment starts and a counted
+customer's outcome never changes.
+
+### Variance reduction (CUPED)
+
+Results are adjusted for each customer's behavior in the 14 days before the
+experiment started: the sum of the metric event's values for `mean`, otherwise
+whether it sent the metric event (the first funnel step, the return event).
+Customers with steady habits then add less noise, so significant results
+usually come sooner. `result get` shows the adjusted comparison, which drives
+status and the recommendation, beside the unadjusted one, with the variance
+reduction. The adjustment needs product analytics; without it, or when no
+customer has pre-period events, results are unadjusted and say why. It is not
+applied to subject, ratio or percentile experiments (`not_supported`). Turn it
+off with `--no-cuped` on create.
+
+### Guardrails
+
+Every experiment watches two guardrails from request telemetry, with no
+instrumentation:
+
+| Guardrail | Breached when the variant, compared with control, has | Default tolerance |
+|---|---|---|
+| `server_error_rate` | a higher share of 5xx responses (platform refusals excluded) | +0.5 percentage points |
+| `p95_latency` | a higher share of requests slower than control's p95 latency | +2 percentage points |
+
+Only requests that evaluated the experiment's rule count, and customers, not
+requests, are the units. A guardrail breaches when a 99% always-valid
+confidence interval on the difference lies wholly above the tolerance, after
+each arm has 100 customers and 1,000 requests. Control's p95 is fixed as the
+latency threshold once control has 1,000 requests; results also report each
+variant's p95.
+
+On a breach Gregale publishes a new flag configuration in which the rule
+serves control to every customer it matches, then stops the experiment with
+`stop_reason: guardrail_breach` and records the breach. Restore the previous
+configuration version to undo it (`gregale flag history`, then
+`gregale flag apply`). Change the tolerances, or turn guardrails off, when you
+create the experiment:
+
+```bash
+gregale flag experiment create checkout-v2 ... --max-error-increase 0.01 --max-slow-increase 0.05
+gregale flag experiment create checkout-v2 ... --no-guardrails
+```
+
+### Recommendations and shipping
+
+`gregale flag experiment result get` ends with a recommendation and the
+command that carries it out: `ship_variant` (a variant is significantly better
+and breaches no guardrail), `keep_control` (every significant variant is
+worse), `keep_running`, `fix_allocation` (sample ratio mismatch), `decide`
+(stopped with no significant difference) or `rolled_back`. Gregale never ships
+a variant on its own. To ship:
+
+```bash
+gregale flag experiment promote checkout-v2 new --project shop
+```
+
+`promote` publishes the rule serving that variant to every customer it matches
+and stops the experiment. MCP agents read the same results and recommendation
+with `gregale_list_flag_experiments` and
+`gregale_get_flag_experiment_results` (release toolset).
+
+### Experiment on end users
+
+By default the units are customers. When each customer has many end users, an
+experiment can count them instead
+([ADR-20261119173702](adr/20261119173702-experiment-subject-units-layers-bandits-metric-rollouts.md)).
+Give the rule `rollout_unit: subject` (the SDK then splits by customer and
+subject), turn product analytics on, and create the experiment with
+`--unit subject`:
+
+```bash
+gregale flag experiment create checkout-users --flag checkout --rule by-user --control legacy \
+  --metric order_completed --unit subject --start --project shop
+```
+
+The SDK reports each end user's first exposure to the rule, at most hourly,
+and only a hash of the subject is kept. Conversions are the subject's
+`track()` events (send them with the subject, see
+[Send properties and a subject](#send-properties-and-a-subject)). Subject
+experiments take `conversion`, `funnel` or `retention` metrics and have no
+guardrails: request telemetry is per customer. SDKs need capability
+`subject-exposures-v1`; older SDKs get `426` while the experiment runs.
+
+### Run experiments side by side
+
+Experiments on different flags can share customers, so one can skew another.
+Put experiments that must not overlap in one layer: each holds a slice of the
+layer's customers while it runs, and the slices never overlap.
+
+```bash
+gregale flag experiment layer create checkout --project shop
+gregale flag experiment create checkout-v2 --flag checkout --rule everyone-percent --control legacy \
+  --metric order_completed --layer checkout --traffic 50 --start --project shop
+gregale flag experiment layer list --project shop
+```
+
+`--traffic` is the percent of the layer the experiment takes; the start fails
+with `409 flag_experiment_layer_full` when the layer has no free slice that
+large. A customer outside the slice skips the rule. An environment has at
+most 10 layers; a layer in use cannot be deleted.
+
+The holdout keeps a share of customers (up to 20%) out of every experiment:
+they see each experiment's control. Its report shows the cumulative effect of
+everything you shipped while it ran:
+
+```bash
+gregale flag experiment holdout set 5 --project shop
+gregale flag experiment holdout report --event order_completed --project shop
+```
+
+The holdout cannot change while an experiment runs. Layers and the holdout
+need SDK capability `experiment-layers-v1`.
+
+### Ratio and percentile metrics
+
+- `--metric-kind ratio --denominator-event EVENT` compares the sum of the
+  metric event's values over the sum of the denominator event's values, such
+  as revenue per order. It uses the same always-valid test as other metrics.
+- `--metric-kind percentile --percentile 95` compares the 95th percentile of
+  each customer's summed metric values, with a bootstrap interval. It has no
+  sequential guarantee: results say `fixed_horizon`, so read them once, at
+  the end you planned.
+
+### Split results by a cohort
+
+```bash
+gregale flag experiment result get checkout-v2 --segment pro-buyers --project shop
+```
+
+This adds the results of the cohort's members and of everyone else, with
+p-values adjusted for the number of comparisons (Benjamini–Hochberg). Use
+segments to explore; the recommendation ignores them. Binary metrics of
+customer experiments only.
+
+### Let a bandit allocate traffic
+
+With `--allocation bandit`, Gregale moves traffic toward the variant that
+converts best while the experiment runs (Thompson sampling), keeping at least
+10% on each variant. Weights move at most hourly, once every variant has 100
+customers. Results show each variant's probability of being best and its
+expected loss instead of p-values, and recommend shipping a variant once it
+is best with 95% probability at an expected loss under 0.1 points. The rule
+must be the flag's only weighted rule, and the metric a conversion, funnel or
+retention.
+
+## Analyze product events
+
+The same `track()` events also feed product analytics: event series, funnels
+and retention, each of which can be split by the variant a customer saw
+([ADR-20261117084505](adr/20261117084505-product-analytics-events-funnels-retention.md)).
+It is behind the `product_analytics` platform flag and needs a plan with
+analytics retention:
+
+| Plan | Raw event retention |
+|---|---|
+| Free | off |
+| Hobby | 30 days |
+| Pro | 90 days |
+| Scale | 365 days |
+
+Analytics events share the monthly event quota with experiments; an event is
+counted once.
+
+### Send properties and a subject
+
+An event may carry up to 10 string properties (keys
+`^[a-z][a-z0-9_]{0,63}$`, values up to 256 bytes; at most 50 distinct keys per
+environment) and an end-user subject. The subject defaults to the one the
+request's flags were evaluated for; Gregale stores only a hash of it. The SDK
+also attaches every flag decision the request made before the call, so any
+event can be split by variant without extra code.
+
+```ts
+flags.track('order_completed', { value: 4200, properties: { plan: 'pro' } });
+```
+
+```python
+flags.track("order_completed", 4200, properties={"plan": "pro"})
+```
+
+```go
+flags.TrackWith(ctx, "order_completed", preview.TrackOptions{Value: 4200, Properties: map[string]string{"plan": "pro"}})
+```
+
+SDKs that send these fields advertise the `track-v2` capability; older SDKs
+keep working without them.
+
+### Query
+
+```bash
+gregale insight event list --project shop --by flag:checkout --from 14d order_completed
+gregale insight funnel get --project shop --window 72h --by flag:checkout signup add_to_cart order_completed
+gregale insight retention get --project shop --period week --periods 4 signup order_completed
+gregale insight request list --project shop --flag checkout
+```
+
+- `--unit subject` counts end users instead of customers and ignores events
+  without a subject.
+- `--by flag:KEY` uses the flag value carried by the unit's earliest event in
+  the range with that flag (for a funnel, its first-step event); `(none)`
+  means the unit never sent an event with that flag. `--by property:KEY`
+  splits by a property. At most 20 values are listed; the rest are `(other)`.
+- Funnels and retention read at most 200,000 units and say `truncated` when
+  they stop; narrow the range or filter.
+- Ranges stop at the plan's retention and 90 days. `insight request list`
+  reads request telemetry and follows its shorter retention.
+
+The API routes are under
+`/v1/projects/{slug}/environments/{environment}/insights` (`GET events`,
+`POST funnel`, `POST retention`, `GET requests`; all read-only). MCP agents use
+`gregale_get_insight_events`, `gregale_get_insight_funnel`,
+`gregale_get_insight_retention` and `gregale_get_insight_requests`
+(diagnose toolset).
+
+### Target a cohort
+
+A cohort is a saved query whose customers a flag rule can target:
+
+| Kind | Members |
+|---|---|
+| `did` | sent the event (optional property filter) at least `--min-count` times in the last `--days` days |
+| `did_not` | were active in the last 30 days but did not send the event in the last `--days` days |
+| `funnel` | completed the `--step` events within `--window`, starting in the last `--days` days |
+
+```bash
+gregale insight cohort create power-buyers --kind did --event order_completed --min-count 3 --days 30 --project shop
+gregale insight cohort list --project shop
+gregale flag rule create power-tools --id power --attr cohort=power-buyers --project shop
+```
+
+Gregale recomputes a cohort when it is created, hourly, and on
+`gregale insight cohort refresh`. A cohort keeps at most Hobby 1,000 / Pro
+10,000 / Scale 100,000 customers (lowest customer IDs first; `truncated`
+says when more matched), and an environment has at most 20 cohorts. Members
+are verified customers; subjects cannot be cohort members.
+
+The gateway stamps each request's cohorts as the `gregale.cohort` attribute,
+so rules use `in` and `not_in` on cohort keys like any other gateway
+attribute; `ends_with` is refused. Membership seen by a request can lag a
+refresh by up to a minute, and if the lookup fails the attribute is missing,
+so neither `in` nor `not_in` matches. Runtime SDKs need capability
+`cohort-targeting-v1`. The API routes are under
+`/v1/projects/{slug}/environments/{environment}/cohorts`; MCP agents list
+cohorts with `gregale_list_insight_cohorts` (diagnose toolset).
+
 ## Promote a guarded rollout stage
 
 Attach a progression plan to a boolean rule that selects `true`. The rule's
@@ -508,6 +960,19 @@ pass. Insufficient or unhealthy evidence holds the stage; the reconciler logs
 the reason and retries on a later pass. Automatic promotion respects debugger
 telemetry entitlement and retention, and uses a version-checked write so a
 concurrent operator edit wins. Rules without explicit opt-in remain manual.
+
+A progression plan can also watch a conversion event. Add `metric` to it:
+
+```json
+"metric": { "event": "order_completed", "max_decrease": 0.01, "min_units": 100 }
+```
+
+After each stage's window, customers the stage serves are compared with every
+other customer that evaluated the flag, on the share that sent the event
+after their first evaluation. When their rate is clearly more than
+`max_decrease` lower, Gregale sets the rule's rollout to 0, removes the plan
+and audits `flags.rollout_auto_rolled_back`. The stage advances only when
+both groups have `min_units` customers and the rate is not clearly worse.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and

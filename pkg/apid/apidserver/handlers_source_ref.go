@@ -169,7 +169,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(maxBytes))
 	defer cancel()
 	r = r.WithContext(ctx)
-	stream, p := s.streamSourceTarball(r.Context(), acct, installID, req.Repo, req.Ref, maxBytes)
+	stream, p := s.streamSourceTarball(r.Context(), acct.ID, installID, req.Repo, req.Ref, maxBytes)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -289,6 +289,9 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		workflowDefs = manifest.Workflows
 	}
 	rolloutReq.Workflows = workflowDefs
+	if s.answerSourceManifestPreview(w, r, acct, app, manifest) {
+		return
+	}
 	rollout, sched, rolloutProblem := s.prepareSourceDeploymentRollout(r, acct, app, manifest, rolloutReq)
 	if rolloutProblem != nil {
 		api.WriteProblem(w, rolloutProblem)
@@ -397,6 +400,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		Workflows:                append(json.RawMessage(nil), rollout.Workflows...),
 		Sidecars:                 append(json.RawMessage(nil), rollout.Sidecars...),
 		OverrideHealthcheck:      append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideReadinessProbe:   append(json.RawMessage(nil), rollout.OverrideReadinessProbe...),
 		OverrideMainDependsOn:    append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
 		ServiceRollout:           state.IsServiceRollout(rollout),
 	})
@@ -586,8 +590,10 @@ func (s *server) requireOwnedGitHubInstallation(ctx context.Context, accountID s
 // The githubd-side cap is passed through as
 // maxArchiveBytes=SourceTarballMaxMB*MiB so the wire shape
 // fails closed mid-stream rather than OOM'ing the box.
-func (s *server) streamSourceTarball(ctx context.Context, acct state.Account, installID int64, repo, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, *api.Problem) {
-	res, err := s.githubd.StreamSourceRef(ctx, acct.ID, installID, repo, ref, maxArchiveBytes)
+// streamSourceTarball streams repo@ref through installID, which installOwner
+// (the namespace that owns the installation) must hold.
+func (s *server) streamSourceTarball(ctx context.Context, installOwner string, installID int64, repo, ref string, maxArchiveBytes int64) (*StreamSourceRefResult, *api.Problem) {
+	res, err := s.githubd.StreamSourceRef(ctx, installOwner, installID, repo, ref, maxArchiveBytes)
 	if err != nil {
 		if p := api.AsProblem(err); p != nil {
 			return nil, p
@@ -675,7 +681,7 @@ func (s *server) auditSourceRefDeploy(r *http.Request, acct state.Account, app s
 	// "omit when zero" so pre-feature rows stay byte-identical
 	// at the JSON layer.
 	mergeAnnotationAudit(data, ann)
-	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.audit.EmitAs(ctx, resolvedActor, "deploy.source_ref", &acct.ID, mergeAgentAudit(mergeActorAudit(data, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin), r))
 	s.recordDeploymentActivity(ctx, r, acct, app, d,
 		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes, "source": "source_ref"})
 }

@@ -27,6 +27,8 @@ func TestRouteVerificationContract(t *testing.T) {
 		// From the proven candidate that is connectivity, not a failure.
 		{"grpc server", 415, "candidate", "candidate", SmokeVerified},
 		{"unproven 415", 415, "candidate", "", SmokeSkipped},
+		// A Go workflow function's ServeWorkflows answers a GET with 405.
+		{"workflow entry", 405, "candidate", "candidate", SmokeVerified},
 		{"old revision", 200, "old", "old", SmokeSkipped},
 		{"old revision missing root", 404, "old", "old", SmokeSkipped},
 		{"gateway not found", 404, "", "", SmokeSkipped},

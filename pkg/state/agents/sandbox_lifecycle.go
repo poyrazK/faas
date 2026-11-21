@@ -39,7 +39,17 @@ type SandboxClaim struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
-	LeaseToken   string
+	// EgressAllow and EgressDeny are the session's web-mode domain policy
+	// (ADR-20261117091026 §3); empty is none.
+	EgressAllow []string
+	EgressDeny  []string
+	// Browser boots a preset session with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
+	// Task is the session's sandbox task, if it is one
+	// (ADR-20261116182615 §3).
+	Task       *SandboxTask
+	LeaseToken string
 	SandboxLease
 }
 
@@ -88,12 +98,23 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	if err != nil {
 		return SandboxClaim{}, false, fmt.Errorf("read claimed session: %w", err)
 	}
+	var task *SandboxTask
+	if row.TaskKind != "" {
+		task = &SandboxTask{Kind: row.TaskKind, URL: row.TaskUrl, MaxChars: int(row.TaskMaxChars)}
+	}
 	return SandboxClaim{ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
-		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, LeaseToken: token,
+		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
 		SandboxLease: SandboxLease{CloseRequested: row.CloseRequested, IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second,
 			ExpiresAt: row.ExpiresAt.Time.UTC()}}, true, nil
+}
+
+// MarkSandboxPlaced records the node schedd placed the session on, before
+// it boots (ADR-20261117190000).
+func (s *Store) MarkSandboxPlaced(ctx context.Context, id, token, nodeID string) error {
+	n, err := s.q.MarkSandboxSessionPlaced(ctx, s.pool, sqlc.MarkSandboxSessionPlacedParams{NodeID: nodeID, SessionID: id, LeaseToken: token})
+	return fenced(n, err, "mark session placed")
 }
 
 // MarkSandboxReady records where the session's VM runs and moves it to

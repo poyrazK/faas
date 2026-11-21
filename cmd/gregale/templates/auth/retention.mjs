@@ -25,6 +25,14 @@ const anonymousStatement = `DELETE FROM auth.users WHERE id IN (
 const orgAuditStatement = `DELETE FROM gregale_auth.org_audit_log WHERE id IN (
     SELECT id FROM gregale_auth.org_audit_log WHERE occurred_at < now() - make_interval(days => $1) LIMIT $2)`
 
+// Spent and expired attempt budgets (sql/0024) a day after their window.
+const attemptStatement = `DELETE FROM gregale_auth.attempt_budgets WHERE key IN (
+    SELECT key FROM gregale_auth.attempt_budgets WHERE window_ends_at < now() - make_interval(days => $1) LIMIT $2)`
+
+export function createAttemptPruner(options) {
+  return createPruner({ ...options, days: 1, statement: attemptStatement, event: 'attempt_budgets' })
+}
+
 export function createOrgAuditPruner(options) {
   return createPruner({ ...options, statement: orgAuditStatement, event: 'org_audit_log' })
 }

@@ -3,10 +3,12 @@ import { OpenAPI } from './generated/core/OpenAPI.js';
 import { RunsService } from './generated/services/RunsService.js';
 import type { ExecutionFileResponse } from './generated/models/ExecutionFileResponse.js';
 
+type FileRequests = Pick<typeof RunsService, 'prepareExecutionFile' | 'uploadExecutionFile'>;
+
 const maxFileBytes = 64 * 1024 * 1024;
 export interface PreparedExecutionFile { readonly file: Blob; readonly metadata: ExecutionFileResponse }
 /** Hash incrementally and prepare a stable locator. This does not reserve storage. */
-export async function prepareExecutionFile(file: Blob, signal?: AbortSignal): Promise<PreparedExecutionFile> {
+export async function prepareExecutionFile(file: Blob, signal?: AbortSignal, requests: FileRequests = RunsService): Promise<PreparedExecutionFile> {
   if (!Number.isSafeInteger(file.size) || file.size < 0 || file.size > maxFileBytes) throw new Error('Run file exceeds the 64 MiB hard limit');
   const hash = createHash('sha256');
   const reader = file.stream().getReader();
@@ -18,7 +20,7 @@ export async function prepareExecutionFile(file: Blob, signal?: AbortSignal): Pr
       hash.update(value);
     }
   } finally { await reader.cancel(); reader.releaseLock(); }
-  const pending = RunsService.prepareExecutionFile({ requestBody: { size_bytes: file.size, sha256: `sha256:${hash.digest('hex')}` } });
+  const pending = requests.prepareExecutionFile({ requestBody: { size_bytes: file.size, sha256: `sha256:${hash.digest('hex')}` } });
   const abort = () => pending.cancel();
   signal?.throwIfAborted();
   signal?.addEventListener('abort', abort, { once: true });
@@ -26,9 +28,9 @@ export async function prepareExecutionFile(file: Blob, signal?: AbortSignal): Pr
   finally { signal?.removeEventListener('abort', abort); }
 }
 /** Publish immutable bytes with backpressure supplied by fetch's Blob transport. */
-export async function uploadPreparedExecutionFile(prepared: PreparedExecutionFile, signal?: AbortSignal): Promise<ExecutionFileResponse> {
+export async function uploadPreparedExecutionFile(prepared: PreparedExecutionFile, signal?: AbortSignal, requests: FileRequests = RunsService): Promise<ExecutionFileResponse> {
   signal?.throwIfAborted();
-  const pending = RunsService.uploadExecutionFile({ id: prepared.metadata.id, xContentSha256: prepared.metadata.sha256 ?? '', requestBody: prepared.file });
+  const pending = requests.uploadExecutionFile({ id: prepared.metadata.id, xContentSha256: prepared.metadata.sha256 ?? '', requestBody: prepared.file });
   const abort = () => pending.cancel();
   signal?.addEventListener('abort', abort, { once: true });
   try { return await pending; } finally { signal?.removeEventListener('abort', abort); }

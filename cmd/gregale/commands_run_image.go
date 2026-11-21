@@ -116,7 +116,11 @@ func protectImageRunCommandArgs(args []string) []string {
 		if args[i] == "--" {
 			return args
 		}
-		if args[i] == "--profile" {
+		if args[i] == "--http-retries" {
+			i += 2
+			continue
+		}
+		if args[i] == "--profile" || args[i] == "--http-timeout" {
 			i++
 		}
 		i++
@@ -589,6 +593,10 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	switch {
+	case live.AttemptChanges > 0:
+		return "the task attempt changed while reconnecting; some earlier output may be unavailable"
+	case live.UnverifiedResume:
+		return "the resumed stream did not identify its attempt; output may be incomplete"
 	case live.Gaps > 0:
 		return "some lines were dropped before they could be sent"
 	case live.Reason == api.JobTaskLogsEndStoredOutput:
@@ -596,7 +604,7 @@ func liveIncompleteReason(live jobTaskLogFollow, err error) string {
 	case live.Reason != "":
 		return live.Reason
 	case err != nil:
-		return err.Error()
+		return redactErrorText(err.Error())
 	default:
 		return "the stream closed early"
 	}

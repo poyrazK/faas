@@ -155,7 +155,9 @@ func (r *MonitorRunner) check(ctx context.Context, source state.MCPReadinessMoni
 	defer cancelReport()
 	return source.CompleteMCPReadinessMonitor(report, job, evidence, reason)
 }
-func probeEvidence(ctx context.Context, httpClient *http.Client, endpoint, token string, role api.MCPReadinessRole) api.MCPReadinessEvidence {
+
+// ProbeEvidence performs read-only protocol and catalog qualification.
+func ProbeEvidence(ctx context.Context, httpClient *http.Client, endpoint, token string, role api.MCPReadinessRole) api.MCPReadinessEvidence {
 	e := api.MCPReadinessEvidence{Role: role.Name, ProtocolVersion: role.ProtocolVersion, CatalogFormat: role.CatalogFormat, Checks: []api.MCPReadinessCheck{}}
 	client, err := mcphosting.NewClient(endpoint, token, role.ProtocolVersion)
 	if err != nil || httpClient == nil {
@@ -172,6 +174,10 @@ func probeEvidence(ctx context.Context, httpClient *http.Client, endpoint, token
 		e.Checks = append(e.Checks, api.MCPReadinessCheck{Name: c.Name, Status: c.Status, Detail: c.Detail})
 	}
 	return e
+}
+
+func probeEvidence(ctx context.Context, client *http.Client, endpoint, token string, role api.MCPReadinessRole) api.MCPReadinessEvidence {
+	return ProbeEvidence(ctx, client, endpoint, token, role)
 }
 func (r *MonitorRunner) token(ctx context.Context, job state.MCPReadinessMonitorJob, d state.Deployment) (string, error) {
 	ref := job.Role.Monitor.SecretRef

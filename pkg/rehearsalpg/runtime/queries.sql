@@ -17,9 +17,109 @@ SELECT pg_catalog.format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATED
 -- name: FormatCreateParticipant :one
 SELECT pg_catalog.format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT CONNECTION LIMIT 16 IN ROLE %I',sqlc.arg(role_name)::text,sqlc.arg(password)::text,sqlc.arg(owner_role)::text)::text;
 -- name: ParticipantRoles :many
-SELECT r.rolname::text FROM pg_catalog.pg_roles r JOIN pg_catalog.pg_auth_members m ON m.member=r.oid
- JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
-WHERE owner.rolname=sqlc.arg(owner_role)::text AND r.rolname::text ~ '^grpw_[a-f0-9]{40}$' ORDER BY r.rolname LIMIT 16;
+SELECT r.rolname::text FROM pg_catalog.pg_roles r
+WHERE (r.rolname::text ~ '^grpw_[a-f0-9]{40}$' AND EXISTS (
+ SELECT 1 FROM pg_catalog.pg_auth_members m JOIN pg_catalog.pg_roles owner ON owner.oid=m.roleid
+ WHERE m.member=r.oid AND owner.rolname=sqlc.arg(owner_role)::text))
+ OR r.rolname::text ~ ('^grpt_' || substr(sqlc.arg(owner_role)::text,6) || '_[a-f0-9]{24}$')
+ORDER BY r.rolname LIMIT 16;
+
+-- name: ConfigureTaskGrantTransaction :exec
+SELECT pg_catalog.set_config('search_path','pg_catalog',true);
+
+-- name: TaskGrantTablesReady :one
+SELECT count(*)=cardinality(sqlc.arg(table_names)::text[])
+FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+JOIN pg_catalog.pg_roles owner ON owner.oid=c.relowner
+WHERE n.nspname='public' AND c.relkind='r' AND c.relpersistence='p'
+ AND owner.rolname=sqlc.arg(owner_role)::text AND c.relname::text=ANY(sqlc.arg(table_names)::text[]);
+
+-- name: TaskParticipantPrivileges :one
+-- Inspect effective ACLs after the fixture is frozen. Never assume the
+-- provisioned grants survived a candidate's migrations.
+WITH relations AS (
+  SELECT c.oid,c.relname,c.relkind,c.relpersistence,c.relowner,n.nspname
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+  WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+), public_schema AS (
+  SELECT oid,nspowner FROM pg_catalog.pg_namespace WHERE nspname='public'
+)
+SELECT EXISTS (
+  SELECT 1 FROM pg_catalog.pg_roles r, public_schema s, pg_catalog.pg_roles owner
+  WHERE r.rolname=sqlc.arg(role_name)::text AND owner.rolname=sqlc.arg(owner_role)::text
+    AND owner.rolname=current_user AND s.nspowner=owner.oid AND r.oid<>owner.oid
+    AND r.rolcanlogin AND NOT (r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolreplication OR r.rolbypassrls)
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_auth_members m WHERE m.member=r.oid)
+    AND pg_catalog.has_database_privilege(r.oid,current_database(),'CONNECT')
+    AND NOT pg_catalog.has_database_privilege(r.oid,current_database(),'CREATE,TEMPORARY')
+    AND pg_catalog.has_schema_privilege(r.oid,s.oid,'USAGE')
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_namespace n
+      WHERE n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_schema_privilege(r.oid,n.oid,'CREATE')
+    )
+    AND cardinality(sqlc.arg(read_tables)::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relkind='r' AND c.relpersistence='p' AND c.relowner=owner.oid
+        AND c.relname::text=ANY(sqlc.arg(read_tables)::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT')
+    )
+    AND cardinality(sqlc.arg(write_tables)::text[])=(
+      SELECT count(*) FROM relations c
+      WHERE c.nspname='public' AND c.relname::text=ANY(sqlc.arg(write_tables)::text[])
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'UPDATE')
+        AND pg_catalog.has_table_privilege(r.oid,c.oid,'DELETE')
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM relations c
+      WHERE CASE WHEN c.relkind='S' THEN
+        pg_catalog.has_sequence_privilege(r.oid,c.oid,'SELECT,USAGE,UPDATE')
+      WHEN c.relkind IN ('r','p','v','m','f') THEN
+        c.relowner=r.oid
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'TRUNCATE,REFERENCES,TRIGGER')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'REFERENCES')
+        OR pg_catalog.has_table_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION,DELETE WITH GRANT OPTION')
+        OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT WITH GRANT OPTION,INSERT WITH GRANT OPTION,UPDATE WITH GRANT OPTION')
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL(sqlc.arg(read_tables)::text[]))
+          AND pg_catalog.has_any_column_privilege(r.oid,c.oid,'SELECT'))
+        OR ((c.nspname<>'public' OR c.relname::text<>ALL(sqlc.arg(write_tables)::text[]))
+          AND (pg_catalog.has_table_privilege(r.oid,c.oid,'INSERT,UPDATE,DELETE')
+            OR pg_catalog.has_any_column_privilege(r.oid,c.oid,'INSERT,UPDATE')))
+      ELSE false END
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
+      WHERE p.prosecdef AND n.nspname !~ '^pg_' AND n.nspname<>'information_schema'
+        AND pg_catalog.has_function_privilege(r.oid,p.oid,'EXECUTE')
+    )
+)::boolean AS valid;
+
+-- name: FormatConfigureTaskSchema :one
+SELECT pg_catalog.format(
+ 'ALTER SCHEMA public OWNER TO %1$I;
+  REVOKE ALL ON SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
+  REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
+  REVOKE EXECUTE ON ALL ROUTINES IN SCHEMA public FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+  ALTER DEFAULT PRIVILEGES FOR ROLE %1$I IN SCHEMA public REVOKE EXECUTE ON ROUTINES FROM PUBLIC',
+ sqlc.arg(owner_role)::text)::text;
+
+-- name: FormatGrantTaskConnect :one
+SELECT pg_catalog.format('GRANT CONNECT ON DATABASE %I TO %I; GRANT USAGE ON SCHEMA public TO %I',
+ sqlc.arg(database_name)::text,sqlc.arg(role_name)::text,sqlc.arg(role_name)::text)::text;
+
+-- name: FormatGrantTaskTables :one
+SELECT (pg_catalog.format('GRANT SELECT ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(read_tables)::text[]) AS name),
+ sqlc.arg(role_name)::text) ||
+ CASE WHEN cardinality(sqlc.arg(write_tables)::text[])>0 THEN
+ pg_catalog.format('; GRANT INSERT,UPDATE,DELETE ON TABLE %s TO %I',
+ (SELECT string_agg(pg_catalog.format('%I.%I','public',name),', ' ORDER BY name) FROM unnest(sqlc.arg(write_tables)::text[]) AS name),
+ sqlc.arg(role_name)::text) ELSE '' END)::text;
 -- name: FormatCreateDatabase :one
 SELECT pg_catalog.format('CREATE DATABASE %I TEMPLATE template0 ENCODING ''UTF8''',sqlc.arg(database_name)::text)::text;
 -- name: FormatConfigureDatabase :one

@@ -37,6 +37,10 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, problem)
 		return
 	}
+	if problem := s.protectedEnvironmentChangeProblem(r, acct, project.ID, req.FromEnvironment, "clone a protected project environment"); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if !s.fullProjectEnvironmentCloneAdmitted() {
 		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
 		return

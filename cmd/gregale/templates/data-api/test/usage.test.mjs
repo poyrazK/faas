@@ -281,3 +281,25 @@ test('access settings go out after start, after a restore and hourly', async () 
   assert.deepEqual(h.calls[3].access, access, 'after a restore')
   h.usage.stop()
 })
+
+test('DAPI025 initial identity failure retries access publication without traffic', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let attempts = 0, published = 0
+  const usage = createUsage(usageConfig(env), { access: { version: 1, schemas: ['api'] }, fetchImpl: async url => {
+    if (url.startsWith(identityEndpoint)) {
+      if (++attempts === 1) throw new Error('identity not started')
+      return Response.json({ token_type: 'Bearer', access_token: token('instance-a') })
+    }
+    published++
+    return Response.json({})
+  } })
+  t.after(() => usage.stop())
+  t.mock.timers.tick(0)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(attempts, 1)
+  assert.equal(published, 0)
+  t.mock.timers.tick(limits.usageReportIntervalMs)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(attempts, 2)
+  assert.equal(published, 1)
+})

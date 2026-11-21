@@ -38,7 +38,10 @@ func TestNodeJoinDerivesCapacityFromTheCLI(t *testing.T) {
 		"'compute-nodes', 'sizing'",
 		"(['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])",
 		"faas_node_sizing.tenant_cpus | default(faas_node_sizing.host_cpus)",
-		"- \"{{ faas_join_tenant_vcpus }}\"",
+		// The pre-register resolves its values before the write, which may
+		// run on the control plane (ADR-20261110210000 slice 1c-3).
+		"vpcpus: \"{{ faas_join_tenant_vcpus }}\"",
+		"- \"{{ faas_join_preregister.vpcpus }}\"",
 		"faas_node_sizing_raw.stdout | from_json",
 		"faas_node_sizing.admission_ceiling_mb",
 		"faas_node_sizing.tenant_slice_max_mb",

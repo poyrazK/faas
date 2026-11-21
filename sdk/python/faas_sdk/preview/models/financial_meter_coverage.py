@@ -6,6 +6,8 @@ from typing import Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="FinancialMeterCoverage")
 
 
@@ -20,6 +22,10 @@ class FinancialMeterCoverage:
     unpriced_quantity: int
     non_billable_quantity: int
     reasons: list[str]
+    projectable: bool | Unset = UNSET
+    """Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes
+    with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
+   """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,6 +43,8 @@ class FinancialMeterCoverage:
 
         reasons = self.reasons
 
+        projectable = self.projectable
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -50,6 +58,8 @@ class FinancialMeterCoverage:
                 "reasons": reasons,
             }
         )
+        if projectable is not UNSET:
+            field_dict["projectable"] = projectable
 
         return field_dict
 
@@ -70,6 +80,8 @@ class FinancialMeterCoverage:
 
         reasons = cast(list[str], d.pop("reasons"))
 
+        projectable = d.pop("projectable", UNSET)
+
         financial_meter_coverage = cls(
             complete=complete,
             fresh=fresh,
@@ -78,6 +90,7 @@ class FinancialMeterCoverage:
             unpriced_quantity=unpriced_quantity,
             non_billable_quantity=non_billable_quantity,
             reasons=reasons,
+            projectable=projectable,
         )
 
         financial_meter_coverage.additional_properties = d

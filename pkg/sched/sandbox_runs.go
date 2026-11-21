@@ -47,6 +47,84 @@ type SandboxAdmission struct {
 	StartCmd     string
 	ReadyCmd     string
 	ReadyTimeout time.Duration
+	// EgressAllow and EgressDeny are a web-mode session's domain policy
+	// (ADR-20261117091026 §3); vmmd validates and enforces them.
+	EgressAllow []string
+	EgressDeny  []string
+	// WebDomainLog asks vmmd for the session's domain log
+	// (ADR-20261117091026 §4), relayed to the WebDomains hook.
+	WebDomainLog bool
+	// Browser boots a preset session with the sandbox browser running
+	// (ADR-20261116182615 §1).
+	Browser bool
+	// Task makes the session a sandbox task (ADR-20261116182615 §3).
+	Task *SandboxTask
+}
+
+// SandboxTask is a sandbox task as vmmd runs it.
+type SandboxTask struct {
+	Kind           string
+	URL            string
+	MaxChars       int
+	Timeout        time.Duration
+	MaxOutputBytes int64
+}
+
+// SandboxWebDomain is one entry of a web-mode session's domain log: a
+// granted domain, or a refused one with why (ADR-20261117091026 §4).
+type SandboxWebDomain struct {
+	Domain  string
+	Refused string
+	At      time.Time
+}
+
+// SandboxBooted is vmmd's report of a booted session VM. Actions is set
+// when the session takes browser actions (ADR-20261117065818 §2), and
+// EgressPolicy when vmmd enforces the session's domain policy
+// (ADR-20261117091026 §3).
+type SandboxBooted struct {
+	Method       string
+	BootMs       int64
+	Actions      bool
+	EgressPolicy bool
+}
+
+// SandboxAction is one browser action agentd relays to the session's VM
+// (ADR-20261117065818 §2); vmmd validates it.
+type SandboxAction struct {
+	ID             string
+	Kind           string
+	URL            string
+	Ref            int
+	Text           string
+	Submit         bool
+	Key            string
+	Direction      string
+	MaxChars       int
+	Timeout        time.Duration
+	MaxOutputBytes int64
+	// Screenshot has vmmd also store the viewport (ADR-20261117065818 §5).
+	Screenshot bool
+}
+
+// SandboxActionDone is a browser action's end as vmmd reports it.
+type SandboxActionDone struct {
+	ActionID        string
+	ExitCode        int
+	Output          []byte
+	TimedOut        bool
+	Truncated       bool
+	Error           string
+	ScreenshotBytes int64
+}
+
+// SandboxTaskDone is a sandbox task's end as vmmd reports it.
+type SandboxTaskDone struct {
+	ExitCode  int
+	Output    []byte
+	TimedOut  bool
+	Truncated bool
+	Error     string
 }
 
 // network is the mode the session boots with.
@@ -75,17 +153,28 @@ type SandboxSpec struct {
 	StartCmd        string
 	ReadyCmd        string
 	ReadyTimeout    time.Duration
+	// Browser has vmmd start the sandbox browser as the session's commands,
+	// and makes the warm snapshot the browser shape's (ADR-20261116182615).
+	Browser bool
+	// Task is the session's sandbox task, if it is one.
+	Task *SandboxTask
+	// EgressAllow and EgressDeny are the session's domain policy.
+	EgressAllow  []string
+	EgressDeny   []string
+	WebDomainLog bool
 	// Snapshot restores the session from a warm snapshot of the same drives,
 	// machine and network mode (ADR-20261027090013 §12).
 	Snapshot *AgentRunSnapshot
 }
 
 // SandboxControl is a request agentd sends a live session's VM: a freeze,
-// a close, or an answer to a workspace persist (ADR-20261027090013 step 7).
+// a close, an answer to a workspace persist (ADR-20261027090013 step 7), or
+// a browser action (ADR-20261117065818 §2).
 type SandboxControl struct {
 	Op              SandboxOp
 	PersistGrant    *SandboxPersistGrant
 	PersistRecorded *SandboxPersistRecorded
+	Action          *SandboxAction
 }
 
 // SandboxOp is what a SandboxControl asks.
@@ -96,6 +185,7 @@ const (
 	SandboxOpClose
 	SandboxOpPersistGrant
 	SandboxOpPersistRecorded
+	SandboxOpAction
 )
 
 // SandboxFreeze and SandboxClose are the controls without a payload.
@@ -139,7 +229,7 @@ type SandboxActivity struct {
 // SandboxHooks observe a live session. Booted runs once; the others as vmmd
 // reports them. A hook's error ends the session.
 type SandboxHooks struct {
-	Booted        func(ctx context.Context, method string, bootMs int64) error
+	Booted        func(ctx context.Context, b SandboxBooted) error
 	Activity      func(ctx context.Context, a SandboxActivity) error
 	Frozen        func(ctx context.Context) error
 	FreezeRefused func(ctx context.Context, reason string) error
@@ -150,6 +240,12 @@ type SandboxHooks struct {
 	// Usage relays vmmd's cumulative usage of the session VM
 	// (ADR-20261027090013 step 11).
 	Usage func(ctx context.Context, u AgentRunUsage) error
+	// TaskDone relays a sandbox task's end (ADR-20261116182615 §3).
+	TaskDone func(ctx context.Context, d SandboxTaskDone) error
+	// ActionDone relays a browser action's end (ADR-20261117065818 §2).
+	ActionDone func(ctx context.Context, d SandboxActionDone) error
+	// WebDomains relays vmmd's domain log (ADR-20261117091026 §4).
+	WebDomains func(ctx context.Context, d []SandboxWebDomain) error
 }
 
 type sandboxVMMClient interface {
@@ -201,15 +297,17 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	spec := SandboxSpec{Instance: placement.Instance, SandboxID: a.SandboxID, AccountID: a.AccountID, Plan: a.Plan,
 		BaseKey: r.cfg.BaseKey, LayerKey: r.cfg.SandboxLayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB,
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
-		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout}
+		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout,
+		Browser: a.Browser, Task: a.Task,
+		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny, WebDomainLog: a.WebDomainLog}
 	shape := r.sandboxShape(placement.NodeID, spec)
 	spec.Snapshot = r.sandboxSnapshotFor(shape, spec)
 	var method string
 	booted := hooks.Booted
-	hooks.Booted = func(ctx context.Context, m string, bootMs int64) error {
-		method = m
+	hooks.Booted = func(ctx context.Context, b SandboxBooted) error {
+		method = b.Method
 		if booted != nil {
-			return booted(ctx, m, bootMs)
+			return booted(ctx, b)
 		}
 		return nil
 	}
@@ -238,8 +336,10 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox RAM %d MB is outside the %s plan", a.RAMMB, a.Plan)}
 	case a.VCPU < 1 || a.VCPU > api.AgentRunVCPUMax[idx] || a.CPUMillicores < 1:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
-	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries:
+	case a.network() != api.SandboxNetworkNone && a.network() != api.SandboxNetworkRegistries && a.network() != api.SandboxNetworkWeb:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("sandbox network mode %q is not supported", a.Network)}
+	case a.Browser && (a.ImageKey != "" || a.StartCmd != "" || a.ReadyCmd != ""):
+		return &AgentRunInvalidError{Reason: "the sandbox browser goes with a preset session, without commands of its own"}
 	}
 	return nil
 }
@@ -275,7 +375,9 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, VcpuCount: int32(spec.VCPU), MemSizeMib: int32(spec.MemSizeMiB),
 		CpuMillicores: int32(spec.CPUMillicores), QuietPauseAfterMs: spec.QuietPauseAfter.Milliseconds(), NetworkMode: spec.Network,
 		WorkspaceKey: spec.WorkspaceKey, ImageKey: spec.ImageKey, StartCmd: spec.StartCmd, ReadyCmd: spec.ReadyCmd,
-		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot),
+		ReadyTimeoutMs: spec.ReadyTimeout.Milliseconds(), Snapshot: snapshotToProto(spec.Snapshot), Browser: spec.Browser,
+		Task:        sandboxTaskToProto(spec.Task),
+		EgressAllow: spec.EgressAllow, EgressDeny: spec.EgressDeny, WebDomainLog: spec.WebDomainLog,
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -335,7 +437,8 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 		switch {
 		case event.GetBooted() != nil:
 			if hooks.Booted != nil {
-				err = hooks.Booted(ctx, event.GetBooted().GetMethod().String(), event.GetBooted().GetBootMs())
+				b := event.GetBooted()
+				err = hooks.Booted(ctx, SandboxBooted{Method: b.GetMethod().String(), BootMs: b.GetBootMs(), Actions: b.GetActions(), EgressPolicy: b.GetEgressPolicy()})
 			}
 		case event.GetActivity() != nil:
 			if hooks.Activity != nil {
@@ -367,6 +470,22 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			if hooks.Usage != nil {
 				err = hooks.Usage(ctx, agentRunUsageFromProto(event.GetUsage()))
 			}
+		case event.GetTaskDone() != nil:
+			if hooks.TaskDone != nil {
+				d := event.GetTaskDone()
+				err = hooks.TaskDone(ctx, SandboxTaskDone{ExitCode: int(d.GetExitCode()), Output: d.GetOutput(), TimedOut: d.GetTimedOut(),
+					Truncated: d.GetTruncated(), Error: d.GetError()})
+			}
+		case event.GetActionDone() != nil:
+			if hooks.ActionDone != nil {
+				d := event.GetActionDone()
+				err = hooks.ActionDone(ctx, SandboxActionDone{ActionID: d.GetActionId(), ExitCode: int(d.GetExitCode()), Output: d.GetOutput(),
+					TimedOut: d.GetTimedOut(), Truncated: d.GetTruncated(), Error: d.GetError(), ScreenshotBytes: d.GetScreenshotBytes()})
+			}
+		case event.GetWebDomains() != nil:
+			if hooks.WebDomains != nil {
+				err = hooks.WebDomains(ctx, sandboxWebDomainsFromProto(event.GetWebDomains()))
+			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
 		}
@@ -395,6 +514,29 @@ func sandboxControlFrame(req SandboxControl) *vmmdpb.RunSandboxRequest {
 			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_PersistRecorded{PersistRecorded: &vmmdpb.RunSandboxPersistRecorded{
 				RequestId: r.RequestID, Recorded: r.Recorded}}}
 		}
+	case SandboxOpAction:
+		if a := req.Action; a != nil {
+			return &vmmdpb.RunSandboxRequest{Frame: &vmmdpb.RunSandboxRequest_Action{Action: &vmmdpb.RunSandboxAction{
+				ActionId: a.ID, Kind: a.Kind, Url: a.URL, Ref: int32(a.Ref), Text: a.Text, Submit: a.Submit, Key: a.Key,
+				Direction: a.Direction, MaxChars: int32(a.MaxChars), TimeoutMs: a.Timeout.Milliseconds(), MaxOutputBytes: a.MaxOutputBytes,
+				Screenshot: a.Screenshot}}}
+		}
 	}
 	return nil
+}
+
+func sandboxWebDomainsFromProto(f *vmmdpb.RunSandboxWebDomains) []SandboxWebDomain {
+	out := make([]SandboxWebDomain, 0, len(f.GetDomains()))
+	for _, d := range f.GetDomains() {
+		out = append(out, SandboxWebDomain{Domain: d.GetDomain(), Refused: d.GetRefused(), At: time.UnixMilli(d.GetAtUnixMs())})
+	}
+	return out
+}
+
+func sandboxTaskToProto(t *SandboxTask) *vmmdpb.RunSandboxTask {
+	if t == nil {
+		return nil
+	}
+	return &vmmdpb.RunSandboxTask{Kind: t.Kind, Url: t.URL, MaxChars: int32(t.MaxChars), TimeoutMs: t.Timeout.Milliseconds(),
+		MaxOutputBytes: t.MaxOutputBytes}
 }

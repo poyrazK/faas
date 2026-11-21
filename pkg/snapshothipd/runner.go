@@ -7,8 +7,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -53,6 +55,18 @@ type Runner struct {
 	// memoryPeersOff keeps memory pages from being shared with other memory
 	// files (ADR-956 amendment 2026-10-31), which is on by default.
 	memoryPeersOff bool
+	// retention is what rows still reference (ADR-20261114182830); nil
+	// leaves the node cache to plain oldest-first eviction.
+	retention state.NodeCacheRetentionReader
+	// owned lists and re-queues the live snapshots of the apps this node
+	// owns (ADR-20261118160000); nil when the store has no such reads.
+	owned state.NodeOwnedSnapshotStore
+
+	// refetched is when each snapshot's evicted replica was last fetched
+	// back (ADR-20261115140000).
+	refetchMu sync.Mutex
+	refetched map[string]time.Time
+	now       func() time.Time
 }
 
 func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, nodeID string, log *slog.Logger) *Runner {
@@ -68,6 +82,8 @@ func New(store state.SnapshotReplicaLeaseStore, backend storage.StorageBackend, 
 		idleInterval:       DefaultIdleInterval,
 		maxTick:            DefaultMaxPerTick,
 		leaseRenewInterval: DefaultLeaseRenewInterval,
+		refetched:          map[string]time.Time{},
+		now:                time.Now,
 	}
 }
 
@@ -135,6 +151,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	go r.runMemorySharing(ctx)
+	go r.runCacheRetention(ctx)
 	t := time.NewTimer(r.nextTick(r.runTick(ctx)))
 	defer t.Stop()
 	for {
@@ -265,6 +282,9 @@ func (r *Runner) runWorkTick(ctx context.Context) {
 }
 
 func (r *Runner) syncJob(ctx context.Context, job state.SnapshotReplicaJob) error {
+	if job.Revalidation && r.refetchEvicted(job) {
+		job.Revalidation = false
+	}
 	driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: job.StorageKey})
 	fetchDrive := false
 	if driveKey != "" && len(job.LayerStorageKeys) > 0 && !job.Revalidation {
@@ -479,4 +499,51 @@ func syncJob(ctx context.Context, backend storage.StorageBackend, job state.Snap
 		}
 	}
 	return nil
+}
+
+// refetchEvicted decides, for a revalidation that finds a replica evicted,
+// whether to fetch it back instead of retiring it (ADR-20261115140000).
+// Revalidation covers only non-stale snapshots of deployments that may still
+// be woken, so the next wake on this node would otherwise pull the whole
+// replica from shared storage (2-4 s for a 2 GiB drive, production-us
+// 2026-11-13). A re-fetch never evicts anything for itself: the cache must
+// keep the re-fetch margin (storage.RoomToRefetch), which a full cache, where
+// the ADR-063 re-fetch/evict loop happened, never has. Each snapshot is
+// fetched back at most once per api.SnapshotReplicaRefetchCooldown.
+func (r *Runner) refetchEvicted(job state.SnapshotReplicaJob) bool {
+	keys := []string{job.StorageKey, job.VMStateStorageKey}
+	if driveKey := state.SnapshotDriveKey(state.Snapshot{StorageKey: job.StorageKey}); driveKey != "" {
+		keys = append(keys, driveKey)
+	}
+	keys = append(keys, job.LayerStorageKeys...)
+	done, err := revalidateWithoutFetch(r.backend, keys)
+	if !done || !errors.Is(err, errReplicaEvicted) {
+		return false
+	}
+	now := r.now()
+	r.refetchMu.Lock()
+	last, seen := r.refetched[job.SnapshotID]
+	r.refetchMu.Unlock()
+	if seen && now.Sub(last) < api.SnapshotReplicaRefetchCooldown {
+		r.observeRefetch(RefetchCooldown)
+		return false
+	}
+	room, known, err := storage.RoomToRefetch(r.backend, job.StorageKey, api.SnapshotReplicaRefetchMinMargin)
+	if err != nil || !known || !room {
+		r.observeRefetch(RefetchNoRoom)
+		return false
+	}
+	r.refetchMu.Lock()
+	r.refetched[job.SnapshotID] = now
+	r.refetchMu.Unlock()
+	r.observeRefetch(RefetchRefetched)
+	r.log.Info("snapshothipd: fetching back an evicted live snapshot replica",
+		"snapshot_id", job.SnapshotID, "deployment_id", job.DeploymentID, "node_id", job.NodeID)
+	return true
+}
+
+func (r *Runner) observeRefetch(outcome string) {
+	if m, ok := r.metrics.(interface{ ObserveRefetch(string) }); ok {
+		m.ObserveRefetch(outcome)
+	}
 }

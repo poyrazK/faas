@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -61,6 +62,25 @@ func (a *queuePushLaneAllowance) observe(triggerID string, ceiling int, gatewayF
 		n++
 	}
 	a.allowed[triggerID] = max(min(n, ceiling), 1)
+}
+
+// prune forgets the allowance of triggers this tick no longer polls, which
+// otherwise stayed in the map for the scheduler's lifetime.
+func (a *queuePushLaneAllowance) prune(polled []sqlc.Trigger) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.allowed) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(polled))
+	for i := range polled {
+		live[polled[i].ID.String()] = true
+	}
+	for id := range a.allowed {
+		if !live[id] {
+			delete(a.allowed, id)
+		}
+	}
 }
 
 // queuePushLaneCount is the lanes one tick submits: enough to cover the
@@ -112,12 +132,58 @@ func (l *Loop) scheduleQueuePushLanes(ctx context.Context, t sqlc.Trigger, store
 	lanes := queuePushLaneCount(maxConcurrency, l.queuePushLanes.current(triggerID), depth, 1)
 	for lane := range lanes {
 		l.submitWork(workQueuePushDispatch, fmt.Sprintf("%s#%d", triggerID, lane), func() {
-			err := l.dispatchOneTrigger(ctx, laneTrigger, store, l.triggerPlanResolver(ctx))
+			planFor := l.triggerPlanResolver(ctx)
+			err := drainQueuePushLane(ctx, func(ctx context.Context) error {
+				return l.dispatchOneTrigger(ctx, laneTrigger, store, planFor)
+			})
 			gatewayFailed := errors.Is(err, errTriggerGatewayDispatch)
 			l.queuePushLanes.observe(triggerID, ceiling, gatewayFailed)
 			if err != nil && !gatewayFailed {
 				l.log.Warn("sched trigger tick: dispatch lane", "trigger_id", triggerID, "lane", lane, "err", err)
 			}
 		})
+	}
+}
+
+// drainQueuePushLane runs one lane: it delivers one record, then the next,
+// while each poll returns a record, until the lane's time or record budget
+// is spent (ADR-972 amendment 2026-11-19). A lane that delivered one record
+// per tick idled between ticks, so a binding's throughput was its lanes times
+// the tick rate rather than what its handler could take. An empty poll or an
+// error ends the run; the next tick submits the lane again.
+func drainQueuePushLane(ctx context.Context, dispatch func(context.Context) error) error {
+	start := time.Now()
+	for delivered := 1; ; delivered++ {
+		pollCtx, report := withTriggerPollReport(ctx)
+		if err := dispatch(pollCtx); err != nil {
+			return err
+		}
+		// A cancelled scheduler stops the lane without an error: the
+		// dispatch in progress settled its record, and shutdown is not a
+		// lane failure.
+		more := report.records > 0 && delivered < api.QueuePushLaneDrainMaxRecords &&
+			time.Since(start) < api.QueuePushLaneDrainBudget && context.Cause(ctx) == nil
+		if !more {
+			return nil
+		}
+	}
+}
+
+// triggerPollReport records how many records a dispatch's poll returned, so a
+// queue push lane knows whether to claim again.
+type triggerPollReport struct{ records int }
+
+type triggerPollReportKey struct{}
+
+func withTriggerPollReport(ctx context.Context) (context.Context, *triggerPollReport) {
+	report := &triggerPollReport{}
+	return context.WithValue(ctx, triggerPollReportKey{}, report), report
+}
+
+// reportTriggerPoll stores a poll's record count in the context's report, if
+// the dispatch has one.
+func reportTriggerPoll(ctx context.Context, records int) {
+	if report, ok := ctx.Value(triggerPollReportKey{}).(*triggerPollReport); ok {
+		report.records = records
 	}
 }

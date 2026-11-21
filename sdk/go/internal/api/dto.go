@@ -104,6 +104,7 @@ type CreateAppRequest struct {
 	RestartPolicy          string                `json:"restart_policy,omitempty"`
 	AfterRestore           *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint       *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup                 *WarmupHook           `json:"warmup,omitempty"`
 	Pause                  string                `json:"pause,omitempty"`
 	Profiling              *ProfilingConfig      `json:"profiling,omitempty"`
 	Tracing                *TracingConfig        `json:"tracing,omitempty"`
@@ -154,6 +155,7 @@ type UpdateAppRequest struct {
 	RestartPolicy    *string               `json:"restart_policy,omitempty"`
 	AfterRestore     *AfterRestoreHook     `json:"after_restore,omitempty"`
 	BeforeCheckpoint *BeforeCheckpointHook `json:"before_checkpoint,omitempty"`
+	Warmup           *WarmupHook           `json:"warmup,omitempty"`
 	// Pause replaces the declared pause value; "" restores the default.
 	Pause            *string          `json:"pause,omitempty"`
 	Profiling        *ProfilingConfig `json:"profiling,omitempty"`
@@ -1348,7 +1350,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int) *Problem {
 			"Concurrency over plan limit",
 			fmt.Sprintf("%s plan caps max_concurrency at %d; requested %d.", l.Plan, l.MaxConcurrency, maxConcurrency)).
 			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency)).
-			WithDocs(docsBase + "/plans#concurrency")
+			WithDocs(docsBase + "/plans#at-a-glance")
 	}
 	return nil
 }
@@ -1566,8 +1568,10 @@ type QueueReceiveResponse struct {
 	ID             string          `json:"id"`
 	Payload        json.RawMessage `json:"payload"`
 	Result         json.RawMessage `json:"result,omitempty"`
-	TraceID        string          `json:"trace_id,omitempty"`
-	Traceparent    string          `json:"traceparent,omitempty"`
+	// State is how the message settled: completed, failed or cancelled.
+	State       string `json:"state,omitempty"`
+	TraceID     string `json:"trace_id,omitempty"`
+	Traceparent string `json:"traceparent,omitempty"`
 }
 
 // DelayedTaskResponse is the create/get/list shape for delayed tasks.

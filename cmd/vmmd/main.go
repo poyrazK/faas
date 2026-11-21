@@ -38,6 +38,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/credhash"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -57,6 +59,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/nodereport"
+	"github.com/onebox-faas/faas/pkg/objectgc"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched/flowcount"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
@@ -64,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/snapshothipd"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -105,6 +109,12 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 type signalAdapter struct {
 	*fcvm.Manager
 }
+
+// vmmdgrpc reports an instance its bridges cannot reach through this method
+// (reportTrafficUnreachable); the adapter must keep exposing it.
+var _ interface {
+	ReportLivenessFailed(ctx context.Context, instanceID, reason string)
+} = signalAdapter{}
 
 // vmmd checks snapshot keys against the instance's deployment through this
 // lookup; a wrapper that hid it would turn the check off (bug hunt H95).
@@ -294,6 +304,9 @@ type runDeps struct {
 	detectFC    func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	readHostCPU func() (fcvm.HostCPU, error)                                                                          // defaults to fcvm.ReadHostCPU (ADR-20261024225612)
 	listen      func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// readPhysBits is the host's physical address width, which gates pmem
+	// (ADR-908). nil reads /proc/cpuinfo.
+	readPhysBits func() (int, error)
 	// databaseLeases overrides the jail uid allocator of a database node;
 	// nil uses the whole range (tests share a host with a compute vmmd).
 	databaseLeases dbvm.Leaser
@@ -759,11 +772,44 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load build seal domain: %w", err)
 	}
-	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities, cfg.RuntimeSealDomainContracted)
+	// ADR-20261110210000 slice 3g-3: a node whose build identity is
+	// retired pulls builder registries through secretd and holds none.
+	if cfg.BuildSealDomainRetired {
+		if err := checkBuildRetired(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
+			os.Getenv("FAAS_VMMD_BUILD_REGISTRY_MIRROR")); err != nil {
+			return err
+		}
+		log.Info("vmmd: build identity retired; builder registry passwords open on the control plane only")
+	}
+	hostIdentities, registryIdentities, err := unsealIdentities(runtimeIdentities, buildIdentities, legacyIdentities,
+		cfg.RuntimeSealDomainContracted, cfg.RuntimeSealDomainRetired, cfg.BuildSealDomainRetired)
 	if err != nil {
 		return err
 	}
-	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
+	// ADR-20261110210000 slice 3e: a retired node holds no runtime
+	// identity and seals capture keys to the runtime recipient.
+	var captureRecipient *age.X25519Recipient
+	// A retired domain is not reported at all, so
+	// FaasSealDomainIdentityMissing does not read the node as one that lost
+	// its identity.
+	loadedDomains := map[sealdomain.Domain]bool{}
+	if !cfg.BuildSealDomainRetired {
+		loadedDomains[sealdomain.Build] = len(buildIdentities) > 0
+	}
+	if cfg.RuntimeSealDomainRetired {
+		captureRecipient, err = runtimeRetiredRecipient(filepath.Dir(keyPath), cfg.RuntimeSealDomainContracted,
+			os.Getenv("FAAS_RUNTIME_SECRET_OPENER"))
+		if err != nil {
+			return err
+		}
+		log.Info("vmmd: runtime identity retired; runtime secrets open on the control plane only")
+	} else {
+		// A retired node reports no runtime domain at all, so
+		// FaasSealDomainIdentityMissing does not read it as a node that
+		// lost its identity.
+		loadedDomains[sealdomain.Runtime] = len(runtimeIdentities) > 0
+	}
+	sealdomain.RegisterLoadedDomains(ops.Registry(), loadedDomains)
 	sealdomain.RegisterLegacyIdentities(ops.Registry(), len(legacyIdentities))
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities),
 		"contracted", cfg.RuntimeSealDomainContracted, "legacy_identities", len(legacyIdentities))
@@ -874,8 +920,30 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case "gcs":
 		log.Info("vmmd: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("vmmd: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("vmmd: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"))
+	}
+	// ADR-20261115180000: in defer mode the shared store's deletes become
+	// requests the control plane's object GC decides.
+	var deleteRequests state.StorageObjectDeletionRequester
+	if r, ok := store.(state.StorageObjectDeletionRequester); ok && store != nil {
+		deleteRequests = r
+	}
+	if deferred, err := objectgc.DeferFromEnv(os.Getenv, storageBackend, deleteRequests, "vmmd"); err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	} else if deferred {
+		log.Info("vmmd: shared-store deletes deferred to the control plane")
+	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, os.Getenv, storageBackend, "vmmd", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
 	}
 	// issue #517 / PR-C / ADR-064 — Ops constructed ABOVE the
 	// Manager wiring so the wake-timeline fan-out (vmmd's canonical
@@ -934,6 +1002,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// files): both on unless an operator switches them off.
 			WithMemoryPeerSharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_PEER_SHARING") != "off").
 			WithMemorySharing(os.Getenv("FAAS_SNAPSHOT_MEMORY_SHARING") != "off")
+		// ADR-20261114182830: remove cached captures and runtime release
+		// bases nothing references, and order eviction by what is live.
+		// FAAS_NODE_CACHE_SWEEP=off leaves the cache to oldest-first eviction.
+		if os.Getenv("FAAS_NODE_CACHE_SWEEP") != "off" {
+			if reader, ok := store.(state.NodeCacheRetentionReader); ok {
+				fanout.WithCacheRetention(reader)
+			} else {
+				log.Warn("vmmd: node cache sweep disabled: the store cannot list what rows reference")
+			}
+		}
 		if raw := os.Getenv("FAAS_SNAPSHOT_FANOUT_INTERVAL"); raw != "" {
 			interval, parseErr := time.ParseDuration(raw)
 			if parseErr != nil || interval <= 0 {
@@ -957,6 +1035,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 		log.Info("vmmd: snapshot fan-out enabled", "node_id", nodeID, "interval", fanout.Interval())
+		// ADR-20261114182830 amendment: vmmd alone evicts the shared node
+		// cache, by the tiers its fan-out sets; schedd, imaged and builderd
+		// then leave snapshot captures and app layers to it.
+		if release, ownErr := storage.ClaimCacheEvictionOwnership(storageBackend); ownErr != nil {
+			log.Warn("vmmd: node cache eviction not claimed; other daemons keep evicting oldest-first", "err", ownErr)
+		} else {
+			defer release()
+		}
 	}
 	// Issue #667 / ADR-078: single storeStamper adapter satisfies
 	// BOTH the FrameworkReadyStamper interface (PR #470-FU-B) and
@@ -979,11 +1065,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// parked time. Firecracker 1.16+ only, and only where KVM records the
 	// realtime clock flag in captures (a tsc host clocksource).
 	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
-	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
-	// images through its own journal, which has no pmem slot yet.
-	pmemBaseDir := ""
-	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
-		pmemBaseDir = cfg.PmemBaseDir
+	// ADR-908: pmem needs Firecracker 1.16+, a host with at least 40 physical
+	// address bits, and no native recovery, whose image journal has no pmem
+	// slot yet.
+	pmemBaseDir, pmemOffReason := resolvePmemBaseDir(cfg.PmemBaseDir, fcVersion, cfg.NativeProcessRecovery, deps.readPhysBits, log)
+	if pmemOffReason != "" {
+		log.Warn("vmmd: pmem base disabled; app bases boot from virtio-blk", "reason", pmemOffReason)
 	}
 	protocolMetrics := mcpprotocol.New(ops.Registry())
 	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
@@ -1315,6 +1402,28 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: DNS-gated egress disabled by FAAS_EGRESS_DNS_GATING=off")
 		mgr.WithDNSGatedEgress(false)
 	}
+	// ADR-20261112121456 §3: web-mode sandbox sessions need the tenant egress
+	// gateway; a development or test fleet may let them use the node's own
+	// address instead.
+	if strings.TrimSpace(os.Getenv("FAAS_SANDBOX_WEB_NODE_EGRESS")) == "1" {
+		log.Warn("vmmd: web-mode sandbox sessions may leave from this node's own address (FAAS_SANDBOX_WEB_NODE_EGRESS=1)")
+		mgr.WithSandboxWebNodeEgress(true)
+	}
+	// ADR-20261117185346 §3: sandbox sessions with egress leave through the
+	// agent tunnel. The switch with an incomplete tunnel refuses to start
+	// rather than leave sessions on the tenant path.
+	if strings.TrimSpace(os.Getenv("FAAS_AGENT_EGRESS_GATEWAY")) == "1" {
+		cfg, err := agentEgressConfigFromEnv(os.Getenv)
+		if err != nil {
+			return err
+		}
+		if err := mgr.SetAgentEgress(cfg); err != nil {
+			return fmt.Errorf("vmmd: %w", err)
+		}
+		log.Info("vmmd: sandbox sessions leave through the agent egress gateway", "iface", cfg.Iface, "slice", cfg.Slice.String(),
+			"proxy", cfg.Proxy != nil)
+		go mgr.RunAgentEgressRenewal(ctx)
+	}
 	// ADR-477: journal survivors remain quarantined. The legacy name reaper
 	// is only available to portable wiring without a journal.
 	preparedCleanupCtx, preparedCleanupCancel := context.WithTimeout(ctx, 5*time.Second)
@@ -1373,11 +1482,39 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.SetCaptureRecipient(captureRecipient)
+	sealedSnapshots, err := sealedSnapshotConfigFromEnv(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if err := sealedSnapshots.apply(mgr, jailer); err != nil {
+		return err
+	}
+	log.Info("vmmd: sealed snapshots", "chunked_format", sealedSnapshots.chunked,
+		"plaintext_cache", sealedSnapshots.cacheDir != "", "plaintext_cache_mb", sealedSnapshots.cacheBytes>>20)
 	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {
 		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
+	}
+	opener, closeOpener, err := runtimeSecretOpenerFromEnv(ctx, os.Getenv, cfg.RequireSecretBinding, log)
+	if err != nil {
+		return err
+	}
+	defer closeOpener()
+	if opener != nil {
+		mgr.SetRuntimeSecretOpener(opener)
+	}
+	// ADR-20261110210000 slice 3j-3: builders pull private registries
+	// through secretd, and no registry password opens here.
+	buildMirror, closeBuildMirror, err := buildRegistryMirrorFromEnv(ctx, os.Getenv, log)
+	if err != nil {
+		return err
+	}
+	defer closeBuildMirror()
+	if buildMirror != nil {
+		mgr.SetBuildRegistryMirror(buildMirror)
 	}
 	var signatureStore any
 	if store != nil {
@@ -1494,6 +1631,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("vmmd: %w", err)
 	}
 	log.Info("vmmd: runtime bases routed to their generation keys", "bases", routedBases)
+	// ADR-20261116190000: this vmmd is the only one on the node now, so the
+	// base generations it does not boot need no eviction pin. The cache
+	// reclaims them under pressure; running guests keep their own links.
+	if unpinned, err := imaged.UnpinOtherBaseGenerations(storageBackend, baseGenerations, routedBases); err != nil {
+		log.Warn("vmmd: unpin other runtime base generations", "err", err)
+	} else if unpinned > 0 {
+		log.Info("vmmd: unpinned runtime base generations this release does not boot", "entries", unpinned)
+	}
 	mgr.WithBaseGenerations(baseGenerations)
 	// ADR-510: identify the kernel and cached bases in the background so the
 	// first restore after this start does not hash a base in its wake path,
@@ -1637,7 +1782,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 
 	// Wave 0 PR-C / ADR-047: vmmd becomes a gRPC client for the
 	// first time. The AdvisoryClient dials /run/faas/apid.sock to
-	// forward guest-init fanotify batches. Empty FAAS_APID_ADVISORY_SOCK
+	// forward guest-init stateless advisory batches. Empty FAAS_APID_ADVISORY_SOCK
 	// disables (matches apid's explicit-empty pattern); nil client
 	// short-circuits Manager.ForwardStatelessAdvisory to a no-op.
 	//
@@ -1646,9 +1791,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Forward outcome. The accessor is nil-receiver safe, so a
 	// nil ops is also a clean no-op (kept for symmetry / unit
 	// tests that don't wire metrics).
+	//
+	// ADR-047 amendment 2026-11-12: a database-backed vmmd writes the audit
+	// row through its own store instead. apid runs on the control plane, so
+	// a compute node has no apid.sock and the gRPC hop never delivered.
 	advisoryTarget := envOr("FAAS_APID_ADVISORY_SOCK", "unix:///run/faas/apid.sock")
 	var advisoryCli *vmmdgrpc.AdvisoryClient
-	if advisoryTarget != "" {
+	switch {
+	case store != nil:
+		advisoryAuditor := &statelessAdvisoryAuditor{audit: audit.New(store, log, ops, "vmmd"), apps: store}
+		if pool != nil {
+			advisoryAuditor.notify = func(ctx context.Context, payload string) error {
+				return db.Notify(ctx, pool, db.NotifyStatelessAdvisory, payload)
+			}
+		}
+		mgr.SetAdvisoryClient(advisoryAuditor)
+		log.Info("vmmd: stateless advisory writes audit rows through the store")
+	case advisoryTarget != "":
 		advisoryCli = vmmdgrpc.NewAdvisoryClient(advisoryTarget, log, ops)
 		mgr.SetAdvisoryClient(advisoryCli)
 		log.Info("vmmd: stateless advisory client wired", "target", advisoryTarget)
@@ -1728,6 +1887,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			envelope, err := normalizeGuestEvent(publishCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
+				return err
+			}
+			// A stage's events stay in its stage (ADR-20261104120000).
+			deploymentID, deploymentApp, deploymentAccount, identityErr := mgr.InstanceRuntimeSecretIdentity(instance)
+			if identityErr != nil || deploymentApp != appID || deploymentAccount != accountID {
+				return errors.New("in-guest event publish: instance identity changed")
+			}
+			if envelope.EnvironmentID, err = guestEventEnvironment(publishCtx, store, accountID, appID, deploymentID, body); err != nil {
 				return err
 			}
 			// Fanout keeps the app's company boundary (ADR-20261025211616).
@@ -1829,7 +1996,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// closed instead of failing VM hosting; plaintext TCP is never used.
 	relayDial, relayTargetErr := outboundRelayTarget(os.Getenv)
 	if relayTargetErr != nil {
-		log.Error("vmmd: outbound relay disabled", "err", relayTargetErr)
+		log.Log(ctx, outboundRelayDisabledLevel(relayTargetErr), "vmmd: outbound relay disabled", "err", relayTargetErr)
 		relayDial = nil
 	}
 	relayRecv, relayRecvErr := StartOutboundRelayReceiver(ctx, log, mgr, identitySigner, relayDial, jailer)
@@ -1873,6 +2040,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: crash capture receiver unavailable", "err", crashRecvErr, "goos", runtime.GOOS)
 	} else {
 		defer crashRecv.Close()
+	}
+	// ADR-047 (amended 2026-11-12): guest-init ships stateless advisory
+	// batches over a guest-initiated stream; the listener names the app.
+	if err := StartStatelessAdvisoryReceiver(log, mgr, jailer); err != nil {
+		log.Warn("vmmd: stateless advisory receiver unavailable", "err", err, "goos", runtime.GOOS)
 	}
 	log.Info("vmmd ready", "fc_version", fcVersion, "max_slots", fcvm.MaxSlots,
 		"uid_lo", fcvm.JailUIDBase, "uid_hi", fcvm.JailUIDMax,
@@ -2044,10 +2216,31 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// sessions start from, this node's artifact store.
 		WithExecutionFileStorage(storageBackend).
 		WithSandboxWorkspaces(storageBackend)
+	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
+	// give-back of their memory to tenants.
+	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)
+	impl.WithBorrowedBuilders(borrowedBuilders)
+	go borrowedBuilders.Run(ctx, func(killCtx context.Context, instance string) error {
+		_, _, err := signalAdapter{mgr}.SignalAndKill(killCtx, instance, 9, 0)
+		return err
+	})
+	if store != nil && pool != nil {
+		startBorrowedBuilderWatcher(ctx, store, pool, borrowedBuilders, log)
+	}
 	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
 	// configured base generation, so a node that cannot is marked degraded.
 	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
 		baseGenerationReadinessCheck(storageBackend, baseGenerations)))
+	// ADR-20261110210000 slice 3i: sealed edge-rule request headers open
+	// here, for this node's instances, through the control plane's secretd.
+	edgeHeaderSecrets, closeEdgeHeaderSecrets, err := edgeHeaderSecretOpenerFromEnv(ctx, os.Getenv, mgr.InstanceAppID, log)
+	if err != nil {
+		return err
+	}
+	defer closeEdgeHeaderSecrets()
+	if edgeHeaderSecrets != nil {
+		impl.WithEdgeHeaderSecrets(edgeHeaderSecrets)
+	}
 	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
 		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
 	}

@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -45,6 +46,10 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		}
 		judge = &id
 	}
+	semantic, err := s.checkOutboundAISemanticCache(ctx, accountID, integrationID, policy)
+	if err != nil {
+		return err
+	}
 	command, err := s.pool.Exec(ctx, `
 		UPDATE outbound_integrations
 		   SET ai_provider = NULLIF($3, ''), ai_daily_token_limit = $4,
@@ -55,6 +60,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		       ai_trace_max_calls = $14, ai_trace_max_cost_millicents = $15, ai_trace_max_repeated_tool_calls = $16,
 		       ai_online_eval_percent = $17, ai_online_eval_judge_integration_id = $18,
 		       ai_online_eval_model = NULLIF($19, ''), ai_online_eval_rubric = NULLIF($20, ''), ai_quality_alerts = $21,
+		       ai_semantic_cache = $22::jsonb,
 		       -- ADR-997: turning AI handling off also clears the content policy,
 		       -- its moderation check (ADR-1340) and its response checks (ADR-1435).
 		       ai_moderation_action = CASE WHEN $3 = '' THEN 'off' ELSE ai_moderation_action END,
@@ -80,7 +86,7 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		policy.DailyCostLimit, policy.MonthlyCostLimit, policy.RequestLogEnabled,
 		policy.UserDailyTokenLimit, policy.UserDailyCostLimit, policy.RequestLogContent, policy.LogExport,
 		policy.AllowUnmetered, policy.AutoPromptCache, policy.TraceMaxCalls, policy.TraceMaxCost, policy.TraceMaxRepeatedToolCalls,
-		policy.OnlineEvalPercent, judge, policy.OnlineEvalModel, policy.OnlineEvalRubric, policy.QualityAlerts)
+		policy.OnlineEvalPercent, judge, policy.OnlineEvalModel, policy.OnlineEvalRubric, policy.QualityAlerts, semantic)
 	if err != nil {
 		return mapErr(err)
 	}
@@ -88,6 +94,40 @@ func (s *PgStore) SetOutboundAIPolicy(ctx context.Context, accountID, integratio
 		return ErrNotFound
 	}
 	return nil
+}
+
+// checkOutboundAISemanticCache returns the stored JSON of the policy's
+// semantic cache (nil when off) after checking that the integration has the
+// response cache on and that the embedding integration is one of the
+// account's enabled OpenAI or Gemini integrations (ADR 20261112194947).
+func (s *PgStore) checkOutboundAISemanticCache(ctx context.Context, accountID, integrationID string, policy OutboundAIPolicy) ([]byte, error) {
+	semantic := policy.semanticCache()
+	if semantic == nil {
+		return nil, nil
+	}
+	if _, err := uuid.Parse(semantic.EmbeddingIntegrationID); err != nil {
+		return nil, ErrInvalidArgument
+	}
+	var ok bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM outbound_integrations integration
+		                WHERE integration.account_id = $1 AND integration.id = $2 AND integration.response_cache_ttl_seconds > 0)
+		   AND EXISTS (SELECT 1 FROM outbound_integrations embedding
+		                WHERE embedding.account_id = $1 AND embedding.id = $3 AND embedding.enabled
+		                  AND embedding.owner_kind = 'customer' AND embedding.provider_auth_mode = 'managed'
+		                  AND embedding.ai_provider = ANY($4::text[]))`,
+		mustPgUUID(accountID), mustPgUUID(integrationID), mustPgUUID(semantic.EmbeddingIntegrationID),
+		api.OutboundAISemanticCacheEmbeddingProviders).Scan(&ok); err != nil {
+		return nil, mapErr(err)
+	}
+	if !ok {
+		return nil, ErrInvalidArgument
+	}
+	encoded, err := json.Marshal(semantic)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
 }
 
 // GetOutboundAIUsage reads one UTC day of the rollups outboundd writes, plus
@@ -225,7 +265,9 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 		       input_image_millicents_per_mtok, output_image_millicents_per_mtok, millicents_per_image,
 		       millicents_per_audio_minute, millicents_per_million_characters, millicents_per_video_second,
 		       millicents_per_web_search, millicents_per_file_search, millicents_per_code_session_gb,
-		       input_audio_millicents_per_mtok, cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok
+		       input_audio_millicents_per_mtok, cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok,
+		       cache_write_1h_millicents_per_mtok, long_context_above_input_tokens, long_context_input_percent,
+		       long_context_output_percent
 		  FROM outbound_ai_price_entries WHERE price_list_id = $1
 		 ORDER BY model_prefix`, listID)
 	if err != nil {
@@ -234,14 +276,17 @@ func (s *PgStore) GetOutboundAIPrices(ctx context.Context, accountID, integratio
 	defer rows.Close()
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
+		var above, inputPercent, outputPercent *int64
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
 			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
-			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok, &entry.CacheWrite1hMillicentsPerMTok,
+			&above, &inputPercent, &outputPercent); err != nil {
 			return OutboundAIPriceList{}, mapErr(err)
 		}
+		entry.LongContext = api.OutboundAILongContextFromColumns(above, inputPercent, outputPercent)
 		list.Entries = append(list.Entries, entry)
 	}
 	return list, mapErr(rows.Err())
@@ -273,6 +318,7 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 		return mapErr(err)
 	}
 	for _, entry := range entries {
+		above, inputPercent, outputPercent := entry.LongContext.Columns()
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO outbound_ai_price_entries
 			    (price_list_id, model_prefix, input_millicents_per_mtok, cached_input_millicents_per_mtok,
@@ -280,13 +326,17 @@ func (s *PgStore) SetOutboundAIPrices(ctx context.Context, accountID, integratio
 			     output_image_millicents_per_mtok, millicents_per_image, millicents_per_audio_minute,
 			     millicents_per_million_characters, millicents_per_video_second, millicents_per_web_search,
 			     millicents_per_file_search, millicents_per_code_session_gb, input_audio_millicents_per_mtok,
-			     cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`, listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
+			     cached_input_audio_millicents_per_mtok, output_audio_millicents_per_mtok,
+			     cache_write_1h_millicents_per_mtok, long_context_above_input_tokens, long_context_input_percent,
+			     long_context_output_percent)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)`,
+			listID, entry.ModelPrefix, entry.InputMillicentsPerMTok,
 			entry.CachedInputMillicentsPerMTok, entry.CacheWriteMillicentsPerMTok, entry.OutputMillicentsPerMTok,
 			entry.InputImageMillicentsPerMTok, entry.OutputImageMillicentsPerMTok, entry.MillicentsPerImage,
 			entry.MillicentsPerAudioMinute, entry.MillicentsPerMillionCharacters, entry.MillicentsPerVideoSecond,
 			entry.MillicentsPerWebSearch, entry.MillicentsPerFileSearch, entry.MillicentsPerCodeSessionGB,
-			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok); err != nil {
+			entry.InputAudioMillicentsPerMTok, entry.CachedInputAudioMillicentsPerMTok, entry.OutputAudioMillicentsPerMTok,
+			entry.CacheWrite1hMillicentsPerMTok, above, inputPercent, outputPercent); err != nil {
 			return mapErr(err)
 		}
 	}

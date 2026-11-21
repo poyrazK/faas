@@ -186,6 +186,7 @@ func acctViewFrom(acct state.Account) *dashboard.AccountView {
 		Plan:                       string(acct.Plan),
 		EmailVerified:              acct.EmailVerified(),
 		EmailVerificationGraceEnds: verificationDeadline(acct).UTC().Format("2006-01-02"),
+		LegalNotice:                legalChangeNotice(),
 	}
 }
 

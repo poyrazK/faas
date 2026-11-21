@@ -101,9 +101,21 @@ type Workload struct {
 	Name string // service name; deterministic sort key
 	// AppSlug is control-plane allocation metadata, never a repository declaration.
 	// Name remains the identity used by dependencies, configuration and reconcile.
-	AppSlug    string `json:"-"`
-	RootDir    string // build context relative to repo root; "" = root
-	Dockerfile string // explicit path if declared (relative to RootDir)
+	AppSlug string `json:"-"`
+	// SlugPrefix names a new app <prefix><Name> (Compose
+	// x-gregale-slug-prefix, or `deploy --project --prefix`); an existing
+	// member keeps its slug. reconcile.AllocateAppSlugs applies it.
+	SlugPrefix string `json:"-"`
+	// StartupDeadlineS is the time-to-ready the repository asks for
+	// (Compose x-gregale-startup-deadline, or healthcheck start_period plus
+	// retries × interval); 0 keeps the default. Apply caps it at the plan's
+	// maximum.
+	StartupDeadlineS int `json:"-"`
+	// PublicAuthMode is Compose x-gregale-public-auth (open or bearer); ""
+	// keeps the plan default for a new app and the app's setting otherwise.
+	PublicAuthMode string `json:"-"`
+	RootDir        string // build context relative to repo root; "" = root
+	Dockerfile     string // explicit path if declared (relative to RootDir)
 	// DockerfileBuild carries a source-built Compose service's build.args
 	// and build.target (ADR-20261019142544). Nil builds the final stage with
 	// every ARG at its default.
@@ -153,6 +165,9 @@ type Workload struct {
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
+	// SourceHosts are literals in this workload's source that dial another
+	// service by its Compose name (detectSourceHosts).
+	SourceHosts []api.PlanSourceHost
 	// DependsOn contains service names declared by Compose's depends_on or by
 	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
 	// explicit conditions also gate release.
@@ -184,6 +199,11 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
+	// Streaming (x-gregale-streaming) and WakeAhead (x-gregale-wake-ahead)
+	// are explicit app settings from Compose. Nil keeps an existing app's
+	// setting and the platform default for a new one.
+	Streaming *bool `json:",omitempty"`
+	WakeAhead *bool `json:",omitempty"`
 	// RenamedFrom is the service's previous name (Compose
 	// x-gregale-renamed-from). A deploy updates that name's app in place
 	// instead of removing it and creating a new one (ADR-20261029090000).
@@ -542,6 +562,7 @@ func ScanWithOptions(fsys fs.FS, opts ScanOptions) (Result, error) {
 		}
 		workloads[i].SourceSHA256 = digest
 	}
+	detectSourceHosts(fsys, workloads, managed)
 	sortStableByName(workloads)
 	sortManagedByName(managed)
 

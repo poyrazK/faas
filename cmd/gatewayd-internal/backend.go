@@ -790,6 +790,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
 		PerInstanceConcurrency:       perInstanceConcurrency,
+		FunctionRunnerSlots:          functionRunnerSlots(app),
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,
@@ -1135,6 +1136,12 @@ func watchInvalidations(ctx context.Context, pool *pgxpool.Pool, inv invalidator
 		db.NotifyAppDelete,
 		db.NotifyAccountDeleted,
 		db.NotifyTrafficSecurityChanged,
+		// ADR 20261114150000 §3: a published flag configuration may kill
+		// or revive a flag; the per-deployment kill cache is wholesale.
+		db.NotifyFeatureFlagsChanged,
+		// ADR 20261119102741 §4: a refreshed or deleted cohort changes
+		// the per-customer cohort cache, which is wholesale too.
+		db.NotifyAnalyticsCohortsChanged,
 	}
 	// With resync: a LISTEN reconnect or a full hub buffer loses notifications
 	// (ADR-1344 §5 rule 3), and the route and app caches have no TTL.
@@ -1245,6 +1252,12 @@ func flushAfterMissedNotifications(inv invalidator, log *slog.Logger) {
 	if refresher, ok := inv.(interface{ RequestTrafficRevocationRefresh() }); ok {
 		refresher.RequestTrafficRevocationRefresh()
 	}
+	if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+		kills.InvalidateFlagKills()
+	}
+	if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+		cohorts.InvalidateFlagCohorts()
+	}
 }
 
 func handleDeploymentRouteInvalidation(ctx context.Context, inv invalidator, raw string, log *slog.Logger) (db.DeploymentRouteChangedPayload, bool) {
@@ -1349,6 +1362,14 @@ func ackEdgeRuleInvalidation(ctx context.Context, pool *pgxpool.Pool, raw, node 
 // require both app_id and instance_id and malformed payloads are logged.
 func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification, log *slog.Logger) {
 	switch n.Channel {
+	case db.NotifyFeatureFlagsChanged:
+		if kills, ok := inv.(interface{ InvalidateFlagKills() }); ok {
+			kills.InvalidateFlagKills()
+		}
+	case db.NotifyAnalyticsCohortsChanged:
+		if cohorts, ok := inv.(interface{ InvalidateFlagCohorts() }); ok {
+			cohorts.InvalidateFlagCohorts()
+		}
 	case db.NotifyTrafficSecurityChanged:
 		if _, err := db.ParseTrafficSecurityChangedPayload(n.Payload); err != nil {
 			log.Warn("gatewayd: invalid traffic security notification", "err", err)
@@ -1427,6 +1448,20 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 		// Phase 4's MigrateInstanceOwner which stamps node_id
 		// before the gateway's RUNNING emission from the wake
 		// path lands).
+		//
+		// Track boots in progress so a request answered at capacity while
+		// another gateway's boot holds the slot waits for that boot rather
+		// than 503ing after the flat settle wait (prod 2026-11-15).
+		if boots, ok := inv.(interface {
+			NoteInstanceBooting(appID, instanceID string)
+			NoteInstanceSettled(appID, instanceID string)
+		}); ok {
+			if p.State == "waking" || p.State == "cold_booting" {
+				boots.NoteInstanceBooting(p.AppID, p.InstanceID)
+			} else {
+				boots.NoteInstanceSettled(p.AppID, p.InstanceID)
+			}
+		}
 		switch p.State {
 		case "running":
 			// RUNNING may have been produced by another gateway process,
@@ -1654,9 +1689,20 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			DeploymentID string    `json:"deployment_id"`
 			Token        string    `json:"token"`
 			ExpiresAt    time.Time `json:"expires_at"`
+			// Unbilled marks a protection-baseline health probe
+			// (ADR-20261116120000 §3).
+			Unbilled bool `json:"unbilled"`
 		}
 		if err := json.Unmarshal([]byte(n.Payload), &p); err != nil || p.AppID == "" || p.DeploymentID == "" || p.Token == "" || p.ExpiresAt.IsZero() {
 			log.Warn("gatewayd: bad route probe challenge", "payload_length", len(n.Payload))
+			return
+		}
+		if p.Unbilled {
+			if authorizer, ok := inv.(interface {
+				AuthorizeUnbilledRouteProbe(string, string, string, time.Time)
+			}); ok {
+				authorizer.AuthorizeUnbilledRouteProbe(p.AppID, p.DeploymentID, p.Token, p.ExpiresAt)
+			}
 			return
 		}
 		if p.Scope != "" {
@@ -1804,4 +1850,13 @@ func (r pgRouter) deploymentAliasReserved(ctx context.Context, label string) (bo
 		return false, errors.New("deployment alias reservation reader is unavailable")
 	}
 	return false, nil
+}
+
+// functionRunnerSlots is a function app's runner execution slots for burst
+// scale-out (gateway.App.FunctionRunnerSlots); zero for other apps.
+func functionRunnerSlots(app state.App) int {
+	if app.Type != state.AppTypeFunction || app.Runtime == "" {
+		return 0
+	}
+	return api.FunctionRunnerSlots(app.Manifest.FunctionConcurrency)
 }

@@ -19,6 +19,9 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/resize":                            authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/compute-policy":                    authz.OrgActionManagePostgres,
 	"PUT /v1/postgres/databases/{id}/previews":                           authz.OrgActionManagePostgres,
+	"GET /v1/postgres/databases/{id}/roles":                              authz.OrgActionReadPostgres,
+	"PUT /v1/postgres/databases/{id}/roles/{name}":                       authz.OrgActionManagePostgres,
+	"DELETE /v1/postgres/databases/{id}/roles/{name}":                    authz.OrgActionManagePostgres,
 	"DELETE /v1/postgres/databases/{id}":                                 authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/bindings":                          authz.OrgActionBindPostgres,
 	"DELETE /v1/postgres/bindings/{id}":                                  authz.OrgActionBindPostgres,
@@ -39,6 +42,9 @@ var actions = map[string]authz.OrgAction{
 	"POST /v1/postgres/databases/{id}/live":        authz.OrgActionManagePostgres,
 	"POST /v1/postgres/databases/{id}/live/rotate": authz.OrgActionManagePostgres,
 	"DELETE /v1/postgres/databases/{id}/live":      authz.OrgActionManagePostgres,
+	// Read-only queries return rows: the members who may bind an app to the
+	// database, and so read its rows through that app (ADR-20261117215858).
+	"POST /v1/postgres/databases/{id}/query": authz.OrgActionBindPostgres,
 }
 
 func Action(pattern string) (authz.OrgAction, bool) {

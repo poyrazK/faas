@@ -1,0 +1,30 @@
+---
+- name: sync faas agent egress peers
+  ansible.builtin.command: /usr/local/sbin/faas-agent-egress-sync
+  changed_when: true
+
+- name: reload faas agent egress firewall
+  ansible.builtin.systemd:
+    name: faas-agent-egress-firewall
+    state: restarted
+    daemon_reload: true
+
+# Before the proxy's own restart, so it reconnects to the new instance.
+- name: restart agentproxyd journal
+  ansible.builtin.systemd:
+    name: systemd-journald@agentproxyd.service
+    state: restarted
+  failed_when: false
+
+- name: restart faas-agentproxyd
+  ansible.builtin.systemd:
+    name: faas-agentproxyd
+    state: restarted
+    daemon_reload: true
+  when: faas_agentproxyd_binary is defined and faas_agentproxyd_binary.stat.exists
+
+- name: reload faas-agentproxyd blocklist
+  ansible.builtin.systemd:
+    name: faas-agentproxyd
+    state: reloaded
+  when: faas_agentproxyd_binary is defined and faas_agentproxyd_binary.stat.exists

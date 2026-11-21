@@ -13,10 +13,12 @@ import (
 type Resource struct {
 	ID, AccountID, RunID, AppID, OwnerID string
 	DatabaseName, RoleName, Status       string
+	ParticipantAccess                    string // projected from the enrolled participant, never persisted in the fixture
 	BackendSHA256                        string
 	Spec                                 Spec
 	Initial                              []Snapshot
 	Evidence                             *Evidence
+	TaskParticipants                     []TaskParticipant `json:"-"` // loaded from enrollment at sealing
 	ExpiresAt                            time.Time
 }
 
@@ -34,7 +36,14 @@ func (r Resource) ValidReservation() bool {
 	return r.DatabaseName == "grpg_"+strings.ReplaceAll(id.String(), "-", "") && r.RoleName == r.DatabaseName
 }
 
+// TaskParticipant identifies an enrolled workload's restricted database role.
+type TaskParticipant struct {
+	AppID  string
+	Access string
+}
+
 type Catalog interface {
+	ScenarioPostgresTaskParticipants(context.Context, Resource) ([]TaskParticipant, error)
 	ReserveScenarioPostgres(context.Context, Resource) (Resource, error)
 	GetScenarioPostgres(context.Context, string, string) (Resource, error)
 	ScenarioPostgresForApp(context.Context, string) (Resource, error)

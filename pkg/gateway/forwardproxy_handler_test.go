@@ -271,6 +271,10 @@ func (s *stubVmmdClient) WarmSnapshot(context.Context, *vmmdpb.WarmSnapshotReque
 func (s *stubVmmdClient) ResumeWarmInstance(context.Context, *vmmdpb.ResumeWarmInstanceRequest, ...grpc.CallOption) (*vmmdpb.ResumeWarmInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway stub does not resume warm instances")
 }
+func (s *stubVmmdClient) PrimeInstance(context.Context, *vmmdpb.PrimeInstanceRequest, ...grpc.CallOption) (*vmmdpb.PrimeInstanceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway stub does not prime instances")
+}
+
 func (s *stubVmmdClient) FreezeInstance(context.Context, *vmmdpb.FreezeInstanceRequest, ...grpc.CallOption) (*vmmdpb.FreezeInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway stub does not freeze instances")
 }

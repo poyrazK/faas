@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -29,6 +30,7 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 	var aiUserDailyTokenLimit, aiUserDailyCostLimit pgtype.Int8
 	var traceMaxCalls, traceMaxCost, traceMaxRepeats pgtype.Int8
 	var onlineEvalPercent pgtype.Int2
+	var semanticCache []byte
 	var accountPlan string
 	var requestPolicy api.OutboundRequestPolicy
 	var offer OutboundIntegrationOffer
@@ -49,8 +51,15 @@ func scanOutboundOffer(row pgx.Row) (OutboundIntegrationOffer, error) {
 		&offer.AIContentPolicy.Response.Email, &offer.AIContentPolicy.Response.PaymentCard, &offer.AIContentPolicy.Response.IBAN,
 		&offer.AIContentPolicy.Response.Secret, &offer.AIContentPolicy.Response.BlockedTerms,
 		&offer.AIContentPolicy.Response.Moderation, &traceMaxCalls, &traceMaxCost, &traceMaxRepeats, &onlineEvalPercent,
-		&offer.AIOnlineEvalJudgeIntegrationID, &offer.AIOnlineEvalModel, &offer.AIOnlineEvalRubric, &offer.AIQualityAlerts); err != nil {
+		&offer.AIOnlineEvalJudgeIntegrationID, &offer.AIOnlineEvalModel, &offer.AIOnlineEvalRubric, &offer.AIQualityAlerts,
+		&semanticCache); err != nil {
 		return OutboundIntegrationOffer{}, mapErr(err)
+	}
+	if len(semanticCache) > 0 {
+		var semantic api.OutboundAISemanticCache
+		if err := json.Unmarshal(semanticCache, &semantic); err == nil && semantic.Enabled {
+			offer.AISemanticCache = &semantic
+		}
 	}
 	offer.AITraceMaxCalls = outboundAITokenLimit(traceMaxCalls)
 	offer.AITraceMaxCostMillicents = outboundAITokenLimit(traceMaxCost)
@@ -162,7 +171,8 @@ func (s *PgStore) ListOutboundIntegrationOffers(ctx context.Context, accountID s
 		       integration.ai_trace_max_calls, integration.ai_trace_max_cost_millicents,
 		       integration.ai_trace_max_repeated_tool_calls, integration.ai_online_eval_percent,
 		       COALESCE(integration.ai_online_eval_judge_integration_id::text, ''), COALESCE(integration.ai_online_eval_model, ''),
-		       COALESCE(integration.ai_online_eval_rubric, ''), integration.ai_quality_alerts
+		       COALESCE(integration.ai_online_eval_rubric, ''), integration.ai_quality_alerts,
+		       integration.ai_semantic_cache
 		  FROM outbound_integrations integration
 		  JOIN accounts account ON account.id = integration.account_id
 		  LEFT JOIN outbound_integration_credentials credential

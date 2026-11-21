@@ -21,6 +21,13 @@ var ErrAppTaskAccountInactive = errors.New("sched: app task account is not activ
 // requeues the task for the owning node's schedd instead of failing it.
 var ErrAppTaskNotOwner = errors.New("sched: app task app is owned by another node")
 
+// ErrAppTaskSpendCap refuses a task whose billing subject is at its monthly
+// spend cap (cost-control review 2026-11-19, N16). Task VMs are billed like
+// instances, so the cap holds them like wakes: nothing is dispatched and the
+// coordinator leaves the restoring lease to the sweep, as for a held budget,
+// so the task waits for the cap to lift instead of failing.
+var ErrAppTaskSpendCap = errors.New("sched: app task billing subject is at its spend cap")
+
 const (
 	accountInactiveFailureCode    = "account_inactive"
 	accountInactiveFailureMessage = "the account is suspended; resolve billing to run work again"
@@ -56,6 +63,10 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return ResolvedAppTaskRuntime{}, err
+	}
+	if reached, observed, capCents := e.admitSpendCap(ctx, &app); reached {
+		return ResolvedAppTaskRuntime{}, withAppTaskStage("admission",
+			errors.Join(ErrAppTaskSpendCap, api.ErrAdmissionRefused(observed, capCents)))
 	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
@@ -221,6 +232,19 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 			return publisher.RecordScenarioCommandNetwork(ctx, identity, placement.NodeID, *task.LeaseToken, out.HostIP)
 		}
 	}
+	var retire func(context.Context) error
+	if networks, ok := e.store.(state.AppTaskNetworkStore); ok && runID == "" && task.LeaseToken != nil {
+		// The task VM calls the app's services as the app
+		// (ADR-20261118070000): record its address under the restoring
+		// lease for gatewayd-internal's caller lookup.
+		lease := *task.LeaseToken
+		publish = func(ctx context.Context, out *AppTaskRestoreOutcome) error {
+			return networks.RecordAppTaskNetwork(ctx, request.ID, placement.NodeID, lease, out.HostIP)
+		}
+		retire = func(ctx context.Context) error {
+			return networks.RetireAppTaskNetwork(context.WithoutCancel(ctx), request.ID)
+		}
+	}
 	var commands state.FinancialPreviewCommandStore
 	if app.PreviewOfSlug != "" {
 		var ok bool
@@ -239,6 +263,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	return ResolvedAppTaskRuntime{
 		publish:   publish,
+		retire:    retire,
 		NodeID:    placement.NodeID,
 		RuntimeID: runtimeID,
 		Spec: AppTaskRestoreSpec{Instance: runtimeID, DeploymentID: dep.ID, App: spec,

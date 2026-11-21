@@ -154,3 +154,57 @@ func TestCopyProgressReceiptsBindGenerationAndSchemaAndResetAttempts(t *testing.
 		t.Fatal("new copy reused the old stall clock", err)
 	}
 }
+
+func TestInitialCopyReceiptKeepsIdentityAcrossSourceQualification(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := t.Context()
+	p := Pipeline{AccountID: uuid.NewString(), SchemaChange: &SchemaChange{}}
+	p.ID, p.Generation = uuid.NewString(), 2
+	if _, err := pool.Exec(ctx, `CREATE SCHEMA gregale_pipeline; CREATE TABLE gregale_pipeline.mirrors(pipeline_id uuid PRIMARY KEY,generation bigint,schema_change text,schema_phase text,readable boolean,retiring boolean)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO gregale_pipeline.mirrors VALUES($1,2,'','',false,false)`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureTableCopyReceipt(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	clock := time.Now().Add(-time.Hour).UTC().Truncate(time.Microsecond)
+	copies := []TableCopyProgress{{Table: "orders", Phase: "copying", NativeState: "d", PeakState: "d", PeakRows: 41, Stalled: true, ProgressAt: clock}}
+	if err := saveTableCopies(ctx, p, pool, copies); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []string{sourceStorageFence(p), sourceContinuityFence(p)} {
+		if _, err := pool.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET schema_change=$2,schema_phase='verifying' WHERE pipeline_id=$1`, p.ID, change); err != nil {
+			t.Fatal(err)
+		}
+		if err := saveTableCopies(ctx, p, pool, nil); !errors.Is(err, ErrConflict) {
+			t.Fatal("ordinary copy writer adopted source qualification", err)
+		}
+		if err := saveTableCopiesAtMirrorChange(ctx, p, pool, copies, change); err != nil {
+			t.Fatal("initial copy could not persist under its locked source fence", err)
+		}
+		saved, err := loadTableCopies(ctx, p, pool)
+		if err != nil || len(saved) != 1 || !saved[0].ProgressAt.Equal(clock) || saved[0].PeakRows != 41 || !saved[0].Stalled {
+			t.Fatal("source qualification reset initial copy identity or high-water marks", saved, err)
+		}
+		var gated bool
+		if err = pool.QueryRow(ctx, `SELECT NOT readable AND schema_phase='verifying' AND schema_change=$2 FROM gregale_pipeline.mirrors WHERE pipeline_id=$1`, p.ID, change).Scan(&gated); err != nil || !gated {
+			t.Fatal("copy observation changed the verification gate", gated, err)
+		}
+		stale := p
+		stale.Generation++
+		if err = saveTableCopiesAtMirrorChange(ctx, stale, pool, copies, change); !errors.Is(err, ErrConflict) {
+			t.Fatal("stale generation wrote through the qualification fence", err)
+		}
+		if err = saveTableCopiesAtMirrorChange(ctx, p, pool, copies, "unrelated-change"); !errors.Is(err, ErrConflict) {
+			t.Fatal("copy observation ignored the locked mirror identity", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE gregale_pipeline.mirrors SET retiring=true WHERE pipeline_id=$1`, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveTableCopiesAtMirrorChange(ctx, p, pool, copies, sourceContinuityFence(p)); !errors.Is(err, ErrConflict) {
+		t.Fatal("retiring generation accepted copy progress", err)
+	}
+}

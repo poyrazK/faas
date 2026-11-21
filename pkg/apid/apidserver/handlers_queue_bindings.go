@@ -58,6 +58,13 @@ func validateQueueBindingClass(class string) *api.Problem {
 // therefore consume a push binding without pretending to be a long-lived
 // worker; pull bindings retain their worker/job contract.
 func validateQueueBindingTarget(mode, class string, app state.App) *api.Problem {
+	// prod 2026-11-20: an HTTP app got "workload_class \"worker\" does not
+	// match app workload class \"http\"", then, with --workload-class http,
+	// "requires push mode and a function app": no binding can succeed, so say
+	// that once.
+	if app.Type != state.AppTypeFunction && queueBindingAppClass(app) == state.WorkloadClassHTTP {
+		return queueBindingProblem("an HTTP app cannot consume a queue: a push binding needs a function app and a pull binding a worker or job app; send this queue's work to one of those (docs/queue-pull-leases.md)")
+	}
 	if class == string(state.WorkloadClassHTTP) {
 		if mode != "push" || app.Type != state.AppTypeFunction {
 			return queueBindingProblem(`workload_class "http" requires push mode and a function app`)
@@ -232,6 +239,11 @@ func (s *server) getQueueBindingStatus(w http.ResponseWriter, r *http.Request, a
 		}
 		resp.OldestPendingAt = &oldest
 		resp.OldestPendingAgeSeconds = &age
+	}
+	resp.BlockedGroups = stats.BlockedLanes
+	if !stats.OldestBlockedAt.IsZero() {
+		age := max(int64(resp.GeneratedAt.Sub(stats.OldestBlockedAt).Seconds()), 0)
+		resp.OldestBlockedAgeSeconds = &age
 	}
 
 	if binding.Mode == "push" {
@@ -547,6 +559,9 @@ func writeQueueBindingMutationError(w http.ResponseWriter, acct state.Account, e
 	switch {
 	case errors.As(err, &quota):
 		api.WriteProblem(w, api.ErrPlanTriggerQuota(acct.Plan, string(quota.Scope), quota.Limit, quota.Observed))
+	case errors.Is(err, state.ErrQueueBindingKeyedWork):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "queue_binding_keyed_work", "Keyed work still queued",
+			"this push binding still holds work-policy messages, which pull leases never take; let them drain before switching to pull"))
 	case errors.Is(err, state.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Queue binding conflicts", "binding or consumer identity is already in use"))
 	case errors.Is(err, state.ErrNotFound):

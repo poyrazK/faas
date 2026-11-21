@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
@@ -41,12 +44,54 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 		t.Fatalf("verification email missing link: %q", msgs[0].TextBody)
 	}
 	token := strings.Fields(msgs[0].TextBody[i+len(marker):])[0]
+	verifyURL := apidserver.EmailVerificationPath + "?token=" + token
 
-	// Opening the link (or a mail scanner prefetching it) only shows the
-	// confirmation; it must not consume the token.
+	// The other account receives recovery instructions, not a form that
+	// returns to the same sign-in via a saved browser session hint.
+	other, _ := flowAccountKey(t, store, "other-browser@example.com", true)
+	otherCookie := flowSession(t, store, *srv.Sessions(), other.ID)
+	switchRec := httptest.NewRecorder()
+	switchReq := httptest.NewRequest(http.MethodGet, verifyURL, nil)
+	switchReq.Header.Set("Accept", "text/html")
+	switchReq.AddCookie(otherCookie)
+	h.ServeHTTP(switchRec, switchReq)
+	page := html.UnescapeString(switchRec.Body.String())
+	signInURL := "/login?reauth=1&verify=1&next=" + url.QueryEscape(verifyURL)
+	if switchRec.Code != http.StatusOK || !strings.Contains(page, "This link is for a different account") ||
+		!strings.Contains(page, `href="`+signInURL+`"`) || strings.Contains(page, `name="token"`) ||
+		strings.Contains(page, acct.Email) || strings.Contains(page, other.Email) {
+		t.Fatalf("wrong account recovery = %d: %s", switchRec.Code, page)
+	}
+	if switchRec.Header().Get("Referrer-Policy") != "no-referrer" || switchRec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("wrong account page exposed the verification URL to referrers or caches: %v", switchRec.Header())
+	}
+
+	// Submit the normal password form with the old cookie still present.
+	login := httptest.NewRecorder()
+	form := url.Values{"email": {acct.Email}, "password": {"correct-horse-battery-staple"}, "next": {verifyURL}}
+	loginReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	loginReq.Header.Set("Accept", "text/html")
+	loginReq.AddCookie(otherCookie)
+	h.ServeHTTP(login, loginReq)
+	if login.Code != http.StatusSeeOther || login.Header().Get("Location") != verifyURL {
+		t.Fatalf("account switch did not bring the browser back to verification: %d %s", login.Code, login.Body.String())
+	}
+	var cookie *http.Cookie
+	for _, c := range login.Result().Cookies() {
+		if c.Name == apidserver.SessionCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" || cookie.Value == otherCookie.Value {
+		t.Fatal("account switch did not set a new session")
+	}
+
+	// Opening the link with the correct session only shows confirmation.
 	openRec := httptest.NewRecorder()
-	openReq := httptest.NewRequest(http.MethodGet, apidserver.EmailVerificationPath+"?token="+token, nil)
+	openReq := httptest.NewRequest(http.MethodGet, verifyURL, nil)
 	openReq.Header.Set("Accept", "text/html,application/xhtml+xml")
+	openReq.AddCookie(cookie)
 	h.ServeHTTP(openRec, openReq)
 	if openRec.Code != http.StatusOK || !strings.Contains(openRec.Body.String(), `method="post"`) {
 		t.Fatalf("open link = %d: %s", openRec.Code, openRec.Body.String())
@@ -56,14 +101,12 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	}
 
 	// The post verifies only from a browser signed in to the account.
-	tok, err := apidserver.MintDashboardSession(t.Context(), store, *srv.Sessions(), acct.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cookie := &http.Cookie{Name: apidserver.SessionCookie, Value: tok}
 	verifyRec := httptest.NewRecorder()
-	h.ServeHTTP(verifyRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
-	if verifyRec.Code != http.StatusOK {
+	verifyReq := verifyEmailPost(apidserver.EmailVerificationPath, token, cookie)
+	verifyReq.Header.Set("Accept", "text/html")
+	h.ServeHTTP(verifyRec, verifyReq)
+	if verifyRec.Code != http.StatusOK || !strings.Contains(verifyRec.Body.String(), "Email verified") ||
+		!strings.Contains(verifyRec.Body.String(), "<code>gregale login</code>") {
 		t.Fatalf("verify status = %d: %s", verifyRec.Code, verifyRec.Body.String())
 	}
 	acct, err = store.AccountByEmail(context.Background(), "verify-me@example.com")
@@ -78,6 +121,53 @@ func TestPasswordSignupSendsSingleUseVerificationLink(t *testing.T) {
 	h.ServeHTTP(replayRec, verifyEmailPost(apidserver.EmailVerificationPath, token, cookie))
 	if replayRec.Code != http.StatusGone {
 		t.Fatalf("replay status = %d, want 410", replayRec.Code)
+	}
+
+	// The old CLI approval can expire while the browser is signing in again.
+	const expiredCode = "cafe1234"
+	if err := store.IssueCliAuthCode(t.Context(), api.HashToken(mustHex(t, expiredCode)), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	retryURL := "/cli-auth?code=" + expiredCode
+	reauthForm := url.Values{
+		"email": {acct.Email}, "password": {"correct-horse-battery-staple"}, "next": {retryURL},
+	}
+	reauthReq := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(reauthForm.Encode()))
+	reauthReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reauthReq.Header.Set("Accept", "text/html")
+	reauthReq.AddCookie(cookie)
+	reauth := httptest.NewRecorder()
+	h.ServeHTTP(reauth, reauthReq)
+	if reauth.Code != http.StatusSeeOther || reauth.Header().Get("Location") != retryURL {
+		t.Fatalf("reauth did not return to the old approval link: %d", reauth.Code)
+	}
+	var reauthenticated *http.Cookie
+	for _, c := range reauth.Result().Cookies() {
+		if c.Name == apidserver.SessionCookie {
+			reauthenticated = c
+		}
+	}
+	if reauthenticated == nil {
+		t.Fatal("reauth did not issue a session")
+	}
+	retryReq := httptest.NewRequest(http.MethodGet, retryURL, nil)
+	retryReq.AddCookie(reauthenticated)
+	retryRec := httptest.NewRecorder()
+	h.ServeHTTP(retryRec, retryReq)
+	body := retryRec.Body.String()
+	if retryRec.Code != http.StatusOK || !strings.Contains(body, "Code unavailable") ||
+		!strings.Contains(body, acct.Email) || !strings.Contains(body, "<code>gregale login</code>") ||
+		!strings.Contains(body, "Open the new link in this browser") ||
+		strings.Contains(body, expiredCode) || strings.Contains(body, `name="code"`) {
+		t.Fatalf("expired approval did not offer recovery in the signed-in browser: %d %s", retryRec.Code, body)
+	}
+
+	// A fresh terminal code can be approved under the same reauthenticated session.
+	const cliCode = "a1b2c3d4"
+	pendingCliCode(t, store, cliCode)
+	approveCliCode(t, srv, reauthenticated, acct.ID, cliCode)
+	if _, approver, err := store.PeekCliAuthCode(t.Context(), api.HashToken(mustHex(t, cliCode))); err != nil || approver != acct.ID {
+		t.Fatalf("verified account could not approve the fresh CLI code: %v", err)
 	}
 }
 

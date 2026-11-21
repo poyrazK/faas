@@ -6,16 +6,20 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // BuildKitSeedEnv turns on the per-node BuildKit seed (ADR-20261030122204):
@@ -161,9 +165,33 @@ func (s *buildkitSeedStore) copyTo(key, dst string) error {
 	}
 	if err := cloneFile(src, dst); err != nil {
 		_ = os.Remove(dst)
+		if errors.Is(err, fs.ErrPermission) {
+			// A seed builderd cannot read never becomes readable: vmmd hands
+			// the drive back only when the seed run's VM is torn down. Drop it
+			// so the next idle slot makes one.
+			s.forget(key)
+		}
 		return err
 	}
 	return nil
+}
+
+// forget removes key's seed.
+func (s *buildkitSeedStore) forget(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = os.Remove(s.readyPath(key))
+	_ = os.Remove(s.seedPath(key))
+}
+
+// checkSeedReadable opens drive for reading, as every copy of the seed will.
+func checkSeedReadable(drive string) error {
+	//nolint:forbidigo // drive is the seed run's drive in builderd's own drive directory.
+	f, err := os.Open(drive)
+	if err != nil {
+		return err
+	}
+	return f.Close()
 }
 
 // install makes the drive a seed run filled the seed for key and removes
@@ -173,6 +201,12 @@ func (s *buildkitSeedStore) install(key, drive string) error {
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.dir, 0o750); err != nil {
 		return fmt.Errorf("mkdir seed dir: %w", err)
+	}
+	// Every build reflinks a copy of the seed, so a seed builderd cannot read
+	// is no seed: vmmd hands the drive back when the seed run's VM is torn
+	// down, and an older vmmd does not.
+	if err := checkSeedReadable(drive); err != nil {
+		return fmt.Errorf("seed drive is not readable by builderd: %w", err)
 	}
 	if err := os.Rename(drive, s.seedPath(key)); err != nil {
 		return fmt.Errorf("install seed: %w", err)
@@ -209,6 +243,23 @@ func (s *buildkitSeedStore) pruneLocked(keep string) {
 		}
 		_ = os.Remove(filepath.Join(s.dir, name))
 	}
+}
+
+// buildKitSeedHasRoom reports whether the drive filesystem can take a seed:
+// the build-drive floor plus api.BuildKitSeedReserveBytes. Like a build drive,
+// a seed run first asks the node's artifact cache for that room
+// (ADR-20261030122204): the cache keeps the disk nearly full, and its oldest
+// artifacts can be fetched again, while a missing seed costs every Railpack
+// build its builder image step. Reclaiming is best effort; the free space
+// decides.
+func buildKitSeedHasRoom(ctx context.Context, dir string, reclaim BuildDriveSpaceReclaimer, available func(string) (uint64, error)) (bool, error) {
+	need := uint64(BuildDriveMinFreeBytes) + uint64(api.BuildKitSeedReserveBytes)
+	_ = reclaimDriveSpaceTo(ctx, dir, need, reclaim, available)
+	free, err := available(dir)
+	if err != nil {
+		return false, err
+	}
+	return free >= need, nil
 }
 
 // removeBuildKitSeeds drops the seeds kept beside driveDir.

@@ -55,11 +55,13 @@ func exerciseAgentBudgets(t *testing.T, store contractTestStore) {
 			t.Fatalf("AddAgentBudgetSpend(%d): %v", add, err)
 		}
 	}
-	if spent, err := store.AgentBudgetSpent(ctx, key.ID, now.AddDate(0, 0, 5)); err != nil || spent != 4000 {
-		t.Fatalf("spent this month = %d, %v; want 4000 (nothing negative counts)", spent, err)
+	// Cost-control review 2026-11-19 (N10): a decrease gives budget back and
+	// the standing cost does not reset next month.
+	if spent, err := store.AgentBudgetSpent(ctx, key.ID, now.AddDate(0, 0, 5)); err != nil || spent != 3300 {
+		t.Fatalf("standing = %d, %v; want 3300 (the decrease gives budget back)", spent, err)
 	}
-	if spent, err := store.AgentBudgetSpent(ctx, key.ID, now.AddDate(0, 1, 0)); err != nil || spent != 0 {
-		t.Fatalf("spent next month = %d, %v; want 0", spent, err)
+	if spent, err := store.AgentBudgetSpent(ctx, key.ID, now.AddDate(0, 1, 0)); err != nil || spent != 3300 {
+		t.Fatalf("standing next month = %d, %v; want 3300 (no monthly reset)", spent, err)
 	}
 
 	request := state.AgentApproval{

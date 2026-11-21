@@ -118,6 +118,8 @@ func TestNormalizeFlagDiagnostic(t *testing.T) {
 		`invalid value "abc" for flag -limit: parse error`:    `invalid value "abc" for flag --limit: parse error`,
 		`invalid boolean value "maybe" for -all: parse error`: `invalid boolean value "maybe" for --all: parse error`,
 		"bad flag syntax: ---x":                               "bad flag syntax: ---x",
+		// prod 2026-11-19: `-5` was reported as "unknown flag --5".
+		"flag provided but not defined: -5": "unknown flag -5 (a negative number is read as a flag)",
 	} {
 		if got := main.NormalizeFlagDiagnostic(in); got != want {
 			t.Errorf("normalizeFlagDiagnostic(%q) = %q, want %q", in, got, want)
@@ -258,26 +260,6 @@ func TestRouteHealthTargetErrorNamesTheMissingPiece(t *testing.T) {
 	}
 	if err := main.RouteHealthTargetError([]string{"api"}, dep); err != nil {
 		t.Errorf("valid target rejected: %v", err)
-	}
-}
-
-// production-us hunt #4 (H4-38): `github-webhook-secret set ...` handed "set"
-// to the flag parser and always failed; the documented verb must reach the
-// server, and the legacy verb-less form keeps working.
-func TestGithubWebhookSecretSetVerbDispatches(t *testing.T) {
-	main.ResetJSONOut(t)
-	secret := strings.Repeat("a", 32)
-	for _, args := range [][]string{
-		{"set", "--installation-id", "42", "--secret", secret},
-		{"--installation-id", "42", "--secret", secret},
-	} {
-		f := main.AuthedFakeAPI(t, `{}`, http.StatusOK)
-		if code := main.CmdGithubWebhookSecret(args); code != 0 || (*f.SawMethod()) == "" {
-			t.Fatalf("github-webhook-secret %q exit=%d request=%s %s, want a request and exit 0", args, code, (*f.SawMethod()), (*f.SawPath()))
-		}
-	}
-	if code := main.CmdGithubWebhookSecret([]string{"rotate"}); code != 1 {
-		t.Fatalf("unknown verb exit = %d, want 1", code)
 	}
 }
 

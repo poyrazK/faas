@@ -20,8 +20,17 @@ does when it runs the role on a host:
 
 What every role of a group shares are the group's globals: the bodies of
 the bootstrap.yml plays that target the group, without their roles:
-lists; ansible.cfg; requirements.yml (collection pins); group_vars and
-host_vars. A globals change changes every role. The rendered inventory and
+lists; ansible.cfg; requirements.yml (collection pins). A globals change
+changes every role.
+
+group_vars and host_vars are hashed per variable (ADR-20261117140000): a
+role's content includes the definition of every top-level variable its
+files or its play entry name, and of every variable those definitions name
+in turn. A variable the plays' bodies name is a global. A role that reads
+variables by computed name (vars[...], lookup('vars'), hostvars, varnames)
+depends on every variable, and a vars file that is not a plain top-level
+mapping is a global file. A switch only the converge playbooks read
+(node_join.yml) is no role's content, so changing it converges nothing. The rendered inventory and
 the operator variables are not in the repository: `gregalectl deploy
 converge-control-plane` hashes those (ADR-580). The converge playbooks
 themselves (control_plane_converge.yml, node_join.yml) are the lanes'
@@ -48,7 +57,8 @@ import subprocess
 import sys
 import weakref
 
-FORMAT = 1
+# 2: group_vars and host_vars hashed per variable (ADR-20261117140000).
+FORMAT = 2
 ANSIBLE = "deploy/ansible"
 ROLES = ANSIBLE + "/roles"
 BOOTSTRAP = ANSIBLE + "/bootstrap.yml"
@@ -56,7 +66,7 @@ GROUPS = ("control_plane", "compute_nodes")
 # The role selection condition a play's role entries carry: lets a
 # converge run apply only the roles whose content changed. It is not role
 # content, so it is dropped before hashing.
-SELECTION = re.compile(r"faas_cp_converge_roles")
+SELECTION = re.compile(r"faas_(?:cp|join)_converge_roles")
 COMMON_FILES = (ANSIBLE + "/ansible.cfg", ANSIBLE + "/requirements.yml")
 # Role subdirectories whose YAML Ansible executes or loads; files/ and
 # templates/ are data a task names, scanned for nothing.
@@ -69,6 +79,12 @@ REFERENCES = (
     ("playbook", re.compile(r"\{\{\s*playbook_dir\s*\}\}/([^\s\"'{}]*)")),
     ("relative", re.compile(r"(?<![\w/.{}-])((?:\.\./)+[^\s\"'{}]*)")),
 )
+# A Jinja/YAML identifier: a variable a text may name.
+IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A top-level key of a vars file.
+TOP_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s|$)")
+# Variable reads by computed name: such a role depends on every variable.
+DYNAMIC_VARS = re.compile(r"\bvars\s*\[|\bhostvars\b|\bvarnames\b|(?:lookup|query)\(\s*[\"']vars[\"']")
 ROLE_INCLUDE = re.compile(r"(?:include_role|import_role):\s*\n?\s*name:\s*[\"']?([\w.-]+)")
 
 
@@ -336,11 +352,74 @@ class Roles:
         return out
 
 
-def globals_inputs(tree, group):
-    paths = [p for p in COMMON_FILES if tree.is_file(p)]
+def var_files(tree, group):
+    """The group's group_vars and host_vars files."""
+    paths = []
     for d in (f"{ANSIBLE}/group_vars/{group}", f"{ANSIBLE}/group_vars/all", f"{ANSIBLE}/host_vars"):
         paths.extend(p for p in tree.walk(d) if not NOT_CONTENT.search(p))
     return sorted(set(paths))
+
+
+def globals_inputs(tree, group):
+    """Every file that can change every role of the group: the common
+    files and the vars files (group_owners maps them to "*"; the hashes
+    read the vars per variable)."""
+    return sorted(set([p for p in COMMON_FILES if tree.is_file(p)] + var_files(tree, group)))
+
+
+def split_variables(text):
+    """{name: definition} of a vars file's top-level keys, comments
+    dropped, or None when the file is not a plain top-level mapping."""
+    out, current = {}, None
+    for line in uncomment(text).split("\n"):
+        if line in ("---", "...") or not line:
+            continue
+        m = TOP_KEY.match(line)
+        if m:
+            current = m.group(1)
+            out.setdefault(current, []).append(line)
+        elif current is not None and (line[0].isspace() or line.startswith("- ")):
+            out[current].append(line)
+        else:
+            return None
+    return {name: "\n".join(lines) for name, lines in out.items()}
+
+
+def identifiers(text):
+    return set(IDENTIFIER.findall(text))
+
+
+class Variables:
+    """The group's variables, each with its definitions and the variables
+    they name."""
+
+    def __init__(self, tree, group):
+        self.defs, self.global_files = {}, []
+        for path in var_files(tree, group):
+            parsed = split_variables(tree.text(path))
+            if parsed is None:
+                self.global_files.append(path)
+                continue
+            for name, text in parsed.items():
+                self.defs.setdefault(name, []).append((path, text))
+        names = set(self.defs)
+        self.deps = {n: identifiers("\n".join(t for _, t in d)) & names - {n} for n, d in self.defs.items()}
+
+    def closure(self, text):
+        """Every variable text names, directly or through definitions; all
+        of them when text reads variables by computed name."""
+        if DYNAMIC_VARS.search(text):
+            return set(self.defs)
+        seen = identifiers(text) & set(self.defs)
+        stack = list(seen)
+        while stack:
+            for name in self.deps[stack.pop()] - seen:
+                seen.add(name)
+                stack.append(name)
+        return seen
+
+    def fields(self, names):
+        return [(f"var:{n}", "\n".join(f"{p}\n{t}" for p, t in self.defs[n]).encode()) for n in sorted(names)]
 
 
 def digest(tree, preamble, fields, paths):
@@ -354,12 +433,17 @@ def group_hashes(tree, group, roles=None):
     """{format_version, group, globals, order, roles: {role: hash}}."""
     rest, order, entries = group_plays(tree, group)
     roles = roles or Roles(tree)
+    variables = Variables(tree, group)
+    common = [p for p in COMMON_FILES if tree.is_file(p)] + variables.global_files
     out = {"format_version": FORMAT, "group": group, "order": order, "roles": {}}
     out["globals"] = digest(tree, f"gregale-host-globals/{FORMAT}", [("group", group.encode()),
-                            ("plays", rest.encode())], globals_inputs(tree, group))
+                            ("plays", rest.encode())] + variables.fields(variables.closure(rest)), common)
     for role in order:
+        inputs = roles.inputs(role)
+        text = "\n".join([entries[role]] + [tree.text(p) for p in sorted(inputs)])
         out["roles"][role] = digest(tree, f"gregale-host-role/{FORMAT}", [("role", role.encode()),
-                                    ("entry", entries[role].encode())], roles.inputs(role))
+                                    ("entry", entries[role].encode())] + variables.fields(variables.closure(text)),
+                                    inputs)
     return out
 
 

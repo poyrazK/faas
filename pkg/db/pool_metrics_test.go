@@ -142,7 +142,7 @@ func TestPoolCollectorDescribesEveryMetric(t *testing.T) {
 	ch := make(chan *prometheus.Desc, 64)
 	c.Describe(ch)
 	close(ch)
-	const want = 9
+	const want = 10
 	if got := len(ch); got != want {
 		t.Errorf("Describe emitted %d descriptors, want %d", got, want)
 	}

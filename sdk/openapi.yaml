@@ -42,6 +42,8 @@ servers:
         default: api.gregale.dev
         description: API hostname.
 tags:
+  - name: mcp-management
+    description: Preview management MCP source intents; no owner or execution authority.
   - name: support
     description: Gregale customer assistance, public conversations and resolution episodes.
   - name: operations
@@ -346,6 +348,12 @@ paths:
         sealed before any deployment is enqueued. Failed configuration starts
         no builds; saved apps and any completed configuration remain available
         for correction. Values are never included in responses or scan plans.
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
       requestBody:
         required: true
         content:
@@ -728,6 +736,56 @@ paths:
               schema: {$ref: '#/components/schemas/ManagedPostgresDatabase'}
         default:
           description: Authentication or database deletion error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/query:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: queryManagedPostgresDatabase
+      summary: Run one read-only SQL statement.
+      description: |
+        Requires the data:read scope (or admin) and MFA.
+        Runs one statement as the database's agent
+        query login, a read-only login that reads the public schema, inside
+        a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
+        timeout, then rolls back. Returns at most max_rows rows (default
+        100, at most 1000) and 1 MiB of values, each in its PostgreSQL text
+        form or null; truncated is true when a cap stopped reading. One
+        query per database runs at a time. A suspended database wakes and
+        its compute is billed as usage. The SQL and rows are never logged;
+        the audit log records a SHA-256 of the statement. Cache-Control
+        no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedPostgresQueryRequest'}
+      responses:
+        '200':
+          description: The rows read.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresQueryResponse'}
+        '409':
+          description: The database is not ready, or another query of it is running.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '422':
+          description: PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '501':
+          description: The database's backend cannot run queries (postgres_query_unsupported).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default:
+          description: Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -1394,6 +1452,12 @@ paths:
         pays for another account or organization answers 409
         `billing_email_in_use`.
 
+        The optional `salesperson_code` requires a verified browser session and
+        applies only before the first paid personal-account purchase. Invalid or
+        unavailable codes return 400; an existing different referral or prior
+        paid purchase returns 409. A saved referral survives checkout retries
+        and provider failures. Only a confirmed invoice payment earns credit.
+
         Asking for the plan the account already pays for keeps its
         subscription: a scheduled cancellation or downgrade is undone and the
         200 carries `plan_change_status: scheduled_change_undone`. A
@@ -1456,6 +1520,28 @@ paths:
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/account/health:
+    get:
+      tags: [account]
+      operationId: getAccountHealth
+      summary: Account health.
+      description: |
+        Returns what may stop the calling account from working: restrictions
+        such as a suspension, failed payment or unverified email with the
+        next step, failed deployments from the last 7 days, custom domains
+        that are not serving, and API requests refused in the last 24 hours
+        with their problem codes and request ids. Internal review details are
+        never included. Available to suspended and past-due accounts.
+      responses:
+        '200':
+          description: The account health checks.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountHealth'
+                example: {"generated_at": "2026-11-12T10:00:00Z", "attention": 1, "restrictions": [{"kind": "email_unverified", "title": "Verify your email address", "detail": "Some actions are refused until your email address is verified.", "action": "Resend verification email", "action_url": "/dashboard/account"}], "failed_deployments": [], "domain_issues": [], "refused_requests": {"window_hours": 24, "total": 2, "by_code": [{"code": "email_unverified", "count": 2, "last_at": "2026-11-12T09:58:00Z"}], "recent": [{"occurred_at": "2026-11-12T09:58:00Z", "route": "POST /v1/apps", "code": "email_unverified", "request_id": "req_01"}]}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/account/export:
     get:
@@ -1739,6 +1825,31 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/MFADisableEmailResponse'}
         '403': {$ref: '#/components/responses/Forbidden'}
+  /v1/account/mfa/disable-email-cancel:
+    post:
+      tags: [mfa]
+      operationId: mfaDisableEmailCancel
+      summary: Cancel a pending email-assisted MFA disable.
+      description: |
+        Cancels every pending email-assisted MFA disable on the account,
+        so its emailed link stops working. A browser session must have
+        passed the second factor; a session from a password reset alone
+        is refused. Signing in with the authenticator app or a recovery
+        code cancels a pending disable too. The owner is emailed when a
+        request is cancelled.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MFADisableEmailCancelRequest'
+      responses:
+        '200':
+          description: Pending requests cancelled (`cancelled` is 0 when none was pending).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MFADisableEmailCancelResponse'}
+        '403': {$ref: '#/components/responses/Forbidden'}
   /v1/account/mfa/disable-email/confirm:
     post:
       tags: [mfa]
@@ -1999,11 +2110,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -2012,10 +2122,11 @@ paths:
           schema: {type: string}
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '410':
           description: Verification link expired, invalid, or already used.
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -2024,9 +2135,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -2040,10 +2152,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -2518,19 +2631,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/sessions/revoke_all:
     post:
@@ -3484,6 +3603,50 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/deleted-apps/{id}/purge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [apps]
+      operationId: purgeDeletedApp
+      summary: Permanently remove a deleted app now, freeing its slug.
+      description: |
+        Ends the app's restore window at once and removes the app and its stored
+        artifacts, so the same account can reuse the slug (for example to redeploy
+        a Compose project after a teardown). This cannot be undone. Requires
+        deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Refused with 409 app_not_purgeable, before the window
+        closes, while the app still has object storage buckets. When something
+        else still holds the app the response is 202 with pending_reason; the
+        window stays closed and the grace sweep finishes the purge.
+      requestBody:
+        description: Optional empty object; no fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, maxProperties: 0}
+      responses:
+        '200':
+          description: The app is gone and its slug is free for this account.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeletedAppPurgeResponse'}
+        '202':
+          description: The restore window is closed; the purge finishes once pending_reason clears.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeletedAppPurgeResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4143,7 +4306,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/wake-timeline:
@@ -4271,7 +4434,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/usage:
@@ -4363,7 +4526,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/analytics:
@@ -5175,6 +5338,9 @@ paths:
                 healthcheck:
                   type: string
                   description: "JSON startup readiness probe: exactly one HTTP path or standard gRPC health selector."
+                readiness_probe:
+                  type: string
+                  description: "JSON steady-state readiness probe with the CreateDeploymentOverrides.readiness_probe shape. Overrides gregale.yaml hosting.readiness_probe for this deployment."
                 override_env:
                   type: string
                   maxLength: 1048576
@@ -5183,7 +5349,7 @@ paths:
                   type: string
                   maxLength: 256
                   pattern: '^$|^(?:\.|(?!(?:\.|\.\.)(?:/|$))[^/\\]+(?:/(?!(?:\.|\.\.)(?:/|$))[^/\\]+)*)$'
-                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; '.' explicitly selects the archive root."
+                  description: "Optional repository-relative build directory. Empty or omitted uses the app's configured root; when the archive does not contain that directory and its own root holds a Dockerfile, package.json, requirements.txt, pyproject.toml, go.mod or gregale.yaml, the archive root is used. '.' explicitly selects the archive root."
                 scope:
                   type: string
                   pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'
@@ -5367,6 +5533,9 @@ paths:
                 dev_source_deleted:
                   type: string
                   description: "JSON string array of canonical archive paths removed since dev_source_base."
+                dev_source_build_now:
+                  type: string
+                  description: "Set to true to build this sync at once even when it reaches the running instance as a live patch. Without it, such a sync's build waits until the developer stops saving and a later sync replaces it."
                 dockerfile:
                   type: boolean
                 runtime:
@@ -5984,6 +6153,100 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first.
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitchList'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+    post:
+      tags: [deployments]
+      operationId: createDatabaseSwitch
+      summary: Restore a database and move the app to the copy.
+      description: "Restores one of the app's managed PostgreSQL databases to point_in_time as a new database and moves the app's bindings in the scope to it, keeping the live release. The app stops serving from fencing until it resumes on the copy. Writes after point_in_time stay only in the source database, which keeps every write. Needs the postgres:manage scope and a verified email. Follow the returned switch with GET; cancel it before it starts switching."
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateDatabaseSwitchRequest'}
+            example: {"database_id": "0123456789abcdef0123456789abcdef", "name": "orders-0900", "point_in_time": "2026-10-30T09:00:00Z"}
+      responses:
+        '202':
+          description: The switch was recorded and runs in the background.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DatabaseSwitch'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
   /v1/apps/{slug}/rollouts/recover:
@@ -7180,7 +7443,7 @@ paths:
           in: query
           schema: {type: string, enum: [info, warn, error]}
           description: >
-            Exact match on the structured `level` field (info, warn, or error) surfaced in each matching log event. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
+            Severity floor: returns lines at this level or higher, so `warn` returns warn and error lines and `info` returns info, warn and error lines. A line's level comes from its structured `level` field (info, warn, or error) surfaced in each matching log event, or from common line markers when the line has no structured level; lines with no recognisable level are omitted whenever a level is set. Empty = no level filter. The CLI and the API handler both validate against the same enum (api.IsValidLogLevel); an unknown value short-circuits with an SSE error frame carrying code invalid_level.
 
         - name: archive
           in: query
@@ -7666,9 +7929,15 @@ paths:
       tags: [env]
       operationId: listEnv
       summary: List env vars on an app.
+      parameters:
+        - name: values
+          in: query
+          required: false
+          schema: {type: string, enum: ["true"]}
+          description: "`true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value."
       description: |
         Returns every env var key + timestamps on the app. The plaintext
-        value NEVER appears in the response — guest-init reads the value
+        value appears only with `?values=true`; guest-init reads it
         at process start from `/etc/faas/env.json` inside the guest.
 
         **scope filter.** The optional `?scope=`
@@ -15908,7 +16177,9 @@ paths:
         default). Status flips to 'grace' for the window, then to
         'revoked' at the deadline. Setting
         `accounts.key_grace_window_days = 0` makes rotation atomic
-        (old key revoked immediately).
+        (old key revoked immediately). The optional body's
+        `grace_window_days` overrides the window for this rotation
+        only; send `0` to revoke a leaked key at once.
 
         Returns the new plaintext exactly once — the old plaintext
         is not re-issued (we only store the SHA-256 hash). The
@@ -15918,6 +16189,14 @@ paths:
 
         Quota: rotation is quota-neutral (-1 +1 = 0 net). A
         customer AT the per-account cap can still rotate.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RotateKeyRequest'
+            example:
+              grace_window_days: 0
       responses:
         '200':
           description: New key minted, old key now in 'grace' (or 'revoked' if grace_window_days=0).
@@ -17920,7 +18199,9 @@ paths:
       description: |
         Marks the company organization as deleted_pending. Live managed
         PostgreSQL databases must complete deletion first. Owner-only
-        (`org.delete`); personal organizations are immutable.
+        (`org.delete`); personal organizations are immutable. Needs a
+        signed-in browser session with a fresh step-up; an API key cannot
+        delete an organization. Owners and admins are emailed.
       responses:
         '204': {description: Org soft-deleted.}
         '401': {$ref: '#/components/responses/Unauthorized'}
@@ -17928,7 +18209,9 @@ paths:
           description: |
             `403 Forbidden` — caller is authenticated but lacks the
             `org.delete` action. Owner-only. Stable code
-            `org_role_forbidden`.
+            `org_role_forbidden`. An API key gets
+            `browser_session_required`; a stale sign-in gets
+            `step_up_required`.
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
@@ -18314,9 +18597,10 @@ paths:
         (a single PostgreSQL tx with `FOR UPDATE` locks on both
         rows). The exactly-one-owner invariant is enforced by the
         partial unique `org_memberships_one_owner_idx`. The new owner must already be an active
-        member of the org. For a Free organization, the recipient must have
+        member of the org whose account is active. For a Free organization, the recipient must have
         available Free-organization ownership capacity; admission is serialized
-        with organization creation and other incoming transfers.
+        with organization creation and other incoming transfers. Needs a
+        signed-in browser session; an API key gets `browser_session_required`.
       requestBody:
         required: true
         content:
@@ -18339,7 +18623,58 @@ paths:
           description: 'code: NotFound (new owner is not a member)'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '409':
-          description: 'code: org_last_owner (caller not the active owner OR new owner already owner)'
+          description: 'code: org_last_owner (caller not the active owner OR new owner already owner), or conflict (new owner''s account is suspended or pending deletion)'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/orgs/{slug}/security-policy:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: getOrgSecurityPolicy
+      summary: Read the organization's security policy.
+      description: |
+        Any member can read whether the organization requires two-factor
+        authentication.
+      responses:
+        '200':
+          description: The organization's security policy.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`org_mfa_required` when the organization requires two-factor authentication and the caller has none.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    put:
+      tags: [orgs]
+      operationId: putOrgSecurityPolicy
+      summary: Require or stop requiring two-factor authentication for members.
+      description: |
+        Owner-only (`org.manage_security`) and needs a fresh step-up. While
+        `require_mfa` is on, a member without two-factor authentication is
+        refused on the organization's routes with `org_mfa_required`, by
+        sessions and API keys alike, until they enrol. Turning it on needs
+        the caller to have two-factor authentication. Owners and admins
+        are emailed when the policy changes.
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+      responses:
+        '200':
+          description: The organization's security policy with the requested two-factor requirement applied.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/OrgSecurityPolicy'}}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: '`org_role_forbidden` for a non-owner; `step_up_required` for a stale sign-in.'
+          content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: '`conflict` when the caller turning the requirement on has no two-factor authentication.'
           content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/invitations/{token}:
@@ -20584,6 +20919,114 @@ paths:
                 # rotated_at only.
         '403': {$ref: '#/components/responses/Forbidden'}
         '409': {$ref: '#/components/responses/Conflict'}
+  /v1/orgs/{organization}/projects/scan/source-ref:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: scanOrgProjectSourceRef
+      summary: "Preview a company project from a connected repository ref."
+      description: "Fetches the repository at the given ref through the organization's own GitHub installation and runs the same read-only scanner as the company source upload. A member's personal installation is never used; the organization must own its resources and have GitHub connected. Requires the deploy role."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectSourceRefScanRequest'
+      responses:
+        '200':
+          description: "Company repository scan, workload partitions and deployment plan."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PlanResponse'
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/ValidationFailed'}
+        '413': {$ref: '#/components/responses/SourceTooLarge'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/orgs/{organization}/projects/apply-plan:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: applyCachedOrgProjectPlan
+      summary: "Deploy a company project's reviewed source without another upload."
+      description: "Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role."
+      parameters:
+        - name: Deployment-Attempt-ID
+          in: header
+          required: false
+          description: Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ApplyCachedProjectPlanRequest'}
+      responses:
+        '200':
+          description: "Company project applied with per-workload deployment receipts."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '403':
+          description: "The member lacks the deploy role or secret write permission."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '409':
+          description: "The company plan is stale, blocked, or requires environment approval."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '410':
+          description: "The reviewed company source expired or belongs elsewhere; scan again."
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+  /v1/orgs/{organization}/projects/safe-deploy:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+    post:
+      tags: [projects]
+      operationId: safeApplyOrgProject
+      summary: "Build an existing company HTTP project and atomically publish its ready release."
+      description: "The company form of the safe project deploy: candidates receive zero traffic and publish only after every candidate completes readiness. Takes the same release headers, attempt ID and plan token as the personal form. Requires the deploy role."
+      parameters:
+        - name: Project-Release-Mode
+          in: header
+          description: "Safe release mode for the company project; defaults to atomic."
+          schema: {type: string, enum: [atomic, atomic-verify, atomic-config-verify, atomic-migrate-verify, atomic-config-migrate-verify, atomic-verify-workers, atomic-config-verify-workers, atomic-migrate-verify-workers, atomic-config-migrate-verify-workers]}
+        - name: Deployment-Attempt-ID
+          in: header
+          required: true
+          description: "Durable identity for this company safe project submission."
+          schema: {type: string, pattern: '^[a-f0-9]{32}$'}
+        - name: plan_token
+          in: query
+          description: "Company scan token bound to the safe release baseline."
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: {$ref: '#/components/schemas/ProjectApplyRequest'}
+      responses:
+        '200':
+          description: "Accepted company candidate deployments and durable safe release state."
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApplyResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/orgs/{organization}/projects/scan:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -21584,6 +22027,18 @@ components:
         until: {type: string, format: date-time, description: Exclusive first_at bound for the traversal.}
         limit: {type: integer, minimum: 1, maximum: 100, default: 100, description: Page size included in the cursor scope binding.}
         cursor: {type: string, maxLength: 2048, description: Previous page continuation retaining its initial cutoff.}
+    MCPReadinessExpectation:
+      type: object
+      description: Exact fresh role observations required in the traffic transaction, independently of emergency overrides. Mismatches return 409 without changing traffic.
+      required: [policy_revision, artifact_sha256, evidence_ids]
+      properties:
+        policy_revision: {type: string, format: uuid}
+        artifact_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        evidence_ids:
+          type: object
+          minProperties: 1
+          maxProperties: 32
+          additionalProperties: {type: string, format: uuid}
     MCPPolicyConvergenceSnapshot:
       description: "Account-scoped live gateway replay observation for an active HTTP deployment. Snapshot metadata only; token enforcement is not attested. Correlates retained admission evidence when available."
       type: object
@@ -24360,6 +24815,7 @@ components:
         evidence_through_id: {type: integer, format: int64, minimum: 0}
         known_millicents: {type: integer, format: int64, minimum: 0}
         coverage_complete: {type: boolean}
+        projectable: {type: boolean, description: 'Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.'}
         fresh: {type: boolean}
         reasons: {type: array, items: {type: string}}
         projected_millicents: {type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.'}
@@ -24662,6 +25118,9 @@ components:
         fresh: {type: boolean}
         expected_minutes: {type: integer, format: int64}
         complete_minutes: {type: integer, format: int64}
+        projectable:
+          type: boolean
+          description: Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
         unpriced_quantity: {type: integer, format: int64}
         non_billable_quantity: {type: integer, format: int64}
         reasons: {type: array, items: {type: string}}
@@ -25161,6 +25620,38 @@ components:
           type: string
           format: date-time
           description: "When the response was made; a restore point must be before it."
+    ManagedPostgresQueryRequest:
+      description: One read-only SQL statement.
+      type: object
+      additionalProperties: false
+      required: [sql]
+      properties:
+        sql: {type: string, minLength: 1, maxLength: 65536, description: One statement; several are refused.}
+        max_rows: {type: integer, minimum: 1, maximum: 1000, description: Rows to return; default 100.}
+    ManagedPostgresQueryResponse:
+      description: The rows one read-only statement read.
+      type: object
+      additionalProperties: false
+      required: [database_id, columns, rows, row_count, truncated, duration_ms]
+      properties:
+        database_id: {type: string}
+        columns:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type]
+            properties:
+              name: {type: string}
+              type: {type: string, description: 'PostgreSQL type name, or oid:N for a type the server did not name.'}
+        rows:
+          type: array
+          items:
+            type: array
+            items: {type: [string, 'null'], description: The value in PostgreSQL text form; null for NULL.}
+        row_count: {type: integer, minimum: 0}
+        truncated: {type: boolean, description: True when the row or 1 MiB cap stopped reading before the result ended.}
+        duration_ms: {type: integer, format: int64, minimum: 0}
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
@@ -25249,7 +25740,7 @@ components:
         request_id: {type: string, format: uuid, description: "Optional reserved database identity for durable workflows. Identical retries recover the same resource independently of the HTTP response cache. A different reservation cannot adopt an existing name."}
         name: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         region: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
-        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 16}
+        postgres_major: {type: integer, minimum: 12, maximum: 99, default: 17}
         service_class: {type: string, enum: [development, burstable, production], default: development}
         availability: {type: string, enum: [single_zone, high_availability], default: single_zone}
         scale_to_zero: {type: boolean, default: true}
@@ -25567,10 +26058,14 @@ components:
       properties:
         enabled: {type: boolean}
     PasswordSignupRequest:
-      description: "Email + password for signup. Same shape as PasswordLoginRequest so the create-or-claim race detection reuses the verifier."
+      description: "Email + password for signup. Same shape as PasswordLoginRequest with an optional referral code."
       type: object
       required: [email, password]
       properties:
+        referral_code:
+          type: string
+          pattern: '^([A-Za-z0-9]{6})?$'
+          description: Optional six-character customer or salesperson referral code; case-insensitive. Requires the referral program to be enabled.
         email: {type: string, format: email}
         password: {type: string, minLength: 12, maxLength: 256}
     ProgrammaticAuthResponse:
@@ -25622,6 +26117,7 @@ components:
         accounts.
       type: object
       properties:
+        referral_code: {type: string, pattern: '^([A-Za-z0-9]{6})?$'}
         email: {type: string, format: email}
     PasswordResetRequest:
       description: "Email for a password-reset request. Optional — the form-page path submits no body; the SDK sends the email."
@@ -25730,6 +26226,16 @@ components:
           enum: [webhook, actions]
           default: webhook
           description: The single production deploy authority; GitHub App PR previews continue in either mode.
+        preview_mode:
+          type: string
+          enum: [app, branch]
+          default: app
+          description: |
+            How pull requests are previewed. `app` gives each previewed
+            workload its own preview app. `branch` makes environment branch
+            `pr-{N}` of production for each pull request and deploys the PR
+            head into it. Choosing `branch` needs the
+            platform to enable branch previews.
     GitHubDeploymentPolicyPatch:
       description: Partial replacement for a project's GitHub deployment policy.
       type: object
@@ -25750,6 +26256,9 @@ components:
         production_trigger:
           type: string
           enum: [webhook, actions]
+        preview_mode:
+          type: string
+          enum: [app, branch]
     GitHubInstallMutationRequest:
       description: |
         Double-submit CSRF envelope for customer-facing GitHub connection
@@ -25964,6 +26473,118 @@ components:
           type: array
           items: {type: string}
           description: Catalog capabilities, internal ones included, whose platform flag is off for this account. Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
+    AccountHealth:
+      description: "What may stop the calling account from working: restrictions with the next step, problems that keep recurring, failed deployments, custom-domain problems and refused API requests."
+      type: object
+      required: [generated_at, attention, restrictions, failed_deployments, domain_issues, refused_requests]
+      properties:
+        generated_at: {type: string, format: date-time, description: When the checks ran.}
+        attention: {type: integer, description: "Number of restrictions, signals, failed deployments and domain issues; zero means nothing needs action."}
+        restrictions:
+          type: array
+          description: Restrictions currently applied to the account, one per kind.
+          items: {$ref: '#/components/schemas/AccountHealthRestriction'}
+        signals:
+          type: array
+          description: "Problems that keep recurring on the account, such as repeated failed deployments or out-of-memory stops, with the next step. Absent from older servers."
+          items: {$ref: '#/components/schemas/AccountHealthSignal'}
+        failed_deployments:
+          type: array
+          description: Failed deployments from the last 7 days, newest first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthDeployment'}
+        domain_issues:
+          type: array
+          description: Custom domains that are unverified or whose certificate is not serving.
+          items: {$ref: '#/components/schemas/AccountHealthDomain'}
+        refused_requests: {$ref: '#/components/schemas/AccountHealthRequests'}
+        unavailable:
+          type: array
+          items: {type: string}
+          description: Checks that could not be loaded; their lists are empty and mean unknown, not none.
+    AccountHealthRestriction:
+      description: One account restriction in customer wording, with the next step when there is one.
+      type: object
+      required: [kind, title, detail]
+      properties:
+        kind:
+          type: string
+          enum: [account_suspended, account_past_due, deletion_pending, abuse_hold, email_unverified, overage_cap_reached, platform_release_pause]
+          description: Stable restriction identifier.
+        title: {type: string, description: Short headline for the restriction.}
+        detail: {type: string, description: What the restriction does to the account.}
+        action: {type: string, description: Label of the next step.}
+        action_url: {type: string, description: Dashboard path for the next step.}
+        since: {type: string, format: date-time, description: "When the restriction started, when known."}
+    AccountHealthSignal:
+      description: "A problem that keeps recurring, in customer wording, with the next step when there is one."
+      type: object
+      required: [kind, subject, title, detail, since]
+      properties:
+        kind:
+          type: string
+          enum: [deploy_failing, app_oom, jobs_failing, limit_pressure]
+          description: Stable signal identifier.
+        subject: {type: string, description: "What the signal is about: an app slug, a scheduled job name or a problem code."}
+        title: {type: string, description: Short headline for the signal.}
+        detail: {type: string, description: What keeps happening and how to fix it.}
+        action: {type: string, description: Label of the link that fixes the signal.}
+        action_url: {type: string, description: Dashboard path of the page that fixes the signal.}
+        since: {type: string, format: date-time, description: When Gregale first detected the problem.}
+    AccountHealthDeployment:
+      description: A failed deployment with the error and fix hint the build or rollout reported.
+      type: object
+      required: [deployment_id, app_id, created_at]
+      properties:
+        deployment_id: {type: string, description: Failed deployment identifier.}
+        app_id: {type: string, description: Identifier of the deployment's app.}
+        app_slug: {type: string, description: Slug of the deployment's app.}
+        error_code: {type: string, description: Stable failure code.}
+        error: {type: string, description: "Failure message, at most 500 bytes."}
+        hint: {type: string, description: "Suggested fix, at most 500 bytes."}
+        created_at: {type: string, format: date-time, description: When the deployment was created.}
+    AccountHealthDomain:
+      description: A custom domain that is not serving correctly.
+      type: object
+      required: [domain, problem]
+      properties:
+        domain: {type: string, description: The custom hostname.}
+        app_slug: {type: string, description: Slug of the app the hostname routes to.}
+        problem: {type: string, description: What is wrong with the hostname.}
+        cert_error: {type: string, description: "The certificate authority's last error, when issuance failed."}
+    AccountHealthRequests:
+      description: API requests Gregale refused for the account in the recent window.
+      type: object
+      required: [window_hours, total, by_code, recent]
+      properties:
+        window_hours: {type: integer, description: Length of the window in hours.}
+        total: {type: integer, format: int64, description: Refused requests in the window.}
+        by_code:
+          type: array
+          description: Counts by problem code, most frequent first, at most 10.
+          items: {$ref: '#/components/schemas/AccountHealthCode'}
+        recent:
+          type: array
+          description: Most recent refused requests, at most 20.
+          items: {$ref: '#/components/schemas/AccountHealthRequest'}
+    AccountHealthCode:
+      description: How often one problem code was returned in the window.
+      type: object
+      required: [code, count, last_at]
+      properties:
+        code: {type: string, description: Problem code from the response body and X-Faas-Error-Code.}
+        count: {type: integer, format: int64, description: Responses with this code.}
+        last_at: {type: string, format: date-time, description: Most recent response with this code.}
+    AccountHealthRequest:
+      description: "One refused request: the matched route pattern, the problem code and the ids to quote to support."
+      type: object
+      required: [occurred_at, route, code]
+      properties:
+        occurred_at: {type: string, format: date-time, description: When the request was refused.}
+        route: {type: string, description: "Matched route pattern, for example POST /v1/apps/{slug}/deployments; never the raw URL."}
+        code: {type: string, description: Problem code returned.}
+        app_slug: {type: string, description: "App slug from the request path, when the route has one."}
+        request_id: {type: string, description: X-Faas-Request-Id of the request.}
+        trace_id: {type: string, description: X-Gregale-Trace-Id of the request.}
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
       type: object
@@ -26007,7 +26628,7 @@ components:
       type: object
       required: [reason, held_at]
       properties:
-        reason: {type: string, enum: [egress_fanout, egress_flood, operator]}
+        reason: {type: string, enum: [cpu_sustained, egress_fanout, egress_flood, operator]}
         held_at: {type: string, format: date-time}
     AccountLimits:
       description: "Plan-driven quota, resource caps, and trigger capabilities returned by GET /v1/account."
@@ -26127,6 +26748,16 @@ components:
       required: [plan]
       properties:
         plan: {type: string, enum: [free, hobby, pro, scale], example: "hobby"}
+        salesperson_code:
+          type: string
+          pattern: '^\s*([A-Za-z0-9]{6})?\s*$'
+          description: |
+            Optional salesperson code for a personal account's first paid purchase.
+            Letters are normalized to uppercase and surrounding spaces are removed.
+            Requires a live verified session. Only active sales codes are accepted;
+            existing referrals and prior payments cannot be reassigned. The choice
+            remains saved if checkout is retried or abandoned. Omit or leave empty
+            to keep ordinary billing behavior. Organization purchases are excluded.
     UpdateAccountBillingInfoRequest:
       description: "Partial legal billing identity update. Empty strings clear fields."
       type: object
@@ -26395,7 +27026,7 @@ components:
         label: {type: [string, "null"], example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: {type: string, format: date-time}
@@ -26681,6 +27312,19 @@ components:
         apps: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/DeletedAppSummary'}}
         next_cursor: {type: string, maxLength: 1024}
         evaluated_at: {type: string, format: date-time}
+    DeletedAppPurgeResponse:
+      type: object
+      description: Outcome of an owner's purge. The restore window is closed either way.
+      required: [account_id, id, slug, purged]
+      properties:
+        account_id: {type: string, format: uuid}
+        id: {type: string, format: uuid}
+        slug: {type: string}
+        purged: {type: boolean, description: True once the app is gone and its slug is free for this account.}
+        pending_reason:
+          type: string
+          description: What still holds the app while purged is false; the grace sweep retries.
+          enum: [environment_clone, exclusive_work, foreign_key, managed_postgres_binding, multipart_write, object_bucket, retained_resources, retry_pending]
     AppScalingSettings:
       description: Stored RAM, CPU, concurrency and instance-floor settings.
       type: object
@@ -27550,6 +28194,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -27842,7 +28488,7 @@ components:
         metrics: {type: string}
         configuration: {type: string}
     DevPatchPreview:
-      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have been applied as a live source patch to the deployment that was live at upload time (phase 1). It is a measurement only; the normal developer build always runs.
+      description: Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync can be applied as a live source patch to the deployment that was live at upload time and, when it was published as one, whether its build waits for the developer to stop saving.
       type: object
       required:
         - eligible
@@ -27881,6 +28527,10 @@ components:
           format: int64
           minimum: 1
           description: Set when this sync published a live patch; poll getDevPatchStatus with it.
+        build_deferred_until:
+          type: string
+          format: date-time
+          description: Set when this sync's build waits behind its live patch. The build starts at this time unless a later sync replaces it first; a patch that fails to apply starts it at once.
     AppDeploySettingsCondition:
       type: object
       additionalProperties: false
@@ -27901,7 +28551,7 @@ components:
           minProperties: 1
           maxProperties: 13
           propertyNames:
-            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, scaling_policy, retry_policy]
+            enum: [execution_mode, restart_policy, startup_deadline_s, max_retries, request_timeout_s, stop_grace_period_s, stop_signal, service_replicas, worker_replicas, after_restore, before_checkpoint, warmup, scaling_policy, retry_policy]
           additionalProperties: {}
           description: Observed values from the app read; null represents an unset optional policy. Must cover every mutated setting.
     UpdateAppRequest:
@@ -27976,6 +28626,9 @@ components:
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
           description: "Set a terminal init snapshot callback for request or service apps. Omit to preserve; an empty object clears it."
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
+          description: "Set the path a deployment's first init snapshot is primed with. Omit to preserve; an empty path clears it."
         pause:
           type: string
           enum: [between_requests, when_idle, never, ""]
@@ -28731,6 +29384,14 @@ components:
           maximum: 2000
           default: 500
           description: "Deadline for checkpoint response in milliseconds; 0 uses the 500 ms default."
+    WarmupHook:
+      description: "Path that primes a deployment's first init snapshot. Before that capture Gregale sends up to 20 GET requests (5 s at most) to it on the app's HTTP port; without it, the HTTP health check path is used. Priming never fails a deploy."
+      type: object
+      properties:
+        path:
+          type: string
+          description: "Absolute path on the app's HTTP port. Should exercise the request code a wake needs warm and be safe to call repeatedly."
+          example: "/internal/warmup"
     AppManifest:
       description: "App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag. The optional `env_secrets` field carries sealed-secret refs (\"secret:NAME\" strings) resolved by the host at wake time against the app_secrets table. Values are NEVER sealed ciphertext — only refs. widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."
       type: object
@@ -28811,6 +29472,8 @@ components:
           $ref: '#/components/schemas/AfterRestoreHook'
         before_checkpoint:
           $ref: '#/components/schemas/BeforeCheckpointHook'
+        warmup:
+          $ref: '#/components/schemas/WarmupHook'
         pause:
           type: string
           enum: [between_requests, when_idle, never]
@@ -30074,6 +30737,7 @@ components:
             type: integer
             minimum: 1
             maximum: 100
+        expected_mcp_readiness: {$ref: '#/components/schemas/MCPReadinessExpectation'}
         expected_mcp_access_policy:
           type: object
           description: "Optional account-wide stored MCP policy condition, checked in the traffic transaction. Changed overlapping JWT rules return 409 mcp_access_policy_changed without changing traffic. When account_revision is supplied, the transaction also requires the unchanged account revision and fresh replay from every currently registered serving gateway. Gateway evidence is a database snapshot at admission, not runtime authorization or a lease on fleet membership."
@@ -35596,6 +36260,15 @@ components:
         preview_service_calls_policy:
           $ref: '#/components/schemas/PreviewServiceCallsPolicy'
           description: "Effective policy selected by the Compose `x-gregale-preview-calls` extension. Defaults to `allow`."
+        app_protocol:
+          type: string
+          description: "Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets none."
+        streaming:
+          type: boolean
+          description: "Compose `x-gregale-streaming`. Omitted when the file sets none."
+        wake_ahead:
+          type: boolean
+          description: "Compose `x-gregale-wake-ahead`. Omitted when the file sets none."
         allowed_service_callers:
           type: array
           items: {type: string}
@@ -35630,6 +36303,10 @@ components:
             type: string
             enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
           description: "For an unset_env_keys name with a Compose value, why that value is not imported. Never values."
+        source_hosts:
+          type: array
+          items: {$ref: '#/components/schemas/PlanSourceHost'}
+          description: "String literals in the workload's source that dial another service by its Compose name, which does not resolve on Gregale. At most a few per workload."
         imported_env_keys:
           type: array
           items: {type: string}
@@ -35832,6 +36509,24 @@ components:
         limit: {type: integer, format: int64}
         observed: {type: integer, format: int64}
         docs_url: {type: string}
+    PlanSourceHost:
+      type: object
+      description: "One place source code dials a service by its Compose name."
+      required: [host, file, line]
+      properties:
+        host: {type: string, description: "The Compose service name the code uses as a host."}
+        file: {type: string, description: "Repository-relative path of the file."}
+        line: {type: integer, description: "1-based line number."}
+    FeatureHint:
+      description: "One Gregale behavior or feature that applies to the scanned source: what the plan will do, how to change it, and the exact CLI commands. IDs are stable."
+      type: object
+      required: [id, applied]
+      properties:
+        id: {type: string, description: "Stable hint ID, such as health-default-path or public-needs-api-key"}
+        workloads: {type: array, items: {type: string}, description: "Workloads the hint is about"}
+        applied: {type: string, description: "What Gregale will do with this source"}
+        change: {type: string, description: "How to change it"}
+        commands: {type: array, items: {type: string}, description: "Exact gregale commands; <placeholders> need a value"}
     PlanResponse:
       description: "Dry-run scan response."
       type: object
@@ -35875,6 +36570,10 @@ components:
         warnings:
           type: array
           items: {type: string}
+        feature_hints:
+          type: array
+          description: "Gregale behaviors and features that apply to the scanned source, with the commands that change them."
+          items: {$ref: '#/components/schemas/FeatureHint'}
         detection_warnings:
           type: array
           description: "Structured skipped/merged detector decisions available to explain-mode clients."
@@ -38626,7 +39325,7 @@ components:
         client_name: {type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces."}
         client_site: {type: string, maxLength: 253, description: Lower-case host name the client was verified at.}
     AgentBudgetResponse:
-      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      description: "An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."
       type: object
       required: [source, spent_cents, month]
       properties:
@@ -38635,8 +39334,8 @@ components:
         key_monthly_cents: {type: integer, format: int64, description: "The budget set for this agent, when one was."}
         key_unlimited: {type: boolean, description: "The agent was set to have no budget of its own."}
         org_max_cents: {type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one."}
-        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent."}
-        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in."}
+        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to the cent. It does not reset each month; lowering capacity gives budget back."}
+        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The current UTC month (kept for compatibility; spent_cents no longer resets monthly)."}
     AgentUndoRequest:
       description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
       type: object
@@ -38816,6 +39515,7 @@ components:
         status: {type: string, enum: [pending, approved, denied, consumed, expired], description: "`consumed` once the approved request was made."}
         review_url: {type: string, format: uri, description: The review page, while the request is pending.: null}
         agent: {type: string, description: "The connection's client name or key label."}
+        connection_id: {type: string, description: "The id of the agent connection that asked, as GET /v1/agent-connections lists it."}
         created_at: {type: string, format: date-time, description: When the agent first made the request.}
         expires_at: {type: string, format: date-time, description: After this time the request can no longer be approved or used.}
         decided_at: {type: string, format: date-time, description: When a person approved or denied it.}
@@ -38848,7 +39548,7 @@ components:
         label: {type: [string, "null"], example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: {type: [string, "null"], format: date-time}
@@ -38930,11 +39630,16 @@ components:
         label: {type: string, maxLength: 100, example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
         approval_categories: {type: array, items: {type: string, enum: [delete, production, credentials, billing]}, description: "Kinds of action an agent key must have a person approve before Gregale carries out the request. Omit for every kind; send an empty list for none. Only agent keys take this field."}
+    RotateKeyRequest:
+      description: "Optional body of POST /v1/keys/{id}/rotate. `grace_window_days` overrides, for this rotation only, how many days the old key keeps working; `0` revokes it at once (use it for a leaked key). Omitted uses the account's grace window or the plan default (7 days)."
+      type: object
+      properties:
+        grace_window_days: {type: integer, minimum: 0, maximum: 30, description: "Days the old key keeps working after this rotation. `0` revokes it at once."}
     RotateKeyResponse:
       description: "Response body of POST /v1/keys/{id}/rotate. The new `key_plaintext` is returned exactly once; the old plaintext is NEVER returned (only the hash is stored). `old_key_expires_at` is the grace deadline applied to the predecessor — the customer's CI rotates over by then."
       type: object
@@ -38956,7 +39661,7 @@ components:
         label: {type: string, maxLength: 100, example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
@@ -39702,6 +40407,7 @@ components:
           type: array
           items: {type: string, format: uuid}
           description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        keeps_release: {type: boolean, description: "True for a restore that moves the app to the copy without changing its code; the target deployment is the release that served when it was requested."}
         source_database_id: {type: string, format: uuid, description: "The database the app leaves. It keeps every write."}
         source_database_name: {type: string}
         target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
@@ -39721,6 +40427,16 @@ components:
         phase_started_at: {type: string, format: date-time}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    CreateDatabaseSwitchRequest:
+      description: "Restore a managed database the app binds and move the app to the copy, keeping its code."
+      type: object
+      additionalProperties: false
+      required: [database_id, name, point_in_time]
+      properties:
+        database_id: {type: string, format: uuid, description: "The managed database the app's bindings point at."}
+        name: {type: string, minLength: 1, maxLength: 63, description: "Name of the restored copy; it becomes the app's database."}
+        point_in_time: {type: string, format: date-time, description: "A time inside the database's restore range. Writes after it stay only in the source database."}
+        scope: {type: string, description: "The environment whose bindings move; empty is the default scope."}
     DatabaseSwitchDrain:
       description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
       type: object
@@ -39730,6 +40446,14 @@ components:
         parked: {type: integer, minimum: 0}
         pending: {type: integer, minimum: 0}
         blocked: {type: integer, minimum: 0}
+    DatabaseSwitchList:
+      description: "A page of an app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/DatabaseSwitch'}
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at."
       type: object
@@ -39960,7 +40684,7 @@ components:
         deleted: {type: array, items: {type: string}}
         secrets_not_restored: {type: array, items: {$ref: '#/components/schemas/ConfigSecretDifference'}}
     AppEnvResponse:
-      description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
+      description: "An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
@@ -39973,6 +40697,7 @@ components:
           example: "default"
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        value: {type: string, description: "The variable's plaintext; present only with `?values=true`."}
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on env writes: the revision this write recorded and the config guard watching it."
@@ -39984,7 +40709,7 @@ components:
     # branch on `if 'env_by_scope' in response` decodes the
     # nested map; otherwise it decodes the flat `env` array.
     ScopedAppEnvResponse:
-      description: "An env var envelope scoped to one named environment. The plaintext value never appears here."
+      description: "An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [scope, key, created_at, updated_at]
       properties:
@@ -39996,6 +40721,7 @@ components:
         key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        value: {type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing."}
     AppEnvListResponse:
       description: |
         List of env var envelopes (no plaintext values). Discriminated
@@ -40219,7 +40945,7 @@ components:
           description: Safe explanation without raw backend errors or probe output.
         reason:
           type: string
-          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
+          enum: [collection_gap, capacity_below_target, request_plan_restricted, request_scope_unavailable, request_evidence_unavailable, request_coverage_incomplete, request_evidence_stale, request_evidence_invalid, requests_unexercised, request_volume_insufficient, request_all_failed, request_error_rate_severe, request_error_rate_elevated, request_errors_below_threshold, requests_observed, memory_pressure]
           description: Stable diagnostic reason, when available.
         action:
           type: string
@@ -43038,6 +43764,19 @@ components:
       description: Empty success body; the confirmation link is sent by email.
       type: object
       additionalProperties: false
+    MFADisableEmailCancelRequest:
+      description: Optional body; a browser session sends the CSRF token minted for `mfa_disable_email_cancel`.
+      type: object
+      additionalProperties: false
+      properties:
+        csrf_token: {type: string}
+    MFADisableEmailCancelResponse:
+      description: How many pending email-assisted MFA disables were cancelled.
+      type: object
+      required: [cancelled]
+      additionalProperties: false
+      properties:
+        cancelled: {type: integer, minimum: 0, example: 1}
     MFADisableEmailConfirmRequest:
       description: Body for consuming the emailed token after the cooldown.
       type: object
@@ -43404,6 +44143,18 @@ components:
             `created_at DESC, id DESC` order exact under random UUIDs. The wire shape is
             opaque; clients MUST pass the value back unchanged.
           type: string
+    OrgSecurityPolicy:
+      description: An organization's security policy.
+      type: object
+      required: [require_mfa]
+      properties:
+        require_mfa:
+          type: boolean
+          description: Members without two-factor authentication are refused on the organization's routes.
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     TransferOwnershipRequest:
       description: |
         POST /v1/orgs/{slug}/transfer_ownership body. The new owner

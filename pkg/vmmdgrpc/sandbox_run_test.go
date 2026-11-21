@@ -4,6 +4,8 @@ package vmmdgrpc_test
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"sync"
 	"testing"
@@ -16,6 +18,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/sandboxproto"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
@@ -216,9 +219,14 @@ func TestRunSandboxRefusals(t *testing.T) {
 			r.GetStart().SandboxId = ""
 			return r
 		}(), codes.InvalidArgument},
-		{"web network", true, func() *vmmdpb.RunSandboxRequest {
+		{"browser with an image", true, func() *vmmdpb.RunSandboxRequest {
 			r := sandboxRunStart()
-			r.GetStart().NetworkMode = "web"
+			r.GetStart().Browser, r.GetStart().ImageKey = true, "jobs/11111111-1111-1111-1111-111111111111.ext4"
+			return r
+		}(), codes.InvalidArgument},
+		{"unknown network", true, func() *vmmdpb.RunSandboxRequest {
+			r := sandboxRunStart()
+			r.GetStart().NetworkMode = "open"
 			return r
 		}(), codes.InvalidArgument},
 	} {
@@ -228,7 +236,9 @@ func TestRunSandboxRefusals(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := stream.Send(tc.start); err != nil {
+			// A server that refuses before reading ends the stream; Send then
+			// reports io.EOF and the refusal arrives on Recv.
+			if err := stream.Send(tc.start); err != nil && !errors.Is(err, io.EOF) {
 				t.Fatal(err)
 			}
 			if _, err := stream.Recv(); status.Code(err) != tc.want {
@@ -480,5 +490,30 @@ func TestRunSandboxWarmSnapshots(t *testing.T) {
 	req.Namespace = "sandbox-preset"
 	if _, err := cli.CaptureSandboxSnapshot(context.Background(), req); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("a template capture into the preset namespace: %v", err)
+	}
+}
+
+// vmmd boots a web-mode session with its network (ADR-20261112121456 §2).
+func TestRunSandboxPassesTheWebNetworkMode(t *testing.T) {
+	vmm := newSandboxRunVMM()
+	cli := newSandboxRunClient(t, vmm, true)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	t.Cleanup(cancel)
+	stream, err := cli.RunSandbox(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := sandboxRunStart()
+	start.GetStart().NetworkMode, start.GetStart().Browser = api.SandboxNetworkWeb, true
+	if err := stream.Send(start); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Recv(); err != nil {
+		t.Fatalf("a web-mode start was refused: %v", err)
+	}
+	vmm.mu.Lock()
+	defer vmm.mu.Unlock()
+	if len(vmm.woken) != 1 || vmm.woken[0].Network != api.SandboxNetworkWeb || !vmm.woken[0].Browser {
+		t.Fatalf("woken %+v; want one web-mode browser wake", vmm.woken)
 	}
 }

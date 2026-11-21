@@ -22,3 +22,8 @@ func TestPgProjectEnvironmentBranchExtend(t *testing.T) {
 		return "pr-2"
 	})
 }
+
+func TestPgProjectEnvironmentBranchSlot(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	projectEnvironmentBranchSlot(t, s)
+}

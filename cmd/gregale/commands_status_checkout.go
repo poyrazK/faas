@@ -82,12 +82,19 @@ func renderCheckoutStatus(out checkoutStatus) {
 		_, _ = fmt.Fprintf(osStdout, "%-12s several workloads · %s; pass --app <slug> for one app\n", "App", environment)
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "%-12s %s · %s\n", "App", out.App.Slug, environment)
-		_, _ = fmt.Fprintf(osStdout, "%-12s %s\n", "State", out.App.Status)
+		state := out.App.Status
+		if label := appParkedLabel(*out.App); label != "" {
+			state = label
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-12s %s\n", "State", state)
 		if url := out.App.CanonicalURL; url != "" {
 			_, _ = fmt.Fprintf(osStdout, "%-12s %s\n", "URL", url)
 		} else if out.App.URL != "" {
 			_, _ = fmt.Fprintf(osStdout, "%-12s %s\n", "URL", out.App.URL)
 		}
+	}
+	if out.App != nil {
+		writeParkedNotice(osStdout, *out.App)
 	}
 	if out.Account != nil {
 		_, _ = fmt.Fprintf(osStdout, "%-12s %s (%s plan)\n", "Account", out.Account.Email, out.Account.Plan)

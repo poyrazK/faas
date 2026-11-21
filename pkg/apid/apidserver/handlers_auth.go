@@ -85,8 +85,7 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 	flash := ""
 	if r.URL.Query().Get("verify") == "1" {
 		flash = verifySignInFlash
-	}
-	if r.URL.Query().Get("reauth") == "1" {
+	} else if r.URL.Query().Get("reauth") == "1" {
 		flash = recentSignInFlash
 	}
 	a.renderLogin(w, r, http.StatusOK, flash, false, next)
@@ -95,7 +94,7 @@ func (a *authHandlers) renderLoginForm(w http.ResponseWriter, r *http.Request) {
 // renderLogin renders the sign-in form. next is carried through the POST so a
 // browser lands where sessionAuth sent it from (H8-28).
 func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, status int, flash string, isError bool, next string) {
-	a.renderAuthPage(w, r, status, dashboard.Page{
+	renderAuthPage(w, r, a.log, status, dashboard.Page{
 		Title: "Sign in",
 		Body:  "login",
 		Flash: flash,
@@ -538,7 +537,7 @@ func dashboardRecoveryRoute(acct state.Account, method, path string) bool {
 	switch method + " " + path {
 	case "GET /dashboard/billing", "GET /dashboard/usage", "GET /dashboard/upgrade",
 		"POST /dashboard/upgrade", "POST /dashboard/account/plan",
-		"GET /dashboard/account", "GET /dashboard/account/export":
+		"GET /dashboard/account", "GET /dashboard/account/export", "GET /dashboard/account/health":
 		return acct.Status == state.AccountSuspended || acct.Status == state.AccountDeletedPending
 	case "POST /dashboard/account/restore":
 		return acct.Status == state.AccountDeletedPending

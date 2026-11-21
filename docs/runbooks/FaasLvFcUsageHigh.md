@@ -7,14 +7,31 @@ partitions and bare cloud disks alike. Before the statfs probe the gauge
 read `lvs -o data_percent`, which is empty for non-thin volumes and absent
 on hosts without LVM, and stayed at 0. The same reading drives imaged's
 budget-pressure snapshot eviction.
-Spec: §12 (lv_fc_used_pct > 80 warn, > 90 page).
+Spec: §12 (lv_fc_used_pct > 80 warn, > 90 page); the warn is 87% since
+ADR-20261114182830 amendment 1.
 
 ## Symptom
 
-The lv-fc logical volume is past 80% / 90% used.
+The lv-fc logical volume is past 87% / 90% used.
 
-- Warn tier (`FaasLvFcUsageHighWarn`) trips at > 80% for 10 m.
+- Warn tier (`FaasLvFcUsageHighWarn`) trips at > 87% for 10 m.
 - Page tier (`FaasLvFcUsageHighPage`) trips at > 90% for 5 m.
+
+About 85% is normal on a node whose artifact cache is full. The cache
+(`/srv/fc/cache`) grows to the disk less a 15% reserve
+(`api.ArtifactCacheReservePercent`) and evicts its oldest entries to keep
+that much free (ADR-20261114182830). Above 87% something is beating
+eviction: pinned cache entries, a large build drive under
+`/srv/fc/builder`, or files outside the cache. Check what each daemon
+resolved:
+
+```bash
+journalctl --since '-14d' --no-pager | grep 'artifact cache budget resolved' | tail -5
+du -xs --block-size=1M /srv/fc/* | sort -rn | head
+```
+
+`source=env` means `FAAS_STORAGE_CACHE_MAX_BYTES` caps the budget; the
+`min_free_bytes` floor applies either way.
 
 §8 says imaged refuses deploys at > 90% and pages at 80%; §12 says
 warn at 80, page at 90. The alert uses §12 verbatim (the more lenient

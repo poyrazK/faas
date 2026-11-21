@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -27,7 +28,7 @@ func cmdProjectsEnvironmentBranch(args []string) int {
 	list := fs.Bool("list", false, "list the parent's branches instead of creating one")
 	status := fs.Bool("status", false, "show the branch: its parent, expiry, data, database copies and workloads")
 	extend := fs.String("extend", "", "move the branch's expiry to this long from now, such as 48h (at most 30 days after its creation, 7 with database copies)")
-	reset := fs.Bool("reset", false, "make the branch again from its parent with its settings; work done in it is discarded and its workloads get new URLs")
+	reset := fs.Bool("reset", false, "make the branch again from its parent with its settings; work done in it is discarded and its workloads keep their URLs")
 	egress := fs.String("egress", "", "outbound traffic: live (default), contained (only the branch's own services) or simulated (contained, and it can seed rehearsals)")
 	privateNetworks := fs.String("private-networks", "", "off (default): the branch's workloads stay off their private networks; join: they join them with addresses of their own (live egress only)")
 	if err := fs.Parse(flags); err != nil || !environmentBranchArgsValid(*list, *status, *reset, *extend != "", len(positional)) {
@@ -171,6 +172,9 @@ func renderProjectEnvironmentBranch(environment api.ProjectEnvironmentResponse) 
 			}
 			_, _ = fmt.Fprintf(osStdout, "  database %s: copy of %s (%s)\n", d.Name, d.SourceDatabaseID, copied)
 		}
+		for _, bucket := range b.Buckets {
+			_, _ = fmt.Fprintf(osStdout, "  bucket %s: %s\n", cmp.Or(bucket.Name, bucket.SourceBucketID), environmentBranchBucketLine(bucket))
+		}
 		for _, w := range b.Workloads {
 			switch {
 			case w.SourceDeployment != "":
@@ -218,4 +222,17 @@ func environmentBranchDataLine(state, message string) string {
 	default:
 		return state
 	}
+}
+
+// environmentBranchBucketLine says how a branch bucket reads its parent.
+func environmentBranchBucketLine(b api.ProjectEnvironmentBranchBucket) string {
+	switch {
+	case b.CopyBucketID == "":
+		return "not made yet"
+	case b.Consistency == "as_of":
+		return "reads the parent as of " + b.AsOf
+	case b.Consistency == "live_parent":
+		return "reads the parent's current objects (versioning was off)"
+	}
+	return b.Consistency
 }

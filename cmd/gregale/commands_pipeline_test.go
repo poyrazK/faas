@@ -51,7 +51,7 @@ func TestPipelineCreateRegistersSourceAndProvisionsMirror(t *testing.T) {
 			main.WriteJSONTest(w, api.DataConnectionCheck{ID: uuid.NewString(), ConnectionID: sourceID, ConnectionRevision: 1, State: "passed", Fresh: true, Capacity: fixtureReadyPipelineCapacity(), Tables: []api.DataSourceTable{{Name: "orders", Supported: true}}})
 		case "POST /v1/postgres/databases":
 			var req api.CreateManagedPostgresDatabaseRequest
-			if json.NewDecoder(r.Body).Decode(&req) != nil || req.Name != "orders-mirror" || req.Region != "test-region" || req.PostgresMajor != 16 {
+			if json.NewDecoder(r.Body).Decode(&req) != nil || req.Name != "orders-mirror" || req.Region != "test-region" || req.PostgresMajor != api.ManagedPostgresDefaultMajor {
 				t.Error("mirror placement changed")
 			}
 			main.WriteJSONTest(w, api.ManagedPostgresDatabase{ID: databaseID, State: "ready"})

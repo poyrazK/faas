@@ -187,3 +187,72 @@ faas_sdk/models/vulnerability.py`; sdk-go is hand-curated. Open
 follow-up: persist all of `vulnerability.fix.versions[]` as a
 slice if a CVE ever carries multiple fixed versions (grype
 currently emits one fixed-version string per CVE).
+
+### Scans that gate nothing run after the snapshot handoff (2026-11-17)
+
+Decision 2 put the scan off the deploy's path; the image preparation
+pipeline (ADR-463) later ran it in front of the snapshot handoff for every
+app. In production every app was `security_policy=off`, so 631 deploys in
+three days waited for a result nothing read: 17.6 s at p50 and 42 s at p90
+of the 1,091 scans logged on both compute nodes over two days, 88% of them
+fresh Grype runs.
+
+imaged now hands the deployment to snapshot preparation first and queues
+the scan when the deploy cannot depend on it: `security_policy` is `off` or
+`warn`, the app does not require signed images, and the deployment has no
+ADR-435 runtime producer (that route requires complete evidence in every
+mode). Enforce mode, signed images and producer evidence keep the scan in
+front, unchanged; so does any doubt, such as a failed producer lookup.
+
+- The `security_scan` stage still records the gate; for a deferred scan it
+  passes at once. `scan_status` stays empty until the scan lands, which the
+  API and dashboard already show as "scan pending".
+- The scan is queued only after the handoff checkpoint commits, so a crash
+  at any earlier checkpoint resumes there and queues it exactly once.
+- One deferred scan runs at a time per imaged (`api.ImagedDeferredScanWorkers`)
+  and at most `api.ImagedDeferredScanQueue` wait, so deferral never runs
+  more Grype processes than the serial scans it replaced. A scan dropped
+  from a full queue, or lost with a restart, is picked up by the
+  live-deployment rescan sweep, which treats a deployment with no scan as
+  due; the sweep skips a deployment whose deferred scan is still queued or
+  running on its node.
+- The "per-deploy scan stamped" log carries `deferred` so the change can be
+  read in production.
+
+### Amendment 2026-11-18: an organization's app keeps its scan in front
+
+An organization's app runs under application standards, and each of its
+instances captures the deployment's `scan_status` and `scan_result_hash` at
+admission (ADR-595). A deferred scan that landed during the snapshot prime
+changed those mirrors under the prime instance, and the caller-input check
+failed the deploy with "runtime inputs changed after admission: artifact".
+Production release acceptance hit this on every org-app deploy whose scan
+finished mid-prime. Such an app now scans before the handoff, as before the
+amendment above; apps without an organization keep the deferral.
+
+### Amendment 2026-11-19: an organization's app defers again unless a standard admits it natively
+
+The 2026-11-18 amendment kept every organization's app on the serial path.
+Every production app belongs to an organization (all 471 source deploys in
+the three days to 2026-11-19), so no scan was ever deferred: 166 of 166
+scans logged after the 2026-11-18 22:36Z release ran in front of the handoff,
+15.6 s at p50 and 33.5 s at p90 of imaged's preparation time.
+
+The failure that amendment answered came from the scheduler's caller-input
+check (`state.CheckedInstanceApplicationStandardAdmission`), the one check
+that compared the deployment's scan mirrors outside ADR-435 producer
+captures. The publication guard (`application_standard_runtime_inputs_match`)
+has ignored them since ADR 20261031190030: a scan renews `scan_status` and
+`scan_result_hash` and changes nothing the instance runs, and a scan that
+parks the deployment still changes `parked_reason`, which stays compared.
+The caller-input check now ignores the mirrors in the same way, and
+MemStore's guard for a booting instance follows the PostgreSQL guard.
+
+imaged therefore defers an organization's app's scan under the conditions
+above, with one more exception: an app whose standard enrollment admits its
+instances natively (`ApplicationStandardEnrollmentRequiresNative`) keeps the
+scan in front, because native captures compare the mirrors
+(`application_standard_native_inputs_match`) and a scan mid-prime would
+invalidate the prime's native snapshot grant. A failed enrollment read also
+keeps the scan in front. On 2026-11-19 none of production's 81 organization
+apps ran under such a standard.

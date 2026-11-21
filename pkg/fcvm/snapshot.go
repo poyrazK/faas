@@ -67,6 +67,10 @@ type Snapshot struct {
 	// Manager opens the key and sets Storage before restoring.
 	CaptureID string
 	SealedKey []byte
+	// SealedCache marks a sealed park or warm snapshot (ADR-20261110210000
+	// slice 3d-3) rather than a crash capture: it is cache, so a key that
+	// cannot be opened or a failed restore cold boots (ADR-005).
+	SealedCache bool
 	// Storage, when set, carries a sealed crash capture's objects
 	// (ADR-733): the backing identity is verified and the capture restored
 	// through it instead of the shared store.
@@ -209,6 +213,9 @@ type RestoreSpec struct {
 	// health.v1 Check action. Both probe types target <HostIP>:8080.
 	// Forwarded from WakeRequest by Manager.bringUp.
 	HealthcheckPath string
+	// ProbeHost (ADR-20261119140000) is the Host header readiness GETs
+	// send; empty sends the instance address.
+	ProbeHost string
 	// HealthcheckGRPC selects standard gRPC health.v1 Check readiness. An
 	// empty service checks overall server health.
 	HealthcheckGRPC        bool

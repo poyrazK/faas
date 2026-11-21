@@ -1,0 +1,8 @@
+Full native suite before the final pause-order correction (exit 1):
+--- FAIL: TestNativeRetiredGenerationOwnershipConflict (2.21s)
+    --- FAIL: TestNativeRetiredGenerationOwnershipConflict/PUBLICATION (1.06s)
+        recovery_native_test.go:330: ownership conflict changed the old subscription false <nil>
+FAIL	github.com/onebox-faas/faas/pkg/datapipeline	423.790s
+ok  	github.com/onebox-faas/faas/pkg/apid/datapipelines	81.166s
+ok  	github.com/onebox-faas/faas/pkg/apid/apidsource	5.635s
+ok  	github.com/onebox-faas/faas/pkg/dashboard	2.989s

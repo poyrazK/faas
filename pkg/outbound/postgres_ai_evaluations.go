@@ -94,7 +94,7 @@ func (b *PostgresBackend) aiEvaluationSamples(ctx context.Context, integrationID
 		  FROM outbound_ai_request_log log
 		  JOIN outbound_ai_request_content content ON content.log_id = log.id
 		 WHERE log.integration_id = $1 AND log.status BETWEEN 200 AND 299
-		   AND log.caller NOT IN ('replay', 'moderation', 'evaluation')
+		   AND log.caller NOT IN ('replay', 'moderation', 'evaluation', 'semantic_cache')
 		   AND NOT content.request_truncated AND NOT content.response_truncated
 		   AND (content.request_path LIKE '%/chat/completions' OR content.request_path LIKE '%/responses')
 		 ORDER BY log.created_at DESC, log.id DESC

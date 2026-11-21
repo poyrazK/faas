@@ -74,7 +74,7 @@ The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, P
 
 The capability gateway (ADR-20261027090016) serves these platform tools over RAP. They acknowledge at once and post their results to the callback URL.
 
-Amendment (2026-11-02): until the gateway exists, apid serves them as a RAP toolset at `/v1/agent-tools` (rollout step 5). RAP tool names allow letters, digits, `_` and `-`, and model APIs refuse dots, so each tool's operation name is written with `_`: `gregale_sleep`, `gregale_run`, `gregale_github_subscribe`.
+Amendment (2026-11-02): until the gateway exists, apid serves them as a RAP toolset at `/v1/agent-tools` (rollout step 5). RAP tool names allow letters, digits, `_` and `-`, and model APIs refuse dots, so each tool's operation name is written with `_`: `gregale_sleep`, `gregale_run`, `gregale_github_subscribe`, `gregale_browse` (ADR-20261116182615 §4), and `gregale_browser` (ADR-20261117065818).
 
 | Tool | What it does |
 |---|---|
@@ -233,6 +233,11 @@ Each step is one PR behind the `agents` capability.
      - A thread revoked since the call gets nothing, as does one whose endpoint is gone or whose account lost `agents`.
      - Events reach an account only from its own installations, so a subscription to a repository the account cannot see never fires.
    - **Not built.** No `final` event is sent when a subscription expires: it simply stops. Subscribing again extends the watch.
+
+   **Step 5, part six (2026-11-19): `agent-infinity-rust` watches repositories.**
+   - **The scripted model subscribes:** `watch OWNER/NAME` calls `gregale_github_subscribe` with that repository when the toolset offers it. The template's toolset calls already carry the workload token (part four).
+   - **Events.** Infinity keeps the call as an active subscription and hands each `subscription_event` to the model as a result of that call, so the scripted model answers each event as `gregale_github_subscribe answered: <event JSON>`. A thread with a live subscription keeps its callback URLs: the template revokes them only once a thread has answered and has no active subscription.
+   - **Journey.** `TestStatelessAgent`'s Infinity run watches a repository in no journey account's installations, and expects the subscription as the call's first result, which only an invocation carrying the app's credential gets. An event reaching the thread needs a repository in the journey account's GitHub installation, and is not covered yet.
 6. Preview on the dogfood account, then the seller beta with harness runs (ADR-20261027090010 milestone B).
 
 ## Open questions

@@ -127,6 +127,12 @@ func decodeProjectEnvironmentQueuesRequest(r *http.Request, plan api.Plan) (api.
 		if binding.Mode == "push" && !limits.TriggersAllowed {
 			return request, nil, api.ErrPlanTriggersNotAllowed(plan)
 		}
+		// Stage environments have no pull consumer yet: leases serve the
+		// production binding only, so an enabled stage pull binding accepted
+		// sends that no worker could ever take (ADR-20261112200000).
+		if binding.Mode == "pull" && binding.Enabled {
+			return request, nil, queueBindingProblem("stage environments cannot consume a queue by pull yet; use mode push, or keep the pull binding disabled")
+		}
 		retry, err := json.Marshal(binding.RetryPolicy)
 		if err != nil {
 			return request, nil, api.ErrValidation("invalid retry policy")

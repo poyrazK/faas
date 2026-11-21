@@ -128,12 +128,13 @@ func Apps(ctx context.Context, store interface {
 	return store.ListApps(ctx, accountID)
 }
 
+// ValidateEnvironmentCreation checks a company-project member's environment
+// creation. A copy (from_environment or a full clone) stays inside the
+// project's resource owner; the caller checks a protected source with
+// BranchParent, as for a branch (ADR-20261112230000).
 func ValidateEnvironmentCreation(r *http.Request, req api.CreateProjectEnvironmentRequest) *api.Problem {
 	if _, shared := From(r.Context()); !shared {
 		return nil
-	}
-	if req.Full || req.FromEnvironment != "" {
-		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization environment cloning unavailable", "create an empty environment and configure its resources separately")
 	}
 	_, _, member, ok := authmw.PrincipalFrom(r)
 	if req.Protected != nil && *req.Protected && (!ok || member == nil || !authz.Can(member.Role, authz.OrgActionManageProjectSecurity)) {

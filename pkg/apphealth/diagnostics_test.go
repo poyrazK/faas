@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -83,7 +84,9 @@ func TestRequestHealthSeverity(t *testing.T) {
 		status, reason   string
 	}{
 		{"isolated high-volume error", 10000, 1, Healthy, "request_errors_below_threshold"},
-		{"low-volume errors", 10, 10, Unknown, "request_volume_insufficient"},
+		{"low-volume errors", 10, 6, Unknown, "request_volume_insufficient"},
+		{"low-volume all failed", 10, 10, Unhealthy, "request_all_failed"},
+		{"few requests all failed", 4, 4, Unknown, "request_volume_insufficient"},
 		{"minimum error count", 100, 4, Healthy, "request_errors_below_threshold"},
 		{"warning boundary", 100, 5, Degraded, "request_error_rate_elevated"},
 		{"severe boundary", 100, 25, Unhealthy, "request_error_rate_severe"},
@@ -106,5 +109,22 @@ func TestRequestHealthSeverity(t *testing.T) {
 				t.Fatalf("%+v", check)
 			}
 		})
+	}
+}
+
+// A release nobody has called since its deploy has no request series; with
+// the gateway's series present for other apps that reads as unexercised, not
+// as unreadable telemetry (prod 2026-11-16: an idle gRPC service read unknown).
+func TestRequestsUnobservedIsUnexercisedNotUnknown(t *testing.T) {
+	e := healthEvidence()
+	e.Metrics = appmetrics.RequestHealth{Source: appmetrics.SourceDegraded, Reason: appmetrics.RequestsUnobservedReason}
+	out := Evaluate(e)
+	check := out.Checks[len(out.Checks)-1]
+	if out.Status != Healthy || check.Reason != appmetrics.RequestsUnobservedReason || check.Status != NotApplicable {
+		t.Fatalf("status=%s check=%+v", out.Status, check)
+	}
+	e.Metrics.Reason = "request_evidence_unavailable"
+	if out := Evaluate(e); out.Status != Unknown {
+		t.Fatalf("missing telemetry must stay unknown: %s", out.Status)
 	}
 }

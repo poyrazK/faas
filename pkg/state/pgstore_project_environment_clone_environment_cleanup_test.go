@@ -288,6 +288,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_webhooks.scope",
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
+		"crons.deployment_scope",                 // Environment crons have their own clone lifecycle (#7134).
+		"crons.environment_id",
 		"custom_domains.environment_id",
 		"customer_operation_approval_forms.scope",
 		"customer_operation_concurrency_policies.scope",
@@ -308,6 +310,9 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"deployments.scope",
 		"dev_bridge_sessions.environment_id",
 		"dev_bridge_sessions.scope",
+		"environment_api_routes.environment_id",                    // Observed-traffic telemetry; cascades with the environment row.
+		"environment_deployment_cron_activations.deployment_scope", // App-scoped cron activation state, removed with the app.
+		"environment_deployment_cron_states.deployment_scope",
 		"environment_external_field_owners.environment_id",
 		"environment_git_sources.environment_id",
 		"environment_gitops_runtime_effects.environment_slug",
@@ -315,10 +320,15 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"environment_management_overrides.environment_id",
 		"environment_workload_graphs.environment_id",
 		"environment_workload_retirements.environment_id", // ADR-1331: immutable retained retirement evidence; journal/source deletion guards prevent cleanup cascades.
+		"event_subscriptions.deployment_scope",            // Removed by environment deletion (deleteProjectEnvironmentRowsTx).
+		"event_subscriptions.environment_id",
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"financial_budget_stop_targets.environment_id",      // In-flight (requested/draining) budget stops block scope cleanup; enforced and failed ones are retained history.
 		"financial_preview_command_runtimes.environment_id", // Preparing/active preview runtimes block scope cleanup; retired rows are retained history.
+		"flag_conversion_daily.environment_id",              // Flag experiment telemetry and definitions cascade with the environment row.
+		"flag_event_names.environment_id",
+		"flag_experiments.environment_id",
 		"github_deploy_branches.scope",
 		"hosting_oidc_trusts.environment", // GitHub Actions OIDC environment claim, not a Gregale environment; its site FK is classified.
 		"hosting_sites.environment",       // Sites reference the environment through a composite foreign key.
@@ -345,6 +355,12 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
 		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",
+		"project_environment_branch_buckets.environment_id", // Branch overlays outlive the environment so their copies can be reclaimed.
+		"project_environment_branch_buckets.environment_slug",
+		"project_environment_branch_databases.environment_id", // Branch database copies outlive the environment so they can be reclaimed.
+		"project_environment_branch_databases.environment_slug",
+		"project_environment_branch_deployments.environment_id", // Cascades with the branch row.
+		"project_environment_branches.environment_id",           // A child branch blocks cleanup; its own row cascades.
 		"project_environment_cleanup_jobs.environment_slug",
 		"project_environment_clone_configuration_ownership.environment_id",
 		"project_environment_clone_deployment_cleanups.environment_id",

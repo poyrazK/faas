@@ -21,6 +21,7 @@ import (
 //	bootonly  daemon wiring, or only for kinds that are never adopted
 var adoptionStateInventory = map[string]map[string]string{
 	"Manager": {
+		"agentDeadlines":                    "reset",    // agent-run guests are refused at adoption, so no run has one
 		"agentWaits":                        "reset",    // agent-run guests are refused at adoption, so no run has one
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
@@ -87,9 +88,11 @@ var adoptionStateInventory = map[string]map[string]string{
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
 		"bindSourceModes":          "rebuilt",
+		"buildkitSeedSources":      "bootonly", // seed-run builders are killed at adoption, never adopted
 		"characterizationReceipts": "bootonly", // awaited only during a boot
 		"clients":                  "rebuilt",  // created on first use
 		"cpuBoostTails":            "reset",    // adoption writes the steady fence instead
+		"driveBaseKeys":            "reset",    // an adopted guest parks its whole drive, not a delta (ADR-20261115213230)
 		"fences":                   "rebuilt",
 		"guestVsockListeners":      "rebuilt",
 		"jobExits":                 "rebuilt",  // a job's exit receiver; a recorded exit is in the block
@@ -126,6 +129,7 @@ var adoptionInstanceInventory = map[string]string{
 	"executionTemplateOnly":           "refused", // template captures retain the disposable execution journal kind
 	"ExecutionOnly":                   "refused", // execution kind
 	"SandboxID":                       "refused", // sandbox sessions are execution-only
+	"agentEgressIP":                   "refused", // a sandbox session's agent tunnel address (ADR-20261117185346)
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -133,6 +137,7 @@ var adoptionInstanceInventory = map[string]string{
 	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
 	"AgentRunRelay":                   "refused", // agent-run guests only
 	"AgentWaitPauseAfter":             "refused", // agent-run guests only
+	"AgentRunDeadline":                "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
@@ -153,6 +158,7 @@ var adoptionInstanceInventory = map[string]string{
 	"GuestReadyMs":                    "reset",
 	"RestoreError":                    "reset",
 	"RestoreFallbackReason":           "reset",
+	"BaseScanGrace":                   "reset", // read once into the wake response (deploy-path P5)
 	"AppID":                           "rebuilt",
 	"WakeID":                          "rebuilt", // channel and readiness identity (ADR-570)
 	"NodeID":                          "rebuilt",
@@ -168,6 +174,7 @@ var adoptionInstanceInventory = map[string]string{
 	"Plan":                            "rebuilt",
 	"Port":                            "rebuilt",
 	"HealthcheckPath":                 "rebuilt",
+	"ProbeHost":                       "rebuilt", // ADR-20261119140000: liveness and readiness loops name the app host
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
 	"RequestConcurrency":              "rebuilt",
@@ -183,34 +190,45 @@ var adoptionInstanceInventory = map[string]string{
 	"EgressNewDstPerMin":              "reset",
 	"EgressFanoutValid":               "reset",
 	"EgressFloodDropsPerMin":          "reset",
-	"StaticEgressExcluded":            "rebuilt",
-	"PrivateNetworkExcluded":          "rebuilt",
-	"networkPolicyMu":                 "reset",
-	"resolvedEgress":                  "rebuilt", // surviving nft entries retain their remaining lifetimes
-	"resolvedEgressGeneration":        "reset",   // restart invalidates outstanding DNS grants
-	"booting":                         "reset",   // only set on a booting network owner, which is never adopted
-	"awaitingExit":                    "reset",   // only set while a teardown call waits on the guest
-	"egressAllowlistUncertain":        "reset",   // adopted guests re-prove their journaled allowlist
-	"egressPortsUncertain":            "reset",   // adopted guests read the surviving port sets
-	"databaseEgress":                  "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
-	"environmentBranch":               "refused", // a contained branch guest is not adopted (ADR-20261031193635)
-	"branchDatabaseEgress":            "refused", // its branch_db pairs go with it
-	"TailCount":                       "reset",   // the host only ever sees decrements
-	"tailSecondsAccum":                "reset",   // informational, not billed
-	"adoptionVCPUs":                   "rebuilt",
-	"adoptionMemSizeMiB":              "rebuilt",
-	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
-	"devPatched":                      "rebuilt",
-	"bridge":                          "rebuilt",
-	"migrationPaused":                 "rebuilt",
-	"warmSpare":                       "rebuilt",
-	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills
-	"HealthcheckGRPC":                 "rebuilt",
-	"functionDestination":             "bootonly", // function VM resources: native qualification builds only
-	"functionExecutions":              "bootonly",
-	"functionMigration":               "bootonly",
-	"publicForwardTarget":             "bootonly", // captured only under native process recovery
-	"wakeID":                          "bootonly", // function VM migration authority
+	// R8-2: an adopted guest's internal-egress total restarts from zero;
+	// meterd counts a reading below its checkpoint as a counter reset.
+	"InternalTxBytes":          "reset",
+	"InternalTxValid":          "reset",
+	"StaticEgressExcluded":     "rebuilt",
+	"PrivateNetworkExcluded":   "rebuilt",
+	"networkPolicyMu":          "reset",
+	"resolvedEgress":           "rebuilt", // surviving nft entries retain their remaining lifetimes
+	"resolvedEgressGeneration": "reset",   // restart invalidates outstanding DNS grants
+	"booting":                  "reset",   // only set on a booting network owner, which is never adopted
+	"awaitingExit":             "reset",   // only set while a teardown call waits on the guest
+	"egressAllowlistUncertain": "reset",   // adopted guests re-prove their journaled allowlist
+	"egressPortsUncertain":     "reset",   // adopted guests read the surviving port sets
+	"databaseEgress":           "rebuilt", // surviving egress_db pairs retain their remaining lifetimes
+	"environmentBranch":        "refused", // a contained branch guest is not adopted (ADR-20261031193635)
+	"branchDatabaseEgress":     "refused", // its branch_db pairs go with it
+	"webDomains":               "reset",   // a restart restarts the web session's distinct-domain count (ADR-20261112121456 §4)
+	"webAllow":                 "refused", // a sandbox session's domain policy; sessions are not adopted (ADR-20261117091026 §3)
+	"webDeny":                  "refused",
+	"webLog":                   "refused", // its domain log (ADR-20261117091026 §4)
+	"webRefusedLogged":         "refused",
+	"TailCount":                "reset", // the host only ever sees decrements
+	"tailSecondsAccum":         "reset", // informational, not billed
+	"adoptionVCPUs":            "rebuilt",
+	"adoptionMemSizeMiB":       "rebuilt",
+	"adoptionOp":               "reset", // resolved before adoption (slice 3)
+	"devPatched":               "rebuilt",
+	"bridge":                   "rebuilt",
+	"migrationPaused":          "rebuilt",
+	"warmSpare":                "rebuilt",
+	"DataRepairOnly":           "refused", // a data repair runs as an execution, which adoption kills
+	"HealthcheckGRPC":          "rebuilt",
+	"HealthcheckGRPCService":   "rebuilt",
+	"RoutedPortRawTCP":         "rebuilt",
+	"functionDestination":      "bootonly", // function VM resources: native qualification builds only
+	"functionExecutions":       "bootonly",
+	"functionMigration":        "bootonly",
+	"publicForwardTarget":      "bootonly", // captured only under native process recovery
+	"wakeID":                   "bootonly", // function VM migration authority
 	// ADR-20261107160000: an adopted guest's later resumes send no identity and
 	// its file keeps the last one published, the same instance. A warm spare
 	// promoted after a vmmd restart keeps the capture's identity in the file.

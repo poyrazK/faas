@@ -18,6 +18,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class WebhooksService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List outbound webhook subscriptions for this app.
    * @returns AppWebhookResponse The webhooks.
@@ -31,7 +32,7 @@ export class WebhooksService {
      */
     slug: string,
   }): CancelablePromise<Array<AppWebhookResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/webhooks',
       path: {
@@ -76,7 +77,7 @@ export class WebhooksService {
     slug: string,
     requestBody: CreateAppWebhookRequest,
   }): CancelablePromise<AppWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/webhooks',
       path: {
@@ -117,7 +118,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<AppWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/webhooks/{id}',
       path: {
@@ -161,7 +162,7 @@ export class WebhooksService {
     id: string,
     requestBody: UpdateAppWebhookRequest,
   }): CancelablePromise<AppWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/webhooks/{id}',
       path: {
@@ -205,7 +206,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/webhooks/{id}',
       path: {
@@ -249,7 +250,7 @@ export class WebhooksService {
     id: string,
     requestBody: RotateAppWebhookSecretRequest,
   }): CancelablePromise<RotateAppWebhookSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/webhooks/{id}/rotate-secret',
       path: {
@@ -303,7 +304,7 @@ export class WebhooksService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/webhooks/{id}/deliveries',
       path: {
@@ -354,7 +355,7 @@ export class WebhooksService {
      */
     did: string,
   }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry',
       path: {
@@ -409,7 +410,7 @@ export class WebhooksService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts',
       path: {
@@ -452,7 +453,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/webhooks/{id}/health',
       path: {
@@ -477,7 +478,7 @@ export class WebhooksService {
    * @throws ApiError
    */
   public static listAccountReleaseWebhooks(): CancelablePromise<Array<AccountReleaseWebhookResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/release-webhooks',
       errors: {
@@ -502,7 +503,7 @@ export class WebhooksService {
   }: {
     requestBody: CreateAccountReleaseWebhookRequest,
   }): CancelablePromise<AccountReleaseWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/release-webhooks',
       body: requestBody,
@@ -534,7 +535,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<AccountReleaseWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/release-webhooks/{id}',
       path: {
@@ -567,7 +568,7 @@ export class WebhooksService {
     id: string,
     requestBody: UpdateAccountReleaseWebhookRequest,
   }): CancelablePromise<AccountReleaseWebhookResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/account/release-webhooks/{id}',
       path: {
@@ -601,7 +602,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/account/release-webhooks/{id}',
       path: {
@@ -634,7 +635,7 @@ export class WebhooksService {
     id: string,
     requestBody: RotateAppWebhookSecretRequest,
   }): CancelablePromise<RotateAppWebhookSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/release-webhooks/{id}/rotate-secret',
       path: {
@@ -677,7 +678,7 @@ export class WebhooksService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/release-webhooks/{id}/deliveries',
       path: {
@@ -717,7 +718,7 @@ export class WebhooksService {
      */
     did: string,
   }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/account/release-webhooks/{id}/deliveries/{did}/retry',
       path: {
@@ -765,7 +766,7 @@ export class WebhooksService {
      */
     pageToken?: string,
   }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/release-webhooks/{id}/deliveries/{did}/attempts',
       path: {
@@ -802,7 +803,7 @@ export class WebhooksService {
      */
     id: string,
   }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/release-webhooks/{id}/health',
       path: {

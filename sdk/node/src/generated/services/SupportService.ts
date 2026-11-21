@@ -20,6 +20,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class SupportService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List personal support notifications
    * Personal support. Metadata-only updates for the current caller. Read state is personal to this account and support audience. Private notes never create customer notifications.
@@ -39,7 +40,7 @@ export class SupportService {
      */
     unread?: boolean,
   }): CancelablePromise<SupportNotificationPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/support/notifications',
       query: {
@@ -74,7 +75,7 @@ export class SupportService {
     ticket: string,
     requestBody: SupportReadRequest,
   }): CancelablePromise<SupportReadResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets/{ticket}/read',
       path: {
@@ -118,7 +119,7 @@ export class SupportService {
      */
     unread?: boolean,
   }): CancelablePromise<SupportNotificationPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{org}/support/notifications',
       path: {
@@ -161,7 +162,7 @@ export class SupportService {
     ticket: string,
     requestBody: SupportReadRequest,
   }): CancelablePromise<SupportReadResult> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/read',
       path: {
@@ -206,7 +207,7 @@ export class SupportService {
      */
     search?: string,
   }): CancelablePromise<SupportTicketPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/support/tickets',
       query: {
@@ -242,7 +243,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: CreateSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets',
       headers: {
@@ -276,7 +277,7 @@ export class SupportService {
      */
     ticket: string,
   }): CancelablePromise<SupportTicket> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/support/tickets/{ticket}',
       path: {
@@ -313,7 +314,7 @@ export class SupportService {
      */
     after?: number,
   }): CancelablePromise<SupportMessagePage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/support/tickets/{ticket}/messages',
       path: {
@@ -355,7 +356,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: SupportMessageRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets/{ticket}/messages',
       path: {
@@ -399,7 +400,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: CloseSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets/{ticket}/close',
       path: {
@@ -443,7 +444,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: ReopenSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets/{ticket}/reopen',
       path: {
@@ -480,7 +481,7 @@ export class SupportService {
      */
     ticket: string,
   }): CancelablePromise<SupportSatisfaction> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/support/tickets/{ticket}/satisfaction',
       path: {
@@ -519,7 +520,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: SupportSatisfactionRequest,
   }): CancelablePromise<SupportSatisfactionSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/support/tickets/{ticket}/satisfaction',
       path: {
@@ -571,7 +572,7 @@ export class SupportService {
      */
     search?: string,
   }): CancelablePromise<SupportTicketPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{org}/support/tickets',
       path: {
@@ -615,7 +616,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: CreateSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets',
       path: {
@@ -657,7 +658,7 @@ export class SupportService {
      */
     ticket: string,
   }): CancelablePromise<SupportTicket> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{org}/support/tickets/{ticket}',
       path: {
@@ -700,7 +701,7 @@ export class SupportService {
      */
     after?: number,
   }): CancelablePromise<SupportMessagePage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/messages',
       path: {
@@ -748,7 +749,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: SupportMessageRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/messages',
       path: {
@@ -798,7 +799,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: CloseSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/close',
       path: {
@@ -848,7 +849,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: ReopenSupportTicketRequest,
   }): CancelablePromise<SupportSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/reopen',
       path: {
@@ -891,7 +892,7 @@ export class SupportService {
      */
     ticket: string,
   }): CancelablePromise<SupportSatisfaction> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/satisfaction',
       path: {
@@ -936,7 +937,7 @@ export class SupportService {
     idempotencyKey: string,
     requestBody: SupportSatisfactionRequest,
   }): CancelablePromise<SupportSatisfactionSubmission> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{org}/support/tickets/{ticket}/satisfaction',
       path: {

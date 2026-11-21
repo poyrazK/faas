@@ -1550,6 +1550,102 @@ func (q *Queries) OperatorOverviewActivity(ctx context.Context, db DBTX, auditSi
 	return i, err
 }
 
+const operatorOverviewCodingAgents = `-- name: OperatorOverviewCodingAgents :many
+WITH recent AS (
+    SELECT l.data->>'actor_agent' AS agent,
+           count(DISTINCT l.data->>'deployment_id')::bigint AS deploys
+    FROM audit_log l
+    WHERE l.received_at >= $1::timestamptz
+      AND l.received_at <= $2::timestamptz
+      AND l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+      AND l.data ? 'actor_agent'
+    GROUP BY 1
+), cohort AS MATERIALIZED (
+    SELECT id, created_at, plan
+    FROM accounts
+    WHERE created_at >= $3::timestamptz
+      AND created_at <= $2::timestamptz
+), cohort_agents AS (
+    SELECT DISTINCT l.data->>'actor_agent' AS agent, c.id AS account_id, c.created_at, c.plan
+    FROM cohort c
+    JOIN audit_log l ON l.account_id = c.id
+    WHERE l.received_at >= c.created_at
+      AND l.received_at <= $2::timestamptz
+      AND l.kind IN ('app.deployed', 'deploy.local_tarball', 'deploy.source_ref', 'upload.session_committed')
+      AND l.data ? 'actor_agent'
+), cohort_outcomes AS (
+    SELECT ca.agent, ca.plan,
+           EXISTS (
+               SELECT 1 FROM apps a JOIN instances i ON i.app_id = a.id
+               WHERE a.account_id = ca.account_id
+                 AND i.last_request_at >= ca.created_at
+                 AND i.last_request_at <= $2::timestamptz
+           ) AS served
+    FROM cohort_agents ca
+), accounts_by_agent AS (
+    SELECT agent,
+           count(*)::bigint AS new_accounts,
+           count(*) FILTER (WHERE served)::bigint AS new_accounts_serving,
+           count(*) FILTER (WHERE plan <> 'free')::bigint AS new_accounts_paid
+    FROM cohort_outcomes
+    GROUP BY agent
+)
+SELECT coalesce(r.agent, a.agent)::text AS agent,
+       coalesce(r.deploys, 0)::bigint AS deploys,
+       coalesce(a.new_accounts, 0)::bigint AS new_accounts,
+       coalesce(a.new_accounts_serving, 0)::bigint AS new_accounts_serving,
+       coalesce(a.new_accounts_paid, 0)::bigint AS new_accounts_paid
+FROM recent r
+FULL JOIN accounts_by_agent a ON a.agent = r.agent
+ORDER BY 3 DESC, 2 DESC, 1
+`
+
+type OperatorOverviewCodingAgentsParams struct {
+	AuditSince  pgtype.Timestamptz
+	ObservedAt  pgtype.Timestamptz
+	CohortSince pgtype.Timestamptz
+}
+
+type OperatorOverviewCodingAgentsRow struct {
+	Agent              string
+	Deploys            int64
+	NewAccounts        int64
+	NewAccountsServing int64
+	NewAccountsPaid    int64
+}
+
+// Deploys and new accounts by the coding agent the Gregale CLI reported
+// (ADR-20261112223000 amendment 1: audit_log.data->>'actor_agent'). Deploys
+// read the audit window through audit_log_received_at_idx; new accounts start
+// from the beta funnel cohort and reach their audit rows through
+// audit_log_account_idx, so neither scans the whole log. A deployment emits
+// one of these kinds; DISTINCT deployment_id keeps a repeat from counting twice.
+func (q *Queries) OperatorOverviewCodingAgents(ctx context.Context, db DBTX, arg OperatorOverviewCodingAgentsParams) ([]OperatorOverviewCodingAgentsRow, error) {
+	rows, err := db.Query(ctx, operatorOverviewCodingAgents, arg.AuditSince, arg.ObservedAt, arg.CohortSince)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorOverviewCodingAgentsRow{}
+	for rows.Next() {
+		var i OperatorOverviewCodingAgentsRow
+		if err := rows.Scan(
+			&i.Agent,
+			&i.Deploys,
+			&i.NewAccounts,
+			&i.NewAccountsServing,
+			&i.NewAccountsPaid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorOverviewFailures = `-- name: OperatorOverviewFailures :many
 WITH counts AS (
     SELECT kind, count(*)::bigint AS hits FROM events
@@ -1668,6 +1764,7 @@ func (q *Queries) OperatorOverviewFunnel(ctx context.Context, db DBTX, arg Opera
 }
 
 const operatorOverviewNodes = `-- name: OperatorOverviewNodes :many
+
 SELECT name, active, last_heartbeat_at FROM compute_nodes ORDER BY name, id
 `
 
@@ -1677,6 +1774,7 @@ type OperatorOverviewNodesRow struct {
 	LastHeartbeatAt pgtype.Timestamptz
 }
 
+// new_accounts, deploys, agent
 func (q *Queries) OperatorOverviewNodes(ctx context.Context, db DBTX) ([]OperatorOverviewNodesRow, error) {
 	rows, err := db.Query(ctx, operatorOverviewNodes)
 	if err != nil {
@@ -1905,9 +2003,11 @@ func (q *Queries) OperatorPostCaptureSnapshot(ctx context.Context, db DBTX, inst
 }
 
 const operatorQueuedBuildsCount = `-- name: OperatorQueuedBuildsCount :one
-SELECT count(*)::bigint FROM builds WHERE status = 'queued'
+SELECT count(*)::bigint FROM builds
+WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now())
 `
 
+// Deferred builds that are not due yet (ADR-20261021221906) are not backlog.
 func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error) {
 	row := db.QueryRow(ctx, operatorQueuedBuildsCount)
 	var column_1 int64
@@ -1917,8 +2017,8 @@ func (q *Queries) OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64
 
 const operatorQueuedBuildsSnapshot = `-- name: OperatorQueuedBuildsSnapshot :one
 SELECT count(*)::bigint AS queued,
-       min(enqueued_at)::timestamptz AS oldest_enqueued_at
-FROM builds WHERE status = 'queued'
+       min(coalesce(not_before, enqueued_at))::timestamptz AS oldest_enqueued_at
+FROM builds WHERE status = 'queued' AND (not_before IS NULL OR not_before <= now())
 `
 
 type OperatorQueuedBuildsSnapshotRow struct {
@@ -1967,12 +2067,12 @@ func (q *Queries) OperatorRecentFailureCounts(ctx context.Context, db DBTX, sinc
 
 const operatorSnapshotPrimeSnapshot = `-- name: OperatorSnapshotPrimeSnapshot :many
 WITH scoped AS MATERIALIZED (
- SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review, d.before_checkpoint_hook FROM deployments d JOIN apps a ON a.id=d.app_id
+ SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review, d.before_checkpoint_hook, d.build_registry_scope FROM deployments d JOIN apps a ON a.id=d.app_id
  WHERE d.status='snapshotting' AND a.status<>'deleted' AND NOT d.environment_workload_held
   AND ($1::text='' OR a.node_id IS NULL OR a.node_id::text=$1::text)
   AND coalesce(d.stage_state->>'current','')<>'readiness'
 ), timed AS MATERIALIZED (
- SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review, d.before_checkpoint_hook,
+ SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.rollback_prepared_at, d.rollout_decision, d.snapshot_recovery_generation, d.runtime_base, d.mail_failure_revision, d.mail_failed_at, d.mail_failure_account_id, d.mail_failure_account_revision, d.mail_failure_app_revision, d.mail_failure_success_revision, d.promoted_at, d.rollback_release_review, d.before_checkpoint_hook, d.build_registry_scope,
   CASE WHEN d.stage_state->>'current'='snapshot_prepare'
    AND (d.stage_state->>'current_started_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$'
    AND pg_input_is_valid(d.stage_state->>'current_started_at','timestamp with time zone')

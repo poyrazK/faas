@@ -254,3 +254,34 @@ def test_parse_duration_ms():
 def test_workflow_requires_async_function():
     with pytest.raises(TypeError):
         workflow("sync")(lambda _input, _wf: None)
+
+
+def test_call_parks_on_the_callee_and_resumes_with_its_output():
+    # ADR-20261113120824 section 2: wf.call reports a call operation and
+    # suspends; a recorded call returns the output or raises WorkflowCallError.
+    from faas_sdk.workflows import WorkflowCallError
+
+    @workflow("signup")
+    async def signup(data, wf):
+        user = await wf.call("users", {"email": data["email"]})
+        try:
+            await wf.call("billing", {"user": user["id"]}, name="charge")
+        except WorkflowCallError as error:
+            return {"user": user["id"], "billing": error.code}
+        return {"user": user["id"]}
+
+    def request(journal):
+        return {"protocol": WORKFLOW_CODE_PROTOCOL, "run_id": "run-1", "workflow": "signup",
+                "input": {"email": "a@b"}, "invocation": len(journal) + 1, "journal": journal}
+
+    first = asyncio.run(run_workflow_invocation(signup, request([])))
+    assert first["ops"] == [{"seq": 0, "name": "users", "kind": "call", "function": "users", "input": {"email": "a@b"}}]
+    assert first["result"]["status"] == "running"
+    done = asyncio.run(run_workflow_invocation(signup, request([
+        {"seq": 0, "name": "users", "kind": "call", "status": "succeeded", "output": {"id": "u1"}},
+        {"seq": 1, "name": "charge", "kind": "call", "status": "failed", "error": "card declined"},
+    ])))
+    assert done["result"] == {"status": "succeeded", "output": {"user": "u1", "billing": "function_call_failed"}}
+
+    local = asyncio.run(run_workflow_locally(signup, {"email": "a@b"}, functions={"users": lambda data: {"id": "u-" + data["email"]}}))
+    assert local.output == {"user": "u-a@b", "billing": "function_call_failed"}

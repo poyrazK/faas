@@ -177,6 +177,9 @@ func groupingResult(in api.IssueEvent) (string, string) {
 	if in.Message != "" {
 		title += ": " + in.Message
 	}
+	if in.SourceKind == "http" && in.HTTPStatus != 0 {
+		title = httpIssueTitle(in)
+	}
 	title, _ = redact.New(api.IssueMessageMaxBytes).Apply(title)
 	// Redaction and its truncation marker can expand the output past the
 	// database title limit even when each submitted field is within bounds.

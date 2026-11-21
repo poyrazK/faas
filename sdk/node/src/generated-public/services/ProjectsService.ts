@@ -29,6 +29,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class ProjectsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Deploy an account-owned reviewed project source without another upload.
    * Applies the exact archive retained by a project scan, not the current
@@ -44,12 +45,20 @@ export class ProjectsService {
    */
   public static applyCachedProjectPlan({
     requestBody,
+    deploymentAttemptId,
   }: {
     requestBody: ApplyCachedProjectPlanRequest,
+    /**
+     * Durable project submission identity. Persist before apply; after an uncertain response inspect the receipt instead of resubmitting.
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/apply-plan',
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
       body: requestBody,
       mediaType: 'application/json',
       errors: {
@@ -105,7 +114,7 @@ export class ProjectsService {
      */
     projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/scan',
       headers: {
@@ -147,7 +156,7 @@ export class ProjectsService {
   }: {
     requestBody: ProjectSourceRefScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/scan/source-ref',
       body: requestBody,
@@ -185,7 +194,7 @@ export class ProjectsService {
      */
     attemptId: string,
   }): CancelablePromise<ProjectSubmissionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/project-submissions/{attempt_id}',
       path: {
@@ -229,7 +238,7 @@ export class ProjectsService {
     action: 'abort' | 'recover' | 'contract' | 'resolve-contract',
     requestBody: (ProjectReleaseControlRequest | ProjectMigrationRecoveryRequest),
   }): CancelablePromise<ProjectSubmissionReceipt> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/project-submissions/{attempt_id}/{action}',
       path: {
@@ -303,7 +312,7 @@ export class ProjectsService {
      */
     planToken?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/safe-deploy',
       headers: {
@@ -342,7 +351,7 @@ export class ProjectsService {
    * @throws ApiError
    */
   public static listProjects(): CancelablePromise<Array<ProjectSummaryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects',
       errors: {
@@ -399,7 +408,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects',
       headers: {
@@ -443,7 +452,7 @@ export class ProjectsService {
     slug: string,
     requestBody: ProjectReleaseSecretStageRequest,
   }): CancelablePromise<ProjectReleaseSecretStageResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/release-secrets',
       path: {
@@ -493,7 +502,7 @@ export class ProjectsService {
     slug: string,
     requestBody: ProjectDeploymentCheckRequest,
   }): CancelablePromise<ProjectDeploymentReadiness> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/deployment-readiness',
       path: {
@@ -526,7 +535,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}',
       path: {
@@ -558,7 +567,7 @@ export class ProjectsService {
     slug: string,
     requestBody: UpdateProjectRequest,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/projects/{slug}',
       path: {
@@ -603,7 +612,7 @@ export class ProjectsService {
      */
     detachServices?: boolean,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}',
       path: {
@@ -642,7 +651,7 @@ export class ProjectsService {
      */
     environment: string,
   }): CancelablePromise<ProjectEnvironmentConfigResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/config',
       path: {
@@ -681,7 +690,7 @@ export class ProjectsService {
     environment: string,
     requestBody: UpdateProjectEnvironmentConfigRequest,
   }): CancelablePromise<ProjectEnvironmentConfigResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/config',
       path: {
@@ -723,7 +732,7 @@ export class ProjectsService {
      */
     environment: string,
   }): CancelablePromise<ProjectEnvironmentSharedSecretsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/secrets',
       path: {
@@ -770,7 +779,7 @@ export class ProjectsService {
     key: string,
     requestBody: SetProjectEnvironmentSharedSecretRequest,
   }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
       path: {
@@ -819,7 +828,7 @@ export class ProjectsService {
      */
     key: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}',
       path: {
@@ -865,7 +874,7 @@ export class ProjectsService {
     key: string,
     requestBody: SetProjectEnvironmentSharedSecretRequest,
   }): CancelablePromise<ProjectEnvironmentSharedSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate',
       path: {
@@ -912,7 +921,7 @@ export class ProjectsService {
      */
     from: string,
   }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/environments/{environment}/config/diff',
       path: {
@@ -947,7 +956,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectDeletePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/projects/{slug}/delete-preview',
       path: {
@@ -995,7 +1004,7 @@ export class ProjectsService {
   }): CancelablePromise<{
     ok?: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/projects/{slug}/exclusions/{slug2}',
       path: {
@@ -1025,7 +1034,7 @@ export class ProjectsService {
      */
     organization: string,
   }): CancelablePromise<Array<ProjectSummaryResponse>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects',
       path: {
@@ -1072,7 +1081,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects',
       path: {
@@ -1120,7 +1129,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1160,7 +1169,7 @@ export class ProjectsService {
     slug: string,
     requestBody: UpdateProjectRequest,
   }): CancelablePromise<ProjectResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1202,7 +1211,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/projects/{slug}',
       path: {
@@ -1240,7 +1249,7 @@ export class ProjectsService {
      */
     slug: string,
   }): CancelablePromise<ProjectDeletePreviewResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/projects/{slug}/delete-preview',
       path: {
@@ -1286,7 +1295,7 @@ export class ProjectsService {
   }): CancelablePromise<{
     ok?: boolean;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}',
       path: {
@@ -1299,6 +1308,151 @@ export class ProjectsService {
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `The company project or saved workload exclusion was not found; both return scope_exclusion_not_found.`,
         409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Preview a company project from a connected repository ref.
+   * Fetches the repository at the given ref through the organization's own GitHub installation and runs the same read-only scanner as the company source upload. A member's personal installation is never used; the organization must own its resources and have GitHub connected. Requires the deploy role.
+   * @returns PlanResponse Company repository scan, workload partitions and deployment plan.
+   * @throws ApiError
+   */
+  public static scanOrgProjectSourceRef({
+    organization,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    requestBody: ProjectSourceRefScanRequest,
+  }): CancelablePromise<PlanResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/scan/source-ref',
+      path: {
+        'organization': organization,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Deploy a company project's reviewed source without another upload.
+   * Applies the exact archive retained by a company project scan in the same organization. A plan reviewed for a personal project or another organization is refused. The normal scanner and apply admission gates run again; the reviewed source expires after one hour. Requires the deploy role.
+   * @returns ApplyResponse Company project applied with per-workload deployment receipts.
+   * @throws ApiError
+   */
+  public static applyCachedOrgProjectPlan({
+    organization,
+    requestBody,
+    deploymentAttemptId,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    requestBody: ApplyCachedProjectPlanRequest,
+    /**
+     * Durable organization project submission identity. Persist before applying this organization's reviewed plan; after an uncertain response inspect its submission receipt instead of resubmitting.
+     */
+    deploymentAttemptId?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/apply-plan',
+      path: {
+        'organization': organization,
+      },
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        403: `The member lacks the deploy role or secret write permission.`,
+        409: `The company plan is stale, blocked, or requires environment approval.`,
+        410: `The reviewed company source expired or belongs elsewhere; scan again.`,
+      },
+    });
+  }
+  /**
+   * Build an existing company HTTP project and atomically publish its ready release.
+   * The company form of the safe project deploy: candidates receive zero traffic and publish only after every candidate completes readiness. Takes the same release headers, attempt ID and plan token as the personal form. Requires the deploy role.
+   * @returns ApplyResponse Accepted company candidate deployments and durable safe release state.
+   * @throws ApiError
+   */
+  public static safeApplyOrgProject({
+    organization,
+    deploymentAttemptId,
+    formData,
+    projectReleaseMode,
+    planToken,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Durable identity for this company safe project submission.
+     */
+    deploymentAttemptId: string,
+    formData: ProjectApplyRequest,
+    /**
+     * Safe release mode for the company project; defaults to atomic.
+     */
+    projectReleaseMode?: 'atomic' | 'atomic-verify' | 'atomic-config-verify' | 'atomic-migrate-verify' | 'atomic-config-migrate-verify' | 'atomic-verify-workers' | 'atomic-config-verify-workers' | 'atomic-migrate-verify-workers' | 'atomic-config-migrate-verify-workers',
+    /**
+     * Company scan token bound to the safe release baseline.
+     */
+    planToken?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/safe-deploy',
+      path: {
+        'organization': organization,
+      },
+      headers: {
+        'Project-Release-Mode': projectReleaseMode,
+        'Deployment-Attempt-ID': deploymentAttemptId,
+      },
+      query: {
+        'plan_token': planToken,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }
@@ -1318,7 +1472,7 @@ export class ProjectsService {
     organization: string,
     formData: ProjectScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/scan',
       path: {
@@ -1363,7 +1517,7 @@ export class ProjectsService {
     slug: string,
     formData: ProjectScanRequest,
   }): CancelablePromise<PlanResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/{slug}/scan',
       path: {
@@ -1421,7 +1575,7 @@ export class ProjectsService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<ApplyResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/projects/{slug}/deploy',
       path: {

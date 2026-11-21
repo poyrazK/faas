@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,9 @@ import (
 
 const scopeRead = "gregale:read"
 const scopeWrite = "gregale:write"
+const scopeInvoke = "gregale:tools:invoke"
+const scopePrivateInvoke = "gregale:tools:invoke-private"
+const scopePublish = "gregale:tools:publish"
 
 // HTTPOptions configures a self-hosted OAuth resource and authorization server.
 // ResourceURL is the public HTTPS /mcp URL, served behind a TLS reverse proxy.
@@ -26,14 +30,18 @@ const scopeWrite = "gregale:write"
 // component; the actual registered URI remains exact for authorization/exchange.
 // No selected CLI credential is used by the remote server.
 type HTTPOptions struct {
-	Lifecycle    *Lifecycle
-	Telemetry    *Telemetry
-	APIBase      string
-	ResourceURL  string
-	RedirectURIs []string
-	Version      string
-	Timeout      time.Duration
-	AllowWrites  bool
+	Lifecycle                  *Lifecycle
+	Telemetry                  *Telemetry
+	APIBase                    string
+	ResourceURL                string
+	RedirectURIs               []string
+	Version                    string
+	Timeout                    time.Duration
+	AllowWrites                bool
+	AllowToolInvocation        bool
+	AllowPrivateToolInvocation bool
+	AllowToolPublishing        bool
+	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
 	// Onboarding is browser (default) or the explicit api-key fallback.
@@ -62,6 +70,10 @@ type HTTPOptions struct {
 	// AgentKeyToolsetSelection lets agent-key requests select a subset of the
 	// operator maximum with Gregale-MCP-Toolsets; omitted selects the default.
 	AgentKeyToolsetSelection bool
+	// LogsAPIBase is the public API origin app log streams use. The compute
+	// gateway serves them behind the public edge and apid's loopback
+	// listener does not, so the hosted bridge defaults it to its own origin.
+	LogsAPIBase string
 }
 
 type remoteServer struct {
@@ -94,6 +106,8 @@ type remoteServer struct {
 	cliAccounts accountSlots
 	// metadataClient fetches client metadata documents; nil disables them.
 	metadataClient *http.Client
+	// docs is shared by every connection, so the docs corpus is fetched once.
+	docs *docsLibrary
 }
 
 type grantContextKey struct{}
@@ -131,7 +145,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	}
 	for _, redirect := range opts.RedirectURIs {
 		if !validConfiguredRedirectURI(redirect) {
-			return nil, errors.New("OAuth redirect URIs must be HTTPS or loopback HTTP without credentials or fragments")
+			return nil, errors.New("OAuth redirect URIs must be HTTPS, loopback HTTP or a private-use scheme without credentials or fragments")
 		}
 	}
 	apiURL, err := url.Parse(opts.APIBase)
@@ -162,8 +176,11 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	issuer := origin
 	if opts.Hosted {
 		issuer = opts.ResourceURL
+		if opts.LogsAPIBase == "" {
+			opts.LogsAPIBase = origin
+		}
 	}
-	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}}
+	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {
 		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
 			return nil, err
@@ -185,7 +202,22 @@ func loopbackHost(host string) bool {
 
 func validRedirectURI(value string) bool {
 	u, err := url.Parse(value)
-	return err == nil && len(value) <= 2048 && !strings.Contains(value, "*") && u.Host != "" && u.User == nil && u.Fragment == "" && (u.Scheme == "https" || (u.Scheme == "http" && loopbackHost(u.Hostname())))
+	return err == nil && len(value) <= 2048 && !strings.Contains(value, "*") && u.Host != "" && u.User == nil && u.Fragment == "" && (u.Scheme == "https" || (u.Scheme == "http" && loopbackHost(u.Hostname())) || privateUseScheme(u.Scheme))
+}
+
+// privateUseSchemePattern is an RFC 8252 §7.1 private-use URI scheme. Native
+// agents such as Cursor return to themselves through one
+// (cursor://anysphere.cursor-mcp/oauth/callback); refusing every non-HTTP
+// callback kept them from connecting at all. Like any redirect it is allowed
+// only when the operator lists it exactly, and PKCE binds the code.
+var privateUseSchemePattern = regexp.MustCompile(`^[a-z][a-z0-9.+-]{2,63}$`)
+
+func privateUseScheme(scheme string) bool {
+	switch scheme {
+	case "http", "https", "javascript", "data", "file", "vbscript", "blob", "about", "ws", "wss", "ftp", "mailto", "tel", "intent":
+		return false
+	}
+	return privateUseSchemePattern.MatchString(scheme)
 }
 
 // Codex randomizes its final loopback callback path component. An operator can
@@ -288,12 +320,14 @@ func (r *remoteServer) handler() http.Handler {
 	})
 }
 
+const privateContentSecurityPolicy = "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+
 func setPrivateHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", privateContentSecurityPolicy)
 }
 
 func writeOAuthJSON(w http.ResponseWriter, status int, value any) {
@@ -307,10 +341,20 @@ func oauthError(w http.ResponseWriter, status int, code, description string) {
 }
 
 func (r *remoteServer) scopes() []string {
+	out := []string{scopeRead}
 	if r.opts.AllowWrites {
-		return []string{scopeRead, scopeWrite}
+		out = append(out, scopeWrite)
 	}
-	return []string{scopeRead}
+	if r.opts.AllowToolInvocation {
+		out = append(out, scopeInvoke)
+	}
+	if r.opts.AllowPrivateToolInvocation && r.opts.AllowToolInvocation {
+		out = append(out, scopePrivateInvoke)
+	}
+	if r.opts.AllowToolPublishing && r.opts.AllowWrites {
+		out = append(out, scopePublish)
+	}
+	return out
 }
 
 func (r *remoteServer) resourceMetadata(w http.ResponseWriter, _ *http.Request) {

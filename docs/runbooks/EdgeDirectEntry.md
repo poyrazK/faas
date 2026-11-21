@@ -7,6 +7,11 @@ This runbook prepares the nodes and the zone. It changes no app traffic: until
 DNS points an app host at the nodes, every request still enters through the
 tunnel.
 
+For the gRPC trailer pilot and Cloudflare bot/content settings, see
+[CloudflareZoneTraffic](CloudflareZoneTraffic.md). A direct curl with matching
+SNI isolates the gateways from Cloudflare; it does not by itself verify the
+proxied direct-origin path or authorize moving the wildcard.
+
 Run the steps in order. Each script prints what it would change and writes
 only with `APPLY=1`.
 

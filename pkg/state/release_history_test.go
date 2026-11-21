@@ -34,10 +34,47 @@ func TestReleaseRunsCrossedByPG(t *testing.T) {
 	}
 }
 
+// TestReleaseRunReplacingPG pins the 2026-11-16 amendment of
+// ADR-20261023181931: the release that replaced a target is the newest
+// release task before the target stopped serving whose deployment still
+// served then. One that never served, or that was rolled back to the target
+// before it stopped serving, is not it.
+func TestReleaseRunReplacingPG(t *testing.T) {
+	s, pool, ctx := pgStoreWithPool(t)
+	fx := releaseRunsSuite(t, s)
+	if _, ok, err := s.ReleaseRunReplacing(ctx, fx.app.ID, fx.target.ID); err != nil || ok {
+		t.Fatalf("a target that never stopped serving: ok=%v err=%v, want none", ok, err)
+	}
+	ended := fx.failedAt.Add(time.Second)
+	set := func(id string, status string, servingEnded *time.Time) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `UPDATE deployments SET status = $2, serving_ended_at = $3 WHERE id = $1`, id, status, servingEnded); err != nil {
+			t.Fatal(err)
+		}
+	}
+	later := ended.Add(time.Second)
+	set(fx.target.ID, "superseded", &ended)
+	set(fx.succeeded.ID, "superseded", &later)
+	set(fx.failed.ID, "failed", nil)
+	run, ok, err := s.ReleaseRunReplacing(ctx, fx.app.ID, fx.target.ID)
+	if err != nil || !ok || run.DeploymentID != fx.succeeded.ID || !run.StartedAt.Equal(fx.succeededAt) || run.Revision != fx.succeeded.Revision {
+		t.Fatalf("replacing = %+v ok=%v err=%v, want the succeeded release (the failed one never served)", run, ok, err)
+	}
+	set(fx.succeeded.ID, "live", nil)
+	if run, ok, err := s.ReleaseRunReplacing(ctx, fx.app.ID, fx.target.ID); err != nil || !ok || run.DeploymentID != fx.succeeded.ID {
+		t.Fatalf("replacing a live successor = %+v ok=%v err=%v", run, ok, err)
+	}
+	earlier := ended.Add(-time.Millisecond)
+	set(fx.succeeded.ID, "superseded", &earlier)
+	if run, ok, err := s.ReleaseRunReplacing(ctx, fx.app.ID, fx.target.ID); err != nil || ok {
+		t.Fatalf("a release rolled back to the target before it stopped serving = %+v ok=%v err=%v, want none", run, ok, err)
+	}
+}
+
 type releaseRunFixture struct {
-	app                   state.App
-	target, failed        state.Deployment
-	succeededAt, failedAt time.Time
+	app                       state.App
+	target, succeeded, failed state.Deployment
+	succeededAt, failedAt     time.Time
 }
 
 // releaseRunsSuite pins ADR-1448's crossing rule at the store: started
@@ -142,7 +179,7 @@ func releaseRunsSuite(t *testing.T, store releaseRunTestStore) releaseRunFixture
 	if runs, err := store.ReleaseRunsCrossedBy(ctx, uuid.NewString(), target.ID); err != nil || len(runs) != 0 {
 		t.Fatalf("runs for another app's target = %+v, %v; want none", runs, err)
 	}
-	return releaseRunFixture{app: app, target: target, failed: failed, succeededAt: admitted[succeeded.ID], failedAt: admitted[failed.ID]}
+	return releaseRunFixture{app: app, target: target, succeeded: succeeded, failed: failed, succeededAt: admitted[succeeded.ID], failedAt: admitted[failed.ID]}
 }
 
 // TestReleaseMigrationDatabasesPG lists only live migration bindings that

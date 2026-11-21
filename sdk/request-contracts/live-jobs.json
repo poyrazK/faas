@@ -1,0 +1,327 @@
+{
+  "resource_id": "import-1",
+  "cases": [
+    {
+      "name": "running",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": true
+    },
+    {
+      "name": "awaiting delivery",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": null,
+        "status": "awaiting_storage_event",
+        "total": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 0,
+        "report": "none",
+        "failures": []
+      },
+      "valid": true
+    },
+    {
+      "name": "unresolved",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": null,
+        "status": "submission_unresolved",
+        "total": 0,
+        "succeeded": 0,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 0,
+        "report": "none",
+        "failures": []
+      },
+      "valid": true
+    },
+    {
+      "name": "native completion report pending",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "succeeded",
+        "total": 3,
+        "succeeded": 3,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 0,
+        "report": "pending",
+        "failures": []
+      },
+      "valid": true
+    },
+    {
+      "name": "report ready",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "succeeded",
+        "total": 3,
+        "succeeded": 3,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 0,
+        "report": "ready",
+        "failures": [],
+        "token": "secret-discard-me"
+      },
+      "valid": true
+    },
+    {
+      "name": "task failure",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "failed",
+        "total": 3,
+        "succeeded": 2,
+        "failed": 1,
+        "cancelled": 0,
+        "running": 0,
+        "report": "unavailable",
+        "failures": [
+          {
+            "input_id": "row:3",
+            "code": "handler_failed",
+            "secret": "discard"
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "other resource",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-2",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "premature report",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "ready",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "missing run",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": null,
+        "status": "succeeded",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "negative count",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": -1,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "inconsistent counts",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 3,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "unsafe number",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 9007199254740992,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "unknown state",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "worker_says_done",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "credential in failure code",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": [
+          {
+            "input_id": "row:3",
+            "code": "Bearer top secret"
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "array status",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": [
+          "running"
+        ],
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "array report",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": [
+          "none"
+        ],
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "boolean count",
+      "snapshot": {
+        "version": 1,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": true,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    },
+    {
+      "name": "boolean version",
+      "snapshot": {
+        "version": true,
+        "resource_id": "import-1",
+        "run_id": "run-1",
+        "status": "running",
+        "total": 3,
+        "succeeded": 1,
+        "failed": 0,
+        "cancelled": 0,
+        "running": 1,
+        "report": "none",
+        "failures": []
+      },
+      "valid": false
+    }
+  ]
+}

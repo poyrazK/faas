@@ -36,12 +36,15 @@ type MemoryStore struct {
 	egressElected             map[string]bool
 	capEvents                 map[memoryCapEventKey]CapEvent
 	capEventsMailed           map[memoryCapEventKey]bool
+	egressHolds               map[memoryEgressHoldKey]CapEvent
 	restoreSlotNotices        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice
 	restoreSlotNoticesMailed  map[memoryRestoreSlotNoticeKey]bool
 	planExcessNotices         map[string]memoryPlanExcessNotice
 	overageDeliveries         map[memoryOverageKey]OverageDelivery
 	overagePending            map[memoryOverageKey]OveragePendingStep
 	usageWaivers              map[string][]usageWaiver
+	// customRoles holds declared custom roles by database (ADR-20261116213000).
+	customRoles map[string]map[string]CustomRole
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -68,6 +71,7 @@ func NewMemoryStore() *MemoryStore {
 		egressElected:             map[string]bool{},
 		capEvents:                 map[memoryCapEventKey]CapEvent{},
 		capEventsMailed:           map[memoryCapEventKey]bool{},
+		egressHolds:               map[memoryEgressHoldKey]CapEvent{},
 		restoreSlotNotices:        map[memoryRestoreSlotNoticeKey]RestoreSlotNotice{},
 		restoreSlotNoticesMailed:  map[memoryRestoreSlotNoticeKey]bool{},
 		planExcessNotices:         map[string]memoryPlanExcessNotice{},

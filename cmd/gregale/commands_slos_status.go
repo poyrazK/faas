@@ -15,12 +15,13 @@ import (
 // (ADR-747): the SLO's error-budget position.
 func cmdSLOsStatus(args []string) int {
 	fs := newFlagSet("slos status", flag.ContinueOnError)
-	slug := fs.String("app", "", "app slug (required)")
+	slug := fs.String("app", "", "app slug (defaults to the linked app)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	fillLinkedApp(slug)
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alert slo status --app <slug> <slo-id>", "slos")
+		PrintUsage(os.Stderr, "usage: gregale alert slo status [--app <slug>] <slo-id>", "slos")
 		return 1
 	}
 	client, err := authedClient()

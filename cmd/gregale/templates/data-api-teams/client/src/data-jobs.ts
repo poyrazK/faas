@@ -3,11 +3,11 @@ import type { teamsClient } from './orders.js'
 import { parseOrder } from './orders.js'
 import type { Database } from './database.types.js'
 export type DataJob = Database['api']['Tables']['team_order_jobs']['Row']
-export type DataJobSummary = Pick<DataJob,'id'|'tenant_id'|'actor'|'kind'|'state'|'processed'|'total'|'created_at'>
+export type DataJobSummary = Pick<DataJob,'id'|'tenant_id'|'actor'|'kind'|'state'|'processed'|'total'|'created_at'|'attempts'|'next_attempt_at'|'last_error_code'>
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 function parse(value: unknown, tenant: string): DataJob {
   const job = value as DataJob
-  if (!job || !uuid.test(job.id) || job.tenant_id !== tenant || typeof job.actor !== 'string' || !['import','export'].includes(job.kind) || !['queued','running','completed','cancelled','failed'].includes(job.state) || !Number.isSafeInteger(job.processed) || !Number.isSafeInteger(job.total) || job.processed < 0 || job.total < job.processed) throw new Error('Invalid background job')
+  if (!job || !uuid.test(job.id) || job.tenant_id !== tenant || typeof job.actor !== 'string' || !['import','export'].includes(job.kind) || !['queued','running','completed','cancelled','failed','blocked'].includes(job.state) || !Number.isSafeInteger(job.processed) || !Number.isSafeInteger(job.total) || job.processed < 0 || job.total < job.processed) throw new Error('Invalid background job')
   return job
 }
 export function backgroundDataJobs(client: ReturnType<typeof teamsClient>) {
@@ -28,8 +28,12 @@ export function backgroundDataJobs(client: ReturnType<typeof teamsClient>) {
       if (!uuid.test(id)) throw new Error('Invalid job ID')
       return one(dataRequest(client.db.rpc('cancel_team_order_job', { job_id: id }), { timeoutMs: 5000 }),id)
     },
+    resume(id: string) {
+      if (!uuid.test(id)) throw new Error('Invalid job ID')
+      return one(dataRequest(client.db.rpc('resume_team_order_job', { job_id: id }), { timeoutMs: 5000 }),id)
+    },
     async list() {
-      const response = await dataRequest(client.db.from('team_order_jobs').select('id,tenant_id,actor,kind,state,processed,total,created_at').eq('tenant_id', client.tenant).order('created_at', { ascending: false }).order('id').limit(20), { timeoutMs: 5000 })
+      const response = await dataRequest(client.db.from('team_order_jobs').select('id,tenant_id,actor,kind,state,processed,total,created_at,attempts,next_attempt_at,last_error_code').eq('tenant_id', client.tenant).order('created_at', { ascending: false }).order('id').limit(20), { timeoutMs: 5000 })
       if (response.error || !Array.isArray(response.data)) throw new Error('Cannot load background jobs')
       return response.data.map(job => parse(job, client.tenant)) as DataJobSummary[]
     },

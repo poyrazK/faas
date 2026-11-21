@@ -34,6 +34,7 @@ func render() string {
 	b.WriteString("<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->\n\n")
 	b.WriteString("These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at " + formatPrice(api.OverageMillicentsPerGBHour) + " per GB-RAM-hour on paid plans.\n\n")
 	b.WriteString("## At a glance\n\n")
+	b.WriteString("What each plan gets: how many apps you can deploy, how much RAM each instance has, and the rest of its limits. [What each limit means](#what-each-limit-means) explains every column.\n\n")
 	b.WriteString("| Plan | Monthly | Deployed apps | PR preview environments | Developer apps | Concurrent instances | RAM / app | Included GB-RAM-hours | App egress / month | App layer | Idle timeout | Max request timeout |\n")
 	b.WriteString("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, plan := range api.Plans {
@@ -71,7 +72,7 @@ func render() string {
 	fmt.Fprintf(&b, "- **Max request timeout** is the longest `request_timeout_s` an app or function may set (`gregale app APP --request-timeout SECONDS`). Without one, a function request must start its response within %s and an app request within %s; a function's whole invocation, a streamed response included, may then run for the longer of its timeout and %s.\n\n",
 		api.RequestBudgetDefault, api.RequestBudgetAppDefault, api.RequestBudgetMax)
 	b.WriteString("## Developer environments\n\n")
-	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum.\n\n",
+	fmt.Fprintf(&b, "Each [`gregale dev`](gregale-dev.md) environment keeps a lease that every sync, and a running watcher, renews. The default lease is %s; `--ttl` or `dev.ttl` in `gregale.yaml` chooses another value from %s up to the plan maximum. Developer apps have their own budget, separate from your deployed apps; a developer database (`gregale dev --postgres`) counts toward the plan's managed PostgreSQL database limit together with your other databases. Free developer environments have 256 MB and no authentication, so they use production-shaped builds instead of watch mode.\n\n",
 		formatDuration(int(api.DeveloperLeaseDefault.Seconds())), formatDuration(int(api.DeveloperLeaseMin.Seconds())))
 	b.WriteString("| Plan | Developer apps | Maximum lease |\n")
 	b.WriteString("|---|---:|---:|\n")

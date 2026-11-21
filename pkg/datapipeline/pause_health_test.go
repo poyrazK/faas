@@ -36,7 +36,7 @@ func TestPauseHealthAndAlertsRequireWorkerAcknowledgement(t *testing.T) {
 	if len(history) != 1 || history[0].Code != "sync_blocked" {
 		t.Fatal("failed pause did not raise an incident", history)
 	}
-	if _, err = store.pool.Exec(ctx, `UPDATE data_pipelines SET state='paused',observed_at=clock_timestamp(),observed_revision=revision WHERE id=$1`, p.ID); err != nil {
+	if _, err = store.pool.Exec(ctx, `UPDATE data_pipelines SET state='paused',reason='',observed_at=clock_timestamp(),observed_revision=revision WHERE id=$1`, p.ID); err != nil {
 		t.Fatal(err)
 	}
 	confirmed, err := store.Get(ctx, p.AccountID, p.ID)
@@ -48,7 +48,11 @@ func TestPauseHealthAndAlertsRequireWorkerAcknowledgement(t *testing.T) {
 	if len(alertHistory(t, ctx, store, p)) != 1 {
 		t.Fatal("confirmed pause emitted a recovery")
 	}
-	if code, recovered := alertCondition(confirmed, time.Now().Add(5*time.Minute)); code != "" || recovered {
+	if code, recovered := alertCondition(confirmed, time.Now()); code != "" || recovered {
 		t.Fatal("confirmed intentional pause reported an incident or recovery", code, recovered)
+	}
+	// adr: 20261112220000 — retained slots need monitoring even while paused.
+	if code, recovered := alertCondition(confirmed, time.Now().Add(5*time.Minute)); code != "monitoring_stale" || recovered {
+		t.Fatal("paused slot lost monitoring without an incident", code, recovered)
 	}
 }

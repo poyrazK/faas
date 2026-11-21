@@ -557,7 +557,6 @@ UpdateAppWebhook
 UpdateBuildProvenanceSBOM
 UpdateCorsPreset
 UpdateCron
-UpdateCronWithOptions
 UpdateCustomDomainCertStatus
 UpdateDataUpstreamCircuitBreaker
 UpdateDeploymentMinInstances

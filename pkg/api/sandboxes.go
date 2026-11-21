@@ -5,8 +5,11 @@ package api
 // its data-plane routes take the session token returned here.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -54,6 +57,67 @@ func SandboxRegistryHost(name string) bool {
 		}
 	}
 	return false
+}
+
+// sandboxWebReservedTLDs are the last labels a web-mode session may not
+// resolve: special-use and private names (RFC 6761, RFC 6762, RFC 8375,
+// RFC 9476 and common private conventions), and Gregale's own internal
+// namespaces (`<name>.internal`, `<service>.svc.gregale`).
+var sandboxWebReservedTLDs = map[string]bool{
+	"localhost": true, "local": true, "internal": true, "arpa": true, "test": true, "invalid": true,
+	"example": true, "onion": true, "alt": true, "home": true, "lan": true, "corp": true,
+	"intranet": true, "private": true, "localdomain": true, "gregale": true,
+}
+
+// SandboxWebHost reports whether a web-mode session may resolve name
+// (ADR-20261112121456 §2): a public name of at least two labels, not an
+// address literal, whose last label is not reserved or internal.
+func SandboxWebHost(name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	if name == "" || len(name) > 253 {
+		return false
+	}
+	if _, err := netip.ParseAddr(name); err == nil {
+		return false
+	}
+	labels := strings.Split(name, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" || len(l) > 63 || strings.HasPrefix(l, "-") || strings.HasSuffix(l, "-") {
+			return false
+		}
+		for _, r := range l {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' && r != '_' {
+				return false
+			}
+		}
+	}
+	tld := labels[len(labels)-1]
+	if sandboxWebReservedTLDs[tld] || strings.Trim(tld, "0123456789") == "" {
+		return false
+	}
+	return true
+}
+
+// ValidSandboxBrowseURL reports whether a gregale_browse URL may be fetched
+// (ADR-20261116182615 §4): http or https, no credentials, a public host
+// (SandboxWebHost), on the ports web mode reaches, at most 2048 bytes.
+func ValidSandboxBrowseURL(raw string) bool {
+	if raw == "" || len(raw) > 2048 || strings.ContainsAny(raw, " \t\r\n") {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Opaque != "" {
+		return false
+	}
+	switch u.Port() {
+	case "", "80", "443":
+	default:
+		return false
+	}
+	return SandboxWebHost(u.Hostname())
 }
 
 // Sandbox problem codes.
@@ -201,6 +265,10 @@ type CreateSandboxRequest struct {
 	// Template boots the session from a sandbox template's newest finished
 	// build in place of a preset or image.
 	Template string `json:"template,omitempty"`
+	// Browser boots a preset session with the sandbox browser running and
+	// its DevTools protocol exposed privately on SandboxBrowserCDPPort
+	// (ADR-20261116182615 §1). It needs SandboxBrowserRAMMBMin.
+	Browser bool `json:"browser,omitempty"`
 	// Pull and RegistryAuth go with Image, as on image runs: "always"
 	// re-pulls a cached image so a moved tag resolves again, and
 	// RegistryAuth is stored sealed on the image's runner job for its
@@ -229,6 +297,10 @@ const SandboxTemplateRefPrefix = "template:"
 // seller image.
 const SandboxPresetImage = "image"
 
+// SandboxBrowserCDPPort is the guest port gregale-browser serves the
+// browser's DevTools protocol on (ADR-20261112133503).
+const SandboxBrowserCDPPort = 9222
+
 // SandboxImageDefaultRAMMB is a seller-image session's RAM when ram_mb is
 // omitted, within the plan's AgentRunRAMMBMax.
 const SandboxImageDefaultRAMMB = 1024
@@ -236,6 +308,84 @@ const SandboxImageDefaultRAMMB = 1024
 // SandboxNetwork is a session's egress (ADR-20261027090013 §6).
 type SandboxNetwork struct {
 	Mode string `json:"mode"`
+	// Allow and Deny narrow a web-mode session's domains
+	// (ADR-20261117091026 §2): rules added to the account's default
+	// policy, never widening it.
+	Allow []string `json:"allow,omitempty"`
+	Deny  []string `json:"deny,omitempty"`
+}
+
+// SandboxEgressPolicy is a web-mode domain policy (ADR-20261117091026 §1):
+// a name is granted when no deny rule matches it and either allow is empty
+// or an allow rule matches it. A rule matches its name and every name below.
+type SandboxEgressPolicy struct {
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny"`
+}
+
+// SandboxEgress is a session's egress record (ADR-20261117091026 §4): the
+// policy it was admitted under and the domains it was granted or refused.
+type SandboxEgress struct {
+	SandboxID string `json:"sandbox_id"`
+	Mode      string `json:"mode"`
+	SandboxEgressPolicy
+	Domains []SandboxEgressDomain `json:"domains"`
+}
+
+// SandboxEgressDomain is one entry of a session's domain log. A grant names
+// the registrable domain and has no Refused; a refusal says why: "policy"
+// (the session's policy), "budget" (the plan's distinct-domain limit) or
+// "platform" (a name Gregale never resolves for sessions, such as an
+// address or an internal name). A policy or platform refusal names the name
+// asked for.
+type SandboxEgressDomain struct {
+	Domain    string    `json:"domain"`
+	Refused   string    `json:"refused,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+}
+
+// ValidSandboxEgressRule reports whether rule is a domain rule: a public
+// name SandboxWebHost allows, lowercase, without a trailing dot.
+func ValidSandboxEgressRule(rule string) bool {
+	return rule != "" && rule == strings.ToLower(rule) && !strings.HasSuffix(rule, ".") && SandboxWebHost(rule)
+}
+
+// SandboxEgressRuleMatches reports whether rule matches name: name is rule
+// or a name below it.
+func SandboxEgressRuleMatches(rule, name string) bool {
+	name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+	return name == rule || strings.HasSuffix(name, "."+rule)
+}
+
+// SandboxEgressAllows reports whether a policy of allow and deny rules
+// grants name (ADR-20261117091026 §1). Deny wins; an empty allow allows
+// every name the platform does.
+func SandboxEgressAllows(allow, deny []string, name string) bool {
+	for _, rule := range deny {
+		if SandboxEgressRuleMatches(rule, name) {
+			return false
+		}
+	}
+	if len(allow) == 0 {
+		return true
+	}
+	for _, rule := range allow {
+		if SandboxEgressRuleMatches(rule, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// SandboxEgressRuleCovered reports whether rule falls under one of allow:
+// every name rule matches, some allow rule matches too.
+func SandboxEgressRuleCovered(rule string, allow []string) bool {
+	for _, a := range allow {
+		if SandboxEgressRuleMatches(a, rule) {
+			return true
+		}
+	}
+	return false
 }
 
 // UpdateSandboxRequest changes a live session's idle timeout, or its
@@ -272,6 +422,8 @@ type Sandbox struct {
 	Image string `json:"image,omitempty"`
 	// Template is the sandbox template the session boots, if any.
 	Template string `json:"template,omitempty"`
+	// Browser is a session created with the sandbox browser running.
+	Browser bool `json:"browser,omitempty"`
 }
 
 // SandboxSnapshot is a persisted workspace (ADR-20261027090013 step 7): a
@@ -335,7 +487,7 @@ type SandboxList struct {
 // ErrSandboxUnsupported refuses a request field sessions do not offer yet.
 func ErrSandboxUnsupported(field, detail string) *Problem {
 	return NewProblem(http.StatusUnprocessableEntity, CodeSandboxUnsupported, "Not supported for sandbox sessions",
-		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans#agents")
+		fmt.Sprintf("%s: %s", field, detail)).WithDocs(docsBase + "/plans")
 }
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
@@ -464,7 +616,7 @@ func NormalizeSandboxPreviewDomain(raw string) (string, error) {
 func ErrSandboxPublicPreviewGated(p Plan) *Problem {
 	return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated, "Plan doesn't include public previews",
 		fmt.Sprintf("the %s plan exposes sandbox ports privately only, behind a preview token; upgrade to Pro or higher for public previews.", p)).
-		WithDocs(docsBase + "/plans#agents")
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrSandboxPreviewsOff answers port routes on an installation without a
@@ -472,4 +624,36 @@ func ErrSandboxPublicPreviewGated(p Plan) *Problem {
 func ErrSandboxPreviewsOff() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeSandboxPreviewsOff, "Sandbox previews are off",
 		"this installation has no sandbox preview domain, so ports cannot be exposed")
+}
+
+// SandboxActionResult is one gregale_browser action, as GET
+// /v1/sandboxes/{id}/actions/{seq} returns it (ADR-20261117065818 §2): its
+// kind and arguments, its state and, once it ended, the page snapshot as
+// result or why it failed as output.
+type SandboxActionResult struct {
+	SandboxID string          `json:"sandbox_id"`
+	Seq       int             `json:"seq"`
+	Kind      string          `json:"kind"`
+	URL       string          `json:"url,omitempty"`
+	Ref       int             `json:"ref,omitempty"`
+	Key       string          `json:"key,omitempty"`
+	Direction string          `json:"direction,omitempty"`
+	State     string          `json:"state"`
+	ExitCode  *int            `json:"exit_code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Output    string          `json:"output,omitempty"`
+}
+
+// SandboxTaskResult is GET /v1/sandboxes/{id}/task (ADR-20261116182615 §3):
+// a task session's arguments and, once it ended, its result. Result is the
+// command's JSON output when it exited 0; Output is its output otherwise.
+type SandboxTaskResult struct {
+	SandboxID string          `json:"sandbox_id"`
+	Kind      string          `json:"kind"`
+	URL       string          `json:"url,omitempty"`
+	State     string          `json:"state"`
+	ExitCode  *int            `json:"exit_code,omitempty"`
+	Result    json.RawMessage `json:"result,omitempty"`
+	Output    string          `json:"output,omitempty"`
+	Outcome   *SandboxOutcome `json:"outcome,omitempty"`
 }

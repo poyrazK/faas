@@ -6,6 +6,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class TelemetryService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * OTel spans writer.
    * Standard OTLP/HTTP endpoint for the OTel spans sidecar
@@ -30,7 +31,7 @@ export class TelemetryService {
    * @throws ApiError
    */
   public static ingestOtlpSpans(): CancelablePromise<any> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/otel/v1/traces',
       errors: {

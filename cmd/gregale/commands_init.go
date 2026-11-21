@@ -54,7 +54,7 @@ import (
 // initCmdUsage is the top-of-failure-line shown for `gregale init` errors.
 // Mirrors PrintUsage's docs URL convention (output.go:144) so the line
 // carries the stable docs site pointer.
-const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>] | --list"
+const initCmdUsage = "usage: gregale init --template <name> --path <dir> [--deploy] [--name <slug>] [--secrets-file <path>] | --agents [--path <dir>] [--name <slug>] [--dry-run] | --list"
 
 // initReceipt is the machine-readable result of a successful scaffolding
 // operation. The path is absolute because that is what the CLI actually
@@ -85,11 +85,27 @@ func cmdInit(args []string) int {
 	secretsFile := fs.String("secrets-file", "", "read KEY=VALUE pairs and set them before the first deployment (requires --deploy)")
 	list := fs.Bool("list", false, "print available templates grouped by category and exit")
 	noMCP := fs.Bool("no-mcp", false, "do not write .mcp.json")
+	agents := fs.Bool("agents", false, "set up an existing project for coding agents instead of scaffolding one")
+	dryRun := fs.Bool("dry-run", false, "with --agents, show the changes without writing them")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
 		PrintUsage(os.Stderr, initCmdUsage, initCmdDocsTopic)
+		return 1
+	}
+	if *agents {
+		if *tpl != "" || *deploy || *secretsFile != "" || *list {
+			PrintUsage(os.Stderr, initCmdUsage+"\n  error: --agents takes only --path, --name and --dry-run", initCmdDocsTopic)
+			return 1
+		}
+		if *dest == "" {
+			*dest = "."
+		}
+		return runInitAgents(*dest, *name, *dryRun, osStdout)
+	}
+	if *dryRun {
+		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --dry-run requires --agents", initCmdDocsTopic)
 		return 1
 	}
 	// --list is a discovery short-circuit. It runs before --template /
@@ -300,10 +316,16 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		return printErr("Could not create "+absDest, err)
 	}
 
-	// Step 5: materialize the embedded template into the destination.
-	// templates.Materialize is os.CopyFS under the hood (embed.go:79);
-	// no chdir, no intermediate tmp.
-	if err := templates.Materialize(tpl, absDest); err != nil {
+	slug := name
+	if slug == "" {
+		slug = sanitizeSlug(filepath.Base(absDest))
+	}
+	if tpl == templates.PrivateNode {
+		err = templates.MaterializePrivateNode(absDest, slug)
+	} else {
+		err = templates.Materialize(tpl, absDest)
+	}
+	if err != nil {
 		return printErr("Could not write template into "+absDest, err)
 	}
 	mcpConfig, err := writeProjectMCPConfig(absDest)
@@ -317,23 +339,15 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 		// The deploy composite has its own JSON receipt. Suppress that
 		// nested output so `init --json --deploy` still emits exactly one
 		// parseable document describing the complete operation.
-		deploySlug := name
-		if deploySlug == "" {
-			deploySlug = sanitizeSlug(filepath.Base(absDest))
-		}
-		deployArgs := []string{
-			"--template", tpl,
-			"--name", deploySlug,
-		}
-		if secretsFile != "" {
-			deployArgs = append(deployArgs, "--secrets-file", secretsFile)
-		}
 		oldOut := osStdout
 		osStdout = io.Discard
-		code := cmdDeployTarball(deployArgs)
+		code := deployInitTemplate(tpl, absDest, slug, secretsFile)
 		osStdout = oldOut
 		if code != 0 {
 			return code
+		}
+		if err := rememberInitTemplate(tpl, absDest, slug); err != nil {
+			_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not remember it in %s: %v; run gregale deploy --name %s there\n", slug, absDest, err, slug)
 		}
 		return writeInitJSON(stdout, initReceipt{Template: tpl, Path: absDest, Status: "created", Deployed: true, MCPConfig: mcpConfig})
 	}
@@ -354,31 +368,72 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	}
 	PrintProgress(stdout, "Docs: %s", docsURLForTemplate(tpl))
 
-	// Step 7: optional deploy chain. When --deploy is set, we hand off
-	// to cmdDeployTarball with --template + --name; cmdDeployTarball
-	// re-materializes the template into its own tmpdir, tar.gz's it,
-	// and runs the upload + log-stream flow. The customer's --path
-	// stays untouched (their working copy).
 	if !deploy {
 		return 0
 	}
-	slug := name
-	if slug == "" {
-		slug = sanitizeSlug(filepath.Base(absDest))
-	}
 	PrintProgress(stdout, "Deploying %s as %s", tpl, slug)
-	deployArgs := []string{
-		"--template", tpl,
-		"--name", slug,
+	if code := deployInitTemplate(tpl, absDest, slug, secretsFile); code != 0 {
+		return code
+	}
+	if err := rememberInitTemplate(tpl, absDest, slug); err != nil {
+		_, _ = fmt.Fprintf(stderr, "warning: deployed %s but could not remember it in %s: %v; run gregale deploy --name %s there\n", slug, absDest, err, slug)
+		return 0
+	}
+	PrintOK(stdout, "Remembered app %s in %s", slug, projectContextPath(absDest))
+	return 0
+}
+
+func deployInitTemplate(tpl, dir, slug, secretsFile string) int {
+	args := []string{"--template", tpl, "--name", slug}
+	if tpl == templates.PrivateNode {
+		args = privateNodeDeployArgs(dir, slug)
+		if jsonOutput || !stdinIsTTY() {
+			args = append(args, "--yes")
+		}
 	}
 	if secretsFile != "" {
-		deployArgs = append(deployArgs, "--secrets-file", secretsFile)
+		args = append(args, "--secrets-file", secretsFile)
 	}
-	return cmdDeployTarball(deployArgs)
+	if tpl != templates.PrivateNode {
+		return cmdDeployTarball(args)
+	}
+	return cmdDeployTarballToExisting(context.Background(), args, false, deployExecution{
+		projectPlan: func(ctx context.Context, client *Client, plan api.PlanResponse) error {
+			if err := validatePrivateNodePlan(plan, slug, ""); err != nil {
+				return err
+			}
+			return verifyUnusedPrivateNodeProject(ctx, client, slug)
+		},
+	})
+}
+
+func rememberInitTemplate(tpl, dir, slug string) error {
+	if tpl != templates.PrivateNode {
+		return rememberInitApp(dir, slug)
+	}
+	if err := ensureProjectContextIgnored(dir); err != nil {
+		return fmt.Errorf("ignore local context: %w", err)
+	}
+	_, err := saveProjectContext(dir, localProjectContext{Version: projectContextVersion, Project: slug, App: slug})
+	return err
+}
+
+// rememberInitApp saves the app init --deploy created as dir's standalone
+// default, so a later plain gregale deploy there updates it instead of
+// creating an app named after the directory. init created dir empty, so no
+// other saved default can be replaced.
+func rememberInitApp(dir, slug string) error {
+	if err := ensureProjectContextIgnored(dir); err != nil {
+		return fmt.Errorf("ignore local context: %w", err)
+	}
+	_, err := saveProjectContext(dir, localProjectContext{Version: standaloneContextVersion, App: slug})
+	return err
 }
 
 func docsURLForTemplate(name string) string {
 	switch name {
+	case templates.PrivateNode:
+		return "https://gregale.dev/docs/quickstart#deploy-a-private-node-app-on-free"
 	case "hello-node", "hello-python", "hello-go", "customer-platform":
 		return deployFromSourceDocsURL
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "ai-chat",
@@ -507,6 +562,8 @@ func validateTemplateSecrets(tpl string, pairs []secretsPair) error {
 // the template README so the README and CLI hint stay in lockstep.
 func nextStepsFor(tpl string) []string {
 	switch tpl {
+	case templates.PrivateNode:
+		return []string{"Review and deploy the internal app with gregale start <dest>."}
 	case "customer-operation-workflow-export":
 		return []string{
 			"Read <dest>/README.md and place the local SDK package at <dest>/packages/gregale-sdk.tgz.",

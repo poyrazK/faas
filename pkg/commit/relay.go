@@ -78,20 +78,56 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 		}
 		source = r.SourceID
 	}
+	grouped, err := outboxHasGroupKey(ctx, r.Pool)
+	if err != nil {
+		return 0, err
+	}
+	// A round claims at most one change per key, so a grouped outbox keeps
+	// claiming rounds while changes are accepted: a row changed several times
+	// drains in one tick, still in order and within batch.
+	accepted, claimedTotal := 0, 0
+	var failures []error
+	for claimedTotal < batch {
+		claimed, n, err := r.tickRound(ctx, batch-claimedTotal, lease, delay, source, grouped)
+		claimedTotal += claimed
+		accepted += n
+		if err != nil {
+			failures = append(failures, err)
+		}
+		if !grouped || claimed == 0 || n == 0 {
+			break
+		}
+	}
+	return accepted, errors.Join(failures...)
+}
+
+// tickRound leases up to batch claimable changes and offers each to the
+// acceptor, returning how many it claimed and accepted.
+func (r *Relay) tickRound(ctx context.Context, batch int, lease, delay time.Duration, source any, grouped bool) (int, int, error) {
+	// A grouped change waits for every older unaccepted change of its key,
+	// whether pending, leased, retrying or blocked (ADR-20261112193306): one
+	// row's changes commit in created_at order under its row lock.
+	headOnly := ""
+	if grouped {
+		headOnly = `
+ AND (group_key IS NULL OR NOT EXISTS(SELECT 1 FROM public.gregale_outbox p
+   WHERE p.group_key=gregale_outbox.group_key AND p.accepted_at IS NULL
+   AND (p.created_at,p.event_id)<(gregale_outbox.created_at,gregale_outbox.event_id)))`
+	}
 	token := uuid.NewString()
 	rows, err := r.Pool.Query(ctx, `WITH candidates AS (
  SELECT event_id FROM public.gregale_outbox
  WHERE accepted_at IS NULL AND blocked_code IS NULL
  AND ($4::uuid IS NULL OR EXISTS(SELECT 1 FROM public.gregale_commit_binding WHERE singleton AND source_id=$4::uuid))
  AND next_attempt_at <= clock_timestamp()
- AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+ AND (lease_until IS NULL OR lease_until <= clock_timestamp())`+headOnly+`
  ORDER BY next_attempt_at,created_at,event_id FOR UPDATE SKIP LOCKED LIMIT $1
  ) UPDATE public.gregale_outbox o SET lease_token=$2::uuid,
  lease_until=clock_timestamp()+($3::bigint * interval '1 millisecond'), attempts=attempts+1
  FROM candidates c WHERE o.event_id=c.event_id
-	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing',COALESCE(to_jsonb(o)->>'schema_version','')`, batch, token, lease.Milliseconds(), source)
+	RETURNING o.event_id::text,o.event_type,o.payload,to_jsonb(o)->'routing',COALESCE(to_jsonb(o)->>'schema_version',''),COALESCE(to_jsonb(o)->>'group_key','')`, batch, token, lease.Milliseconds(), source)
 	if err != nil {
-		return 0, fmt.Errorf("commit: claim events: %w", err)
+		return 0, 0, fmt.Errorf("commit: claim events: %w", err)
 	}
 	type claimedEvent struct {
 		event          Event
@@ -101,9 +137,9 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 	for rows.Next() {
 		var e Event
 		var routing json.RawMessage
-		if err := rows.Scan(&e.ID, &e.Type, &e.Data, &routing, &e.SchemaVersion); err != nil {
+		if err := rows.Scan(&e.ID, &e.Type, &e.Data, &routing, &e.SchemaVersion, &e.GroupKey); err != nil {
 			rows.Close()
-			return 0, err
+			return 0, 0, err
 		}
 		invalid := false
 		if len(routing) > 0 && string(routing) != "null" {
@@ -121,7 +157,7 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	accepted := 0
 	var failures []error
@@ -188,7 +224,19 @@ func (r *Relay) Tick(ctx context.Context) (int, error) {
 		}
 		accepted += int(resultRows)
 	}
-	return accepted, errors.Join(failures...)
+	return len(events), accepted, errors.Join(failures...)
+}
+
+// outboxHasGroupKey reports whether the outbox has the changes install's
+// group_key column; a generic Commit outbox that was never upgraded has not.
+func outboxHasGroupKey(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	var ok bool
+	err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_attribute
+ WHERE attrelid='public.gregale_outbox'::regclass AND attname='group_key' AND NOT attisdropped)`).Scan(&ok)
+	if err != nil {
+		return false, fmt.Errorf("commit: read outbox columns: %w", err)
+	}
+	return ok, nil
 }
 
 // Cleanup removes only accepted rows older than the owner's retention window.

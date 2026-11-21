@@ -26,6 +26,9 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -214,6 +217,18 @@ type Builderd struct {
 	// future opportunistic eligibility but cannot bypass this host fence.
 	slotMu      sync.Mutex
 	activeSlots int
+	// activeReserved counts the slots in faas-cp-build.slice (the fixed
+	// allocator's slots and the BuildKit seed run count here too) and
+	// activeBorrowed those in faas-borrowed.slice; borrowedBuilds tracks the
+	// borrowed ones for the give-back (ADR-20261118154632). All under slotMu.
+	activeReserved int
+	activeBorrowed int
+	borrowedBuilds map[string]*borrowedBuild
+	// elastic is elastic builder slots; nil or off keeps the fixed
+	// allocator.
+	elastic *ElasticSlots
+	// sliceFreeMB overrides the builder-slice memory read in tests.
+	sliceFreeMB func() (int, bool)
 	// sourceStorage is the optional remote source handoff used by split-box
 	// deployments. Local/single-box deployments leave it nil and continue to
 	// read the source spool directly.
@@ -700,6 +715,23 @@ func (b *Builderd) stopIfBuildOutpaced(ctx context.Context, claim state.Build) b
 	return true
 }
 
+// recordBuildNode records this node on a build it just claimed
+// (ADR-20261110210000 slice 3j-3): secretd admits only that node to pull the
+// app's private base images for the builder VM. Under a per-node database
+// login the claim already recorded it and this changes nothing. A failure
+// is logged, not fatal: the build still runs, and only a mirrored private
+// pull is refused.
+func (b *Builderd) recordBuildNode(ctx context.Context, buildID string) {
+	recorder, ok := b.store.(state.BuildNodeRecorder)
+	if !ok || b.builderNodeID == "" {
+		return
+	}
+	if err := recorder.RecordBuildNode(ctx, buildID, b.builderNodeID); err != nil {
+		b.log.Warn("builderd: record the build's node; private base-image pulls through the mirror will be refused",
+			"build", buildID, "err", err)
+	}
+}
+
 // requeueClaim returns a worker-owned claim to the durable queue. Production
 // stores implement the claim-fenced capability; the legacy fallback preserves
 // compatibility with older state.Store implementations.
@@ -727,6 +759,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.requeueClaimAfterCancellation(ctx, build)
 		}
 	}()
+	b.recordBuildNode(ctx, build.ID)
 
 	dep, err := b.store.DeploymentByID(ctx, build.DeploymentID)
 	if err != nil {
@@ -1127,7 +1160,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	// Slot allocation (CLAUDE.md: builds never outrank tenant wakes).
-	slot, releaseSlot, acquired := b.acquireSlot()
+	slot, releaseSlot, acquired := b.acquireBuildSlot(ctx, build)
 	if !acquired {
 		// Requeue the row (NOT markFailed) so a later tick / notify
 		// can re-attempt it. RequeueBuild clears started_at but
@@ -1166,37 +1199,43 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
+	dependencyCacheSeedKey := ""
+	if dependencyCacheKey != "" && len(buildSecrets) == 0 && len(registryCreds) == 0 {
+		dependencyCacheSeedKey = dependencyCacheFamilyKey(app, fw, runtimeBaseRef)
+	}
 	vmReq := VMRequest{
-		BuildDependencyDigest: buildDependencyDigest,
-		PublicBuildURLs:       publicURLs,
-		DockerfileBuild:       dockerfileBuild,
-		GoCommand:             goCommand,
-		BuildSecrets:          buildSecrets,
-		RegistryCredentials:   registryCreds,
-		BuildID:               build.ID,
-		TenantID:              app.AccountID,
-		DeploymentID:          dep.ID,
-		SourcePath:            dep.SourcePath,
-		SourceSHA256:          srcHash,
-		SourceRoot:            dep.SourceRoot,
-		DockerfilePath:        dockerfilePath,
-		Framework:             fw,
-		Runtime:               runtimeName,
-		RuntimeBaseRef:        runtimeBaseRef,
-		IssueSourceMaps:       sourceMaps,
-		Function:              app.Type == state.AppTypeFunction,
-		SharedRuntime:         sharedRuntime != "",
-		DevWatchCommand:       watch.Command,
-		DevWatchHost:          watch.Host,
-		DependencyCacheKey:    dependencyCacheKey,
-		LayerCompression:      b.cfg.LayerCompression,
-		BuildKitSnapshotter:   b.cfg.BuildKitSnapshotter,
-		DeferCacheExport:      b.cfg.DeferCacheExport,
-		LogPath:               dep.LogPath,
-		RAMMB:                 api.BuildVMRAMMB,
-		TimeoutSec:            b.cfg.BuildTimeoutSeconds,
-		Plan:                  string(acct.Plan),
-		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
+		Borrowed:               slot.Label == slotLabelBorrowed,
+		BuildDependencyDigest:  buildDependencyDigest,
+		PublicBuildURLs:        publicURLs,
+		DockerfileBuild:        dockerfileBuild,
+		GoCommand:              goCommand,
+		BuildSecrets:           buildSecrets,
+		RegistryCredentials:    registryCreds,
+		BuildID:                build.ID,
+		TenantID:               app.AccountID,
+		DeploymentID:           dep.ID,
+		SourcePath:             dep.SourcePath,
+		SourceSHA256:           srcHash,
+		SourceRoot:             dep.SourceRoot,
+		DockerfilePath:         dockerfilePath,
+		Framework:              fw,
+		Runtime:                runtimeName,
+		RuntimeBaseRef:         runtimeBaseRef,
+		IssueSourceMaps:        sourceMaps,
+		Function:               app.Type == state.AppTypeFunction,
+		SharedRuntime:          sharedRuntime != "",
+		DevWatchCommand:        watch.Command,
+		DevWatchHost:           watch.Host,
+		DependencyCacheKey:     dependencyCacheKey,
+		DependencyCacheSeedKey: dependencyCacheSeedKey,
+		LayerCompression:       b.cfg.LayerCompression,
+		BuildKitSnapshotter:    b.cfg.BuildKitSnapshotter,
+		DeferCacheExport:       b.cfg.DeferCacheExport,
+		LogPath:                dep.LogPath,
+		RAMMB:                  api.BuildVMRAMMB,
+		TimeoutSec:             b.cfg.BuildTimeoutSeconds,
+		Plan:                   string(acct.Plan),
+		WarmScopeKey:           builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
 	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
 		// A build with secrets or registry credentials never restores or
@@ -1285,6 +1324,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.markFailed(ctx, build, state.FailureInfra, "vm spawn: "+err.Error(), buildStart)
 			return BuildResult{}, err
 		}
+		// vmmd stopped running borrowed builders since it last said it did
+		// (ADR-20261118154632): the build waits in the queue, it did not fail.
+		if vmReq.Borrowed && status.Code(err) == codes.FailedPrecondition {
+			cancel()
+			if vm, ok := b.vm.(borrowedVM); ok {
+				vm.ForgetBorrowedCapability()
+			}
+			if rqErr := b.requeueClaim(ctx, build, requeueNoSlot); rqErr != nil {
+				b.log.Warn("builderd: requeue after vmmd refused a borrowed builder", "build", build.ID, "err", rqErr)
+			}
+			b.emitBuildLog(ctx, build.ID, "borrowed builder slot unavailable on this node — requeued\n")
+			return BuildResult{}, ErrNoSlot
+		}
 		// Translate a context-deadline to timeout-class; everything else is infra.
 		fc := state.FailureInfra
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -1340,14 +1392,26 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			}
 		}
 	}()
+	stopSteps := b.followBuildSteps(ctx, build.ID, handle)
 	var out BuildOutcome
 	if warmStarted {
 		out, warmCaptured, err = warmVM.WaitForWarmCompletion(ctx, handle)
 	} else {
 		out, err = b.vm.WaitForCompletion(ctx, handle)
 	}
+	stopSteps()
 	stopWatch()
 	<-watchDone
+	// A borrowed slot that gave its memory back to tenants returns the build
+	// to the queue at its place (ADR-20261118154632). A build that finished
+	// before its VM stopped keeps its result.
+	if actor, preempted := b.preemptionActor(build.ID, out); preempted && (err != nil || out.ExitCode != 0) {
+		if rqErr := b.requeuePreempted(ctx, build, actor); rqErr != nil && !errors.Is(rqErr, state.ErrNotFound) {
+			b.markFailed(ctx, build, state.FailureInfra, "borrowed build given back to tenants; requeue failed: "+rqErr.Error(), buildStart)
+			return BuildResult{}, rqErr
+		}
+		return BuildResult{}, ErrPreempted
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			// Cancelling the wait context does not necessarily terminate the
@@ -1437,9 +1501,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	} else if cacheOwed {
 		b.emitBuildLog(ctx, build.ID, "dependency cache will be saved after the image is handed off\n")
 	}
-	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
-	}
+	b.emitGuestBuildLog(ctx, build.ID, "[guest build output]", out.LogTail)
 	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
 		b.emitBuildLog(ctx, build.ID, line)
 	}
@@ -1610,9 +1672,7 @@ func (b *Builderd) exportDeferredCache(ctx context.Context, vm DeferredCacheVM, 
 		// goes to the deployment's build log, as a failed build's does, and
 		// never to the operator log.
 		b.emitBuildLog(ctx, build.ID, "dependency cache could not be saved — the next build may reinstall dependencies\n")
-		if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
-			b.emitBuildLog(ctx, build.ID, "[dependency cache export output]\n"+tail+"\n")
-		}
+		b.emitGuestBuildLog(ctx, build.ID, "[dependency cache export output]", out.LogTail)
 		return
 	}
 	b.log.Info("builderd: deferred dependency cache saved", "build", build.ID,
@@ -2159,9 +2219,15 @@ func (b *Builderd) emitBuildLog(ctx context.Context, buildID, line string) {
 // failing step (production-us hunt #9: a RUN exiting 3 showed "ot complete
 // successfully: exit code: 3" and Go frames). The customer's build output gets
 // the budget first; the daemon log keeps only a short tail for operators.
+//
+// The tail used to be cut to one NOTIFY payload (3 KiB), which lost output a
+// customer printed on purpose (Kroki feedback 2026-11-17: `du` sizes printed
+// mid-build were pushed out by the export lines that followed). It is now
+// guestBuildLogTailMaxBytes and emitGuestBuildLog sends it in NOTIFY-sized
+// chunks.
 func boundedGuestBuildLogTail(raw string) string {
 	const (
-		maxBytes       = 3 * 1024
+		maxBytes       = guestBuildLogTailMaxBytes
 		daemonTail     = 512
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"

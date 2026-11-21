@@ -346,7 +346,7 @@ A production release of an app that already serves traffic uses the
 adaptive health-gated canary and first-wake 5xx rollback by default
 ([ADR-1446](../adr/1446-safe-releases-by-default.md),
 [ADR-1321](../adr/1321-evidence-paced-default-rollouts.md)); see
-[Safe by default](../deploys.md#safe-by-default). To also wait for the
+[Safe by default](../rollouts.md#safe-by-default). To also wait for the
 rollout to reach 100% before the command returns, use the safe path:
 
 ```bash
@@ -479,6 +479,14 @@ lifecycle:
   max_retries: 5
   request_timeout_s: 20
 ```
+
+`startup_deadline_s` is how long the app may take to become ready on every
+cold boot, not only the first. It defaults to 30 s (15 s on Free) and may be
+raised to the plan's startup window: 30 s on Free and Hobby, 60 s on Pro,
+120 s on Scale. An app that needs longer than the gateway's default 30 s
+request hold should also set `scaling.wake_max_queue_wait_seconds` (up to
+120) so its first request waits for the boot instead of getting a 503 with
+`Retry-After`.
 
 The equivalent one-off override is `gregale deploy --execution-mode worker`.
 For a worker that consumes a queue, the `worker:` block declares the mode and
@@ -815,6 +823,12 @@ receipt. Stopping a local wait leaves server processing running.
 `--secrets-file PATH` keeps the selected file out of automatically packed source,
 including committed HEAD, even when secret scanning is off or `.gregaleignore`
 tries to reinclude it. Keep secrets out of any archive you supply with `--tarball`.
+
+When the source directory (or its project root) has
+`.gregale/required-secrets.json`, an app deploy warns before the upload about
+each declared name the app has neither as a secret nor as an environment
+variable in the deploy's scope, counting the names `--secrets-file` just
+sealed. It only warns: a binding or the image can still supply the value.
 
 For projects, apply carries the bundle separately and seals it for every selected
 workload in the requested environment before it queues any build. This requires

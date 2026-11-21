@@ -18,6 +18,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class TriggersService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List triggers on the account.
    * Returns every trigger owned by the calling account, optional
@@ -48,7 +49,7 @@ export class TriggersService {
      */
     kind?: TriggerKind,
   }): CancelablePromise<Array<Trigger>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers',
       query: {
@@ -89,7 +90,7 @@ export class TriggersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<Trigger> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers',
       headers: {
@@ -136,7 +137,7 @@ export class TriggersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<CreateTriggerBatchResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers:batch_create',
       headers: {
@@ -170,7 +171,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<Trigger> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers/{id}',
       path: {
@@ -205,7 +206,7 @@ export class TriggersService {
     id: string,
     requestBody: UpdateTriggerRequest,
   }): CancelablePromise<Trigger> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/triggers/{id}',
       path: {
@@ -244,7 +245,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/triggers/{id}',
       path: {
@@ -275,7 +276,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<TriggerWorkBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers/{id}/work-binding',
       path: {
@@ -313,7 +314,7 @@ export class TriggersService {
      */
     idempotencyKey?: string,
   }): CancelablePromise<TriggerWorkBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/triggers/{id}/work-binding',
       path: {
@@ -344,7 +345,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/triggers/{id}/work-binding',
       path: {
@@ -374,7 +375,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<Trigger> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/pause',
       path: {
@@ -410,7 +411,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<Trigger> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/resume',
       path: {
@@ -458,7 +459,7 @@ export class TriggersService {
      */
     limit?: number,
   }): CancelablePromise<ListTriggerRecordsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers/{id}/records',
       path: {
@@ -500,7 +501,7 @@ export class TriggersService {
      */
     rid: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/records/{rid}/retry',
       path: {
@@ -541,7 +542,7 @@ export class TriggersService {
      */
     rid: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/triggers/{id}/records/{rid}/drop',
       path: {
@@ -586,7 +587,7 @@ export class TriggersService {
      */
     limit?: number,
   }): CancelablePromise<ListTriggerDeadLetterResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers/{id}/dlq',
       path: {
@@ -623,7 +624,7 @@ export class TriggersService {
      */
     id: string,
   }): CancelablePromise<TriggerMetricsResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/triggers/{id}/metrics',
       path: {
@@ -689,7 +690,7 @@ export class TriggersService {
       code?: string;
     }>;
   }> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/invocations:dispatch_batch',
       body: requestBody,

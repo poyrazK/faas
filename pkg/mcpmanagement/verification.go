@@ -108,6 +108,13 @@ func (m *management) verifyPlan(ctx context.Context, args planLookupArgs) (any, 
 		m.mu.Unlock()
 		return nil, invalid("invalid_plan", "verification requires an unexpired plan from this connection")
 	}
+	if !p.attempted && p.localReceipt == nil && p.result == nil && p.configReceipt == nil && p.failure == nil {
+		// Nothing was applied, so there is nothing to observe yet. A new
+		// app's plan has no app either, and verification answered "no such
+		// application resource".
+		m.mu.Unlock()
+		return m.getPlan(ctx, args)
+	}
 	r := m.recoverableReceipt(p)
 	v, target := m.planVerification(p)
 	m.mu.Unlock()
@@ -259,6 +266,20 @@ func (m *management) verifyRelease(ctx context.Context, t verificationTarget, v 
 }
 
 func (m *management) addToolVerification(name string, args any, data json.RawMessage) (json.RawMessage, error) {
+	// Task execution retains its native intent/operation receipt; generic plan
+	// verification cannot describe or certify that separate execution authority.
+	if name == "gregale_apply_task_tool_retire" {
+		return bindTaskRetirementReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_quarantine" {
+		return bindTaskQuarantineReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_restore" {
+		return bindTaskRestoreReceipt(args, data)
+	}
+	if name == "gregale_apply_task_tool_deploy" {
+		return bindTaskExecutionReceipt(args, data)
+	}
 	if !isApplyTool(name) {
 		return data, nil
 	}

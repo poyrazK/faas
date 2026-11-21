@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/agentrunproto"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -23,6 +24,8 @@ import (
 type agentRunTestVMM struct {
 	*fakeVMM
 	dialErr error
+	// handler replaces the default guest when set.
+	handler agentrunproto.Handler
 }
 
 func (v *agentRunTestVMM) DialAgentRun(ctx context.Context, _ Lease) (net.Conn, error) {
@@ -34,10 +37,14 @@ func (v *agentRunTestVMM) DialAgentRun(ctx context.Context, _ Lease) (net.Conn, 
 	guestCtx := context.WithoutCancel(ctx)
 	go func() {
 		defer guest.Close()
-		_ = agentrunproto.Serve(guestCtx, guest, func(_ context.Context, req agentrunproto.Request, stdout, _ io.Writer, _ <-chan struct{}) (agentrunproto.Result, error) {
-			fmt.Fprintf(stdout, "ran %s", req.Command[0])
-			return agentrunproto.Result{Status: agentrunproto.StatusSucceeded, Result: json.RawMessage(`{"ok":true}`)}, nil
-		})
+		handler := v.handler
+		if handler == nil {
+			handler = func(_ context.Context, req agentrunproto.Request, stdout, _ io.Writer, _ <-chan struct{}) (agentrunproto.Result, error) {
+				fmt.Fprintf(stdout, "ran %s", req.Command[0])
+				return agentrunproto.Result{Status: agentrunproto.StatusSucceeded, Result: json.RawMessage(`{"ok":true}`)}, nil
+			}
+		}
+		_ = agentrunproto.Serve(guestCtx, guest, handler)
 	}()
 	return host, nil
 }
@@ -221,5 +228,23 @@ func TestFillAgentInput(t *testing.T) {
 	}
 	if agentInputStagingDir([]Drive{{DriveID: DriveBase, PathOnHost: "/a/base", IsReadOnly: true}, {DriveID: DriveLayer, PathOnHost: "/cache/layer.ext4"}}) != "/cache" {
 		t.Fatal("the input drive is not staged beside the writable layer")
+	}
+}
+
+// ADR-20261027090016 amendment 3: a run with a seller deadline below its
+// guest ceiling is stopped by vmmd at that deadline and reported timed out.
+func TestRunAgentStopsAtTheSellerDeadline(t *testing.T) {
+	vmm := &agentRunTestVMM{fakeVMM: &fakeVMM{}, handler: func(_ context.Context, _ agentrunproto.Request, _, _ io.Writer, cancelled <-chan struct{}) (agentrunproto.Result, error) {
+		<-cancelled
+		return agentrunproto.Result{Status: agentrunproto.StatusCancelled}, nil
+	}}
+	m := agentRunTestManager(t, vmm, &Instance{ExecutionOnly: true, AgentRunOnly: true, AgentRunDeadline: 50 * time.Millisecond})
+	started := time.Now()
+	result, _, err := m.RunAgent(context.Background(), "agent-vm-1", agentRunTestRequest(), nil, nil)
+	if err != nil || result.Status != agentrunproto.StatusTimedOut {
+		t.Fatalf("result %+v, %v; want timed_out", result, err)
+	}
+	if took := time.Since(started); took > 10*time.Second {
+		t.Fatalf("stopped after %v, want the 50 ms deadline, not the 30 s ceiling", took)
 	}
 }

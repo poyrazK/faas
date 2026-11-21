@@ -3,7 +3,6 @@ package datapipeline
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"slices"
 	"time"
 
@@ -59,7 +58,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 	}
 	actual := make([]relation, 0, len(p.SchemaChange.RequestedTables))
 	for _, name := range p.SchemaChange.RequestedTables {
-		r, table, err := inspectSourceTable(ctx, source, name)
+		r, table, err := inspectPipelineTable(ctx, p, source, name)
 		if err != nil {
 			return err
 		}
@@ -69,7 +68,7 @@ func (e *Engine) reconcileTables(ctx context.Context, p Pipeline, raw string, so
 	actual = recordedSourceMetadata(p, preserveMissingMetadata(actual, before))
 	for _, old := range before {
 		i := slices.IndexFunc(actual, func(r relation) bool { return r.Name == old.Name })
-		if i < 0 || !reflect.DeepEqual(old, actual[i]) {
+		if i < 0 || !sameVerificationRelation(old, actual[i]) {
 			return &blocked{"source_schema_changed", true}
 		}
 	}

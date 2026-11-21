@@ -141,13 +141,31 @@ func TestDecorate_AppRuntimeOOM_TemplatesPeakAndPlan(t *testing.T) {
 		t.Errorf("Why missing plan cap + 8 MB overhead; got %q", p.Why)
 	}
 
-	// Fix should mention the source plan and the recommended plan
-	// (peak + 8 MB = 392 MB round-up).
-	if !strings.Contains(p.Fix, "256 MB plan") {
-		t.Errorf("Fix missing source plan; got %q", p.Fix)
+	// Fix names the current limit, the minimum (peak + 8 MB = 392 MB) and a
+	// per-app --ram command: RAM is set per app, not only by plan (2026-11-13
+	// agent feedback: the old text said to upgrade the plan).
+	if !strings.Contains(p.Fix, "from 256 MB") {
+		t.Errorf("Fix missing current limit; got %q", p.Fix)
 	}
 	if !strings.Contains(p.Fix, "at least 392 MB") {
-		t.Errorf("Fix missing recommended plan; got %q", p.Fix)
+		t.Errorf("Fix missing minimum; got %q", p.Fix)
+	}
+	if !strings.Contains(p.Fix, "`gregale app <app> --ram 512`") {
+		t.Errorf("Fix missing the per-app --ram command; got %q", p.Fix)
+	}
+}
+
+func TestOOMSuggestedRAMMB(t *testing.T) {
+	for _, tc := range []struct{ peak, plan, want int }{
+		{peak: 384, plan: 256, want: 512},  // double the limit
+		{peak: 520, plan: 512, want: 1024}, // killed at the cap
+		{peak: 900, plan: 256, want: 1024}, // peak + 8 beats double, rounded up
+		{peak: 0, plan: 512, want: 1024},   // peak unknown
+		{peak: 0, plan: 0, want: 0},
+	} {
+		if got := OOMSuggestedRAMMB(tc.peak, tc.plan); got != tc.want {
+			t.Errorf("OOMSuggestedRAMMB(%d, %d) = %d, want %d", tc.peak, tc.plan, got, tc.want)
+		}
 	}
 }
 
@@ -169,7 +187,7 @@ func TestDecorate_AppRuntimeOOM_NilObservedUsesStatic(t *testing.T) {
 		t.Errorf("static Why should describe the cgroup mechanism; got %q", p.Why)
 	}
 	// Static Fix should NOT carry the templated "at least N MB".
-	if !strings.Contains(p.Fix, "upgrade to a plan with more RAM") {
+	if !strings.Contains(p.Fix, "`gregale app <app> --ram <MB>`") {
 		t.Errorf("static Fix should carry the unobserved prose; got %q", p.Fix)
 	}
 	if strings.Contains(p.Fix, "at least") {

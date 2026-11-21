@@ -91,14 +91,28 @@ func main() {
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
 	}
+	// Nor does a debug session's helper (ADR-20261117070620).
+	if len(os.Args) > 0 && os.Args[0] == appTaskDebugHelperArg0 && os.Getpid() != 1 {
+		os.Exit(runAppTaskDebugHelper(os.Args[1:]))
+	}
 	// Nor does the builder's dependency-cache check, run by the build shell.
 	if os.Getenv(dependencyInputsHelperEnv) == dependencyInputsHelperValue && os.Getpid() != 1 {
 		os.Exit(runDependencyCacheInputs(railpackFrontendRef, os.Args[1:], os.Stdout))
 	}
-	if err := boot(); err != nil {
-		fmt.Fprintf(os.Stderr, "guest-init: %v\n", err)
-		os.Exit(1)
-	}
+	// vmmd reads the status (0 when boot returned nil, else 1) from the
+	// kernel's "Attempted to kill init! exitcode=" line.
+	os.Exit(finishBoot(boot(), os.Stderr, func() { drainConsole(os.Stderr) }))
+}
+
+// drainConsole waits until the console has transmitted what guest-init wrote
+// to f (tcdrain). PID 1's exit panics the kernel at once, and the panic dump
+// cut guest-init's reason line short on the serial console: "guest-init: app
+// [    3.600487] Kernel panic - not syncing: Attempted to kill init!" (Hunt 34
+// H34-35, and the clean-exit line in the 2026-11-17 eval; see finishBoot).
+// stdout and stderr are the same console, so draining one drains both. Not a
+// terminal: nothing to wait for.
+func drainConsole(f *os.File) {
+	_ = unix.IoctlSetInt(int(f.Fd()), unix.TCSBRK, 1)
 }
 
 func boot() error {
@@ -153,6 +167,9 @@ func boot() error {
 		return fmt.Errorf("assemble overlay: %w", err)
 	}
 	guestStage("assemble-overlay")
+	// The runtime base is unreachable after the pivot; a debug session
+	// (ADR-20261117070620) needs its tools, so clone them first.
+	captureAppTaskDebugTools(slog.Default())
 	if err := pivotInto(root); err != nil {
 		return fmt.Errorf("pivot_root: %w", err)
 	}
@@ -172,6 +189,9 @@ func boot() error {
 		return err
 	}
 	guestStage(fmt.Sprintf("mode-%d", mode))
+	if mode != modeAppTask {
+		releaseAppTaskDebugTools()
+	}
 	if mode == modeDataRepair {
 		return runDataRepairGuest(slog.Default())
 	}
@@ -326,15 +346,6 @@ func boot() error {
 		slog.Default().Warn("vsock liveness listener unavailable", "err", err)
 	}
 
-	// Wave 0 PR-C / ADR-047: stateless-runtime advisory. FAN_CLASS_NOTIF
-	// on a closed set of state-shaped paths; debounced batches shipped
-	// over AF_VSOCK DGRAM (port=1025, msg_type=2) to the host. Returns
-	// are tolerated — a guest without CONFIG_FANOTIFY=y still boots,
-	// the contract is "no signal" not "won't boot".
-	if err := runStatelessAdvisory(slog.Default()); err != nil {
-		slog.Default().Warn("stateless advisory unavailable", "err", err)
-	}
-
 	// Issue #667 / ADR-078 (consolidated follow-up PR): the
 	// tail-events unix-socket proxy. The proxy at
 	// /run/guest-init/tail-events.sock is the runner-facing entry
@@ -378,6 +389,13 @@ func boot() error {
 	_ = f.Close()
 	if err != nil {
 		return err
+	}
+	// ADR-047 (amended 2026-11-12): watch state-shaped directories,
+	// including data/ and db/ under the app's working directory, and ship
+	// each written path once over vsock port 1025. Tolerated — the
+	// contract is "no signal", not "won't boot".
+	if err := runStatelessAdvisory(slog.Default(), manifest.EffectiveWorkingDir()); err != nil {
+		slog.Default().Warn("stateless advisory unavailable", "err", err)
 	}
 	if manifest.EffectivePort() == api.ProfileBridgePort() {
 		// The bridge would take the app's own port; an older imaged may
@@ -530,6 +548,9 @@ func boot() error {
 	supRef.OnCrash = func(attempt int, err error) {
 		fmt.Fprintf(os.Stderr, "guest-init: app restart (restart %d/%d policy=%s): %v\n", attempt, maxRestarts, policy, err)
 	}
+	supRef.OnCleanExit = func() {
+		fmt.Fprintf(os.Stderr, "guest-init: app exited cleanly (status 0, policy=%s); a clean exit is not restarted\n", policy)
+	}
 	// ADR-051 Phase 4: characterize the workload by observing the
 	// first cold boot. Runs in parallel with sup.Run() so the
 	// PID-fd walk finds the customer's listener without blocking
@@ -650,7 +671,8 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	}
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
-	env = StampRestoreReseedEnv(env)
+	env = StampJVMHeapEnv(env, argv...)
+	env = StampRestoreReseedEnv(env, argv...)
 	env = StampInstanceIdentityEnv(env)
 	env = stampWorkloadEndpointEnv(env, workloadEnv)
 	serviceProxyTrust, trustErr := prepareServiceProxyTrust("/", "/")
@@ -1330,10 +1352,19 @@ func runBuildOnce(m api.BuildManifest) error {
 		"--oci-worker-snapshotter", buildkitSnapshotter(m),
 		"--oci-worker-net", "host",
 	}
+	// ADR-20261110210000 slice 3j-3: vmmd may serve this build its app's
+	// private registries as loopback mirrors; the guest holds no password.
+	privateMirrors, mirrorErr := buildRegistryMirrors(m)
+	if mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
+	if mirrorErr := startBuildRegistryForwarders(privateMirrors); mirrorErr != nil {
+		return writeAndPoweroff(m, mirrorErr, "")
+	}
 	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
 	// before Docker Hub, which limits anonymous pulls per IP.
-	if len(m.DockerHubMirrors) > 0 {
-		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+	if len(m.DockerHubMirrors) > 0 || len(privateMirrors) > 0 {
+		config, err := buildkitRegistryConfig(m.DockerHubMirrors, privateMirrors)
 		if err != nil {
 			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
 		}
@@ -1363,8 +1394,11 @@ func runBuildOnce(m api.BuildManifest) error {
 	// fetch/unpack step; without the console mirror the host only sees a hot
 	// Firecracker process and cannot distinguish progress from a deadlock.
 	bk.WaitDelay = 2 * time.Second
-	bk.Stdout = io.MultiWriter(os.Stdout, &buildkitLog)
-	bk.Stderr = io.MultiWriter(os.Stderr, &buildkitLog)
+	// The console is the customer's build log: drop buildkitd's debug
+	// entries and stack frames there. buildkitLog keeps them for the
+	// start-failure tail.
+	bk.Stdout = io.MultiWriter(newBuildkitConsoleFilter(os.Stdout), &buildkitLog)
+	bk.Stderr = io.MultiWriter(newBuildkitConsoleFilter(os.Stderr), &buildkitLog)
 	if err := bk.Start(); err != nil {
 		return writeAndPoweroff(m, fmt.Errorf("start buildkitd: %w", err), tailOf(buildkitLog.Bytes(), m.LogTailBytes))
 	}
@@ -1485,8 +1519,9 @@ func runBuildOnce(m api.BuildManifest) error {
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
 	), secretEnv...)
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	stdoutConsole, stderrConsole := newBuildOutputFilter(os.Stdout), newBuildOutputFilter(os.Stderr)
+	cmd.Stdout = io.MultiWriter(stdoutConsole, &buf)
+	cmd.Stderr = io.MultiWriter(stderrConsole, &buf)
 	clock.stage("build-command")
 	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -1509,6 +1544,12 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Use exit 124 for the durable build marker even when the stuck
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		// A stuck descendant may still be writing after a timeout; only a
+		// finished command's last partial line is flushed.
+		stdoutConsole.Flush()
+		stderrConsole.Flush()
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A failure to reach the registry for a platform-owned image is the

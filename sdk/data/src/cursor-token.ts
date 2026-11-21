@@ -1,14 +1,16 @@
+import { ExactNumber } from './exact-numeric.js'
 import { cursorFrom, cursorPage, type CursorOrder, type CheckedOrder, type ReadQuery } from './cursor.js'
 
 /** Derive this scope on the server from verified identity/tenant/permission claims. */
 export type CursorScope = Readonly<{ identity: string; schemaFingerprint: string }>
 export type CursorPagerOptions = Readonly<{ key: Uint8Array | CryptoKey; ttlMs?: number; maxPageSize?: number; now?: () => number }>
 export type CursorPageResult<Query> = { result: Awaited<Query>; nextCursor: string | null; previousCursor: string | null; hasMore: boolean; direction: 'forward' | 'backward' }
-type Scalar = string | number | boolean | null
+type Scalar = string | number | boolean | null | ExactNumber
+type WireScalar = Exclude<Scalar, ExactNumber> | { exactNumber: string }
 type SelectedRow<Query> = Awaited<Query> extends { data: infer Data } ? NonNullable<Data> extends readonly (infer Row)[] ? Row : never : never
 type SelectedOrder<Query, Order extends readonly CursorOrder[]> = { [Index in keyof Order]: Order[Index]['column'] extends keyof SelectedRow<Query> ? SelectedRow<Query>[Order[Index]['column']] extends Scalar ? Order[Index] : never : never }
 type Builder<Query> = { order(column: string, options: { ascending: boolean; nullsFirst: boolean }): Query; limit(count: number): Query; or(filters: string): Query }
-type Payload = { v: 1; binding: string; issued: number; expires: number; values: Scalar[] }
+type Payload = { v: 1; binding: string; issued: number; expires: number; values: WireScalar[] }
 export class CursorPaginationError extends Error {
   constructor(public readonly code: 'invalid_options' | 'invalid_cursor' | 'expired_cursor' | 'incompatible_cursor' | 'invalid_response', message: string) { super(message); this.name = 'CursorPaginationError' }
 }
@@ -64,7 +66,7 @@ export async function createCursorPager(options: CursorPagerOptions) {
   async function seal(values: Scalar[], binding: string): Promise<string> {
     const issued = timestamp(now), expires = issued + ttlMs
     if (!Number.isSafeInteger(expires)) return fail('invalid_options', 'Invalid cursor expiry')
-    const bytes = encoder.encode(JSON.stringify({ v: 1, binding, issued, expires, values } satisfies Payload))
+    const bytes = encoder.encode(JSON.stringify({ v: 1, binding, issued, expires, values: values.map(value => value instanceof ExactNumber ? { exactNumber: value.source } : value) } satisfies Payload))
     if (bytes.length > 8192) return fail('invalid_response', 'Ordering values exceed cursor bounds')
     const iv = crypto.getRandomValues(new Uint8Array(12))
     const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData }, key, bytes)
@@ -85,7 +87,15 @@ export async function createCursorPager(options: CursorPagerOptions) {
     const time = timestamp(now)
     if (payload.expires <= time) return fail('expired_cursor', 'Continuation expired; restart pagination')
     if (payload.issued > time || payload.binding !== binding) return fail('incompatible_cursor', 'Continuation does not match this query, identity, ordering, page size or schema')
-    const row = Object.fromEntries(order.map((field, i) => [field.column, payload.values[i]])) as Record<string, Scalar>
+    let values: Scalar[]
+    try {
+      values = payload.values.map(value => {
+        if (value === null || typeof value !== 'object') return value
+        if (Object.keys(value).length !== 1 || !Object.hasOwn(value, 'exactNumber') || typeof value.exactNumber !== 'string') return fail('invalid_cursor', 'Invalid exact continuation value')
+        return new ExactNumber(value.exactNumber)
+      })
+    } catch { return fail('invalid_cursor', 'Invalid continuation values') }
+    const row = Object.fromEntries(order.map((field, i) => [field.column, values[i]])) as Record<string, Scalar>
     try { return [...cursorFrom(row, order)] } catch { return fail('invalid_cursor', 'Invalid continuation values') }
   }
   return {

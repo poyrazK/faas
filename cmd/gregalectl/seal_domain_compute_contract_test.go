@@ -92,9 +92,22 @@ func TestSealDomainContractRoleComputeReaders(t *testing.T) {
 	if !strings.Contains(control, "(faas_seal_domain_control_contracted | bool) == (faas_seal_domain_delivery_contracted | bool)") {
 		t.Error("control.yml must refuse one of schedd's domains contracted without the other")
 	}
+	// A compute node whose control or delivery identity is retired checks
+	// only what it still holds; the control plane's converge checks both.
 	inOrder(t, "control.yml", control,
-		"loop: [control, delivery]",
+		`loop: "{{ ([] if (faas_seal_domain_control_retired_on_compute | bool) else ['control']) + ([] if (faas_seal_domain_delivery_retired_on_compute | bool) else ['delivery']) }}"`,
 		"dest: /etc/systemd/system/faas-schedd.service.d/30-faas-seal-domain-schedd-contract.conf")
+	// Slice 3k-2: a retired compute node never installs the control identity
+	// and removes what an earlier converge left.
+	for _, want := range []string{
+		"not (faas_seal_domain_control_retired_on_compute | bool) or (faas_schedd_secretd_internal_svc | default(false) | bool)",
+		"not (faas_seal_domain_control_retired_on_compute | bool) or (faas_seal_domain_control_contracted | bool)",
+		"take the control domain identity off a retired compute node",
+	} {
+		if !strings.Contains(control, want) {
+			t.Errorf("control.yml lacks %q", want)
+		}
+	}
 	main := read(filepath.Join(role, "tasks", "main.yml"))
 	inOrder(t, "main.yml", main, "include_tasks: control.yml", "include_tasks: delivery.yml")
 	delivery := read(filepath.Join(role, "tasks", "delivery.yml"))

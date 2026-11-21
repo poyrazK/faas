@@ -265,7 +265,12 @@ func renderServiceMap(w io.Writer, m api.ServiceMapResponse) {
 		// An edge with only private TCP sessions has no HTTP calls to report.
 		if e.Calls > 0 || e.TCPSessions == 0 {
 			_, _ = fmt.Fprintf(w, "  Calls:      %d (errors %d, %.2f%%)\n", e.Calls, e.Errors, e.ErrorRatePct)
-			_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+			if e.Calls > e.Errors {
+				_, _ = fmt.Fprintf(w, "  Latency:    p50=%.1fms p95=%.1fms\n", e.LatencyP50MS, e.LatencyP95MS)
+			} else {
+				// Latency covers successful calls; every call here failed.
+				_, _ = fmt.Fprintln(w, "  Latency:    none (no successful calls in window)")
+			}
 			_, _ = fmt.Fprintf(w, "  Woke:       %d calls (%.0f%%) found the target parked\n", e.ColdCalls, e.ColdCallPct)
 		}
 		if e.TCPSessions > 0 {
@@ -421,7 +426,10 @@ func renderThrottleSuggestions(w io.Writer, slug string, r api.ThrottleSuggestio
 		return
 	}
 	if r.RoutesCollapsed > 0 {
-		_, _ = fmt.Fprintf(w, "Collapsed:     %d routes beyond RouteMetricsPerAppCap (covered by __route_other__)\n", r.RoutesCollapsed)
+		// The __route_other__ series also holds every request to a path the
+		// app does not declare, so an app without declared routes always
+		// "exceeded" the cap (Hunt 34 H34-8). Say what the bucket holds.
+		_, _ = fmt.Fprintf(w, "Other routes:  requests to undeclared paths, or to routes beyond the %d-route cap, are grouped as __route_other__ and get no suggestion\n", api.RouteMetricsPerAppCap)
 	}
 	if len(r.Suggestions) == 0 {
 		_, _ = fmt.Fprintln(w, "\nSuggestions:   (none)")

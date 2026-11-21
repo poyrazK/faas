@@ -587,7 +587,7 @@ FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 
 -- Preserve UpdateAccountStatus's recovery behavior and personal-org mirror.
 -- name: RestorePaymentAccount :execrows
 UPDATE accounts SET status='active',past_due_at=NULL,deletion_requested_at=NULL,suspended_reason=NULL
-WHERE id=$1 AND (status='past_due' OR (status IN ('suspended','deleted_pending') AND past_due_at IS NOT NULL));
+WHERE id=$1 AND (status='past_due' OR (status IN ('active','suspended','deleted_pending') AND past_due_at IS NOT NULL));
 
 -- name: RestorePaymentPersonalOrg :exec
 UPDATE orgs SET status='active',updated_at=now() WHERE personal_org=true AND personal_owner_account_id=$1;
@@ -1144,6 +1144,13 @@ VALUES($1,$2,$3,$4,$5,$6,'managed_postgres_cap',1,$7,$8,$9,$10);
 UPDATE managed_postgres_cap_events SET mail_intent_id=sqlc.arg(intent_id)::uuid
 WHERE subject_id=sqlc.arg(subject_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
   AND threshold=sqlc.arg(threshold)::text AND mail_intent_id IS NULL;
+
+-- name: LinkManagedPostgresEgressHoldNotice :execrows
+-- ADR-20261110160000 amendment 2026-11-13: the egress hold email is per
+-- database; its intent claims that database's row for the month.
+UPDATE managed_postgres_egress_hold_notices SET mail_intent_id=sqlc.arg(intent_id)::uuid
+WHERE database_id=sqlc.arg(database_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz
+  AND subject_id=sqlc.arg(subject_id)::uuid AND mail_intent_id IS NULL;
 
 -- name: ShareManagedPostgresCapSubmissionAccount :one
 SELECT a.email,a.status,a.deletion_requested_at,o.from_address,m.sender_address

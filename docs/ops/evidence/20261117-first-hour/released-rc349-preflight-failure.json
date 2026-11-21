@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "status": "failed",
+  "reason": "journey_failed_or_incomplete",
+  "started_at": "2026-11-17T16:50:09Z",
+  "artifact": {
+    "status": "passed",
+    "release_tag": "v0.1.18-rc.349",
+    "release_url": "https://github.com/poyrazK/faas/releases/tag/v0.1.18-rc.349",
+    "published_at": "2026-11-17T12:11:51Z",
+    "platform": "darwin/arm64",
+    "archive": "gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "archive_url": "https://github.com/poyrazK/faas/releases/download/v0.1.18-rc.349/gregale_0.1.18-rc.349_darwin_arm64.tar.gz",
+    "checksum_manifest_sha256": "35c0280d016a59d1e305a1af8afeb88cad3200b267b8fef4d92206a3b7c8c006",
+    "expected_archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "archive_sha256": "7b10c2c34b2f93110c8965a252bc95ff8b2030b658e1411299353465f4625c78",
+    "checksum_verified": true,
+    "cli_sha256": "7a1597ffc8dc91ba76ca4f8478c12cb84fb608da9b513c1881b9c12d7daf12c1",
+    "cli_version": "v0.1.18-rc.349",
+    "cli_source_sha": "37b55bddef0ce36d22b524c9270b290ecd529e81",
+    "release_verify_available": true
+  },
+  "journey": {
+    "status": "failed",
+    "steps": {
+      "first_private_response": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "anonymous_request_denied": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "edit_and_interrupt_wait": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "resume_same_release_and_verify_edit": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "failed_startup_is_diagnosable": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "repair_and_verify": {
+        "status": "not_run",
+        "seconds": null
+      },
+      "cleanup": {
+        "status": "not_run",
+        "seconds": null
+      }
+    },
+    "metrics": {
+      "first_hour_first_verified_response_s": null,
+      "first_hour_second_verified_deployment_s": null,
+      "first_hour_resume_to_verified_response_s": null,
+      "first_hour_failure_to_recovery_s": null,
+      "first_hour_complete_s": null,
+      "first_hour_interruptions": null
+    },
+    "harness_revision": "a545bc148803f3f989b00666c86c8a46110dfdfd",
+    "harness_worktree_dirty": true
+  },
+  "target": "https://api.gregale.dev"
+}

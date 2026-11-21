@@ -192,22 +192,36 @@ func stageResidentExec(dir, source string) (*residentExec, error) {
 	if byPath, err := os.Stat(source); err != nil || !os.SameFile(byPath, before) {
 		return nil, fmt.Errorf("installed executable %s was replaced while opening", source)
 	}
-	tmp, err := os.CreateTemp(dir, residentExecTempPrefix+"*")
-	if err != nil {
-		return nil, fmt.Errorf("create resident executable: %w", err)
-	}
-	tmpPath := tmp.Name()
+	var tmpPath string
 	published := false
 	defer func() {
-		if !published {
-			_ = tmp.Close()
+		if !published && tmpPath != "" {
 			_ = os.Remove(tmpPath)
 		}
 	}()
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(tmp, hash), src)
-	if err != nil {
-		return nil, fmt.Errorf("copy installed executable: %w", err)
+	var n int64
+	// The copy is exec'd by every launch, so no child may inherit it open for
+	// writing (writeExecutable).
+	if err := writeExecutable(func() error {
+		tmp, err := os.CreateTemp(dir, residentExecTempPrefix+"*")
+		if err != nil {
+			return fmt.Errorf("create resident executable: %w", err)
+		}
+		tmpPath = tmp.Name()
+		defer func() { _ = tmp.Close() }() // no-op after the checked Close below
+		if n, err = io.Copy(io.MultiWriter(tmp, hash), src); err != nil {
+			return fmt.Errorf("copy installed executable: %w", err)
+		}
+		if err := tmp.Chmod(before.Mode().Perm()); err != nil {
+			return fmt.Errorf("chmod resident executable: %w", err)
+		}
+		if err := tmp.Close(); err != nil {
+			return fmt.Errorf("close resident executable: %w", err)
+		}
+		return nil
+	}); err != nil {
+		return nil, err
 	}
 	after, err := src.Stat()
 	if err != nil {
@@ -215,12 +229,6 @@ func stageResidentExec(dir, source string) (*residentExec, error) {
 	}
 	if n != before.Size() || !sameResidentFile(before, after) {
 		return nil, fmt.Errorf("installed executable %s changed while it was copied", source)
-	}
-	if err := tmp.Chmod(before.Mode().Perm()); err != nil {
-		return nil, fmt.Errorf("chmod resident executable: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, fmt.Errorf("close resident executable: %w", err)
 	}
 	var want [sha256.Size]byte
 	copy(want[:], hash.Sum(nil))

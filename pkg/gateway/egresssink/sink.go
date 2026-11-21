@@ -107,6 +107,10 @@ type usageBucket struct {
 	coldBoots uint64
 }
 
+func (b usageBucket) empty() bool {
+	return b.bytes == 0 && b.requests == 0 && b.coldBoots == 0
+}
+
 // NewEgressSink returns a sink with the real time clock. Use
 // NewEgressSinkWithClock in tests for determinism.
 func NewEgressSink() *EgressSink {
@@ -260,7 +264,7 @@ func (s *EgressSink) DrainRecords() []Record {
 		// preserved because minute keys are immutable.
 		var drained uint64
 		for minute, bucket := range inst.usage {
-			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
+			if bucket.empty() {
 				continue
 			}
 			out = append(out, Record{
@@ -271,7 +275,7 @@ func (s *EgressSink) DrainRecords() []Record {
 				Requests:   bucket.requests,
 				ColdBoots:  bucket.coldBoots,
 			})
-			drained += bucket.bytes + bucket.requests + bucket.coldBoots
+			drained++
 		}
 		// Wipe the bucket map: a future Record on a different
 		// minute-key populates a fresh entry on a different key, so
@@ -336,7 +340,7 @@ func (s *EgressSink) Snapshot() []Record {
 	for id, inst := range s.instances {
 		inst.mu.Lock()
 		for minute, bucket := range inst.usage {
-			if bucket.bytes == 0 && bucket.requests == 0 && bucket.coldBoots == 0 {
+			if bucket.empty() {
 				continue
 			}
 			out = append(out, Record{

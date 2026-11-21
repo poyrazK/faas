@@ -93,7 +93,7 @@ func validateStartScopeBeforeLogin(scope, statePath string) error {
 		}
 		for _, path := range append(paths, statePath) {
 			saved, found, loadErr := loadStartSession(path)
-			if loadErr == nil && found && saved.ScopePath == scope && (saved.DeploymentID != "" || saved.PendingSubmission != nil) {
+			if loadErr == nil && found && saved.ScopePath == scope && (saved.DeploymentID != "" || saved.PendingSubmission != nil || saved.ProjectSessionID != "") {
 				return nil
 			}
 		}

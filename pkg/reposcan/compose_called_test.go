@@ -132,6 +132,33 @@ func TestComposeCalledServicesServeRequests(t *testing.T) {
 			want: map[string]Class{"worker": ClassWorker, "beat": ClassWorker},
 		},
 		{
+			name: "a gRPC host:port target that listens",
+			compose: `services:
+  frontend:
+    build: ./src/frontend
+    ports: ["8080:8080"]
+    environment: {PRODUCT_CATALOG_SERVICE_ADDR: "productcatalogservice:3550"}
+  productcatalogservice: {build: ./src/productcatalogservice}
+`,
+			files: map[string]string{
+				"src/frontend/Dockerfile":              "FROM golang:1.26\nEXPOSE 8080\n",
+				"src/productcatalogservice/Dockerfile": "FROM golang:1.26\nEXPOSE 3550\nCMD [\"/server\"]\n",
+			},
+			want: map[string]Class{"productcatalogservice": ClassHTTP},
+		},
+		{
+			name: "a host:port target that shows no listener stays a worker",
+			compose: `services:
+  web:
+    image: ghcr.io/x/web:1
+    ports: ["80:3000"]
+    environment: {QUEUE_ADDR: "consumer:7000"}
+  consumer: {build: ./consumer}
+`,
+			files: map[string]string{"consumer/Dockerfile": "FROM golang:1.26\nCMD [\"/consumer\"]\n"},
+			want:  map[string]Class{"consumer": ClassWorker},
+		},
+		{
 			name: "expose alone is not a call",
 			compose: `services:
   cache: {image: ghcr.io/x/cache:1, expose: ["6379"]}
@@ -176,5 +203,42 @@ func TestComposeCalledServicesServeRequests(t *testing.T) {
 				t.Errorf("warnings = %v, want one containing %q", result.Warnings, tc.warning)
 			}
 		})
+	}
+}
+
+// Retail-store probe 2026-11-17: a Compose service with only expose: and no
+// caller was planned as a worker without a word, then every boot failed with
+// execution_mode_conflict. It stays a worker (ADR-20261029120000), but the
+// plan now says why it will fail.
+func TestComposeUncalledExposedServiceIsWarned(t *testing.T) {
+	compose := `services:
+  web: {image: ghcr.io/x/web:1, ports: ["80:3000"]}
+  probe: {image: nginx:1.27, expose: ["80"]}
+  queue: {image: ghcr.io/x/consumer:1}
+`
+	result, err := Scan(fstest.MapFS{"compose.yaml": {Data: []byte(compose)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var probe, queue Class
+	for _, w := range result.Workloads {
+		switch w.Name {
+		case "probe":
+			probe = w.Class
+		case "queue":
+			queue = w.Class
+		}
+	}
+	if probe != ClassWorker || queue != ClassWorker {
+		t.Fatalf("classes probe=%q queue=%q, want both workers", probe, queue)
+	}
+	var found []string
+	for _, warning := range result.Warnings {
+		if strings.Contains(warning, "execution_mode_conflict") {
+			found = append(found, warning)
+		}
+	}
+	if len(found) != 1 || !strings.Contains(found[0], `service "probe" declares expose: [80]`) || !strings.Contains(found[0], "http://probe:80") {
+		t.Fatalf("warnings = %v, want one for probe only (queue listens on nothing declared)", result.Warnings)
 	}
 }

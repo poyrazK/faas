@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Crons enabled by resuming a stage's automation after a full environment clone.
+ * Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
  */
 export type ResumeEnvironmentAutomationResponse = {
   /**
@@ -18,5 +18,13 @@ export type ResumeEnvironmentAutomationResponse = {
    * Crons enabled by this call.
    */
   cron_ids: Array<string>;
+  /**
+   * Number of event subscriptions enabled.
+   */
+  event_subscriptions_resumed: number;
+  /**
+   * Event subscriptions enabled by this call.
+   */
+  event_subscription_ids: Array<string>;
 };
 

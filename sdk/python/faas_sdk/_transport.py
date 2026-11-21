@@ -44,6 +44,7 @@ from typing import Any
 
 import httpx
 
+from ._async_request import AsyncRequestTransport, AsyncResponseTransport, ResponseObserver, RetryPolicy
 from ._rfc7807 import parse_problem, raise_for_problem
 from .idempotency import HEADER_NAME as IDEMPOTENCY_HEADER
 from .idempotency import current_idempotency_key, mint_idempotency_key
@@ -411,6 +412,7 @@ class WrapperOptions:
 
     retry: RetryOptions = field(default_factory=RetryOptions)
     logger: logging.Logger | None = None
+    on_response: ResponseObserver | None = None
 
 
 def build_chain(
@@ -443,7 +445,8 @@ def build_async_chain(
     (Retry -> Logging -> Rfc7807 -> Idempotency -> user_transport)
     on the async path. Every layer is `httpx.AsyncBaseTransport`.
     """
-    chain: httpx.AsyncBaseTransport = user_transport
+    observed = AsyncResponseTransport(user_transport, options.on_response)
+    chain: httpx.AsyncBaseTransport = observed
     chain = AsyncIdempotencyTransport(chain)
     chain = AsyncRfc7807Layer(chain)
     chain = AsyncLoggingTransport(chain, logger=options.logger)
@@ -452,7 +455,12 @@ def build_async_chain(
         max_attempts=options.retry.max_attempts,
         backoff=options.retry.backoff,
     )
-    return chain
+    attempt = AsyncLoggingTransport(AsyncIdempotencyTransport(observed), logger=options.logger)
+    default_retry = RetryPolicy(
+        max_attempts=max(0, min(int(options.retry.max_attempts), 8)) + 1,
+        backoff=min(options.retry.backoff, 8.0) if math.isfinite(options.retry.backoff) and options.retry.backoff > 0 else 0.1,
+    )
+    return AsyncRequestTransport(chain, attempt, observed, default_retry)
 
 
 def install_chain(

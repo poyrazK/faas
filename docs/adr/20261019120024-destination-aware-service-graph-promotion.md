@@ -118,3 +118,25 @@ graph-routed and fail closed whatever the environment's release history. An
 environment that has used release sets stays fail-closed, including for later
 stage deployments outside its published graph. The lookup uses
 `project_release_sets_history_idx`; no schema change.
+
+## Amendment 2026-11-13: release history no longer pins a stage closed
+
+The 2026-11-12 amendment kept any environment that had ever published a release
+set fail-closed: a later `deploy --env` stage deployment outside a graph got 403
+on every service call, even after its release sets were deactivated and past
+retention, and nothing reverted it (projects review 2026-11-12, problem 2).
+
+A pinned caller with declared bindings is now graph-routed while its project
+environment has an **active** release set, or while the caller itself belongs
+to a release set still usable for rollback (unexpired, or retained by a
+customer operation). Otherwise it routes in its environment lane. So:
+
+- while a release set is active, a stage deployment outside it stays refused,
+  as before;
+- after deactivation, members of the deactivated set keep their graph until
+  it expires, and other stage deployments route in the environment lane at
+  once;
+- once every set is past retention, the environment behaves as one that never
+  used release sets.
+
+Promotion candidates are unchanged. No schema change.

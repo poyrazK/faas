@@ -137,7 +137,9 @@ func TestCLITools(t *testing.T) {
 		}
 	})
 	t.Run("help_all", func(t *testing.T) {
-		res := tg.ok(t, time.Minute, "help", "--all")
+		// The harness sets FAAS_JSON=1, and help then prints its JSON
+		// manifest; this step reads the text listing (journeys 2026-11-16).
+		res := tg.runWithEnvOK(t, []string{"FAAS_JSON=0"}, time.Minute, "help", "--all")
 		// The command tree (ADR-20261026145832) lists nouns: secrets live
 		// under env and domains under domain. Match whole entries, so a
 		// command's name in another entry's description does not count.
@@ -177,7 +179,7 @@ func TestCustomDomainBinding(t *testing.T) {
 	t.Parallel()
 	slug, _ := tg.deployProbe(t, "domain")
 	domain := slug + ".example.com"
-	t.Cleanup(func() { tg.run(t, time.Minute, "domain", "delete", domain) })
+	t.Cleanup(func() { tg.run(t, time.Minute, "domain", "delete", domain, "--yes") })
 	s := newStory(t)
 
 	s.step("add", func(t *testing.T) {
@@ -212,7 +214,8 @@ func TestCustomDomainBinding(t *testing.T) {
 		if res := tg.ok(t, time.Minute, "domain", "list"); !strings.Contains(string(res.stdout), domain) {
 			t.Errorf("domains list does not show %s", domain)
 		}
-		tg.ok(t, time.Minute, "domain", "delete", domain)
+		// Non-interactive deletes need explicit approval.
+		tg.ok(t, time.Minute, "domain", "delete", domain, "--yes")
 		if res := tg.ok(t, time.Minute, "domain", "list"); strings.Contains(string(res.stdout), domain) {
 			t.Errorf("%s is still listed after domains rm", domain)
 		}

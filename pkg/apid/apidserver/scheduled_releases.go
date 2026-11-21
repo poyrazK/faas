@@ -87,7 +87,7 @@ func (s *server) releaseFreezeOrSchedule(r *http.Request, acct state.Account, ap
 	if nowProblem != nil {
 		if nowProblem.Code == api.CodeReleaseFrozen {
 			nowProblem = nowProblem.WithHint("A scheduled release is built and runs its release command now; only its traffic waits for release_at. " +
-				"Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
+				"Wait for the freeze to end, lift it with `gregale release freeze lift`, or deploy with --override-freeze REASON; the override is audited.")
 		}
 		return nil, nowProblem
 	}

@@ -242,7 +242,7 @@ func assertNativeTableAddition(t *testing.T, ctx context.Context, store *Postgre
 	if fresh.fingerprint == oldAPI.fingerprint {
 		t.Fatal("table addition did not change the API contract")
 	}
-	if status, body := fresh.requestTable("GET", "alice", "customers", "id=eq.1&select=id,name", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.requestTable("GET", "alice", "customers", "id=eq.1&select=id,name", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("unverified table exposed rows: %d %s", status, body)
 	}
 	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,total", ""); status != 200 || !strings.Contains(body, "88.88") {

@@ -91,6 +91,29 @@ func (s *PgStore) CheckDeploymentDependencies(ctx context.Context, id string, no
 	return gate, gateErr
 }
 
+// PreviewDeploymentDependencies is CheckDeploymentDependencies without the
+// deadline start or the persisted progress; see
+// DeploymentDependencyPreviewStore.
+func (s *PgStore) PreviewDeploymentDependencies(ctx context.Context, id string, now time.Time) error {
+	// Not a read-only transaction: the gate's target reads take row locks
+	// (SELECT … FOR UPDATE), which Postgres refuses there. persist=false
+	// writes nothing, and the transaction always rolls back.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	dep, err := deploymentByIDDB(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	_, gateErr := checkDeploymentDependenciesTx(ctx, tx, dep, now, false)
+	return gateErr
+}
+
+var _ DeploymentDependencyPreviewStore = (*MemStore)(nil)
+var _ DeploymentDependencyPreviewStore = (*PgStore)(nil)
+
 func checkDeploymentDependenciesTx(ctx context.Context, tx pgx.Tx, candidate Deployment, now time.Time, persist bool) (*DeploymentDependencyGate, error) {
 	row, err := sqlc.New().ReadDeploymentDependencyGate(ctx, tx, mustPgUUID(candidate.ID))
 	if errors.Is(err, pgx.ErrNoRows) {

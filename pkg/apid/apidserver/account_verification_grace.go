@@ -124,6 +124,7 @@ var overdueVerificationAllowed = map[string]bool{
 	"POST /v1/auth/logout":              true,
 	"GET /v1/auth/csrf":                 true,
 	"GET /v1/account":                   true,
+	"GET /v1/account/health":            true,
 	"DELETE /v1/account":                true,
 }
 
@@ -146,7 +147,7 @@ func (s *server) requireVerificationNotOverdue(next accountHandler) accountHandl
 // the account page (which offers the resend button) and the resend form.
 func dashboardOverdueRoute(method, path string) bool {
 	switch method + " " + path {
-	case "GET /dashboard/account", "POST /dashboard/account/verify-email/resend",
+	case "GET /dashboard/account", "GET /dashboard/account/health", "POST /dashboard/account/verify-email/resend",
 		"POST /dashboard/account/email", "POST /dashboard/account/delete":
 		return true
 	}

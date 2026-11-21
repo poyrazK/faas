@@ -1,0 +1,83 @@
+---
+# The neon domain (ADR-20261112160000 §3). neond on the control plane seals
+# each per-project Neon API key to it and is its only reader, so the
+# control plane stages the identity alone: no recipient for writers, no
+# fleet copy (the table is new), nothing to migrate. neond_service turns
+# project keys on only once the identity is here.
+- name: seal_domains — require the neon domain on a control-plane host
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    fail_msg: >-
+      The neon seal domain is read by neond, which runs on a control-plane
+      (or single-box) host only. Leave faas_seal_domain_neon_identity_src
+      unset elsewhere.
+
+# 0400 root:root. systemd hands it to neond alone as a credential.
+- name: seal_domains — install the neon domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_neon_identity_src }}"
+    dest: /etc/faas/secrets/domains/neon.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-neond for seal domains
+
+# Rotation: the previous identity stays beside the new one, so keys sealed
+# before the rotation still open until they are re-minted; unset, it is
+# removed.
+- name: seal_domains — install the previous neon domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_neon_previous_identity_src }}"
+    dest: /etc/faas/secrets/domains/neon.age.previous
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-neond for seal domains
+  when: faas_seal_domain_neon_previous_identity_src | length > 0
+
+- name: seal_domains — remove the previous neon domain identity
+  ansible.builtin.file:
+    path: /etc/faas/secrets/domains/neon.age.previous
+    state: absent
+  notify: restart faas-neond for seal domains
+  when: faas_seal_domain_neon_previous_identity_src | length == 0
+
+- name: seal_domains — create the neond drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-neond.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: seal_domains — give neond the neon domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-neon-reader.conf.j2
+    dest: /etc/systemd/system/faas-neond.service.d/60-faas-seal-domain-neon.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-neond for seal domains
+
+- name: seal_domains — restart neond before proving the neon domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the neon domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - neon
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_neon.prom"
+      - --json
+  register: faas_seal_domain_neon_verify
+  changed_when: (faas_seal_domain_neon_verify.stdout | from_json).probe_written | default(false)

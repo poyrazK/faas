@@ -70,6 +70,64 @@ func TestPollCheckedRollbackPinsReceiptAndCompletion(t *testing.T) {
 		})
 	}
 }
+
+type flakyRollbackPollClient struct {
+	rollbackPollClient
+	errs []error
+}
+
+func (f *flakyRollbackPollClient) GetRollbackOperation(ctx context.Context, slug, id string) (api.RollbackOperation, error) {
+	if len(f.errs) > 0 {
+		err := f.errs[0]
+		f.errs = f.errs[1:]
+		return api.RollbackOperation{}, err
+	}
+	return f.rollbackPollClient.GetRollbackOperation(ctx, slug, id)
+}
+
+// The 2026-11-15 journey run: a rollback still preparing after 5 min lost
+// one status read to a timeout, and --wait --timeout 25m gave up at once.
+func TestPollCheckedRollbackWaitSurvivesTransientReads(t *testing.T) {
+	pin := rollbackCLIPin()
+	now := time.Now()
+	complete := pin
+	complete.Status, complete.CompletedAt, complete.AuditID = "complete", &now, "123"
+	timeout := context.DeadlineExceeded
+	unavailable := &api.APIError{Problem: api.Problem{Status: http.StatusServiceUnavailable, Code: "service_unavailable"}}
+	refused := &api.APIError{Problem: api.Problem{Status: http.StatusNotFound, Code: "not_found"}}
+	t.Run("transient then complete", func(t *testing.T) {
+		client := &flakyRollbackPollClient{rollbackPollClient: rollbackPollClient{rows: []api.RollbackOperation{pin, complete}}, errs: []error{timeout, unavailable}}
+		last, err := main.PollRollbackOperation(t.Context(), client, "app", pin, true, time.Millisecond)
+		if err != nil || last.Status != "complete" {
+			t.Fatalf("wait: %+v %v", last, err)
+		}
+	})
+	t.Run("permanent error stops", func(t *testing.T) {
+		client := &flakyRollbackPollClient{rollbackPollClient: rollbackPollClient{rows: []api.RollbackOperation{complete}}, errs: []error{refused}}
+		if _, err := main.PollRollbackOperation(t.Context(), client, "app", pin, true, time.Millisecond); !errors.Is(err, refused) {
+			t.Fatalf("err = %v, want the refusal", err)
+		}
+	})
+	t.Run("status read without wait reports the error", func(t *testing.T) {
+		client := &flakyRollbackPollClient{rollbackPollClient: rollbackPollClient{rows: []api.RollbackOperation{complete}}, errs: []error{unavailable}}
+		if _, err := main.PollRollbackOperation(t.Context(), client, "app", pin, false, time.Millisecond); !errors.Is(err, unavailable) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("deadline bounds transient retries", func(t *testing.T) {
+		errs := make([]error, 1000)
+		for i := range errs {
+			errs[i] = unavailable
+		}
+		client := &flakyRollbackPollClient{rollbackPollClient: rollbackPollClient{rows: []api.RollbackOperation{complete}}, errs: errs}
+		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+		defer cancel()
+		if _, err := main.PollRollbackOperation(ctx, client, "app", pin, true, time.Millisecond); err == nil {
+			t.Fatal("wait succeeded without a status")
+		}
+	})
+}
+
 func TestPollCheckedRollbackTimeoutPreservesBlockers(t *testing.T) {
 	pin := rollbackCLIPin()
 	blocked := pin

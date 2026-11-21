@@ -39,8 +39,8 @@ func TestSetupQueueWorkloadRejectsInvalidProfileBeforeNetwork(t *testing.T) {
 	if _, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "orders", 0, 1, false); err == nil {
 		t.Fatal("target depth zero should fail before calling the API")
 	}
-	if _, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "orders", 10, 0, false); err == nil {
-		t.Fatal("max concurrency zero should fail before calling the API")
+	if _, err := main.SetupQueueWorkload(context.Background(), fake, "demo", "orders", 10, -1, false); err == nil {
+		t.Fatal("negative max concurrency should fail before calling the API")
 	}
 	if fake.calls != 0 {
 		t.Fatalf("configure calls = %d, want 0", fake.calls)

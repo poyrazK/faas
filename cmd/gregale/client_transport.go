@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -13,19 +14,36 @@ import (
 )
 
 // cliUserAgent names this CLI build on every API request, so server logs and
-// support can tell which release sent a request and spot version skew.
+// support can tell which release sent a request and spot version skew. Run
+// by a coding agent, it also names the agent, as in
+// "gregale/0.1.0 (linux/amd64; agent=claude-code)" (ADR-20261112223000
+// Amendment 1).
 func cliUserAgent() string {
-	return "gregale/" + wire.Version + " (" + runtime.GOOS + "/" + runtime.GOARCH + ")"
+	comment := runtime.GOOS + "/" + runtime.GOARCH
+	if agent := reportedCodingAgent(); agent != "" {
+		comment += "; agent=" + agent
+	}
+	return "gregale/" + wire.Version + " (" + comment + ")"
+}
+
+// reportedCodingAgent is the coding agent the User-Agent names, or "" when
+// none runs the CLI or DO_NOT_TRACK asks the CLI not to report it.
+func reportedCodingAgent() string {
+	if v := os.Getenv("DO_NOT_TRACK"); v != "" && v != "0" {
+		return ""
+	}
+	return api.CodingAgentFromEnv(os.Getenv)
 }
 
 // cliTransport stamps the CLI's User-Agent on API requests and relays the
 // deprecation and warning headers apid answers with as one stderr line each.
 type cliTransport struct {
-	base http.RoundTripper
+	base  http.RoundTripper
+	debug *httpDebugRecorder
 }
 
 func wrapCLITransport(base http.RoundTripper) http.RoundTripper {
-	return cliTransport{base: base}
+	return cliTransport{base: base, debug: activeHTTPDebug.Load()}
 }
 
 func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -46,8 +64,15 @@ func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 			req.Header.Set(api.AgentReasonHeader, reason)
 		}
 	}
+	var ticket httpDebugTicket
+	if t.debug != nil {
+		ticket = t.debug.start(req)
+	}
 	resp, err := t.base.RoundTrip(req)
-	if err == nil {
+	if t.debug != nil {
+		t.debug.finish(ticket, resp, err, req.Context())
+	}
+	if err == nil && resp != nil {
 		reportServerNotice(req.Method, req.URL.Path, resp.Header)
 	}
 	return resp, err

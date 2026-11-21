@@ -136,6 +136,11 @@ func managedProbeCaller(ctx context.Context, store serviceProxyLiveIdentityStore
 		if err != nil {
 			return nil, err
 		}
+		// Ordinary app task VMs (`gregale app exec`, task commands) are in this
+		// lookup too, from the address schedd recorded under the task's lease
+		// (app_task_networks, ADR-20261118070000). A task without that row has
+		// no identity: the gateway never names a caller from vmmd's attestation
+		// and the task row alone.
 		if len(callers) != 1 || callers[0].ID != task.ID || callers[0].AppID != task.AppID || callers[0].DeploymentID != task.DeploymentID {
 			return nil, nil
 		}

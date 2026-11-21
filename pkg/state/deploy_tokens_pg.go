@@ -183,11 +183,11 @@ func (s *PgStore) AuthenticateDeployToken(ctx context.Context, hash []byte) (Acc
 		}
 	}
 	if t.Status == string(APIKeyStatusRevoked) {
-		return Account{}, APIKey{}, ErrAPIKeyRevoked
+		return Account{}, refusedKey(t.ID, t.AccountID), ErrAPIKeyRevoked
 	}
 	if t.ExpiresAt == nil || !t.ExpiresAt.After(time.Now()) {
 		_, _ = s.pool.Exec(ctx, `update deploy_tokens set status = 'revoked', revoked_at = coalesce(revoked_at, now()) where id = $1::uuid and status <> 'revoked'`, t.ID)
-		return Account{}, APIKey{}, ErrAPIKeyExpired
+		return Account{}, refusedKey(t.ID, t.AccountID), ErrAPIKeyExpired
 	}
 	principal, orgID := t.AccountID, ""
 	if t.CreatedByAccountID != "" && t.CreatedByAccountID != t.AccountID {

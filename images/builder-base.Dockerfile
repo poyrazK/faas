@@ -38,8 +38,15 @@ ARG BUILDKIT_GRPC_VERSION=1.83.2
 # buildkitd and buildctl get the patched release.
 ARG BUILDKIT_COMPRESS_VERSION=1.20.3
 # BuildKit 0.32.2 pins containerd v2.3.3 (GHSA-p7v4-vr35-mj6f, HIGH) and
-# Railpack 0.38.0 v2.3.4; both get the patched release.
-ARG CONTAINERD_VERSION=2.3.6
+# Railpack 0.38.0 v2.3.4; both get the patched release. v2.3.7 also fixes
+# GHSA-vwhp-8p66-mq4f (HIGH), which failed the builder-base gate on 2026-11-20.
+ARG CONTAINERD_VERSION=2.3.7
+# BuildKit 0.32.2 selects go.opentelemetry.io/otel/sdk and otel/trace v1.44.0
+# and Railpack 0.38.0 v1.46.0 (GHSA-q7gw-24fr-5p69, attribute length limit
+# bypass). Both builds raise every stable otel module they require to this
+# release; a retired module without it (exporters/jaeger) keeps its version
+# and still links the patched sdk/trace.
+ARG OTEL_VERSION=1.47.0
 ARG RUNC_EBPF_VERSION=0.22.0
 ARG RUNC_CGROUPS_VERSION=0.1.0
 
@@ -99,6 +106,7 @@ WORKDIR /src/railpack
 ARG RAILPACK_VERSION
 ARG RAILPACK_SOURCE_SHA256
 ARG CONTAINERD_VERSION
+ARG OTEL_VERSION
 ARG TARGETOS
 ARG TARGETARCH
 # Source archives come straight from codeload.github.com, which serves
@@ -118,6 +126,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=golang.org/x/net@v0.60.0 && \
       go mod edit -require=golang.org/x/crypto@v0.57.0 && \
       go mod edit -require=github.com/containerd/containerd/v2@v${CONTAINERD_VERSION} && \
+      otel_mods=$(awk '{p=$1; v=$2} $1=="require"{p=$2; v=$3} p ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && v ~ /^v1\./ {print p}' go.mod) && \
+      for m in $otel_mods; do \
+        if go list -mod=mod -m "$m@v${OTEL_VERSION}" >/dev/null 2>&1; then go mod edit -require="$m@v${OTEL_VERSION}"; fi; \
+      done && \
       GOTOOLCHAIN=local go mod tidy && \
       GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         GOMAXPROCS=2 GOMEMLIMIT=2GiB GOGC=10 \
@@ -128,6 +140,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       grep -q '^/out/railpack: go1.26.11$' /tmp/railpack-build-info && \
       grep -q 'golang.org/x/net.*v0.60.0' /tmp/railpack-build-info && \
       grep -q "github.com/containerd/containerd/v2.*v${CONTAINERD_VERSION}" /tmp/railpack-build-info && \
+      go version -m /out/railpack | awk -v want="v${OTEL_VERSION}" '$2 ~ /^go\.opentelemetry\.io\/otel\/(sdk|trace)$/ {seen=1; if ($3 != want) bad=1} END {exit !(seen && !bad)}' && \
       ! grep -Eq 'v0.58.0|go1.26.7' /tmp/railpack-build-info
 
 # ---- runc (builder OCI runtime) -----------------------------------------
@@ -180,6 +193,7 @@ ARG GO_ARCHIVE_VERSION
 ARG BUILDKIT_GRPC_VERSION
 ARG BUILDKIT_COMPRESS_VERSION
 ARG CONTAINERD_VERSION
+ARG OTEL_VERSION
 COPY images/buildkit-session-health.patch /tmp/buildkit-session-health.patch
 COPY images/buildkit-frontend-startup.patch /tmp/buildkit-frontend-startup.patch
 # BuildKit 0.32.2 still selects the vulnerable go-archive v0.2.0, gRPC
@@ -202,6 +216,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       go mod edit -require=google.golang.org/grpc@v${BUILDKIT_GRPC_VERSION} && \
       go mod edit -require=github.com/klauspost/compress@v${BUILDKIT_COMPRESS_VERSION} && \
       go mod edit -require=github.com/containerd/containerd/v2@v${CONTAINERD_VERSION} && \
+      otel_mods=$(awk '{p=$1; v=$2} $1=="require"{p=$2; v=$3} p ~ /^go\.opentelemetry\.io\/otel(\/|$)/ && v ~ /^v1\./ {print p}' go.mod) && \
+      for m in $otel_mods; do \
+        if go list -mod=mod -m "$m@v${OTEL_VERSION}" >/dev/null 2>&1; then go mod edit -require="$m@v${OTEL_VERSION}"; fi; \
+      done && \
       go mod tidy && \
       go mod vendor && \
       go test -mod=vendor ./frontend/gateway -run '^TestServeWaitsForColdFrontend$' -count=1 && \
@@ -211,6 +229,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
         go build -mod=vendor -trimpath -ldflags "${BUILDKIT_LDFLAGS}" -o /out/buildctl ./cmd/buildctl && \
       go version -m /out/buildkitd | grep -q "github.com/containerd/containerd/v2.*v${CONTAINERD_VERSION}" && \
+      go version -m /out/buildctl /out/buildkitd | awk -v want="v${OTEL_VERSION}" '$2 ~ /^go\.opentelemetry\.io\/otel\/(sdk|trace)$/ {seen=1; if ($3 != want) bad=1} END {exit !(seen && !bad)}' && \
       ! go version -m /out/buildctl /out/buildkitd | grep "github.com/klauspost/compress" | grep -vq "v${BUILDKIT_COMPRESS_VERSION}"
 
 # ---- stage 2: assemble the runtime rootfs -------------------------------

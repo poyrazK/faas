@@ -196,7 +196,10 @@ func TestProjectRetryCommandSavesFreshAttemptAndForcesOnlyFailed(t *testing.T) {
 						}
 					}
 					dirty := mode == "worktree" || mode == "alias"
-					if bytes.Contains(packageBody, []byte("dirty")) != dirty || local != dirty || !config {
+					// Local-files uploads leave credential files such as .env
+					// out (#7441), and so do committed sources (prod finding
+					// #42, retail-store feedback B4).
+					if bytes.Contains(packageBody, []byte("dirty")) != dirty || local != dirty || config {
 						t.Fatalf("wrong source policy: mode=%s package=%s local=%v config=%v", mode, packageBody, local, config)
 					}
 				}

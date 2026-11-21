@@ -111,7 +111,7 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 		t.Run(map[bool]string{false: "human", true: "json"}[asJSON], func(t *testing.T) {
 			row := restartStatusTestReceipt("retrying")
 			row.FailureReason = "requests_active"
-			posts, gets := 0, 0
+			posts, gets, healthReads := 0, 0, 0
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				if r.Method == "POST" && r.URL.Path == "/v1/apps/demo/restart" {
@@ -130,6 +130,14 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 						out.CompletedAt = &at
 					}
 					_ = json.NewEncoder(w).Encode(out)
+				} else if r.Method == "GET" && r.URL.Path == "/v1/apps/demo/health" {
+					// --wait also waits for the replicas to pass readiness.
+					healthReads++
+					status := "fail"
+					if healthReads > 1 {
+						status = "pass"
+					}
+					_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: "demo", Checks: []api.AppHealthCheck{{Code: "readiness", Status: status}}})
 				} else {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 					http.Error(w, "unexpected", 500)
@@ -140,6 +148,11 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 			jsonOutput = false
 			stdout, stderr, restore := swapIO(t)
 			defer restore()
+			defer func() {
+				if healthReads != 2 {
+					t.Errorf("health reads = %d, want 2 (wait until readiness passes)", healthReads)
+				}
+			}()
 			args := []string{"demo", "restart", "--fresh", "--wait", "--poll-interval", "1ms", "--timeout", "1s"}
 			if asJSON {
 				args = append(args, "--json")
@@ -159,7 +172,7 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 				if err := decoder.Decode(&got); !errors.Is(err, io.EOF) {
 					t.Fatal("stdout contains more than one JSON receipt")
 				}
-			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "Application health has not been verified") {
+			} else if !strings.Contains(stderr(), "Waiting for active requests to finish") || !strings.Contains(stdout.String(), "passed their readiness checks") {
 				t.Fatalf("missing explanation: %s %s", stdout, stderr())
 			}
 		})

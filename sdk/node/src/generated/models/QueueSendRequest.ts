@@ -29,5 +29,9 @@ export type QueueSendRequest = {
    * Optional keyed ordering policy for a queue message. Scoped environment bindings reject this option until their policy adapter is available.
    */
   work?: InvokeWork;
+  /**
+   * Messages with the same group_key are delivered one at a time, in send order, on push and pull consumers; a message waiting to retry holds later ones with its key. Cannot be combined with work. Preview: refused with queue_groups_unavailable until released to the account.
+   */
+  group_key?: string;
 };
 

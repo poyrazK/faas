@@ -23,6 +23,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -69,8 +70,8 @@ func formatGBHours(f float64) string {
 func printResidentCostEcho(plan api.Plan, ramMB, min int) {
 	cost := ResidentGBHoursPerMonth(plan, ramMB, min)
 	_, _ = fmt.Fprintf(osStdout,
-		"  %d instance%s of %d MB kept warm ≈ %s (billed against your included quota, then %d millicent/GB-h overage).\n",
-		min, pluralOne(min), ramMB, formatGBHours(cost), api.OverageMillicentsPerGBHour)
+		"  %d instance%s of %d MB kept warm ≈ %s (billed against your included quota, then %s/GB-h overage).\n",
+		min, pluralOne(min), ramMB, formatGBHours(cost), formatOverageUSD(api.OverageMillicentsPerGBHour))
 }
 
 func pluralOne(n int) string {
@@ -78,4 +79,10 @@ func pluralOne(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// formatOverageUSD renders a per-GB-h overage rate in dollars. The cost echo
+// printed "5000 millicent/GB-h" (Hunt 34 H34-12); customers price in dollars.
+func formatOverageUSD(millicents int64) string {
+	return "$" + strings.TrimPrefix(formatMillicents("USD", millicents), "USD ")
 }

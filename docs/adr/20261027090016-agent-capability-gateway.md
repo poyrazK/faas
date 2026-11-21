@@ -1,6 +1,6 @@
 # ADR-20261027090016 · The agent capability gateway: one policy, budget and audit for models, tools, web and data
 
-- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored.
+- **Status:** proposed (owner decision D19, 2026-10-19). §6 amended the same day: where audit records and counters are stored. Amendment 1 (2026-11-19): what is already built, and the first slice. Amendment 2 (2026-11-19): run approvals without a freeze state.
 - **Date:** 2026-10-19
 - **Amends (when accepted):**
   - ADR-20261027090010 §7: model calls join one per-run capability policy and budget;
@@ -201,3 +201,333 @@ All steps stay on local branches until the owner asks for PRs, behind the intern
 1. Whether customer MCP servers may be marked trusted, and by whom (proposed: the seller, per server, recorded in the audit).
 2. Slack as an approval channel at launch, or webhooks only.
 3. Whether `agents.spawn` (sub-agents) lives here or in ADR-20261027090010's workflow step.
+
+## Amendment 1 (2026-11-19) · What is built, and the first slice
+
+The owner chose a foundation slice (2026-11-19): policies, the MCP endpoint
+for agent runs, a per-run tool-call budget with decision rows, and `web_fetch`
+as the first tool behind a switch. Taint, approval, the audit spool, sessions,
+tenant narrowing and the other tool sources come later, in the rollout order
+above.
+
+### What already exists
+
+- **Step 2 is built for agent runs** (ADR-20261027090010 §7). vmmd mints the
+  relay assertion from agentd's placement data (`AgentRunClaims`:
+  `account_id`, `run_id`, `lease_token`, `platform_tenant_id`, `agent_id`,
+  `agent_version`), and outboundd verifies it and checks the run's live lease
+  on every request (`PostgresAgentRuns.AuthorizeAgentRun`).
+  - A version is keyed by `(agent_id, version)`, so the claim this ADR calls
+    `agent_version_id` is that pair.
+  - Sandbox sessions start the guest relay but have no relay identity yet.
+    They get one in a later step.
+- **Model spend** already has a per-run cap and ledger in outboundd
+  (`agent_run_ai_spend`, `agent_run_ai_reservations`), which §6 keeps.
+- **Stateless agents' platform tools** (`gregale_sleep`, `gregale_run`,
+  `gregale_github_subscribe`, `gregale_browse`, `gregale_browser`) are a RAP
+  toolset in apid (ADR-20261030125501 §4 amendment). They serve function
+  agents, whose runtimes speak RAP. This gateway serves VM agents over MCP.
+  Neither replaces the other in this slice.
+
+### The slice
+
+1. **The policy lives on the version.** `agent_versions.capability_policy`
+   (jsonb, written by apid at version create, immutable like the rest of the
+   version). A version without one allows nothing but its models, as today.
+   For this slice it holds:
+   - `tools`: a list of `{name, mode}`, where `mode` is `allow` or `deny`.
+     `approve` is refused until approval ships (step 6).
+   - `budgets.tool_calls`: calls per run, at most `AgentToolCallsPerRunMax`
+     for the plan. It defaults to that maximum.
+
+   `sensitive`, `taint_mode`, `web`, `data` and per-tenant narrowing are
+   refused at create until their steps ship. Refusing them, rather than
+   ignoring them, keeps a seller from believing a rule is enforced when it is
+   not.
+2. **The endpoint.** outboundd serves `/mcp` (MCP Streamable HTTP, stateless)
+   on the relay, only to agent-run principals; any other caller gets 404.
+   - Every request re-runs the agent-run authorization (live lease, not
+     cancelled), so a finished run loses its tools at once.
+   - `tools/list` returns the registry's tools that the version's policy
+     allows and the operator switched on. The policy is read in the same
+     query as the lease check, so it costs no extra round trip.
+   - agentd gives the harness `GREGALE_CAPABILITY_MCP_URL`
+     (`${GREGALE_OUTBOUND_URL}/mcp`) when the version's policy allows a tool.
+     Preset configuration files that point each harness at it come with the
+     preset work.
+3. **Budget and decisions.**
+   - **The tool-call count is in Postgres for now,** one conditional update
+     per call on `agent_run_capability_summaries` (counts by tool and
+     decision). This deviates from §6, which keeps per-run counters in
+     memory on a pinned replica. vmmd does not pin runs to an outboundd
+     replica yet, and a count that two replicas can each under-read would not
+     fail closed. One write per tool call is small next to the model calls a
+     run makes. In-memory counters with pinning replace it in step 5, before
+     any volume test.
+   - **Decision rows** (`agent_run_capability_decisions`): a call refused by
+     policy, by an exhausted budget, or because the tool is off. These are
+     the low-volume rows §6 keeps in Postgres. An allowed call writes only
+     the summary.
+   - outboundd is the only writer of both tables. apid reads them for the
+     run timeline in a later PR.
+4. **`web_fetch`, the first tool** (ADR-20261027090018 tier 1): GET one URL
+   and return its text.
+   - It dials only public IPv4 on ports 80 and 443, checking every address
+     at connect time, so DNS cannot rebind it to a private one. It follows at
+     most `AgentWebFetchRedirectsMax` redirects, re-checking each.
+   - It reads at most `AgentWebFetchMaxBytes`, and returns text types only.
+   - It is behind `FAAS_OUTBOUND_AGENT_WEB_FETCH` (off). §1 sends tool
+     traffic through the agent egress gateway, and the control plane has no
+     path into it yet. The switch stays off in production until outboundd's
+     fetches leave from an agent address. That routing is its own change,
+     after the gateway host exists (docs/runbooks/agent-egress-production-rollout.md).
+     With the switch off, the tool is not listed.
+
+### Limits added in this slice
+
+| Name | Value |
+|---|---|
+| `AgentToolCallsPerRunMax` | 0 / 1,000 / 5,000 / 20,000 (Free / Hobby / Pro / Scale) |
+| `AgentCapabilityPolicyToolsMax` | 64 |
+| `AgentWebFetchMaxBytes` | 1 MiB |
+| `AgentWebFetchTimeoutSec` | 20 |
+| `AgentWebFetchRedirectsMax` | 5 |
+
+### Metrics added in this slice
+
+- `outbound_capability_calls_total{source,decision}`
+- `outbound_capability_call_seconds{source}`
+- `agent_budget_exhausted_total{kind}`
+
+These are the §12 names above, so later steps add labels, not new names.
+
+## Amendment 2 (2026-11-19) · Run approvals, waiting in the model-wait pause
+
+The owner chose approvals as the next gap to close (2026-11-19). This amends
+§5: a tool in `approve` mode waits for the seller's decision inside the
+call, and the run waits in ADR-20261027090012's model-wait pause instead of
+ADR-1151's frozen state. Taint (§4) stays a later step; `approve` is set per
+tool for now.
+
+### Why not the frozen state
+
+§5 froze the run through agentd and schedd. ADR-20261027090012 rejected that
+state for waits inside a call:
+- it costs a database write and a schedd round trip per wait;
+- thawing re-admits the reservation, and destroys the VM if it no longer fits;
+- its TTL and parking have no meaning for a run.
+
+An approval is a wait inside a call, so the same reasoning applies.
+
+The model-wait pause already gives what §5 asked for. While outboundd holds
+the call, the relay connection is open and silent and the guest CPU is idle,
+so vmmd quiet-pauses the VM:
+- **Unbilled:** the paused seconds are excluded from billing.
+- **Timers stop:** the guest's in-process timers stop while it is paused, so
+  a harness's MCP request timeout does not run down while a person decides.
+
+Where the pause is off (the version opts out, or vmmd's switch is off), the
+wait is billed like any other call, and the harness's own tool timeout bounds
+it.
+
+### The flow
+
+1. **Request.** The run calls a tool whose policy mode is `approve`. outboundd
+   writes an `agent_run_approvals` row in one transaction:
+   - the tool;
+   - a SHA-256 of the arguments;
+   - a bounded summary of the arguments, untrusted agent text, at most
+     `AgentRunApprovalSummaryMaxBytes`;
+   - an expiry.
+
+   In the same transaction it queues an `agent_run.approval_requested`
+   webhook to the account's receivers that subscribe to it.
+2. **Wait.** outboundd holds the MCP call open and reads the decision every
+   `AgentRunApprovalPollMillis`. It lifts the relay connection's write
+   deadline for that request only, up to the approval's expiry plus the
+   tool's timeout.
+3. **Decision.** The seller calls
+   `POST /v1/agent-runs/{id}/approvals/{approval_id}` with
+   `{"decision": "approve"|"deny", "note"}`. apid writes an
+   `agent_run_approval_decisions` row. Each approval has one decision, which
+   cannot be changed, and an expired approval refuses one with 409.
+   `GET /v1/agent-runs/{id}/approvals` lists a run's approvals.
+4. **Outcome:**
+   - **Approved:** the call counts against the tool-call budget and runs as
+     any allowed call.
+   - **Denied or expired:** the call returns an error result naming the
+     outcome and the seller's note. The tool never runs, and the budget is
+     not charged.
+   - **The harness goes away first:** the approval stays as it is until it
+     expires, and a late decision changes nothing.
+
+### Bounds
+
+- **Expiry.** `min(now + AgentRunApprovalTimeoutSec, the run's deadline −
+  AgentRunApprovalDeadlineMarginSec)`. A run's deadline keeps running while
+  it waits, as in ADR-20261027090012 §3. Pausing the deadline while a person
+  decides is a later change to vmmd's run timer.
+- **Pending approvals.** At most `AgentRunApprovalsPendingMax` per run. Past
+  that, the call is refused at once, as `denied` in the decision rows.
+- **Matching.** The arguments digest is shown to the seller and kept with the
+  decision. A decision approves exactly the call that asked for it, never a
+  later call with other arguments.
+
+### Ownership
+
+- outboundd is the only writer of `agent_run_approvals` and of the webhook
+  delivery it queues with it.
+- apid is the only writer of `agent_run_approval_decisions`. The decision is
+  customer intent.
+- outboundd only reads decisions.
+
+### Limits (`pkg/api/limits.go`)
+
+| Name | Value |
+|---|---|
+| `AgentRunApprovalTimeoutSec` | 3,600 (bounded by the run's deadline) |
+| `AgentRunApprovalDeadlineMarginSec` | 30 |
+| `AgentRunApprovalsPendingMax` | 8 |
+| `AgentRunApprovalSummaryMaxBytes` | 2,048 |
+| `AgentRunApprovalPollMillis` | 1,000 |
+| `AgentRunApprovalNoteMaxBytes` | 1,024 |
+
+`AgentApprovalTimeoutSec` (86,400) in §5 is replaced by
+`AgentRunApprovalTimeoutSec`. No run lasts a day yet. The value grows when
+run deadlines pause during a wait.
+
+### Metrics
+
+`agent_approvals_total{outcome}`, the §12 name, where outcome is `approved`,
+`denied`, `expired` or `abandoned`.
+
+### Rollout
+
+1. This amendment.
+2. Data and API:
+   - `approve` mode in policies;
+   - the two tables;
+   - apid's list and decide routes, with an audit event;
+   - the webhook event.
+3. outboundd: the request, the held call, the outcome, the metric and the
+   ops docs.
+4. **Not in this step:**
+   - taint (§4);
+   - pausing the run deadline while waiting;
+   - Slack as an approval channel (open question 2);
+   - showing approvals in the dashboard.
+
+
+## Amendment 3 (2026-11-20) · The run deadline pauses while a person decides
+
+Amendment 2 left the run's deadline running during an approval wait, so a
+seller who takes ten minutes to answer can cost a run with a 600 s timeout
+its whole budget. The owner chose to close that gap (2026-11-20). This
+amendment also corrects amendment 2.
+
+### Correction to amendment 2
+
+Amendment 2 said the guest's timers stop while the model-wait pause holds the
+VM. They do not: ADR-20261027090012 §3 records that the guest clock is not
+stepped on resume and keeps host time (ADR-906), so a guest timer that would
+have expired during the pause expires at resume. Two timers matter:
+- **The harness's tool timeout.** agentd's preset wiring (PR #7683) sets it
+  to `AgentRunApprovalTimeoutSec + 120` s for codex and claude-code. A seller
+  image sets its own.
+- **The run's timeout** in the guest and in vmmd. This amendment extends it.
+
+### The rule
+
+A run's deadline is `running_at + timeout_sec + credit`, where **credit** is
+the wall time during which at least one of the run's approvals was waiting,
+capped at `AgentRunApprovalCreditMaxSec`. Overlapping approvals count once.
+An approval waits from `created_at` until the first of:
+- its decision;
+- its expiry;
+- `released_at`, when outboundd stopped holding the call (the harness went
+  away, or the call ended for any other reason).
+
+Credit is wall time, paused or not. Where the model-wait pause is off the
+wait is billed, as amendment 2 says; the credit only moves the deadline.
+
+### Who enforces it
+
+- **vmmd holds the deadline.** `AgentRunStart.deadline_sec` carries the
+  seller's `timeout_sec` beside the request, whose own `timeout_sec` is now
+  the guest ceiling. vmmd's host timer and the exchange's context start at
+  `deadline_sec` and move to `deadline_sec + credit` when agentd says so,
+  never past the ceiling. At the deadline vmmd resumes the guest and sends
+  the cancel frame, and it reports the run as `timed_out`, not `cancelled`.
+  An older vmmd reads only the request and so gives the run the whole
+  ceiling; the release order below keeps that from happening.
+- **agentd computes credit.** While a run's version has an `approve` tool,
+  agentd reads the run's credit every `AgentRunApprovalCreditPollSec` and,
+  when it grew, sends `AgentRunExtend{credit_ms}` on the RunAgent stream. The
+  value is the run's total, so a repeated or reordered frame does no harm.
+  schedd forwards it to vmmd unchanged. agentd only reads approval rows;
+  outboundd still writes them.
+- **The guest timer is a ceiling.** The guest kills the harness at the
+  request's `timeout_sec`, which it validates against
+  `agentrunproto.MaxTimeoutSec`. For a version with an `approve` tool,
+  agentd sends `min(timeout_sec + AgentRunApprovalCreditMaxSec,
+  MaxTimeoutSec)`, and vmmd enforces the real deadline. `MaxTimeoutSec`
+  rises from 3,600 to 7,200 so a Scale run at its 3,600 s plan limit can
+  still earn credit.
+- **outboundd's expiry** becomes the first of `now +
+  AgentRunApprovalTimeoutSec` and `running_at + least(timeout_sec +
+  deadline_credit_max_sec, MaxTimeoutSec) − AgentRunApprovalDeadlineMarginSec`.
+  While a call waits it earns credit one second per second until the cap, so
+  the deadline stays the same distance ahead until the cap is reached; the
+  cap's deadline is therefore the last moment a wait can end. With no credit
+  (`deadline_credit_max_sec = 0`) this is amendment 2's expiry. An expiry
+  that leaves 1 s or less still refuses the call.
+
+The margin (30 s) is more than five times the poll (5 s), so agentd extends
+the deadline before vmmd reaches it.
+
+### Data
+
+- `agent_run_approvals.released_at timestamptz NULL`, written by outboundd
+  when the held call ends. An older outboundd leaves it null, and the wait
+  then ends at the decision or the expiry.
+- `agent_runs.deadline_credit_max_sec integer NOT NULL DEFAULT 0`, written by
+  agentd when the run starts running: the credit this run may earn, 0 when
+  the switch is off or the version has no `approve` tool. outboundd reads it
+  for the expiry, so outboundd needs no switch of its own.
+
+Both are expand-only.
+
+### Bounds
+
+- A run outlives its `timeout_sec` by at most `AgentRunApprovalCreditMaxSec`.
+- A paused VM keeps its memory on the node for the whole wait. Measured
+  admission (ADR-909) already counts it; the cap bounds it.
+- Approval waits are the only source of credit. A model call is not.
+
+### Limits (`pkg/api/limits.go`)
+
+| Name | Value |
+|---|---|
+| `AgentRunApprovalCreditMaxSec` | 3,600 |
+| `AgentRunApprovalCreditPollSec` | 5 |
+| `agentrunproto.MaxTimeoutSec` | 7,200 (was 3,600) |
+
+### Release order
+
+Units release independently (docs/release-compatibility.md), so each step
+works beside the previous release:
+1. This amendment.
+2. Guest: `MaxTimeoutSec` 7,200. An older agentd never sends more than 3,600.
+3. Data and outboundd: both columns, `released_at` writes and the new
+   expiry, which is unchanged while every run's credit cap is 0.
+4. schedd and vmmd: the `AgentRunExtend` frame and the movable deadline. An
+   older schedd or vmmd ignores the frame, as both ignore unknown frames
+   today, and the run keeps its plain deadline.
+5. agentd: the credit poll and the guest ceiling, behind the switch
+   `FAAS_AGENTD_APPROVAL_DEADLINE_CREDIT` (off). It goes on after steps 2–4
+   are live on every node, because an older guest refuses a `timeout_sec`
+   above 3,600.
+
+### Metrics
+
+`agent_run_deadline_credit_seconds_total`: credit agentd sent to vmmd.

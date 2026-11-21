@@ -153,9 +153,15 @@ func TestUsageRetirementRecoversAndCorrectsFiniteWindowsAcrossRestart(t *testing
 				_, err = collector.Collect(ctx)
 				return err
 			}
-			// Shutdown in the middle of an hour must wait for that hour to close.
-			if err := collect(); !errors.Is(err, ErrUsageStale) || len(provider.windows) != 0 {
-				t.Fatalf("requested open final window: %v; windows=%v", err, provider.windows)
+			// Shutdown in the middle of an hour must wait for that hour to close,
+			// but the windows that closed before it are collected now.
+			if err := collect(); err != nil || len(provider.windows) != 3 {
+				t.Fatalf("closed windows before the open final one: %v; windows=%v", err, provider.windows)
+			}
+			for _, w := range provider.windows {
+				if !w.To.Before(end) {
+					t.Fatalf("requested the open final window: %v", provider.windows)
+				}
 			}
 			now = end
 			if err := collect(); err != nil || len(provider.windows) != 4 {

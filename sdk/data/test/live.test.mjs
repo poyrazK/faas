@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { getEventListeners } from 'node:events'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
 import { sql, toPostgresText, createLiveSealer, LiveSealError, LiveConnection, LiveResult, LiveProtocolError, parseLiveServerFrame, LiveSnapshot, liveRead } from '../dist/live/index.js'
@@ -288,4 +289,72 @@ test('anonymous and server-key reads subscribe and renew with their own credenti
     { type: 'live.renew', subscription: backend.id, server_key: key, subject: 'user-7' },
   ])
   visitor.close(); backend.close(); conn.close()
+})
+
+test('DAPI001 terminal revocation erases live rows and retained transaction visibility', async () => {
+  const socket = new FakeSocket(), clock = new FakeClock()
+  const conn = new LiveConnection({ connect: () => socket, clock })
+  await settle()
+  const q = conn.query({ database: 'db', read: 'messages?select=id', token: () => 'token' })
+  socket.open(); await settle()
+  socket.deliver(rows(q.id, 1, '1:10:', [{ id: 'private', values: ['1', '7', '{}', 't'] }]))
+  assert.equal(q.getSnapshot().rows.length, 1)
+  socket.deliver({ type: 'live.error', subscription: q.id, code: 'forbidden', message: 'revoked', closed: true })
+  assert.deepEqual(q.getSnapshot().rows, [])
+  assert.deepEqual(q.getSnapshot().keys, [])
+  assert.deepEqual(q.getSnapshot().columns, [])
+  assert.equal(q.getSnapshot().snapshot, null)
+  await assert.rejects(q.awaitTxId(1), /closed/)
+  conn.close()
+})
+
+test('DAPI009 transaction waits honor pre-cancellation and remove listeners on success and close', async () => {
+  const socket = new FakeSocket(), clock = new FakeClock()
+  const conn = new LiveConnection({ connect: () => socket, clock })
+  await settle(); const q = conn.query({ sealed: 's' }); socket.open(); await settle()
+  socket.deliver(rows(q.id, 1, '1:2:', []))
+  const cancelled = new AbortController(); cancelled.abort(new Error('already cancelled'))
+  await assert.rejects(q.awaitTxId(99, { signal: cancelled.signal }), /already cancelled/)
+  const controller = new AbortController()
+  const seen = q.awaitTxId(5, { signal: controller.signal })
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 1)
+  socket.deliver({ type: 'live.progress', database: 'db', snapshot: '1:10:' })
+  await seen
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0)
+  const pending = q.awaitTxId(99, { signal: controller.signal })
+  q.close(); await assert.rejects(pending, /closed/)
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0)
+  conn.close()
+})
+
+test('DAPI010 credentials from a dead socket cannot replace a fresh subscription', async () => {
+  const sockets = [], clock = new FakeClock()
+  const conn = new LiveConnection({ connect: () => { const s = new FakeSocket(); sockets.push(s); return s }, clock, reconnectDelayMs: () => 1 })
+  await settle()
+  let completeOld, calls = 0
+  const q = conn.query({ database: 'db', read: 'messages?select=id', token: () => ++calls === 1 ? new Promise(resolve => { completeOld = resolve }) : 'fresh' })
+  sockets[0].open(); await settle(); sockets[0].close()
+  clock.advance(1); await settle(); sockets[1].open(); await settle()
+  completeOld('old'); await settle()
+  assert.deepEqual(sockets[1].sent.filter(f => f.type === 'live.subscribe'), [{ type: 'live.subscribe', subscription: q.id, database: 'db', rest: 'messages?select=id', token: 'fresh' }])
+  conn.close()
+})
+
+test('DAPI011 live renewal retries transient token failures without reconnecting', async () => {
+  const socket = new FakeSocket(), clock = new FakeClock()
+  const conn = new LiveConnection({ connect: () => socket, clock })
+  await settle()
+  let calls = 0, unavailable = false
+  const q = conn.query({ database: 'db', read: 'messages?select=id', token: async () => { calls++; if (unavailable) throw new Error('temporary'); return 'token' } })
+  socket.open(); await settle(); socket.deliver(rows(q.id, 1, '1:2:', []))
+  unavailable = true; clock.advance(48_000); await settle()
+  socket.deliver({ type: 'live.error', subscription: q.id, code: 'seal_expired', message: 'expired', closed: false }); await settle()
+  unavailable = false; clock.advance(2_000); await settle()
+  assert.ok(calls >= 4)
+  assert.equal(socket.sent.at(-1).type, 'live.renew')
+  assert.equal(socket.sent.at(-1).token, 'token')
+  socket.deliver({ type: 'live.renewed', subscription: q.id, expires: clock.now()/1000 + 60 })
+  socket.deliver({ type: 'live.progress', database: 'db', snapshot: '1:3:' })
+  assert.equal(q.getSnapshot().status, 'live')
+  conn.close(); assert.equal(clock.timers.length, 0)
 })

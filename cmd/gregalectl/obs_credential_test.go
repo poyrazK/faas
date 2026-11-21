@@ -66,6 +66,8 @@ func TestObsReadsSendTheOperatorSession(t *testing.T) {
 		{subObsRuleCoverage},
 		{subObsRecordingCoverage},
 		{subObsNotificationHealth},
+		{subObsServingHealth},
+		{subObsVerifyDeployment, "--release", strings.Repeat("a", 40), "--after", time.Now().Add(-time.Minute).UTC().Format(time.RFC3339), "--wait-timeout", "1s"},
 		{subObsSummary},
 		{subObsResponseTimes},
 		{subObsRecurrence},
@@ -102,8 +104,12 @@ func TestObsReadsSendTheOperatorSession(t *testing.T) {
 			_, stderr, restore := captureOperatorIO()
 			defer restore()
 
-			if code := cmdObsDispatch(args); code != 1 {
-				t.Fatalf("exit = %d, want 1 from the refused request (stderr=%q)", code, stderr)
+			want := 1
+			if args[0] == subObsVerifyDeployment {
+				want = 3 // Missing evidence is distinct from a confirmed fault.
+			}
+			if code := cmdObsDispatch(args); code != want {
+				t.Fatalf("exit = %d, want %d from the refused request (stderr=%q)", code, want, stderr)
 			}
 			mu.Lock()
 			defer mu.Unlock()

@@ -33,6 +33,8 @@ says so instead of skipping silently.
 
 ## Retention
 
+How long logs and request events are kept depends on your plan:
+
 | Plan | Archived logs readable for | Job task output kept for | HTTP request events | Log drains |
 |---|---|---|---|---|
 | Free | 1 day | 1 day | — | — |
@@ -69,12 +71,56 @@ their output reads as empty and truncated (`gregale job logs` prints only
 still building) prints its build and deploy log, then its failure reason. With
 `--json` each entry is a `{"type":"log"}` record and the last record is a
 `{"type":"summary"}` with the deployment's `status`, `error` and `error_code`.
-`--explain` is a terminal summary and is refused with `--json`.
+
+### Structured deployment explanations
+
+```bash
+gregale logs my-api --deployment DEPLOYMENT_ID --explain --json
+gregale logs my-api --release v12 --explain --json
+```
+
+An unfiltered deployment snapshot with `--explain --json` uses the same severity
+and pattern model as text explanations. It emits one `type: explanation` object,
+with no log rows or human summary mixed into stdout. It records the app, deployment ID,
+status read before the snapshot, selected `source`, persisted failure reason,
+error/warning/info counts, last error, the top three patterns and inspection
+commands. Patterns use the existing 64-byte message-prefix buckets. A successful
+read exits zero even when the deployment itself failed.
+
+Failed, cancelled and still-building deployments use build/deploy logs; served
+deployments use runtime logs. The command verifies that the selected deployment
+belongs to the selected app before opening the stream. The snapshot reads at
+most 500 log records within a 30-second operation budget. Message excerpts are
+redacted before being shortened to 4096 bytes. Existing text log routing,
+multiline build output and streaming behavior are preserved. `--explain --json` requires
+`--deployment` or `--release` and excludes follow, archive, project and log-filter
+options. `--dry-run` continues to preview the query locally.
+
+`complete` describes the selected returned window, not all deployment history
+or application health. Retention and server-side windows may omit earlier
+output even on a complete read. A clean explicit end marks that window complete;
+EOF without an end, gaps, malformed records, degraded streams and record limits
+are reported as partial, with a nonzero exit. The receipt includes
+`observed_lines`, `skipped_records`, `entry_limit`, `end_reason`, `warnings` and
+`messages_shortened`. Read errors retain already observed counts and use exit
+1; partial reads and deadlines use 3; cancellation uses 130. Failed stream opens
+also produce an incomplete report once deployment identity is verified.
+The read requires metadata access to the selected app and deployment. Where the
+server supplies a typed read failure, `read_error_code` and `read_status` retain
+it. `unclassified_count` records returned legacy rows without a recognized level.
+
+Ordinary `--json` log records keep their existing format. These explanations
+perform metadata/log reads only and do not probe health, retry deployments or
+change configuration.
 
 `--level` reads the `level` or `severity` field of JSON log lines (the
 format Pino, Zap, Logrus and Cloud Logging use) and common text shapes such as
-`[ERROR]` or `level=error`. Lines with no recognisable level are left out when
-you filter by level.
+`[ERROR]`, `level=error`, or a line that starts with `ERROR `, `WARN ` or
+`INFO `. Lines with no recognisable level are left out when you filter by level.
+
+An app's stdout and stderr reach Gregale through one console, so every app
+line is labelled `stdout` whichever stream the app wrote it to. Mark severity
+in the line itself rather than relying on the stream.
 
 Save filters you use often with `gregale logs views save NAME ...` and reuse
 them with `--view NAME`.

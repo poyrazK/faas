@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.compose_process import ComposeProcess
     from ..models.compose_resources import ComposeResources
     from ..models.plan_detected_by import PlanDetectedBy
+    from ..models.plan_source_host import PlanSourceHost
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
     from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
     from ..models.secret_file import SecretFile
@@ -98,6 +99,13 @@ class PlanWorkload:
     preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
     """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
     `deny` rejects preview callers before waking the target."""
+    app_protocol: str | Unset = UNSET
+    """Protocol from Compose `x-gregale-app-protocol` (`http1`, `http2` or `grpc`). Omitted when the file sets
+    none."""
+    streaming: bool | Unset = UNSET
+    """Compose `x-gregale-streaming`. Omitted when the file sets none."""
+    wake_ahead: bool | Unset = UNSET
+    """Compose `x-gregale-wake-ahead`. Omitted when the file sets none."""
     allowed_service_callers: list[str] | Unset = UNSET
     """Target-side service allowlist from Compose `x-gregale-allow-callers`. Omitted permits same-account callers;
     an empty array denies all."""
@@ -116,6 +124,9 @@ class PlanWorkload:
     configured on the app and not provided by the platform. Names only, never values."""
     unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
     """For an unset_env_keys name with a Compose value, why that value is not imported. Never values."""
+    source_hosts: list[PlanSourceHost] | Unset = UNSET
+    """String literals in the workload's source that dial another service by its Compose name, which does not
+    resolve on Gregale. At most a few per workload."""
     imported_env_keys: list[str] | Unset = UNSET
     """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
     import: true and they are unset. Names only."""
@@ -214,6 +225,12 @@ class PlanWorkload:
         if not isinstance(self.preview_service_calls_policy, Unset):
             preview_service_calls_policy = self.preview_service_calls_policy
 
+        app_protocol = self.app_protocol
+
+        streaming = self.streaming
+
+        wake_ahead = self.wake_ahead
+
         allowed_service_callers: list[str] | Unset = UNSET
         if not isinstance(self.allowed_service_callers, Unset):
             allowed_service_callers = self.allowed_service_callers
@@ -243,6 +260,13 @@ class PlanWorkload:
         unset_env_key_reasons: dict[str, Any] | Unset = UNSET
         if not isinstance(self.unset_env_key_reasons, Unset):
             unset_env_key_reasons = self.unset_env_key_reasons.to_dict()
+
+        source_hosts: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.source_hosts, Unset):
+            source_hosts = []
+            for source_hosts_item_data in self.source_hosts:
+                source_hosts_item = source_hosts_item_data.to_dict()
+                source_hosts.append(source_hosts_item)
 
         imported_env_keys: list[str] | Unset = UNSET
         if not isinstance(self.imported_env_keys, Unset):
@@ -314,6 +338,12 @@ class PlanWorkload:
             field_dict["service_binding_transport"] = service_binding_transport
         if preview_service_calls_policy is not UNSET:
             field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
+        if streaming is not UNSET:
+            field_dict["streaming"] = streaming
+        if wake_ahead is not UNSET:
+            field_dict["wake_ahead"] = wake_ahead
         if allowed_service_callers is not UNSET:
             field_dict["allowed_service_callers"] = allowed_service_callers
         if allowed_service_call_scopes is not UNSET:
@@ -330,6 +360,8 @@ class PlanWorkload:
             field_dict["unset_env_keys"] = unset_env_keys
         if unset_env_key_reasons is not UNSET:
             field_dict["unset_env_key_reasons"] = unset_env_key_reasons
+        if source_hosts is not UNSET:
+            field_dict["source_hosts"] = source_hosts
         if imported_env_keys is not UNSET:
             field_dict["imported_env_keys"] = imported_env_keys
         if source is not UNSET:
@@ -351,6 +383,7 @@ class PlanWorkload:
         from ..models.compose_process import ComposeProcess
         from ..models.compose_resources import ComposeResources
         from ..models.plan_detected_by import PlanDetectedBy
+        from ..models.plan_source_host import PlanSourceHost
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
         from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
         from ..models.secret_file import SecretFile
@@ -458,6 +491,12 @@ class PlanWorkload:
         else:
             preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
 
+        app_protocol = d.pop("app_protocol", UNSET)
+
+        streaming = d.pop("streaming", UNSET)
+
+        wake_ahead = d.pop("wake_ahead", UNSET)
+
         allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
 
         _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
@@ -488,6 +527,15 @@ class PlanWorkload:
             unset_env_key_reasons = UNSET
         else:
             unset_env_key_reasons = PlanWorkloadUnsetEnvKeyReasons.from_dict(_unset_env_key_reasons)
+
+        _source_hosts = d.pop("source_hosts", UNSET)
+        source_hosts: list[PlanSourceHost] | Unset = UNSET
+        if _source_hosts is not UNSET:
+            source_hosts = []
+            for source_hosts_item_data in _source_hosts:
+                source_hosts_item = PlanSourceHost.from_dict(source_hosts_item_data)
+
+                source_hosts.append(source_hosts_item)
 
         imported_env_keys = cast(list[str], d.pop("imported_env_keys", UNSET))
 
@@ -541,6 +589,9 @@ class PlanWorkload:
             service_reliability=service_reliability,
             service_binding_transport=service_binding_transport,
             preview_service_calls_policy=preview_service_calls_policy,
+            app_protocol=app_protocol,
+            streaming=streaming,
+            wake_ahead=wake_ahead,
             allowed_service_callers=allowed_service_callers,
             allowed_service_call_scopes=allowed_service_call_scopes,
             class_=class_,
@@ -549,6 +600,7 @@ class PlanWorkload:
             required_env_keys=required_env_keys,
             unset_env_keys=unset_env_keys,
             unset_env_key_reasons=unset_env_key_reasons,
+            source_hosts=source_hosts,
             imported_env_keys=imported_env_keys,
             source=source,
             tier=tier,

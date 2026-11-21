@@ -100,6 +100,14 @@ query strings never reach your bucket: put an asset's version in its key, such
 as `/assets/app.3f9c2e.js`, not in `?v=`. The mount path cannot change after
 creation. Buckets are private unless created public.
 
+A public bucket serves each object with the type it was stored with, on your
+app's own hostname, so an HTML or SVG object runs as a page of your app. That
+is what hosting a static site needs, but it also means anyone who can write to
+the bucket can publish script on your origin. If your users upload files (for
+example through upload URLs from `gregale bucket sign`), keep those uploads in a
+private bucket and hand out signed download URLs, which always serve HTML and
+SVG as attachments.
+
 When public mount paths overlap, the longest matching path serves the request.
 For example, `/assets/images/logo.png` uses the bucket mounted at
 `/assets/images`, regardless of when the bucket at `/assets` was created.

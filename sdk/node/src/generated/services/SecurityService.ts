@@ -16,6 +16,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class SecurityService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the app security posture.
    * Customer-scoped, read-only configuration checks for an app. The
@@ -34,7 +35,7 @@ export class SecurityService {
      */
     slug: string,
   }): CancelablePromise<AppSecurityPostureResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/security',
       path: {
@@ -79,7 +80,7 @@ export class SecurityService {
     slug: string,
     requestBody: AppSecurityRequest,
   }): CancelablePromise<AppSecurityResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/apps/{slug}/security',
       path: {
@@ -119,7 +120,7 @@ export class SecurityService {
     slug: string,
     requestBody: SecurityQuarantineRecoveryRequest,
   }): CancelablePromise<SecurityQuarantineRecoveryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/security/recover',
       path: {
@@ -164,7 +165,7 @@ export class SecurityService {
      */
     slug: string,
   }): CancelablePromise<AppStaticEgressIPResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/static-egress-ip',
       path: {
@@ -211,7 +212,7 @@ export class SecurityService {
     slug: string,
     requestBody: SetAppStaticEgressIPRequest,
   }): CancelablePromise<AppStaticEgressIPResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/static-egress-ip',
       path: {
@@ -253,7 +254,7 @@ export class SecurityService {
      */
     slug: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/static-egress-ip',
       path: {
@@ -285,7 +286,7 @@ export class SecurityService {
      */
     slug: string,
   }): CancelablePromise<AppTrustedSignerListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/trusted_signers',
       path: {
@@ -327,7 +328,7 @@ export class SecurityService {
     name: string,
     requestBody: AddTrustedSignerRequest,
   }): CancelablePromise<TrustedSigner> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/trusted_signers/{name}',
       path: {
@@ -369,7 +370,7 @@ export class SecurityService {
      */
     name: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/trusted_signers/{name}',
       path: {

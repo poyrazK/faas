@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -37,6 +38,10 @@ const (
 // packed archive may not exceed capMB and the expanded source may not exceed
 // api.SourceArchiveMaxExpandedBytes, the limits apid enforces.
 func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, dockerfile bool, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
+	return packGitArchiveReported(srcPath, capMB, mode, buildOnly, dockerfile, nil, excludes...)
+}
+
+func packGitArchiveReported(srcPath string, capMB int, mode secretScanMode, buildOnly map[string][]byte, dockerfile bool, report *deploySourceFilesReport, excludes ...string) (outPath string, regularFileCount int, findings []secretscan.Finding, err error) {
 	if capMB <= 0 {
 		return "", 0, nil, fmt.Errorf("invalid source cap %d MB", capMB)
 	}
@@ -47,6 +52,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 	rules, err := readGitArchiveRules(srcPath, dockerfile)
 	if err != nil {
 		return "", 0, nil, err
+	}
+	if report != nil {
+		report.generated = buildOnly
 	}
 
 	in, err := openCustomerFile(srcPath)
@@ -86,6 +94,7 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 
 	var totalUncompressed int64
 	archiveEntryCount := 0
+	var envFilesLeft []string
 	existingEntries := make(map[string]bool)
 	tr := tar.NewReader(gzIn)
 	for {
@@ -111,7 +120,22 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		if name == "" {
 			continue
 		}
-		if excluded[name] || gitArchiveShouldExclude(name, isDir, rules) {
+		decision := gitArchiveSelection(name, isDir, rules)
+		if excluded[name] {
+			decision = packSelection{excluded: true, reason: "command-scoped exclusion"}
+		}
+		// A committed .env stays local too, as in local-files deploys and
+		// `gregale dev` (prod finding #42): runtime values belong in sealed
+		// env, and upstream repositories commit test fixtures there. A
+		// negated rule such as `!.env` in .gregaleignore still ships one.
+		if !isDir && !decision.excluded && localEnvFileName(name) && decision.reason != "negated ignore rule" {
+			decision = packSelection{excluded: true, reason: "local env file"}
+			envFilesLeft = append(envFilesLeft, name)
+		}
+		if err := report.observe(name, isDir, hdr.Size, decision, false); err != nil {
+			return "", 0, findings, err
+		}
+		if decision.excluded {
 			continue
 		}
 		if hdr.Typeflag != tar.TypeDir && hdr.Typeflag != tar.TypeReg {
@@ -149,6 +173,9 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 				var entryFindings []secretscan.Finding
 				body, entryFindings = scanGitArchiveEntry(name, body, mode)
 				findings = append(findings, entryFindings...)
+				if report != nil && len(entryFindings) > 0 {
+					report.redacted[name] = true
+				}
 				hdr.Size = int64(len(body))
 				if hdr.Size > expandedCap-totalUncompressed {
 					return "", 0, findings, sourceExpandedLimitError()
@@ -209,7 +236,20 @@ func packGitArchive(srcPath string, capMB int, mode secretScanMode, buildOnly ma
 		return "", 0, findings, sourceUploadLimitError(capMB)
 	}
 	success = true
+	if len(envFilesLeft) > 0 {
+		PrintWarn(osStderr, "%s", committedEnvFilesNote(envFilesLeft))
+	}
 	return outPath, regularFileCount, findings, nil
+}
+
+// committedEnvFilesNote names the committed .env files a HEAD deploy left
+// out and how to set their values or ship one anyway.
+func committedEnvFilesNote(names []string) string {
+	shown := names
+	if len(shown) > maxCredentialWarningNames {
+		shown = append(append([]string(nil), shown[:maxCredentialWarningNames]...), fmt.Sprintf("and %d more", len(names)-maxCredentialWarningNames))
+	}
+	return fmt.Sprintf("not uploading committed env file(s) %s; set runtime values with `gregale env push`, or add a negated rule such as !%s to .gregaleignore to upload one", strings.Join(shown, ", "), path.Base(names[0]))
 }
 
 func writeGitArchiveBuildOnlyFiles(tw *tar.Writer, files map[string][]byte, existing map[string]bool, remaining int64, existingEntryCount int) (int, error) {
@@ -392,6 +432,9 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 	rules := packRules{dockerfile: dockerfile}
 	goVendor := map[string]bool{}
 	var ignore, dockerignore []byte
+	// Compose files and service .dockerignore files, for
+	// composeServiceDockerignorePatterns. Bounded like the root files.
+	composeInputs := map[string][]byte{}
 	err := forEachArchiveEntry(srcPath, func(hdr *tar.Header, body io.Reader) error {
 		name := strings.TrimSuffix(hdr.Name, "/")
 		if path.Base(name) == "modules.txt" && path.Base(path.Dir(name)) == "vendor" && hdr.Typeflag == tar.TypeReg {
@@ -403,6 +446,16 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 			dst = &ignore
 		case name == dockerignoreFile && dockerfile:
 			dst = &dockerignore
+		case hdr.Typeflag == tar.TypeReg && len(composeInputs) < 256 &&
+			(slices.Contains(composeFileNames, name) || (path.Base(name) == dockerignoreFile && name != dockerignoreFile)):
+			data, err := io.ReadAll(io.LimitReader(body, maxGitignoreBytes+1))
+			if err != nil {
+				return err
+			}
+			if len(data) <= maxGitignoreBytes {
+				composeInputs[name] = data
+			}
+			return nil
 		default:
 			return nil
 		}
@@ -422,7 +475,12 @@ func readGitArchiveRules(srcPath string, dockerfile bool) (packRules, error) {
 	if err != nil {
 		return rules, fmt.Errorf("read deploy ignore files: %w", err)
 	}
-	rules.patterns = append(parseDockerignore(dockerignore), parseGregaleignore(ignore)...)
+	rules.patterns = rootDockerignorePatterns(dockerignore)
+	rules.patterns = append(rules.patterns, composeServiceDockerignorePatterns(func(rel string) ([]byte, bool) {
+		data, ok := composeInputs[rel]
+		return data, ok
+	})...)
+	rules.patterns = append(rules.patterns, parseGregaleignore(ignore)...)
 	rules.goVendor = func(rel string) bool { return goVendor[rel] }
 	return rules, nil
 }
@@ -441,24 +499,6 @@ func gitArchiveEntrySafe(name string) bool {
 		}
 	}
 	return true
-}
-
-// gitArchiveShouldExclude mirrors filepath.WalkDir's SkipDir behaviour for
-// archives that omit explicit directory headers (git archive commonly does).
-// Checking only the file basename would otherwise let a tracked file below
-// node_modules/.git/etc. survive the filter.
-func gitArchiveShouldExclude(name string, isDir bool, rules packRules) bool {
-	if rules.exclude(name, isDir) {
-		return true
-	}
-	trimmed := strings.TrimSuffix(name, "/")
-	parts := strings.Split(trimmed, "/")
-	for i := 1; i < len(parts); i++ {
-		if rules.exclude(strings.Join(parts[:i], "/"), true) {
-			return true
-		}
-	}
-	return false
 }
 
 func readGitArchiveEntryForScan(name string, size int64, mode secretScanMode) ([]byte, bool) {

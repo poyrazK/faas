@@ -163,6 +163,12 @@ the 20 s gate.
   `api.BuildKitSeedRetryMax` (30 min): the metal run's first seed attempt
   met the new builder base's scan still pending. Drain stops a seed run's VM as it
   does a build's.
+- **Room for the seed (2026-11-16).** The artifact cache keeps `/srv/fc`
+  nearly full (19-21 GB free on both production nodes), so a seed run first
+  asks the cache for the build-drive floor plus the seed reserve, as a build
+  asks it for the floor. Without that a seed was never made. The seed thus
+  outranks the cache's oldest artifacts, which can be fetched again, and the
+  cache is smaller by the seed's real size (about 1.5-2 GB).
 - **Reflink only.** A copy that cannot share the seed's blocks is not made:
   the seed is a 28 GiB sparse image, so a byte copy would cost more than the
   pull it saves. Without a copy the build runs as today. `/srv/fc` is XFS
@@ -175,3 +181,48 @@ the 20 s gate.
   cache export attaches the build's copy to the export VM only when the
   guest reported `buildkit_seeded`; otherwise the copy goes when the build
   ends.
+
+## Production canary finding (2026-11-17)
+
+The first production canary (compute-2, `FAAS_BUILD_BUILDKIT_SEED=1`)
+made a seed, and every build after it ran unseeded: builderd could not open
+the seed (`permission denied`). vmmd stages a builder's writable drives for
+its jail uid by chmodding the source 0600 and chowning it, on the
+assumption that builderd only removes the file afterwards. The seed run's
+drive is the one builderd keeps and reflinks for every build. The metal
+test ran as root, which reads any file, so it passed. The canary was rolled
+back the same day.
+
+- vmmd records a builder's BuildKit seed drive when it stages it and, once
+  the VM has exited and its binds are unmounted, gives the file back to the
+  owner and group of the directory builderd keeps it in (the build export
+  handoff does the same for exports). A failure is logged; it costs only
+  the seed.
+- builderd installs a seed only if it can open it, and drops a ready seed a
+  build cannot open, so the next idle slot makes one. With an older vmmd
+  the seed run therefore fails and backs off instead of installing a seed
+  no build can use.
+- The metal test checks that the installed seed has its directory's owner,
+  which fails without the handoff even as root.
+
+## Second production canary (2026-11-18)
+
+The second canary ran on fsn-2 (compute-1) on rc.355, which carries the
+handoff, from 2026-11-18 19:59Z to 2026-11-19 07:15Z. fsn-3 ran without the
+seed in the same window.
+
+| | Builds | vm_build p50 | vm_build p90 | build command p50 |
+|---|---|---|---|---|
+| fsn-2, seeded | 8 | 41 s | 72 s | 31 s |
+| fsn-3, unseeded, same window | 7 | 74 s | 108 s | 67 s |
+| fsn-2, unseeded, three days before | 165 | 85 s | 120 s | 75 s |
+
+- Every build on fsn-2 ran seeded, and builderd logged no error.
+- The seed belongs to builderd's directory owner. It takes about 2.4 GiB of
+  `/srv/fc`.
+- A release in the window changed the platform images. builderd made a new
+  seed in 87 s and dropped the old one.
+
+production-us turns the seed on for every compute node
+(`builderd_buildkit_seed` in `deploy/ansible/group_vars/compute_nodes/perf_switches.yml`).
+The daemon default stays off.

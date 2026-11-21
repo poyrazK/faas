@@ -100,6 +100,17 @@ func IsJobLayer(key string) bool {
 	return canonicalUUID(job) && (!attempt || canonicalUUID(artifact))
 }
 
+// JobLayerJobID returns the job a JobLayer or JobLayerAttempt key belongs
+// to.
+func JobLayerJobID(key string) (string, bool) {
+	if !IsJobLayer(key) {
+		return "", false
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(key, "jobs/"), ".ext4")
+	job, _, _ := strings.Cut(name, "__")
+	return job, true
+}
+
 // IsSandboxTemplateLayer reports whether key is a sandbox template build's
 // full-rootfs artifact, AppLayer of a template build app
 // (api.IsSandboxTemplateAppSlug) and a UUID deployment
@@ -286,4 +297,12 @@ func SandboxImageIdentity(imageKey string) string {
 		return "apps/" + dir
 	}
 	return imageKey
+}
+
+// SandboxScreenshot is the artifact key of a gregale_browser action's
+// screenshot (ADR-20261117065818 §5). vmmd derives it from the session it
+// runs and the action's ID, so no key travels on the wire; every part is a
+// UUID.
+func SandboxScreenshot(accountID, sandboxID, actionID string) string {
+	return "sandbox-screenshots/" + accountID + "/" + sandboxID + "/" + actionID + ".jpg"
 }

@@ -894,6 +894,63 @@ func TestCmdEnvPush_StrictMode_PropagatesLine(t *testing.T) {
 	}
 }
 
+// TestCmdEnvPush_DefaultScan_PointsAtEnvSet pins where the default scan
+// sends detected secrets: `gregale env set`, not --secret-scan=off. The
+// override-only message taught a coding agent to turn the scan off for a
+// real credential (agent eval rc.357, Django task).
+func TestCmdEnvPush_DefaultScan_PointsAtEnvSet(t *testing.T) {
+	stripeKey := "STRIPE_SECRET_KEY=" + "sk_live_" + "aBcDeFgHiJkLmNoPqRsTuVwXyZ" + "_XXXX" + "\n"
+	for _, tc := range []struct {
+		name     string
+		body     string
+		wantCode int
+		wantPuts []string
+	}{
+		{name: "all secrets", body: stripeKey, wantCode: 1},
+		{name: "mixed", body: "PORT=8080\n" + stripeKey, wantCode: 0, wantPuts: []string{"PORT"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			envFile := filepath.Join(t.TempDir(), ".env")
+			if err := os.WriteFile(envFile, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			var puts []string
+			sink := &multiSink{onSecrets: func(method, path string) (int, any) {
+				if method == "GET" {
+					return http.StatusOK, api.AppSecretListResponse{Quota: 25}
+				}
+				if method == "PUT" {
+					parts := strings.Split(path, "/")
+					puts = append(puts, parts[len(parts)-1])
+					return http.StatusOK, nil
+				}
+				return http.StatusBadRequest, nil
+			}}
+			srv := httptest.NewServer(sink)
+			defer srv.Close()
+			t.Setenv("FAAS_API", srv.URL)
+			t.Setenv("FAAS_TOKEN", "fp_live_x")
+			var stderr bytes.Buffer
+			origStderr := osStderr
+			osStderr = &stderr
+			defer func() { osStderr = origStderr }()
+
+			if code := envPush([]string{"--app", "hello", "-f", envFile}); code != tc.wantCode {
+				t.Fatalf("envPush = %d, want %d; stderr: %s", code, tc.wantCode, stderr.String())
+			}
+			if strings.Join(puts, ",") != strings.Join(tc.wantPuts, ",") {
+				t.Errorf("PUT keys = %v, want %v", puts, tc.wantPuts)
+			}
+			if want := "gregale env set --app hello --file " + envFile; !strings.Contains(stderr.String(), want) {
+				t.Errorf("stderr should point at %q; got: %q", want, stderr.String())
+			}
+			if strings.Contains(stderr.String(), "Use --secret-scan=off to override") {
+				t.Errorf("stderr still offers the scan override as the fix: %q", stderr.String())
+			}
+		})
+	}
+}
+
 // --- app scale / rename ---------------------------------------------------
 
 // TestCmdAppScale_RequiresLogin pins the no-token exit code (#72).
@@ -934,7 +991,7 @@ func TestCmdAppScale_Min1_EchoesResidentCost(t *testing.T) {
 		"✓ Updated",
 		"1 instance of 512 MB kept warm",
 		"~365.6 GB-h/mo",
-		"5000 millicent/GB-h overage",
+		"$0.05/GB-h overage",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout missing %q\nfull: %s", want, out)

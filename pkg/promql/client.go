@@ -176,6 +176,31 @@ type VectorSample struct {
 	Value  float64
 }
 
+const (
+	VectorFailureTransport       = "transport_error"
+	VectorFailureHTTP            = "http_error"
+	VectorFailureInvalidResponse = "invalid_response"
+	VectorFailureOther           = "other"
+)
+
+type vectorQueryError struct {
+	reason string
+	cause  error
+}
+
+func (e *vectorQueryError) Error() string { return e.cause.Error() }
+func (e *vectorQueryError) Unwrap() error { return e.cause }
+
+// VectorQueryFailure returns a fixed reason for a failed instant vector query.
+// Callers can check for cancellation and deadlines through the wrapped error.
+func VectorQueryFailure(err error) string {
+	var failure *vectorQueryError
+	if errors.As(err, &failure) {
+		return failure.reason
+	}
+	return VectorFailureOther
+}
+
 // QueryVector runs an instant query and preserves every series' labels. Rows
 // with malformed values are ignored; a non-vector response is a contract
 // error. This is used by the public-status evaluator for ALERTS{}.
@@ -216,15 +241,24 @@ func (c *Client) queryVectorAt(ctx context.Context, query string, strict bool, a
 	}
 	resp, err := c.doer.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, &vectorQueryError{reason: VectorFailureTransport, cause: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
-		return nil, fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		err := fmt.Errorf("prometheus %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, &vectorQueryError{reason: VectorFailureHTTP, cause: err}
 	}
+	rows, err := decodeVectorResponse(resp.Body, query, strict)
+	if err != nil {
+		return nil, &vectorQueryError{reason: VectorFailureInvalidResponse, cause: err}
+	}
+	return rows, nil
+}
+
+func decodeVectorResponse(body io.Reader, query string, strict bool) ([]VectorSample, error) {
 	var payload queryResponse
-	if err := decodePromQLResponse(resp.Body, &payload); err != nil {
+	if err := decodePromQLResponse(body, &payload); err != nil {
 		return nil, err
 	}
 	if err := validatePromQLSeries(len(payload.Data.Result)); err != nil {
@@ -395,8 +429,9 @@ func (c *Client) QueryRange(ctx context.Context, query, start, end, step string)
 // samples whose label resolves to ""): the rollup's "6 round-trips
 // regardless of N apps" promise depends on the per-app loop only
 // seeing per-app keys; an unlabeled metric would otherwise poison
-// the loop with a "" key. NaN / Inf samples parse to NaN / +Inf —
-// callers guard with safeFloat / safeRoundNonNeg.
+// the loop with a "" key. A NaN / Inf sample (0/0 for an idle app) is
+// dropped too, so one app's sample cannot fail the whole map: platform
+// alerts' outage detection failed every pass on prod because of it.
 func (c *Client) QueryMap(ctx context.Context, query string) (map[string]float64, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("promql: client not configured")
@@ -412,6 +447,9 @@ func (c *Client) QueryMap(ctx context.Context, query string) (map[string]float64
 			continue
 		}
 		f, err := parseSampleValue(row.Value, query)
+		if errors.Is(err, errNonFiniteSample) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -556,6 +594,9 @@ func (c *Client) doVector(ctx context.Context, query string) ([]struct {
 	return pr.Data.Result, nil
 }
 
+// errNonFiniteSample marks a NaN or Inf sample value.
+var errNonFiniteSample = errors.New("non-finite value")
+
 // parseSampleValue parses the second element of a Prometheus sample
 // value pair (timestamp + stringified float). Returns a structured
 // error so callers can wrap with the offending query.
@@ -569,7 +610,7 @@ func parseSampleValue(v [2]any, query string) (float64, error) {
 		return 0, fmt.Errorf("parse %q for query %q: %w", raw, query, err)
 	}
 	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return 0, fmt.Errorf("non-finite value %q for query %q", raw, query)
+		return 0, fmt.Errorf("%w %q for query %q", errNonFiniteSample, raw, query)
 	}
 	return f, nil
 }

@@ -14,7 +14,7 @@ import (
 )
 
 // StorageDocsURL documents storage limits and their growth.
-const StorageDocsURL = "https://gregale.dev/docs/managed-postgres#storage"
+const StorageDocsURL = "https://gregale.dev/docs/managed-postgres#usage-and-limits"
 
 // BindingDocsURL documents the per-app binding limit.
 const BindingDocsURL = "https://gregale.dev/docs/plans"

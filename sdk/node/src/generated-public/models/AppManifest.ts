@@ -11,6 +11,7 @@ import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { TracingConfig } from './TracingConfig.js';
+import type { WarmupHook } from './WarmupHook.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
@@ -72,6 +73,7 @@ export type AppManifest = {
   restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
   after_restore?: AfterRestoreHook;
   before_checkpoint?: BeforeCheckpointHook;
+  warmup?: WarmupHook;
   /**
    * The app's declared pause tier. Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
    */

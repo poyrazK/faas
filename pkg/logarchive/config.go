@@ -185,6 +185,10 @@ type Config struct {
 	// field read parts; switch writers on only once every gatewayd-internal
 	// runs such a release.
 	PartObjects bool
+	// WriteOnly is set by a write-only envelope (Credentials.Access): the
+	// credentials create objects and nothing else, so the shipper ships part
+	// objects and no reader runs on this host (ADR-20261110210000 slice 3l).
+	WriteOnly bool
 
 	// regionExplicit distinguishes an explicit FAAS_LOG_ARCHIVE_REGION from
 	// ConfigFromEnv's us-east-1 default. It lets an archive envelope provide

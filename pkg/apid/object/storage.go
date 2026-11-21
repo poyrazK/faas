@@ -374,6 +374,23 @@ func (s *Service) CreateBucket(w http.ResponseWriter, r *http.Request, acct stat
 		BucketProblem(w, ErrObjectStorageDisabled)
 		return
 	}
+	// A bucket's bindings are delivered as secrets in its scope, so a project
+	// app's "production" bucket lives in the lane production is served from,
+	// Only a serving deployment decides: before the first deploy a bucket
+	// keeps the scope it names, since the bucket is not a value the clone
+	// fallback (ProjectEnvironmentCloneValueScope) could see.
+	if app.ProjectID != "" && req.Scope == "production" {
+		serving, err := state.ResolveProductionDeployment(r.Context(), s.Host.Store(), app.ID)
+		switch {
+		case err == nil && serving.Scope == "":
+			req.Scope = api.DefaultEnvScope
+		case err == nil:
+			req.Scope = serving.Scope
+		case !errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.ErrCapacity("could not resolve the production environment's scope"))
+			return
+		}
+	}
 	if s.providerRefusingCredentials() {
 		BucketProblem(w, ErrObjectStorageProviderRefused)
 		return
@@ -670,6 +687,14 @@ func (s *Service) ListBucketObjects(w http.ResponseWriter, r *http.Request, acct
 	}
 	if err != nil || limit < 1 || limit > 1000 || len(prefix) > 1024 || !utf8.ValidString(prefix) || len(cursor) > 8192 {
 		BucketProblem(w, objectstorage.ErrInvalid)
+		return
+	}
+	if page, handled, err := s.listOverlayBucketObjects(r.Context(), b, provider, prefix, cursor, int32(limit)); handled {
+		if err != nil {
+			BucketProblem(w, err)
+			return
+		}
+		httpkit.WriteJSON(w, 200, page)
 		return
 	}
 	if err := s.CustomerObjectRequestRecorder(b)(r.Context()); err != nil {

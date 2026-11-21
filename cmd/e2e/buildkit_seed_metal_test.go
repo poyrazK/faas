@@ -43,6 +43,14 @@ const buildKitSeededLine = "BuildKit started from this node's seed"
 // tick and a cold seed run on a two-vCPU acceptance host.
 const buildKitSeedWait = 30 * time.Minute
 
+// buildKitSeedStartupDeadlineS is the Pro plan's startup window. On a
+// two-vCPU acceptance host the first app's prime shares both vCPUs with the
+// seed run: its layer verification plus its cold boot came to about the
+// 30 s COLD_BOOTING window, and the watchdog stopped it at 13.9 s into the
+// boot (2026-11-17). The longer deadline extends the prime's budgets
+// (primeStartupExtension); the test checks seeding, not cold-boot latency.
+const buildKitSeedStartupDeadlineS = 60
+
 func TestBuildKitSeedMetal(t *testing.T) {
 	if os.Getenv("FAAS_TEST_KERNEL") == "" || os.Getenv("FAAS_BUILDER_BASE_PATH") == "" {
 		t.Skip("FAAS_TEST_KERNEL / FAAS_BUILDER_BASE_PATH unset; skipping metal BuildKit seed test")
@@ -78,6 +86,7 @@ func TestBuildKitSeedMetal(t *testing.T) {
 
 	t.Run("seed-run-makes-a-seed", func(t *testing.T) {
 		waitForBuildKitSeed(t, seedDir)
+		assertSeedOwnedLikeItsDirectory(t, seedDir)
 	})
 
 	createOpenApp(t, h, key, "seeded")
@@ -104,11 +113,12 @@ func TestBuildKitSeedMetal(t *testing.T) {
 func createOpenApp(t *testing.T, h *e2etest.Harness, key, slug string) {
 	t.Helper()
 	public := false
+	startup := buildKitSeedStartupDeadlineS
 	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: slug, Type: "app", RequireAuthn: &public}); got != http.StatusCreated {
 		t.Fatalf("create app %s: status=%d", slug, got)
 	}
 	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/"+slug, api.UpdateAppRequest{RequireAuthn: &public,
-		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}, StartupDeadlineS: &startup}); status != http.StatusOK {
 		t.Fatalf("open app auth %s: status=%d", slug, status)
 	}
 }
@@ -153,6 +163,29 @@ func waitForBuildKitSeed(t *testing.T, seedDir string) {
 			t.Fatalf("no BuildKit seed in %s after %v", seedDir, buildKitSeedWait)
 		}
 		time.Sleep(5 * time.Second)
+	}
+}
+
+// assertSeedOwnedLikeItsDirectory checks vmmd handed the seed run's drive
+// back: builderd, an unprivileged user in production, must open the seed for
+// every build. This suite runs as root and can read any file, so it checks
+// ownership; a seed left owned by the seed run's jail uid made every
+// production build run unseeded (2026-11-17).
+func assertSeedOwnedLikeItsDirectory(t *testing.T, seedDir string) {
+	t.Helper()
+	seeds, err := filepath.Glob(filepath.Join(seedDir, "*.ext4"))
+	if err != nil || len(seeds) != 1 {
+		t.Fatalf("seed drives = %v (%v), want one", seeds, err)
+	}
+	var dir, seed unix.Stat_t
+	if err := unix.Stat(seedDir, &dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(seeds[0], &seed); err != nil {
+		t.Fatal(err)
+	}
+	if seed.Uid != dir.Uid || seed.Gid != dir.Gid {
+		t.Fatalf("seed %s owned by %d:%d, want its directory's %d:%d (vmmd did not hand the drive back)", seeds[0], seed.Uid, seed.Gid, dir.Uid, dir.Gid)
 	}
 }
 

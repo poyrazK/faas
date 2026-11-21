@@ -50,13 +50,16 @@ import (
 // inject a plain *http.Client via WithHTTPClient to reach httptest
 // loopback servers; production never does.
 type OCIRegistryStorageBackend struct {
-	hc       *http.Client // egress-policy transport; nil → oci.NewEgressHTTPClient()
-	registry string       // "ghcr.io/onebox-faas" — namespace prefix; "" rejected at Put/Get time
-	prefix   string       // "faas/" — repo namespace; default; overridable via WithRepoPrefix
-	user     string       // optional Basic-Auth username for the token endpoint
-	pw       string       // optional Basic-Auth password
-	ua       string       // User-Agent header on every request
-	timeout  time.Duration
+	// deferDelete, when set, records deletes instead of performing them
+	// (ADR-20261115180000, DeferDeletes).
+	deferDelete DeleteDeferrer
+	hc          *http.Client // egress-policy transport; nil → oci.NewEgressHTTPClient()
+	registry    string       // "ghcr.io/onebox-faas" — namespace prefix; "" rejected at Put/Get time
+	prefix      string       // "faas/" — repo namespace; default; overridable via WithRepoPrefix
+	user        string       // optional Basic-Auth username for the token endpoint
+	pw          string       // optional Basic-Auth password
+	ua          string       // User-Agent header on every request
+	timeout     time.Duration
 	// githubPackagesAPI enables GHCR's supported package-version deletion
 	// fallback. GHCR rejects distribution-spec manifest DELETE with 405, but
 	// exposes version deletion through api.github.com.
@@ -660,6 +663,9 @@ func (o *OCIRegistryStorageBackend) Delete(ctx context.Context, key string) erro
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("storage: oci delete %q: %w", key, err)
+	}
+	if o.deferDelete != nil {
+		return o.deferDelete.DeferDelete(ctx, key)
 	}
 	if o.deleteUnsupported.Load() {
 		if err := o.deleteGitHubPackageVersion(ctx, repo, tag); err != nil {

@@ -173,7 +173,7 @@ func cmdScan(args []string) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, *showAffected, *explain)
 }
@@ -241,7 +241,7 @@ func executeConnectedRepoScan(opts connectedRepoScanOptions) int {
 		return printErr("Scan failed", err)
 	}
 	if jsonOutput {
-		return jsonOut(writeJSON(plan))
+		return jsonOut(writeJSON(withFeatureHints(plan)))
 	}
 	return printPlanTextWithExplain(osStdout, plan, excludeList, opts.showAffected, opts.explain)
 }
@@ -258,7 +258,7 @@ func executeConnectedRepoPreview(ctx context.Context, opts connectedRepoScanOpti
 		return code
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -380,7 +380,7 @@ func runProjectDeployPreviewWithMode(
 		return printErr("Scan failed", err)
 	}
 	if emitJSON {
-		if code := jsonOut(writeJSON(plan)); code != 0 {
+		if code := jsonOut(writeJSON(withFeatureHints(plan))); code != 0 {
 			return code
 		}
 		if strict && !plan.CanApply {
@@ -907,9 +907,12 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 // confirmation prompt and existing callers.
 // write is indistinguishable from a malformed terminal and is intentionally
 // handled like the legacy renderer.
-//
-//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
+	return printPreparedPlanText(w, withFeatureHints(plan), excludeSet, showAffected, explain)
+}
+
+//nolint:errcheck // terminal output is best effort.
+func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
@@ -969,6 +972,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
 		printDefaultMemoryServices(w, plan)
+		printFeatureHints(w, plan.FeatureHints)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
 			printPlanDetectionWarnings(w, plan.DetectionWarnings)
@@ -1024,7 +1028,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			// appears in this loop, and no "(excluded)" tag is
 			// needed here. The show-affected branch (printAffectedText)
 			// renders the partition including Skipped.
-			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, imageSuffix)
+			fmt.Fprintf(w, "  - %-20s root=%-20s%s%s%s%s%s%s%s%s%s%s\n", wl.Name, wl.RootDir, schedSuffix, classSuffix, memorySuffix, servicePolicySuffix, serviceTransportSuffix, previewPolicySuffix, tenantPolicySuffix, visibilitySuffix, planWorkloadProtocolSuffix(wl), imageSuffix)
 			if explain {
 				printWorkloadDetectionTrace(w, wl)
 			}
@@ -1040,6 +1044,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			fmt.Fprintln(w, "  - "+wn)
 		}
 	}
+	printFeatureHints(w, plan.FeatureHints)
 	if explain && len(plan.Workloads) == 0 {
 		printPlanDetectionTrace(w, nil)
 	}
@@ -1373,4 +1378,22 @@ func planProblem(plan api.PlanResponse) api.Problem {
 		Title:  "Cron limit reached",
 		Detail: fmt.Sprintf("plan caps crons at %d; you have %d.", plan.LimitCrons, plan.ObservedCrons),
 	}
+}
+
+// planWorkloadProtocolSuffix shows the Compose x-gregale-app-protocol,
+// -streaming and -wake-ahead settings the deploy applies, so a dry run
+// confirms the extensions took effect (microservices-demo feedback,
+// 2026-11-16).
+func planWorkloadProtocolSuffix(wl api.PlanWorkload) string {
+	var out string
+	if wl.AppProtocol != "" {
+		out += "  protocol=" + wl.AppProtocol
+	}
+	if wl.Streaming != nil {
+		out += fmt.Sprintf("  streaming=%t", *wl.Streaming)
+	}
+	if wl.WakeAhead != nil {
+		out += fmt.Sprintf("  wake_ahead=%t", *wl.WakeAhead)
+	}
+	return out
 }

@@ -9,10 +9,11 @@ accounts it is released to.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable, Iterator
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 from uuid import UUID
 
 from .._wrapper import FaaSClient as _BaseFaaSClient
+from .files import FileBucket
 
 TaskOutput = TypeVar("TaskOutput")
 
@@ -52,6 +53,18 @@ class FaaSClient(_BaseFaaSClient):
     def awatch_execution_environment(self, environment_id: str, *, after: int = 0, poll_interval: float = 2.0) -> AsyncIterator[dict[str, Any]]:
         from .execution_environments import awatch_execution_environment
         return awatch_execution_environment(self, environment_id, after=after, poll_interval=poll_interval)
+
+    def __enter__(self) -> Self:
+        super().__enter__()
+        return self
+
+    async def __aenter__(self) -> Self:
+        await super().__aenter__()
+        return self
+
+    def files(self, *, app_slug: str, bucket: str) -> FileBucket:
+        """Managed application files; requires storage preview access and grants."""
+        return FileBucket(self, app_slug=app_slug, bucket=bucket)
 
     def watch_execution(
         self,
