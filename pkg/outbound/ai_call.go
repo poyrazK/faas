@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/outbound/aiprices"
 )
 
 // aiCallPlan is the gateway's view of one AI call before admission
@@ -139,6 +140,7 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 	case hasBody:
 		inputBytes = api.OutboundAIRequestBufferMaxBytes
 	}
+	rateTokens := int64(-1)
 	estimate := AIUsage{Model: plan.facts.model, Known: true,
 		InputTokens: (inputBytes + api.OutboundAIReserveBytesPerToken - 1) / api.OutboundAIReserveBytesPerToken}
 	if plan.endpoint.media != aiMediaNone {
@@ -149,7 +151,11 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 			estimate.OutputTokens = *plan.guard.MaxOutputTokens
 		}
 		if estimate.OutputTokens == 0 {
-			estimate.OutputTokens = api.OutboundAIDefaultOutputReserveTokens
+			estimate.OutputTokens = modelOutputReserve(integration, plan.facts.model)
+			// The rate limit keeps reserving the default: it throttles
+			// typical calls, and reserving every call's longest possible
+			// response would starve a tokens-per-minute guard.
+			rateTokens = api.OutboundAIDefaultOutputReserveTokens
 		}
 	}
 	// ADR-1433: the request's built-in tools reserve their fees.
@@ -159,7 +165,22 @@ func estimateAIReservation(r *http.Request, integration Integration, plan *aiCal
 	estimate.OutputTokens = min(estimate.OutputTokens, api.OutboundAIMaxTokensPerResponse)
 	estimate.OutputImageTokens = min(estimate.OutputImageTokens, estimate.OutputTokens)
 	cost := aiCallCostMillicents(integration, estimate)
-	return aiReservation{tokens: estimate.InputTokens + estimate.OutputTokens, cost: cost, estimate: estimate}
+	if rateTokens < 0 || rateTokens > estimate.OutputTokens {
+		rateTokens = estimate.OutputTokens
+	}
+	return aiReservation{tokens: estimate.InputTokens + rateTokens, cost: cost, estimate: estimate}
+}
+
+// modelOutputReserve is what a generation call that names no output ceiling
+// reserves for its cost (cost-control review 2026-11-19, N17): the longest
+// response its model can return, so concurrent calls cannot each settle far
+// past their reservation and overshoot a hard spend cap. A model the catalog
+// does not know reserves api.OutboundAIUnknownModelOutputReserveTokens.
+func modelOutputReserve(integration Integration, model string) int64 {
+	if limit, ok := aiprices.Default().MaxOutputTokens(integration.AIProvider, model); ok {
+		return max(limit, api.OutboundAIDefaultOutputReserveTokens)
+	}
+	return api.OutboundAIUnknownModelOutputReserveTokens
 }
 
 // estimateMediaReservation reserves an image, transcription or speech call
