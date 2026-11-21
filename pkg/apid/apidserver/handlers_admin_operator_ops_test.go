@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -157,6 +158,55 @@ func TestObsNodeDrain_EnqueuesDurableIntentBeforeMutation(t *testing.T) {
 	}
 	if fresh.Lifecycle != state.NodeLifecycleActive {
 		t.Fatalf("handler mutated node before intent dispatch: lifecycle=%q", fresh.Lifecycle)
+	}
+}
+
+// A node operation's preflight names the apps and tenants with a VM on the
+// node now, not every app the node ever ran.
+func TestObsNodeDrainPreflightCountsResidentWorkloadOnly(t *testing.T) {
+	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
+	ctx := context.Background()
+	store := *e.Store()
+	node, err := store.UpsertComputeNodeFromOperator(ctx, state.ComputeNode{
+		Name: "node-preflight-a", TargetURL: "unix:///run/faas/vmmd-preflight-a.sock",
+		VPCPUs: 8, MemMB: 16384, MaxConcurrency: 32, AdmissionCeilingMB: 12000,
+	})
+	if err != nil {
+		t.Fatalf("seed node: %v", err)
+	}
+	for _, seed := range []struct {
+		slug   string
+		states []state.State
+	}{
+		{"preflight-live", []state.State{state.StateRunning, state.StateParked}},
+		{"preflight-history", []state.State{state.StateParked, state.StateStopped}},
+	} {
+		app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: seed.slug, Type: state.AppTypeApp})
+		if err != nil {
+			t.Fatal(err)
+		}
+		dep, err := store.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: app.ID, Status: state.DeployLive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, st := range seed.states {
+			if _, err := store.CreateInstance(ctx, app.ID, dep.ID, string(st), 512, node.ID, uuid.NewString()); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	rec := e.DoAdmin(t, http.MethodPost, "/v1/admin/ops/nodes/node-preflight-a/drain?confirm=true&reason=kernel_upgrade", nil, nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("node drain: got status %d, want 202; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp api.ObsNodeMutationResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	p := resp.Preflight
+	if p.AffectedApps != 1 || p.AffectedTenants != 1 || p.TotalInstances != 1 || p.LiveInstances != 1 || p.LiveRAMMB != int64(512+api.PerVMOverheadMB) {
+		t.Fatalf("preflight = %+v", p)
 	}
 }
 

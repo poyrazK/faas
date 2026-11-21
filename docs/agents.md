@@ -202,19 +202,28 @@ agent key instead; see
 ## Give the agent its own key
 
 An agent that runs the `gregale` CLI, or the MCP server locally, needs a
-credential. Create a dedicated key instead of sharing your own login. Scope
-it to what the agent needs:
+credential. Create a dedicated agent key instead of sharing your own login:
 
 ```sh
-gregale key create coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --agent
 ```
+
+`--agent` makes it an agent key (the `agent` scope) with `apps:read` and
+`deploy:write`. Only an agent key asks a person before risky requests
+([approvals](#approve-an-agents-risky-requests)) and holds the always-on cost
+it adds to an [agent budget](#limit-what-an-agent-adds-to-your-bill). A key
+without the `agent` scope gets neither, so don't give a coding agent one.
+When the CLI runs inside Claude Code, Codex, Cursor or Gemini CLI, `key
+create` warns if the key it creates lacks the `agent` scope.
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
 and crons. It also changes app settings, including turning off an app's
 request authentication, and deletes apps (a soft delete that `gregale app
 restore` reverses within the grace period). An agent key's `--approvals`
-(default `all`) puts deletes and production changes in front of a person. Add `env:write` for the MCP tools that set non-secret variables.
+(default `all`) puts deletes and production changes in front of a person. To
+choose other scopes, list them with `--scopes`; `--agent` adds the `agent`
+scope to them. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access
@@ -344,14 +353,21 @@ your account's spend cap still bounds it.
 Within the budget the change goes through. Past it, Gregale answers
 `428 approval_required` with a review link, as for other approvals, and the
 review page shows the change's added monthly cost. Approving lets that one
-change through. Lowering cost never asks, and does not give budget back.
+change through. Lowering cost never asks, and gives the budget back.
+
+The budget holds the total always-on cost the agent's changes keep running,
+not what it added this month: it does not reset on the 1st, so capacity an
+agent added last month still counts. A prewarm must fit the budget when it is
+made but stops counting once made, since its window ends on its own. Two
+changes sent at once cannot both fit into the same headroom: each reserves
+its cost before it is written.
 
 Without a budget of its own, an agent gets half its plan's default spend cap:
 $5 a month on Hobby, $25 on Pro, $75 on Scale ($0 on Free, which cannot keep
 instances warm). Set a budget, make it unlimited, or go back to the default:
 
 ```sh
-gregale mcp connection budget <id>             # budget and this month's use
+gregale mcp connection budget <id>             # budget and the always-on cost in use
 gregale mcp connection budget <id> --set 40    # $40 a month
 gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
@@ -385,6 +401,15 @@ tarball or an upload) applies the source's own `gregale.yaml` deployment
 settings, so it is priced for the replicas or warm floor they add before
 any of them is written.
 
+A cron is priced too (`POST /v1/crons`, and a `PATCH /v1/crons/{id}` that
+changes its schedule, timezone or enables it), because a cron that fires
+more often than its app idles keeps the app running. Each firing is priced
+as the app staying up for its idle timeout, or until the next firing when
+that comes sooner: a cron every minute costs as much as a warm instance, a
+daily one almost nothing. A command cron is priced for its own VM up to the
+command's timeout. An HTTP cron on an app that already keeps a warm
+instance adds nothing.
+
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:
 each workload's floor in the source environment. A branch keeps no
@@ -401,7 +426,7 @@ scales to zero adds nothing; its compute, storage and egress follow use.
 ## See your agents at a glance
 
 `gregale mcp connection status` shows each connected agent on one line: its
-pending approval requests, the always-on cost it committed this month
+pending approval requests, the always-on cost its changes keep running
 against its budget, how many of its changes of the last 7 days undo can
 reverse, and its last change. Give an id for one agent in detail, with the
 review link of each pending request:

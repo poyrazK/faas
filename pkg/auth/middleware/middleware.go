@@ -705,6 +705,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 						m.recordAgentActivity(r, acct, key, aw.status, activity)
 					}
 					next(aw, r, acct)
+					m.releaseAgentBudget(key.ID, activity) //nolint:contextcheck // the release outlives the request, like the activity row
 					if !recorded {
 						m.finishAgentUndo(r, undo, aw, activity.id)
 						m.recordAgentActivity(r, acct, key, aw.status, activity) //nolint:contextcheck // the insert outlives the request on purpose, like TouchKeyLastUsed

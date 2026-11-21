@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 )
 
 // ListActiveInstancesOnNodeID is ListInstancesOnNodeID limited to instances
@@ -51,9 +52,14 @@ func (m *MemStore) ListActiveInstancesOnNodeID(_ context.Context, nodeID string)
 
 // ResidentStates are the instance states that hold a VM on a node: serving,
 // starting, paused in a warm pool or frozen, draining, snapshotting or
-// migrating. Parked, stopped, failed and evicted rows are history.
+// migrating. They are exactly LiveStates (IsLive); parked, stopped, failed
+// and evicted rows are history.
 func ResidentStates() []State {
-	return []State{StateRunning, StateColdBooting, StateWaking, StateDraining, StateSnapshotting, StateMigrating, StateWarm, StateFrozen}
+	out := make([]State, 0, len(liveStates))
+	for _, st := range liveStates {
+		out = append(out, State(st))
+	}
+	return out
 }
 
 // ListResidentInstancesOnNodeID is ListInstancesOnNodeID limited to resident
@@ -87,7 +93,9 @@ func (m *MemStore) ListResidentInstancesOnNodeID(_ context.Context, nodeID strin
 	defer m.mu.Unlock()
 	out := make([]Instance, 0)
 	for _, ins := range m.instances {
-		if ins.NodeID == nodeID && resident[State(ins.State)] {
+		// Lowercased like the callers' IsLive checks: MemStore accepts any
+		// case, while PostgreSQL's CHECK only allows lowercase states.
+		if ins.NodeID == nodeID && resident[State(strings.ToLower(ins.State))] {
 			out = append(out, ins)
 		}
 	}

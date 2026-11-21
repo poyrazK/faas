@@ -273,6 +273,13 @@ func (m *management) listOrgMembers(ctx context.Context, a orgArgs) (any, error)
 	if org == "" {
 		org = m.opts.Org
 	}
+	if org == "" {
+		picked, err := m.onlyActiveOrg(ctx)
+		if err != nil {
+			return nil, err
+		}
+		org = picked
+	}
 	if err := validateSegment(org, "org"); err != nil {
 		return nil, invalid("invalid_argument", "name the organization")
 	}
@@ -297,4 +304,27 @@ func (m *management) listOrgMembers(ctx context.Context, a orgArgs) (any, error)
 		return nil, err
 	}
 	return map[string]any{"org": org, "members": members.Members, "invitations": invites}, nil
+}
+
+// onlyActiveOrg picks the account's one active organization when org is
+// omitted; with several it names them, since the agent cannot discover them
+// otherwise and "name the organization" left it guessing.
+func (m *management) onlyActiveOrg(ctx context.Context) (string, error) {
+	orgs, err := m.client.ListOrgs(ctx)
+	if err != nil {
+		return "", err
+	}
+	var active []string
+	for _, o := range orgs.Orgs {
+		if o.Status == "" || o.Status == "active" {
+			active = append(active, o.Slug)
+		}
+	}
+	if len(active) == 1 {
+		return active[0], nil
+	}
+	if len(active) == 0 {
+		return "", invalid("invalid_argument", "the account belongs to no active organization")
+	}
+	return "", invalid("invalid_argument", "name the organization in org: one of "+strings.Join(active, ", "))
 }

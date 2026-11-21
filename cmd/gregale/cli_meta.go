@@ -4841,7 +4841,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
-			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons and event subscriptions the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons, event subscriptions and bucket notifications the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
@@ -5210,10 +5210,11 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List API keys"},
 			{Name: "add", Short: "Mint a new API key", Positionals: []string{"<label>"}, Flags: []cliFlag{
+				{Name: "agent", Short: "a key for a coding agent: adds the agent scope so risky requests ask a person and always-on cost is held to an agent budget (default scopes agent,apps:read,deploy:write)"},
 				{Name: "scopes", Short: "comma-separated API key scopes; omit for full admin access", Value: "SCOPE,..."},
 				{Name: "projects", Short: "limit an agent key to these projects (comma-separated slugs)", Value: "SLUG,..."},
 				{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},
-			}, Examples: []string{"gregale key create agent-runner --scopes runs:write", "gregale key create ci-agent --scopes agent,deploy:write --projects api,web", "gregale key create sandbox-agent --scopes agent,deploy:write --approvals none"}},
+			}, Examples: []string{"gregale key create coding-agent --agent", "gregale key create agent-runner --scopes runs:write", "gregale key create ci-agent --scopes agent,deploy:write --projects api,web", "gregale key create sandbox-agent --scopes agent,deploy:write --approvals none"}},
 			{Name: "rm", Short: "Revoke an API key", Positionals: []string{"<id>"}},
 			{Name: subRotate, Short: "Rotate an API key", Positionals: []string{"<key-id>"}, Flags: []cliFlag{
 				{Name: "revoke-old", Short: "revoke the old key now instead of after the grace window (use when the key leaked)", Bool: true},

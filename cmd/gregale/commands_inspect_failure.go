@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -14,6 +15,9 @@ type inspectFailureOverview struct {
 	Candidate    bool
 	Cause        string
 	Recovery     string
+	// CrashedSince is set when the release's process crashed: its output is
+	// in the runtime logs from this time, not in the deployment log.
+	CrashedSince string
 }
 
 func inspectPersistedFailure(deployment, candidate *api.DeploymentResponse) *inspectFailureOverview {
@@ -33,7 +37,14 @@ func inspectPersistedFailure(deployment, candidate *api.DeploymentResponse) *ins
 	if cause == recovery {
 		recovery = ""
 	}
-	return &inspectFailureOverview{DeploymentID: failed.ID, Candidate: isCandidate, Cause: cause, Recovery: recovery}
+	overview := &inspectFailureOverview{DeploymentID: failed.ID, Candidate: isCandidate, Cause: cause, Recovery: recovery}
+	if failed.ErrorCode == api.CodeAppStartupCrash {
+		overview.CrashedSince = "30m"
+		if created, err := time.Parse(time.RFC3339Nano, failed.CreatedAt); err == nil {
+			overview.CrashedSince = created.UTC().Truncate(time.Second).Format(time.RFC3339)
+		}
+	}
+	return overview
 }
 
 func firstInspectFailureText(values ...string) string {

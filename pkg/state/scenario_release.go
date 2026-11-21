@@ -5,8 +5,10 @@ import (
 	"errors"
 	"slices"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
+	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 )
 
 // IsScenarioCommandAdmissionRefused reports a durable refusal by the contained
@@ -32,4 +34,19 @@ func ReleaseTaskRunsDeploymentRelease(task AppTask, dep Deployment) bool {
 		return true
 	}
 	return !task.CommandShell && rehearsalcommand.IsContainedReleaseFor(task.Command, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+}
+
+// HostedTaskRehearsalMigrationRelease identifies the command-only app from the
+// private run's deterministic workload identity. A caller-selected scenario
+// workload name cannot suppress priming for an ordinary app.
+func HostedTaskRehearsalMigrationRelease(task AppTask) bool {
+	if task.Kind != AppTaskKindRelease || !rehearsalcommand.IsCommand(task.Command) {
+		return false
+	}
+	spec, err := rehearsalcommand.Decode(task.Command)
+	if err != nil {
+		return false
+	}
+	run, err := uuid.Parse(spec.RunID)
+	return err == nil && run != uuid.Nil && task.AppID == tasktoolrehearsal.WorkloadID(run, tasktoolrehearsal.MigrationWorkload)
 }

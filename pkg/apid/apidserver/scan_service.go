@@ -875,12 +875,24 @@ type productionRedeployStore interface {
 // without a source change nothing ever rebuilt them (2026-11-15 agent eval:
 // three retail services stayed down across retries). An app with a
 // deployment still in flight is left to it.
+//
+// It also returns apps whose newest production deployment failed while an
+// older release keeps serving. The reconcile records a workload's source hash
+// before its build runs, so after that failure the same source compared equal
+// and `deploy --project --only <svc>` reported the service "unchanged" while
+// the old (broken) release served; only `release retry` recovered it (boa
+// multi-service deploy, 2026-11-21). The checkout's source is what the deploy
+// asks for, and it is not the one serving.
 func productionAppsWithoutRelease(ctx context.Context, store productionRedeployStore, selected []state.App, added, changed []state.App) ([]state.App, error) {
 	candidates, err := environmentAppsWithoutLiveDeployment(ctx, store, selected, state.DefaultEnvScope, added, changed)
 	if err != nil {
 		return nil, err
 	}
-	var out []state.App
+	behind, err := productionAppsBehindFailedDeployment(ctx, store, selected, candidates, added, changed)
+	if err != nil {
+		return nil, err
+	}
+	out := behind
 	for _, app := range candidates {
 		latest, err := store.LatestDeployment(ctx, app.ID)
 		switch {
@@ -893,6 +905,53 @@ func productionAppsWithoutRelease(ctx context.Context, store productionRedeployS
 		out = append(out, app)
 	}
 	return out, nil
+}
+
+// productionAppsBehindFailedDeployment returns selected apps, not already
+// queued or without a live release, whose live production release is older
+// than a failed production deployment.
+func productionAppsBehindFailedDeployment(ctx context.Context, store productionRedeployStore, selected, withoutRelease, added, changed []state.App) ([]state.App, error) {
+	skip := make(map[string]bool, len(withoutRelease)+len(added)+len(changed))
+	for _, group := range [][]state.App{withoutRelease, added, changed} {
+		for _, app := range group {
+			skip[app.ID] = true
+		}
+	}
+	var out []state.App
+	for _, app := range selected {
+		if skip[app.ID] {
+			continue
+		}
+		live, err := store.LiveDeploymentForScope(ctx, app.ID, state.DefaultEnvScope)
+		if errors.Is(err, state.ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("live deployment for %s: %w", app.Slug, err)
+		}
+		latest, err := store.LatestDeployment(ctx, app.ID)
+		if errors.Is(err, state.ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("latest deployment for %s: %w", app.Slug, err)
+		}
+		if latest.ID == live.ID || latest.Status != state.DeployFailed || !sameDeploymentScope(latest.Scope, live.Scope) {
+			continue
+		}
+		out = append(out, app)
+	}
+	return out, nil
+}
+
+func sameDeploymentScope(a, b string) bool {
+	norm := func(scope string) string {
+		if strings.TrimSpace(scope) == "" {
+			return state.DefaultEnvScope
+		}
+		return strings.TrimSpace(scope)
+	}
+	return norm(a) == norm(b)
 }
 
 // environmentAppsWithoutLiveDeployment returns selected apps that the
@@ -2809,7 +2868,11 @@ func (s *server) scanService(
 	}
 	if len(req.Secrets) > 0 {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
-		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, filteredW, req.Environment, req.Secrets); prob != nil {
+		// Declarations come from every scanned service, not the --only
+		// selection: a key only an unselected service names is that
+		// service's, and must not land on the selected ones (boa
+		// multi-service deploy, 2026-11-21).
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, result.Workloads, req.Environment, req.Secrets); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 		// Secret-only redeploys also need a build, even if source reconciliation

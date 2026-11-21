@@ -19,39 +19,9 @@ func isNoRunningInstanceLogs(data string) bool {
 }
 
 // parkedLogsSelection picks the archive that holds a parked app's most recent
-// output: its newest instance and the UTC day that instance started. A
-// scale-to-zero app is parked most of the time, so `gregale logs <slug>` (the
-// documented `--since 1h --level error` example included) used to answer only
-// "No running instance … read a parked instance's retained logs with --archive
-// --instance <id> --date <day>" (H10-72). ok is false when no instance is
-// known or the newest one had no activity since `since`.
+// output (H10-72); see api.ParkedLogsSelection.
 func parkedLogsSelection(instances []api.InstanceResponse, since time.Time) (api.InstanceResponse, api.ArchiveLogSelector, bool) {
-	var newest api.InstanceResponse
-	var newestStart time.Time
-	for _, ins := range instances {
-		started, err := time.Parse(time.RFC3339, ins.StartedAt)
-		if err != nil {
-			continue
-		}
-		if newestStart.IsZero() || started.After(newestStart) {
-			newest, newestStart = ins, started
-		}
-	}
-	if newestStart.IsZero() {
-		return api.InstanceResponse{}, api.ArchiveLogSelector{}, false
-	}
-	if !since.IsZero() {
-		lastActive := newestStart
-		for _, raw := range []string{newest.LastRequestAt, newest.ParkedAt} {
-			if at, err := time.Parse(time.RFC3339, raw); err == nil && at.After(lastActive) {
-				lastActive = at
-			}
-		}
-		if lastActive.Before(since) {
-			return api.InstanceResponse{}, api.ArchiveLogSelector{}, false
-		}
-	}
-	return newest, api.ArchiveLogSelector{InstanceID: newest.ID, Date: newestStart.UTC().Format("2006-01-02")}, true
+	return api.ParkedLogsSelection(instances, since)
 }
 
 // runParkedAppLogs prints the newest instance's retained logs for a parked

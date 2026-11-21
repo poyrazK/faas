@@ -138,6 +138,11 @@ func (s *PgStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, a
 		}
 		records = append(records, record)
 	}
+	// Buckets carry their notification rules, which reservation copies; a rule
+	// must reach a captured workload (ADR-20261104120000 amendment 2026-11-16).
+	if err := requireCloneNotificationDestinations(records); err != nil {
+		return nil, err
+	}
 	if err := pinCloneLayerArtifactsTx(ctx, tx, records); err != nil {
 		return nil, err
 	}

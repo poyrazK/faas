@@ -171,6 +171,15 @@
     "kind": "operational"
   },
   {
+    "table": "agent_budget_standing",
+    "columns": [
+      "key_id",
+      "standing_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_key_budgets",
     "columns": [
       "key_id",
@@ -13069,12 +13078,16 @@
     "table": "object_bucket_notifications",
     "columns": [
       "bucket_id",
+      "clone_paused",
       "managed_rules",
       "revision",
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "via": [
@@ -13083,8 +13096,7 @@
           "object_buckets",
           "id"
         ]
-      ],
-      "unavailable": "object_bucket_setting_unavailable"
+      ]
     }
   },
   {

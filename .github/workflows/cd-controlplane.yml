@@ -940,6 +940,11 @@ jobs:
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
+          ALERTMANAGER_EMAIL_TO: ${{ vars.ALERTMANAGER_EMAIL_TO }}
+          ALERTMANAGER_EMAIL_FROM: ${{ vars.ALERTMANAGER_EMAIL_FROM }}
+          ALERTMANAGER_SMTP_SMARTHOST: ${{ vars.ALERTMANAGER_SMTP_SMARTHOST }}
+          ALERTMANAGER_SMTP_USERNAME: ${{ vars.ALERTMANAGER_SMTP_USERNAME }}
+          ALERTMANAGER_CHAT_WEBHOOK: ${{ vars.ALERTMANAGER_CHAT_WEBHOOK }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
@@ -994,6 +999,12 @@ jobs:
           # production environment. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
+          # Alert email through an SMTP relay when the environment sets
+          # ALERTMANAGER_EMAIL_TO; the relay password is a host file. A release
+          # cut before the script stages none.
+          if [[ -f scripts/ci/alertmanager_email_vars.sh ]]; then
+            bash scripts/ci/alertmanager_email_vars.sh "$work/vars.yml"
           fi
           # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
           # the bundle installs. A release cut before the script stages none.
@@ -2005,6 +2016,11 @@ jobs:
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           EDGEDNSD_CF_TOKEN: ${{ secrets.EDGEDNSD_CF_TOKEN }}
+          ALERTMANAGER_EMAIL_TO: ${{ vars.ALERTMANAGER_EMAIL_TO }}
+          ALERTMANAGER_EMAIL_FROM: ${{ vars.ALERTMANAGER_EMAIL_FROM }}
+          ALERTMANAGER_SMTP_SMARTHOST: ${{ vars.ALERTMANAGER_SMTP_SMARTHOST }}
+          ALERTMANAGER_SMTP_USERNAME: ${{ vars.ALERTMANAGER_SMTP_USERNAME }}
+          ALERTMANAGER_CHAT_WEBHOOK: ${{ vars.ALERTMANAGER_CHAT_WEBHOOK }}
           POSTGRES_RUNTIME_ROLES_ENABLED: ${{ vars.POSTGRES_RUNTIME_ROLES_ENABLED }}
           POSTGRES_OWNER_CONTRACT_ENABLED: ${{ vars.POSTGRES_OWNER_CONTRACT_ENABLED }}
           POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED: ${{ vars.POSTGRES_COMPUTE_DAEMON_ROLES_ENABLED }}
@@ -2061,6 +2077,12 @@ jobs:
           # production environment. A release cut before the script stages none.
           if [[ -f scripts/ci/faas_environment_vars.sh ]]; then
             bash scripts/ci/faas_environment_vars.sh "$work/vars.yml"
+          fi
+          # Alert email through an SMTP relay when the environment sets
+          # ALERTMANAGER_EMAIL_TO; the relay password is a host file. A release
+          # cut before the script stages none.
+          if [[ -f scripts/ci/alertmanager_email_vars.sh ]]; then
+            bash scripts/ci/alertmanager_email_vars.sh "$work/vars.yml"
           fi
           # The environment's FAAS_BILLING_MODE, so Ansible renders the drop-in
           # the bundle installs. A release cut before the script stages none.

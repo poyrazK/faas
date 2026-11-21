@@ -242,6 +242,10 @@ var budgetRoutes = map[string]bool{
 	"POST /v1/apps/{}/deployments/source-ref":     true,
 	"POST /v1/apps/{}/deployments/source-tarball": true,
 	"POST /v1/uploads/{}/commit":                  true,
+	// A cron wakes its app on schedule, so one that fires more often than
+	// the app idles keeps it running (cost-control review 2026-11-19, N3).
+	"POST /v1/crons":     true,
+	"PATCH /v1/crons/{}": true,
 }
 
 // ChargesBudget reports whether a route's handler charges the agent's

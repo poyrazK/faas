@@ -455,7 +455,7 @@ func renderAlertDeliveries(deliveries []api.AlertDeliveryResponse, includeTest b
 		if errText == "" {
 			errText = "-"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatThreshold(d.ObservedValue), errText)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s", d.FiredAt.UTC().Format(time.RFC3339), d.Status, d.AttemptCount, httpStatus, formatObserved(d.ObservedValue), errText)
 		if includeTest {
 			_, _ = fmt.Fprintf(tw, "\t%t", d.IsTest)
 		}
@@ -770,6 +770,13 @@ var alertIDPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$|^[0-9a-fA-F]{8}-[0-9a
 // operator reads by eye.
 func formatThreshold(v float64) string {
 	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// formatObserved rounds a measured value to two decimals: an error rate of
+// 25/26 printed as 96.15384615384616 (prod hunt 2026-11-21). Thresholds keep
+// formatThreshold: they are what the owner typed.
+func formatObserved(v float64) string {
+	return strconv.FormatFloat(math.Round(v*100)/100, 'f', -1, 64)
 }
 
 // ptrIfNonEmpty returns nil for an empty string, else a pointer to

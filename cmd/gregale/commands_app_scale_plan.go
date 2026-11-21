@@ -501,6 +501,13 @@ func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, pla
 	if minInstances > limits.MaxMinInstances {
 		warnings = append(warnings, fmt.Sprintf("Requested minimum instances %d exceeds the plan limit of %d.", minInstances, limits.MaxMinInstances))
 	}
+	// The API refuses an idle timeout outside the reaper's range; the
+	// preview showed `--idle 5` as a clean change (prod hunt 2026-11-21).
+	if request.IdleTimeoutS != nil && *request.IdleTimeoutS != 0 {
+		if floor, ceiling := limits.IdleTimeoutBounds(); *request.IdleTimeoutS < floor || *request.IdleTimeoutS > ceiling {
+			warnings = append(warnings, fmt.Sprintf("Idle timeout %d s is outside %d..%d s for this plan; 0 uses the plan default.", *request.IdleTimeoutS, floor, ceiling))
+		}
+	}
 	if minInstances > maxVMs {
 		warnings = append(warnings, fmt.Sprintf("Requested minimum instances %d exceeds the app's maximum concurrency of %d.", minInstances, maxVMs))
 	}

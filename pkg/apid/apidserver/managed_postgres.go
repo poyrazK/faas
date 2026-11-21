@@ -165,6 +165,9 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	production := managedpostgres.ProductionEnvironmentActive(getenv)
 	if production {
 		logManagedPostgresProductionReadiness(registry, getenv, metrics, log)
+		// A live policy (managed_postgres_policy) can change the approval
+		// or the switches readiness reads: report again on each one.
+		registry.OnPolicyChange(func() { logManagedPostgresProductionReadiness(registry, getenv, metrics, log) })
 	}
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
@@ -203,8 +206,8 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 				return 0, managedpostgres.ErrQuotaExceeded
 			}
 			limit := limits.DatabasesMax
-			if registry.MaxDatabasesPerAccount < limit {
-				limit = registry.MaxDatabasesPerAccount
+			if registry.MaxDatabasesPerAccount() < limit {
+				limit = registry.MaxDatabasesPerAccount()
 			}
 			return limit, nil
 		},

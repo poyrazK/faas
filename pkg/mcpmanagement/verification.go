@@ -108,6 +108,13 @@ func (m *management) verifyPlan(ctx context.Context, args planLookupArgs) (any, 
 		m.mu.Unlock()
 		return nil, invalid("invalid_plan", "verification requires an unexpired plan from this connection")
 	}
+	if !p.attempted && p.localReceipt == nil && p.result == nil && p.configReceipt == nil && p.failure == nil {
+		// Nothing was applied, so there is nothing to observe yet. A new
+		// app's plan has no app either, and verification answered "no such
+		// application resource".
+		m.mu.Unlock()
+		return m.getPlan(ctx, args)
+	}
 	r := m.recoverableReceipt(p)
 	v, target := m.planVerification(p)
 	m.mu.Unlock()

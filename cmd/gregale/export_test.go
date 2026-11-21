@@ -519,6 +519,7 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
 var AuthAdminKeyID = &authAdminKeyID
@@ -1733,6 +1734,8 @@ var ReadRouteMonitorRoutes = readRouteMonitorRoutes
 var ReadRoutePolicyPlan = readRoutePolicyPlan
 var ReadSavedToken = readSavedToken
 var ReadSecretsFile = readSecretsFile
+var ProjectDeployInitialSecrets = projectDeployInitialSecrets
+var ProjectSecretOwnersFor = projectSecretOwnersFor
 var ReadStandardReviewCLI = readStandardReviewCLI
 var ReadTestBaselineReport = readTestBaselineReport
 var ReadScaffoldOpenAPIDocument = readScaffoldOpenAPIDocument
@@ -2991,3 +2994,15 @@ func BucketUploadContentType(args []string) (string, error) {
 	o, err := parseBucketTransfer(args)
 	return o.contentType, err
 }
+
+// RenderInspectFailureDetails renders inspect's failure section for one
+// failed deployment of app slug.
+func RenderInspectFailureDetails(w io.Writer, slug string, failed api.DeploymentResponse) {
+	renderInspectFailureDetails(w, inspectSummary{App: inspectAppSummary{Slug: slug}, Failure: inspectPersistedFailure(&failed, nil)})
+}
+
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
+var AppScalePlanWarnings = appScalePlanWarnings
+
+// FormatObserved renders a measured alert value.
+var FormatObserved = formatObserved

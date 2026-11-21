@@ -181,7 +181,8 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = full.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"}); err != nil {
+	staging, err := full.CreateProjectEnvironment(ctx, state.ProjectEnvironment{AccountID: account.ID, ProjectID: project.ID, Slug: "staging"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	app, err := full.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, ProjectID: project.ID, WorkloadName: "worker", Slug: "worker-" + uuid.NewString(), Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 128, MaxConcurrency: 1})
@@ -196,16 +197,38 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 		}
 		return binding
 	}
+	// Destinations resolve in the bucket's environment (ADR-20261104120000
+	// amendment 2026-11-16): the staging branch's copy bucket reaches the
+	// staging queue, a production bucket only production's.
 	binding := newBinding("staging")
 	bucket := readyCompanyBucket(t, st, account.ID, app.ID)
+	branchBuckets := st.(state.ProjectEnvironmentBranchBucketStore)
+	row, err := branchBuckets.RecordProjectEnvironmentBranchBucket(ctx, state.ProjectEnvironmentBranchBucket{AccountID: account.ID,
+		ProjectID: project.ID, EnvironmentID: staging.ID, EnvironmentSlug: staging.Slug, AppID: app.ID, SourceBucketID: uuid.NewString()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = branchBuckets.SetProjectEnvironmentBranchBucketCopy(ctx, row.ID, bucket.ID); err != nil {
+		t.Fatal(err)
+	}
 	notifications := st.(state.ObjectNotificationStore)
 	rule := notificationRuleForTest(bucket, app, "queue")
+	// The production bucket belongs to another app of the project: the bucket
+	// fixture names every bucket "assets".
+	producer, err := full.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, ProjectID: project.ID, WorkloadName: "producer", Slug: "producer-" + uuid.NewString(), Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 128, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	productionBucket := readyCompanyBucket(t, st, account.ID, producer.ID)
+	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, producer.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); !errors.Is(err, state.ErrObjectNotificationInvalid) {
+		t.Fatal("a production bucket reached a staging-only queue", err)
+	}
 	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, bucket.ID, []api.ObjectNotificationRule{rule}); err != nil {
 		t.Fatal(err)
 	}
-	capture := func() state.ObjectNotificationSnapshot {
+	captureFrom := func(bucket state.ObjectBucket) state.ObjectNotificationSnapshot {
 		t.Helper()
-		completion, e := st.BeginTrackedGatewayUpload(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, BucketID: bucket.ID, SubjectID: "test", Key: uuid.NewString(), Status: "pending", Bytes: 1}, accountingPolicy())
+		completion, e := st.BeginTrackedGatewayUpload(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: account.ID, AppID: bucket.AppID, BucketID: bucket.ID, SubjectID: "test", Key: uuid.NewString(), Status: "pending", Bytes: 1}, accountingPolicy())
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -225,20 +248,21 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 		t.Fatal("mutation did not capture notification")
 		return state.ObjectNotificationSnapshot{}
 	}
-	snapshot := capture()
-	if snapshot.QueueBindingID != binding.ID {
+	snapshot := captureFrom(bucket)
+	if snapshot.QueueBindingID != binding.ID || snapshot.DeploymentScope != "staging" || snapshot.EnvironmentID != staging.ID {
 		t.Fatal("mutation did not capture staging binding", snapshot)
 	}
-	production := newBinding("production")
-	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, bucket.ID, []api.ObjectNotificationRule{rule}); !errors.Is(err, state.ErrObjectNotificationInvalid) {
-		t.Fatal("ambiguous unqualified queue ARN accepted", err)
+	// A same-name production queue no longer makes the ARN ambiguous: each
+	// bucket resolves its own environment's binding.
+	production := newBinding("")
+	if again := captureFrom(bucket); again.QueueBindingID != binding.ID {
+		t.Fatal("a production queue redirected the staging bucket", again)
 	}
-	ambiguous := capture()
-	if ambiguous.QueueBindingID != "" {
-		t.Fatal("ambiguous mutation chose an environment", ambiguous)
+	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, producer.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); err != nil {
+		t.Fatal(err)
 	}
-	if err = notifications.EnqueueObjectNotification(ctx, notificationInvocationForTest(app, "queue"), ambiguous); !errors.Is(err, state.ErrNotFound) {
-		t.Fatal("ambiguous receipt adopted a binding", err)
+	if own := captureFrom(productionBucket); own.QueueBindingID != production.ID || own.DeploymentScope != "" || own.EnvironmentID != "" {
+		t.Fatal("the production bucket did not capture production's binding", own)
 	}
 	// Existing receipts retain identity and retry policy after a rename/change.
 	renamed, retry := "renamed", []byte(`{"max_attempts":7}`)
@@ -272,8 +296,12 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 	if err != nil || depth != 0 {
 		t.Fatal("notification leaked into production", depth, err)
 	}
-	// After the rename, new mutations resolve the now-unique production queue.
-	productionSnapshot := capture()
+	// After the rename the staging bucket resolves nothing, and the production
+	// bucket still resolves production's queue.
+	if renamedStage := captureFrom(bucket); renamedStage.QueueBindingID != "" {
+		t.Fatal("the staging bucket resolved another environment's queue", renamedStage)
+	}
+	productionSnapshot := captureFrom(productionBucket)
 	if productionSnapshot.QueueBindingID != production.ID {
 		t.Fatal("unique production destination not captured", productionSnapshot)
 	}

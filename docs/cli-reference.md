@@ -7586,10 +7586,11 @@ List API keys
 
 Mint a new API key
 
-`gregale key create [--scopes <SCOPE,...>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
+`gregale key create [--agent] [--scopes <SCOPE,...>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--agent` | a key for a coding agent: adds the agent scope so risky requests ask a person and always-on cost is held to an agent budget (default scopes agent,apps:read,deploy:write) |  |
 | `--scopes <SCOPE,...>` | comma-separated API key scopes; omit for full admin access |  |
 | `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
 | `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
@@ -7597,6 +7598,7 @@ Mint a new API key
 Examples:
 
 ```sh
+gregale key create coding-agent --agent
 gregale key create agent-runner --scopes runs:write
 gregale key create ci-agent --scopes agent,deploy:write --projects api,web
 gregale key create sandbox-agent --scopes agent,deploy:write --approvals none

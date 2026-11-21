@@ -114,6 +114,9 @@ type Querier interface {
 	// the CHECK on latency_hist rejects a flattened array of another width. The
 	// update is additive, so apid replicas flushing the same key add up.
 	AddRequestAnalyticsMinutes(ctx context.Context, db DBTX, arg AddRequestAnalyticsMinutesParams) error
+	// A signed change: a change that lowers cost gives budget back, never below
+	// zero.
+	AdjustAgentBudgetStanding(ctx context.Context, db DBTX, arg AdjustAgentBudgetStandingParams) error
 	// Record the source's unchanged legacy settings so creating a stage head
 	// cannot reclassify a production identity as a stage-only service.
 	AdmitLegacyProjectEnvironmentCloneSource(ctx context.Context, db DBTX, arg AdmitLegacyProjectEnvironmentCloneSourceParams) error
@@ -224,6 +227,11 @@ type Querier interface {
 	AppRuntimeGeneration(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	AppSLOForReleaseGate(ctx context.Context, db DBTX, arg AppSLOForReleaseGateParams) (AppSLOForReleaseGateRow, error)
 	AppTaskCallersByHostIP(ctx context.Context, db DBTX, arg AppTaskCallersByHostIPParams) ([]AppTaskCallersByHostIPRow, error)
+	// App task VMs are billed like instances (cost-control review 2026-11-19,
+	// N16). A task overlaps the window from started_at until finished_at; the
+	// caller bounds an unfinished task by its lease and timeout. started_at is
+	// bounded below by the longest a task can run so the index stays selective.
+	AppTasksInBillingWindow(ctx context.Context, db DBTX, arg AppTasksInBillingWindowParams) ([]AppTasksInBillingWindowRow, error)
 	AppendAccountCreditLedgerEntry(ctx context.Context, db DBTX, arg AppendAccountCreditLedgerEntryParams) error
 	AppendEvent(ctx context.Context, db DBTX, arg AppendEventParams) error
 	AppendMCPAdmissionEvidence(ctx context.Context, db DBTX, arg AppendMCPAdmissionEvidenceParams) (int64, error)
@@ -2418,6 +2426,9 @@ type Querier interface {
 	GetAgentApprovalEmailLastSent(ctx context.Context, db DBTX, arg GetAgentApprovalEmailLastSentParams) (pgtype.Timestamptz, error)
 	GetAgentApprovalRequestState(ctx context.Context, db DBTX, id pgtype.UUID) (GetAgentApprovalRequestStateRow, error)
 	GetAgentBudgetSpend(ctx context.Context, db DBTX, arg GetAgentBudgetSpendParams) (int64, error)
+	// Cost-control review 2026-11-19 (N10): the always-on cost the key's changes
+	// keep running. It never resets.
+	GetAgentBudgetStanding(ctx context.Context, db DBTX, keyID pgtype.UUID) (int64, error)
 	// ADR-20261111114059: the key's own budget; no row means the plan default.
 	GetAgentKeyBudget(ctx context.Context, db DBTX, keyID pgtype.UUID) (pgtype.Int8, error)
 	GetAlertRollback(ctx context.Context, db DBTX, arg GetAlertRollbackParams) ([]byte, error)
@@ -3170,6 +3181,8 @@ type Querier interface {
 	InsertProfileCapture(ctx context.Context, db DBTX, arg InsertProfileCaptureParams) error
 	InsertProfileCaptureData(ctx context.Context, db DBTX, arg InsertProfileCaptureDataParams) error
 	InsertProjectBindingVerificationRun(ctx context.Context, db DBTX, arg InsertProjectBindingVerificationRunParams) error
+	// A full clone's target bucket gets its source's configuration paused.
+	InsertProjectEnvironmentCloneBucketNotifications(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneBucketNotificationsParams) error
 	InsertProjectEnvironmentCloneCapturedEdgePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedEdgePolicyParams) error
 	InsertProjectEnvironmentCloneCapturedRoutePolicy(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneCapturedRoutePolicyParams) error
 	// Managed ownership columns are deliberately absent: provider credentials
@@ -5641,6 +5654,7 @@ type Querier interface {
 	ObjectNodeSettlementReady(ctx context.Context, db DBTX, arg ObjectNodeSettlementReadyParams) (int64, error)
 	ObjectNodeSettlementRetry(ctx context.Context, db DBTX, arg ObjectNodeSettlementRetryParams) (int64, error)
 	ObjectNodeSettlementStats(ctx context.Context, db DBTX) (ObjectNodeSettlementStatsRow, error)
+	ObjectNotificationEnvironmentSlug(ctx context.Context, db DBTX, environmentID pgtype.UUID) (string, error)
 	ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error)
 	ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error
 	ObjectNotificationLockApp(ctx context.Context, db DBTX, arg ObjectNotificationLockAppParams) (pgtype.UUID, error)
@@ -5649,6 +5663,8 @@ type Querier interface {
 	ObjectNotificationTargetApp(ctx context.Context, db DBTX, arg ObjectNotificationTargetAppParams) (pgtype.UUID, error)
 	// Whether a bucket app's events may reach the target app (ADR-20261025211616).
 	ObjectNotificationTargetInReach(ctx context.Context, db DBTX, arg ObjectNotificationTargetInReachParams) (bool, error)
+	// A rule's queue resolves in its bucket's environment (ADR-20261104120000
+	// amendment 2026-11-16): production's unscoped binding, or the stage's.
 	ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error)
 	// Notification recipients meet the same company reach as subscriptions
 	// (ADR-20261025211616): a rule cannot route a company bucket's events past it.
@@ -5656,7 +5672,10 @@ type Querier interface {
 	// (ADR-614 amendment 2026-11-13), so the capture inserts it from the event
 	// envelope when it is missing and appends to it otherwise.
 	ObjectNotificationsCapture(ctx context.Context, db DBTX, arg ObjectNotificationsCaptureParams) (int64, error)
+	ObjectNotificationsClearClonePause(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
 	ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error)
+	// Any explicit write of the rules clears a clone's pause (ADR-20261104120000
+	// amendment 2026-11-16).
 	ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error
 	// Batched read counts (ADR-20261030075301); a deleted bucket is skipped.
 	ObjectReadUsageRecordMetrics(ctx context.Context, db DBTX, arg ObjectReadUsageRecordMetricsParams) error
@@ -6874,6 +6893,7 @@ type Querier interface {
 	ReadProjectEnvironmentCloneSourceEnvironmentID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceEnvironmentIDParams) (pgtype.UUID, error)
 	ReadProjectEnvironmentCloneSourceRelease(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceReleaseParams) (string, error)
 	ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
+	ReadProjectEnvironmentCloneTargetBucketNotifications(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetBucketNotificationsParams) ([]ReadProjectEnvironmentCloneTargetBucketNotificationsRow, error)
 	ReadProjectEnvironmentCloneTargetOperationID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetOperationIDParams) (string, error)
 	ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error)
 	ReadProjectEnvironmentCloneTargetSettings(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetSettingsParams) (ReadProjectEnvironmentCloneTargetSettingsRow, error)
@@ -7737,6 +7757,10 @@ type Querier interface {
 	RequeuePreemptedBuild(ctx context.Context, db DBTX, arg RequeuePreemptedBuildParams) (int64, error)
 	RequeueWorkflowRunForRetry(ctx context.Context, db DBTX, arg RequeueWorkflowRunForRetryParams) (WorkflowRun, error)
 	ReserveAccountCreditConsumption(ctx context.Context, db DBTX, arg ReserveAccountCreditConsumptionParams) (pgtype.UUID, error)
+	// Cost-control review 2026-11-19 (N9): adds millicents only while the total
+	// stays within limit, in one statement, so two concurrent requests cannot
+	// both pass a check of the same total. No row returned means over budget.
+	ReserveAgentBudgetStanding(ctx context.Context, db DBTX, arg ReserveAgentBudgetStandingParams) ([]int64, error)
 	ReserveBillingUsageIntent(ctx context.Context, db DBTX, arg ReserveBillingUsageIntentParams) (int64, error)
 	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
@@ -7814,6 +7838,9 @@ type Querier interface {
 	RestoreTrafficPolicyStatementTimeout(ctx context.Context, db DBTX, timeout string) (string, error)
 	// A wave transaction cannot outlive the evidence that authorized it.
 	RestrictApplicationStandardWorkerEvidence(ctx context.Context, db DBTX, arg RestrictApplicationStandardWorkerEvidenceParams) (int64, error)
+	// Resumes the notifications a full clone paused on its target buckets in one
+	// stage.
+	ResumeEnvironmentClonePausedBucketNotifications(ctx context.Context, db DBTX, arg ResumeEnvironmentClonePausedBucketNotificationsParams) ([]pgtype.UUID, error)
 	// Enables the crons a clone paused in one environment; the enable clears
 	// clone_paused and anchors the schedule.
 	ResumeEnvironmentClonePausedCrons(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]ResumeEnvironmentClonePausedCronsRow, error)

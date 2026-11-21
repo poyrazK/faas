@@ -132,8 +132,16 @@ func TestOrgMembersStayInTheConnectionsOrg(t *testing.T) {
 	if len(f.orgReads) != 2 {
 		t.Fatalf("reads = %v", f.orgReads)
 	}
-	m, _ = newLogsFixture(t, "")
+	m, f = newLogsFixture(t, "")
 	if _, err := m.listOrgMembers(t.Context(), orgArgs{Org: "nope"}); err == nil {
 		t.Fatal("organization outside membership accepted")
+	}
+	// A personal connection that names no organization reads the account's
+	// only one; it used to be refused with "name the organization".
+	if _, err := m.listOrgMembers(t.Context(), orgArgs{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.orgReads) != 2 {
+		t.Fatalf("personal reads = %v", f.orgReads)
 	}
 }

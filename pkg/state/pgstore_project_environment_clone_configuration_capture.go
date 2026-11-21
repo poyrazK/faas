@@ -280,6 +280,9 @@ func captureCloneConfigurationWorkloadsForScopesTx(ctx context.Context, tx pgx.T
 	if err := requireCloneEventSubscriptionsCapturedDB(ctx, tx, op.ProjectID, op.SourceEnvironment, appIDs); err != nil {
 		return nil, err
 	}
+	if err := requireCloneNotificationDestinations(records); err != nil {
+		return nil, err
+	}
 	return records, nil
 }
 

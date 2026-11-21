@@ -102,7 +102,7 @@ func (m *management) planLocalDeploy(ctx context.Context, args planLocalDeployAr
 	if !api.ValidAppSlug(args.App) {
 		return nil, invalid("invalid_argument", "app must be a valid Gregale app slug")
 	}
-	dir, err := localProjectDir(args.Path)
+	dir, err := localProjectDir(args.Path, args.App)
 	if err != nil {
 		return nil, err
 	}
@@ -427,7 +427,7 @@ func envChangeInput(values map[string]string) ([]string, []byte, error) {
 func secretRefusal(err error, app string) error {
 	var apiErr *api.APIError
 	if err == nil || errors.As(err, &apiErr) && apiErr.Problem.Code == "secret_scan_strict" {
-		return invalid("secret_detected", "a value looks like a credential and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
+		return invalid("secret_detected", "a variable looks like a credential, by its name or its value, and was not set. Call gregale_request_secret so the user enters it on Gregale's page, or ask them to run `gregale env set "+app+" KEY` themselves; never ask for or pass a secret value in a tool call")
 	}
 	return err
 }
@@ -476,8 +476,10 @@ func notFound(err error) bool {
 // localProjectDir accepts an existing, absolute project directory. The
 // filesystem root, the home directory and its ancestors are refused, as is a
 // directory under a linked project context, whose deploys target project
-// environments.
-func localProjectDir(path string) (string, error) {
+// environments. An app-only link is accepted: `gregale deploy` writes one into
+// every directory it deploys, so refusing it let an agent deploy a directory
+// only once. When app is set, the link must name that app.
+func localProjectDir(path, app string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", invalid("invalid_path", "path must be an absolute directory path")
 	}
@@ -491,13 +493,34 @@ func localProjectDir(path string) (string, error) {
 		return "", invalid("invalid_path", "refusing to deploy the filesystem root or the home directory; choose the project directory")
 	}
 	for at := dir; ; at = filepath.Dir(at) {
-		if _, err := os.Stat(filepath.Join(at, ".gregale", "project.json")); err == nil {
-			return "", invalid("linked_project", "this directory is linked to a Gregale project; deploy it with `gregale deploy` or the project release tools")
+		if err := checkLocalLink(filepath.Join(at, ".gregale", "project.json"), app); err != nil {
+			return "", err
 		}
 		if at == filepath.Dir(at) {
 			return dir, nil
 		}
 	}
+}
+
+// checkLocalLink refuses a project link (project or environment set), an
+// unreadable link, and an app-only link that names another app.
+func checkLocalLink(path, app string) error {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	var link struct {
+		Project     string `json:"project"`
+		App         string `json:"app"`
+		Environment string `json:"environment"`
+	}
+	if err != nil || len(data) > 64<<10 || json.Unmarshal(data, &link) != nil || link.Project != "" || link.Environment != "" {
+		return invalid("linked_project", "this directory is linked to a Gregale project; deploy it with `gregale deploy` or the project release tools")
+	}
+	if app != "" && link.App != "" && link.App != app {
+		return invalid("linked_app", fmt.Sprintf("this directory is linked to app %s; deploy it to %s, or remove .gregale/project.json to deploy it as another app", link.App, link.App))
+	}
+	return nil
 }
 
 // fingerprintTree hashes the path, contents, size, mode and modification time of every

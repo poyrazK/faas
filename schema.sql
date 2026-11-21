@@ -31192,6 +31192,18 @@ CREATE TABLE public.agent_budget_spend (
 
 
 --
+-- Name: agent_budget_standing; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_budget_standing (
+    key_id uuid NOT NULL,
+    standing_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_budget_standing_standing_millicents_check CHECK ((standing_millicents >= 0))
+);
+
+
+--
 -- Name: agent_callback_revocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50310,6 +50322,7 @@ CREATE TABLE public.object_bucket_notifications (
     revision bigint NOT NULL,
     rules jsonb NOT NULL,
     managed_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
+    clone_paused boolean DEFAULT false NOT NULL,
     CONSTRAINT object_bucket_notifications_revision_check CHECK ((revision > 0)),
     CONSTRAINT object_bucket_notifications_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 1000))),
     CONSTRAINT object_compute_trigger_ownership_check CHECK (public.object_compute_trigger_ownership_valid(rules, managed_rules))
@@ -63743,6 +63756,14 @@ ALTER TABLE public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_budget_spend
     ADD CONSTRAINT agent_budget_spend_pkey PRIMARY KEY (key_id, month);
+
+
+--
+-- Name: agent_budget_standing agent_budget_standing_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_standing
+    ADD CONSTRAINT agent_budget_standing_pkey PRIMARY KEY (key_id);
 
 
 --
@@ -79292,6 +79313,13 @@ CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (n
 --
 
 CREATE INDEX app_tasks_account_app_created_idx ON public.app_tasks USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: app_tasks_billing_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_billing_window_idx ON public.app_tasks USING btree (started_at) WHERE (started_at IS NOT NULL);
 
 
 --
@@ -97711,6 +97739,14 @@ ALTER TABLE ONLY public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_budget_spend
     ADD CONSTRAINT agent_budget_spend_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_budget_standing agent_budget_standing_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_standing
+    ADD CONSTRAINT agent_budget_standing_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --
