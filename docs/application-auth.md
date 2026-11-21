@@ -182,6 +182,10 @@ treat it like the user's own) and:
   passkeys or linked sign-ins, approve third-party apps, end their other
   sessions or delete the account (`403 impersonation_restricted`); signing
   itself out works;
+- cannot leave access behind in the user's organizations: no
+  service-account secrets or invitations, role changes, or changes to the
+  organization's second-factor rule, identity providers or domains (use the
+  admin key for those, so they are recorded as yours);
 - appears to the user on their account page as opened by support.
 
 Only users with a confirmed email address can be opened: GoTrue has no
@@ -217,7 +221,7 @@ providers and email delivery, and rotates signing keys.
 
 ```sh
 gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit
-gregale auth config shop-auth --signup off --mfa on --leaked-password-check on
+gregale auth config shop-auth --signup off --mfa on
 gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@shop.example.com>' --email-api-key-stdin
 ```
 
@@ -226,9 +230,9 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--site-url`, `--redirect-urls` | Where users return after sign-in; `--redirect-urls none` clears the list. |
 | `--signup on\|off` | Whether anyone may sign up, or only invited and administrator-created users. |
 | `--autoconfirm on\|off` | Skip email confirmation. Development only. |
-| `--password-min-length N` | Minimum password length, 6 to 72. |
+| `--password-min-length N` | Minimum password length, 8 (the default) to 72. |
 | `--password-require CLASSES` | `lower`, `upper`, `digit` and `symbol`, comma-separated, or `none`. |
-| `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). |
+| `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). On by default; only the first five characters of the password's SHA-1 hash leave the app, and a password is accepted if the service cannot be reached. |
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
 | `--mfa-phone on\|off`, `--recovery-codes on\|off` | SMS codes as a second factor, and one-time recovery codes (see Two-step verification). |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
@@ -475,12 +479,45 @@ next renewal, and an access token already issued keeps working until it
 expires, at most ten minutes later. The user then signs in again. The account
 page's list of sessions leaves out the ones past their limits.
 
+### Wrong passwords and codes
+
+The Auth app counts wrong passwords and wrong second-step codes in its
+database, so every instance shares the count and it survives the app
+parking and waking:
+
+| Budget | Limit in 15 minutes |
+| --- | --- |
+| Wrong passwords for one account from one client address | 10 |
+| Wrong passwords for one account from any address | 50 |
+| Wrong authenticator, SMS or recovery codes for one user | 10 |
+
+A spent budget answers `429` with `error_code` `too_many_attempts` and a
+`Retry-After` header until its window ends, before GoTrue checks the
+password; a correct password from the same address is held too. A correct
+password from another address still signs in and resets the account's
+count. Someone who spends an account's budget from many addresses pauses
+password sign-in for that account, not magic links, codes, providers or
+passkeys. Failed service-account secrets are counted the same way, per client
+address. Counts are kept as digests, never as addresses or numbers, and
+are deleted a day after their window.
+
+### Rate limits
+
+GoTrue's own limits per client address apply too. Tune them with
+`GOTRUE_RATE_LIMIT_*` app secrets (for example `GOTRUE_RATE_LIMIT_EMAIL_SENT`,
+`GOTRUE_RATE_LIMIT_TOKEN_REFRESH`, `GOTRUE_RATE_LIMIT_VERIFY`,
+`GOTRUE_RATE_LIMIT_OTP`), each a number of events per hour (`30`) or events
+over a duration (`10/5m`). `GOTRUE_RATE_LIMIT_SMS_SENT` stays at GoTrue's 30
+texts an hour, against SMS pumping, and `GOTRUE_RATE_LIMIT_HEADER` is set by
+Gregale. These limits are kept in each instance's memory, so they start again
+when the app wakes; the budgets above do not.
+
 ### Other GoTrue settings
 
 Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,
-`GOTRUE_PASSKEY_*` and `GOTRUE_SECURITY_CAPTCHA_*` settings can still be set as
-app secrets. Any other `GOTRUE_*` secret stops startup, because Gregale owns
-that setting.
+`GOTRUE_PASSKEY_*`, `GOTRUE_SECURITY_CAPTCHA_*` and `GOTRUE_RATE_LIMIT_*`
+settings can still be set as app secrets. Any other `GOTRUE_*` secret stops
+startup, because Gregale owns that setting.
 
 ## Rotate signing keys
 
@@ -1129,7 +1166,12 @@ gregale add bucket uploads --app shop-auth --permission read_write
 
 `POST /authz/v1/storage/sign` with `{"bucket": "uploads", "key": "org/<org id>/reports/q3.pdf", "operation": "read"}`
 returns a URL valid for 60 seconds (`GET`, or `PUT` for `write`). Keys must start
-with `org/<org id>/`; the bucket name is the policy resource.
+with `org/<org id>/`; the bucket name is the policy resource. A `write` names
+the object's `size` in bytes, and may name its `content_type`; the URL is
+signed for exactly those, the response lists them under `headers`, and the
+upload must send them. Uploads are at most 100 MiB unless the app sets
+`AUTH_STORAGE_MAX_UPLOAD_BYTES` (up to 5 GiB); a larger `size` answers
+`413 object_too_large`.
 
 **Realtime.** Create the endpoint through the Auth app; clients connect with
 their Auth access token:
@@ -1222,7 +1264,27 @@ dashboard page and paste it:
 gregale auth admin-key create shop-auth
 ```
 
-The key is shown once; the Auth app stores only its SHA-256. The dashboard page
+The key is shown once; the Auth app stores only its SHA-256. A key expires after
+365 days unless you pass `--expires-in DAYS` (1 to 3650) or `--no-expiry`, and
+can do everything unless you narrow it with `--scopes`:
+
+| Scope | Allows |
+| --- | --- |
+| `users:read` | Listing and reading users, organizations, sign-up requests and activity |
+| `users:write` | Changing them too: import, claims, sign-out, bans, deletion, sign-up approval, organization changes |
+| `impersonate` | Opening a session as a user, and listing or ending those sessions |
+| `sso` | Identity providers and SCIM tokens |
+| `oauth-clients` | OAuth server clients |
+| `service-accounts` | Organizations' service accounts |
+| `emails` | Email templates |
+
+```sh
+gregale auth admin-key create shop-auth --scopes users:read --expires-in 30
+```
+
+A key used past its expiry answers `401 admin_key_expired`; one used outside its
+scopes answers `403 admin_key_scope`. Keys made before scopes existed keep every
+scope and never expire; replace them with `create` and `revoke`. The dashboard page
 sends the key only to your Auth app and keeps it in the browser tab until you
 close it or choose **Forget key**. User records go from your Auth app to your
 browser and never through Gregale. From the page you can search users, see their
@@ -1276,7 +1338,7 @@ gregale auth config shop-auth --activity-retention 90
 The Auth app deletes older entries in batches after requests, at most every six
 hours, so pruning never wakes it or your database.
 
-`gregale auth admin-key list shop-auth` shows key IDs and
+`gregale auth admin-key list shop-auth` shows key IDs with their scopes and expiry, and
 `gregale auth admin-key revoke shop-auth ID` removes one. Both restart the Auth
 app so running instances load the change.
 

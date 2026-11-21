@@ -14,6 +14,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class StatusService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read the current public platform status.
    * Unauthenticated single-region snapshot. Includes five public
@@ -27,7 +28,7 @@ export class StatusService {
    * @throws ApiError
    */
   public static getPublicStatus(): CancelablePromise<PublicStatusOverview> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/status',
     });
@@ -66,7 +67,7 @@ export class StatusService {
      */
     ref?: string,
   }): CancelablePromise<PreflightReport> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/preflight',
       query: {
@@ -94,7 +95,7 @@ export class StatusService {
      */
     publicId: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/status/incidents/{public_id}',
       path: {
@@ -113,7 +114,7 @@ export class StatusService {
    * @throws ApiError
    */
   public static getLegacyStatusSlo(): CancelablePromise<StatusPage> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/status/slo.json',
     });
@@ -147,7 +148,7 @@ export class StatusService {
      */
     active?: boolean,
   }): CancelablePromise<Array<PublicStatusEvent>> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/admin/status/incidents',
       cookies: {
@@ -194,7 +195,7 @@ export class StatusService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/status/incidents',
       cookies: {
@@ -249,7 +250,7 @@ export class StatusService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/admin/status/incidents/{public_id}/updates',
       path: {
@@ -303,7 +304,7 @@ export class StatusService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/admin/status/incidents/{public_id}',
       path: {
@@ -358,7 +359,7 @@ export class StatusService {
      */
     faasSid?: string,
   }): CancelablePromise<PublicStatusEvent> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PATCH',
       url: '/v1/admin/status/incidents/{public_id}/updates/{update_id}',
       path: {

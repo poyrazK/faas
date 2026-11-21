@@ -20,6 +20,21 @@ func (q *Queries) DeleteQueueLeaseReceipt(ctx context.Context, db DBTX, invocati
 	return err
 }
 
+const deleteQueueLeaseReceiptForAttempt = `-- name: DeleteQueueLeaseReceiptForAttempt :exec
+DELETE FROM invocation_queue_lease_receipts
+WHERE invocation_id=$1::uuid AND attempt=$2::integer
+`
+
+type DeleteQueueLeaseReceiptForAttemptParams struct {
+	InvocationID pgtype.UUID
+	Attempt      int32
+}
+
+func (q *Queries) DeleteQueueLeaseReceiptForAttempt(ctx context.Context, db DBTX, arg DeleteQueueLeaseReceiptForAttemptParams) error {
+	_, err := db.Exec(ctx, deleteQueueLeaseReceiptForAttempt, arg.InvocationID, arg.Attempt)
+	return err
+}
+
 const exhaustExpiredQueueLease = `-- name: ExhaustExpiredQueueLease :execrows
 UPDATE invocations SET state='dead_letter', outcome='dead_letter', completed_at=clock_timestamp(),
     last_error='queue lease attempt budget exhausted after lease expiry', lease_expires_at=NULL, instance_id=NULL,
@@ -204,6 +219,21 @@ func (q *Queries) LockQueueLeaseInvocation(ctx context.Context, db DBTX, id pgty
 	return i, err
 }
 
+const queueBindingHasKeyedWork = `-- name: QueueBindingHasKeyedWork :one
+SELECT EXISTS (SELECT 1 FROM invocations
+    WHERE queue_binding_id=$1::uuid AND source='queue'
+      AND state IN ('pending','dispatching') AND work_policy_name IS NOT NULL)::boolean AS keyed
+`
+
+// ADR-20261112200000: keyed messages a push binding accepted, which a pull
+// lease would never take.
+func (q *Queries) QueueBindingHasKeyedWork(ctx context.Context, db DBTX, bindingID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, queueBindingHasKeyedWork, bindingID)
+	var keyed bool
+	err := row.Scan(&keyed)
+	return keyed, err
+}
+
 const queueLeaseActiveCount = `-- name: QueueLeaseActiveCount :one
 SELECT count(*)::bigint FROM invocations i
 WHERE i.app_id=$1::uuid AND i.source='queue' AND i.environment_id IS NULL
@@ -225,16 +255,49 @@ func (q *Queries) QueueLeaseActiveCount(ctx context.Context, db DBTX, arg QueueL
 	return column_1, err
 }
 
+const queueLeaseBindingForQueue = `-- name: QueueLeaseBindingForQueue :one
+SELECT b.id FROM queue_bindings b
+WHERE b.account_id=$1::uuid AND b.app_id=$2::uuid
+    AND b.queue_name=$3::text AND b.deployment_scope=''
+ORDER BY b.created_at, b.id LIMIT 1
+`
+
+type QueueLeaseBindingForQueueParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	QueueName string
+}
+
+// The production binding the lease path's queue name names now, in any
+// state: a receipt for one of its messages settles under its current name
+// even when the message was sent under the name it had before a rename.
+func (q *Queries) QueueLeaseBindingForQueue(ctx context.Context, db DBTX, arg QueueLeaseBindingForQueueParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, queueLeaseBindingForQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const queueLeaseCandidates = `-- name: QueueLeaseCandidates :many
-SELECT c.id FROM (
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+SELECT c.id, c.work_policy_name, c.work_key_digest, c.work_fairness_digest, c.work_fairness_limit FROM (
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
-         AND w.work_policy_name IS NULL AND NOT w.quota_reserved
+         AND NOT w.quota_reserved
+         -- A work-policy row is a candidate only as its lane's head
+         -- (ADR-20261112193306): no older pending or any running row in the
+         -- same app, policy and key. A retrying head that is not due yet
+         -- still blocks later rows. The claim rechecks under the lane lock.
+         AND (w.work_policy_name IS NULL OR NOT EXISTS (
+             SELECT 1 FROM invocations o
+             WHERE o.app_id=w.app_id AND o.work_policy_name=w.work_policy_name
+                 AND o.work_key_digest=w.work_key_digest AND o.id<>w.id
+                 AND o.state IN ('pending','dispatching')
+                 AND (o.work_sequence<w.work_sequence OR o.state='dispatching')))
          AND w.queue_binding_id=$2::uuid
      ORDER BY w.due_at, w.created_at, w.id LIMIT $3::integer)
     UNION ALL
-    (SELECT w.id, w.due_at, w.created_at FROM production_invocation_work w
+    (SELECT w.id, w.due_at, w.created_at, w.work_policy_name, w.work_key_digest, w.work_fairness_digest, w.work_fairness_limit FROM production_invocation_work w
      WHERE w.app_id=$1::uuid AND w.source='queue' AND w.state='pending'
          AND w.due_at<=statement_timestamp() AND (w.deadline_at IS NULL OR w.deadline_at>clock_timestamp())
          AND w.work_policy_name IS NULL AND NOT w.quota_reserved
@@ -251,6 +314,14 @@ type QueueLeaseCandidatesParams struct {
 	QueueName      string
 }
 
+type QueueLeaseCandidatesRow struct {
+	ID                 pgtype.UUID
+	WorkPolicyName     pgtype.Text
+	WorkKeyDigest      []byte
+	WorkFairnessDigest []byte
+	WorkFairnessLimit  pgtype.Int4
+}
+
 // The binding's own messages and legacy messages under its name, each read in
 // due order from its own index (invocations_queue_lease_binding_idx and
 // _name_idx), so a lease reads about candidate_limit rows whatever the
@@ -258,7 +329,7 @@ type QueueLeaseCandidatesParams struct {
 // 2026-10-24). The due bound uses statement_timestamp(): it is stable, so it
 // bounds the index range, where volatile clock_timestamp() left only a filter
 // and the planner walked the global due index instead.
-func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]pgtype.UUID, error) {
+func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLeaseCandidatesParams) ([]QueueLeaseCandidatesRow, error) {
 	rows, err := db.Query(ctx, queueLeaseCandidates,
 		arg.AppID,
 		arg.BindingID,
@@ -269,13 +340,19 @@ func (q *Queries) QueueLeaseCandidates(ctx context.Context, db DBTX, arg QueueLe
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []QueueLeaseCandidatesRow{}
 	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
+		var i QueueLeaseCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkPolicyName,
+			&i.WorkKeyDigest,
+			&i.WorkFairnessDigest,
+			&i.WorkFairnessLimit,
+		); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -290,8 +367,11 @@ UPDATE invocations i SET state='dispatching', received_at=COALESCE(i.received_at
     attempts=i.attempts+1, instance_id=$2::text
 FROM lease_clock
 WHERE i.id=$3::uuid AND i.app_id=$4::uuid AND i.source='queue'
-    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL AND i.work_policy_name IS NULL
+    AND i.state='pending' AND NOT i.quota_reserved AND i.environment_id IS NULL
     AND i.due_at<=lease_clock.at AND (i.deadline_at IS NULL OR i.deadline_at>lease_clock.at)
+    -- ADR-20261112200000: a push verification canary left behind by a
+    -- push-to-pull switch is not a job for a pull worker.
+    AND NOT EXISTS (SELECT 1 FROM queue_binding_canaries c WHERE c.id=i.id)
 RETURNING i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.due_at, i.method, i.path, i.cron_id, i.scheduled_at, i.ack_url, i.result, i.lease_expires_at, i.received_at, i.completed_at, i.instance_id, i.attempts, i.last_error, i.created_at, i.org_id, i.outcome, i.deadline_at, i.retry_policy, i.result_retention_until, i.replayed_from_invocation_id, i.last_replayed_at, i.on_success_destination_id, i.on_failure_destination_id, i.queue_name, i.quota_reserved, i.work_policy_name, i.work_key_digest, i.work_expires_at, i.work_sequence, i.work_policy_revision, i.work_fairness_digest, i.work_fairness_limit, i.platform_tenant_id, i.failure_rules, i.occurrence_id, i.start_deadline_at, i.work_decision, i.operation_id, i.deployment_scope, i.queue_binding_id, i.replay_generation, i.outcome_code, i.environment_id, i.replay_root_invocation_id, i.replay_root_created_at, i.async_quota_subject_id, i.edge_jwt_issuer, i.edge_jwt_subject
 `
 
@@ -481,6 +561,34 @@ func (q *Queries) ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocation
 		&i.LeaseExpiresAt,
 	)
 	return i, err
+}
+
+const releaseQueueLeaseInvocation = `-- name: ReleaseQueueLeaseInvocation :execrows
+UPDATE invocations SET state='pending', attempts=attempts-1, lease_expires_at=NULL, instance_id=NULL
+WHERE id=$1::uuid AND app_id=$2::uuid AND source='queue' AND state='dispatching'
+    AND attempts=$3::integer AND attempts>0 AND replay_generation=$4::bigint
+`
+
+type ReleaseQueueLeaseInvocationParams struct {
+	ID               pgtype.UUID
+	AppID            pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+}
+
+// ADR-20261112200000: a lease whose consumer went away before the response
+// reached it returns to pending with the attempt it never used.
+func (q *Queries) ReleaseQueueLeaseInvocation(ctx context.Context, db DBTX, arg ReleaseQueueLeaseInvocationParams) (int64, error) {
+	result, err := db.Exec(ctx, releaseQueueLeaseInvocation,
+		arg.ID,
+		arg.AppID,
+		arg.Attempt,
+		arg.ReplayGeneration,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const retryQueueLeaseInvocation = `-- name: RetryQueueLeaseInvocation :execrows

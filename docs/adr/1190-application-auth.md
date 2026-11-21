@@ -97,12 +97,37 @@ startup rather than being ignored. `gregale auth config` and
 and CSRF-bound forms, write those secrets from typed settings validated by one
 shared package (`pkg/authsettings`): sign-up, email confirmation, site and
 redirect URLs, minimum password length and required character classes,
-leaked-password checks, TOTP enrolment and nineteen OAuth providers. Turning
+leaked-password checks, TOTP enrolment and nineteen OAuth providers. Two
+defaults are Gregale's rather than GoTrue's: a minimum password length of
+eight characters (NIST SP 800-63B; GoTrue's six is also below the floor the
+settings accept, and a lower value an app still holds is raised at start
+rather than stopping it) and the leaked-password check on. That check sends
+Have I Been Pwned only a five-character SHA-1 prefix, from sign-up and
+password changes, and lets the password through if the service cannot be
+reached. `gregale auth status` and `auth config` warn while sign-up is open
+without CAPTCHA or the check is off. Turning
 MFA off stops new TOTP enrolments only, so users who enrolled keep verifying.
 The front sets every enabled provider's callback to its own `/auth/v1/callback`.
 `/settings/v1` reports the running configuration without credentials, since the
 CLI and dashboard cannot read secrets back. GoTrue rate-limits on `X-Real-IP`, which the
-public gateway replaces with the verified client address. GoTrue v2.197.0
+public gateway replaces with the verified client address. Those limits live in
+each instance's memory, so a snapshot restore starts them at zero and
+instances do not share them, and none counts per account. The front
+therefore keeps failed-attempt budgets in `gregale_auth.attempt_budgets`
+(sql/0024), keyed by SHA-256 digests: wrong passwords per account and
+client address and per account, wrong second-step codes per user, and
+failed service-account secrets per client address
+(`AuthPasswordFailuresPerAddress`, `AuthPasswordFailuresPerAccount`,
+`AuthSecondStepFailuresPerUser`, `AuthAttemptWindowSeconds`). It reads the
+account from the sign-in body as GoTrue does, refuses a body it cannot
+parse or that names the account twice, counts GoTrue's `invalid_credentials`
+and `mfa_verification_failed` answers before relaying them, clears the
+account's budgets on success and answers `429 too_many_attempts` while one
+is spent, without asking GoTrue. If the budgets cannot be read it answers
+503 rather than passing the attempt on. Spending an account's budget from
+many addresses pauses its password sign-in only; other sign-in methods
+keep working. Owners tune GoTrue's own limits with `GOTRUE_RATE_LIMIT_*`
+secrets, validated at start, except the address header and texts sent. GoTrue v2.197.0
 logs requests and audit events at info, with user email addresses, even when
 its log level is set to `warn`, so the front reads GoTrue's output and drops
 info and debug lines, and replaces personal fields (`actor_username`, `email`,
@@ -249,7 +274,7 @@ Each surface reaches the same function:
 | Surface | Check |
 |---|---|
 | Database rows | RLS policies call the helpers through the Data API |
-| Object download or upload | `POST /authz/v1/storage/sign` checks `authorize('storage:read'/'storage:write', 'org/<org>/<bucket>/<path>')` and returns a SigV4 URL valid for 60 seconds, signed with a bucket bound to the Auth app |
+| Object download or upload | `POST /authz/v1/storage/sign` checks `authorize('storage:read'/'storage:write', 'org/<org>/<bucket>/<path>')` and returns a SigV4 URL valid for 60 seconds, signed with a bucket bound to the Auth app; an upload URL also signs the declared `content-length` (at most `AuthStorageUploadDefaultBytes`, or `AUTH_STORAGE_MAX_UPLOAD_BYTES` up to a single PUT's limit) and optional `content-type`, so it carries nothing larger |
 | Realtime channel | `/realtime/authorize-channel` checks `authorize_subject(subject, 'realtime:read', ...)` for channels named `org:<org>:<kind>:<name>` |
 | Workflow start | `POST /authz/v1/workflows/{name}/start` checks `authorize('workflow:start', 'org/<org>/workflow/<name>')` and publishes an app-scoped `auth.workflow.start` event |
 | Gateway route | An optional edge JWT rule gates routes coarsely, never as the only check on data |
@@ -351,7 +376,15 @@ platform ID tokens (Sign in with Apple, Google) need no browser at all.
 Owners administer users through `/admin/v1` on the Auth app with a key they
 hold. `gregale auth admin-key create` prints a 256-bit key once and seals only
 its SHA-256 as `AUTH_ADMIN_KEY_<id>`; without such a secret the API does not
-exist. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
+exist. The secret may follow the digest with `;scopes=<a,b>` and
+`;expires=<Unix seconds>`: new keys expire after `AuthAdminKeyDefaultDays`
+unless created with `--no-expiry`, and may be narrowed to `users:read`,
+`users:write`, `impersonate`, `sso`, `oauth-clients`, `service-accounts` or
+`emails`. Each `/admin/v1` route needs one scope and a route no scope names
+needs every scope, so a route added later is closed to narrow keys until it
+is mapped. A bare digest, as keys made before scopes were, holds every scope
+and never expires. Secrets are write-only, so `/settings/v1` reports each
+key's ID, scopes and expiry (never its digest) for `admin-key list`. The dashboard page `/dashboard/apps/{slug}/auth` is served by apid but
 its script calls the Auth app directly from the owner's browser: apid adds the
 Auth app's exact origin to that page's `connect-src`, and the Auth app answers
 CORS only for the Gregale API origin sealed at creation. apid never receives
@@ -413,8 +446,13 @@ that `session_active()` requires. The front then caps the session with
 and refreshes once so the access token hook adds `act` before the session is
 handed over. Account changes are refused at the front from tokens with
 `act`, by path, before GoTrue sees them; dropping `act` would break the
-token's signature, so reading the unverified payload there is safe. Admin
-keys now carry their IDs so the record names the key that acted.
+token's signature, so reading the unverified payload there is safe. Nor may
+such a token leave access that outlives the capped session in the person's
+organizations: issuing service-account secrets or invitations, changing
+roles, or changing the organization's second-factor rule, identity
+providers or domains is refused the same way; the operator does those with
+the admin key. Admin keys now carry their IDs so the record names the key
+that acted.
 
 ### Lifecycle events and activity
 

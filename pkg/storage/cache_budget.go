@@ -1,5 +1,7 @@
 package storage
 
+import "github.com/onebox-faas/faas/pkg/api"
+
 // ResolveCacheMaxBytes picks the artifact-cache byte budget for this host.
 //
 // The budget was a flat 8 GiB constant, which does not scale with the machine
@@ -33,6 +35,44 @@ func ResolveCacheMaxBytes(memTotalBytes int64) int64 {
 		return maxCacheMaxBytes
 	}
 	return budget
+}
+
+// ResolveCacheBudget sizes the artifact cache from the disk it lives on as
+// well as from RAM (ADR-20261114182830). The cache shares its filesystem with
+// capture staging, writable layer clones and builder drives, so it keeps a
+// reserve free on that filesystem: api.ArtifactCacheReservePercent of the
+// disk, never less than api.ArtifactCacheMinFreeBytes. The byte budget is
+// the rest of the disk, or the RAM-derived budget when that is larger (a
+// small disk, or a filesystem that cannot report its size). The reserve is
+// returned as the free-space floor, so a full disk is held off by eviction,
+// not by the budget alone.
+func ResolveCacheBudget(memTotalBytes, fsTotalBytes int64) (maxBytes, minFreeBytes int64) {
+	maxBytes = ResolveCacheMaxBytes(memTotalBytes)
+	minFreeBytes = api.ArtifactCacheMinFreeBytes
+	if fsTotalBytes <= 0 {
+		return maxBytes, minFreeBytes
+	}
+	if reserve := fsTotalBytes / 100 * api.ArtifactCacheReservePercent; reserve > minFreeBytes {
+		minFreeBytes = reserve
+	}
+	if disk := fsTotalBytes - minFreeBytes; disk > maxBytes {
+		maxBytes = disk
+	}
+	return maxBytes, minFreeBytes
+}
+
+// OwnerMinFreeBytes is the free-space floor the cache's eviction owner holds
+// (ADR-20261118003000): on a disk that can host builds, at least one build
+// drive (api.ArtifactCacheBuildFreeBytes), because builderd cannot evict the
+// captures and layers the owner keeps; otherwise minFreeBytes. Only the owner
+// holds it: a process that may not evict captures and layers cannot reach it,
+// and on production-us (rc.352, 2026-11-18) imaged's pre-stage evicted the
+// sidecars it had just written trying to, and failed.
+func OwnerMinFreeBytes(fsTotalBytes, minFreeBytes int64) int64 {
+	if fsTotalBytes >= 2*api.ArtifactCacheBuildFreeBytes && minFreeBytes < api.ArtifactCacheBuildFreeBytes {
+		return api.ArtifactCacheBuildFreeBytes
+	}
+	return minFreeBytes
 }
 
 const (

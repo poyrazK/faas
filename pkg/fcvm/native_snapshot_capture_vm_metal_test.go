@@ -605,7 +605,7 @@ func nativeMetalCaptureVMRestoreBackings(t *testing.T, ctx context.Context, m *M
 	if lease.UID == incoming.NativeLease.UID || lease.HostIP == incoming.NativeLease.HostIP || lease.Netns == incoming.NativeLease.Netns || lease.Slot == incoming.NativeLease.Slot {
 		t.Fatal("native restore borrowed source allocation or network")
 	}
-	if limit := nativeCaptureVMMemoryLimit(t, filepath.Join(cgroupRoot, ParentCgroupFor(lease.Plan), PerInstanceScope(lease.Instance))); limit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
+	if limit := nativeCaptureVMMemoryLimit(t, filepath.Join(cgroupRoot, vmCgroupParent(lease), PerInstanceScope(lease.Instance))); limit != uint64(api.BillableRAMMB(frame.RAMMB))<<20 {
 		t.Fatal("native restore changed billable target memory fence", limit)
 	}
 	if _, err := v.loadNativeQualificationRestore(ctx, lease, version, qualificationRestoreReceiptControl{}); err == nil {

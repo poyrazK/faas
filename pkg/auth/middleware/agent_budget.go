@@ -27,6 +27,10 @@ func (m *Middleware) ChargesAgentBudget(r *http.Request) bool {
 // changes that add nothing are never charged.
 func (m *Middleware) ChargeAgentBudget(w http.ResponseWriter, r *http.Request, plan api.Plan, millicents int64) (commit func(), answered bool) {
 	noop := func() {}
+	if Previewing(r) {
+		m.answerBudgetPreview(w, r, plan, millicents)
+		return noop, true
+	}
 	acct, key, _, ok := PrincipalFrom(r)
 	if !ok || key == nil || !ProjectLimitable(*key) || millicents <= 0 {
 		return noop, false

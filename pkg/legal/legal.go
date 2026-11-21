@@ -59,6 +59,10 @@ type Config struct {
 	AbuseEmail         string `json:"abuse_email"`
 	SecurityEmail      string `json:"security_email"`
 	SupportEmail       string `json:"support_email"`
+	// ChangeNotice announces a material change (Terms section 13): while
+	// the effective date is still ahead, the dashboard shows it to every
+	// signed-in customer. Leave it empty when nothing is pending.
+	ChangeNotice string `json:"change_notice"`
 }
 
 // Missing names every required field that is still empty or invalid.
@@ -104,6 +108,17 @@ func (c Config) Missing() []string {
 
 // Published reports whether the documents may be served.
 func (c Config) Published() bool { return len(c.Missing()) == 0 }
+
+// PendingNotice returns the change notice to show at now: ChangeNotice while
+// the effective date is still ahead, otherwise "".
+func (c Config) PendingNotice(now time.Time) string {
+	notice := strings.TrimSpace(c.ChangeNotice)
+	effective, err := time.Parse("2006-01-02", c.EffectiveDate)
+	if notice == "" || err != nil || !now.Before(effective) {
+		return ""
+	}
+	return notice
+}
 
 // Version is the effective date; a new date means customers accept again.
 func (c Config) Version() string { return c.EffectiveDate }

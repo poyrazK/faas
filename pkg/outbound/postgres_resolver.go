@@ -3,6 +3,7 @@ package outbound
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -64,7 +65,7 @@ const integrationPolicySQL = `
 	       integration.ai_log_export, integration.ai_moderation_action, COALESCE(integration.ai_moderation_kind, ''),
 	       COALESCE(integration.ai_moderation_integration_id::text, ''), COALESCE(integration.ai_moderation_model, ''),
 	       integration.ai_moderation_categories, integration.ai_moderation_on_error, integration.ai_allow_unmetered,
-	       integration.ai_auto_prompt_cache,
+	       integration.ai_auto_prompt_cache, integration.ai_semantic_cache,
 	       integration.ai_response_email, integration.ai_response_payment_card, integration.ai_response_iban,
 	       integration.ai_response_secret, integration.ai_response_blocked_terms, integration.ai_response_moderation,
 	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
@@ -105,7 +106,8 @@ const currentAIPricesSQL = `
 	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second,
 	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb,
 	       entry.input_audio_millicents_per_mtok, entry.cached_input_audio_millicents_per_mtok,
-	       entry.output_audio_millicents_per_mtok
+	       entry.output_audio_millicents_per_mtok, entry.cache_write_1h_millicents_per_mtok,
+	       entry.long_context_above_input_tokens, entry.long_context_input_percent, entry.long_context_output_percent
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -140,6 +142,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var tagLimitCosts []int64
 	var traceLimits aiTraceLimits
 	var onlineEvalPercent int
+	var semanticCache []byte
 	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &accountStatus, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
@@ -149,7 +152,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&contentPolicy.PaymentCard, &contentPolicy.IBAN, &contentPolicy.Secret, &contentPolicy.BlockedTerms,
 			&aiLogExport, &contentPolicy.Moderation.Action, &contentPolicy.Moderation.Kind, &contentPolicy.Moderation.IntegrationID,
 			&contentPolicy.Moderation.Model, &contentPolicy.Moderation.Categories, &contentPolicy.Moderation.OnError, &aiAllowUnmetered,
-			&aiAutoPromptCache,
+			&aiAutoPromptCache, &semanticCache,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
 			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
 			&tagLimitTags, &tagLimitCosts, &traceLimits.calls, &traceLimits.cost, &traceLimits.repeats, &onlineEvalPercent)
@@ -285,6 +288,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		AILogExport:       aiLogExport,
 		AIAllowUnmetered:  aiAllowUnmetered,
 		AIAutoPromptCache: aiAutoPromptCache,
+		AISemanticCache:   resolvedSemanticCache(semanticCache, api.Plan(plan), aiProvider, responseCacheTTLSeconds),
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
 		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue),
@@ -311,14 +315,17 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 	entries := make([]api.OutboundAIPriceEntry, 0)
 	for rows.Next() {
 		var entry api.OutboundAIPriceEntry
+		var above, inputPercent, outputPercent *int64
 		if err := rows.Scan(&entry.ModelPrefix, &entry.InputMillicentsPerMTok, &entry.CachedInputMillicentsPerMTok,
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
 			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
-			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok, &entry.CacheWrite1hMillicentsPerMTok,
+			&above, &inputPercent, &outputPercent); err != nil {
 			return nil, err
 		}
+		entry.LongContext = api.OutboundAILongContextFromColumns(above, inputPercent, outputPercent)
 		entries = append(entries, entry)
 	}
 	if err := rows.Err(); err != nil {
@@ -328,3 +335,22 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 }
 
 var _ Resolver = (*PostgresResolver)(nil)
+
+// resolvedSemanticCache reads an integration's semantic cache settings
+// (ADR 20261112194947). They apply only while the plan includes the
+// semantic cache and the integration has a response cache; anything else,
+// including unreadable settings, turns it off.
+func resolvedSemanticCache(raw []byte, plan api.Plan, provider string, responseCacheTTLSeconds int) *api.OutboundAISemanticCache {
+	if len(raw) == 0 || provider == "" || responseCacheTTLSeconds <= 0 {
+		return nil
+	}
+	limits, ok := api.LimitsFor(plan)
+	if !ok || !limits.OutboundAISemanticCacheAllowed {
+		return nil
+	}
+	var semantic api.OutboundAISemanticCache
+	if json.Unmarshal(raw, &semantic) != nil || !semantic.Enabled || !semantic.Valid(provider) {
+		return nil
+	}
+	return &semantic
+}

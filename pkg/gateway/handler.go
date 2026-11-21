@@ -156,6 +156,11 @@ type App struct {
 	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
 	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
 	PerInstanceConcurrency int
+	// FunctionRunnerSlots is how many requests a function instance's
+	// generated runner executes at once (interpreter workers × the app's
+	// function_concurrency); zero for apps without one. It sizes burst
+	// scale-out only, never admission (burstScaleOutConcurrency).
+	FunctionRunnerSlots int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -903,6 +908,17 @@ type Backend interface {
 	ScheduleMirror(ctx context.Context, appID, mirrorDeploymentID, mirrorRuleID string) (instanceID, wakeID string, err error)
 }
 
+// backendLaneCapacityCount counts the instances holding the requesting
+// lane's slots: deploymentID's environment, or production when it is empty or
+// one of the production weights. Backends without lane data fall back to the
+// app-wide count.
+func backendLaneCapacityCount(backend Backend, appID, deploymentID string) int {
+	if counter, ok := backend.(interface{ LaneCapacityCount(string, string) int }); ok {
+		return counter.LaneCapacityCount(appID, deploymentID)
+	}
+	return backendCapacityCount(backend, appID)
+}
+
 func backendCapacityCount(backend Backend, appID string) int {
 	if counter, ok := backend.(interface{ CapacityCount(string) int }); ok {
 		return counter.CapacityCount(appID)
@@ -992,6 +1008,8 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
+	// appPlan names a service call target's plan (WithAppPlanResolver).
+	appPlan               AppPlanResolver
 	publicRoutingPolicy   PublicRoutingPinner
 	publicRoutingStride   publicRoutingStride
 	publicRoutingFreezes  publicRoutingFreezes
@@ -1379,6 +1397,9 @@ type Handler struct {
 	// (cmd/gatewayd-internal/main.go → secretbox.MultiOpen
 	// → publicAuthUnsealer closure).
 	publicAuthUnsealer PublicAuthUnsealer
+	// basicAuthVerifiers checks basic auth against verify-only verifiers
+	// (ADR-20261110210000 slice 3h); nil keeps the sealed path alone.
+	basicAuthVerifiers *BasicAuthVerifiers
 
 	// edgeRules (ADR-089 / issue #561 PR 3) is the
 	// per-host LRU-backed matcher consulted between the
@@ -2374,7 +2395,7 @@ func (h *Handler) enforceRequireAuthn(w http.ResponseWriter, r *http.Request, re
 		// RFC 9110 §15.5.2: a 401 carries the challenge (production-us
 		// hunt #9, H9-82).
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -2907,8 +2928,13 @@ func (h *Handler) applyEdgeRuleHeaders(w http.ResponseWriter, r *http.Request, a
 	// any request-side op runs (ADR-968).
 	requestOps := expandHeaderOps(rule.RequestHeaders, r)
 	responseOps := expandHeaderOps(rule.ResponseHeaders, r)
-	// Request-side ops: apply directly to r.Header.
+	// Request-side ops: apply directly to r.Header. A sealed value is added
+	// by the instance's vmmd (ADR-20261110210000 slice 3i).
 	for _, op := range requestOps {
+		if op.SecretID != "" {
+			recordEdgeSecretHeader(r, op)
+			continue
+		}
 		applyHeaderOp(r.Header, op)
 	}
 	// Response-side ops: wrap w with a headerRecorder that
@@ -5392,7 +5418,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 		})
 		rec.status = http.StatusUnauthorized
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized,
-			"Unauthorized", "this app requires an API key; present it as `Authorization: Bearer <token>`").
+			"Unauthorized", missingBearerDetail(tok)).
 			WithHeader("WWW-Authenticate", `Bearer realm="apps"`))
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
@@ -5466,7 +5492,7 @@ func (h *Handler) enforcePublicAuthBearer(w http.ResponseWriter, r *http.Request
 // every other credential compare in the platform
 // (api.HashAPIKey / cmd/apid webhook signing).
 func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App) bool {
-	if h.publicAuthCache == nil || h.publicAuthUnsealer == nil {
+	if (h.publicAuthCache == nil || h.publicAuthUnsealer == nil) && h.basicAuthVerifiers == nil {
 		rec.status = http.StatusInternalServerError
 		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeInternal,
 			"Auth chain not wired",
@@ -5521,13 +5547,11 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 	// PublicAuthUnsealer.UnsealBasicAuth on the
 	// secretbox-sealed BasicSealed blob stored on the apps
 	// row.
-	expectedUser, expectedPass, ok := h.publicAuthCache.Get(app.ID, app.PublicAuth.BasicSealed, func() (string, string, bool) {
-		u, p, err := h.publicAuthUnsealer.UnsealBasicAuth(r.Context(), app.PublicAuth.BasicSealed)
-		if err != nil {
-			return "", "", false
-		}
-		return u, p, true
-	})
+	//
+	// ADR-20261110210000 slice 3h: with verifiers, the credential is
+	// checked against its argon2id verifier and never opened; the sealed
+	// path stays as the fallback for a blob that has none yet.
+	matched, ok := h.basicAuthMatches(r, app, user, pass)
 	if !ok {
 		// Unseal failure is treated as a credential mismatch
 		// (401) so a brute-forcer can't tell the difference
@@ -5545,11 +5569,8 @@ func (h *Handler) enforcePublicAuthBasic(w http.ResponseWriter, r *http.Request,
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return false
 	}
-	// (3) Constant-time compare of fixed-length digests, both
-	// evaluated. ConstantTimeCompare returns early on unequal
-	// lengths and || skipped the password compare on a wrong
-	// username, so timing revealed the username and both lengths.
-	if !basicCredentialsMatch(user, pass, expectedUser, expectedPass) {
+	// (3) The credential did not match.
+	if !matched {
 		// One audit row per app and client prefix a minute: a guessing
 		// flood wrote one per guess and filled the bounded audit queue.
 		if h.publicAuthGuesses.fail(guessKey) {
@@ -5982,8 +6003,12 @@ func (c *capWriter) Write(b []byte) (int, error) {
 		// Fire once; idempotent under concurrent writes thanks
 		// to disabled CAS. A committed response cannot become a
 		// problem document any more (see committed).
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
-			c.onCap()
+		if c.disabled.CompareAndSwap(false, true) {
+			if !c.committed && c.onCap != nil {
+				c.onCap()
+			} else if c.committed {
+				markResponseTruncated(c.ResponseWriter)
+			}
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
@@ -6307,6 +6332,10 @@ func (h *Handler) pickAfterCapacity(app App, preferredInstanceID, versionKey str
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Outermost: a gRPC caller gets the platform's errors as gRPC statuses;
+	// the recorders below still see the HTTP status (grpc_platform_error.go).
+	w, finishGRPC := wrapGRPCPlatformErrors(w, r)
+	defer finishGRPC()
 	r = r.WithContext(withResponseCacheFill(r.Context(), h.responseCache))
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
@@ -6661,7 +6690,7 @@ haveApp:
 		return
 	}
 	if routeProbe {
-		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken))
+		r = r.WithContext(withRouteProbe(r.Context(), probeDeploymentID, probeToken, h.routeProbeUnbilled(app, probeDeploymentID, probeToken)))
 	}
 	// Preserve the bounded classification across the gateway → schedd gRPC
 	// boundary. The scheduler includes it in wake.boot_started metadata.
@@ -7135,7 +7164,8 @@ haveApp:
 		return
 	}
 	// A preview runs unreviewed code: the credential a platform gate just
-	// verified does not reach it (ADR-20261102100001).
+	// verified does not reach it (ADR-20261102100001), and no app receives
+	// a verified Gregale API key (ADR-20261120060000).
 	withholdPreviewGateCredential(r, app)
 	// The three verified identity sources have all run by this point. Keep
 	// operator-authorized deployment smoke available for rollout readiness.
@@ -7687,7 +7717,7 @@ haveApp:
 				if notServing := h.pinnedDeploymentNotServing(r.Context(), app, exactDeploymentID); notServing != nil {
 					admitErr = notServing
 				} else {
-					pick, admitErr = h.settleAtCapacity(r.Context(), app, limits, maxInstances, func() PickResult {
+					pick, admitErr = h.settleAtCapacity(r.Context(), app, exactDeploymentID, limits, maxInstances, func() PickResult {
 						return pickPublicDeployment(h.backend, app.ID, exactDeploymentID, preferredInstanceID)
 					})
 					settled = admitErr == nil
@@ -7800,6 +7830,9 @@ haveApp:
 			r = r.WithContext(withWakePhaseTrace(r.Context(), platformWakeTrace))
 		}
 		if err != nil {
+			if h.clientLeftDuringWake(r, app) {
+				return
+			}
 			if showWakePage && r.Context().Err() == nil && wakeCtx.Err() == context.DeadlineExceeded && errors.Is(err, context.DeadlineExceeded) && h.gate.WakeInProgress(app.ID) {
 				// The caller's short wait expired, but the detached wake is
 				// still alive. Record the visit and let the page's fetch/meta
@@ -7867,6 +7900,7 @@ haveApp:
 	// Reconcile pressure accumulated by the app-level burst. Public snapshots
 	// use deployment-scoped admissions; explicit pin URLs skip expansion.
 	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
+	burstPerVM := burstScaleOutConcurrency(app, perVMConcurrency)
 	waitedForBurst := false
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
@@ -7875,9 +7909,9 @@ haveApp:
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
-			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency, routing)
+			waitedForBurst, burstErr = h.maybePublicRoutingBurst(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM, routing)
 		} else {
-			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, perVMConcurrency)
+			waitedForBurst, burstErr = h.maybeBurstCapacity(burstWaitCtx, app, limits.MaxConcurrency, burstPerVM)
 		}
 		if burstErr != nil {
 			if errors.Is(burstErr, context.DeadlineExceeded) && r.Context().Err() == nil {
@@ -7944,7 +7978,7 @@ haveApp:
 		// cached instance was evicted since. Only a true count of live
 		// instances is the customer's limit (#5709).
 		var wakeErr error
-		pick, wakeErr = h.settleAtCapacity(r.Context(), app, limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
+		pick, wakeErr = h.settleAtCapacity(r.Context(), app, "", limits, effectiveAppConcurrencyLimit(app, limits.MaxConcurrency), func() PickResult {
 			return h.pickAfterCapacity(app, preferredInstanceID, versionKey)
 		})
 		if wakeErr != nil {
@@ -8101,6 +8135,7 @@ haveApp:
 	// the HTTP bytes to this exact instance. A retry restamps for its own
 	// target inside the forward closures below.
 	var identity api.PlatformIdentity
+	r = h.withFlagRequestAttributes(r)
 	r, identity = stampTargetIdentity(r, app, target)
 	requestAttrs.addIdentity(identity)
 
@@ -8232,7 +8267,13 @@ haveApp:
 			}
 		}
 		if recovery, ok := h.backend.(staleTargetRecovery); ok {
-			recovery.RecoverStaleTarget(staleContext, app.ID, app.Scope, limits.MaxConcurrency)
+			recoveryCtx := staleContext
+			if !frozen {
+				// Name the dead target so schedd can ask its vmmd and fail
+				// a row whose VM is gone instead of answering at capacity.
+				recoveryCtx = sched.WithStaleInstanceHint(staleContext, failed.InstanceID)
+			}
+			recovery.RecoverStaleTarget(recoveryCtx, app.ID, app.Scope, limits.MaxConcurrency)
 		}
 	}
 	staleSignal := &staleTargetSignal{}
@@ -8514,6 +8555,13 @@ haveApp:
 		capped := h.setupBufferedCapWriter(w, r.Method, app, planCap)
 		completionTarget = h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
+				// Only vmmd adds sealed edge-rule headers
+				// (ADR-20261110210000 slice 3i); without it the
+				// request would reach the app without its credential.
+				if len(edgeSecretHeadersFrom(req.Context())) > 0 {
+					writeForwarderProblem(w, http.StatusServiceUnavailable)
+					return
+				}
 				req, _ = stampTargetIdentity(req, app, tgt)
 				req, endTracking := h.trackSlowRequest(req, app, tgt, isStreaming)
 				defer endTracking()
@@ -8604,6 +8652,9 @@ haveApp:
 	// already in flight. The latter is cold on the pinned path but admitted
 	// nothing, so it carries no method of its own.
 	waitedOnWake := cold || !platformWakeStart.IsZero()
+	if cold && wakeMethod != WakeMethodUnspecified {
+		h.recordPlatformProbeWake(r, app.ID, target.InstanceID, wakeStart)
+	}
 	if waitedOnWake && h.metrics != nil {
 		// Wake latency is "request-received to first upstream byte". The
 		// wake-timing RoundTripper stamps the inbound request's recorder at
@@ -8771,6 +8822,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		if decision.path != "" {
 			requestLog = requestLog.With(decision.logAttribute())
 		}
+		if truncated := truncatedResponse(r); truncated != nil {
+			requestLog = requestLog.With("response_truncated", true, "sent_status", truncated.status, "response_bytes", truncated.Bytes)
+		}
 		if revision := TrafficPolicyRevision(r.Context()); revision != "" {
 			requestLog = requestLog.With("traffic_policy_revision", revision)
 		}
@@ -8789,9 +8843,17 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 	// Idle reaper hook (spec §4.1): 2xx → the instance is alive. 4xx/5xx are
 	// not evidence of activity (a misconfigured client can hammer a dead
 	// instance with 401s forever and we'd never park it).
+	//
+	// A route probe (ADR-847) is platform traffic, not customer activity: it
+	// still refreshes the gateway's cached target below, but it never resets
+	// the idle timer. A probed app otherwise never parked, kept its RAM and
+	// its billed running time, and never captured a snapshot (ADR-847
+	// amendment 2026-11-19).
 	if h.lastSeen != nil && status >= 200 && status < 300 && target.InstanceID != "" {
 		now := time.Now()
-		h.lastSeen.Touch(target.InstanceID, now)
+		if !isRouteProbe(r.Context()) {
+			h.lastSeen.Touch(target.InstanceID, now)
+		}
 		if recorder, ok := h.backend.(targetActivityRecorder); ok {
 			recorder.TouchTarget(appID, target.InstanceID, now)
 		}
@@ -9379,6 +9441,10 @@ type statusRecorder struct {
 	// remove it. The parked HEAD cache is shared with anonymous callers.
 	headCachePrivate bool
 
+	// responseTruncated is set when the body passed the plan's cap after
+	// the status went out (truncated_response_telemetry.go).
+	responseTruncated bool
+
 	// Capture the final rebound request context when the response commits.
 	trafficResponseCommittedContext context.Context
 
@@ -9513,7 +9579,7 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 	if s.deploymentSmoke {
 		s.Header().Set("Cache-Control", "no-store")
 	}
-	if s.sharedCachePrivate {
+	if s.sharedCachePrivate || !declaresCachePolicy(s.Header()) {
 		markSharedCachePrivate(s.Header())
 	}
 }
@@ -9937,6 +10003,11 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 		config = configs[0]
 	}
 	policy := WakeAdmissionPolicyForAppWithWakeLimits(plan, config.overflow, config.maxQueueWaitMS, config.wakeMaxQueueDepth, config.wakeMaxQueueWaitSecs)
+	if h.log != nil {
+		// A request that joins a wake already in flight waits on that wake's
+		// leader, which may have started before a schedd restart.
+		h.log.Debug("gateway: wake gate enter", "app_id", appID, "joins_inflight", h.gate.WakeInProgress(appID), "trigger", trigger)
+	}
 	werr := h.gate.WaitWithPolicy(ctx, appID, accountID, policy,
 		func() bool {
 			// max_concurrency is a ceiling for scheduler-driven scale-up,
@@ -9945,6 +10016,13 @@ func (h *Handler) coldStart(ctx context.Context, appID, accountID, scope string,
 			return h.backend.HealthyCount(appID) == 0
 		},
 		func(ctx context.Context) error {
+			if h.log != nil {
+				leaderStart := time.Now()
+				h.log.Debug("gateway: wake leader ensure start", "app_id", appID)
+				defer func() {
+					h.log.Debug("gateway: wake leader ensure end", "app_id", appID, "took", time.Since(leaderStart).String())
+				}()
+			}
 			_, hasCapacityEnsurer := h.backend.(capacityWarmEnsurer)
 			_, hasWarmEnsurer := h.backend.(warmEnsurer)
 			if scope == "" && (hasCapacityEnsurer || hasWarmEnsurer) && h.burstPressure != nil {

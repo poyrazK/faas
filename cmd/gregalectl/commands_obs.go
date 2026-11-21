@@ -67,6 +67,8 @@ const subObsCollectionHistory = "collection-history"
 const subObsRecurrence = "recurrence"
 const subObsResponseTimes = "response-times"
 const subObsNotificationHealth = "notification-health"
+const subObsServingHealth = "serving-health"
+const subObsVerifyDeployment = "verify-deployment"
 const subObsRuleHealth = "rule-health"
 const subObsRuleCoverage = "rule-coverage"
 const subObsRecordingCoverage = "recording-coverage"
@@ -102,7 +104,7 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|serving-health|verify-deployment|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
 		return 2
 	}
 	sub, rest := args[0], args[1:]
@@ -117,6 +119,10 @@ func cmdObsDispatch(args []string) int {
 		return cmdObsRuleHealth(rest)
 	case subObsNotificationHealth:
 		return cmdObsNotificationHealth(rest)
+	case subObsServingHealth:
+		return cmdObsServingHealth(rest)
+	case subObsVerifyDeployment:
+		return cmdObsVerifyDeployment(rest)
 	case subObsCollectionHistory:
 		return cmdObsCollectionHistory(rest)
 	case subObsRecurrence:
@@ -547,6 +553,11 @@ func writeObsOverviewHuman(w io.Writer, response api.ObsOverviewResponse) {
 	_, _ = fmt.Fprintf(w, "recent_failures_1h=%d\n", len(response.RecentFailures1h))
 	for _, failure := range response.RecentFailures1h {
 		_, _ = fmt.Fprintf(w, "  failure kind=%s count=%d\n", failure.Kind, failure.Count)
+	}
+	_, _ = fmt.Fprintf(w, "coding_agents=%d\n", len(response.CodingAgents))
+	for _, agent := range response.CodingAgents {
+		_, _ = fmt.Fprintf(w, "  agent name=%s deploys_24h=%d new_accounts_14d=%d new_accounts_serving_14d=%d new_accounts_paid_14d=%d\n",
+			agent.Agent, agent.Deploys24h, agent.NewAccounts14d, agent.NewAccountsServing14d, agent.NewAccountsPaid14d)
 	}
 }
 

@@ -1,9 +1,11 @@
 package datapipeline
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +31,7 @@ func primaryColumns(r relation) []column {
 			keys = append(keys, col)
 		}
 	}
+	slices.SortStableFunc(keys, func(a, b column) int { return cmp.Compare(a.KeyPosition, b.KeyPosition) })
 	return keys
 }
 func collated(name string, c column) string {
@@ -38,7 +41,7 @@ func collated(name string, c column) string {
 	return name
 }
 func verificationSetting(ctx context.Context, tx pgx.Tx) error {
-	_, err := tx.Exec(ctx, `SELECT set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),set_config('idle_in_transaction_session_timeout',$3,true)`, strconv.FormatInt(api.DataPipelineVerificationLockTimeout.Milliseconds(), 10), strconv.FormatInt(api.DataPipelineVerificationQueryTimeout.Milliseconds(), 10), strconv.FormatInt(api.DataPipelineLease.Milliseconds(), 10))
+	_, err := tx.Exec(ctx, `SELECT set_config('lock_timeout',$1,true),set_config('statement_timeout',$2,true),set_config('idle_in_transaction_session_timeout',$3,true)`, strconv.FormatInt(api.DataPipelineVerificationLockTimeout.Milliseconds(), 10), strconv.FormatInt(workQueryMillis(ctx), 10), strconv.FormatInt(api.DataPipelineLease.Milliseconds(), 10))
 	if err != nil {
 		return err
 	}
@@ -270,7 +273,8 @@ func cleanupCancelledVerification(ctx context.Context, p Pipeline, target *pgx.C
 	if err != nil || c == nil {
 		return err
 	}
-	if c.Progress.ID != v.ID && (v.IntentID == "" || c.Progress.IntentID != v.IntentID) {
+	queued := v.Phase == "queued" && v.ManualAttempt > 0 && v.ID == queuedVerificationID(p, v.ManualAttempt) && c.Progress.ManualAttempt == v.ManualAttempt
+	if !queued && c.Progress.ID != v.ID && (v.IntentID == "" || c.Progress.IntentID != v.IntentID) {
 		return nil
 	}
 	if err = current(ctx); err != nil {

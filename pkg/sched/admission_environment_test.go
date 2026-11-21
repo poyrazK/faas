@@ -351,3 +351,25 @@ func TestStageAdmissionRejectsScalingHistoryFromDifferentLifetime(t *testing.T) 
 		t.Fatalf("different lifetime's clock authorized admission: %+v %v", result, err)
 	}
 }
+
+// A warm stage instance must not hold production's only configured slot.
+// Production admits with the empty environment key; its shared ceiling used
+// to collapse to the app's configured max_concurrency while the shared count
+// included every stage, so with max_concurrency 1 a warm staging instance
+// refused production (prod 2026-11-19: 429 app_concurrency_reached on every
+// production request for 12 min after a promotion, 8.6 min after a rollback).
+func TestStageInstanceDoesNotHoldProductionsConfiguredSlot(t *testing.T) {
+	ledger := sched.NewNodeLedger()
+	stage := sched.Request{Instance: "stage-1", AppID: "app", EnvironmentKey: "environment:stage", Plan: api.PlanScale, RAMMB: 128, MaxConcurrency: 1}
+	if err := ledger.Admit(stage); err != nil {
+		t.Fatalf("stage admission: %v", err)
+	}
+	production := sched.Request{Instance: "prod-1", AppID: "app", ProductionEnvironment: true, Plan: api.PlanScale, RAMMB: 128, MaxConcurrency: 1}
+	if err := ledger.Admit(production); err != nil {
+		t.Fatalf("a warm stage instance held production's only configured slot: %v", err)
+	}
+	production.Instance = "prod-2"
+	if err := ledger.Admit(production); err == nil {
+		t.Fatal("production exceeded its own max_concurrency 1")
+	}
+}

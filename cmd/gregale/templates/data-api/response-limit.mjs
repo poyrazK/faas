@@ -10,6 +10,8 @@ export function streamResponse(response, res, method, deadline, problem, publicC
   // Only a complete success may become a shared edge entry.
   if (publicCache && response.statusCode === 200) Object.assign(out, { 'Cache-Control': publicCache.cacheControl, 'Cache-Tag': publicCache.tags })
   for (const name of ['content-type', 'content-range', 'preference-applied', 'location']) if (response.headers[name]) out[name] = response.headers[name]
+  const retry = response.headers['retry-after']
+  if ([429, 503].includes(response.statusCode) && typeof retry === 'string' && /^\d+$/.test(retry) && Number.isSafeInteger(Number(retry))) out['retry-after'] = retry
   const headers = () => { if (!res.headersSent) res.writeHead(response.statusCode, out) }
   const stop = () => { stopped = true; res.removeListener('drain', drain) }
   const drain = () => { if (!stopped && deadline.check()) response.resume() }

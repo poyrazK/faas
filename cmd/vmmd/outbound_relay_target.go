@@ -5,6 +5,8 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -59,4 +61,17 @@ func outboundRelayTarget(getenv func(string) string) (outboundRelayDialer, error
 	default:
 		return nil, fmt.Errorf("outbound relay: target %q must start with unix:// or tcp://", target)
 	}
+}
+
+// outboundRelayDisabledLevel is the log level of a relay target that left the
+// relay closed. Missing mTLS files are the documented state of a compute node
+// whose relay leaf was never issued (vmmd_service's
+// faas_vmmd_outbound_relay_tls_managed off): the relay is simply off, and an
+// ERROR on every vmmd start was noise (prod 2026-11-16). A malformed target
+// or unreadable material is a configuration fault and stays an error.
+func outboundRelayDisabledLevel(err error) slog.Level {
+	if errors.Is(err, fs.ErrNotExist) {
+		return slog.LevelWarn
+	}
+	return slog.LevelError
 }

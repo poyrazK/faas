@@ -16,6 +16,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ComposeLoopbackPortWarning explains why a loopback-only Compose mapping
+// produces an internal service. It is part of the scan's text response.
+const ComposeLoopbackPortWarning = "ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)"
+
 // composeCandidate is the loose, decoded shape of one
 // docker-compose services entry. The decoder stays non-strict; keys the scan
 // does not apply are reported per service by composeServiceKeyWarnings
@@ -66,9 +70,20 @@ type composeCandidate struct {
 	AllowedServiceCallers     *[]string                               `yaml:"x-gregale-allow-callers"`
 	AllowedServiceCallScopes  *api.ServiceCallerScopes                `yaml:"x-gregale-allow-call-scopes"`
 	PlatformTenantRequired    *bool                                   `yaml:"x-gregale-platform-tenant-required"`
+	// Streaming and WakeAhead set the app's response streaming and
+	// service wake-ahead from the Compose file, as `gregale app <slug>
+	// --streaming-enabled` and `gregale app wake-ahead <slug> on` do.
+	Streaming *bool `yaml:"x-gregale-streaming"`
+	WakeAhead *bool `yaml:"x-gregale-wake-ahead"`
 	// RenamedFrom names the service this one was called before, so a
 	// rename keeps its app (ADR-20261029090000).
 	RenamedFrom string `yaml:"x-gregale-renamed-from"`
+	// StartupDeadline is x-gregale-startup-deadline: seconds or a duration
+	// the service may take to become ready (retail-store feedback A5).
+	StartupDeadline any `yaml:"x-gregale-startup-deadline"`
+	// PublicAuth is x-gregale-public-auth: open or bearer for the service's
+	// public URL, replacing the plan default.
+	PublicAuth string `yaml:"x-gregale-public-auth"`
 }
 
 // buildFromAny returns (context, dockerfile, present) from any
@@ -137,6 +152,14 @@ type composeDoc struct {
 	// ServiceBindingPolicy is the project-wide x-gregale-service-policy: the
 	// policy of every deployable service that sets none (ADR-20261022111119).
 	ServiceBindingPolicy string `yaml:"x-gregale-service-policy"`
+	// SlugPrefix is the top-level x-gregale-slug-prefix: new apps for this
+	// file's services are named <prefix><service>, so short service names
+	// (ui, cart) need not be globally unique app names. Service names, and
+	// the <service>.svc.gregale addresses built from them, are unchanged.
+	SlugPrefix string `yaml:"x-gregale-slug-prefix"`
+	// PublicAuth is the top-level x-gregale-public-auth: the public auth
+	// mode of every service that sets none.
+	PublicAuth string `yaml:"x-gregale-public-auth"`
 }
 type composeRoot struct {
 	Compose composeDoc `yaml:"compose"`
@@ -227,6 +250,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
 	}
+	slugPrefix, err := interpolateComposeString(c.SlugPrefix, composeEnv, src, "(top level)", "x-gregale-slug-prefix")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := ValidateSlugPrefix(slugPrefix); err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: %s: x-gregale-slug-prefix: %w", src, err)
+	}
 	activeProfiles := composeActiveProfiles(composeEnv)
 	renamedBy := make(map[string]string)
 	for _, name := range svcNames {
@@ -314,6 +344,12 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		if !hasWorkload && s.PlatformTenantRequired != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-platform-tenant-required requires a deployable workload", src, name)
 		}
+		if !hasWorkload && s.Streaming != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-streaming requires a deployable workload", src, name)
+		}
+		if !hasWorkload && s.WakeAhead != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-wake-ahead requires a deployable workload", src, name)
+		}
 		conditions, dependencyErr := composeDependencyConditions(s.DependsOn)
 		if dependencyErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, dependencyErr)
@@ -362,6 +398,20 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// The healthcheck override applies to prebuilt and built images alike
 		// (ADR-20261019195000): imaged merges it onto the image's HEALTHCHECK.
 		healthcheck, err := composeHealthcheck(s.Healthcheck)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		if warning := composeStartupDeadlineWarning(fsys, healthcheck); warning != "" {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
+		startupDeadlineS, startupNote, err := composeStartupDeadline(fsys, s.StartupDeadline, healthcheck)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		if startupNote != "" {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+startupNote)
+		}
+		publicAuth, err := composePublicAuth(s.PublicAuth, c.PublicAuth)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 		}
@@ -417,21 +467,40 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// Compose, so the service stays internal (ADR-20261102192943).
 		portsLoopback := len(ports) > 0 && composePortsLoopbackOnly(s.Ports)
 		if portsLoopback {
-			warnings = append(warnings, "reposcan: "+src+": "+name+
-				": ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)")
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+ComposeLoopbackPortWarning)
 		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
 		// exists, mergeByKey infers HTTP from a published port and worker
 		// otherwise.
+		// A curl/wget fetch of the serving port becomes a host-side HTTP
+		// readiness check, so the image needs no curl (feedback B2).
+		var readinessCheck *api.DeploymentHealthcheck
+		servingPort := 0
+		if len(ports) > 0 {
+			servingPort = ports[0]
+		} else if len(internalPorts) > 0 {
+			servingPort = internalPorts[0].Port
+		}
+		if probe, replaced, converted := composeHTTPReadiness(healthcheck, servingPort); converted {
+			readinessCheck, healthcheck = probe, replaced
+			warnings = append(warnings, "reposcan: "+src+": "+name+": healthcheck runs as an HTTP readiness check of "+probe.Path+" from the platform; the image needs no curl or wget for it")
+		}
+		if slugPrefix != "" && !api.ValidAppSlug(slugPrefix+name) {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: x-gregale-slug-prefix %q makes app name %q, which is not a valid app name (3-40 lowercase letters, digits and hyphens)", src, name, slugPrefix, slugPrefix+name)
+		}
 		seeds = append(seeds, workloadSeed{
 			name:                name,
+			slugPrefix:          slugPrefix,
+			startupDeadlineS:    startupDeadlineS,
+			publicAuth:          publicAuth,
 			rootDir:             ctx,
 			dockerfile:          df,
 			dockerfileBuild:     dockerfileBuild,
 			image:               image,
 			imageSet:            true,
 			healthcheck:         healthcheck,
+			readinessCheck:      readinessCheck,
 			imageProcess:        process,
 			secretFiles:         secretFiles,
 			resources:           resources,
@@ -448,6 +517,8 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			allowedServiceCallers:     allowedCallers,
 			allowedServiceCallScopes:  allowedCallScopes,
 			platformTenantRequired:    s.PlatformTenantRequired,
+			streaming:                 s.Streaming,
+			wakeAhead:                 s.WakeAhead,
 			renamedFrom:               renamedFrom,
 
 			ports:         ports,

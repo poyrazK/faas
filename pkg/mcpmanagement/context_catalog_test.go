@@ -14,8 +14,14 @@ import (
 func TestContextCatalogReadOnlyResourcesAndPrompts(t *testing.T) {
 	f, cs, ctx := newReleaseFixture(t, true)
 	resources, err := cs.ListResources(ctx, nil)
-	if err != nil || len(resources.Resources) != 2 {
+	if err != nil || len(resources.Resources) != 3 {
 		t.Fatalf("resources=%+v %v", resources, err)
+	}
+	// The error contract tools no longer repeat in their output schemas is
+	// served once (ADR-20261103193000, amendment 2026-11-13).
+	contract, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: errorContractURI})
+	if err != nil || len(contract.Contents) != 1 || !strings.Contains(contract.Contents[0].Text, `"recovery"`) || !strings.Contains(contract.Contents[0].Text, `"retry_original"`) {
+		t.Fatalf("error contract = %+v %v", contract, err)
 	}
 	templates, err := cs.ListResourceTemplates(ctx, nil)
 	if err != nil || len(templates.ResourceTemplates) != 11 {

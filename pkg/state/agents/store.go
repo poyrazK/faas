@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -142,6 +143,9 @@ type VersionSpec struct {
 	// (ADR-20261027090012 §1), for a harness whose connections are
 	// heartbeat-sensitive. The API names it pause_during_model_calls: false.
 	NoModelWaitPause bool
+	// CapabilityPolicy is what a run may do over the capability gateway
+	// (ADR-20261027090016 amendment 1); nil allows only the models.
+	CapabilityPolicy *api.AgentCapabilityPolicy
 }
 
 // Agent is an agent definition.
@@ -337,6 +341,12 @@ func (s *Store) addVersion(ctx context.Context, tx pgx.Tx, accountID string, age
 	if err != nil {
 		return Agent{}, Version{}, fmt.Errorf("encode deliveries: %w", err)
 	}
+	var policy []byte
+	if spec.CapabilityPolicy != nil {
+		if policy, err = json.Marshal(spec.CapabilityPolicy); err != nil {
+			return Agent{}, Version{}, fmt.Errorf("encode capability policy: %w", err)
+		}
+	}
 	run := spec.Harness.Run
 	if run == nil {
 		run = []string{}
@@ -347,7 +357,7 @@ func (s *Store) addVersion(ctx context.Context, tx pgx.Tx, accountID string, age
 		HarnessRun: run, HarnessModels: models, PromptTemplate: spec.PromptTemplate,
 		RamMb: optInt(spec.RAMMB), TimeoutSec: int32(spec.TimeoutSec),
 		ModelIntegrations: integrations, AiBudgetMillicents: optInt8(spec.AIBudgetMillicents), Deliveries: deliveries,
-		PauseDuringModelCalls: !spec.NoModelWaitPause,
+		PauseDuringModelCalls: !spec.NoModelWaitPause, CapabilityPolicy: policy,
 	})
 	if err != nil {
 		return Agent{}, Version{}, fmt.Errorf("insert agent version: %w", err)
@@ -734,6 +744,11 @@ func (s *Store) activeAgent(ctx context.Context, db sqlc.DBTX, accountID, name s
 }
 
 func (s *Store) version(ctx context.Context, db sqlc.DBTX, accountID, agentID string, version int) (Version, error) {
+	// Versions are int4. Converting a larger number wrapped it, so version
+	// 4294967297 read (and ran) version 1 (CodeQL go/incorrect-integer-conversion).
+	if version < 1 || version > math.MaxInt32 {
+		return Version{}, ErrNotFound
+	}
 	row, err := s.q.GetAgentVersion(ctx, db, sqlc.GetAgentVersionParams{AgentID: agentID, AccountID: accountID, Version: int32(version)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Version{}, ErrNotFound
@@ -773,13 +788,20 @@ func versionFrom(row sqlc.GetAgentVersionRow) (Version, error) {
 	if len(deliveries) == 0 {
 		deliveries = nil
 	}
+	var policy *api.AgentCapabilityPolicy
+	if len(row.CapabilityPolicy) > 0 {
+		policy = &api.AgentCapabilityPolicy{}
+		if err := json.Unmarshal(row.CapabilityPolicy, policy); err != nil {
+			return Version{}, fmt.Errorf("decode capability policy: %w", err)
+		}
+	}
 	return Version{
 		Version: int(row.Version),
 		VersionSpec: VersionSpec{
 			Harness:        Harness{Preset: row.HarnessPreset.String, Image: row.HarnessImage.String, Run: row.HarnessRun, Models: models},
 			PromptTemplate: row.PromptTemplate, RAMMB: int(row.RamMb.Int32), TimeoutSec: int(row.TimeoutSec),
 			Integrations: nilIfEmpty(integrations), AIBudgetMillicents: row.AiBudgetMillicents.Int64,
-			Deliveries: deliveries, NoModelWaitPause: !row.PauseDuringModelCalls,
+			Deliveries: deliveries, NoModelWaitPause: !row.PauseDuringModelCalls, CapabilityPolicy: policy,
 		},
 		CreatedAt: row.CreatedAt.Time,
 	}, nil

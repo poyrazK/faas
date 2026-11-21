@@ -36,6 +36,7 @@ import (
 
 	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/featurehints"
 )
 
 // decomposeSink is the http test server for the /v1/projects surface.
@@ -1021,8 +1022,11 @@ func TestCmdDeployTarball_ProjectDryRunUsesScan(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout.String())), &got); err != nil {
 		t.Fatalf("project dry-run output is not JSON: %v\n%s", err, stdout.String())
 	}
-	if !reflect.DeepEqual(got, goldenPlan) {
-		t.Fatalf("project dry-run plan differs from ScanProject response:\n got  %+v\n want %+v", got, goldenPlan)
+	// The CLI adds feature hints when the server sent none (ADR-20261112223000).
+	want := goldenPlan
+	want.FeatureHints = featurehints.For(featurehints.FromPlan(goldenPlan))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("project dry-run plan differs from ScanProject response:\n got  %+v\n want %+v", got, want)
 	}
 }
 

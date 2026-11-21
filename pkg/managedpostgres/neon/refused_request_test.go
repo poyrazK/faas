@@ -26,6 +26,13 @@ func TestProviderJSONKeepsNeonRefusalForTheOperatorLog(t *testing.T) {
 			wantReason: "neon DELETE /projects/p-1/branches/br-2 answered 422 request_id=req-0f1e: cannot delete the project's default branch",
 		},
 		{
+			name:       "branch already deleted",
+			status:     http.StatusUnprocessableEntity,
+			body:       `{"request_id":"9faa6aea-89d3-4e23-b9a2-e0cbd83ccd78","message":"branch is already deleted"}`,
+			want:       managedpostgres.ErrNotFound,
+			wantReason: "neon DELETE /projects/p-1/branches/br-2 answered 422 request_id=9faa6aea-89d3-4e23-b9a2-e0cbd83ccd78: branch is already deleted",
+		},
+		{
 			name:       "conflict with code",
 			status:     http.StatusConflict,
 			body:       `{"code":"BRANCH_HAS_CHILDREN","message":"branch has children"}`,
@@ -91,5 +98,26 @@ func TestQuietReasonChainsUnderOuterReasons(t *testing.T) {
 	}
 	if got, want := outer.Error(), managedpostgres.ErrInvalid.Error()+": historical point: read source metadata"; got != want {
 		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+// Only a DELETE refused as already deleted means the resource is gone.
+func TestAlreadyDeletedRefusal(t *testing.T) {
+	for _, tc := range []struct {
+		method  string
+		status  int
+		message string
+		want    bool
+	}{
+		{http.MethodDelete, http.StatusUnprocessableEntity, "branch is already deleted", true},
+		{http.MethodDelete, http.StatusBadRequest, "Project is Already Deleted", true},
+		{http.MethodDelete, http.StatusUnprocessableEntity, "cannot delete the project's default branch", false},
+		{http.MethodDelete, http.StatusTooManyRequests, "already deleted", false},
+		{http.MethodDelete, http.StatusBadGateway, "already deleted", false},
+		{http.MethodPost, http.StatusUnprocessableEntity, "branch is already deleted", false},
+	} {
+		if got := alreadyDeletedRefusal(tc.method, tc.status, tc.message); got != tc.want {
+			t.Errorf("alreadyDeletedRefusal(%s, %d, %q) = %v, want %v", tc.method, tc.status, tc.message, got, tc.want)
+		}
 	}
 }

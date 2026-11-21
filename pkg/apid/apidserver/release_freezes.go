@@ -374,7 +374,7 @@ func (s *server) retryReleaseProblem(ctx context.Context, app state.App, dep sta
 	} else if len(active) > 0 {
 		s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 		return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, active, now)).
-			WithHint("A retry cannot override a freeze. Wait for it to end, lift it with `gregale freeze lift`, or deploy again with --override-freeze REASON; the override is audited.")
+			WithHint("A retry cannot override a freeze. Wait for it to end, lift it with `gregale release freeze lift`, or deploy again with --override-freeze REASON; the override is audited.")
 	}
 	percent, explicit, err := dep.RetryTrafficIntent()
 	if err != nil {
@@ -443,7 +443,7 @@ func (s *server) darkReleaseFreezeProblem(ctx context.Context, app state.App, d 
 	}
 	s.releaseMetrics.Decision(releasemetrics.GuardFreeze, "refused")
 	return api.ErrReleaseFrozen(app.Slug, s.freezeViews(ctx, predate, now)).
-		WithHint("This release was deployed without traffic before the freeze began and has not served. Wait for the freeze to end, lift it with `gregale freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
+		WithHint("This release was deployed without traffic before the freeze began and has not served. Wait for the freeze to end, lift it with `gregale release freeze lift`, or deploy it again with --override-freeze REASON; the override is audited.")
 }
 
 // promotionFreezeProblem applies releaseFreezeProblem to every app a new

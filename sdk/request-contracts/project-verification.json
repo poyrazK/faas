@@ -1,0 +1,178 @@
+{
+  "target": {
+    "version": 1,
+    "base_url": "https://verify.test/prefix",
+    "project_slug": "shop",
+    "environment": null,
+    "workloads": [
+      {
+        "slug": "shop-api",
+        "app_id": "11111111111111111111111111111111",
+        "deployment_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "slug": "shop-worker",
+        "app_id": "22222222222222222222222222222222",
+        "deployment_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  },
+  "project_id": "33333333333333333333333333333333",
+  "cases": [
+    {
+      "scenario": "verified",
+      "outcome": "verified",
+      "code": "verified"
+    },
+    {
+      "scenario": "failed_worker",
+      "outcome": "failed",
+      "code": "smoke_failed"
+    },
+    {
+      "scenario": "worker_recovered",
+      "outcome": "verified",
+      "code": "verified"
+    },
+    {
+      "scenario": "release_failed",
+      "outcome": "failed",
+      "code": "release_failed"
+    },
+    {
+      "scenario": "approval",
+      "outcome": "blocked",
+      "code": "release_blocked"
+    },
+    {
+      "scenario": "building",
+      "outcome": "inconclusive",
+      "code": "release_pending"
+    },
+    {
+      "scenario": "superseded",
+      "outcome": "inconclusive",
+      "code": "release_pending"
+    },
+    {
+      "scenario": "stale",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "stale_sample",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "future",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "missing_metrics",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "old_release",
+      "outcome": "inconclusive",
+      "code": "deployment_not_serving"
+    },
+    {
+      "scenario": "mixed_release",
+      "outcome": "inconclusive",
+      "code": "deployment_not_serving"
+    },
+    {
+      "scenario": "unhealthy",
+      "outcome": "failed",
+      "code": "health_failed"
+    },
+    {
+      "scenario": "unsupported_no_check",
+      "outcome": "inconclusive",
+      "code": "smoke_required"
+    },
+    {
+      "scenario": "unattributed",
+      "outcome": "inconclusive",
+      "code": "smoke_inconclusive"
+    },
+    {
+      "scenario": "probe_exception",
+      "outcome": "inconclusive",
+      "code": "smoke_inconclusive"
+    },
+    {
+      "scenario": "wrong_app",
+      "outcome": "inconclusive",
+      "code": "identity_mismatch"
+    },
+    {
+      "scenario": "wrong_project",
+      "outcome": "inconclusive",
+      "code": "identity_mismatch"
+    },
+    {
+      "scenario": "wrong_deployment",
+      "outcome": "inconclusive",
+      "code": "identity_mismatch"
+    },
+    {
+      "scenario": "wrong_timeline",
+      "outcome": "inconclusive",
+      "code": "identity_mismatch"
+    },
+    {
+      "scenario": "wrong_scope",
+      "outcome": "inconclusive",
+      "code": "identity_mismatch"
+    },
+    {
+      "scenario": "denied",
+      "outcome": "inconclusive",
+      "code": "evidence_unavailable"
+    },
+    {
+      "scenario": "oversized",
+      "outcome": "inconclusive",
+      "code": "response_limit"
+    },
+    {
+      "scenario": "unknown_phase",
+      "outcome": "inconclusive",
+      "code": "release_pending"
+    },
+    {
+      "scenario": "unchanged",
+      "outcome": "inconclusive",
+      "code": "deployment_identity_unavailable"
+    },
+    {
+      "scenario": "naive_timestamp",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "invalid_timestamp",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "expired_ttl",
+      "outcome": "inconclusive",
+      "code": "stale_evidence"
+    },
+    {
+      "scenario": "partial_traffic",
+      "outcome": "inconclusive",
+      "code": "release_pending"
+    },
+    {
+      "scenario": "health_unknown",
+      "outcome": "inconclusive",
+      "code": "health_unknown"
+    }
+  ]
+}

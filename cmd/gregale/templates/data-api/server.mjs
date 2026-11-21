@@ -14,6 +14,7 @@ import { sharedBudgetConfig, createSharedBudget } from './shared-budget.mjs'
 import { createHealth } from './health.mjs'
 import { createDeadline } from './deadline.mjs'
 import { checkSQLDeadlineConnection } from './sql-deadline.mjs'
+import { configurePipelineReadGate } from './pipeline-read-gate.mjs'
 import { streamResponse } from './response-limit.mjs'
 import { createRateLimiter, admitRateLimit, admitServerKeyRate } from './rate-limit.mjs'
 import { createUserConcurrency, admitUserConcurrency, createServerKeyConcurrency, admitServerKeyConcurrency } from './user-concurrency.mjs'
@@ -244,9 +245,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         // (ADR 20261019102108): one past its credential, rate, row-security
         // and concurrency checks. Refusals before here count as rejected, so
         // invalid tokens or a throttled flood cannot use up an owner's cap.
-        if (counted) counted.access = access
         if (req.url.startsWith('/rest/v1/')) markQueryShape(req, res, config)
         if (req.url === '/__gregale/schema') {
+          if (counted) counted.access = access
           if (!/^[a-f0-9]{64}$/.test(servingFingerprint ?? '')) return problem(res, 503, 'serving_contract_unavailable')
           try {
             if (!deadline.enter('refresh')) return
@@ -263,6 +264,20 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (deadline.check()) problem(res, 503, 'data_api_unavailable')
           return
         }
+        if (config.accessSafety && !await config.accessSafety.ready(deadline.expiresAt - Date.now())) {
+          return problem(res, 503, 'data_api_unavailable', { reason: 'access_safety' })
+        }
+        // A restore may have changed safety while this request waited. Make
+        // the final authorization decision against the refreshed generation.
+        if (access === 'user' && !storage) {
+          const denial = rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
+        } else if (access === 'anonymous') {
+          const target = storage ? storageAnonymousTarget(storage, config) : rpc ? publicRpcTarget(req, config, rpc) : publicReadTarget(req, config)
+          if (target.code) return problem(res, { public_read_not_allowed: 403, data_api_public_read_unsafe: 503, data_api_public_rpc_unsafe: 503 }[target.code] ?? 401, target.code)
+          publicCache = storage ? null : publicReadCache(req, config, target)
+        }
+        if (counted) counted.access = access
         if (!deadline.enter('signing')) return
         // Only the binding login may become the SQL role. External role claims
         // cannot select an administrator, owner or another application's role.
@@ -277,6 +292,8 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
         if (serverKeySlot) claims.gregale_server_key = serverKeySlot
         // A caller cannot extend or enable the internal SQL retry deadline.
         delete claims.gregale_sql_deadline
+        delete claims.gregale_pipeline_request
+        if (config.pipelineReadGate) claims.gregale_pipeline_request = { version: 1, previous_hook: config.pipelinePreviousHook }
         if (config.sqlDeadline) claims.gregale_sql_deadline = { version: 1, expires_at_ms: sqlDeadlineExpiry(deadline.expiresAt), coordinated_refresh: config.coordinatedRefresh === true }
         // Never accept reserved coordination claims from an application JWT.
         if (config.coordinatedRefresh) {
@@ -450,6 +467,7 @@ export async function main(env = process.env) {
   // Inspection connects first, with the full query budget, so a suspended
   // database is awake before the configuration checks run.
   const snapshot = await startupStage('inspection', 'data_api_configuration_invalid', () => inspect(config.connection, config.schemas))
+  if (config.readOnly) await startupStage('pipeline', 'data_api_configuration_invalid', () => configurePipelineReadGate(config))
   config.snapshot = snapshot
   config.functions = snapshot.functions
   if (config.publicRead) await bootCheck(() => checkPublicRelations(config.connection, config.publicRead), 'data_api_public_read_unsafe', 'Unsafe public read configuration')
@@ -458,7 +476,7 @@ export async function main(env = process.env) {
     // the owner's migration adds or repairs storage_objects. An unreachable
     // database fails the boot instead, because a disabled storage would be
     // captured in the snapshot every wake restores.
-    try { await checkStorageTable(config.connection, config.storage.schema) } catch (error) {
+    try { config.storage = Object.freeze({ ...config.storage, maintenance: await checkStorageTable(config.connection, config.storage.schema) }) } catch (error) {
       if (!(error instanceof UnsafeConfiguration)) {
         runtimeFailure('data_api_database_unavailable')
         throw Object.assign(new Error('Database unavailable during startup'), { cause: error, reported: true })

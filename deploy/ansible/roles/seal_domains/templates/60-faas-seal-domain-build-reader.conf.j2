@@ -1,3 +1,14 @@
+{% if faas_seal_domain_build_retired_on_compute | bool %}
+# Managed by the seal_domains role (ADR-20261110210000 slice 3g-3): this node
+# holds no build identity. imaged pulls apps' private images through secretd
+# and refuses to start while a build, fleet or host identity is still loaded.
+# The empty LoadCredential= drops every credential loaded before this
+# drop-in, the base unit's fleet and host identities included.
+[Service]
+LoadCredential=
+UnsetEnvironment=FAAS_HOST_AGE_IDENTITY_PATH
+Environment=FAAS_SEAL_DOMAIN_BUILD_RETIRED=true
+{% else %}
 # Managed by the seal_domains role (ADR 20261022111812): imaged opens app and
 # job private-registry passwords with the build seal-domain identity. The
 # fleet identity stays in the base unit until the domain re-seal completes.
@@ -15,3 +26,4 @@ LoadCredential=faas_seal_domain_build:/etc/faas/secrets/domains/build.age
 LoadCredential=faas_seal_domain_build_previous:/etc/faas/secrets/domains/build.age.previous
 {% endif %}
 Environment=FAAS_SEAL_DOMAIN_BUILD_IDENTITY_PATH=%d/faas_seal_domain_build
+{% endif %}

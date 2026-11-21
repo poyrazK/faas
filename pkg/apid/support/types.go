@@ -84,6 +84,8 @@ type ticketState struct {
 	Episode         Episode            `json:"episode"`
 	CustomerReopens int                `json:"customer_reopens"`
 	RequiredSkills  []string           `json:"required_skills"`
+	// StaffInitiated marks a ticket support opened (ContactCustomer).
+	StaffInitiated bool `json:"staff_initiated,omitempty"`
 }
 type StaffTicket struct {
 	Ticket          api.SupportTicket `json:"ticket"`

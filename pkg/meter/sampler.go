@@ -92,6 +92,12 @@ type UsageDeltas struct {
 	NetworkCumulative bool
 	NetTXValid        bool
 	NetRXValid        bool
+	// InternalTXBytes (billing review R8-2) is vmmd's cumulative count of
+	// the NetTXBytes the instance sent to internal destinations, valid only
+	// when InternalTXValid. The sampler subtracts it from billed egress
+	// when WithInternalEgressUnbilled is on.
+	InternalTXBytes uint64
+	InternalTXValid bool
 }
 
 type EgressSource interface {
@@ -245,6 +251,10 @@ type Sampler struct {
 	// quietRelease decides which accounts on mode applies to (the
 	// quiet_pause_unbilled platform flag); nil releases every account.
 	quietRelease func(platformflags.Subject) bool
+	// internalEgressUnbilled ([meter] internal_egress_unbilled, billing
+	// review R8-2) subtracts each instance's internal egress from
+	// usage_minutes.net_tx_bytes. Off by default.
+	internalEgressUnbilled bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -492,6 +502,15 @@ func (s *Sampler) WithRollSettle(settle time.Duration) *Sampler {
 	return s
 }
 
+// WithInternalEgressUnbilled makes billed egress leave out the bytes an
+// instance sent to internal destinations (ADR-20261114100000): after each
+// network checkpoint the sampler hands vmmd's cumulative internal reading to
+// a store implementing state.InternalEgressObserver.
+func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
+	s.internalEgressUnbilled = on
+	return s
+}
+
 // newestClosedMinute is the newest minute closed at least s.settle ago.
 func (s *Sampler) newestClosedMinute(observedAt time.Time) time.Time {
 	return observedAt.Add(-s.settle).Truncate(time.Minute).Add(-time.Minute)
@@ -564,9 +583,15 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	// for this minute. Like residency, they come from the ledger, so a
 	// caught-up minute subtracts exactly what a live roll would have.
 	var quietPaused map[string]state.QuietPausedSeconds
+	// ADR-20261116120000 §3: seconds a wake caused only by a baseline
+	// health probe kept the instance resident; the platform pays for them.
+	var probeUnbilled map[string]int64
 	if exactResidency {
 		var err error
 		if quietPaused, err = s.quietPausedSeconds(ctx, minute); err != nil {
+			return nil, err
+		}
+		if probeUnbilled, err = platformProbeUnbilledSeconds(ctx, s.store, minute); err != nil {
 			return nil, err
 		}
 	}
@@ -614,6 +639,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	if err != nil {
 		return nil, err
 	}
+	tasksByApp, err := s.appTasksInMinute(ctx, minute)
+	if err != nil {
+		return nil, err
+	}
 	var out []RolledRow
 	// The previous app's unbilled paused usage is recorded when the next app
 	// starts, after every path through its floor below (rollout step 3). An
@@ -639,6 +668,9 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
+		}
+		if out, err = s.rollAppTasks(ctx, out, app, tasksByApp[app.ID], planByAccount, minute, observedAt); err != nil {
+			return out, err
 		}
 		// The quiet_pause_unbilled flag decides per account whether on mode
 		// subtracts this app's paused seconds (ADR-20261023171905).
@@ -713,6 +745,7 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 					})
 				}
 				seconds = billed
+				seconds -= min(max(probeUnbilled[ins.ID], 0), seconds)
 			}
 			if seconds > 0 && (exactResidency || state.State(ins.State).Billable()) {
 				covered, err := managed()
@@ -1247,16 +1280,36 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
 		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
 	}
-	deltaTx, deltaRx, err := s.store.AppendNetworkUsageObservation(ctx,
-		row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		int64(usage.NetTXBytes), usage.NetTXValid,
-		int64(usage.NetRXBytes), usage.NetRXValid)
+	deltaTx, deltaRx, err := s.appendNetworkObservation(ctx, row, usage)
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
 	row.NetTxBytes = deltaTx
 	row.NetRxBytes = deltaRx
 	return nil
+}
+
+// appendNetworkObservation checkpoints vmmd's cumulative network counters.
+// When WithInternalEgressUnbilled is on and vmmd reported the internal
+// counter, the billed egress it adds leaves out the internal bytes (billing
+// review R8-2). Financial usage evidence is append-only, so this happens as
+// the bytes are written, never after.
+func (s *Sampler) appendNetworkObservation(ctx context.Context, row *RolledRow, usage UsageDeltas) (int64, int64, error) {
+	if observer, ok := s.store.(state.InternalEgressObserver); ok && s.internalEgressUnbilled && usage.InternalTXValid {
+		if usage.InternalTXBytes > math.MaxInt64 {
+			return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
+		}
+		tx, rx, _, err := observer.AppendNetworkUsageObservationExcludingInternal(ctx,
+			row.AccountID, row.AppID, row.InstanceID, row.Minute,
+			int64(usage.NetTXBytes), usage.NetTXValid,
+			int64(usage.NetRXBytes), usage.NetRXValid,
+			int64(usage.InternalTXBytes))
+		return tx, rx, err
+	}
+	return s.store.AppendNetworkUsageObservation(ctx,
+		row.AccountID, row.AppID, row.InstanceID, row.Minute,
+		int64(usage.NetTXBytes), usage.NetTXValid,
+		int64(usage.NetRXBytes), usage.NetRXValid)
 }
 
 // tailSecondsFor returns the per-instance accumulated waitUntil

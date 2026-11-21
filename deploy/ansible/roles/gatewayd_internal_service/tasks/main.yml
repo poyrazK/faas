@@ -89,6 +89,25 @@
   when: faas_compute_durable_listeners | bool
   notify: restart faas-gatewayd-internal listeners
 
+# ADR-20261110120000 (amended 2026-11-15): with a TCP listener on this node,
+# gatewayd-internal and its durable socket (which binds before the service
+# runs) refuse to start until the host firewall is loaded. A change here only
+# reloads systemd and applies at the next start, so a rollout restarts nothing.
+- name: gatewayd_internal_service — render the host-firewall start guard
+  ansible.builtin.template:
+    src: 60-faas-require-host-firewall.conf.j2
+    dest: "/etc/systemd/system/{{ item.unit }}.d/60-faas-require-host-firewall.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    faas_unit_section: "{{ item.section }}"
+    faas_require_host_firewall_on: "{{ (faas_require_host_firewall | bool) and (faas_gateway_listen | default('off')) not in ['off', ''] }}"
+  loop:
+    - { unit: faas-gatewayd-internal.service, section: Service }
+    - { unit: faas-gatewayd-internal.socket, section: Socket }
+  notify: reload systemd for the host-firewall start guard
+
 - name: gatewayd_internal_service — remove the durable listener drop-ins when off
   ansible.builtin.file:
     path: "{{ item.dest }}"
@@ -140,10 +159,15 @@
     group: root
     mode: "0755"
 
+# The release install writes 99-faas-role.conf for every daemon
+# (pkg/roleTemplating), after this role on a fresh join. A shared file name let
+# it replace this drop-in and drop the compute-only health listener and apid
+# history target (OVH cutover, 2026-11-20). This drop-in has its own name and
+# sorts after the installer's, so both apply and these settings win.
 - name: gatewayd_internal_service — install FAAS_REALTIME_ROLE drop-in
   ansible.builtin.template:
     src: 99-faas-realtimed-role.conf.j2
-    dest: /etc/systemd/system/faas-realtimed.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-realtimed.service.d/zz-faas-realtimed-role.conf
     owner: root
     group: root
     mode: "0644"
@@ -489,6 +513,69 @@
     mode: "0644"
   notify: restart faas-gatewayd-internal
 
+# ADR-20261110210000 slice 3h: verify-only basic auth.
+- name: gatewayd_internal_service — check the basic auth mode
+  ansible.builtin.assert:
+    that:
+      - faas_gateway_basic_auth in ['sealed', 'verifier', 'verifier-only']
+    fail_msg: faas_gateway_basic_auth is sealed, verifier or verifier-only.
+
+- name: gatewayd_internal_service — install the basic auth mode drop-in
+  ansible.builtin.template:
+    src: 99-faas-gateway-basic-auth.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gateway-basic-auth.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
+# ADR-20261110210000 slice 3i: who opens sealed edge-rule request headers.
+- name: gatewayd_internal_service — check the edge rule header values mode
+  ansible.builtin.assert:
+    that:
+      - faas_gateway_edge_header_secrets in ['local', 'inject']
+    fail_msg: faas_gateway_edge_header_secrets is local or inject.
+
+- name: gatewayd_internal_service — install the edge rule header values drop-in
+  ansible.builtin.template:
+    src: 99-faas-gateway-edge-header-secrets.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gateway-edge-header-secrets.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+
+# ADR-20261110210000 slice 3f: with faas_gateway_secretd_log_drains (and
+# vmmd_service's faas_secretd_target, which issues the node's client leaf),
+# drain headers open through secretd for the app's owner node only.
+- name: gatewayd_internal_service — require secretd for secretd log drains
+  ansible.builtin.assert:
+    that:
+      - (faas_box_role | default('single-box')) == 'compute-only'
+      - faas_secretd_target | default('') | length > 0
+    fail_msg: >-
+      faas_gateway_secretd_log_drains is for compute-only nodes and needs
+      faas_secretd_target (vmmd_service), which issues the node's secretd
+      client leaf.
+  when: faas_gateway_secretd_log_drains | bool
+
+- name: gatewayd_internal_service — install the secretd log drain drop-in
+  ansible.builtin.template:
+    src: 99-faas-gatewayd-secretd.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gatewayd-secretd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-gatewayd-internal
+  when: faas_gateway_secretd_log_drains | bool
+
+- name: gatewayd_internal_service — remove the secretd log drain drop-in while off
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.service.d/99-faas-gatewayd-secretd.conf
+    state: absent
+  notify: restart faas-gatewayd-internal
+  when: not (faas_gateway_secretd_log_drains | bool)
+
 - name: gatewayd_internal_service — install realtimed FAAS_NODE_NAME drop-in
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-node-name.conf.j2
@@ -525,6 +612,9 @@
     state: absent
   loop:
     - 60-faas-edge-local-first.conf
+    # 2026-11-14 hand override that turned local first off before the
+    # manifest did; 99-faas-role.conf now carries local_first: false.
+    - 99-zz-local-first-off.conf
     - 60-faas-request-journal-local.conf
     - 61-faas-request-telemetry-minute-collapse.conf
     - 63-faas-gateway-local-vmmd-socket.conf

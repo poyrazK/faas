@@ -91,7 +91,25 @@ func (s *server) getDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("dead-letter event"))
 		return
 	}
-	writeJSON(w, http.StatusOK, deadLetterEventResponseForApp(ev, app.Slug))
+	out := deadLetterEventResponseForApp(ev, app.Slug)
+	s.addDeadLetterReplayHistory(r, ev, &out)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// addDeadLetterReplayHistory reports how often an invocation entry was
+// replayed. prod 2026-11-19: a replay that failed again came back under the
+// same id with no sign it had been replayed. Best effort: a failed lookup
+// leaves the entry as it is.
+func (s *server) addDeadLetterReplayHistory(r *http.Request, ev state.DeadLetterEvent, out *api.DeadLetterEvent) {
+	if ev.Source != "invocation" || ev.SourceID == "" {
+		return
+	}
+	inv, err := s.store.InvocationByID(r.Context(), ev.SourceID)
+	if err != nil || inv.AppID != ev.AppID || inv.ReplayGeneration <= 0 {
+		return
+	}
+	out.ReplayCount = inv.ReplayGeneration
+	out.LastReplayedAt = inv.LastReplayedAt
 }
 
 func (s *server) replayDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {

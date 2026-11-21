@@ -21,16 +21,75 @@ type routeProbeValidator interface {
 
 type routeProbeKey struct{}
 
-type routeProbeRequest struct{ deploymentID, token string }
+type routeProbeRequest struct {
+	deploymentID, token string
+	// unbilled marks a protection-baseline health probe
+	// (ADR-20261116120000 §3): a wake it alone causes is not billed.
+	unbilled bool
+}
 
-func withRouteProbe(ctx context.Context, deploymentID, token string) context.Context {
-	return context.WithValue(ctx, routeProbeKey{}, routeProbeRequest{deploymentID, token})
+func withRouteProbe(ctx context.Context, deploymentID, token string, unbilled bool) context.Context {
+	return context.WithValue(ctx, routeProbeKey{}, routeProbeRequest{deploymentID, token, unbilled})
 }
 
 // isRouteProbe reports whether the request is an authenticated route probe.
 func isRouteProbe(ctx context.Context) bool {
 	probe, ok := ctx.Value(routeProbeKey{}).(routeProbeRequest)
 	return ok && probe.deploymentID != ""
+}
+
+// isUnbilledRouteProbe reports an authenticated protection-baseline health
+// probe.
+func isUnbilledRouteProbe(ctx context.Context) bool {
+	probe, ok := ctx.Value(routeProbeKey{}).(routeProbeRequest)
+	return ok && probe.deploymentID != "" && probe.unbilled
+}
+
+// routeProbeUnbilled reports whether the probe's challenge was issued as an
+// unbilled health probe.
+func (h *Handler) routeProbeUnbilled(app App, deploymentID, token string) bool {
+	resolver, ok := h.backend.(interface {
+		RouteProbeUnbilled(string, string, string) bool
+	})
+	return ok && resolver.RouteProbeUnbilled(app.ID, deploymentID, token)
+}
+
+// PlatformProbeWakeRecorder records a wake caused only by an unbilled
+// health probe; gatewayd wires it to the state store.
+type PlatformProbeWakeRecorder func(ctx context.Context, appID, instanceID string, wokeAt, probeDoneAt time.Time)
+
+// WithPlatformProbeWakeRecorder installs the probe wake ledger writer.
+func (b *PGBackend) WithPlatformProbeWakeRecorder(fn PlatformProbeWakeRecorder) *PGBackend {
+	if b != nil {
+		b.probeWakeRecorder = fn
+	}
+	return b
+}
+
+// RecordPlatformProbeWake forwards to the installed recorder, if any.
+func (b *PGBackend) RecordPlatformProbeWake(ctx context.Context, appID, instanceID string, wokeAt, probeDoneAt time.Time) {
+	if b == nil || b.probeWakeRecorder == nil {
+		return
+	}
+	b.probeWakeRecorder(ctx, appID, instanceID, wokeAt, probeDoneAt)
+}
+
+// recordPlatformProbeWake records that an unbilled health probe alone woke
+// the instance that served it, so meterd leaves the wake unbilled and
+// schedd parks it once the probe is done (ADR-20261116120000 §3). Only an
+// admitted wake counts: a request that joined someone else's wake did not
+// cause it.
+func (h *Handler) recordPlatformProbeWake(r *http.Request, appID, instanceID string, wokeAt time.Time) {
+	if !isUnbilledRouteProbe(r.Context()) || instanceID == "" || wokeAt.IsZero() {
+		return
+	}
+	recorder, ok := h.backend.(interface {
+		RecordPlatformProbeWake(context.Context, string, string, time.Time, time.Time)
+	})
+	if !ok {
+		return
+	}
+	recorder.RecordPlatformProbeWake(context.WithoutCancel(r.Context()), appID, instanceID, wokeAt, time.Now())
 }
 
 // routeProbePassesPlatformAuth reports whether a request is a validated route
@@ -72,14 +131,42 @@ type routeProbeChallenge struct {
 	token     string
 	expiresAt time.Time
 	scope     string
+	unbilled  bool
 }
 
 func (b *PGBackend) AuthorizeRouteProbe(appID, deploymentID, token string, expiresAt time.Time) {
-	b.AuthorizeRouteProbeForScope(appID, deploymentID, token, "", expiresAt)
+	b.authorizeRouteProbe(appID, deploymentID, token, "", false, expiresAt)
+}
+
+// AuthorizeUnbilledRouteProbe installs a protection-baseline health probe
+// challenge: a wake the probe alone causes is not billed
+// (ADR-20261116120000 §3).
+func (b *PGBackend) AuthorizeUnbilledRouteProbe(appID, deploymentID, token string, expiresAt time.Time) {
+	b.authorizeRouteProbe(appID, deploymentID, token, "", true, expiresAt)
+}
+
+// RouteProbeUnbilled reports whether an authenticated live challenge was
+// issued as an unbilled health probe.
+func (b *PGBackend) RouteProbeUnbilled(appID, deploymentID, token string) bool {
+	if b == nil || token == "" {
+		return false
+	}
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	for _, c := range b.probeChallenges[smokeChallengeKey(appID, deploymentID)] {
+		if c.expiresAt.After(time.Now()) && subtle.ConstantTimeCompare([]byte(c.token), []byte(token)) == 1 {
+			return c.unbilled
+		}
+	}
+	return false
 }
 
 // AuthorizeRouteProbeForScope binds the private challenge to a named release scope.
 func (b *PGBackend) AuthorizeRouteProbeForScope(appID, deploymentID, token, scope string, expiresAt time.Time) {
+	b.authorizeRouteProbe(appID, deploymentID, token, scope, false, expiresAt)
+}
+
+func (b *PGBackend) authorizeRouteProbe(appID, deploymentID, token, scope string, unbilled bool, expiresAt time.Time) {
 	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
 		return
 	}
@@ -103,7 +190,7 @@ func (b *PGBackend) AuthorizeRouteProbeForScope(appID, deploymentID, token, scop
 		}
 	}
 	key := smokeChallengeKey(appID, deploymentID)
-	b.probeChallenges[key] = append(b.probeChallenges[key], routeProbeChallenge{token: token, expiresAt: expiresAt, scope: scope})
+	b.probeChallenges[key] = append(b.probeChallenges[key], routeProbeChallenge{token: token, expiresAt: expiresAt, scope: scope, unbilled: unbilled})
 }
 
 // ValidateRouteProbe authenticates a probe token bound to app and deployment.

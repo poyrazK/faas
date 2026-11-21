@@ -56,6 +56,7 @@ var vmmdCallerPolicy = map[string]vmmdCaller{
 	vmmdpb.Vmmd_MountParentExt4ReadOnly_FullMethodName:                 callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeParentExt4_FullMethodName:                   callerSchedd | callerImaged,
 	vmmdpb.Vmmd_MaterializeVerifiedParentExt4_FullMethodName:           callerSchedd | callerImaged,
+	vmmdpb.Vmmd_PrimeInstance_FullMethodName:                           callerSchedd,
 	vmmdpb.Vmmd_UmountParentExt4_FullMethodName:                        callerSchedd | callerImaged,
 	vmmdpb.Vmmd_AcknowledgeMigration_FullMethodName:                    callerSchedd,
 	vmmdpb.Vmmd_AdoptMigratedInstance_FullMethodName:                   callerSchedd,
@@ -179,8 +180,40 @@ func CallerPolicyStreamInterceptor() grpc.StreamServerInterceptor {
 		if err := authorizeCaller(ss.Context(), info.FullMethod, nil); err != nil {
 			return err
 		}
+		if builderOnlyCaller(ss.Context()) {
+			// A stream's request is not known when it opens, so builderd's
+			// instance check runs on every message it sends: it follows its
+			// own builder's console (Logs) and never a tenant's.
+			ss = &builderScopedStream{ServerStream: ss, method: info.FullMethod}
+		}
 		return handler(srv, &callerCheckedStream{ServerStream: ss, method: info.FullMethod})
 	}
+}
+
+// builderOnlyCaller reports a certificate whose only class is builderd.
+// Unix-socket callers carry no certificate and are not narrowed.
+func builderOnlyCaller(ctx context.Context) bool {
+	if p, ok := peer.FromContext(ctx); ok && p != nil && p.AuthInfo == nil && p.Addr != nil && p.Addr.Network() == "unix" {
+		return false
+	}
+	cn, err := wire.PeerCN(ctx)
+	return err == nil && callerClasses[cn] == callerBuilder
+}
+
+// builderScopedStream applies builderMayCall to each message builderd sends.
+type builderScopedStream struct {
+	grpc.ServerStream
+	method string
+}
+
+func (s *builderScopedStream) RecvMsg(m any) error {
+	if err := s.ServerStream.RecvMsg(m); err != nil {
+		return err
+	}
+	if !builderMayCall(s.method, m) {
+		return status.Error(codes.PermissionDenied, "builderd may act only on builder instances")
+	}
+	return nil
 }
 
 func authorizeCaller(ctx context.Context, method string, req any) error {

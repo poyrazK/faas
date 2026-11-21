@@ -57,7 +57,15 @@ func (s *PgStore) EnqueueInvocationBatch(ctx context.Context, template Invocatio
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if err := lockInvocationAdmissionAppDB(ctx, tx, prepared); err != nil {
+	// A batch always takes the app's admission lock, even for a producer
+	// that admits single rows unlocked: each row bumps one of the app's
+	// eight backlog counter slots, chosen by its id, so two unlocked batches
+	// lock those slot rows in different orders and deadlock (prod re-run
+	// 2026-11-18: 3 of 12 concurrent send-batches refused). One lock per
+	// batch costs no more than the batch's single transaction.
+	locked := prepared
+	locked.AdmissionUnlocked = false
+	if err := lockInvocationAdmissionAppDB(ctx, tx, locked); err != nil {
 		return nil, err
 	}
 	out := make([]Invocation, 0, len(payloads))

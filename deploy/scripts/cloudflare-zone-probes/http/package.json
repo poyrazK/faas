@@ -1,0 +1,1 @@
+{"name":"gregale-zone-http-probe","version":"1.0.0","private":true,"scripts":{"start":"node server.cjs"}}

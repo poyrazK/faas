@@ -20,6 +20,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class SecretsService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * Read runtime acknowledgements for a deleted secret.
    * Returns the value-free runtime roster captured at deletion and its latest application acknowledgement state.
@@ -39,7 +40,7 @@ export class SecretsService {
      */
     revocationId: string,
   }): CancelablePromise<AppSecretRevocationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/secret-revocations/{revocation_id}',
       path: {
@@ -81,7 +82,7 @@ export class SecretsService {
      */
     scope?: string,
   }): CancelablePromise<AppSecretListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/secrets',
       path: {
@@ -120,7 +121,7 @@ export class SecretsService {
      */
     environment: string,
   }): CancelablePromise<AppSecretReferenceListResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/secret-references',
       path: {
@@ -173,7 +174,7 @@ export class SecretsService {
     environment: string,
     requestBody: PutAppSecretReferenceRequest,
   }): CancelablePromise<AppSecretReferenceResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/secret-references/{key}',
       path: {
@@ -223,7 +224,7 @@ export class SecretsService {
      */
     environment: string,
   }): CancelablePromise<void> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/secret-references/{key}',
       path: {
@@ -294,7 +295,7 @@ export class SecretsService {
      */
     scope?: string,
   }): CancelablePromise<AppSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/secrets/{key}',
       path: {
@@ -363,7 +364,7 @@ export class SecretsService {
      */
     prefer?: 'return=representation',
   }): CancelablePromise<AppSecretRevocationResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/secrets/{key}',
       path: {
@@ -438,7 +439,7 @@ export class SecretsService {
      */
     scope?: string,
   }): CancelablePromise<RotateAppSecretResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/secrets/{key}/rotate',
       path: {
@@ -483,7 +484,7 @@ export class SecretsService {
     slug: string,
     requestBody: SecretEntryRequest,
   }): CancelablePromise<SecretEntryResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/secret-requests',
       path: {
@@ -523,7 +524,7 @@ export class SecretsService {
     slug: string,
     requestBody: SecretEntryStatusRequest,
   }): CancelablePromise<SecretEntryStatus> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/secret-requests/status',
       path: {
@@ -577,7 +578,7 @@ export class SecretsService {
      */
     limit?: number,
   }): CancelablePromise<ListSecretsForAccountResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/secrets',
       query: {

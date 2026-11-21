@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"encoding/json"
 	"math"
 	"sort"
 	"strings"
@@ -60,7 +61,92 @@ func (m *MemStore) OperatorOverview(ctx context.Context, now time.Time) (api.Obs
 	}
 	out.BetaFunnel14d = m.operatorOverviewFunnelLocked(now)
 	out.RecentFailures1h, out.TopRateLimitedAccounts24h = m.operatorOverviewEventsLocked(now)
+	out.CodingAgents = m.operatorOverviewCodingAgentsLocked(now)
 	return out, nil
+}
+
+// codingAgentDeployKinds are the deploy audit kinds apid stamps with
+// actor_agent (mergeAgentAudit); OperatorOverviewCodingAgents lists the same.
+var codingAgentDeployKinds = map[string]bool{
+	"app.deployed": true, "deploy.local_tarball": true, "deploy.source_ref": true, "upload.session_committed": true,
+}
+
+// operatorOverviewCodingAgentsLocked mirrors OperatorOverviewCodingAgents.
+func (m *MemStore) operatorOverviewCodingAgentsLocked(now time.Time) []api.ObsCodingAgent {
+	auditSince, cohortSince := now.Add(-api.ObsOverviewAuditWindow), now.Add(-api.ObsOverviewCohortWindow)
+	type agentRow struct{ deploys, accounts map[string]bool }
+	rows := map[string]*agentRow{}
+	row := func(agent string) *agentRow {
+		if rows[agent] == nil {
+			rows[agent] = &agentRow{deploys: map[string]bool{}, accounts: map[string]bool{}}
+		}
+		return rows[agent]
+	}
+	for _, entry := range m.auditLog {
+		if !codingAgentDeployKinds[entry.Kind] || entry.ReceivedAt.After(now) {
+			continue
+		}
+		var data struct {
+			Agent        *string `json:"actor_agent"`
+			DeploymentID string  `json:"deployment_id"`
+		}
+		if json.Unmarshal(entry.Data, &data) != nil || data.Agent == nil {
+			continue
+		}
+		if !entry.ReceivedAt.Before(auditSince) {
+			r := row(*data.Agent)
+			if data.DeploymentID != "" {
+				r.deploys[data.DeploymentID] = true
+			}
+		}
+		if entry.AccountID == nil {
+			continue
+		}
+		// MemStore account IDs are bare hex; audit rows carry the UUID form.
+		account, found := m.accounts[entry.AccountID.String()]
+		if !found {
+			account, found = m.accounts[strings.ReplaceAll(entry.AccountID.String(), "-", "")]
+		}
+		if !found || account.CreatedAt.Before(cohortSince) || account.CreatedAt.After(now) || entry.ReceivedAt.Before(account.CreatedAt) {
+			continue
+		}
+		row(*data.Agent).accounts[account.ID] = true
+	}
+	served := map[string]bool{}
+	for _, instance := range m.instances {
+		app, found := m.apps[instance.AppID]
+		if !found {
+			continue
+		}
+		account, found := m.accounts[app.AccountID]
+		seen := instance.LastRequestAt
+		if found && !seen.IsZero() && !seen.Before(account.CreatedAt) && !seen.After(now) {
+			served[account.ID] = true
+		}
+	}
+	out := make([]api.ObsCodingAgent, 0, len(rows))
+	for agent, r := range rows {
+		item := api.ObsCodingAgent{Agent: agent, Deploys24h: len(r.deploys), NewAccounts14d: len(r.accounts)}
+		for id := range r.accounts {
+			if served[id] {
+				item.NewAccountsServing14d++
+			}
+			if m.accounts[id].Plan != api.PlanFree {
+				item.NewAccountsPaid14d++
+			}
+		}
+		out = append(out, item)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].NewAccounts14d != out[j].NewAccounts14d {
+			return out[i].NewAccounts14d > out[j].NewAccounts14d
+		}
+		if out[i].Deploys24h != out[j].Deploys24h {
+			return out[i].Deploys24h > out[j].Deploys24h
+		}
+		return out[i].Agent < out[j].Agent
+	})
+	return out
 }
 
 func (m *MemStore) operatorOverviewFunnelLocked(now time.Time) api.ObsBetaFunnel {

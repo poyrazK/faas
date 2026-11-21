@@ -496,6 +496,7 @@
     - customer-operations.json
     - live-queries.json
     - agent-runs.json
+    - runtime-diagnostics.json
   notify:
     - restart grafana-server
     - reload grafana provisioning

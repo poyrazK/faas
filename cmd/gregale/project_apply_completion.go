@@ -15,6 +15,7 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 	phase := "deployment"
 	remembered := build.Configuration
 	backoff := time.Second
+	var steps projectBuildStepPoller
 	for {
 		callCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		dep, err := client.GetDeployment(callCtx, build.DeploymentID)
@@ -32,6 +33,11 @@ func pollProjectDeployment(ctx context.Context, client rolloutStatusClient, buil
 				last.Configuration = remembered
 			}
 			phase = waiting
+			progress := projectWaitProgressFrom(ctx)
+			progress.observe(build, dep, waiting, done, failure)
+			if !done {
+				steps.poll(ctx, client, progress, build, dep, waiting)
+			}
 			if done {
 				return projectApplyWaitResult{deployment: last, ok: true, err: failure}
 			}

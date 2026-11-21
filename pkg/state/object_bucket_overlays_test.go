@@ -82,6 +82,14 @@ func objectBucketOverlays(t *testing.T, s contractTestStore) {
 	if err != nil || len(hidden) != 2 || !hidden["a.txt"] || !hidden["dir/b.txt"] || hidden["c.txt"] {
 		t.Fatalf("tombstones = %v, %v", hidden, err)
 	}
+	for prefix, want := range map[string]bool{"dir/": true, "di": true, "": true, "dir/c": false, "other/": false, "%": false, "_": false} {
+		if got, err := s.ObjectBucketOverlayTombstonesUnder(ctx, overlayBucket.ID, prefix); err != nil || got != want {
+			t.Fatalf("tombstones under %q = %v, %v; want %v", prefix, got, err, want)
+		}
+	}
+	if got, err := s.ObjectBucketOverlayTombstonesUnder(ctx, source.ID, "dir/"); err != nil || got {
+		t.Fatalf("tombstones under another bucket = %v, %v", got, err)
+	}
 
 	row, err := s.RecordProjectEnvironmentBranchBucket(ctx, state.ProjectEnvironmentBranchBucket{AccountID: acct.ID, ProjectID: project.ID,
 		EnvironmentID: branch.EnvironmentID, EnvironmentSlug: branch.Slug, AppID: deployment.AppID, SourceBucketID: source.ID})

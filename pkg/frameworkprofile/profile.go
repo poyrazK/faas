@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
 	"github.com/onebox-faas/faas/pkg/markers"
+	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
 const (
@@ -68,11 +69,26 @@ type Profile struct {
 	// build with no detected start inherits from the runtime base (python3 on
 	// the Python runner) (Hunt 12 H12-29).
 	StartFromConfig bool `json:"start_from_config,omitempty"`
+	// StartPinned reports that StartCommand also replaces the built image's
+	// command although no file named it: the command Railpack builds for this
+	// Flask or FastAPI source cannot serve the application the profile
+	// located (a `main:app` without a main module, `python main.py` that only
+	// defines the app, or none at all), see pythonStartPinned (ADR-1500
+	// amendment 4). Profiles written before it lack the mark and keep the
+	// image's command.
+	StartPinned bool `json:"start_pinned,omitempty"`
 	// HealthFromConfig reports that HealthPath is gregale.yaml's explicit
 	// hosting.health, which keeps HTTP readiness even on a raw-TCP routed
 	// port (ADR-20261027090000).
-	HealthFromConfig bool      `json:"health_from_config,omitempty"`
-	Warnings         []Warning `json:"warnings,omitempty"`
+	HealthFromConfig bool `json:"health_from_config,omitempty"`
+	// HealthDefaulted reports that HealthPath is the platform's /healthz:
+	// neither gregale.yaml nor the source named a health route. Startup
+	// readiness is then the port accepting connections, as for a direct
+	// image, because a plain Express or Flask app answers /healthz with 404
+	// and failed every deploy (ADR-079 amendment 2). Profiles written before
+	// it lack the mark and keep HTTP readiness.
+	HealthDefaulted bool      `json:"health_defaulted,omitempty"`
+	Warnings        []Warning `json:"warnings,omitempty"`
 	// ImageCommand is the accepted Compose CMD contract. Its presence freezes
 	// image semantics even when Cmd is nil (inherit) or the app changes class.
 	ImageCommand     *ImageCommand     `json:"image_command,omitempty"`
@@ -161,13 +177,19 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		// showed `gunicorn handler:app --bind 0.0.0.0:$PORT` while the
 		// guest ran `gunicorn --workers 2 handler:app` (Hunt 12 H12-3).
 		if web := procfileWebCommand(fsys); web != "" {
-			profile.StartCommand = web
+			profile.StartCommand, profile.StartPinned = web, false
+		}
+		// railpack.json's deploy.startCommand outranks the Procfile and
+		// Railpack's own detection, so it is the command the guest runs.
+		if start := railpackConfigStartCommand(fsys); start != "" {
+			profile.StartCommand, profile.StartPinned = start, false
 		}
 	}
 	// An unknown tree may be a home directory, not a project: do not scan it.
+	healthInferred := false
 	if framework != markers.FrameworkDocker && framework != markers.FrameworkUnknown {
 		if health := inferHealthPath(fsys); health != "" {
-			profile.HealthPath = health
+			profile.HealthPath, healthInferred = health, true
 		}
 	}
 	if cfg, present, err := hostingconfig.Load(fsys); err != nil {
@@ -179,16 +201,33 @@ func Analyze(fsys fs.FS) (Profile, error) {
 		} else {
 			profile.ConfigFile = "gregale.yml"
 		}
+		if profile.HealthFromConfig && profile.HealthPath == "/" {
+			profile.Warnings = append(profile.Warnings, rootHealthPathWarning(profile.ConfigFile))
+		}
 	}
 	profile.Warnings = append(profile.Warnings, loopbackWarnings(fsys)...)
 	profile.Inferred = profile.StartCommand != "" && profile.Framework != string(markers.FrameworkUnknown)
+	profile.HealthDefaulted = !healthInferred && !profile.HealthFromConfig
 	return profile, nil
+}
+
+// rootHealthPathWarning flags hosting.health: /. Gregale answers GET and
+// HEAD on an app's health path at its edge without running the app (unless
+// health_path_wakes is on), so with "/" every visitor to the home page got
+// {"status":"ok","source":"edge"} and never reached the app. Coding agents
+// set it when an app had no health route (agent eval baseline 2026-11-17).
+func rootHealthPathWarning(configFile string) Warning {
+	return Warning{
+		Code:    "health_path_root",
+		Message: `hosting.health is "/": Gregale answers the health path at its edge, so visitors to / get {"status":"ok"} instead of the app's page. Add a small route such as /healthz and name it instead.`,
+		Sources: []string{configFile},
+	}
 }
 
 func applyHostingConfig(profile *Profile, cfg hostingconfig.Config) {
 	if start := strings.TrimSpace(cfg.Start); start != "" {
 		profile.StartCommand = start
-		profile.StartFromConfig = true
+		profile.StartFromConfig, profile.StartPinned = true, false
 	}
 	if cfg.Port != 0 {
 		profile.Port = cfg.Port
@@ -267,6 +306,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `FastAPI\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("uvicorn %s:%s --host 0.0.0.0 --port $PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "uvicorn")
 		} else {
 			profile.StartCommand = "uvicorn app:app --host 0.0.0.0 --port $PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("FastAPI", "app:app"))
@@ -284,6 +324,7 @@ func inferPython(fsys fs.FS, profile *Profile) {
 		module, symbol, ok := findPythonApplication(fsys, `Flask\s*\(`)
 		if ok {
 			profile.StartCommand = fmt.Sprintf("gunicorn %s:%s --bind 0.0.0.0:$PORT", module, symbol)
+			profile.StartPinned = pythonStartPinned(fsys, all, "gunicorn")
 		} else {
 			profile.StartCommand = "gunicorn app:app --bind 0.0.0.0:$PORT"
 			profile.Warnings = append(profile.Warnings, pythonEntrypointWarning("Flask", "app:app"))
@@ -337,6 +378,93 @@ func inferDocker(fsys fs.FS, profile *Profile) {
 		profile.Port = port
 	}
 	profile.Warnings = append(profile.Warnings, Warning{Code: "container_command_deferred", Message: "The container entrypoint and health contract will be read from the image; source inference is intentionally conservative.", Sources: []string{"Dockerfile"}})
+	if warning, ok := nonHTTPServiceWarning(body); ok {
+		profile.Warnings = append(profile.Warnings, warning)
+	}
+}
+
+// nonHTTPServers maps official images of servers that speak their own TCP
+// protocol to the port they serve on (ADR-20261112223000 §1).
+var nonHTTPServers = map[string]int{
+	"redis": 6379, "valkey": 6379, "keydb": 6379,
+	"postgres": 5432, "mysql": 3306, "mariadb": 3306, "mongo": 27017,
+	"memcached": 11211, "rabbitmq": 5672, "nats": 4222,
+	"eclipse-mosquitto": 1883, "cassandra": 9042, //nolint:misspell // the official image name
+}
+
+// nonHTTPPorts are those servers' ports, plus Kafka's.
+var nonHTTPPorts = func() map[int]bool {
+	ports := map[int]bool{9092: true}
+	for _, port := range nonHTTPServers {
+		ports[port] = true
+	}
+	return ports
+}()
+
+var fromPattern = regexp.MustCompile(`(?im)^\s*FROM\s+(?:--\S+\s+)*(\S+)`)
+
+// nonHTTPServiceWarning reports a Dockerfile whose serving port is a raw TCP
+// server's: its own EXPOSE, else the port of a known server image it builds
+// FROM. The build readies once the port accepts connections, but the app's
+// public route speaks HTTP, which the server does not, so it is reached over
+// an internal TCP port instead. A final stage built FROM a datastore is
+// reported whatever its port: apid refuses that build (stateless_only_violation).
+func nonHTTPServiceWarning(dockerfile string) (Warning, bool) {
+	if base, hosted, stateful := statefuldenylist.MatchDockerfile([]byte(dockerfile)); stateful {
+		return datastoreWarning(imageName(base), hosted), true
+	}
+	server, port := "", firstPort(dockerfile)
+	if froms := fromPattern.FindAllStringSubmatch(dockerfile, -1); len(froms) > 0 {
+		ref := imageName(froms[len(froms)-1][1])
+		if serverPort, known := nonHTTPServers[ref]; known {
+			server = ref
+			if port == 0 {
+				port = serverPort
+			}
+		}
+	}
+	if !nonHTTPPorts[port] {
+		return Warning{}, false
+	}
+	what := fmt.Sprintf("port %d is a raw TCP port", port)
+	if server != "" {
+		what = fmt.Sprintf("this builds %s, which serves its own TCP protocol on port %d", server, port)
+	}
+	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+		"%s. The app's public URL speaks HTTP, which this server does not answer. "+
+			"Deploy this build or the published image (`gregale deploy --image <image>@sha256:<digest> --name <app>`); "+
+			"either is ready once the port accepts connections. Then keep it private and let other apps reach it over TCP with "+
+			"`gregale app <app> --visibility internal --ports <name>=tcp:%d:internal`.", what, port)}, true
+}
+
+// datastoreWarning names the hosted service for a datastore build. A datastore
+// is refused built or as an image (stateless_only_violation): an app parks to
+// a snapshot and keeps no data.
+func datastoreWarning(server, hosted string) Warning {
+	managed := hosted
+	if server == "postgres" {
+		managed = "use managed PostgreSQL: `gregale postgres create <name>`"
+	}
+	return Warning{Code: "non_http_service", Sources: []string{"Dockerfile"}, Message: fmt.Sprintf(
+		"this builds %s, a datastore. Gregale does not run datastores, built or as an image: an app parks to a snapshot and keeps no data. "+
+			"%s, and read its URL from the environment: `gregale env set --app <app> %s_URL=<url>`.",
+		server, upperFirst(managed), strings.ToUpper(server))}
+}
+
+// imageName is an image reference's last path segment without tag or digest:
+// docker.io/library/postgres:16@sha256:… → postgres.
+func imageName(ref string) string {
+	ref = strings.ToLower(ref)
+	if at := strings.IndexByte(ref, '@'); at >= 0 {
+		ref = ref[:at]
+	}
+	if slash := strings.LastIndexByte(ref, '/'); slash >= 0 {
+		ref = ref[slash+1:]
+	}
+	if colon := strings.IndexByte(ref, ':'); colon >= 0 {
+		ref = ref[:colon]
+	}
+	return ref
 }
 
 func nodePackageManager(fsys fs.FS, declared string) string {
@@ -393,7 +521,14 @@ func looksLikeDevelopmentCommand(command string) bool {
 	return false
 }
 
-var healthPathRegex = regexp.MustCompile(`(?i)(?:get|route|handle|head|live|post|put|patch|delete)\s*\(\s*["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
+// healthPathRegex finds a conventional health route in source: a framework
+// registration (app.get("/healthz"), @app.route, http.HandleFunc), a plain
+// router's switch case (case "/healthz":) or a path comparison
+// (url.pathname === "/healthz", self.path == "/healthz", r.URL.Path ==
+// "/healthz"). A plain node:http server declared its /healthz only in a
+// switch, so its 503 went unprobed under TCP readiness and an unhealthy
+// release deployed (journeys 2026-11-16 TestHealthGate; ADR-079 amendment 2).
+var healthPathRegex = regexp.MustCompile(`(?i)(?:(?:get|route|handle|handlefunc|head|live|post|put|patch|delete)\s*\(\s*|\bcase\s+|[=!]==?\s*)["'](/(?:healthz?|readyz?|livez?|ready|live))["']`)
 
 // inferHealthPath only accepts conventional readiness names. Choosing an
 // arbitrary application route as a smoke endpoint is worse than retaining the
@@ -596,6 +731,74 @@ func procfileWebCommand(fsys fs.FS) string {
 	return ""
 }
 
+// railpackConfigStartCommand returns railpack.json's deploy.startCommand, or
+// "" when the file is absent, unreadable or names none.
+func railpackConfigStartCommand(fsys fs.FS) string {
+	var config struct {
+		Deploy struct {
+			StartCommand string `json:"startCommand"`
+		} `json:"deploy"`
+	}
+	if json.Unmarshal([]byte(readFile(fsys, "railpack.json")), &config) != nil {
+		return ""
+	}
+	return strings.TrimSpace(config.Deploy.StartCommand)
+}
+
+// railpackPythonMainFiles are the files whose presence gives Railpack's
+// Python provider a start command (getMainPythonFile), in its order.
+var railpackPythonMainFiles = []string{"main.py", "app.py", "start.py", "bot.py", "hello.py", "server.py"}
+
+// fastapiServerExtra matches a FastAPI requirement whose extras install
+// uvicorn without naming it: fastapi[standard], fastapi[all] and
+// fastapi[standard-no-fastapi-cloud-cli].
+var fastapiServerExtra = regexp.MustCompile(`(^|[^a-z0-9_.-])fastapi\s*\[[^\]]*\b(standard|all)\b`)
+
+// pythonStartPinned reports whether a located Flask or FastAPI application's
+// inferred start must replace the built image's command because the command
+// Railpack 0.38's Python provider (GetStartCommand) builds cannot serve it:
+//
+//   - With none of its main files, Railpack detects no start and the image
+//     keeps its base's CMD (python3, Hunt 12 H12-29).
+//   - A Flask app whose manifests mention gunicorn, or a FastAPI app whose
+//     manifests mention uvicorn, starts as `main:app` whichever module
+//     defines the application. Without a root main module that fails; a main
+//     module may re-export the application, so its presence keeps it.
+//   - Otherwise Railpack runs `python <main file>`, which only defines the
+//     application and exits unless the file starts a server itself. FastAPI's
+//     own install, fastapi[standard], brings uvicorn without naming it.
+//
+// Railpack tests a dependency as a case-insensitive substring of a manifest,
+// comments included; only root manifests are read here. The pinned command
+// runs server, so it must be installed. manifests is the comment-stripped,
+// lowercased dependency text.
+func pythonStartPinned(fsys fs.FS, manifests, server string) bool {
+	if !pythonDependencyNamed(manifests, server) && (server != "uvicorn" || !fastapiServerExtra.MatchString(manifests)) {
+		return false
+	}
+	script := ""
+	for _, name := range railpackPythonMainFiles {
+		if fileExists(fsys, name) {
+			script = name
+			break
+		}
+	}
+	if script == "" {
+		return true
+	}
+	var raw strings.Builder
+	for _, name := range []string{"requirements.txt", "pyproject.toml", "Pipfile"} {
+		raw.WriteString(strings.ToLower(readFile(fsys, name)))
+		raw.WriteByte('\n')
+	}
+	uses := func(dependency string) bool { return strings.Contains(raw.String(), dependency) }
+	if uses("flask") && uses("gunicorn") || uses("fastapi") && uses("uvicorn") {
+		return !fileExists(fsys, "main.py") && !fileExists(fsys, "main/__init__.py")
+	}
+	body := readFile(fsys, script)
+	return !strings.Contains(body, "__main__") && !strings.Contains(body, ".run(")
+}
+
 func fileExists(fsys fs.FS, path string) bool {
 	_, err := fs.Stat(fsys, path)
 	return err == nil
@@ -612,4 +815,11 @@ func readFile(fsys fs.FS, path string) string {
 		return ""
 	}
 	return string(data)
+}
+
+func upperFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }

@@ -32,7 +32,7 @@ func TestMigrationCronSuspensionReason(t *testing.T) {
 		select pg_get_constraintdef(oid)
 		  from pg_constraint
 		 where conrelid = 'crons'::regclass
-		   and conname = 'crons_suspended_reason_chk'
+		   and conname in ('crons_suspended_reason_chk', 'crons_suspended_reason_v2_chk')
 	`).Scan(&definition); err != nil {
 		t.Fatalf("load crons_suspended_reason_chk: %v", err)
 	}

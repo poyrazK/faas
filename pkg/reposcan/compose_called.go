@@ -3,10 +3,12 @@ package reposcan
 import (
 	"fmt"
 	"io/fs"
+	"net"
 	"net/url"
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -19,7 +21,8 @@ import (
 // worker never does. A service is called when
 //
 //   - another service addresses it by its Docker name in an http, https, ws
-//     or wss URL in its Compose `environment:`, or
+//     or wss URL in its Compose `environment:`, or by a bare host:port (a
+//     gRPC target) when it shows it listens, as below, or
 //   - a service that serves requests lists it in `depends_on` (Compose or
 //     .gregale/project.yaml) and the repository shows that it listens: it
 //     declares `expose:`, or it runs its own image's command and that image
@@ -41,9 +44,18 @@ func classifyCalledComposeServices(fsys fs.FS, workloads []Workload, imageListen
 		return nil
 	}
 	listens := imageListeningOnce(imageListening)
-	addressed := composeServicesAddressedByURL(fsys)
+	addressed, bare := composeServicesAddressed(fsys)
 	for name, i := range candidates {
 		if addressed[name] {
+			workloads[i].Class = ClassHTTP
+			continue
+		}
+		// gRPC clients take host:port, not a URL (microservices-demo's
+		// PRODUCT_CATALOG_SERVICE_ADDR: productcatalogservice:3550). Such an
+		// address is a call when the service shows it listens, the evidence
+		// depends_on needs below; otherwise it may name a raw TCP service.
+		if bare[name] && (len(workloads[i].InternalPorts) > 0 ||
+			listensByItsOwnCommand(fsys, workloads[i]) || imageListensByItsOwnCommand(&workloads[i], listens)) {
 			workloads[i].Class = ClassHTTP
 		}
 	}
@@ -64,6 +76,37 @@ func classifyCalledComposeServices(fsys fs.FS, workloads []Workload, imageListen
 		}
 	}
 	var warnings []string
+	listedAsDependency := map[int]bool{}
+	for _, caller := range workloads {
+		if !servesRequests(caller) {
+			continue
+		}
+		for _, dependency := range caller.DependsOn {
+			if i, ok := candidates[strings.ToLower(dependency)]; ok {
+				listedAsDependency[i] = true
+			}
+		}
+	}
+	// A service that declares `expose:` listens, and a listening worker
+	// fails its first boot with execution_mode_conflict. With no caller and
+	// no published port it stays a worker (the ADR keeps a health or metrics
+	// listener loud rather than parking it), so say so in the plan instead
+	// of only at boot. A depends_on target is warned below.
+	for _, i := range candidates {
+		w := workloads[i]
+		if w.Class != ClassWorker || len(w.InternalPorts) == 0 || listedAsDependency[i] {
+			continue
+		}
+		ports := make([]string, 0, len(w.InternalPorts))
+		for _, p := range w.InternalPorts {
+			ports = append(ports, strconv.Itoa(p.Port))
+		}
+		warnings = append(warnings, fmt.Sprintf(
+			"reposcan: service %q declares expose: [%s] but publishes no ports and no service calls it, so it is planned as a background worker, "+
+				"and a worker that listens fails its first boot (execution_mode_conflict); publish it with ports:, have a service call it (http://%s:%s), "+
+				"or drop expose: if it does not serve requests",
+			w.Name, strings.Join(ports, ", "), w.Name, ports[0]))
+	}
 	for _, caller := range workloads {
 		if !servesRequests(caller) {
 			continue
@@ -167,20 +210,26 @@ func servesRequests(w Workload) bool {
 	return w.Class != ClassWorker && w.Class != ClassJob
 }
 
-// composeServicesAddressedByURL returns the lower-cased Docker hosts of the
-// http, https, ws and wss URLs each Compose service's environment sets,
-// leaving out a service's own name. Values are read apart from the scan
-// result, as the env import reads them; an unreadable environment only means
-// no address counts as a call.
-func composeServicesAddressedByURL(fsys fs.FS) map[string]bool {
-	called := map[string]bool{}
+// composeServicesAddressed returns the lower-cased Docker hosts each Compose
+// service's environment addresses, leaving out a service's own name: by an
+// http, https, ws or wss URL, and separately by a bare host:port such as a
+// gRPC target. Values are read apart from the scan result, as the env import
+// reads them; an unreadable environment only means no address counts as a call.
+func composeServicesAddressed(fsys fs.FS) (called, bare map[string]bool) {
+	called, bare = map[string]bool{}, map[string]bool{}
 	env, err := ReadComposeEnv(fsys)
 	if err != nil {
-		return called
+		return called, bare
 	}
 	for caller, entries := range env.Services {
 		for _, value := range entries {
 			if value == nil {
+				continue
+			}
+			if host, ok := BareServiceAddressHost(*value); ok {
+				if !strings.EqualFold(host, caller) {
+					bare[host] = true
+				}
 				continue
 			}
 			parsed, err := url.Parse(strings.TrimSpace(*value))
@@ -197,5 +246,24 @@ func composeServicesAddressedByURL(fsys fs.FS) map[string]bool {
 			}
 		}
 	}
-	return called
+	return called, bare
+}
+
+// BareServiceAddressHost returns the lower-cased host of a value written as
+// host:port with no scheme, path or credentials, the form gRPC and many TCP
+// clients take. The host must be a single DNS label, as a Compose service
+// name is: an IP address or a dotted name is not a project service.
+func BareServiceAddressHost(value string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if strings.ContainsAny(value, "/@ ") {
+		return "", false
+	}
+	host, port, err := net.SplitHostPort(value)
+	if err != nil || host == "" || strings.ContainsAny(host, ".:") {
+		return "", false
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return "", false
+	}
+	return strings.ToLower(host), true
 }

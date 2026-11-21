@@ -111,9 +111,15 @@ func (l *Loop) routePublishedEventAt(ctx context.Context, payload string, accept
 				// cannot have subscribed before this event either.
 				return errors.Join(routeErrs...)
 			}
+			// A subscription receives only its own environment's events
+			// (ADR-20261104120000).
+			if !strings.EqualFold(row.EnvironmentID, envelope.EnvironmentID) {
+				continue
+			}
 			if _, err := l.routeSubscription(ctx, envelope, eventPayload, state.PublishedEventRecipient{
 				ID: row.ID, AccountID: row.AccountID, AppID: row.AppID,
 				Source: row.Source, Type: row.Type, Filter: row.Filter, SchemaVersions: row.SchemaVersions,
+				DeploymentScope: row.DeploymentScope, EnvironmentID: row.EnvironmentID,
 			}, now, false, 0); err != nil {
 				routeErrs = append(routeErrs, err)
 			}
@@ -184,9 +190,18 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		}
 		workflowHeld := l.workflowEventHeld(ctx, recipient)
 		if l.eventsHeld(ctx, recipient, work.Payload) || workflowHeld {
-			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, now.Add(capabilityDeferral))
+			if state.EventDeliveryHoldExpired(work.CreatedAt, now) {
+				expired := state.EventDeliveryHeldExpiredProgress(previous, previous.Attempts, now)
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, expired); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = expired
+				continue
+			}
+			next := state.EventDeliveryHoldRecheck(work.CreatedAt, now)
+			wait := state.EventCapabilityWaitProgress(previous, previous.Attempts+1, next)
 			if workflowHeld {
-				wait = state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowCapabilityWaitReason, now.Add(capabilityDeferral))
+				wait = state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowCapabilityWaitReason, next)
 			}
 			if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
 				return err
@@ -222,12 +237,18 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
 			if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
-				wait := state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowPlanWaitReason, now.Add(capabilityDeferral))
+				expired := state.EventDeliveryHoldExpired(work.CreatedAt, now)
+				wait := state.EventWorkflowWaitProgress(previous, previous.Attempts+1, state.EventWorkflowPlanWaitReason, state.EventDeliveryHoldRecheck(work.CreatedAt, now))
+				if expired {
+					wait = state.EventDeliveryHeldExpiredProgress(previous, previous.Attempts, now)
+				}
 				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
 					return err
 				}
 				work.RecipientProgress[recipient.ID] = wait
-				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				if !expired {
+					routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				}
 				continue
 			}
 			if errors.Is(routeErr, state.ErrWorkflowRunQuotaExceeded) {
@@ -369,6 +390,21 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		Source: state.InvocationAsyncInvoke, State: state.InvocationPending,
 		Method: eventInvocationMethod, Path: eventInvocationPath,
 		Payload: eventPayload, Headers: headers, DueAt: now, CreatedAt: now,
+	}
+	if row.DeploymentScope != "" {
+		// ADR-20261104120000: a stage subscription's delivery is the stage's
+		// own work, pinned to the stage's live release like any stage ingress.
+		// Work policies are still the app's, so a stage binding is refused.
+		if row.Work != nil {
+			return true, eventWorkRouteError(row.ID, "bind environment work", errors.New("work policies are not available for environment event subscriptions"), false)
+		}
+		prepared, _, resolveErr := state.ResolveInvocationVersionForEnvironment(ctx, l.engine.store, invocation, row.DeploymentScope)
+		if resolveErr != nil {
+			return true, fmt.Errorf("subscription %s: resolve environment %s: %w", row.ID, row.DeploymentScope, &eventFanoutRouteError{
+				code: state.EventFanoutFailureCodeTargetUnavailable, retryable: !errors.Is(resolveErr, state.ErrNotFound), err: resolveErr,
+			})
+		}
+		invocation = prepared
 	}
 	if handled, routeErr := l.routeBoundEventWork(ctx, row, invocation, requireActiveApp && row.WorkSnapshotCaptured); handled || routeErr != nil {
 		return true, routeErr
@@ -822,7 +858,10 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 	}
 	workflowHeld := l.workflowEventHeld(ctx, work.Recipient)
 	if l.eventsHeld(ctx, work.Recipient, work.Payload) || workflowHeld {
-		next := now.Add(capabilityDeferral)
+		if l.expireHeldEventRecipient(ctx, store, work, now) {
+			return
+		}
+		next := state.EventDeliveryHoldRecheck(work.AcceptedAt, now)
 		wait := state.EventCapabilityWaitProgress(work.PreviousProgress, work.TotalAttempts, next)
 		if workflowHeld {
 			wait = state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowCapabilityWaitReason, next)
@@ -894,7 +933,10 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 		}
 	}
 	if errors.Is(routeErr, state.ErrWorkflowEventPlanIneligible) {
-		next := now.Add(capabilityDeferral)
+		if l.expireHeldEventRecipient(ctx, store, work, now) {
+			return
+		}
+		next := state.EventDeliveryHoldRecheck(work.AcceptedAt, now)
 		wait := state.EventWorkflowWaitProgress(work.PreviousProgress, work.TotalAttempts, state.EventWorkflowPlanWaitReason, next)
 		if err := store.FinishPublishedEventRecipient(ctx, work, wait, next); err != nil && l.log != nil {
 			l.log.Error("sched: hold workflow recipient for plan", "err", err)
@@ -1030,6 +1072,22 @@ func (l *Loop) eventsHeld(ctx context.Context, recipient state.PublishedEventRec
 
 // workflowEventHeld applies the workflows switch only to workflow recipients;
 // ordinary event subscriptions remain independently routable.
+// expireHeldEventRecipient moves a delivery held past api.EventDeliveryHoldMax
+// (events or workflows off for its app, or its plan lost workflows) to the
+// dead-letter queue as delivery_held_expired, so its outbox row can settle
+// and be pruned (ADR-20261027125625 amendment 2026-11-13). It reports whether
+// it did.
+func (l *Loop) expireHeldEventRecipient(ctx context.Context, store state.PublishedEventRecipientWorkStore, work *state.PublishedEventRecipientWork, now time.Time) bool {
+	if !state.EventDeliveryHoldExpired(work.AcceptedAt, now) {
+		return false
+	}
+	expired := state.EventDeliveryHeldExpiredProgress(work.PreviousProgress, work.TotalAttempts, now)
+	if err := store.FinishPublishedEventRecipient(ctx, work, expired, now); err != nil && l.log != nil {
+		l.log.Error("sched: dead-letter held event delivery", "err", err)
+	}
+	return true
+}
+
 func (l *Loop) workflowEventHeld(ctx context.Context, recipient state.PublishedEventRecipient) bool {
 	if len(recipient.Workflow) == 0 || l == nil || l.engine == nil {
 		return false

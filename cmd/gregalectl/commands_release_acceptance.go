@@ -207,8 +207,12 @@ type releaseAcceptanceNodeReport struct {
 	Node     string `json:"node"`
 	NodeID   string `json:"node_id"`
 	Instance bool   `json:"instance"`
-	Build    bool   `json:"build"`
-	Ready    bool   `json:"ready"`
+	// InstanceEvidence names what proved Instance: "acceptance" (a canary
+	// app's instance) or "node" (any instance the node started at or after
+	// --since). Empty while Instance is false.
+	InstanceEvidence string `json:"instance_evidence,omitempty"`
+	Build            bool   `json:"build"`
+	Ready            bool   `json:"ready"`
 }
 
 // cmdReleaseAcceptanceVerifyNode is the per-node canary's check. cd-platform
@@ -221,12 +225,22 @@ func cmdReleaseAcceptanceVerifyNode(args []string) int {
 	fs.SetOutput(os.Stderr)
 	nodeName := fs.String("node", "", "compute node name (manifest or registry form)")
 	slugsCSV := fs.String("slugs", "", "comma-separated acceptance app slugs")
+	sinceFlag := fs.String("since", "", "RFC 3339 time the node activated: an instance it started since then also proves it serves")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 0 || strings.TrimSpace(*nodeName) == "" || strings.TrimSpace(*slugsCSV) == "" {
-		fmt.Fprintln(os.Stderr, "usage: gregalectl release-acceptance verify-node --node NAME --slugs SLUG[,SLUG...]")
+		fmt.Fprintln(os.Stderr, "usage: gregalectl release-acceptance verify-node --node NAME --slugs SLUG[,SLUG...] [--since RFC3339]")
 		return 2
+	}
+	var since time.Time
+	if value := strings.TrimSpace(*sinceFlag); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: --since: %v\n", err)
+			return 2
+		}
+		since = parsed
 	}
 	slugs, err := parseReleaseAcceptanceSlugs(*slugsCSV)
 	if err != nil {
@@ -239,7 +253,7 @@ func cmdReleaseAcceptanceVerifyNode(args []string) int {
 		return 1
 	}
 	defer closeFn()
-	report, err := releaseAcceptanceVerifyNode(context.Background(), st, strings.TrimSpace(*nodeName), slugs)
+	report, err := releaseAcceptanceVerifyNode(context.Background(), st, strings.TrimSpace(*nodeName), slugs, since)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl release-acceptance verify-node: %v\n", err)
 		return 1
@@ -254,7 +268,7 @@ func cmdReleaseAcceptanceVerifyNode(args []string) int {
 	return 0
 }
 
-func releaseAcceptanceVerifyNode(ctx context.Context, st state.Store, name string, slugs []string) (releaseAcceptanceNodeReport, error) {
+func releaseAcceptanceVerifyNode(ctx context.Context, st state.Store, name string, slugs []string, since time.Time) (releaseAcceptanceNodeReport, error) {
 	node, err := st.ComputeNodeByName(ctx, name)
 	if errors.Is(err, state.ErrNotFound) {
 		node, err = st.ComputeNodeByName(ctx, canonicalComputeNodeName(name, roleComputeOnly))
@@ -280,9 +294,9 @@ func releaseAcceptanceVerifyNode(ctx context.Context, st state.Store, name strin
 			return releaseAcceptanceNodeReport{}, fmt.Errorf("app %q instances: %w", slug, err)
 		}
 		for _, instance := range instances {
-			if instance.NodeID == node.ID && instance.DeploymentID == deployment.ID &&
-				(instance.State == string(state.StateRunning) || instance.State == string(state.StateParked)) {
+			if instance.NodeID == node.ID && instance.DeploymentID == deployment.ID && releaseAcceptanceServed(instance) {
 				report.Instance = true
+				report.InstanceEvidence = "acceptance"
 			}
 		}
 		build, err := st.BuildByDeployment(ctx, deployment.ID)
@@ -307,8 +321,34 @@ func releaseAcceptanceVerifyNode(ctx context.Context, st state.Store, name strin
 			report.Build = true
 		}
 	}
+	// Placement sends a fresh app to the node with the most admission
+	// headroom, and after the previous node's drain that is rarely the one
+	// just activated: rc.347's fsn-3 held 119 apps and 1.9 GB of headroom
+	// beside an empty fsn-2, built a canary app, and placed none of six. An
+	// instance the node started since it activated proves the same thing,
+	// that this release boots or restores VMs there
+	// (ADR-20261116150000).
+	if !report.Instance && !since.IsZero() {
+		instances, err := st.ListInstancesOnNodeID(ctx, node.ID)
+		if err != nil {
+			return releaseAcceptanceNodeReport{}, fmt.Errorf("node %q instances: %w", node.Name, err)
+		}
+		for _, instance := range instances {
+			if !instance.StartedAt.Before(since) && releaseAcceptanceServed(instance) {
+				report.Instance = true
+				report.InstanceEvidence = "node"
+				break
+			}
+		}
+	}
 	report.Ready = report.Instance && report.Build
 	return report, nil
+}
+
+// releaseAcceptanceServed is an instance that ran: running now, or parked
+// after running.
+func releaseAcceptanceServed(instance state.Instance) bool {
+	return instance.State == string(state.StateRunning) || instance.State == string(state.StateParked)
 }
 
 func releaseAcceptanceMutationFlags(fs *flag.FlagSet) (*bool, *string) {

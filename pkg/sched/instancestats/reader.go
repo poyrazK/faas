@@ -86,7 +86,8 @@ type InstanceStat struct {
 	QuietPaused bool
 	// IdleLadderLevel (ADR-20261107122928) is the idle ladder level vmmd
 	// holds a quiet-paused instance at: 1 quiet pause, 2 freeze, which
-	// measured admission books at the frozen charge. 0 otherwise.
+	// measured admission books at the frozen charge, 3 and 4 compressed
+	// (L3/L4), which it also charges their latest sample. 0 otherwise.
 	IdleLadderLevel int32
 	// Frozen (ADR-1151) is true while vmmd holds the instance frozen in
 	// place.
@@ -177,6 +178,11 @@ type InstanceStat struct {
 	// RX is the validity of RXBytes. Mirrors TX semantics:
 	// Unknown on first sample / regression / cache miss.
 	RX Validity
+	// InternalTXBytes (billing review R8-2) is the cumulative part of
+	// TXBytes the guest sent to internal destinations, read by vmmd's
+	// per-namespace poll. InternalTXValid is false until vmmd reports it.
+	InternalTXBytes uint64
+	InternalTXValid bool
 	// DiskUsedBytes and DiskCapacityBytes are the latest guest writable-root
 	// filesystem sample. DiskValid is false until both values arrive.
 	DiskUsedBytes     int64

@@ -8,7 +8,7 @@ from ...client import AuthenticatedClient, Client
 from ...models.password_login_request import PasswordLoginRequest
 from ...models.password_login_response import PasswordLoginResponse
 from ...models.problem import Problem
-from ...types import UNSET, Response, Unset
+from ...types import UNSET, Response
 
 
 def _get_kwargs(

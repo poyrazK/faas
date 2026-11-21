@@ -9,6 +9,7 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class DelayedTasksService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List delayed tasks for an app.
    * Newest-first, cursor-paginated delayed-task history.
@@ -33,7 +34,7 @@ export class DelayedTasksService {
      */
     limit?: number,
   }): CancelablePromise<ListDelayedTasksResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/delayed-tasks',
       path: {
@@ -93,7 +94,7 @@ export class DelayedTasksService {
      */
     xGregaleRelease?: string,
   }): CancelablePromise<DelayedTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/delayed-tasks',
       path: {
@@ -131,7 +132,7 @@ export class DelayedTasksService {
      */
     id: string,
   }): CancelablePromise<DelayedTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/delayed-tasks/{id}',
       path: {
@@ -165,7 +166,7 @@ export class DelayedTasksService {
      */
     id: string,
   }): CancelablePromise<DelayedTaskResponse> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/delayed-tasks/{id}',
       path: {

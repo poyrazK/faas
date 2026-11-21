@@ -14,6 +14,10 @@ func (s *server) configurePipelineSetup(service *datapipeline.Service) {
 	if s.managedPostgres == nil {
 		return
 	}
+	service.PlanExistingMirror = func(ctx context.Context, account, id string) (datapipeline.MirrorPlan, error) {
+		db, err := s.managedPostgres.Get(ctx, account, id)
+		return datapipeline.MirrorPlan{Region: db.Spec.Region, StorageLimitBytes: db.Spec.StorageLimitBytes, RestoreWindowSeconds: db.Spec.RestoreWindowSeconds}, pipelineMirrorError(err)
+	}
 	service.PlanMirror = func(ctx context.Context, account, region string) (datapipeline.MirrorPlan, error) {
 		if region == "" {
 			region = s.managedPostgres.DefaultRegion()

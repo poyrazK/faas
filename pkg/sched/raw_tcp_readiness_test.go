@@ -1,7 +1,9 @@
+// adr: 079 — amendment 1: a raw TCP routed port also skips plan-default HTTP liveness (ADR-20261027090000).
 package sched_test
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -21,7 +23,7 @@ func TestRawTCPRoutedPortDropsTheDefaultHealthPath(t *testing.T) {
 		ports    []api.WorkloadPort
 		profile  frameworkprofile.Profile
 		override string
-		wantPath string
+		wantPath string // informational; only the cache case is asserted
 	}{
 		{"a raw TCP routed port uses TCP readiness", tcp, frameworkprofile.Profile{Port: 5432, HealthPath: "/healthz"}, "", ""},
 		{"an omitted protocol is TCP", []api.WorkloadPort{{Name: "echo", Port: 5432}}, frameworkprofile.Profile{Port: 5432, HealthPath: "/healthz"}, "", ""},
@@ -46,6 +48,11 @@ func TestRawTCPRoutedPortDropsTheDefaultHealthPath(t *testing.T) {
 			path, grpc, _ := sched.StartupProbeForApp(dep, app)
 			if path != tc.wantPath || grpc {
 				t.Fatalf("probe = (%q, grpc=%v), want %q", path, grpc, tc.wantPath)
+			}
+			// ADR-079 amendment 1: TCP readiness on the raw TCP listener
+			// also tells vmmd to skip the plan-default HTTP liveness probe.
+			if got, want := sched.RoutedPortRawTCPForApp(dep, app, path, grpc), tc.wantPath == ""; got != want {
+				t.Fatalf("routed port raw TCP = %v, want %v", got, want)
 			}
 		})
 	}
@@ -73,5 +80,30 @@ func TestRawTCPRoutedPortHonoursTheReceiptHealthDeclaration(t *testing.T) {
 	dep.APIHostingReceipt = nil
 	if path, _, _ := sched.StartupProbeForApp(dep, app); path != "" {
 		t.Fatalf("default path on a raw TCP port = %q, want TCP readiness", path)
+	}
+}
+
+// adr: 20261116192126 — a managed cache's private RESP port gets TCP
+// readiness and no plan-default HTTP liveness, which killed a woken cache
+// about 50 s in; the same internal port on any other image keeps HTTP.
+func TestManagedValkeyDeploymentUsesRawTCPProbes(t *testing.T) {
+	ports := []api.WorkloadPort{{Name: "redis", Port: api.ManagedValkeyPort, Protocol: api.WorkloadPortTCP, Internal: true}}
+	app := state.App{AppProtocol: api.AppProtocolHTTP1, Manifest: state.AppManifest{Port: api.ManagedValkeyPort, Ports: ports}}
+	for _, tc := range []struct {
+		image    string
+		wantPath string // informational; only the cache case is asserted
+	}{
+		{api.ManagedValkeyImage, ""},
+		{"docker.io/library/redis@sha256:" + strings.Repeat("a", 64), "/healthz"},
+	} {
+		dep := state.Deployment{ID: "dep-1", Kind: state.DeploymentKindImage, ImageDigest: tc.image}
+		path, grpc, _ := sched.StartupProbeForApp(dep, app)
+		cache := tc.image == api.ManagedValkeyImage
+		if cache && (path != "" || grpc) {
+			t.Fatalf("%s: probe = (%q, grpc=%v), want TCP accept", tc.image, path, grpc)
+		}
+		if got, want := sched.RoutedPortRawTCPForApp(dep, app, path, grpc), cache; got != want {
+			t.Fatalf("%s: routed port raw TCP = %v, want %v", tc.image, got, want)
+		}
 	}
 }

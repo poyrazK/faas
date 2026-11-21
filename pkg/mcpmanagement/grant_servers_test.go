@@ -157,3 +157,26 @@ func TestTelemetryReportsConnectionsOnceABridgeAttaches(t *testing.T) {
 		t.Fatal("metrics carry an account or client identity")
 	}
 }
+
+// Flag, budget and reviewed plans live only in memory. Idle cleanup dropped
+// the server holding them after 10 minutes, before their 15 minutes ran out,
+// so an agent waiting for a person to agree could no longer apply.
+func TestMemoryPlansPreventIdleEviction(t *testing.T) {
+	future, past := time.Now().Add(time.Hour), time.Now().Add(-time.Hour)
+	for name, m := range map[string]*management{
+		"flag":     {flagPlans: map[string]*flagPlan{"p": {ExpiresAt: future}}},
+		"budget":   {budgetPlans: map[string]*budgetPlan{"p": {ExpiresAt: future}}},
+		"reviewed": {reviewedPlans: map[string]*reviewedPlan{"p": {ExpiresAt: future}}},
+	} {
+		if m.idle(time.Now()) {
+			t.Errorf("%s: idle cleanup would lose an unexpired plan", name)
+		}
+		if !m.holdsPlans() {
+			t.Errorf("%s: holdsPlans is false", name)
+		}
+	}
+	expired := &management{flagPlans: map[string]*flagPlan{"p": {ExpiresAt: past}}, reviewedPlans: map[string]*reviewedPlan{"q": {ExpiresAt: past}}}
+	if !expired.idle(time.Now()) {
+		t.Fatal("expired plans kept the server")
+	}
+}

@@ -24,6 +24,12 @@ client as Cloudflare's HTML page.
 
 Alerts for the running edge: [FaasComputeEdge](FaasComputeEdge.md).
 
+Before claiming protocol/content transparency, run the
+[Cloudflare zone traffic checks](CloudflareZoneTraffic.md) (Hunt 34): AI bot
+blocking and Bot Fight Mode can override customer policy or inject HTML;
+public Tunnel hostnames do not support gRPC success trailers. Customer 502/504
+bodies remain subject to Cloudflare's Free-proxy error-page replacement.
+
 ## Before you start
 
 - The release on the compute nodes contains ADR-1343 steps 1–5 (#4781, #4795,

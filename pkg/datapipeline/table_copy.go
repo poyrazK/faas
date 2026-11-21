@@ -63,7 +63,11 @@ func nativeCopyRelations(ctx context.Context, p Pipeline, target *pgx.Conn) ([]n
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, before := range p.SchemaChange.Before {
+	var baseline []relation
+	if p.SchemaChange != nil {
+		baseline = p.SchemaChange.Before
+	}
+	for _, before := range baseline {
 		if liveTableRepair(p.SchemaChange) && before.Name == p.SchemaChange.Recovery.Table {
 			continue
 		}
@@ -72,6 +76,27 @@ func nativeCopyRelations(ctx context.Context, p Pipeline, target *pgx.Conn) ([]n
 		}
 	}
 	return result, nil
+}
+
+// Initial selection uses the same durable high-water marks as later additions,
+// without creating a schema approval or changing the customer's selected tables.
+func observeInitialCopyProgress(ctx context.Context, p Pipeline, target *pgx.Conn, ob *Observation, current func(context.Context) error) error {
+	if err := ensureTableReceipt(ctx, target); err != nil {
+		return err
+	}
+	p.SchemaChange = &SchemaChange{AddedTables: slices.Clone(p.Tables)}
+	ready, err := observeTableCopyProgress(ctx, p, target, current, true)
+	if err != nil {
+		return err
+	}
+	ob.TablesReady = ready
+	for _, copy := range p.SchemaChange.Copies {
+		if copy.Stalled {
+			ob.Reason = "initial_copy_stalled"
+			break
+		}
+	}
+	return nil
 }
 
 func copyStateRank(state string) int {
@@ -118,11 +143,15 @@ func loadTableCopies(ctx context.Context, p Pipeline, target receiptSQL) ([]Tabl
 }
 
 func saveTableCopies(ctx context.Context, p Pipeline, target receiptSQL, copies []TableCopyProgress) error {
+	return saveTableCopiesAtMirrorChange(ctx, p, target, copies, p.SchemaApproval)
+}
+
+func saveTableCopiesAtMirrorChange(ctx context.Context, p Pipeline, target receiptSQL, copies []TableCopyProgress, change string) error {
 	encoded, _ := json.Marshal(copies)
 	tag, err := target.Exec(ctx, `INSERT INTO gregale_pipeline.table_copies(pipeline_id,generation,change_id,progress)
- SELECT pipeline_id,generation,schema_change,$4::jsonb FROM gregale_pipeline.mirrors
- WHERE pipeline_id=$1 AND generation=$2 AND schema_change=$3 AND NOT retiring
- ON CONFLICT(pipeline_id) DO UPDATE SET generation=excluded.generation,change_id=excluded.change_id,progress=excluded.progress`, p.ID, p.Generation, p.SchemaApproval, encoded)
+ SELECT pipeline_id,generation,$3,$4::jsonb FROM gregale_pipeline.mirrors
+ WHERE pipeline_id=$1 AND generation=$2 AND schema_change=$5 AND NOT retiring
+ ON CONFLICT(pipeline_id) DO UPDATE SET generation=excluded.generation,change_id=excluded.change_id,progress=excluded.progress`, p.ID, p.Generation, p.SchemaApproval, encoded, change)
 	if err != nil {
 		return err
 	}
@@ -133,6 +162,10 @@ func saveTableCopies(ctx context.Context, p Pipeline, target receiptSQL, copies 
 }
 
 func observeTableCopies(ctx context.Context, p Pipeline, target *pgx.Conn, current func(context.Context) error) (int, error) {
+	return observeTableCopyProgress(ctx, p, target, current, false)
+}
+
+func observeTableCopyProgress(ctx context.Context, p Pipeline, target *pgx.Conn, current func(context.Context) error, initial bool) (int, error) {
 	relations, err := nativeCopyRelations(ctx, p, target)
 	if err != nil {
 		return 0, err
@@ -149,9 +182,15 @@ func observeTableCopies(ctx context.Context, p Pipeline, target *pgx.Conn, curre
 	if err != nil {
 		return 0, err
 	}
-	var stage string
-	if err = tx.QueryRow(ctx, `SELECT table_stage FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND schema_change=$3 AND NOT retiring FOR UPDATE`, p.ID, p.Generation, p.SchemaApproval).Scan(&stage); err != nil {
+	var stage, change string
+	if err = tx.QueryRow(ctx, `SELECT table_stage,schema_change FROM gregale_pipeline.mirrors WHERE pipeline_id=$1 AND generation=$2 AND NOT retiring FOR UPDATE`, p.ID, p.Generation).Scan(&stage, &change); err != nil {
 		return 0, err
+	}
+	// A source qualification fence gates reads without starting another initial
+	// COPY. Keep its original receipt and progress clock, under the locked fence.
+	// Approved table additions still require their exact schema-change identity.
+	if change != p.SchemaApproval && (!initial || !sourceQualificationFence(p, change)) {
+		return 0, ErrConflict
 	}
 	now := time.Now().UTC()
 	copies := make([]TableCopyProgress, 0, len(CopiedTables(p.SchemaChange)))
@@ -183,7 +222,7 @@ func observeTableCopies(ctx context.Context, p Pipeline, target *pgx.Conn, curre
 		}
 		copies = append(copies, copyProgress(old, next, now))
 	}
-	if err = saveTableCopies(ctx, p, tx, copies); err != nil {
+	if err = saveTableCopiesAtMirrorChange(ctx, p, tx, copies, change); err != nil {
 		return 0, err
 	}
 	if err = current(ctx); err != nil {

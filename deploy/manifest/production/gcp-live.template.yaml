@@ -179,7 +179,15 @@ public_edge:
   # and serve from the node's own instances first. On by hand since
   # 2026-11-02 (60-faas-edge-node-set.conf, 60-faas-edge-local-first.conf).
   placement_node_set: true
-  local_first: true
+  # Off since 2026-11-14 (hand override 99-zz-local-first-off.conf, then this
+  # line). Local first kept every request on the entry node's instances until
+  # one VM had concurrency_per_vm (80 on Scale) in flight, and the edges did
+  # not spread hosts by node set, so scale-out instances on another node took
+  # no traffic: one instance served 100% while two sat idle. With it off,
+  # gatewayd-internal rotates over every ready instance; a 3-instance app on
+  # two nodes measured 508/539/513. Turn back on only once local first serves
+  # a share proportional to the node's ready instances.
+  local_first: false
   # ADR-20261102081618: the edges also take TLS on 443 at their forwarded
   # address, beside the tunnel. The role writes the listener and removes the
   # hand-placed 60-faas-edge-direct.conf it replaces.
@@ -212,9 +220,12 @@ public_edge:
       # them on 2026-11-04: Cloudflare's Universal SSL certificate
       # (gregale.dev, *.gregale.dev), which the proxied platform hosts use, a
       # certificate for the apex alone, and operations.gregale.dev's (Vercel).
+      # sales.gregale.dev, the sales frontend on Vercel
+      # (ADR-20261111113147), was added on 2026-11-13: its certificate
+      # (Google Trust Services, issued 2026-11-12) is the one the site serves.
       transparency:
         domain: gregale.dev
-        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev"]
+        allow_names: ["gregale.dev", "*.gregale.dev", "operations.gregale.dev", "sales.gregale.dev"]
 
 # Request- and wake-path switches on the compute nodes, each measured on
 # production by hand before it moved here (2026-11-06): the node journals
@@ -227,6 +238,9 @@ hot_path:
   request_telemetry_minute_collapse: true
   local_vmmd_data_socket: true
   edge_keepalive_per_node: true
+  # ADR-20261110081523: the edge reaches its own node's gatewayd-internal in
+  # binary HTTP. On by hand on fsn-2/fsn-3 since 2026-11-15 with no fallbacks.
+  edge_binary_hop: true
   frozen_tier: true
   frozen_fast_path: true
   owner_cache: true
@@ -242,6 +256,16 @@ log_archive:
   bucket: gregale-prod-280686321025-log-archive
   endpoint: https://storage.googleapis.com
   auth: gcp_metadata
+
+# docs/ops/serving-probe.md: each compute node requests the platform-owned
+# probe function (release-acceptance account) through the public edge every
+# five minutes and posts failures to the chat webhook in
+# /etc/faas/secrets/serving-probe/webhook_url on that node. The
+# post-deployment monitoring gate qualifies releases on these results. Keep
+# cron and synthetic checks off the probe app so it parks between probes.
+serving_probes:
+  urls: ["https://serving-probe.gregale.dev/"]
+  expected_body: gregale-serving-probe-ok
 
 dns:
   apps_domain: gregale.dev
@@ -304,6 +328,14 @@ storage:
 cgroups:
   slice: faas-cp.slice
   controllers: "memory,cpu,io,pids"
+
+# Control-plane artifact signer (ADR-20261109170000,
+# docs/runbooks/artifact-signer-rollout.md step 2): signd on the control plane
+# signs app layers and compute imaged signs through it. Needs the fleet
+# sign.key at /etc/faas/secrets/sign.key on the control plane first.
+# retire_compute_key (step 4) stays off until the full resign is clean.
+artifact_signer:
+  enabled: true
 
 # Workload-identity tokens for queue workers (ADR-1141). Off until an
 # operator runs `gregalectl workload-identity init --out DIR` on the

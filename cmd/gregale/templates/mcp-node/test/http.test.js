@@ -74,6 +74,8 @@ test('HTTP origin policy, tool errors, redacted logs and stream cancellation', {
     assert.equal(prompt.status, 200);
     assert.match((await result(prompt)).messages[0].content.text, /fixture text/);
     const discovery = await protocolRequest('server/discover');
+    // Gregale's deploy qualification requires the echoed revision.
+    assert.equal(discovery.headers.get('mcp-protocol-version'), '2026-07-28');
     assert.deepEqual((await result(discovery)).capabilities.completions, {});
     const promptCompletion = await protocolRequest('completion/complete', {
       ref: { type: 'ref/prompt', name: 'summarize' }, argument: { name: 'style', value: 'exec' },

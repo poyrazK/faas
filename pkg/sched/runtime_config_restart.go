@@ -311,6 +311,19 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 			}
 			result, wakeErr := e.admitAndDispatchWithOptions(candidateCtx, appID, deployment.ID,
 				instanceModeForApp(deployedApp), TriggerRuntimeConfigRestart, false, true)
+			if wakeErr != nil && len(staleServing) > 0 && isConcurrencyRefusal(wakeErr) {
+				// The replacement takes the one-slot grant, so a refusal here
+				// means the ledger counts a slot no serving instance holds.
+				// Waiting for it to clear held a restart (and the credential
+				// rotation behind it) until an instance idled out (production
+				// 2026-11-15). Retire one predecessor instead: the gateway
+				// holds requests through the replacement's boot.
+				e.logRuntimeConfigCapRefusal(appID, deployment.ID, instances, wakeErr)
+				if err := e.retireRuntimeConfigInstance(ctx, appID, deployment.ID, staleServing[0]); err != nil {
+					return CoordOutcome{}, err
+				}
+				continue
+			}
 			if wakeErr != nil {
 				return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: boot replacement for deployment %s: %w", deployment.ID, wakeErr)
 			}
@@ -677,4 +690,32 @@ func (e *Engine) waitForRuntimeConfigInstanceDrain(ctx context.Context, appID, i
 		case <-ticker.C:
 		}
 	}
+}
+
+// isConcurrencyRefusal reports an admission refused at the app's concurrency
+// ceiling.
+func isConcurrencyRefusal(err error) bool {
+	var problem *api.Problem
+	return errors.As(err, &problem) && problem.Code == api.CodePlanLimitConcur
+}
+
+// logRuntimeConfigCapRefusal records what the ledger counted against an app
+// whose restart replacement was refused at the cap, beside the instance rows
+// the restart saw, so a leaked reservation can be named.
+func (e *Engine) logRuntimeConfigCapRefusal(appID, deploymentID string, instances []state.Instance, refusal error) {
+	if e.log == nil {
+		return
+	}
+	rows := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		rows = append(rows, instance.ID+"="+instance.State)
+	}
+	held := e.ledger.AppReservations(appID)
+	reservations := make([]string, 0, len(held))
+	for _, r := range held {
+		reservations = append(reservations, fmt.Sprintf("%s deployment=%s env=%q node=%s counts=%t frozen=%t admitted=%s",
+			r.Instance, r.DeploymentID, r.EnvironmentKey, r.NodeID, r.CountsConcurrency, r.Frozen, r.AdmittedAt.UTC().Format(time.RFC3339)))
+	}
+	e.log.Warn("sched: runtime config restart refused at the concurrency cap; retiring a predecessor first",
+		"app", appID, "deployment", deploymentID, "err", refusal, "instances", rows, "ledger", reservations)
 }

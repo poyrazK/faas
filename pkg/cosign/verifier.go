@@ -33,6 +33,44 @@ type LocalVerifier struct {
 	// records remembers verifications across restarts; nil keeps them in
 	// memory only (RememberVerifications).
 	records *attestationRecords
+	// requireV2 refuses raw v1 signatures (RequireV2).
+	requireV2 bool
+}
+
+// RequireV2 makes the verifier refuse v1 signatures, which sign only the
+// layer digest and so can be replayed onto another storage key. Turn it on
+// after `signd resign` has converted every stored layer (ADR-20261109170000).
+func (v *LocalVerifier) RequireV2(on bool) *LocalVerifier {
+	v.requireV2 = on
+	return v
+}
+
+// isSignatureV1 reports a raw 64-byte P-256 r||s signature.
+func isSignatureV1(sig []byte) bool { return len(sig) == 64 }
+
+// refreshV1Signature rereads a v1 signature from the canonical store when
+// RequireV2 is on. The node cache serves a signature it already holds, so a
+// v1 copy cached before `artifact resign` rewrote the object would otherwise
+// fail every boot of that layer. A failed refresh keeps the cached bytes,
+// which RequireV2 then refuses.
+func (v *LocalVerifier) refreshV1Signature(ctx context.Context, sigKey string, sig []byte) []byte {
+	if !v.requireV2 || !isSignatureV1(sig) {
+		return sig
+	}
+	cache := storage.AsCacheBackend(v.stor)
+	if cache == nil {
+		return sig
+	}
+	rc, err := cache.Refresh(ctx, sigKey)
+	if err != nil {
+		return sig
+	}
+	defer func() { _ = rc.Close() }()
+	fresh, err := io.ReadAll(io.LimitReader(rc, maxSignatureV2Bytes+1))
+	if err != nil {
+		return sig
+	}
+	return fresh
 }
 
 // NewLocalVerifier parses the SPKI PEM at path (mode ≤ 0o444
@@ -90,6 +128,12 @@ func (v *LocalVerifier) CheckPresent(ctx context.Context, layerKey, sigKey strin
 	_ = sigRC.Close()
 	if err != nil {
 		return fmt.Errorf("cosign: read sig %q: %w", sigKey, err)
+	}
+	sig = v.refreshV1Signature(ctx, sigKey, sig)
+	if v.requireV2 && isSignatureV1(sig) {
+		return api.NewProblem(503, "sig_invalid",
+			"unbound signature for cold-boot layer",
+			fmt.Sprintf("signature for layer %q at %q is v1, which does not name its storage key; this verifier requires v2 (re-sign with signd resign)", layerKey, sigKey))
 	}
 	if checkSignatureShape(layerKey, sig) != nil {
 		return api.NewProblem(503, "sig_invalid",
@@ -189,6 +233,15 @@ func (v *LocalVerifier) verify(ctx context.Context, layerKey, sigKey, cacheKey s
 
 	// A v2 signature (ADR-20261109170000) must also name this layer's key,
 	// so a signed layer copied over another key fails here.
+	// A v1 signature covers only the digest, so a signed layer and its
+	// signature copied over another app's key would verify. Once every
+	// stored layer is re-signed, RequireV2 closes that replay.
+	sig = v.refreshV1Signature(ctx, sigKey, sig)
+	if v.requireV2 && isSignatureV1(sig) {
+		return api.NewProblem(503, "sig_invalid",
+			"unbound signature for cold-boot layer",
+			fmt.Sprintf("signature for layer %q at %q is v1, which does not name its storage key; this verifier requires v2 (re-sign with signd resign)", layerKey, sigKey))
+	}
 	if !verifySignature(v.pub, layerKey, digest, sig) {
 		// Title for human display; Detail is the load-bearing
 		// operator message (Problem.Error() returns code+detail,

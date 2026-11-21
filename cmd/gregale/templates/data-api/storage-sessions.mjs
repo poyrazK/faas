@@ -38,7 +38,7 @@ async function body(req, max, signal) {
 }
 
 export async function handleUploadSession(ctx, helpers) {
-  const { rows, transfer, objectRequest, discard, drain, sendJSON, publicRow, newObjectKey, validateName } = helpers
+  const { rows, transfer, objectRequest, registerObject, discard, drain, sendJSON, publicRow, newObjectKey, validateName } = helpers
   const { route, req, res, config } = ctx
   const binding = config.storage.buckets.get(route.bucket)
   const rpc = async (name, payload, signal = ctx.deadline.signal) => rows(ctx, { resource: `rpc/gregale_storage_${name}`, method: 'POST', body: payload, token: await ctx.token(true), signal })
@@ -46,8 +46,8 @@ export async function handleUploadSession(ctx, helpers) {
   const session = async signal => { const result = await get(signal); return result.status === 200 && Array.isArray(result.json) && result.json.length === 1 ? result.json[0] : null }
   const answer = s => sendJSON(res, 200, { id: s.id, bucket: s.bucket, name: s.name, size: s.size, content_type: s.content_type, state: s.state, expires_at: s.expires_at,
     chunk_size: limits.storageChunkBytes, parts: Object.entries(s.parts).map(([number, part]) => ({ number: Number(number), size: part.size, sha256: part.sha256 })).sort((a,b) => a.number-b.number), ...(s.receipt ? { object: publicRow(s.receipt) } : {}) })
-  const failed = result => ctx.problem(res, [400,401,403,409,412,429].includes(result.status) ? result.status : 503,
-    ({ 400: 'storage_rejected', 401: 'storage_forbidden', 403: 'storage_forbidden', 404: 'storage_sessions_unavailable', 409: 'storage_session_conflict', 412: 'storage_version_conflict', 429: 'storage_session_limit' })[result.status] ?? 'storage_commit_unknown')
+  const failed = result => ctx.problem(res, [400,401,403,409,410,412,429].includes(result.status) ? result.status : 503,
+    ({ 400: 'storage_rejected', 401: 'storage_forbidden', 403: 'storage_forbidden', 404: 'storage_sessions_unavailable', 409: 'storage_session_conflict', 410: 'storage_session_history_retired', 412: 'storage_version_conflict', 429: 'storage_session_limit' })[result.status] ?? 'storage_commit_unknown')
   if (route.action === 'sessionStart') {
     let input
     try { input = JSON.parse((await body(req, 4096, ctx.deadline.signal)).toString()) } catch { return ctx.problem(res, 400, 'storage_invalid_session') }
@@ -84,6 +84,7 @@ export async function handleUploadSession(ctx, helpers) {
       if (bytes.length !== expectedSize || createHash('sha256').update(bytes).digest('hex') !== sha) return ctx.problem(res, 400, 'storage_checksum_mismatch')
       if (previous) return answer(found)
       const key = newObjectKey()
+      if (!await registerObject(ctx,key,signal)) return ctx.problem(res,503,'storage_maintenance_unavailable')
       try { const stored = await objectRequest(binding, 'PUT', key, { body: bytes, headers: { 'content-length': bytes.length, 'content-type': 'application/octet-stream' }, signal }); await drain(stored); if (stored.statusCode < 200 || stored.statusCode >= 300) throw new Error('store') }
       catch { await discard(binding, key); return ctx.problem(res, 502, 'storage_backend_unavailable') }
       const result = await rpc('part', { p_id: route.id, p_number: route.part, p_size: bytes.length, p_sha256: sha, p_key: key }, signal)
@@ -97,6 +98,7 @@ export async function handleUploadSession(ctx, helpers) {
   const plan = prepared.json
   if (plan.state === 'complete') return answer(plan)
   return transfer(ctx, async signal => {
+    if (!await registerObject(ctx,plan.object_key,signal)) return ctx.problem(res,503,'storage_maintenance_unavailable')
     // Immutable, checksum-verified chunks are composed through a bounded
     // stream. No local disk or process state is needed to resume after park.
     const stream = Readable.from((async function* () {

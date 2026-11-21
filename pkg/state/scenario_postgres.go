@@ -32,6 +32,49 @@ func scenarioPGResource(v pgsql.ScenarioPostgresFixture) (rehearsalpg.Resource, 
 	}
 	return r, nil
 }
+
+type scenarioPostgresEnrollment interface {
+	ScenarioTestMemberByApp(context.Context, string) (ScenarioTestMember, error)
+	ScenarioTestAppByWorkload(context.Context, string, string, string) (App, error)
+}
+
+func (s *PgStore) ScenarioPostgresTaskParticipants(ctx context.Context, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return scenarioPostgresTaskParticipants(ctx, s, fixture)
+}
+
+func (m *MemStore) ScenarioPostgresTaskParticipants(ctx context.Context, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	return scenarioPostgresTaskParticipants(ctx, m, fixture)
+}
+
+func scenarioPostgresTaskParticipants(ctx context.Context, enrollment scenarioPostgresEnrollment, fixture rehearsalpg.Resource) ([]rehearsalpg.TaskParticipant, error) {
+	primary, err := enrollment.ScenarioTestMemberByApp(ctx, fixture.AppID)
+	if err != nil {
+		return nil, err
+	}
+	if primary.AccountID != fixture.AccountID || primary.RunID != fixture.RunID || primary.NetworkMode != ScenarioNetworkContained {
+		return nil, ErrConflict
+	}
+	var plan rehearsalwork.Plan
+	if primary.ManagedWorkJSON != "" && json.Unmarshal([]byte(primary.ManagedWorkJSON), &plan) != nil {
+		return nil, ErrConflict
+	}
+	var participants []rehearsalpg.TaskParticipant
+	for _, participant := range plan.Participants {
+		if !rehearsalwork.TaskPostgresAccess(participant.Postgres) {
+			continue
+		}
+		app, err := enrollment.ScenarioTestAppByWorkload(ctx, fixture.AccountID, fixture.RunID, participant.Workload)
+		if err != nil {
+			return nil, err
+		}
+		if app.AccountID != fixture.AccountID || app.ID == fixture.AppID {
+			return nil, ErrConflict
+		}
+		participants = append(participants, rehearsalpg.TaskParticipant{AppID: app.ID, Access: participant.Postgres})
+	}
+	return participants, nil
+}
+
 func (s *PgStore) ReserveScenarioPostgres(ctx context.Context, r rehearsalpg.Resource) (rehearsalpg.Resource, error) {
 	if !r.ValidReservation() {
 		return r, ErrConflict
@@ -76,9 +119,10 @@ func (s *PgStore) ScenarioPostgresForApp(ctx context.Context, app string) (rehea
 	if e != nil {
 		return rehearsalpg.Resource{}, e
 	}
-	r, err := scenarioPGResource(v)
+	r, err := scenarioPGResource(v.ScenarioPostgresFixture)
 	if err == nil && r.AppID != app {
-		r.RoleName = rehearsalwork.PostgresRole(r.ID, app)
+		r.ParticipantAccess = v.ParticipantAccess
+		r.RoleName = rehearsalwork.PostgresParticipantRole(r.ID, app, r.ParticipantAccess)
 	}
 	return r, err
 }
@@ -191,11 +235,12 @@ func (m *MemStore) ScenarioPostgresForApp(ctx context.Context, app string) (rehe
 		}
 	} else {
 		part, _ := rehearsalwork.Decode(p.Member.ManagedWorkJSON).Participant(p.Member.Workload)
-		if part.Postgres != "read_write" {
+		if !rehearsalwork.PostgresAccess(part.Postgres) {
 			return rehearsalpg.Resource{}, ErrNotFound
 		}
 		if r.AppID != app {
-			r.RoleName = rehearsalwork.PostgresRole(r.ID, app)
+			r.ParticipantAccess = part.Postgres
+			r.RoleName = rehearsalwork.PostgresParticipantRole(r.ID, app, r.ParticipantAccess)
 		}
 	}
 	return rehearsalpg.CloneResource(r), nil

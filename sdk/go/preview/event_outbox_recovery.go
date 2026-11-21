@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"math"
 	"time"
@@ -143,7 +142,7 @@ func claimNextEventOutbox(ctx context.Context, db *sql.DB, account, app string, 
 		code = "retry_window_expired"
 	} else if options.RetryPolicy != nil && options.RetryPolicy.MaxAttempts > 0 && claim.attempts >= options.RetryPolicy.MaxAttempts {
 		code = "attempts_exhausted"
-	} else if !bytes.Equal(actual[:], digest) || json.Unmarshal([]byte(claim.body), &request) != nil || request.Validate() != nil || request.ExpectedAppID != app || request.Key != claim.key {
+	} else if !bytes.Equal(actual[:], digest) || decodeEventOutboxRequest(claim.body, &request) != nil || request.Validate() != nil || request.ExpectedAppID != app || request.Key != claim.key {
 		code = "publication_rejected"
 	}
 	if code != "" {

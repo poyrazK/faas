@@ -1,0 +1,175 @@
+#!/usr/bin/env python3
+"""Observe Alertmanager transport results, never human acknowledgement.
+
+Only the fixed loopback metrics endpoint is read. No notifications are sent.
+The last-success clock is when two observations confirmed a new completed
+successful request count, not the provider's delivery timestamp. A first
+snapshot establishes a baseline and never fabricates historical receipts.
+"""
+
+import json
+import math
+import os
+from pathlib import Path
+import re
+import sys
+import time
+import urllib.request
+
+SOURCE = "http://127.0.0.1:9094/metrics"
+# Match the existing operator notification response and integration budgets.
+MAX_BYTES = 1 << 20
+MAX_PAIRS = 32
+RECEIVERS = {"faas-page", "faas-warn", "faas-heartbeat"}
+INTEGRATIONS = {"email", "pushover", "slack", "webhook", "pagerduty", "opsgenie", "victorops", "wechat", "telegram", "discord", "webex", "sns", "msteams", "msteamsv2", "rocketchat", "jira"}
+INPUTS = {
+    "alertmanager_notification_requests_total": "requests",
+    "alertmanager_notification_requests_failed_total": "failures",
+    "alertmanager_notification_latency_seconds_count": "count",
+    "alertmanager_notification_latency_seconds_sum": "latency",
+}
+SAMPLE = re.compile(r"^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)\})?\s+(\S+)$")
+LABEL = re.compile(r'([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\[\\"n])*)"(?:,|$)')
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def read_source():
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    with opener.open(SOURCE, timeout=10) as response:
+        body = response.read(MAX_BYTES + 1)
+    if len(body) > MAX_BYTES:
+        raise ValueError("source_too_large")
+    return parse(body.decode("utf-8"))
+
+
+def parse(body):
+    pairs, generation = {}, None
+    for line in body.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        match = SAMPLE.fullmatch(line)
+        if not match:
+            raise ValueError("invalid_exposition")
+        name, raw_labels, raw_value = match.groups()
+        if name == "process_start_time_seconds" and not raw_labels:
+            generation = float(raw_value)
+        if name not in INPUTS:
+            continue
+        labels, position = {}, 0
+        for label in LABEL.finditer(raw_labels or ""):
+            if label.start() != position or label[1] in labels:
+                raise ValueError("invalid_labels")
+            labels[label[1]] = label[2]
+            position = label.end()
+        if position != len(raw_labels or "") or set(labels) != {"receiver_name", "integration"}:
+            raise ValueError("receiver_labels_unavailable")
+        receiver, integration = labels["receiver_name"], labels["integration"]
+        if receiver not in RECEIVERS or integration not in INTEGRATIONS:
+            raise ValueError("unsupported_receiver")
+        value = float(raw_value)
+        if not math.isfinite(value) or value < 0:
+            raise ValueError("invalid_counter")
+        row = pairs.setdefault(receiver + "/" + integration, {"receiver": receiver, "integration": integration})
+        field = INPUTS[name]
+        if field in row:
+            raise ValueError("duplicate_counter")
+        row[field] = value
+    if generation is None or not math.isfinite(generation) or generation <= 0 or not pairs or len(pairs) > MAX_PAIRS:
+        raise ValueError("source_incomplete")
+    for row in pairs.values():
+        if not all(field in row for field in INPUTS.values()):
+            raise ValueError("pair_incomplete")
+        if any(row[k] != math.trunc(row[k]) for k in ("requests", "failures", "count")):
+            raise ValueError("invalid_counter")
+        # The histogram and request counter are updated after Notify returns.
+        # Reject a scrape in the middle of those separate updates.
+        if row["requests"] != row["count"] or row["failures"] > row["requests"]:
+            raise ValueError("incoherent_snapshot")
+    return {"generation": generation, "pairs": pairs}
+
+
+def observe(snapshot, previous, now):
+    state = {"generation": snapshot["generation"], "pairs": {}}
+    for key, row in snapshot["pairs"].items():
+        old = previous.get("pairs", {}).get(key, {})
+        successes = row["requests"] - row["failures"]
+        last = old.get("last_success", 0)
+        if not isinstance(last, (int, float)) or not math.isfinite(last) or not 0 <= last <= now:
+            last = 0
+        reset = previous.get("generation") != snapshot["generation"] or row["requests"] < old.get("requests", math.inf) or row["failures"] < old.get("failures", math.inf) or successes < old.get("confirmed", math.inf)
+        confirmed = successes if reset else old["confirmed"]
+        pending = successes if reset else old["pending"]
+        if not reset and confirmed < pending <= successes:
+            confirmed, last = pending, now
+        state["pairs"][key] = dict(row, confirmed=confirmed, pending=successes, last_success=last)
+    return state
+
+
+def render(state, now, up=True):
+    lines = [
+        "# HELP faas_notification_receiver_collector_up 1 when receiver evidence was read coherently.",
+        "# TYPE faas_notification_receiver_collector_up gauge",
+        f"faas_notification_receiver_collector_up {int(up)}",
+        "# HELP faas_notification_receiver_collector_last_run_timestamp_seconds Last collection attempt.",
+        "# TYPE faas_notification_receiver_collector_last_run_timestamp_seconds gauge",
+        f"faas_notification_receiver_collector_last_run_timestamp_seconds {now:.3f}",
+    ]
+    fields = [
+        ("faas_notification_receiver_requests_total", "requests", "counter", "Completed transport requests, including failures."),
+        ("faas_notification_receiver_failures_total", "failures", "counter", "Completed requests that failed, including retry attempts."),
+        ("faas_notification_receiver_latency_seconds_total", "latency", "counter", "Total transport latency across successful and failed requests."),
+        ("faas_notification_receiver_last_success_observed_timestamp_seconds", "last_success", "gauge", "Time a new successful request count was confirmed; 0 means unknown, never human receipt."),
+    ]
+    for metric, field, kind, help_text in fields:
+        lines.extend([f"# HELP {metric} {help_text}", f"# TYPE {metric} {kind}"])
+        for key, row in sorted(state.get("pairs", {}).items()):
+            labels = f'receiver="{row["receiver"]}",integration="{row["integration"]}"'
+            lines.append(f"{metric}{{{labels}}} {row[field]:.6f}")
+    return "\n".join(lines) + "\n"
+
+
+def write_atomic(path, body):
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(body)
+    os.chmod(tmp, 0o644)
+    os.replace(tmp, path)
+
+
+def load_state(path):
+    try:
+        if path.stat().st_size > MAX_BYTES:
+            return {}
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict) or not isinstance(value.get("pairs"), dict) or len(value["pairs"]) > MAX_PAIRS:
+            return {}
+        for key, row in value["pairs"].items():
+            if not isinstance(row, dict) or not all(isinstance(row.get(k), (float, int)) and math.isfinite(row[k]) and row[k] >= 0 for k in ("requests", "failures", "confirmed", "pending", "last_success")):
+                return {}
+        return value
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def run(state_path, textfile, now=time.time, source=read_source):
+    previous = load_state(state_path)
+    try:
+        snapshot = source()
+        at = now()
+        state = observe(snapshot, previous, at)
+    except (OSError, ValueError):
+        # Never publish cached receiver values as fresh evidence after failure.
+        write_atomic(textfile, render({}, now(), up=False))
+        print("notification-receiver-metrics: source_unavailable_or_invalid", file=sys.stderr)
+        return 1
+    write_atomic(state_path, json.dumps(state, sort_keys=True))
+    write_atomic(textfile, render(state, at))
+    return 0
+
+
+if __name__ == "__main__":
+    directory = os.environ.get("STATE_DIRECTORY", "/var/lib/faas-notification-receiver-metrics").split(":")[0]
+    sys.exit(run(Path(directory) / "state.json", Path("/var/lib/node_exporter/textfile_collector/notification-receivers.prom")))

@@ -47,6 +47,8 @@ package apidserver
 import (
 	"net/http"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/agentconnections"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -149,6 +151,32 @@ func mergeActorAudit(data map[string]any, userID, via, ip, pusher string) map[st
 	}
 	if pusher != "" {
 		data["actor_pusher"] = pusher
+	}
+	return data
+}
+
+// mergeAgentAudit adds the coding agent behind a request to an audit payload
+// (ADR-20261112223000 Amendment 1), so deploys and new apps can be counted
+// by agent:
+//   - actor_agent: the agent the Gregale CLI's User-Agent names
+//     (api.CodingAgents, e.g. "claude-code"). The client reports it itself,
+//     so it attributes usage only; nothing grants or refuses on it, which
+//     keeps clear of the header-sniffing problem described above.
+//   - actor_agent_key: the agent connection the authenticated key belongs
+//     to (hosted_mcp, agent_key, app_agent), from the auth chain's key.
+//
+// Absent values add no keys, like mergeActorAudit.
+func mergeAgentAudit(data map[string]any, r *http.Request) map[string]any {
+	if data == nil {
+		data = map[string]any{}
+	}
+	if agent := api.CodingAgentFromUserAgent(r.UserAgent()); agent != "" {
+		data["actor_agent"] = agent
+	}
+	if _, key, ok := authmw.AccountFromContext(r); ok && key != nil {
+		if kind := agentconnections.Kind(*key); kind != "" {
+			data["actor_agent_key"] = kind
+		}
 	}
 	return data
 }

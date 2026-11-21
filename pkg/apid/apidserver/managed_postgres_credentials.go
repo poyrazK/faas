@@ -16,11 +16,56 @@ const managedPostgresCredentialMaxBytes = credentialdelivery.MaxCredentialBytes
 type managedPostgresSecretStore = credentialdelivery.SecretStore
 
 type appSecretCredentialSink struct {
-	delivery   *credentialdelivery.Sink
-	recipient  func() *age.X25519Recipient
-	hmacKey    func() []byte
-	identities func() []*age.X25519Identity
-	probe      func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	delivery     *credentialdelivery.Sink
+	recipient    func() *age.X25519Recipient
+	hmacKey      func() []byte
+	identities   func() []*age.X25519Identity
+	probe        func(context.Context, string, managedpostgres.CredentialAccess, int) error
+	cutoverProbe func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error
+}
+
+func (s *appSecretCredentialSink) VerifyCutoverCredential(ctx context.Context, c managedpostgres.Cutover, member managedpostgres.CutoverCredential, target managedpostgres.Database) error {
+	binding := managedpostgres.Binding{ID: member.ID, AccountID: c.AccountID, AppID: c.AppID, Scope: c.Scope,
+		DatabaseID: c.Target.ID, EnvironmentKey: member.EnvironmentKey, Access: member.Access, CredentialGeneration: 1}
+	// Historical fleet envelopes remain verifiable during a domain rollout.
+	// An error opening a matching local envelope is never retried through a
+	// more privileged opener.
+	if s.identities != nil {
+		for _, id := range s.identities() {
+			if id != nil && id.Recipient().String() == member.Sealed.Kid {
+				return s.VerifyCredential(ctx, binding, member.Sealed, target)
+			}
+		}
+	}
+	if s.cutoverProbe != nil {
+		return s.cutoverProbe(ctx, c, member, target)
+	}
+	return s.VerifyCredential(ctx, binding, member.Sealed, target)
+}
+
+// CanVerifyCutoverCredentials reports whether a credential sealed now can be
+// verified during a database switch: secretd's verifier is configured, or
+// apid holds the identity for the key new credentials are sealed to. On
+// production 2026-11-17 runtime credentials were sealed to secretd's runtime
+// domain while neither held, and every switch retried verification for
+// 30 minutes before failing.
+func (s *appSecretCredentialSink) CanVerifyCutoverCredentials() bool {
+	if s.cutoverProbe != nil {
+		return true
+	}
+	if s.recipient == nil || s.identities == nil {
+		return false
+	}
+	recipient := s.recipient()
+	if recipient == nil {
+		return false
+	}
+	for _, id := range s.identities() {
+		if id != nil && id.Recipient().String() == recipient.String() {
+			return true
+		}
+	}
+	return false
 }
 
 func newAppSecretCredentialSink(store managedPostgresSecretStore, recipient func() *age.X25519Recipient, hmacKey func() []byte) (*appSecretCredentialSink, error) {

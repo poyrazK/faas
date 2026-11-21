@@ -94,6 +94,12 @@ func collectInstances(ctx context.Context, store EvidenceStore, e *Evidence) {
 		return
 	}
 	e.Instances, e.InstancesKnown = instances, true
+	if recent, ok := store.(interface {
+		ListLatestInstancesForApp(context.Context, string, int) ([]state.Instance, error)
+	}); ok {
+		// Best effort: without it, failed boots simply go unreported.
+		e.RecentInstances, _ = recent.ListLatestInstancesForApp(ctx, e.App.ID, RecentInstanceScan)
+	}
 	ids := make([]string, 0, len(instances))
 	e.Nodes = make(map[string]state.ComputeNode)
 	seen := make(map[string]bool)

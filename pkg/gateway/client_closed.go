@@ -22,6 +22,16 @@ func observedStatus(r *http.Request, status int) int {
 		return status
 	}
 	rec, _ := r.Context().Value(responseRecorderKey{}).(*statusRecorder)
+	if rec != nil && rec.responseTruncated {
+		// The body was cut at the cap after the status went out
+		// (truncated_response_telemetry.go): the client never got this response.
+		return http.StatusBadGateway
+	}
+	if rec != nil && rec.ResponseWriter != nil && rec.wroteHeader && status == http.StatusOK {
+		if mapped, ok := grpcObservedStatus(rec.Header()); ok {
+			return mapped
+		}
+	}
 	if rec == nil || rec.wroteHeader {
 		return status
 	}

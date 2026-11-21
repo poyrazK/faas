@@ -67,3 +67,14 @@ Native evidence (gregale-internal-test-1, 2026-10-14):
 65534 with only `CAP_CHOWN`, `CAP_DAC_OVERRIDE` and `CAP_FOWNER`, publishes
 root-owned entries as 0:0 and a `1001:0` entry intact; without `CAP_CHOWN` the
 chown to root fails, and plain `mkfs.ext4 -d` publishes the builder's own UID.
+
+## Amendment 2026-11-15: low ports for the app user
+
+Source builds keep the platform app user (§2), but a Dockerfile app without
+`USER` that listened on port 80 failed with EACCES, where Docker would run it
+(Docker sets `net.ipv4.ip_unprivileged_port_start=0` in every container). The
+guest kernel command line now sets the same sysctl on app and builder VMs, so
+the app user may bind any port. The guest stays the isolation boundary and
+the port is reachable only through the gateway. Executions (no network) are
+unchanged. Boot arguments are not part of the snapshot backing identity, so
+the setting reaches existing apps on their next cold boot.

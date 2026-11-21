@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -503,6 +504,88 @@ func TestRenderManifestAnsibleFiles_TenantEgressGateway(t *testing.T) {
 	}
 }
 
+// adr: 20261117185346 §1–§2 — a declared agent egress gateway gives every
+// compute host its tunnel slice and address, derived from its name, and the
+// gateway host its own listener and public addresses; the control plane
+// gets none.
+func TestRenderManifestAnsibleFiles_AgentEgressGateway(t *testing.T) {
+	for _, proxy := range []bool{false, true} {
+		t.Run(fmt.Sprintf("proxy=%t", proxy), func(t *testing.T) { testRenderAgentEgressGateway(t, proxy) })
+	}
+}
+
+// adr: 20261117185346 §4 — with proxy on, the gateway runs agentproxyd and
+// every node's vmmd gets its registration URL; off, neither.
+func testRenderAgentEgressGateway(t *testing.T, proxy bool) {
+	t.Helper()
+	yaml := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: fsn-1.gregale.dev:7100\n    - name: fsn-2\n      role: compute-only\n      address: fsn-2.gregale.dev:50051\n", 1)
+	yaml += "egress:\n  agent_gateway:\n    endpoint: egress-gw.gregale.dev:51821\n    public_key: " +
+		"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n    tunnel_cidr: 10.78.0.0/16\n    addresses: [198.51.100.7, 198.51.100.8]\n"
+	proxyURL := ""
+	if proxy {
+		yaml += "    proxy: true\n"
+		proxyURL = "http://10.78.0.1:15081"
+	}
+	m, err := manifest.Parse([]byte(yaml))
+	if err != nil {
+		t.Fatalf("manifest.Parse: %v", err)
+	}
+	if errs := m.Validate(); errs != nil {
+		t.Fatalf("manifest.Validate: %v", errs)
+	}
+	files, err := renderManifestAnsibleFiles(m, t.TempDir())
+	if err != nil {
+		t.Fatalf("renderManifestAnsibleFiles: %v", err)
+	}
+	var cpVars, computeVars, gatewayVars, inventory string
+	for _, file := range files {
+		switch {
+		case strings.HasSuffix(file.Path, "hosts.ini"):
+			inventory = string(file.Body)
+		case strings.HasSuffix(file.Path, "agent-egress-gateway.yml"):
+			gatewayVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-1.yml"):
+			cpVars = string(file.Body)
+		case strings.HasSuffix(file.Path, "fsn-2.yml"):
+			computeVars = string(file.Body)
+		}
+	}
+	for _, want := range []string{
+		`faas_agent_egress_iface: "wg-agent"`,
+		`faas_agent_egress_gateway_endpoint: "egress-gw.gregale.dev:51821"`,
+		`faas_agent_egress_tunnel_cidr: "10.78.0.0/16"`,
+		`faas_agent_egress_node_slice: "10.78.8.0/22"`,
+		`faas_agent_egress_node_address: "10.78.8.1/32"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1"` + "\n",
+		fmt.Sprintf("faas_agent_egress_proxy_url: %q\n", proxyURL),
+	} {
+		if !strings.Contains(computeVars, want) {
+			t.Errorf("compute host vars missing %s:\n%s", want, computeVars)
+		}
+	}
+	if strings.Contains(cpVars, "faas_agent_egress_") || strings.Contains(computeVars, "faas_tenant_egress_") {
+		t.Errorf("unexpected egress vars:\ncontrol plane:\n%s\ncompute:\n%s", cpVars, computeVars)
+	}
+	if !strings.Contains(inventory, "[agent_egress_gateway]\nagent-egress-gateway\n") {
+		t.Errorf("inventory has no agent gateway group:\n%s", inventory)
+	}
+	for _, want := range []string{
+		`ansible_host: "egress-gw.gregale.dev"`,
+		`faas_agent_egress_gateway_address: "10.78.0.1/16"`,
+		`faas_agent_egress_listen_port: 51821`,
+		"faas_agent_egress_node_prefix: 22\n",
+		fmt.Sprintf("faas_agentproxyd_enabled: %t\n", proxy),
+		"faas_agentproxyd_registration_port: 15081\n",
+		"faas_agent_egress_addresses:\n  - \"198.51.100.7\"\n  - \"198.51.100.8\"\n",
+	} {
+		if !strings.Contains(gatewayVars, want) {
+			t.Errorf("gateway host vars missing %s:\n%s", want, gatewayVars)
+		}
+	}
+}
+
 // ADR-520: public_edge.custom_domains turns on the control plane's
 // on-demand customer certificates. Only the control plane runs the public
 // edge, so compute hosts must not receive the switches.
@@ -624,16 +707,19 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 		enabled   bool
 		placement bool
 		direct    bool
+		entry     string
+		noTunnel  bool
 		edgedns   bool
 		spread    bool
 	}{
 		{name: "off", yaml: base},
 		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
 		{name: "placement routing", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n", enabled: true, placement: true},
-		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true},
+		{name: "direct entry", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: both\n", enabled: true, direct: true, entry: "both"},
+		{name: "direct entry without the tunnel", yaml: base + "public_edge:\n  compute_nodes: true\n  entry: direct\n", enabled: true, direct: true, entry: "direct", noTunnel: true},
 		{name: "spread and local first", yaml: base + "public_edge:\n  compute_nodes: true\n  placement_routing: true\n  placement_node_set: true\n  local_first: true\n", enabled: true, placement: true, spread: true},
 		{name: "direct entry with edgednsd", yaml: strings.Replace(base, "address: 10.42.0.2:50051\n", "address: 10.42.0.2:50051\n      public_ipv4: 203.0.113.2\n", 1) +
-			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, edgedns: true},
+			"public_edge:\n  compute_nodes: true\n  entry: both\n  dns:\n    zone_id: zone-1\n    names: [pilot.example.dev]\n", enabled: true, direct: true, entry: "both", edgedns: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))
@@ -684,9 +770,17 @@ func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
 			}
 			// ADR-20261102081618: direct entry opens the compute edges' TLS
 			// listener and keeps their 80/443 Cloudflare-only.
-			for _, line := range []string{"faas_edge_entry: \"both\"\n", "faas_cloudflare_origin_only: true\n"} {
-				if got := strings.Contains(computeVars, line); got != tc.direct {
-					t.Errorf("compute host has %q = %v, want %v:\n%s", line, got, tc.direct, computeVars)
+			if got := strings.Contains(computeVars, "faas_cloudflare_origin_only: true\n"); got != tc.direct {
+				t.Errorf("compute host Cloudflare-only firewall = %v, want %v:\n%s", got, tc.direct, computeVars)
+			}
+			if tc.direct && !strings.Contains(computeVars, fmt.Sprintf("faas_edge_entry: %q\n", tc.entry)) {
+				t.Errorf("compute host vars missing faas_edge_entry %q:\n%s", tc.entry, computeVars)
+			}
+			// ADR-20261102081618 step 6: entry direct drops the tunnel
+			// connector on the compute hosts and its scrape on the control plane.
+			for host, vars := range map[string]string{"control": controlVars, "compute": computeVars} {
+				if got := strings.Contains(vars, "faas_edge_tunnel: false\n"); got != tc.noTunnel {
+					t.Errorf("%s host faas_edge_tunnel: false = %v, want %v:\n%s", host, got, tc.noTunnel, vars)
 				}
 			}
 			if strings.Contains(controlVars, "faas_edge_entry") {

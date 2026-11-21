@@ -117,3 +117,38 @@ func TestEgressFloodAfterFanoutHoldsWithFloodReason(t *testing.T) {
 		t.Fatalf("hold = %v %q, want egress_flood", held.AbuseHeld(), held.AbuseHoldReason)
 	}
 }
+
+// adr: 20261113133500 — strikes live in the store, so a recycle counted by one
+// schedd (or before a restart) and a recycle counted by another add up to
+// the hold.
+func TestAbuseStrikesSurviveScheddRestart(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app, _ := sched.SeedApp(t, store, api.PlanPro, 512, 5)
+	ctx := context.Background()
+
+	before := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	first, err := before.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake: %v", err)
+	}
+	if err := before.RecycleForEgressAbuse(ctx, first.InstanceID, sched.EgressAbuseFanout, 1500, 1200); err != nil {
+		t.Fatalf("first recycle: %v", err)
+	}
+	if got, _ := store.AccountByID(ctx, acct.ID); got.AbuseHeld() {
+		t.Fatal("one recycle must not hold the account")
+	}
+
+	// A fresh engine has an empty in-memory counter.
+	after := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	second, err := after.Wake(ctx, app.ID, "", "", "")
+	if err != nil {
+		t.Fatalf("Wake after restart: %v", err)
+	}
+	if err := after.RecycleForEgressAbuse(ctx, second.InstanceID, sched.EgressAbuseFanout, 1500, 1200); err != nil {
+		t.Fatalf("recycle after restart: %v", err)
+	}
+	held, _ := store.AccountByID(ctx, acct.ID)
+	if !held.AbuseHeld() || held.AbuseHoldReason != state.AccountAbuseHoldEgressFanout {
+		t.Fatalf("account after restart repeat = held %v reason %q, want egress_fanout hold", held.AbuseHeld(), held.AbuseHoldReason)
+	}
+}

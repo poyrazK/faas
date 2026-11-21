@@ -166,7 +166,7 @@ or of the monthly provider-spend breaker (`fleet.max_databases`,
 Compare `apid_managed_postgres_fleet_databases` and
 `apid_managed_postgres_fleet_cost_millicents` with the ceilings. Either raise
 a ceiling deliberately, within the provider budget, and restart apid, or
-review the largest consumers with `gregale postgres diagnostics`.
+review the largest consumers with `gregalectl billing postgres diagnostics`.
 
 `FaasManagedPostgresFleetPaused` pages at the ceiling. Every account gets
 `managed_postgres_new_databases_paused` for new databases; at the spend

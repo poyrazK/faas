@@ -109,6 +109,9 @@ type Loop struct {
 	// queuePushLanes holds each push-queue trigger's lane allowance
 	// (ADR-972). In memory and per schedd; a restart ramps from one lane.
 	queuePushLanes queuePushLaneAllowance
+	// queueHoldRefreshed is when each held push-queue trigger last refreshed
+	// its messages' retention (trigger ID → time.Time; ADR-20261113180000).
+	queueHoldRefreshed sync.Map
 	// brokerLanes tracks broker trigger lanes and app owners (ADR-20261027162741).
 	brokerLanes brokerLanes
 	// triggerSecretIdentities opens Kafka credentials only in the
@@ -116,6 +119,10 @@ type Loop struct {
 	// seal-domain identity first, then the fleet and host identities
 	// (current and previous during a rotation).
 	triggerSecretIdentities []*age.X25519Identity
+	// triggerConfigOpener, when set, opens a broker trigger's credentials
+	// by reference through the control plane's secretd instead of
+	// triggerSecretIdentities (ADR-20261110210000 slice 3g).
+	triggerConfigOpener TriggerConfigOpener
 	// recordRate caps the records each app's broker triggers take per
 	// second (ADR-20261101093015); nil leaves broker polls uncapped.
 	recordRate *TriggerRecordRateLimiter
@@ -188,6 +195,7 @@ type Loop struct {
 	targets               *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
 	floor                 *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	prewarm               *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
+	cronPrewake           *cronPrewake                            // ADR-20261107122928 amendment 3: prewarm intents before HTTP cron fires; nil opts out
 	recentLoad            *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
 	fleetRates            fleetRequestRates                       // H4-70 fleet-wide demand from instances.request_count
 	livenessWindow        *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
@@ -625,6 +633,19 @@ func (l *Loop) WithTriggerSecretIdentities(identities []*age.X25519Identity) *Lo
 	return l
 }
 
+// TriggerConfigOpener opens a broker trigger's config with its credentials
+// by reference (app, trigger), somewhere other than this node.
+type TriggerConfigOpener func(ctx context.Context, appID, triggerID string) (json.RawMessage, error)
+
+// WithTriggerConfigOpener makes broker pollers take their credentials from
+// open (the control plane's secretd, ADR-20261110210000 slice 3g) instead of
+// opening the stored config with this node's identities. Broker triggers are
+// polled only by the app's owner, which secretd authorizes.
+func (l *Loop) WithTriggerConfigOpener(open TriggerConfigOpener) *Loop {
+	l.triggerConfigOpener = open
+	return l
+}
+
 // WithAppPublicAuthModeLookup (ADR-119) arms the Loop-level
 // mode lookup that postBatch consults before posting the
 // trigger batch envelope. Mirror of
@@ -922,6 +943,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyRuntimeConfigRestart,
 		db.NotifyDeploymentChanged,
 		db.NotifySnapshotPrime,
+		db.NotifyLayerPublished,                  // ADR-038 amendment 2026-11-17: verify a layer before its prime.
 		db.NotifyCronRunNow,                      // PR-D / issue #791: multiplexed on the cron loop's existing LISTEN; zero extra pool connections.
 		db.NotifyAppDelete,                       // ADR-098: multiplexed on the cron loop's existing LISTEN; same zero-cost pattern as NotifyCronRunNow. Saves a 7th long-term pool subscriber (the standalone one tipped pool.MaxConns=8 over the edge and starved the async-invoke drain's BeginTx under e2e query bursts).
 		db.NotifyJobChanged,                      // issue #1184: wake job dispatch and reconcile cancelled task VMs on the existing LISTEN.
@@ -983,6 +1005,8 @@ func (l *Loop) Run(ctx context.Context) error {
 
 	reaperT := time.NewTicker(10 * time.Second)
 	defer reaperT.Stop()
+	reservationAuditT := time.NewTicker(reservationAuditInterval)
+	defer reservationAuditT.Stop()
 	cronTicks := minuteTicks(ctx, time.Now)
 	// Fire-now safety ticker (PR-D / issue #791). 60s cadence
 	// mirrors pkg/sched/fire_now.go::fireNowSafetyTick: when a
@@ -1362,6 +1386,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 		case <-reaperT.C:
 			l.dispatchReaper(ctx)
+		case <-reservationAuditT.C:
+			l.submitWork(workReservationAudit, "tick", func() { l.engine.ReleaseStaleReservations(ctx) })
 		case <-cronTicks:
 			l.submitWork(workCronSweep, "sweep", func() { l.runCronTick(ctx) })
 		case <-l.cronResume:
@@ -1859,6 +1885,7 @@ func (l *Loop) dispatchRetention(ctx context.Context) {
 		l.runRetention(ctx)
 		l.runDeadLetterRetention(ctx)
 		l.runCronHistoryRetention(ctx)
+		l.runCronPrewakeRetention(ctx)
 	})
 }
 
@@ -2185,6 +2212,10 @@ const maxConcurrentPrimes = api.SnapshotPrimeConcurrentSlots
 
 const maxSnapshotPrimeAttempts = 2
 
+// maxPrimeRuntimeValuesRetries bounds how often a prime boots again because
+// the app's config or secrets changed while it booted.
+const maxPrimeRuntimeValuesRetries = 3
+
 func snapshotPrimeInterruptedByShutdown(ctx context.Context, err error) bool {
 	if ctx == nil || err == nil {
 		return false
@@ -2260,9 +2291,9 @@ func (l *Loop) submitWork(kind workKind, key string, fn func()) {
 func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 	l.submitWork(workPrime, appID+"\x00"+deploymentID, func() {
 		var err error
-		attempts := 0
+		attempts, valuesChanged := 0, 0
 		for attempt := 1; attempt <= maxSnapshotPrimeAttempts; attempt++ {
-			attempts = attempt
+			attempts++
 			err = l.engine.Prime(ctx, appID, deploymentID)
 			if err == nil || errors.Is(err, state.ErrSnapshotPrimeStale) {
 				return
@@ -2270,6 +2301,18 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 			if errors.Is(err, errPrimeActivationPending) {
 				l.log.Warn("sched: prime activation handoff pending; recovery will retry", "app", appID, "deployment", deploymentID, "err", err)
 				return
+			}
+			// A config or secret change while the prime booted (env set,
+			// a rotation, CI setting secrets right after deploy) is not
+			// the release's fault: boot it again with the new values. It
+			// has its own budget so a timeout retry is not spent on it
+			// (deploy-path review P3).
+			if errors.Is(err, state.ErrRuntimeValuesChanged) && valuesChanged < maxPrimeRuntimeValuesRetries && ctx.Err() == nil {
+				valuesChanged++
+				attempt--
+				l.log.Warn("sched: app config or secrets changed during snapshot prime; priming again",
+					"app", appID, "deployment", deploymentID, "retry", valuesChanged, "err", err)
+				continue
 			}
 			if attempt == maxSnapshotPrimeAttempts || !retryableSnapshotPrimeError(err) || ctx.Err() != nil {
 				break
@@ -2284,9 +2327,9 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 }
 
 // finishFailedPrime decides what a prime that failed after its retries does
-// to the deployment: a shutdown or a node-capacity refusal inside
-// api.SnapshotPrimeCapacityMaxWait leaves it snapshotting for prime recovery;
-// anything else fails it.
+// to the deployment: a shutdown, or a node-capacity or financial compute
+// authority refusal inside api.SnapshotPrimeCapacityMaxWait, leaves it
+// snapshotting for prime recovery; anything else fails it.
 func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string, attempts int, err error) {
 	if snapshotPrimeInterruptedByShutdown(ctx, err) {
 		l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
@@ -2294,7 +2337,7 @@ func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string
 		return
 	}
 	if l.engine.primeAwaitsCapacity(ctx, deploymentID, err) {
-		l.log.Info("sched: snapshot prime refused for node capacity; prime recovery will retry",
+		l.log.Info("sched: snapshot prime refused for node capacity or compute authority; prime recovery will retry",
 			"app", appID, "deployment", deploymentID, "max_wait", api.SnapshotPrimeCapacityMaxWait, "err", err)
 		return
 	}
@@ -2437,6 +2480,8 @@ func (l *Loop) handleAppWake(ctx context.Context, n db.Notification) error {
 //     replica target; other transitions remain informational.
 //   - snapshot_prime: imaged finished building a deployment's layer; boot it
 //     once, snapshot it, and park it (spec §5 step 6, ADR-018).
+//   - layer_published: imaged stored and replicated a deployment's layer;
+//     verify it now so its prime does not (ADR-038 amendment 2026-11-17).
 func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
@@ -2531,8 +2576,9 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 				// shared key would make the reconcile look like a
 				// duplicate of the drain and swallow it.
 				id := deploymentID
+				deadline := l.now().Add(api.SupersededInstanceDrainGrace)
 				l.submitWork(workDeploymentReconcile, "drain\x00"+id, func() {
-					l.engine.drainDeploymentInstances(context.WithoutCancel(ctx), id, true)
+					l.drainSupersededDeployment(context.WithoutCancel(ctx), id, deadline)
 				})
 			}
 			// Live activates the new mode. Failed/superseded/cancelled signals
@@ -2566,6 +2612,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 			return
 		}
 		l.dispatchPrime(ctx, p.AppID, p.DeploymentID)
+	case db.NotifyLayerPublished:
+		l.dispatchLayerVerify(ctx, n.Payload)
 	case db.NotifyCronRunNow:
 		// PR-D / issue #791: fire-now wake. The notify payload is
 		// informational (the row in cron_fire_now_requests is the
@@ -2870,6 +2918,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
+	probeWakes := l.recentPlatformProbeWakes(ctx, now)
 	for _, a := range apps {
 		plan := api.Plan("")
 		ladderHold := false
@@ -2938,13 +2987,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// ADR-072: carrier for the post-snapshot
 				// app-wide max floor enrichment. Empty on legacy
 				// rows that pre-date the per-deployment column.
-				DeploymentID: ins.DeploymentID,
-				RAMMB:        ins.RAMMB,
-				LastRequest:  lastRequest,
-				Started:      ins.StartedAt,
-				IdleTimeoutS: a.IdleTimeoutS,
-				AppType:      string(a.Type),
-				NodeID:       ins.NodeID,
+				DeploymentID:    ins.DeploymentID,
+				RAMMB:           ins.RAMMB,
+				LastRequest:     lastRequest,
+				Started:         ins.StartedAt,
+				ProbeWakeDoneAt: probeWakes[ins.ID],
+				IdleTimeoutS:    a.IdleTimeoutS,
+				AppType:         string(a.Type),
+				NodeID:          ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
@@ -3178,12 +3228,116 @@ func (l *Loop) dispatchReaper(ctx context.Context) {
 func (l *Loop) parkFromReaper(ctx context.Context, info InstanceInfo, allowNewRequests bool) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
+	guest := l.freshGuestActivity(info.Instance)
+	if info.probeOnly() {
+		// A probe-only instance's open flows are the gateway's keep-alive
+		// connections (ADR-20261116120000 §3); only work in flight or a
+		// new request keeps it.
+		guest = l.requestsInFlight(info.Instance)
+	}
 	return l.engine.ParkIdle(parkCtx, info.Instance, IdleParkCheck{
 		LastRequest:      info.LastRequest,
 		RequestCount:     info.RequestCount,
 		AllowNewRequests: allowNewRequests,
-		Guest:            l.freshGuestActivity(info.Instance),
+		Guest:            guest,
 	})
+}
+
+// recentPlatformProbeWakes reads the probe wake ledger for the reaper tick:
+// each instance's latest unbilled health probe end. A store without the
+// ledger, or a failed read, leaves every instance on its idle timeout.
+func (l *Loop) recentPlatformProbeWakes(ctx context.Context, now time.Time) map[string]time.Time {
+	ledger, ok := l.engine.store.(state.PlatformProbeWakeStore)
+	if !ok {
+		return nil
+	}
+	wakes, err := ledger.RecentPlatformProbeWakes(ctx, now.Add(-api.ProtectionProbeWakeLookback))
+	if err != nil {
+		l.log.Warn("reaper: platform probe wakes", "err", err)
+		return nil
+	}
+	return wakes
+}
+
+// supersededDrainPoll is how often a superseded release's busy instances are
+// checked again during SupersededInstanceDrainGrace.
+var supersededDrainPoll = time.Second
+
+// drainSupersededDeployment parks a superseded release's instances once the
+// requests they already serve have finished. Idle instances park at once;
+// one whose guest reports requests in flight (or waitUntil tasks) is checked
+// again every supersededDrainPoll until deadline, then drained as before.
+// The wait is re-scheduled rather than slept so it holds no work slot; a
+// dropped re-submission is repaired by drainSupersededReaperRows.
+func (l *Loop) drainSupersededDeployment(ctx context.Context, deploymentID string, deadline time.Time) {
+	if busy := l.parkIdleSupersededInstances(ctx, deploymentID); busy > 0 && l.now().Before(deadline) && ctx.Err() == nil {
+		time.AfterFunc(supersededDrainPoll, func() {
+			l.submitWork(workDeploymentReconcile, "drain\x00"+deploymentID, func() {
+				l.drainSupersededDeployment(ctx, deploymentID, deadline)
+			})
+		})
+		return
+	}
+	l.engine.drainDeploymentInstances(ctx, deploymentID, true)
+}
+
+// parkIdleSupersededInstances parks the deployment's running request
+// instances that serve nothing now and reports how many still have requests
+// in flight. It reports none, so the caller drains at once, when the app is
+// at its concurrency cap: waiting would refuse the new release's wakes.
+// The cap includes the rollout overlap (ADR-199): the superseded release
+// draining beside the new one is that overlap, and without it an app at the
+// default max_concurrency of 1 (old + new = 2) never got the grace, so every
+// deploy still cut its in-flight requests (prod test 2026-11-15).
+func (l *Loop) parkIdleSupersededInstances(ctx context.Context, deploymentID string) int {
+	e := l.engine
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return 0
+	}
+	app, err := e.store.AppByID(ctx, dep.AppID)
+	// Only the app's owner scheduler parks its instances, as
+	// drainDeploymentInstances requires. Every schedd receives
+	// deployment_changed; a non-owner that parked the instance first left the
+	// owner's park a no-op, so the owner's reservation was never released and
+	// later explicit admissions were refused at the cap (prod test
+	// 2026-11-15: immediate-rollout verification 429s after canaries).
+	if err != nil || !e.ownsApp(app) || e.ledger.Concurrency(app.ID) >= max(app.MaxConcurrency, 1)+api.RolloutConcurrencyGrant {
+		return 0
+	}
+	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
+	if err != nil {
+		return 0
+	}
+	busy := 0
+	for _, ins := range instances {
+		if ins.DeploymentID != deploymentID || ins.State != string(state.StateRunning) || ins.Mode == string(state.InstanceModeWorker) {
+			continue
+		}
+		err := e.ParkIdle(ctx, ins.ID, IdleParkCheck{
+			LastRequest: ins.LastRequestAt, RequestCount: ins.RequestCount, AllowNewRequests: true,
+			Guest: l.requestsInFlight(ins.ID),
+		})
+		if errors.Is(err, ErrParkActivity) {
+			busy++
+		}
+	}
+	return busy
+}
+
+// requestsInFlight is freshGuestActivity without open connections: the
+// gateway keeps idle keep-alive connections to every instance, which would
+// hold a superseded instance for the whole grace.
+func (l *Loop) requestsInFlight(instance string) func(context.Context) (GuestActivity, bool) {
+	fresh := l.freshGuestActivity(instance)
+	if fresh == nil {
+		return nil
+	}
+	return func(ctx context.Context) (GuestActivity, bool) {
+		guest, ok := fresh(ctx)
+		guest.OpenConns = 0
+		return guest, ok
+	}
 }
 
 // freshGuestActivity reads the newest vmmd activity and conntrack flow count
@@ -4165,7 +4319,13 @@ func (h *httpGatewaySynth) invoke(ctx context.Context, appID string, inv state.I
 		// An ordinary 5xx is retryable under the durable invocation contract.
 		// Runner-caught exceptions are marked InvocationFailed above and take
 		// the permanent branch instead.
-		err = appAnsweredError{err: fmt.Errorf("application or gateway returned retryable HTTP %d", statusCode)}
+		// Keep what the app said: without it a dead-lettered invocation's
+		// error_detail read only "retryable HTTP 500" (prod 2026-11-15).
+		msg := fmt.Sprintf("application or gateway returned retryable HTTP %d", statusCode)
+		if detail := safetext.Ellipsis(strings.TrimSpace(string(out.Result)), invocationFailureDetailMaxBytes); detail != "" {
+			msg += ": " + detail
+		}
+		err = appAnsweredError{err: errors.New(msg)}
 	}
 	return out, err
 }
@@ -4776,6 +4936,7 @@ const cronSweepSlice = 10 * time.Second
 func (l *Loop) runCronTick(ctx context.Context) {
 	l.cronSweepTried = map[string]struct{}{}
 	l.runCronSweep(ctx)
+	l.runCronPrewake(ctx)
 }
 
 // cronAppBudgetHeld reports an app a compute budget holds. The drain defers
@@ -4995,6 +5156,9 @@ func (l *Loop) dispatchOneCron(ctx context.Context, c state.Cron, now time.Time)
 			l.cronMetrics.decision("not_due")
 		}
 		// Already fired in the current window.
+		return
+	}
+	if len(c.Command) == 0 && l.pauseFailingCron(ctx, c) {
 		return
 	}
 	if len(c.Command) > 0 || c.SchedulePolicy != nil {

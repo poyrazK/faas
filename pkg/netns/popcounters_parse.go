@@ -10,6 +10,9 @@ import (
 // pollers: the per-CIDR drop_v4_/drop_v6_ counters, the deny_* aggregates,
 // and the ADR-361 faas_egress_* policy and fan-out counters.
 func trackedCounterName(name string) bool {
+	if name == EgressInternalTxCounter {
+		return true
+	}
 	for _, prefix := range []string{"drop_v4_", "drop_v6_", "deny_", "faas_egress_"} {
 		if strings.HasPrefix(name, prefix) {
 			return true
@@ -39,6 +42,7 @@ func parseNftCounters(out []byte) (map[string]uint64, error) {
 			Counter struct {
 				Name    string `json:"name"`
 				Packets uint64 `json:"packets"`
+				Bytes   uint64 `json:"bytes"`
 			} `json:"counter"`
 		}
 		if err := json.Unmarshal(raw, &c); err != nil {
@@ -51,6 +55,18 @@ func parseNftCounters(out []byte) (map[string]uint64, error) {
 			continue
 		}
 		m[c.Counter.Name] += c.Counter.Packets
+		if byteCounter(c.Counter.Name) {
+			m[c.Counter.Name+CounterBytesSuffix] += c.Counter.Bytes
+		}
 	}
 	return m, nil
+}
+
+// CounterBytesSuffix keys a byte counter's bytes in the parsed map; its
+// plain name keeps the packet count every counter reports.
+const CounterBytesSuffix = ":bytes"
+
+// byteCounter reports the counters whose bytes, not only packets, are read.
+func byteCounter(name string) bool {
+	return name == EgressInternalTxCounter
 }

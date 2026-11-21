@@ -1,4 +1,5 @@
 import { createHash, createHmac } from 'node:crypto'
+import { limits } from './config.mjs'
 
 // Object access for application Auth (ADR-1190 phase 5). Buckets bound to
 // the Auth app with `gregale add bucket NAME --app AUTH_APP` arrive as
@@ -8,9 +9,20 @@ import { createHash, createHmac } from 'node:crypto'
 
 const suffixes = ['ENDPOINT', 'REGION', 'BUCKET', 'ACCESS_KEY_ID', 'SECRET_ACCESS_KEY']
 
+// uploadLimit is the largest object a signed upload URL accepts:
+// AUTH_STORAGE_MAX_UPLOAD_BYTES, or limits.storageUploadDefaultBytes, at
+// most a single PUT's limits.storageUploadMaxBytes.
+export function uploadLimit(env) {
+  const value = env.AUTH_STORAGE_MAX_UPLOAD_BYTES ?? ''
+  if (value === '') return limits.storageUploadDefaultBytes
+  if (!/^[1-9][0-9]{0,9}$/.test(value) || Number(value) > limits.storageUploadMaxBytes) throw new Error(`AUTH_STORAGE_MAX_UPLOAD_BYTES must be 1 to ${limits.storageUploadMaxBytes}`)
+  return Number(value)
+}
+
 // storageBindings maps a binding name (the prefix after GREGALE_S3_,
 // lower-cased) to its credentials. The name is also the policy resource kind.
 export function storageBindings(env) {
+  const maxUploadBytes = uploadLimit(env)
   const bindings = new Map()
   for (const key of Object.keys(env)) {
     const match = /^GREGALE_S3_([A-Z0-9_]+)_ENDPOINT$/.exec(key)
@@ -24,7 +36,7 @@ export function storageBindings(env) {
     bindings.set(name, Object.freeze({
       endpoint, region: env[`${prefix}_REGION`], bucket: env[`${prefix}_BUCKET`],
       accessKeyId: env[`${prefix}_ACCESS_KEY_ID`], secretAccessKey: env[`${prefix}_SECRET_ACCESS_KEY`],
-      virtualHosted: env[`${prefix}_ADDRESSING_STYLE`] === 'virtual',
+      virtualHosted: env[`${prefix}_ADDRESSING_STYLE`] === 'virtual', maxUploadBytes,
     }))
   }
   return bindings
@@ -50,8 +62,10 @@ function rfc3986(value) {
 const hmac = (key, value) => createHmac('sha256', key).update(value).digest()
 
 // presign returns a SigV4 query-signed URL (AWS "presigned URL" form) for
-// method on url, valid for expires seconds and signing only the host header.
-export function presign({ method, url, region, accessKeyId, secretAccessKey, expires, now = new Date() }) {
+// method on url, valid for expires seconds and signing the host header and
+// any headers given (lower-case names), which the request must then carry
+// with exactly those values: an upload's content-length bounds its size.
+export function presign({ method, url, region, accessKeyId, secretAccessKey, expires, headers = {}, now = new Date() }) {
   const amzDate = now.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '')
   const date = amzDate.slice(0, 8)
   const scope = `${date}/${region}/s3/aws4_request`
@@ -60,10 +74,12 @@ export function presign({ method, url, region, accessKeyId, secretAccessKey, exp
     'X-Amz-Credential': `${accessKeyId}/${scope}`,
     'X-Amz-Date': amzDate,
     'X-Amz-Expires': String(expires),
-    'X-Amz-SignedHeaders': 'host',
   }
+  const signed = { host: url.host, ...headers }
+  const names = Object.keys(signed).sort()
+  params['X-Amz-SignedHeaders'] = names.join(';')
   const query = Object.keys(params).sort().map(k => `${rfc3986(k)}=${rfc3986(params[k])}`).join('&')
-  const canonical = [method, url.pathname, query, `host:${url.host}`, '', 'host', 'UNSIGNED-PAYLOAD'].join('\n')
+  const canonical = [method, url.pathname, query, ...names.map(name => `${name}:${String(signed[name]).trim()}`), '', names.join(';'), 'UNSIGNED-PAYLOAD'].join('\n')
   const toSign = ['AWS4-HMAC-SHA256', amzDate, scope, createHash('sha256').update(canonical).digest('hex')].join('\n')
   const key = hmac(hmac(hmac(hmac(`AWS4${secretAccessKey}`, date), region), 's3'), 'aws4_request')
   return `${url.origin}${url.pathname}?${query}&X-Amz-Signature=${createHmac('sha256', key).update(toSign).digest('hex')}`

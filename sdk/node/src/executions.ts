@@ -12,6 +12,7 @@ import type { ExecutionResponse } from './generated/models/ExecutionResponse.js'
 import { streamSse, type SseEvent } from './sse.js';
 import { prepareExecutionFile, uploadPreparedExecutionFile } from './execution-files.js';
 import { mintIdempotencyKey } from './idempotency.js';
+import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 
 /** Event names emitted by `/v1/executions/{id}/events`. */
 export type ExecutionEventType =
@@ -61,7 +62,7 @@ export interface WatchExecutionOptions {
   retryMaxMs?: number;
 }
 
-/** Options for `FaaSClient.runExecution`. */
+/** Options for execution submission and observation. */
 export interface RunExecutionOptions extends WatchExecutionOptions {
   /** Local immutable data files staged below context.input_dir. */
   files?: Readonly<Record<string, Blob>>;
@@ -69,6 +70,19 @@ export interface RunExecutionOptions extends WatchExecutionOptions {
   idempotencyKey?: string;
   /** Called in stream order for every status, output, and terminal event. */
   onEvent?: (event: ExecutionEvent) => void | Promise<void>;
+}
+
+/** Convenience operations on the isolated preview client. */
+export interface ExecutionHelpers {
+  watchExecution(id: string, options?: WatchExecutionOptions): AsyncGenerator<ExecutionEvent, void, void>;
+  runExecution(requestBody: CreateExecutionRequest, options?: RunExecutionOptions): Promise<ExecutionResponse>;
+}
+
+/** Internal request boundary shared by isolated and legacy helpers. */
+export interface ExecutionRequests {
+  readonly idempotencyKey?: string;
+  runs: Pick<typeof RunsService, 'createExecution' | 'createExecutionV2' | 'getExecution' | 'prepareExecutionFile' | 'uploadExecutionFile'>;
+  fetchEvents(path: string, signal?: AbortSignal): Promise<Response>;
 }
 
 class ExecutionEventParseError extends Error {}
@@ -140,18 +154,11 @@ async function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function executionEventsURL(
-  executionID: string,
-  after: number,
-  limit: number,
-): URL {
-  const url = new URL(
-    `/v1/executions/${encodeURIComponent(executionID)}/events`,
-    OpenAPI.BASE,
-  );
-  if (after > 0) url.searchParams.set('after', String(after));
-  url.searchParams.set('limit', String(limit));
-  return url;
+function executionEventsPath(executionID: string, after: number, limit: number): string {
+  const query = new URLSearchParams();
+  if (after > 0) query.set('after', String(after));
+  query.set('limit', String(limit));
+  return `/v1/executions/${encodeURIComponent(executionID)}/events?${query}`;
 }
 
 function executionHeaders(): Headers {
@@ -166,6 +173,30 @@ function executionHeaders(): Headers {
   return headers;
 }
 
+// Compatibility exports continue to resolve the process-wide configuration.
+const legacyRequests: ExecutionRequests = {
+  runs: RunsService,
+  get idempotencyKey() {
+    const headers = OpenAPI.HEADERS;
+    return typeof headers === 'object' && headers ? new Headers(headers).get('Idempotency-Key') ?? undefined : undefined;
+  },
+  fetchEvents(path, signal) {
+    return globalThis.fetch(new URL(path, OpenAPI.BASE), {
+      method: 'GET', headers: executionHeaders(), signal,
+    });
+  },
+};
+
+/** Watch using the legacy process-wide configuration. For independent callers,
+ * use createClient from the preview entry and client.watchExecution(...).
+ */
+export function watchExecution(
+  executionID: string,
+  options: WatchExecutionOptions = {},
+): AsyncGenerator<ExecutionEvent, void, void> {
+  return watchExecutionWithClient(legacyRequests, executionID, options);
+}
+
 /**
  * Watch a disposable execution until its terminal event.
  *
@@ -173,7 +204,8 @@ function executionHeaders(): Headers {
  * established, an EOF or transient read failure reconnects with the latest
  * event id, so callers do not need to implement cursor bookkeeping.
  */
-export async function* watchExecution(
+export async function* watchExecutionWithClient(
+  client: ExecutionRequests,
   executionID: string,
   options: WatchExecutionOptions = {},
 ): AsyncGenerator<ExecutionEvent, void, void> {
@@ -189,11 +221,7 @@ export async function* watchExecution(
 
     let response: Response;
     try {
-      response = await globalThis.fetch(executionEventsURL(executionID, after, limit), {
-        method: 'GET',
-        headers: executionHeaders(),
-        signal: options.signal,
-      });
+      response = await client.fetchEvents(executionEventsPath(executionID, after, limit), options.signal);
     } catch (err) {
       if (options.signal?.aborted) throw abortReason(options.signal);
       if (!connected || !isRetryableError(err)) throw err;
@@ -224,7 +252,12 @@ export async function* watchExecution(
       for await (const raw of streamSse(response, options.signal)) {
         if (options.signal?.aborted) throw abortReason(options.signal);
         const event = decodeEvent(raw);
-        if (event.id !== undefined && event.id > after) after = event.id;
+        // A reconnect may replay an overlapping batch. Deliver each identified
+        // event once; cursorless events keep their original delivery semantics.
+        if (event.id !== undefined) {
+          if (event.id <= after) continue;
+          after = event.id;
+        }
         if (event.type === 'terminal') terminal = true;
         yield event;
         if (terminal) return;
@@ -248,39 +281,66 @@ export async function* watchExecution(
  * as completion: agents receive live output and the final GET is made only
  * after the terminal event, when the VM has been destroyed.
  */
-export async function runExecution(
+export function runExecution(
+  requestBody: CreateExecutionRequest,
+  options: RunExecutionOptions = {},
+): Promise<ExecutionResponse> {
+  return runExecutionWithClient(legacyRequests, requestBody, options);
+}
+
+/** Internal execution workflow; its request boundary stays fixed throughout. */
+export async function runExecutionWithClient(
+  client: ExecutionRequests,
   requestBody: CreateExecutionRequest,
   options: RunExecutionOptions = {},
 ): Promise<ExecutionResponse> {
   const { idempotencyKey: requestedKey, files, onEvent, ...watchOptions } = options;
-  const idempotencyKey = requestedKey ?? mintIdempotencyKey();
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
 
   const entries = Object.entries(files ?? {});
+  const idempotencyKey = requestedKey ?? (entries.length ? client.idempotencyKey ?? mintIdempotencyKey() : undefined);
   if (entries.length + (requestBody.input_files?.length ?? 0) > 8) throw new Error('At most 8 Run input files are allowed');
   const prepared = [];
-  for (const [path, file] of entries) prepared.push({ path, prepared: await prepareExecutionFile(file, watchOptions.signal) });
+  for (const [path, file] of entries) prepared.push({ path, prepared: await prepareExecutionFile(file, watchOptions.signal, client.runs) });
   if (prepared.length) requestBody = { ...requestBody, input_files: [...(requestBody.input_files ?? []), ...prepared.map(({ path, prepared }) => ({ path, file_id: prepared.metadata.id }))] };
   const extended = !!requestBody.environment_id || requestBody.limits?.execution_class === 'extended' || requestBody.input_schema !== undefined || requestBody.result_schema !== undefined || !!requestBody.input_files?.length || requestBody.artifact_storage === 'stored';
-  const create = async () => {
-    watchOptions.signal?.throwIfAborted();
-    const pending = (extended ? RunsService.createExecutionV2 : RunsService.createExecution)({ requestBody, idempotencyKey });
-    const abort = () => pending.cancel(); watchOptions.signal?.addEventListener('abort', abort, { once: true });
-    try { return await pending; } finally { watchOptions.signal?.removeEventListener('abort', abort); }
-  };
+  const create = () => withSignal(
+    extended ? client.runs.createExecutionV2({ requestBody, idempotencyKey }) : client.runs.createExecution({ requestBody, idempotencyKey }),
+    watchOptions.signal,
+  );
   let receipt: ExecutionResponse;
   try { receipt = await create(); }
   catch (error) {
     const problem = error as { status?: number; body?: { code?: string }; problem?: { code?: string } };
     if (!prepared.length || problem.status !== 409 || (problem.problem?.code ?? problem.body?.code) !== 'execution_files_not_ready') throw error;
-    for (const { prepared: file } of prepared) if (file.metadata.upload_required) await uploadPreparedExecutionFile(file, watchOptions.signal);
+    for (const { prepared: file } of prepared) if (file.metadata.upload_required) await uploadPreparedExecutionFile(file, watchOptions.signal, client.runs);
     receipt = await create();
   }
 
-  for await (const event of watchExecution(receipt.id, watchOptions)) {
+  for await (const event of watchExecutionWithClient(client, receipt.id, watchOptions)) {
     if (onEvent) await onEvent(event);
     if (event.type === 'terminal') break;
   }
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
-  return RunsService.getExecution({ id: receipt.id });
+  return withSignal(client.runs.getExecution({ id: receipt.id }), watchOptions.signal);
+}
+
+/** Cancel only this generated request and preserve the caller's abort reason. */
+async function withSignal<T>(request: CancelablePromise<T>, signal?: AbortSignal): Promise<T> {
+  const onAbort = () => request.cancel();
+  if (signal?.aborted) {
+    request.cancel();
+    // Observe the cancelled promise before propagating the caller's reason.
+    await request.catch(() => undefined);
+    throw abortReason(signal);
+  }
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await request;
+  } catch (error) {
+    if (signal?.aborted) throw abortReason(signal);
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }

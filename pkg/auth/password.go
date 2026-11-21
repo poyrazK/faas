@@ -118,8 +118,11 @@ func Encode(plaintext string) (string, error) {
 // a hash slot when ctx ends, and returns ErrPasswordHashBusy at once when the
 // slot queue is full (see deriveKey).
 func EncodeContext(ctx context.Context, plaintext string) (string, error) {
-	if err := Validate(plaintext); err != nil {
-		return "", err
+	// Only the length floor here: Encode is the hashing primitive. Callers
+	// that take a new password from a person run Validate first, which also
+	// refuses common breached passwords.
+	if len(plaintext) < MinPasswordLen {
+		return "", ErrPasswordTooShort
 	}
 	salt, err := randomBytes(saltLen)
 	if err != nil {
@@ -133,12 +136,16 @@ func EncodeContext(ctx context.Context, plaintext string) (string, error) {
 }
 
 // Validate returns ErrPasswordTooShort when plaintext is below
-// MinPasswordLen. Caller-side check so the apid signup / set-password
-// paths can map the failure to CodePasswordTooWeak without paying
-// the Argon2id cost first.
+// MinPasswordLen, and ErrPasswordBreached when it is a common breached
+// password or a simple pattern. Caller-side check so the apid signup /
+// set-password paths can map the failure to CodePasswordTooWeak without
+// paying the Argon2id cost first.
 func Validate(plaintext string) error {
 	if len(plaintext) < MinPasswordLen {
 		return ErrPasswordTooShort
+	}
+	if commonPassword(plaintext) {
+		return ErrPasswordBreached
 	}
 	return nil
 }

@@ -399,6 +399,12 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, problem)
 		return
 	}
+	if req.FromEnvironment != "" {
+		if problem := s.protectedEnvironmentChangeProblem(r, acct, project.ID, req.FromEnvironment, "copy a protected project environment"); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+	}
 	if req.Full {
 		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
 		return

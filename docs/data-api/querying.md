@@ -29,3 +29,24 @@ Pass null options on logout. Never use a JWT as a scope value.
 For mutations, classify errors and reconcile uncertain outcomes using the
 operation's receipt. A timeout or interrupted response can follow a commit.
 See [write recovery](../data-api.md#read-only-receipt-recovery).
+
+## Generated Go and Python clients
+
+Generate clients with `data-api types --language go` or `--language python`.
+Pagination preserves caller OR filters and conjoins the cursor boundary; it
+replaces ordering and removes offset, so reuse the original query prefix when
+building the next page. Relation and RPC names are encoded as individual URL
+segments. Names containing slashes are explicitly unsupported.
+
+Both transports require an HTTPS origin (HTTP loopback is allowed for local
+development) and reject redirects before forwarding credentials or replaying a
+write. Supply the API origin without a path, query, fragment or credentials.
+
+Go inserts, updates and RPC arguments expose `SetNull []string`. Nil optional
+pointers omit fields and retain defaults; adding a nullable field's exact
+database name to SetNull sends explicit JSON null. For required scalar RPC
+arguments, a zero value with SetNull also sends null. Supplying a nonzero value
+and SetNull for the same field is rejected. GET RPC null arguments are refused;
+use POST when explicit null is required. Generated JSON methods preserve legal
+PostgreSQL names containing commas, dashes or backticks without changing keys.
+Python nullable inputs continue to use dictionaries and `None`.

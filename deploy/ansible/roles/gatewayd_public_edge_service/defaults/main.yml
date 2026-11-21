@@ -27,8 +27,12 @@ faas_edge_overload: "off"
 # ADR-20261102081618: how Cloudflare reaches this edge. "tunnel", the default,
 # is the connector only; "both" also opens the edge's TLS listener on
 # faas_edge_public_tls_port for proxied address records. The manifest's
-# public_edge.entry sets it per cell.
+# public_edge.entry sets it per cell; "direct" is "both" without the
+# connector (step 6).
 faas_edge_entry: tunnel
+# Whether the node runs the Cloudflare Tunnel connector. The manifest renders
+# false for public_edge.entry direct, and the role then removes the connector.
+faas_edge_tunnel: true
 faas_edge_public_tls_port: 443
 # Operator-provisioned secrets, never in inventory or the repository: the
 # zone's Cloudflare Origin CA certificate and key (the pair the control

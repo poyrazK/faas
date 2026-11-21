@@ -1,0 +1,159 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
+)
+
+type obsDeploymentOptions struct {
+	runtimeDiagnostics            *operatorobs.RuntimeDiagnostics
+	runtimeDiagnosticsUnsupported bool
+	release, report, expectedRole string
+	after, processCompareAt       time.Time
+	wait, poll, stableFor         time.Duration
+	json                          bool
+}
+
+func cmdObsVerifyDeployment(args []string) int {
+	options, cred, ok := parseObsDeploymentOptions(args)
+	if !ok {
+		return 2
+	}
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	client := &http.Client{Timeout: api.ObsPostDeployHTTPTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	fetch := newObsDeploymentProcessFetcher(client, cred, options)
+
+	save := func(report obsDeploymentReport) error {
+		if options.report == "" {
+			return nil
+		}
+		return writeObsDeploymentReport(options.report, report)
+	}
+	report, code := runObsDeploymentVerification(ctx, options, fetch, time.Now, waitObsDeploymentPoll, save)
+	if options.json || jsonOutput || jsonFlagEnabled(args) {
+		if emitOperatorJSON(report) != 0 {
+			return 2
+		}
+	} else {
+		writeObsDeploymentHuman(osStdout, report)
+	}
+	return code
+}
+
+func parseObsDeploymentOptions(args []string) (obsDeploymentOptions, obsCredential, bool) {
+	fs := flag.NewFlagSet(subObsVerifyDeployment, flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	opts := obsDeploymentOptions{}
+	fs.StringVar(&opts.release, "release", "", "requested release SHA")
+	fs.StringVar(&opts.expectedRole, "expected-role", "", "advisory build profile: "+strings.Join(operatorobs.RuntimeBuildRoles(), ", "))
+	diagnostics := fs.String("runtime-diagnostics", "", "advisory groups: all, none, or comma-separated names; core evidence is always collected")
+	after := fs.String("after", "", "rollout evidence boundary")
+	fs.DurationVar(&opts.wait, "wait-timeout", 0, "wait budget; zero derives from probe policy")
+	fs.DurationVar(&opts.poll, "poll-interval", api.ObsPostDeployPollDefault, "poll interval")
+	fs.DurationVar(&opts.stableFor, "stable-for", 0, "passing window with advancing source evidence; zero exits at the first pass")
+	fs.StringVar(&opts.report, "report", "", "private JSON report path")
+	fs.BoolVar(&opts.json, "json", false, "emit JSON")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
+	stdin := fs.Bool("token-stdin", false, "read bearer token from stdin")
+	if err := fs.Parse(args); err != nil {
+		return opts, obsCredential{}, false
+	}
+	at, err := time.Parse(time.RFC3339Nano, *after)
+	if err != nil || fs.NArg() != 0 || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(opts.release) || at.After(time.Now().Add(api.ObsHealthClockSkewTolerance)) || opts.wait < 0 || opts.wait > api.ObsPostDeployWaitMax || opts.poll < time.Second || opts.poll > api.ObsPostDeployPollMax || opts.stableFor < 0 || opts.stableFor > api.ObsPostDeployWaitMax || opts.wait > 0 && opts.stableFor > opts.wait || *stdin && *token != "" {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: valid release, boundary, bounded wait, poll interval and stability window within the explicit wait required")
+		return opts, obsCredential{}, false
+	}
+	opts.after = at.UTC()
+	if opts.expectedRole != "" && !operatorobs.RuntimeBuildRoleValid(opts.expectedRole) {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: unknown expected role")
+		return opts, obsCredential{}, false
+	}
+	diagnosticsSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "runtime-diagnostics" {
+			diagnosticsSet = true
+		}
+	})
+	if diagnosticsSet {
+		opts.runtimeDiagnostics, err = operatorobs.ParseRuntimeDiagnostics(opts.expectedRole, *diagnostics)
+		if err != nil {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: runtime diagnostics require an expected role and distinct supported groups, all, or none")
+			return opts, obsCredential{}, false
+		}
+	}
+	if *stdin {
+		reader := bufio.NewReader(io.LimitReader(os.Stdin, int64(api.ObsPostDeployTokenMaxBytes)+2))
+		value, err := reader.ReadString('\n')
+		value = strings.TrimSuffix(value, "\n")
+		if err != nil || strings.TrimSpace(value) == "" || len(value) > api.ObsPostDeployTokenMaxBytes || strings.ContainsAny(value, "\r\n\x00") {
+			_, _ = fmt.Fprintln(osStderr, "gregalectl obs verify-deployment: one nonempty bearer token line is required")
+			return opts, obsCredential{}, false
+		}
+		return opts, obsCredential{bearer: value}, true
+	}
+	cred, ok := resolveObsCredential("obs verify-deployment", *token)
+	return opts, cred, ok
+}
+
+func writeObsDeploymentReport(path string, report obsDeploymentReport) error {
+	body, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(filepath.Dir(path), ".monitoring-report-*")
+	if err != nil {
+		return err
+	}
+	name := file.Name()
+	defer func() { _ = os.Remove(name) }()
+	if _, err = file.Write(append(body, '\n')); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err = file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(name, path)
+}
+
+func waitObsDeploymentPoll(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func fetchObsDeploymentSnapshot(ctx context.Context, client *http.Client, cred obsCredential) obsDeploymentSnapshot {
+	serving := make(chan obsDeploymentServingRead, 1)
+	go func() {
+		var out api.ObsServingHealth
+		started := time.Now()
+		err := fetchObsBundleSection(ctx, client, apidBase()+operatorobs.ServingHealthPath, cred, subObsServingHealth, &out)
+		serving <- obsDeploymentServingRead{value: out, err: err, timing: obsDeploymentReadTime(started, time.Now())}
+	}()
+	var notifications api.ObsNotificationHealth
+	started := time.Now()
+	err := fetchObsBundleSection(ctx, client, apidBase()+operatorobs.NotificationHealthPath, cred, subObsNotificationHealth, &notifications)
+	timing := obsDeploymentReadTime(started, time.Now())
+	return obsDeploymentSnapshot{serving: <-serving, notifications: notifications, notificationErr: err, notificationTiming: timing}
+}

@@ -445,9 +445,11 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 		// Per-deployment HTTP or gRPC readiness selection. Both
 		// probe modes target <HostIP>:8080.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -510,6 +512,7 @@ func toWakeRequest(ctx context.Context, req *vmmdpb.CreateFromSnapshotRequest) (
 			MemBytes:          snap.GetMemBytes(),
 			CaptureID:         snap.GetCaptureId(),
 			SealedKey:         snap.GetSealedKey(),
+			SealedCache:       snap.GetSealedCache(),
 		}
 	}
 	return wr, nil
@@ -574,6 +577,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
 			"Invalid buildkit seed drive", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
 	}
+	cacheExportManifest, err := cacheExportManifestFromProto(req.GetBuild())
+	if err != nil {
+		return fcvm.WakeRequest{}, api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Invalid cache export manifest", err.Error()).WithDocs(wire.DocsBaseURL + "/vmmd#create")
+	}
 	return fcvm.WakeRequest{
 		Instance: req.GetInstance(),
 		// issue #463 / ADR-069 / PR-B AC #1 — see toWakeRequest's
@@ -632,9 +640,11 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// path so deploy's first boot primes the same probe
 		// semantics on the freshly-deployed app.
 		HealthcheckPath:          app.GetHealthcheckPath(),
+		ProbeHost:                app.GetProbeHost(),
 		HealthcheckGRPC:          app.GetHealthcheckGrpc(),
 		HealthcheckGRPCService:   app.GetHealthcheckGrpcService(),
 		ImageHealthcheckRequired: app.GetImageHealthcheckRequired(),
+		RoutedPortRawTCP:         app.GetRoutedPortRawTcp(),
 		ReadinessProbe:           json.RawMessage(app.GetReadinessProbeJson()),
 		LivenessProbe:            json.RawMessage(app.GetLivenessProbeJson()),
 		QuietPauseAfter:          quietPauseAfterFromWire(app.GetQuietPauseAfterMs()),
@@ -664,11 +674,46 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
+		// ADR-20261118154632: a builder on a borrowed slot runs in
+		// faas-borrowed.slice. CreateColdBoot refuses it first when this
+		// node cannot.
+		BorrowedBuilder: req.GetBuild().GetBorrowed() && buildSpecExportDir(req.GetBuild()) != "",
 		// ADR-20261026091500: the built app's sealed registry
 		// credentials, for the builder's FROM pulls.
 		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 		BuildKitSeedDrive:        seedDrive,
+		// ADR-20261110210000 slice 3j-3: the build a registry mirror pulls
+		// for through secretd.
+		BuildID: req.GetBuild().GetBuildId(),
+		// ADR-20261029171525 amendment 2: a deferred cache export run's
+		// build.json, staged on the build's drive before boot.
+		CacheExportManifest: cacheExportManifest,
 	}, nil
+}
+
+// cacheExportManifestFromProto returns a deferred cache export run's
+// build.json (ADR-20261029171525 amendment 2). vmmd stages only a builder's
+// manifest that asks for the cache export alone, so the field cannot turn a
+// drive into an ordinary build.
+func cacheExportManifestFromProto(b *vmmdpb.BuildSpec) ([]byte, error) {
+	raw := b.GetCacheExportManifest()
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if b.GetExportDir() == "" {
+		return nil, errors.New("vmmd: a cache export manifest needs a builder VM")
+	}
+	if len(raw) > api.BuildCacheExportManifestMaxBytes {
+		return nil, fmt.Errorf("vmmd: cache export manifest is %d bytes (max %d)", len(raw), api.BuildCacheExportManifestMaxBytes)
+	}
+	var m api.BuildManifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("vmmd: cache export manifest: %w", err)
+	}
+	if !m.CacheExportOnly || m.DeferCacheExport || !m.DependencyCache {
+		return nil, errors.New("vmmd: cache export manifest must set cache_export_only and dependency_cache, and not defer_cache_export")
+	}
+	return raw, nil
 }
 
 // buildKitSeedDriveFromProto returns a builder's BuildKit seed copy
@@ -757,6 +802,7 @@ func sealedFromProto(pbs []*vmmdpb.SealedSecret) []fcvm.SealedEnvEntry {
 			Key:        p.GetKey(),
 			Ciphertext: p.GetCiphertext(),
 			SourceKey:  p.GetSourceKey(),
+			Scope:      p.GetSecretScope(),
 		})
 	}
 	return out
@@ -903,6 +949,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 	resp := &vmmdpb.WakeResponse{
 		RehearsalRunId:                     inst.Net.RehearsalRunID,
 		EnvironmentBranchContained:         inst.Net.EnvironmentBranchContained,
+		BaseScanGrace:                      inst.BaseScanGrace,
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,

@@ -29,14 +29,15 @@ func printAppSettingsReceipt(slug, environment string, request api.UpdateAppRequ
 		// (production-us hunt #9).
 		PrintWarn(osStdout, "Memory changes apply to instances started from now on; running instances keep their current memory and billing until they park or restart. Apply now: %s app %s restart", recoveryCLI(), recoveryArgument(slug))
 	}
-	command := recoveryCLI() + " app " + recoveryArgument(slug)
+	command := recoveryCLI() + " app get " + recoveryArgument(slug)
 	if environment != "" {
-		command += " --environment " + recoveryArgument(environment)
+		// `app get` takes no environment; the slug-first form reads one.
+		command = recoveryCLI() + " app " + recoveryArgument(slug) + " --environment " + recoveryArgument(environment)
 		_, _ = fmt.Fprintln(osStdout, "This update targets the named environment's settings; it does not confirm a deployment or release there.")
 	}
 	_, _ = fmt.Fprintf(osStdout, "\nReview saved settings (POSIX shells):\n  %s\n", command)
 	if environment == "" {
-		_, _ = fmt.Fprintf(osStdout, "Review current operations and health:\n  %s inspect %s\n", recoveryCLI(), recoveryArgument(slug))
+		_, _ = fmt.Fprintf(osStdout, "Review current operations and health:\n  %s app health %s --explain\n", recoveryCLI(), recoveryArgument(slug))
 	} else {
 		_, _ = fmt.Fprintln(osStdout, "Review that environment's release and workload state before deciding whether another release is needed.")
 	}
@@ -107,6 +108,7 @@ var appSettingsAdditionalLabels = map[string]string{
 	"restart_policy":                  "Restart policy",
 	"after_restore":                   "After-restore hook",
 	"before_checkpoint":               "Before-checkpoint hook",
+	"warmup":                          "Snapshot warm-up path",
 	"pause":                           "Pause tier",
 	"profiling":                       "Profiling",
 	"startup_deadline_s":              "Startup deadline (seconds)",

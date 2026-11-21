@@ -88,6 +88,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		image               string // highest-tier seed's prebuilt image
 		healthcheck         *api.ComposeHealthcheck
 		readinessCheck      *api.DeploymentHealthcheck
+		slugPrefix          string
+		startupDeadlineS    int
+		publicAuth          string
 		ingressSettings     []IngressSetting
 		labels              map[string]string
 		imageProcess        *api.ComposeProcess
@@ -107,6 +110,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		allowedServiceCallers     *[]string
 		allowedServiceCallScopes  *api.ServiceCallerScopes
 		platformTenantRequired    *bool
+		streaming                 *bool
+		wakeAhead                 *bool
 		renamedFrom               string
 
 		schedules     []CronSchedule
@@ -200,6 +205,15 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if b.labels == nil && s.labels != nil {
 			b.labels = maps.Clone(s.labels)
 		}
+		if b.slugPrefix == "" {
+			b.slugPrefix = s.slugPrefix
+		}
+		if b.startupDeadlineS == 0 {
+			b.startupDeadlineS = s.startupDeadlineS
+		}
+		if b.publicAuth == "" {
+			b.publicAuth = s.publicAuth
+		}
 		if !b.imageSet && (s.imageSet || s.image != "") {
 			b.image = s.image
 			b.healthcheck = s.healthcheck.Clone()
@@ -258,6 +272,14 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 		if b.platformTenantRequired == nil && s.platformTenantRequired != nil {
 			value := *s.platformTenantRequired
 			b.platformTenantRequired = &value
+		}
+		if b.streaming == nil && s.streaming != nil {
+			value := *s.streaming
+			b.streaming = &value
+		}
+		if b.wakeAhead == nil && s.wakeAhead != nil {
+			value := *s.wakeAhead
+			b.wakeAhead = &value
 		}
 		if b.renamedFrom == "" {
 			b.renamedFrom = s.renamedFrom
@@ -322,6 +344,9 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			CommandShell:        b.commandShell,
 			ImageHealthcheck:    b.healthcheck.Clone(),
 			ReadinessCheck:      b.readinessCheck.Clone(),
+			SlugPrefix:          b.slugPrefix,
+			StartupDeadlineS:    b.startupDeadlineS,
+			PublicAuthMode:      b.publicAuth,
 			IngressSettings:     slices.Clone(b.ingressSettings),
 			Labels:              maps.Clone(b.labels),
 			ImageProcess:        b.imageProcess.Clone(),
@@ -338,6 +363,8 @@ func mergeByKey(seeds []workloadSeed) []Workload {
 			AllowedServiceCallers:     b.allowedServiceCallers,
 			AllowedServiceCallScopes:  b.allowedServiceCallScopes,
 			PlatformTenantRequired:    b.platformTenantRequired,
+			Streaming:                 b.streaming,
+			WakeAhead:                 b.wakeAhead,
 			RenamedFrom:               b.renamedFrom,
 			Unpublished:               b.det == detCompose && (len(b.ports) == 0 || b.portsLoopback),
 			InternalPorts:             b.internalPorts,

@@ -21,7 +21,9 @@ class ProjectEnvironmentBranchWorkload:
     """The parent deployment whose build the branch reuses."""
     status: str
     url: str | Unset = UNSET
-    """The workload's address in the branch. Its first request starts it."""
+    """The workload's stable address in the branch, which a reset keeps. Its first request starts it."""
+    environment_url: str | Unset = UNSET
+    """The address of this incarnation of the branch; a reset gives it a new one."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +37,8 @@ class ProjectEnvironmentBranchWorkload:
 
         url = self.url
 
+        environment_url = self.environment_url
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -47,6 +51,8 @@ class ProjectEnvironmentBranchWorkload:
         )
         if url is not UNSET:
             field_dict["url"] = url
+        if environment_url is not UNSET:
+            field_dict["environment_url"] = environment_url
 
         return field_dict
 
@@ -63,12 +69,15 @@ class ProjectEnvironmentBranchWorkload:
 
         url = d.pop("url", UNSET)
 
+        environment_url = d.pop("environment_url", UNSET)
+
         project_environment_branch_workload = cls(
             workload=workload,
             deployment_id=deployment_id,
             source_deployment_id=source_deployment_id,
             status=status,
             url=url,
+            environment_url=environment_url,
         )
 
         project_environment_branch_workload.additional_properties = d

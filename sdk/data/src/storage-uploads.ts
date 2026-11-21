@@ -8,11 +8,21 @@ export type UploadSession = Readonly<{
 }>
 export type ResumableUploadOptions = {
   contentType?: string; signal?: AbortSignal; sessionId?: string
+  /** Reuse this ID to reconcile an uncertain start through idempotent creation. */
+  id?: string
+  /** Persist the recovery ID before any create request is sent. */
+  onSessionId?: (id: string) => void | Promise<void>
   /** Undefined replaces unconditionally, null creates only, otherwise compare the previous version. */
   expectedVersion?: string | null
   /** Persist this ID to resume without re-uploading acknowledged chunks. */
   onSession?: (session: UploadSession) => void | Promise<void>
   onProgress?: (progress: { sessionId: string; uploaded: number; total: number }) => void
+}
+export class UploadSessionStartError extends Error {
+  constructor(readonly sessionId: string, cause: unknown) {
+    super('Upload session start could not be confirmed; reconcile this session ID before retrying', { cause })
+    this.name = 'UploadSessionStartError'
+  }
 }
 export type StorageUploads = {
   startUpload(name: string, options: { size: number; contentType?: string; expectedVersion?: string | null; id?: string; signal?: AbortSignal }): Promise<UploadSession>
@@ -58,10 +68,21 @@ export function storageUploads(bucket: string, call: (path: string, init: Reques
       if (!Number.isInteger(number) || number < 1 || number > 20 || body.size > 5242880) throw new Error('Invalid upload part')
       return json(`${path(id)}/parts/${number}`, { method: 'PUT', headers: { 'content-type': 'application/octet-stream', 'x-content-sha256': await digest(body) }, body, signal })
     },
-    async uploadResumable(name, value, { contentType, signal, sessionId, expectedVersion, onSession, onProgress } = {}) {
+    async uploadResumable(name, value, { contentType, signal, sessionId, id, expectedVersion, onSessionId, onSession, onProgress } = {}) {
+      validateName(name)
+      if (sessionId !== undefined && id !== undefined) throw new Error('Use either sessionId to resume or id for idempotent creation')
       const type = contentType ?? (value instanceof Blob && value.type ? value.type : 'application/octet-stream')
       const body = blobOf(value, type)
-      let session = sessionId ? await methods.getUpload(sessionId, { signal }) : await methods.startUpload(name, { size: body.size, contentType: type, expectedVersion, signal })
+      let session: UploadSession
+      if (sessionId !== undefined) session = await methods.getUpload(sessionId, { signal })
+      else {
+        const recoveryId = id ?? crypto.randomUUID()
+        if (!idPattern.test(recoveryId)) throw new Error('Invalid upload session ID')
+        signal?.throwIfAborted()
+        await onSessionId?.(recoveryId)
+        try { session = await methods.startUpload(name, { size: body.size, contentType: type, expectedVersion, id: recoveryId, signal }) }
+        catch (cause) { throw new UploadSessionStartError(recoveryId, cause) }
+      }
       if (session.name !== name || session.size !== body.size || session.content_type !== type) throw new Error('Upload session does not match this file')
       await onSession?.(session)
       if (session.state === 'aborted') throw new Error('Upload session was aborted')

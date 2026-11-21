@@ -145,6 +145,10 @@ type InternalReverseProxy struct {
 	Logger              *slog.Logger
 	DialTimeout         time.Duration
 	TrustedIngressCIDRs []netip.Prefix
+	// AllowForwardedHTTP serves app requests a trusted ingress received over
+	// plain http instead of redirecting them to https
+	// (FAAS_GATEWAY_ALLOW_PLAIN_HTTP; see redirectForwardedHTTP).
+	AllowForwardedHTTP bool
 	// Drain (issue #587 / PR-A) is the per-request WaitGroup-backed
 	// drain tracker shared with Handler + TraceHandler + the
 	// control mux. nil = drain disabled. Wired via WithInFlightTracker
@@ -530,7 +534,43 @@ func dialWithTimeout(ctx context.Context, dialer InternalDialer, dialTimeout tim
 func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, release := p.publicTrafficContext(r.Context())
 	defer release()
+	upload := r.Body
+	if drainable(r) {
+		// The transport closes the body it sent; net/http then stops
+		// reading the upload. Keep it open so the rest can be drained.
+		r.Body = uncloseableBody{upload}
+	}
 	p.serveHTTP(w, p.withPreference(r.WithContext(WithStartTime(ctx, time.Now()))))
+	if drainable(r) {
+		drainUnreadUpload(w, upload)
+	}
+}
+
+type uncloseableBody struct{ io.Reader }
+
+func (uncloseableBody) Close() error { return nil }
+
+func drainable(r *http.Request) bool {
+	return r.Body != nil && r.Body != http.NoBody && r.ContentLength > 0 && r.ContentLength <= earlyAnswerDrainBytes
+}
+
+// Bounds on the upload drainUnreadUpload reads after an early answer: the
+// largest body any route accepts, and the time the rest may take to arrive.
+const (
+	earlyAnswerDrainBytes   = api.MaxEdgeRuleLimitBodyBytesStreaming
+	earlyAnswerDrainTimeout = 60 * time.Second
+)
+
+// drainUnreadUpload reads and discards what is left of the request body
+// after the answer is written. net/http reads at most 256 KiB of an unread
+// body and then closes the connection; a client that sends the whole upload
+// before it reads the answer, as Cloudflare does, saw the close as a broken
+// pipe and returned its own 502 in place of the app's answer (prod hunt
+// 2026-11-20, R12-2). A body larger than any route accepts, or one that
+// stalls, is left to the close.
+func drainUnreadUpload(w http.ResponseWriter, body io.Reader) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(earlyAnswerDrainTimeout))
+	_, _ = io.CopyN(io.Discard, body, earlyAnswerDrainBytes)
 }
 
 func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request) {
@@ -566,6 +606,9 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	defer done()
 
+	if p.redirectForwardedHTTP(w, r) {
+		return
+	}
 	if p.Dialer == nil || p.Target == nil {
 		// Wiring bug — log at ERROR because the customer sees the
 		// failure on the public listener.
@@ -1237,6 +1280,31 @@ func CanonicalForwardingContext(r *http.Request, trustedIngressCIDRs []netip.Pre
 		}
 	}
 	return clientIP.String(), proto
+}
+
+// redirectForwardedHTTP sends a 308 to https when a trusted ingress says the
+// client spoke plain http, as the platform hosts and custom domains already
+// do: an app must not evaluate credentials sent in cleartext or serve its
+// pages over http. It acts only on an explicit forwarded "http" from a
+// trusted peer, so probes and internal callers without forwarding headers
+// are served as before.
+func (p *InternalReverseProxy) redirectForwardedHTTP(w http.ResponseWriter, r *http.Request) bool {
+	// The forwarded scheme decides, not r.TLS: Cloudflare reaches a compute
+	// edge over mTLS even when the visitor used plain http.
+	if p.AllowForwardedHTTP || !TrustedIngressPeer(r, p.TrustedIngressCIDRs) {
+		return false
+	}
+	values := r.Header.Values("X-Forwarded-Proto")
+	if len(values) != 1 || !strings.EqualFold(strings.TrimSpace(values[0]), "http") || strings.HasPrefix(r.URL.Path, acmeChallengePrefix) {
+		return false
+	}
+	host := hostname(r.Host)
+	if host == "" {
+		return false
+	}
+	w.Header().Set("Location", "https://"+host+r.URL.RequestURI())
+	w.WriteHeader(http.StatusPermanentRedirect)
+	return true
 }
 
 // TrustedIngressPeer reports whether r's direct peer is a configured ingress

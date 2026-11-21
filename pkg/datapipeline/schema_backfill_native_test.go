@@ -132,7 +132,16 @@ func assertNativeSchemaBackfill(t *testing.T, ctx context.Context, store *Postgr
  INSERT INTO public.orders(id,customer,total,status) VALUES(700000,'new during backfill',9,'new during backfill')`); err != nil {
 		t.Fatal(err)
 	}
-	p = tick()
+	// Restarted workers may need another bounded replication acknowledgement
+	// before the durable backfill cursor can advance. Keep the same identity
+	// throughout the wait so a restarted backfill cannot satisfy the assertion.
+	wait(func(v Pipeline) bool {
+		progress := v.VerificationProgress
+		if progress == nil || progress.ID != partial.VerificationProgress.ID {
+			t.Fatal("backfill lost private progress identity after restart", progress)
+		}
+		return progress.Rows > partial.VerificationProgress.Rows && progress.BackfilledRows > partial.VerificationProgress.BackfilledRows
+	})
 	resumed := get()
 	if resumed.VerificationProgress.ID != partial.VerificationProgress.ID || resumed.VerificationProgress.Rows <= partial.VerificationProgress.Rows || resumed.VerificationProgress.BackfilledRows <= partial.VerificationProgress.BackfilledRows {
 		t.Fatal("backfill failed to resume private progress", resumed.VerificationProgress)
@@ -147,7 +156,7 @@ func assertNativeSchemaBackfill(t *testing.T, ctx context.Context, store *Postgr
 	}
 	fresh := startNativeDataAPI(t, ctx, targetURL, reader)
 	defer fresh.close()
-	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,status", ""); status != 200 || strings.TrimSpace(body) != "[]" {
+	if status, body := fresh.request("GET", "alice", "id=eq.1&select=id,status", ""); status != 503 || !strings.Contains(body, "mirror_unavailable") {
 		t.Fatalf("required field exposed before refresh completion: %d %s", status, body)
 	}
 	ready = true

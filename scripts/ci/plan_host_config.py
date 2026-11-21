@@ -107,6 +107,9 @@ def plan(release, host, new, deps=None, is_ancestor=git_is_ancestor, previous_re
     if previous_release and previous_release != base:
         raise Refused(f"unit release is built over {base}, but the previous release before {commit} is "
                       f"{previous_release} (N±1); roll it out in full first")
+    if host["base_git_sha"] is None:
+        raise Refused(f"the host has no active release yet (a rebuilt control plane): deploy the full release {base} "
+                      "first")
     if host["base_git_sha"] != base:
         raise Refused(f"host runs full release {host['base_git_sha']}, but this unit release is built over {base}: "
                       "deploy that full release first")

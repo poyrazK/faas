@@ -24,7 +24,7 @@ func TestScalingOutcomeLostReplyExpiry(t *testing.T) {
 			store, path, key := testStateStore(t)
 			var originalID string
 			backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/alpha/scaling" {
+				if r.Method == http.MethodPost && r.URL.Path == "/v1/apps/alpha/scaling" && r.Header.Get(api.AgentPreviewHeader) == "" {
 					var refs scalingOutcomeSnapshot
 					var history actionHistorySnapshot
 					if err := store.read(scalingOutcomeNamespace+"scaling", &refs); err != nil {

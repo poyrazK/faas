@@ -46,7 +46,6 @@ package apidserver
 import (
 	"errors"
 	"net/http"
-	"slices"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -182,20 +181,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("could not generate key"))
 		return
 	}
-	// Expiry policy mirrors the legacy handler: non-admin scopes
-	// get a 365-day expires_at; admin keys default to nil
-	// expiry (the legacy admin contract). The customer can
-	// rotate an admin key with grace=0 to opt into finite
-	// expiry.
-	var expiresAt *time.Time
-	if !slices.Contains(scopes, api.ScopeAdmin) {
-		t := time.Now().UTC().Add(time.Duration(api.DefaultAPIKeyLifetimeDays) * 24 * time.Hour)
-		// Agent keys run unattended, so they expire sooner (ADR-20261029085359).
-		if slices.Contains(scopes, api.ScopeAgent) {
-			t = time.Now().UTC().Add(api.AgentKeyLifetime)
-		}
-		expiresAt = &t
-	}
+	expiresAt := api.NewAPIKeyExpiry(scopes, time.Now())
 	// IAM hardening mega-PR (logical change 2): stamp the
 	// provenance columns on the new row. parent_key_id is nil for
 	// first-mints (the FK is reserved for explicit lineage; rotation
@@ -235,6 +221,7 @@ func (s *server) createOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	}
 	s.audit.Emit(r.Context(), "api_key.created", &acct.ID, auditPayload)
 	s.noticeCredentialCreated(r, acct, credentialAPIKey, k.Label)
+	s.mailOrgCredentialCreated(r.Context(), k.OrgID, acct.ID, credentialAPIKey, k.Label)
 	resp := orgAPIKeyResponse(k)
 	resp.Prefix = keyPrefix(plaintext)
 	resp.Plaintext = plaintext
@@ -380,20 +367,10 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 	// Resolve grace window from the per-account override (the
 	// same helper the legacy rotateKey uses). nil = plan default
 	// (api.DefaultAPIKeyGraceWindowDays = 7).
-	var graceWindow time.Duration
-	gw, err := s.resolveGraceWindow(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not resolve grace window"))
+	graceWindow, graceWindowDays, prob := s.rotationGraceWindow(r.Context(), acct.ID, req.GraceWindowDays)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
-	}
-	if gw == nil {
-		graceWindow = time.Duration(api.DefaultAPIKeyGraceWindowDays) * 24 * time.Hour
-	} else {
-		graceWindow = time.Duration(*gw) * 24 * time.Hour
-	}
-	var graceWindowDays int
-	if graceWindow > 0 {
-		graceWindowDays = int(graceWindow / (24 * time.Hour))
 	}
 	// Mint the new plaintext + hash BEFORE the rotation so the
 	// store op can persist the real hash. The handler is the
@@ -461,6 +438,7 @@ func (s *server) rotateOrgAPIKey(w http.ResponseWriter, r *http.Request, acct st
 		"old_key", oldKey.ID, "new_key", newKey.ID,
 		"account", acct.ID, "org", mem.OrgID, "grace_window_days", graceWindowDays)
 	s.noticeCredentialCreated(r, acct, credentialRotatedKey, newKey.Label)
+	s.mailOrgCredentialCreated(r.Context(), mem.OrgID, acct.ID, credentialRotatedKey, newKey.Label)
 
 	resp := api.RotateOrgAPIKeyResponse{
 		Key:          orgAPIKeyResponse(newKey),

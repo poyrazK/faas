@@ -22,6 +22,12 @@ type SnapshotPrimeHandoffStore interface {
 	SnapshotPrimeHandoff(context.Context, string, string, string) (SnapshotPrimeHandoff, error)
 }
 
+// SnapshotPrimeCaptureFailedReason is the deployment_ready no_snapshot_reason
+// for a prime whose instance booted healthy but whose init snapshot capture
+// failed (deploy-path review P13): the deployment goes live without a
+// snapshot and its first request cold boots (ADR-005).
+const SnapshotPrimeCaptureFailedReason = "snapshot_failed"
+
 type SnapshotPrimeHandoff struct {
 	Channel string
 	Payload json.RawMessage
@@ -102,7 +108,11 @@ func retainSnapshotPrimeHandoff(ctx context.Context, expected, actual Instance, 
 			return nil, ErrInvalidArgument
 		}
 	case db.NotifyDeploymentReady:
-		if actual.Mode == string(InstanceModeWorker) || next != string(StateStopped) || actual.State != string(StateRunning) || fields.InstanceID != actual.ID || fields.NoSnapshotReason != "ephemeral_secret" {
+		// Two snapshot-less activations: a booted instance retired before
+		// capture because it holds ephemeral secrets, and one whose capture
+		// failed after it booted healthy (snapshots are a cache, ADR-005).
+		fromState := map[string]string{"ephemeral_secret": string(StateRunning), SnapshotPrimeCaptureFailedReason: string(StateSnapshotting)}[fields.NoSnapshotReason]
+		if actual.Mode == string(InstanceModeWorker) || next != string(StateStopped) || fromState == "" || actual.State != fromState || fields.InstanceID != actual.ID {
 			return nil, ErrInvalidArgument
 		}
 	default:

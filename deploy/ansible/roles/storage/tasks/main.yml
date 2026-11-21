@@ -462,6 +462,33 @@
     - sigs
     - snap
 
+# ADR-20261109120000 amendment 5: an encrypted /srv/fc unlocks through Tang
+# only after early boot (clevis-luks-askpass.path runs after sysinit.target).
+# A mount beneath it that local-fs.target requires would wait for an unlock
+# that cannot start yet, time out, and drop boot into emergency mode with no
+# network. On an encrypted volume the binds below are nofail and the faas
+# units require them instead (12-faas-storage-binds.conf).
+- name: storage — inspect which device holds the data volume
+  ansible.builtin.command:
+    argv: [findmnt, --noheadings, --output, SOURCE, --mountpoint, "{{ faas_storage_mount }}"]
+  register: faas_storage_volume_source
+  changed_when: false
+  failed_when: false
+
+- name: storage — note whether the data volume is the encrypted one
+  ansible.builtin.set_fact:
+    faas_storage_volume_encrypted: "{{ (faas_storage_volume_source.stdout | default('') | trim) == '/dev/mapper/' ~ faas_storage_label ~ '-crypt' }}"
+
+# The crypttab entry is _netdev, so systemd-cryptsetup-generator hangs it on
+# remote-cryptsetup.target alone. Ubuntu images do not always enable that
+# target; without it nothing asks for the unlock at boot and Tang is never
+# contacted.
+- name: storage — queue the Tang unlock at boot
+  ansible.builtin.systemd_service:
+    name: remote-cryptsetup.target
+    enabled: true
+  when: faas_storage_volume_encrypted | bool
+
 # OCI artifacts are cached outside /srv/fc for daemon compatibility. The
 # path must still live on the fast XFS filesystem: vmmd stages drive images
 # from this cache and a cross-filesystem copy adds about one second to every
@@ -567,10 +594,28 @@
     path: "{{ faas_storage_cache_mount }}"
     src: "{{ faas_storage_mount }}/cache"
     fstype: none
-    opts: "bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache"
+    opts: "bind,{{ 'nofail,' if (faas_storage_volume_encrypted | bool) else '' }}x-systemd.requires-mounts-for={{ faas_storage_mount }}/cache"
     dump: "0"
     passno: "0"
-    state: mounted
+    state: present
+  when: "'compute_nodes' in group_names"
+
+# ansible.posix.mount state=mounted decides "already mounted" with
+# os.path.ismount, which is false for a bind whose parent is a bind of the
+# same filesystem. On an encrypted host /var/lib/faas is one, so the module
+# stacked another compute OCI cache bind on every converge (bhs-2, 2026-11-19). The
+# fstab entry above is written as present; mount it only when nothing is
+# mounted there yet.
+- name: storage — mount the compute OCI cache bind once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if findmnt --mountpoint "{{ faas_storage_cache_mount }}" > /dev/null; then exit 0; fi
+    mount "{{ faas_storage_cache_mount }}"
+    echo mounted
+  args:
+    executable: /bin/bash
+  register: faas_storage_cache_bind_mount
+  changed_when: "'mounted' in faas_storage_cache_bind_mount.stdout"
   when: "'compute_nodes' in group_names"
 
 - name: storage — verify the compute OCI cache is on fast XFS storage
@@ -726,11 +771,64 @@
     path: "{{ faas_storage_grype_mount }}"
     src: "{{ faas_storage_mount }}/grype"
     fstype: none
-    opts: "bind,x-systemd.requires-mounts-for={{ faas_storage_mount }}/grype"
+    opts: "bind,{{ 'nofail,' if (faas_storage_volume_encrypted | bool) else '' }}x-systemd.requires-mounts-for={{ faas_storage_mount }}/grype"
     dump: "0"
     passno: "0"
-    state: mounted
+    state: present
   when: "'compute_nodes' in group_names"
+
+# ansible.posix.mount state=mounted decides "already mounted" with
+# os.path.ismount, which is false for a bind whose parent is a bind of the
+# same filesystem. On an encrypted host /var/lib/faas is one, so the module
+# stacked another Grype database bind on every converge (bhs-2, 2026-11-19). The
+# fstab entry above is written as present; mount it only when nothing is
+# mounted there yet.
+- name: storage — mount the Grype database bind once
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if findmnt --mountpoint "{{ faas_storage_grype_mount }}" > /dev/null; then exit 0; fi
+    mount "{{ faas_storage_grype_mount }}"
+    echo mounted
+  args:
+    executable: /bin/bash
+  register: faas_storage_grype_bind_mount
+  changed_when: "'mounted' in faas_storage_grype_bind_mount.stdout"
+  when: "'compute_nodes' in group_names"
+
+- name: storage — create the faas unit drop-in directory for the binds
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_volume_encrypted | bool
+
+- name: storage — keep faas daemons off the unmounted cache and Grype binds
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-.service.d/12-faas-storage-binds.conf
+    content: |
+      # Managed by Gregale (storage, ADR-20261109120000 amendment 5). These
+      # binds sit on the encrypted data volume and are nofail, so boot never
+      # waits for Tang; a faas daemon waits for them instead.
+      [Unit]
+      RequiresMountsFor={{ faas_storage_cache_mount }} {{ faas_storage_grype_mount }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: faas_storage_binds_dropin
+  when:
+    - "'compute_nodes' in group_names"
+    - faas_storage_volume_encrypted | bool
+
+- name: storage — load the bind drop-in and the fstab change
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - faas_storage_volume_encrypted | bool
+    - faas_storage_binds_dropin is changed
 
 - name: storage — restart imaged after the Grype database move
   ansible.builtin.systemd:

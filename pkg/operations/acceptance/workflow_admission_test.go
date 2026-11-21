@@ -188,7 +188,7 @@ func TestPgOperationWorkflowLegacyRecoveryPreservesCanonicalAttempts(t *testing.
 		wantStatus           string
 		wantAttempt          int
 	}{
-		{"ordinary", `{"steps":[{"name":"step","handler":"/run"}]}`, "step", false, "pending", 2},
+		{"ordinary", `{"steps":[{"name":"step","handler":"/run"}]}`, "step", false, "pending", 3}, // recovery keeps the attempt (#7052)
 		{"resumed", `{"steps":[{"name":"step","handler":"/run"}]}`, "step", true, "pending", 3},
 		{"safe-outbound", `{"steps":[{"name":"step","outbound":{"method":"GET"}}]}`, "step", false, "pending", 3},
 		{"idempotent-outbound", `{"steps":[{"name":"step","outbound":{"method":"POST","idempotency_supported":true}}]}`, "step", false, "pending", 3},

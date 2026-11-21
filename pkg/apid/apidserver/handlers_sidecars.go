@@ -692,7 +692,7 @@ func notifyAndAuditDeployment(r *http.Request, s *server, acct state.Account, ap
 		DeployedBy: d.DeployedBy,
 		PRNumber:   d.PRNumber,
 	})
-	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &acct.ID, mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin))
+	s.audit.EmitAs(ctxr, resolvedActor, "app.deployed", &acct.ID, mergeAgentAudit(mergeActorAudit(appDeployedData, d.DeployedByUserID, d.DeployedVia, d.DeployedFromIP, d.PusherLogin), r))
 	s.recordDeploymentActivity(ctxr, r, acct, app, d,
 		map[string]any{"revision": d.Revision, "scope": d.Scope, "supersedes": supersedes})
 	// Issue #472 / ADR-054: emit app.signed_image_accepted here ONLY

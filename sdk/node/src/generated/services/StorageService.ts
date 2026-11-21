@@ -63,6 +63,7 @@ import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class StorageService {
+  protected static readonly clientConfig?: typeof OpenAPI;
   /**
    * List private object buckets and configured creation capabilities
    * storage:manage lists every bucket. storage:read/storage:write keys see only buckets with an explicit grant. Admin and dashboard sessions list every bucket.
@@ -78,7 +79,7 @@ export class StorageService {
      */
     slug: string,
   }): CancelablePromise<ObjectBucketList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets',
       path: {
@@ -121,7 +122,7 @@ export class StorageService {
       serve_at?: string;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets',
       path: {
@@ -146,7 +147,7 @@ export class StorageService {
      */
     slug: string,
   }): CancelablePromise<ObjectUploadRouteList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/upload-routes',
       path: {
@@ -171,7 +172,7 @@ export class StorageService {
     slug: string,
     requestBody: CreateObjectUploadRouteRequest,
   }): CancelablePromise<ObjectUploadRoute | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/upload-routes',
       path: {
@@ -200,7 +201,7 @@ export class StorageService {
      */
     route: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/upload-routes/{route}',
       path: {
@@ -228,7 +229,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}',
       path: {
@@ -257,7 +258,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketAccessGrantList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/access-grants',
       path: {
@@ -293,7 +294,7 @@ export class StorageService {
     key: string,
     requestBody: SetObjectBucketAccessGrantRequest,
   }): CancelablePromise<ObjectBucketAccessGrant | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/access-grants/{key}',
       path: {
@@ -329,7 +330,7 @@ export class StorageService {
      */
     key: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/access-grants/{key}',
       path: {
@@ -359,7 +360,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectS3CredentialList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials',
       path: {
@@ -390,7 +391,7 @@ export class StorageService {
     bucket: string,
     requestBody: CreateObjectS3CredentialRequest,
   }): CancelablePromise<Problem | ObjectS3CredentialSecret> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials',
       path: {
@@ -425,7 +426,7 @@ export class StorageService {
      */
     credential: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}',
       path: {
@@ -460,7 +461,7 @@ export class StorageService {
      */
     credential: string,
   }): CancelablePromise<ObjectS3CopySourceList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources',
       path: {
@@ -502,7 +503,7 @@ export class StorageService {
     source: string,
     requestBody: SetObjectS3CopySourceRequest,
   }): CancelablePromise<ObjectS3CopySource | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
       path: {
@@ -544,7 +545,7 @@ export class StorageService {
      */
     source: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}/copy-sources/{source}',
       path: {
@@ -575,7 +576,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectStorageComputeBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings',
       path: {
@@ -606,7 +607,7 @@ export class StorageService {
     bucket: string,
     requestBody: CreateObjectStorageComputeBindingRequest,
   }): CancelablePromise<Problem | ObjectStorageComputeBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings',
       path: {
@@ -641,7 +642,7 @@ export class StorageService {
      */
     binding: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}',
       path: {
@@ -676,7 +677,7 @@ export class StorageService {
      */
     binding: string,
   }): CancelablePromise<ObjectStorageComputeBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate',
       path: {
@@ -688,7 +689,7 @@ export class StorageService {
   }
   /**
    * List objects with opaque cursor pagination
-   * Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+   * Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent bucket's, keys it deleted hidden; each parent object has from_parent.
    * @returns any One page, not a bucket-wide usage or billing total
    * @returns Problem Invalid request, access denied, bucket unavailable, or provider error
    * @throws ApiError
@@ -725,10 +726,14 @@ export class StorageService {
       key: string;
       size_bytes: number;
       last_modified: string;
+      /**
+       * In an environment branch's bucket, the object is read from the parent environment's bucket.
+       */
+      from_parent?: boolean;
     }>;
     next_cursor?: string;
   } | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects',
       path: {
@@ -766,7 +771,7 @@ export class StorageService {
      */
     key: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects',
       path: {
@@ -808,7 +813,7 @@ export class StorageService {
      */
     versionId?: string,
   }): CancelablePromise<ObjectTaggingResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
       path: {
@@ -853,7 +858,7 @@ export class StorageService {
      */
     versionId?: string,
   }): CancelablePromise<ObjectTaggingResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
       path: {
@@ -898,7 +903,7 @@ export class StorageService {
      */
     versionId?: string,
   }): CancelablePromise<ObjectTaggingResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/tags',
       path: {
@@ -956,7 +961,7 @@ export class StorageService {
      */
     versionIdMarker?: string,
   }): CancelablePromise<ObjectVersionList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
       path: {
@@ -1002,7 +1007,7 @@ export class StorageService {
      */
     versionId: string,
   }): CancelablePromise<ObjectVersionDeleteResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/versions',
       path: {
@@ -1037,7 +1042,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectDeletionRequest,
   }): CancelablePromise<ObjectDeletion | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions',
       path: {
@@ -1073,7 +1078,7 @@ export class StorageService {
      */
     deletion: string,
   }): CancelablePromise<ObjectDeletion | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/deletions/{deletion}',
       path: {
@@ -1103,7 +1108,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectEncryptionCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption-capabilities',
       path: {
@@ -1132,7 +1137,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketEncryption | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
       path: {
@@ -1163,7 +1168,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketEncryptionRequest,
   }): CancelablePromise<Problem | ObjectBucketEncryption> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
       path: {
@@ -1194,7 +1199,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem | ObjectBucketEncryption> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/encryption',
       path: {
@@ -1223,7 +1228,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketCORS | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/cors',
       path: {
@@ -1254,7 +1259,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketCORSRequest,
   }): CancelablePromise<ObjectBucketCORS | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/cors',
       path: {
@@ -1284,7 +1289,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/cors',
       path: {
@@ -1323,7 +1328,7 @@ export class StorageService {
      */
     versionId: string,
   }): CancelablePromise<ObjectVersionRetentionResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
       path: {
@@ -1368,7 +1373,7 @@ export class StorageService {
     versionId: string,
     requestBody: ObjectVersionRetentionRequest,
   }): CancelablePromise<ObjectVersionProtection | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/retention',
       path: {
@@ -1413,7 +1418,7 @@ export class StorageService {
      */
     versionId: string,
   }): CancelablePromise<ObjectVersionLegalHoldResult | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
       path: {
@@ -1458,7 +1463,7 @@ export class StorageService {
     versionId: string,
     requestBody: ObjectVersionLegalHoldRequest,
   }): CancelablePromise<ObjectVersionProtection | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/objects/protection/legal-hold',
       path: {
@@ -1498,7 +1503,7 @@ export class StorageService {
      */
     operation: string,
   }): CancelablePromise<ObjectVersionProtection | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/protection-operations/{operation}',
       path: {
@@ -1528,7 +1533,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectLockCapabilities | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/object-lock-capabilities',
       path: {
@@ -1557,7 +1562,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketObjectLock | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
       path: {
@@ -1588,7 +1593,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketObjectLockRequest,
   }): CancelablePromise<Problem | ObjectBucketObjectLock> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/object-lock',
       path: {
@@ -1619,7 +1624,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketVersioning | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
       path: {
@@ -1650,7 +1655,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketVersioningRequest,
   }): CancelablePromise<Problem | ObjectBucketVersioning> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/versioning',
       path: {
@@ -1691,7 +1696,7 @@ export class StorageService {
     bucket: string,
     requestBody: ReconcileObjectStorageComputeTriggersRequest,
   }): CancelablePromise<ObjectBucketNotifications | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/compute-triggers',
       path: {
@@ -1727,7 +1732,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketNotifications | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
       path: {
@@ -1758,7 +1763,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketNotificationsRequest,
   }): CancelablePromise<ObjectBucketNotifications | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
       path: {
@@ -1789,7 +1794,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketNotifications | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/notifications',
       path: {
@@ -1818,7 +1823,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketLifecycle | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
       path: {
@@ -1849,7 +1854,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectBucketLifecycleRequest,
   }): CancelablePromise<ObjectBucketLifecycle | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
       path: {
@@ -1880,7 +1885,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketLifecycle | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle',
       path: {
@@ -1909,7 +1914,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem | ObjectLifecycleScan> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans',
       path: {
@@ -1943,7 +1948,7 @@ export class StorageService {
      */
     scan: string,
   }): CancelablePromise<ObjectLifecycleScan | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/lifecycle/scans/{scan}',
       path: {
@@ -1973,7 +1978,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem | ObjectCapacityReconciliation> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations',
       path: {
@@ -2007,7 +2012,7 @@ export class StorageService {
      */
     reconciliation: string,
   }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
       path: {
@@ -2042,7 +2047,7 @@ export class StorageService {
      */
     reconciliation: string,
   }): CancelablePromise<ObjectCapacityReconciliation | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/capacity-reconciliations/{reconciliation}',
       path: {
@@ -2087,7 +2092,7 @@ export class StorageService {
      */
     cursor?: string,
   }): CancelablePromise<ObjectWriteReceiptList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts',
       path: {
@@ -2126,7 +2131,7 @@ export class StorageService {
      */
     receipt: string,
   }): CancelablePromise<ObjectWriteReceipt | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/write-receipts/{receipt}',
       path: {
@@ -2165,7 +2170,7 @@ export class StorageService {
     bucket: string,
     requestBody: ObjectSignRequest,
   }): CancelablePromise<ObjectSignedRequest | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/signed-url',
       path: {
@@ -2206,7 +2211,7 @@ export class StorageService {
      */
     cursor?: string,
   }): CancelablePromise<ObjectMultipartUploadList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads',
       path: {
@@ -2246,7 +2251,7 @@ export class StorageService {
     bucket: string,
     requestBody: CreateObjectMultipartUploadRequest,
   }): CancelablePromise<ObjectMultipartUpload | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads',
       path: {
@@ -2292,7 +2297,7 @@ export class StorageService {
      */
     limit?: number,
   }): CancelablePromise<ObjectMultipartPartList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts',
       path: {
@@ -2331,7 +2336,7 @@ export class StorageService {
      */
     upload: string,
   }): CancelablePromise<ObjectMultipartUpload | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}',
       path: {
@@ -2365,7 +2370,7 @@ export class StorageService {
      */
     upload: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}',
       path: {
@@ -2415,7 +2420,7 @@ export class StorageService {
     part: number,
     requestBody: ObjectMultipartPartSignRequest,
   }): CancelablePromise<ObjectSignedRequest | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url',
       path: {
@@ -2460,7 +2465,7 @@ export class StorageService {
     upload: string,
     requestBody: CompleteObjectMultipartUploadRequest,
   }): CancelablePromise<ObjectMultipartUpload | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete',
       path: {
@@ -2480,7 +2485,7 @@ export class StorageService {
    * @throws ApiError
    */
   public static getObjectStorageUsage(): CancelablePromise<ObjectStorageUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/account/object-storage-usage',
     });
@@ -2505,7 +2510,7 @@ export class StorageService {
      */
     slug: string,
   }): CancelablePromise<ObjectBucketList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets',
       path: {
@@ -2554,7 +2559,7 @@ export class StorageService {
       serve_at?: string;
     },
   }): CancelablePromise<ObjectBucket | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets',
       path: {
@@ -2589,7 +2594,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}',
       path: {
@@ -2624,7 +2629,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectBucketAccessGrantList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants',
       path: {
@@ -2666,7 +2671,7 @@ export class StorageService {
     key: string,
     requestBody: SetObjectBucketAccessGrantRequest,
   }): CancelablePromise<ObjectBucketAccessGrant | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'PUT',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants/{key}',
       path: {
@@ -2708,7 +2713,7 @@ export class StorageService {
      */
     key: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/access-grants/{key}',
       path: {
@@ -2744,7 +2749,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectS3CredentialList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials',
       path: {
@@ -2781,7 +2786,7 @@ export class StorageService {
     bucket: string,
     requestBody: CreateObjectS3CredentialRequest,
   }): CancelablePromise<Problem | ObjectS3CredentialSecret> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials',
       path: {
@@ -2822,7 +2827,7 @@ export class StorageService {
      */
     credential: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/s3-credentials/{credential}',
       path: {
@@ -2858,7 +2863,7 @@ export class StorageService {
      */
     bucket: string,
   }): CancelablePromise<ObjectStorageComputeBindingList | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings',
       path: {
@@ -2895,7 +2900,7 @@ export class StorageService {
     bucket: string,
     requestBody: CreateObjectStorageComputeBindingRequest,
   }): CancelablePromise<Problem | ObjectStorageComputeBinding> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings',
       path: {
@@ -2936,7 +2941,7 @@ export class StorageService {
      */
     binding: string,
   }): CancelablePromise<Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'DELETE',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}',
       path: {
@@ -2977,7 +2982,7 @@ export class StorageService {
      */
     binding: string,
   }): CancelablePromise<ObjectStorageComputeBinding | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'POST',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/compute-bindings/{binding}/rotate',
       path: {
@@ -3035,7 +3040,7 @@ export class StorageService {
     }>;
     next_cursor?: string;
   } | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/apps/{slug}/buckets/{bucket}/objects',
       path: {
@@ -3065,7 +3070,7 @@ export class StorageService {
      */
     organization: string,
   }): CancelablePromise<ObjectStorageUsageResponse | Problem> {
-    return __request(OpenAPI, {
+    return __request(this?.clientConfig ?? OpenAPI, {
       method: 'GET',
       url: '/v1/orgs/{organization}/object-storage-usage',
       path: {

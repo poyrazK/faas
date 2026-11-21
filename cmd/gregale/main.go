@@ -53,21 +53,7 @@ func topLevelUsage(showAll, showOperator bool) string {
 	if showAll && !showOperator {
 		b.WriteString("Run 'gregale help --all --operator' to include operator and compatibility commands.\n")
 	}
-	b.WriteString("\nGlobal flags:\n")
-	b.WriteString("  --agent-reason TEXT    With an agent key, tell the person who approves a request\n")
-	b.WriteString("                         what it is for (before the command; up to 280 characters).\n")
-	b.WriteString("                         Equivalent env: GREGALE_AGENT_REASON.\n")
-	b.WriteString("  --json                 Machine-readable output where supported. Slices emit\n")
-	b.WriteString("                         NDJSON; scalars emit indented JSON; errors print\n")
-	b.WriteString("                         RFC 7807 to stderr. Equivalent env: FAAS_JSON=1.\n")
-	b.WriteString("                         Interactive-only commands retain human prompts.\n")
-	b.WriteString("  --non-interactive      Disable prompts and browser launches (before the command).\n")
-	b.WriteString("  --org SLUG             Run project commands on a company's projects (before\n")
-	b.WriteString("                         the command), e.g. gregale --org acme deploy --project.\n")
-	b.WriteString("  --profile NAME         Select a connection profile (before the command).\n")
-	b.WriteString("  --wait-for-approval    When an agent key's request needs a person's approval,\n")
-	b.WriteString("                         wait for the decision and retry once (before the\n")
-	b.WriteString("                         command). Equivalent env: GREGALE_WAIT_FOR_APPROVAL=1.\n")
+	writeGlobalFlagHelp(&b)
 	fmt.Fprintf(&b, "Docs: %s\n", docsURL)
 	return b.String()
 }
@@ -114,13 +100,32 @@ func init() {
 
 func run(args []string) (status int) {
 	args = protectImageRunCommandArgs(args)
+	previousHTTPTimeout := httpRequestTimeout
+	httpRequestTimeout = 0
+	defer func() { httpRequestTimeout = previousHTTPTimeout }()
+	previousDebug, previousTrace := httpDebugEnabled, activeHTTPDebug.Load()
+	httpDebugEnabled = false
+	activeHTTPDebug.Store(nil)
+	var invocationTrace *httpDebugRecorder
+	defer func() {
+		if invocationTrace != nil {
+			invocationTrace.close()
+		}
+		httpDebugEnabled = previousDebug
+		activeHTTPDebug.Store(previousTrace)
+	}()
 	resetCapabilityView()
 	previousJSON, previousUsageHelp, previousPath := jsonOutput, jsonUsageHelp, invokedCommandPath
+	previousFlagHelpPath := invokedFlagHelpPath
 	defer func() {
 		jsonOutput = previousJSON
 		jsonUsageHelp = previousUsageHelp
 		invokedCommandPath = previousPath
+		invokedFlagHelpPath = previousFlagHelpPath
 	}()
+	previousRetries := httpReadRetries
+	httpReadRetries = 0
+	defer func() { httpReadRetries = previousRetries }()
 	previousAutomation, previousWait, previousOrg, previousReason := nonInteractive, approvalWaitEnabled, projectOrganization, agentReason
 	defer func() {
 		nonInteractive, approvalWaitEnabled, projectOrganization, agentReason = previousAutomation, previousWait, previousOrg, previousReason
@@ -154,6 +159,20 @@ func run(args []string) (status int) {
 	if profileErr != nil {
 		return printErr("Invalid connection profile", profileErr)
 	}
+	// The explicit help command offers structured discovery before argument
+	// rewriting or connection validation. --help keeps its human usage contract.
+	if jsonOutput && len(args) > 0 && args[0] == "help" {
+		return runJSONHelp(args[1:])
+	}
+	if httpDebugEnabled {
+		invocationTrace = &httpDebugRecorder{out: osStderr}
+		activeHTTPDebug.Store(invocationTrace)
+	}
+	// ADR-20261112223000 §5: help read by a coding agent starts with a
+	// pointer to the task guide, on stderr so help's stdout is unchanged.
+	if hasHelpFlag(args) || (len(args) > 0 && args[0] == "help") || len(args) == 0 {
+		printAgentHint(osStderr)
+	}
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
@@ -163,6 +182,9 @@ func run(args []string) (status int) {
 			return printErr("Missing required flag", err)
 		}
 		return printErr("Invalid app target", err)
+	}
+	if code, moved := movedOperatorCommand(args); moved {
+		return code
 	}
 	if slices.Equal(typed, args) {
 		printCliTreeHint(osStderr, typed)
@@ -210,11 +232,15 @@ func run(args []string) (status int) {
 	defer func() { treeUsageFrom, treeUsageTo = previousUsageFrom, previousUsageTo }()
 	if len(args) > 0 {
 		if noun, ok := lookupCliTreeNoun(args[0]); ok && oldPathDepth(args[:1]) == 0 {
-			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name))
+			return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale %s --help' for its commands", leadingWords(args), noun.Name), cliUnknownCommand, strings.Fields(leadingWords(args))))
 		}
 	}
 	jsonUsageHelp = hasHelpFlag(args)
 	invokedCommandPath = publicCommandPath(args)
+	invokedFlagHelpPath = ""
+	if jsonOutput {
+		invokedFlagHelpPath = flagDiagnosticInvocationPath(typed)
+	}
 	previousHelpPrinted, previousHelpPath := flagHelpPrinted, helpRequestPath
 	flagHelpPrinted, helpRequestPath = false, ""
 	if jsonUsageHelp {
@@ -248,7 +274,7 @@ func run(args []string) (status int) {
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
-		if command, ok := lookupDiscoverableCommand(args[0]); ok {
+		if command, ok := lookupNamedHelpCommand(args[0]); ok {
 			if printManifestHelpAs(typed, args, command, args[1:]) {
 				return 0
 			}
@@ -289,7 +315,7 @@ func run(args []string) (status int) {
 			_, _ = fmt.Fprint(osStdout, topLevelUsage(showAll, showOperator))
 			return 0
 		}
-		if command, ok := lookupDiscoverableCommand(args[1]); ok && cliCommandAvailable(command.Name) {
+		if command, ok := lookupNamedHelpCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelpAs(typed, args, command, args[2:]) {
 				return 0
 			}
@@ -306,6 +332,9 @@ func run(args []string) (status int) {
 		// Updating the CLI must work when saved configuration is broken:
 		// a newer CLI may be the fix.
 		return cmdUpdate(args[1:])
+	case "export":
+		// Local integrity checks work without a usable connection profile.
+		return cmdExport(args[1:])
 	case "completion":
 		// Tier A8 / ADR-083. Routes to one of bash|zsh|fish|powershell
 		// via cmdCompletion; the dispatcher is in completion.go. Like help,
@@ -315,6 +344,9 @@ func run(args []string) (status int) {
 		// Tier A8 / ADR-083. No arg → gregale(1); one arg →
 		// gregale-<command>(1). Dispatcher is in man.go.
 		return cmdMan(args[1:])
+	case "guide":
+		// ADR-20261112223000 §4: the task index; offline, like man.
+		return cmdGuide(args[1:])
 	}
 	if err := validateSelectedProfile(); err != nil {
 		return printErr("Invalid connection profile", err)
@@ -420,6 +452,9 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
 		}
+		if len(args) > 1 && args[1] == "purge" {
+			return cmdAppsPurge(args[2:])
+		}
 		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
 		// operator entry point. Must come before the default
 		// fall-through so a slug-shaped token ("routes") is never
@@ -500,6 +535,8 @@ func run(args []string) (status int) {
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
+	case "redis":
+		return cmdRedis(args[1:])
 	case "realtime":
 		return cmdRealtime(args[1:])
 	case dispatchDeploys:
@@ -561,6 +598,9 @@ func run(args []string) (status int) {
 	case "park":
 		return cmdPark(args[1:])
 	case "wake":
+		if isAppProjectCommand(args) {
+			return cmdAppProject(args)
+		}
 		return cmdWake(args[1:])
 	case "wake-ahead":
 		return cmdWakeAhead(args[1:])
@@ -584,10 +624,15 @@ func run(args []string) (status int) {
 		return cmdDeployTokens(args[1:])
 	case "sandbox-templates":
 		return cmdSandboxTemplates(args[1:])
+	case "agents":
+		// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+		return cmdAgents(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "insights":
+		return cmdInsights(args[1:])
 	case "flags":
 		return cmdFlags(args[1:])
 	case "product":
@@ -660,17 +705,13 @@ func run(args []string) (status int) {
 		// every leaf calls authedClient() and hits apid. The
 		// operator-only surfaces (sign-keys, node-key, pki,
 		// host-age, manifest, release, backup) moved to
-		// `gregalectl` in PR-6.5 — this is the only operator verb
-		// that stayed in `gregale` because it's a customer/admin
-		// API surface.
+		// `gregalectl` in PR-6.5, and admin credit/refund/abuse-hold,
+		// github-webhook-secret and the Postgres accounting verbs
+		// followed (commands_moved_operator.go). This one stays: its
+		// routes check the customer's own account-admin scope.
 		return cmdTrustedPublishers(args[1:])
 	case "secrets":
 		return cmdSecrets(args[1:])
-	case "github-webhook-secret":
-		// PR-D / ADR-012 §7 amendment. Distinct top-level
-		// command; dispatches to a single verb (set) for the
-		// per-tenant webhook secret rotation.
-		return cmdGithubWebhookSecret(args[1:])
 	case "account":
 		return cmdAccount(args[1:])
 	case "channels":
@@ -750,6 +791,9 @@ func run(args []string) (status int) {
 		return cmdStoredWorkflows(args[1:])
 	case "commit":
 		return cmdCommit(args[1:])
+	case "postgres-changes":
+		// Capture Postgres row changes into an app queue (ADR-20261112140000).
+		return cmdPostgresChanges(args[1:])
 	case "data-repair":
 		return cmdDataRepair(args[1:])
 	case "events":
@@ -776,8 +820,6 @@ func run(args []string) (status int) {
 		// button has a CLI twin. Subcommands live in
 		// commands_billing.go.
 		return cmdBilling(args[1:])
-	case "admin":
-		return cmdAdmin(args[1:])
 	case "logs":
 		return cmdLogs(args[1:])
 	case "tail":
@@ -856,10 +898,10 @@ func run(args []string) (status int) {
 }
 
 func unknownCommand(name string) int {
-	if suggestion, ok := suggestCommand(name); ok {
-		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion))
+	if suggestion, ok := rootCommandSuggestion(name); ok {
+		return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion), cliUnknownCommand, strings.Fields(name)))
 	}
-	return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", name))
+	return printErr("Unknown command", commandDiagnosticError(fmt.Sprintf("gregale: unknown command %q; run 'gregale help' for usage", name), cliUnknownCommand, strings.Fields(name)))
 }
 
 // printManifestHelp resolves verb paths without invoking a command parser or

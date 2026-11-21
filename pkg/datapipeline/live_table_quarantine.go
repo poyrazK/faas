@@ -3,7 +3,6 @@ package datapipeline
 import (
 	"context"
 	"encoding/json"
-	"reflect"
 	"slices"
 	"time"
 
@@ -73,7 +72,7 @@ func commitLiveQuarantine(ctx context.Context, p Pipeline, target *pgx.Conn, pla
 		return err
 	}
 	var before []relation
-	if json.Unmarshal(baseline, &before) != nil || !reflect.DeepEqual(before, plan.After) {
+	if json.Unmarshal(baseline, &before) != nil || !sameRelations(before, plan.After) {
 		return &blocked{"schema_receipt_conflict", true}
 	}
 	if _, err = tx.Exec(ctx, "LOCK TABLE "+tableIdent(identities.Table)+" IN ACCESS EXCLUSIVE MODE"); err != nil {

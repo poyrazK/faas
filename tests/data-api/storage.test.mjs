@@ -88,6 +88,7 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   await owner.query(`REVOKE ALL ON SCHEMA public FROM PUBLIC; CREATE SCHEMA api; CREATE SCHEMA bare;`)
   await owner.query(sql.replaceAll('{{schema}}', 'api'))
   await owner.query((await readFile(new URL('../../cmd/gregale/templates/data-api/storage-sessions.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api'))
+  await owner.query((await readFile(new URL('../../cmd/gregale/templates/data-api/storage-cleanup.sql', import.meta.url), 'utf8')).replaceAll('{{schema}}', 'api'))
   await owner.query(`CREATE POLICY own_uploads ON api.storage_objects
       USING (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
       WITH CHECK (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND size <= 64);
@@ -112,6 +113,8 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const s3 = name => ({ [`GREGALE_S3_${name}_ENDPOINT`]: bucket.origin, [`GREGALE_S3_${name}_REGION`]: 'us-east-1', [`GREGALE_S3_${name}_BUCKET`]: `real-${name.toLowerCase()}`, [`GREGALE_S3_${name}_ACCESS_KEY_ID`]: 'AKID', [`GREGALE_S3_${name}_SECRET_ACCESS_KEY`]: 'secret' })
   const config = runtimeConfig({ DATABASE_URL: loginURL.toString(), DATA_API_ISSUER: 'https://issuer.example', DATA_API_JWKS_URL: 'https://issuer.example/jwks', DATA_API_AUDIENCE: 'files',
     DATA_API_STORAGE: 'on', DATA_API_PUBLIC_READ: 'api.storage_objects', ...s3('UPLOADS'), ...s3('AVATARS') })
+  config.storage=Object.freeze({...config.storage,maintenance:await checkStorageTable(loginURL.toString(),'api')})
+  assert.equal(config.storage.maintenance,true)
   const snapshot = await inspect(loginURL.toString(), ['api'])
   config.snapshot = snapshot; config.functions = snapshot.functions
   const upstream = await port(), ready = await port()
@@ -138,12 +141,16 @@ test('storage follows RLS through PostgREST: own files, public avatars, guarded 
   const firstVersion = await stored('alice/hello.txt')
   assert.match(firstVersion, /^\/real-uploads\/_gregale\/objects\/[0-9a-f]{32}$/)
   assert.equal(bucket.objects.get(firstVersion).toString(), 'hello')
+  assert.equal((await owner.query('SELECT count(*)::int AS n FROM gregale_storage_maintenance.owned_keys WHERE object_key=$1',[firstVersion.slice('/real-uploads/'.length)])).rows[0].n,1,'ownership is persisted before an object upload')
   assert.equal(await (await files(alice).download('alice/hello.txt')).text(), 'hello')
   assert.deepEqual(await refusal(files(bob).download('alice/hello.txt')), [404, 'storage_not_found'])
 
   const rest = (token, init = {}) => fetch(url + '/rest/v1/storage_objects', { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers } })
   const forged = await rest(alice, { method: 'POST', body: JSON.stringify({ bucket: 'uploads', name: 'alice/forged.txt', size: 1, content_type: 'text/plain' }) })
   assert.equal(forged.status, 403, 'REST writes stop at the guard trigger')
+  const register = await fetch(url + '/rest/v1/rpc/gregale_storage_register_key', { method: 'POST', headers: { Authorization: `Bearer ${alice}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ p_bucket: 'uploads', p_key: '_gregale/objects/' + 'f'.repeat(32) }) })
+  assert.ok(register.status >= 400, 'ordinary REST cannot register cleanup ownership')
+  assert.equal((await owner.query("SELECT count(*)::int AS n FROM gregale_storage_maintenance.owned_keys WHERE object_key=$1",['_gregale/objects/'+'f'.repeat(32)])).rows[0].n,0)
   assert.deepEqual((await (await rest(alice)).json()).map(r => r.name), ['alice/hello.txt'], 'REST reads follow RLS')
   assert.deepEqual(await (await rest(bob)).json(), [])
 

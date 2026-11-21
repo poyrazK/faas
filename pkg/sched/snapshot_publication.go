@@ -40,7 +40,9 @@ func (e *Engine) captureInitOrReuse(ctx context.Context, ins state.Instance, vms
 		return SnapshotBytes{}, nil, err
 	}
 	// Measured cache reuse needs its own current review and restore admission.
-	if snap, ok := e.reusableSnapshotOn(ctx, ins.DeploymentID, state.SnapshotTierInit, ins.NodeID); ok && !measured {
+	// With sealing on (slice 3d-3) a plaintext row is recaptured once, sealed,
+	// rather than reused forever.
+	if snap, ok := e.reusableSnapshotOn(ctx, ins.DeploymentID, state.SnapshotTierInit, ins.NodeID); ok && !measured && (!e.sealSnapshots || len(snap.SealedKey) > 0) {
 		err := e.vmm.Destroy(ctx, ins.NodeID, ins.ID)
 		return SnapshotBytes{MemBytes: snap.MemBytes, VMStateBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes}, &snap, err
 	}

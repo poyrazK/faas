@@ -40,6 +40,9 @@ func (e *Engine) captureSnapshotWithStandards(ctx context.Context, ins state.Ins
 		return SnapshotBytes{}, err
 	}
 	if !measured {
+		if token, seal := e.snapshotSealToken(memKey, stateKey); seal {
+			return e.captureSealedSnapshot(ctx, ins, memKey, stateKey, before, mode, token)
+		}
 		if mode == "warm" {
 			return e.vmm.WarmSnapshot(ctx, ins.NodeID, ins.ID, memKey, stateKey)
 		}

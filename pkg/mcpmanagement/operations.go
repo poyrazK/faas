@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,7 +36,7 @@ type operationPlan struct {
 	ResourceHash      string                  `json:"resource_hash,omitempty"`
 }
 
-var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true}
+var operationKinds = map[string]bool{"restart": true, "scale": true, "env": true, "config_rollback": true, "config_rollback_guarded": true, "cron_update": true, "cron_delete": true, "domain_delete": true, "run_command": true, "dlq_replay": true, "workflow_recovery": true, "monitoring_change": true, "edge_change": true, "preview_change": true, "event_change": true, "consumer_change": true, "workflow_publish": true}
 
 type operationArgs struct {
 	App         string `json:"app" jsonschema:"Existing app slug"`
@@ -121,6 +122,9 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 		return nil, err
 	}
 	p := &releasePlan{Action: "operation_" + kind, App: a.App, AppID: app.ID, AccountID: account.ID, APIBase: m.opts.APIBase, Profile: m.opts.Profile, Scope: normalizedScope(a.Environment), Project: a.Project, ProjectID: env.ProjectID, EnvironmentID: env.ID, Reason: a.Reason, ExpiresAt: time.Now().Add(releasePlanTTL), Operation: &operationPlan{Kind: kind, Request: data, AppHash: hex.EncodeToString(hash[:])}}
+	// Agent keys and hosted sign-ins (mcp-login keys) pay from an agent
+	// budget (ADR-20261111114059); a person's own key never does.
+	p.budgeted = m.budgeted(account)
 	if a.Environment != "" {
 		_, p.WorkloadRevision, err = m.client.GetAppInEnvironmentRevision(ctx, a.App, a.Environment)
 	}
@@ -130,6 +134,12 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 func (m *management) planRestart(ctx context.Context, a operationArgs) (any, error) {
 	if a.Project != "" || a.Environment != "" {
 		return nil, invalid("unsupported_scope", "the native restart is app-wide; use an approved environment rollout for a named target")
+	}
+	// A parked app has nothing to restart: its next request boots it with the
+	// current configuration. The apply used to be refused with a recovery
+	// that said to plan the same restart again.
+	if instances, err := m.client.ListInstancesWithHistory(ctx, a.App, false); err == nil && !anyInstanceRunning(instances) {
+		return nil, invalid("nothing_to_restart", a.App+" is parked, so nothing is running to restart; its next request boots it with the current variables and secrets. No restart is needed.")
 	}
 	p, err := m.operationBase(ctx, a, "restart", struct{}{})
 	if err != nil {
@@ -179,6 +189,7 @@ func (m *management) planScale(ctx context.Context, a scalePlanArgs) (any, error
 	}
 	p.Operation.ExpectedRevision = before.Revision
 	p.Operation.ScalingBefore = &before
+	p.AgentBudget = m.previewScaling(ctx, p, a, before.Revision)
 	p.TrafficEffect = "Change selected app resource settings. Warm instances and increased resource sizes can increase usage charges; native quotas and residency rules remain enforced."
 	p.Operation.Changes = p.Operation.Request
 	return m.savePlan(p)
@@ -381,6 +392,20 @@ func (m *management) runOperation(ctx context.Context, p *releasePlan, retry boo
 			return nil, redactApprovalError(err, p.Operation.EnvReceiptProof)
 		}
 		return result, nil
+	case "dlq_replay", "workflow_recovery", "monitoring_change":
+		return m.runAsyncOperation(ctx, p)
+	case "run_command":
+		return m.runCommand(ctx, p)
+	case "edge_change":
+		return m.runEdgeChange(ctx, p, retry)
+	case "preview_change":
+		return m.runPreviewChange(ctx, p, retry)
+	case "event_change":
+		return m.runEventChange(ctx, p)
+	case "consumer_change":
+		return m.runConsumerChange(ctx, p)
+	case "workflow_publish":
+		return m.runWorkflowPublish(ctx, p)
 	case "cron_update", "cron_delete", "domain_delete":
 		return m.applyResourceOperation(ctx, p)
 	}
@@ -456,4 +481,35 @@ func resourceFingerprint(v any) string {
 	b, _ := json.Marshal(v)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// previewScaling asks apid what the scaling change would cost this agent,
+// without making it. A preview that fails leaves the plan without a price:
+// apply is priced and gated all the same.
+func (m *management) previewScaling(ctx context.Context, p *releasePlan, a scalePlanArgs, revision int64) *api.AgentBudgetPreview {
+	if !p.budgeted {
+		return nil
+	}
+	revision = max(revision, 0)
+	req := api.ApplyAppScalingRequest{ExpectedAppID: p.AppID, ExpectedEnvironmentID: p.EnvironmentID, RequestID: uuid.NewString(), ExpectedRevision: &revision,
+		RAMMB: a.RAMMB, CPUMillicores: a.CPUMillicores, MaxConcurrency: a.MaxConcurrency, MinInstances: a.MinInstances}
+	out, err := m.client.PreviewAppScaling(ctx, p.App, p.Scope, req)
+	if err != nil || !out.Charged {
+		return nil
+	}
+	return &out
+}
+
+// anyInstanceRunning reports an instance holding host memory or booting.
+func anyInstanceRunning(instances []api.InstanceResponse) bool {
+	for _, ins := range instances {
+		switch strings.ToLower(ins.State) {
+		case "running", "waking", "cold_booting":
+			return true
+		}
+		if ins.Resident {
+			return true
+		}
+	}
+	return false
 }

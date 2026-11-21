@@ -77,6 +77,9 @@ func PlanEnvImport(env reposcan.ComposeEnv, service string, callable []string, l
 				}
 				value = &rewritten
 				out.Rewritten[key] = host
+			} else if rewritten, host, ok := rewriteBareServiceAddress(*value, callable, env.Mesh); ok {
+				value = &rewritten
+				out.Rewritten[key] = host
 			}
 		}
 		reason := envSkipReason(key, value, services, limits)
@@ -115,17 +118,34 @@ func RewrittenEnvNotes(service string, imported []string, plan EnvImport) []stri
 	var notes []string
 	for _, key := range imported {
 		if host, ok := plan.Rewritten[key]; ok {
-			if parsed, err := url.Parse(plan.Values[key]); err == nil {
-				note := fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, parsed.Host)
-				if plan.Plaintext[key] {
-					note += " over " + parsed.Scheme + ", because private service HTTPS is not enabled on this installation"
-				}
-				notes = append(notes, note)
+			address, scheme := rewrittenAddress(plan.Values[key])
+			if address == "" {
+				continue
 			}
+			note := fmt.Sprintf("%s: %s calls %s; imported with %s as its address", service, key, host, address)
+			if plan.Plaintext[key] && scheme != "" {
+				note += " over " + scheme + ", because private service HTTPS is not enabled on this installation"
+			}
+			notes = append(notes, note)
 		}
 	}
 	slices.Sort(notes)
 	return notes
+}
+
+// rewrittenAddress is the host[:port] an imported value now calls, and its
+// URL scheme if it has one. A bare host:port (gRPC *_ADDR values) parses as
+// a URL whose "scheme" is the host and whose Host is empty, which left the
+// dry-run note reading "imported with  as its address".
+func rewrittenAddress(value string) (address, scheme string) {
+	value = strings.TrimSpace(value)
+	if parsed, err := url.Parse(value); err == nil && parsed.Host != "" {
+		return parsed.Host, parsed.Scheme
+	}
+	if host, port, err := net.SplitHostPort(value); err == nil && host != "" {
+		return net.JoinHostPort(host, port), ""
+	}
+	return "", ""
 }
 
 // secureScheme reports an https or wss URL.
@@ -246,6 +266,25 @@ func secretValue(key, value string) bool {
 
 // valueHost is the lower-case host a value names: a URL's host, a host:port,
 // or a bare single-label name such as `db`.
+// rewriteBareServiceAddress turns a host:port value that calls a project
+// service the HTTP mesh serves, the form gRPC clients take
+// (`productcatalogservice:3550`), into that service's mesh address,
+// `productcatalogservice.svc.gregale:10081`. The mesh listener speaks HTTP/1.1
+// and h2c, so a plaintext gRPC channel reaches the service's serving port.
+// A host:port naming a raw TCP service or a datastore stays as it is: the
+// HTTP mesh cannot carry its protocol.
+func rewriteBareServiceAddress(value string, callable []string, mesh map[string]bool) (rewritten, host string, ok bool) {
+	host, ok = reposcan.BareServiceAddressHost(value)
+	if !ok || !mesh[host] || !slices.ContainsFunc(callable, func(name string) bool { return strings.EqualFold(name, host) }) {
+		return "", "", false
+	}
+	name := api.ServiceDNSName(host)
+	if !api.ValidServiceName(name) {
+		return "", "", false
+	}
+	return fmt.Sprintf("%s.svc.gregale:%d", name, api.ServiceBindingPort), host, true
+}
+
 func valueHost(value string) string {
 	value = strings.TrimSpace(value)
 	if strings.Contains(value, "://") {

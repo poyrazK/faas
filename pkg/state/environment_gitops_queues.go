@@ -175,6 +175,13 @@ func validateGitOpsDesiredQueues(out *EnvironmentGitOpsObservation, snapshot git
 		if err == nil {
 			err = validateQueueBindingConsumer(binding, app.Type, QueueBindingAppClass(app.WorkloadClass, app.Manifest.ExecutionMode))
 		}
+		// Stage environments have no pull consumer (leases serve production
+		// only); an enabled stage pull binding accepted sends no worker could
+		// take. The API refused it; GitOps applied it (ADR-20261113180000, R5-7).
+		if err == nil && binding.Mode == "pull" && binding.Enabled && !ProductionDeploymentScope(snapshot.Environment) {
+			out.State.Unsupported = append(out.State.Unsupported, resource+"#queue_bindings/"+name+": stage environments cannot consume a queue by pull yet; use mode push, or keep the pull binding disabled")
+			continue
+		}
 		limits, _ := api.LimitsFor(snapshot.Plan)
 		if err == nil && binding.Mode == "push" {
 			_, err = queueConsumerForBinding(binding, limits)

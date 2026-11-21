@@ -91,14 +91,16 @@ func loopbackLogin(ctx context.Context, c *Client, ln net.Listener, codeResp api
 	port := ln.Addr().(*net.TCPAddr).Port
 	results := make(chan loopbackResult, 1)
 	srv := &http.Server{
-		Handler:           loopbackCallback(ctx, c, port, codeResp.Code, results),
+		Handler:           loopbackCallback(ctx, c, port, codeResp.Code, codeResp.Verifier, results),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() { _ = srv.Serve(ln) }()
 	defer func() { _ = srv.Close() }()
 
 	_, _ = fmt.Fprintf(osStdout, "Opening %s\n", codeResp.URL)
-	_, _ = fmt.Fprintln(osStdout, "  Click Authorize in your browser to sign in.")
+	// Nothing to type: the person only checks the page names this login
+	// (F10-3, ADR-20261115160000).
+	_, _ = fmt.Fprintf(osStdout, "  Click Authorize in your browser if it shows %s and port %d.\n", codeResp.Code, port)
 	if err := openBrowser(codeResp.URL); err != nil {
 		PrintFail(os.Stderr, "Could not open browser: %v", err)
 		_, _ = fmt.Fprintln(os.Stderr, "  Open the URL above in a browser on this computer, or run 'gregale login --device'.")
@@ -111,13 +113,33 @@ func loopbackLogin(ctx context.Context, c *Client, ln net.Listener, codeResp api
 	case <-ctx.Done():
 		return printErr("Login interrupted", ctx.Err())
 	case <-timer.C:
-		return printErr("Login expired", errors.New("the browser did not approve in time; run gregale login again"))
+		return printCliLoginRecovery("Login code expired", nil, false)
 	case res := <-results:
 		if res.err != nil {
+			var ae *APIError
+			if errors.As(res.err, &ae) && ae.Problem.Code == api.CodeCliAuthUnavailable {
+				return printCliLoginRecovery("Login code unavailable", ae, false)
+			}
 			return printErr("Login failed", res.err)
 		}
 		return finalizeLogin(ctx, c, res.resp.Plaintext, res.resp.KeyID, res.resp.Account)
 	}
+}
+
+func printCliLoginRecovery(title string, err *APIError, device bool) int {
+	command := recoveryCLI() + " login"
+	if device {
+		command += " --device"
+	}
+	if loginInsecureStorage {
+		command += " --insecure-storage"
+	}
+	hint := fmt.Sprintf("Run %s in this terminal and open the new link in the same browser.", command)
+	if err == nil {
+		return printErr(title, errors.New(hint))
+	}
+	problem := err.Problem
+	return printErr(title, &APIError{Problem: *problem.WithHint(hint)})
 }
 
 // loopbackDeadline is when to stop waiting: the code's expiry plus a little
@@ -141,7 +163,9 @@ var loopbackPage = template.Must(template.New("loopback").Parse(`<!doctype html>
 // loopbackCallback serves the one-click callback. It accepts only this
 // login's own code on 127.0.0.1:port (a page elsewhere cannot rebind a name
 // to it, and does not know the code), and only the first good callback.
-func loopbackCallback(ctx context.Context, c *Client, port int, code string, results chan<- loopbackResult) http.Handler {
+// verifier is the minted code's verifier: the device code the browser brings
+// exchanges only together with it, and it never leaves this process.
+func loopbackCallback(ctx context.Context, c *Client, port int, code, verifier string, results chan<- loopbackResult) http.Handler {
 	var mu sync.Mutex
 	done := false
 	wantHost := "127.0.0.1:" + strconv.Itoa(port)
@@ -165,7 +189,7 @@ func loopbackCallback(ctx context.Context, c *Client, port int, code string, res
 			_ = loopbackPage.Execute(w, map[string]string{"Title": "Already signed in", "Detail": "You can close this tab."})
 			return
 		}
-		resp, err := c.ExchangeCliAuthLogin(ctx, api.CliAuthCodeResponse{Code: code, DeviceCode: q.Get("device_code")})
+		resp, err := c.ExchangeCliAuthLogin(ctx, api.CliAuthCodeResponse{Code: code, DeviceCode: q.Get("device_code"), Verifier: verifier})
 		if err != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			_ = loopbackPage.Execute(w, map[string]string{"Title": "Sign-in failed", "Detail": "Return to your terminal for details."})

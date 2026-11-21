@@ -33,10 +33,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -113,7 +111,7 @@ func (s *server) postLoginEmail(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 	if err != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -213,7 +211,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(createErr, state.ErrConflict) {
 				// Concurrent signup. Re-issue the verify path so
 				// the response shape matches the post-create path.
-				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 				if verr != nil {
 					writePasswordCheckUnavailable(w)
 					return
@@ -261,7 +259,7 @@ func (s *server) postSignup(w http.ResponseWriter, r *http.Request) {
 	//   - Different password: 401 invalid_credentials (NEVER 409).
 	// Signup is also a password sign-in for a bound address. Share its
 	// verification and failure accounting with /login and /v1/auth/signup.
-	acct, ok, err := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, ok, err := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 	if err != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -484,7 +482,7 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 	}
 	// The reset link proved control of the address: lift a failed-sign-in
 	// pause someone else's guessing put on it.
-	s.resetLoginFailures(r.Context(), acct.Email)
+	s.resetLoginFailures(withLoginNetwork(r.Context(), r), acct.Email)
 	s.issueSessionCookie(w, r, acct)
 	target := "/dashboard/"
 	if len(leftKeys) > 0 {
@@ -712,7 +710,7 @@ func (s *server) accountChangeProof(w http.ResponseWriter, r *http.Request, acct
 			s.log.Error("set_password.verify", "account_id", acct.ID, "err", verr)
 		}
 		if verr != nil || !matched {
-			s.recordLoginFailure(r.Context(), acct.Email, &acct)
+			s.recordLoginFailure(withLoginNetwork(r.Context(), r), acct.Email, &acct)
 			s.audit.Emit(r.Context(), "account.password_set_denied", &acct.ID, map[string]any{
 				"reason": "current_password",
 			})
@@ -1059,7 +1057,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if errors.Is(createErr, state.ErrConflict) {
-				existing, ok, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+				existing, ok, verr := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 				if verr != nil {
 					writePasswordCheckUnavailable(w)
 					return
@@ -1096,7 +1094,7 @@ func (s *server) postV1AuthSignup(w http.ResponseWriter, r *http.Request) {
 	// (OAuth-only accounts) stay aligned with postV1AuthLogin and
 	// postLoginEmail. Otherwise the duplicate Argon2id-verify here
 	// would drift from the canonical helper.
-	existing, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	existing, hit, verr := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 	if verr != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -1124,7 +1122,7 @@ func (s *server) postV1AuthLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	acct, hit, verr := s.verifyPasswordOrPad(r.Context(), email, password)
+	acct, hit, verr := s.verifyPasswordOrPad(withLoginNetwork(r.Context(), r), email, password)
 	if verr != nil {
 		writePasswordCheckUnavailable(w)
 		return
@@ -1277,25 +1275,33 @@ func (s *server) refusePasswordOnlyKey(w http.ResponseWriter, r *http.Request, a
 // to be minted leaves at most api.SignInAPIKeysMax. Best-effort: a failure
 // is logged and the sign-in proceeds.
 func (s *server) retireOldSignInKeys(r *http.Request, acct state.Account) {
+	s.retireOldLoginKeys(r, acct, signInKeyLabel, api.SignInAPIKeysMax-1)
+}
+
+// retireOldLoginKeys keeps the newest keep live keys labelled label and
+// revokes the rest, so interactive sign-ins (a password sign-in, each
+// `gregale login`) cannot pile up live full-access keys. Best-effort: a
+// failure is logged and the sign-in proceeds.
+func (s *server) retireOldLoginKeys(r *http.Request, acct state.Account, label string, keep int) {
 	keys, err := s.store.ListAPIKeys(r.Context(), acct.ID)
 	if err != nil {
 		s.log.Warn("v1auth.sign_in_keys_list", "account", acct.ID, "err", err)
 		return
 	}
-	live := liveSignInKeys(keys, time.Now())
-	for i := api.SignInAPIKeysMax - 1; i < len(live); i++ {
+	live := liveLoginKeys(keys, label, time.Now())
+	for i := max(keep, 0); i < len(live); i++ {
 		if _, err := s.revokeAPIKeyWithReason(r, acct, live[i].ID, "sign_in_rotated"); err != nil {
 			s.log.Warn("v1auth.sign_in_key_retire", "account", acct.ID, "key", live[i].ID, "err", err)
 		}
 	}
 }
 
-// liveSignInKeys returns the unrevoked, unexpired keys a password sign-in
-// minted, newest first.
-func liveSignInKeys(keys []state.APIKey, now time.Time) []state.APIKey {
+// liveLoginKeys returns the unrevoked, unexpired keys labelled label, newest
+// first.
+func liveLoginKeys(keys []state.APIKey, label string, now time.Time) []state.APIKey {
 	var live []state.APIKey
 	for _, k := range keys {
-		if k.Label != signInKeyLabel || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
+		if k.Label != label || k.Status == "revoked" || (k.ExpiresAt != nil && !k.ExpiresAt.After(now)) {
 			continue
 		}
 		live = append(live, k)
@@ -1462,114 +1468,4 @@ func (s *server) sendEmailVerificationAt(ctx context.Context, base string, acct 
 	}); err != nil {
 		s.log.Error("email_verification.mailer", "err", err, "account_id", acct.ID)
 	}
-}
-
-// verifyEmailConfirm is GET /v1/auth/verify-email. A browser gets a button
-// that posts the token back, and nothing is consumed: the GET used to consume
-// the token, so mail scanners that prefetch links (Safe Links, Proofpoint,
-// Mimecast) verified the address and the person then saw "verification link
-// invalid" (bug hunt round 8). Magic links already confirm the same way. A
-// client that does not ask for HTML keeps the old one-step verification.
-func (s *server) verifyEmailConfirm(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	if !api.AcceptsHTML(r) {
-		s.verifyEmailToken(w, r, token)
-		return
-	}
-	if raw, err := base64.RawURLEncoding.DecodeString(token); err != nil || len(raw) != 32 {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Referrer-Policy", "no-referrer")
-	_ = emailVerificationConfirmPage.Execute(w, token)
-}
-
-var emailVerificationConfirmPage = template.Must(template.New("verify-email-confirm").Parse(`<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Verify your email</title></head>
-<body>
-<main>
-<h1>Verify your email address</h1>
-<form method="post" action="/v1/auth/verify-email">
-<input type="hidden" name="token" value="{{.}}">
-<button type="submit">Verify email</button>
-</form>
-</main>
-</body>
-</html>
-`))
-
-// verifyEmail is POST /v1/auth/verify-email, the confirmation page's form.
-func (s *server) verifyEmail(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	s.verifyEmailToken(w, r, strings.TrimSpace(r.PostFormValue("token")))
-}
-
-// verifyEmailToken consumes a verification token. Possession of the email
-// link never becomes a session credential, and the link verifies only from a
-// browser signed in to its account (ADR 20261109120000): whoever signed up
-// with the address may not own it, and the mailbox owner clicking a link
-// someone else's sign-up sent them must not vouch for that someone's
-// password, keys and authenticator. The mailbox owner who did not sign up
-// cannot sign in with that password; they use an email sign-in link, which
-// clears whatever the sign-up left.
-func (s *server) verifyEmailToken(w http.ResponseWriter, r *http.Request, token string) {
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil || len(raw) != 32 {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	if !s.verificationFromAccountBrowser(w, r, api.HashToken(raw), token) {
-		return
-	}
-	accountID, err := s.store.ConsumeEmailVerificationToken(r.Context(), api.HashToken(raw))
-	if err != nil {
-		s.log.Info("email_verification.invalid_token", "err", err)
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	s.audit.Emit(r.Context(), "auth.email_verified", &accountID, map[string]any{
-		"method": "email_link",
-	})
-	page := dashboard.Page{Title: "Email verified", Body: "email_verified"}
-	if err := dashboard.Render(w, s.log, httpsec.NonceFromContext(r.Context()), page); err != nil {
-		s.log.Error("dashboard render email verified", "err", err)
-		renderProblem(w, s.log, err)
-	}
-}
-
-// Keep the imports tidy — these helpers are referenced by the
-// future test surface and the README expansion; the imports stay
-// green so gofmt doesn't flag them on a future edit.
-
-// verificationFromAccountBrowser reports whether r comes from a browser fully
-// signed in to the account the verification link belongs to. Otherwise it
-// answers: a browser goes to sign in and comes back to the link, any other
-// client gets 401; the link is not consumed.
-func (s *server) verificationFromAccountBrowser(w http.ResponseWriter, r *http.Request, hash []byte, token string) bool {
-	peek, ok := s.store.(state.EmailVerificationPeekStore)
-	if !ok {
-		return true
-	}
-	ownerID, err := peek.EmailVerificationTokenAccount(r.Context(), hash)
-	if err != nil {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return false
-	}
-	if owner, err := s.store.AccountByID(r.Context(), ownerID); err == nil && s.signedInBrowserAs(r, owner) {
-		return true
-	}
-	if api.AcceptsHTML(r) {
-		next := emailVerificationPath + "?token=" + url.QueryEscape(token)
-		http.Redirect(w, r, loginPath+"?verify=1&next="+url.QueryEscape(next), http.StatusSeeOther)
-		return false
-	}
-	api.WriteProblemForRequest(w, r, api.NewProblem(http.StatusUnauthorized, api.CodeSessionExpired,
-		"Sign in to verify", "open the link in a browser signed in to the account it was sent for"))
-	return false
 }

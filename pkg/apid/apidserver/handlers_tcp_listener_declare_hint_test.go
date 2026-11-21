@@ -32,7 +32,7 @@ func TestTCPListenerUndeclaredPortSaysHowToDeclareIt(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
 		t.Fatalf("decode problem: %v", err)
 	}
-	for _, want := range []string{"Compose project's ports", "tcp-<port>", "PATCH /v1/apps/tcp-undeclared"} {
+	for _, want := range []string{"Compose project's ports", "tcp-<port>", "gregale app tcp-undeclared --ports tcp:<port>"} {
 		if !strings.Contains(problem.Detail, want) {
 			t.Errorf("detail %q missing %q", problem.Detail, want)
 		}

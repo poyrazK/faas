@@ -24,7 +24,7 @@ func versionJSON(v agentstore.Version) api.AgentVersion {
 			Harness:        api.AgentHarness{Preset: h.Preset, Image: h.Image, Run: h.Run, Models: h.Models},
 			PromptTemplate: v.PromptTemplate, RAMMB: v.RAMMB, TimeoutSec: v.TimeoutSec,
 			Integrations: v.Integrations, AIBudgetMillicents: v.AIBudgetMillicents, Deliveries: deliveriesJSON(v.Deliveries),
-			PauseDuringModelCalls: &pause,
+			PauseDuringModelCalls: &pause, CapabilityPolicy: v.CapabilityPolicy,
 		},
 		CreatedAt: v.CreatedAt,
 	}

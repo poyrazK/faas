@@ -178,6 +178,11 @@ type operationFixture struct {
 }
 
 func (f *operationFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get(api.AgentPreviewHeader) == api.AgentPreviewBudget {
+		// A budget preview writes nothing (ADR-20261111114059).
+		_ = json.NewEncoder(w).Encode(api.AgentBudgetPreview{Preview: true, Charged: true})
+		return
+	}
 	if f.serveScaling(w, r) {
 		return
 	}
@@ -470,6 +475,12 @@ func TestCatalogOutputContractsAndRetryHints(t *testing.T) {
 	for _, tool := range toolsetCatalog(t, nil) {
 		if tool.OutputSchema == nil {
 			t.Errorf("%s lacks an output schema", tool.Name)
+		}
+		if tool.Name == "gregale_plan_task_tool_deploy" || tool.Name == "gregale_plan_task_tool_recovery" {
+			if !tool.Annotations.IdempotentHint || !tool.Annotations.ReadOnlyHint {
+				t.Error("read-only Task review and recovery planning must promise idempotency")
+			}
+			continue
 		}
 		if strings.HasPrefix(tool.Name, "gregale_plan_") || tool.Name == "gregale_request_secret" {
 			if tool.Annotations.IdempotentHint {

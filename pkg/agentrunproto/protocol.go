@@ -62,9 +62,11 @@ const (
 	MaxInputPathBytes      = 512
 	MaxInputPathDepth      = 8
 	MaxFailureMessageBytes = 512
-	// MaxTimeoutSec is the largest plan timeout (AgentRunTimeoutMaxSec);
-	// admission applies the plan's own.
-	MaxTimeoutSec = 3600
+	// MaxTimeoutSec is the largest guest timeout: the largest plan timeout
+	// (AgentRunTimeoutMaxSec) plus approval-wait credit (ADR-20261027090016
+	// amendment 3). Admission applies the plan's own, and vmmd holds a run
+	// with credit to its seller deadline.
+	MaxTimeoutSec = 7200
 	// MaxResultBytes is the largest plan AgentResultMaxBytes.
 	MaxResultBytes = 1 << 20
 

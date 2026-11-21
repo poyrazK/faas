@@ -62,6 +62,7 @@ type testScenario struct {
 	Services         map[string]testService    `yaml:"services"`
 	Trigger          []string                  `yaml:"trigger"`
 	Command          []string                  `yaml:"command"`
+	GRPC             *testGRPCConfig           `yaml:"grpc,omitempty" json:"grpc,omitempty"`
 	Requests         []testHTTPRequest         `yaml:"requests"`
 	Checks           []testHTTPRequest         `yaml:"checks"`
 	Steps            []testScenarioStep        `yaml:"steps,omitempty"`
@@ -399,7 +400,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	validateOnly := fs.Bool("validate", false, "validate scenario sources without platform access")
 	preflightOnly := fs.Bool("preflight", false, "check account capacity before provisioning")
 	engine := fs.String("engine", "real-vm", "real-vm, local, or simulated")
-	baseURL := fs.String("base-url", "", "HTTP loopback origin (optional with local.command)")
+	baseURL := fs.String("base-url", "", "loopback origin or https://<app>.gregale.dev (optional with local.command)")
 	dataPath := fs.String("data", "", "JSON or CSV case data for the local engine")
 	load := fs.Bool("load", false, "run native HTTP journeys concurrently with the local engine")
 	vus := fs.Int("vus", 0, "concurrent users or arrival-rate concurrency cap (1..50, default 1)")
@@ -541,12 +542,17 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 		if err := validateTestReportInputs(testScenarioInputPaths(scenario, sourceDir), *reportPath, *junitPath, *htmlPath); err != nil {
 			return printErr("Invalid test report paths", err)
 		}
+		if err := validateTestGRPCDefinitions(context.Background(), sourceDir, scenario); err != nil {
+			return printErr("Invalid scenario manifest", fmt.Errorf("scenario %q: %w", name, err))
+		}
 		if !*load {
 			httpScenario := scenario
 			httpScenario.Load = nil
 			if err := validateTestHTTPRequestsWithData(httpScenario, dataFields); err != nil {
 				return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 			}
+		} else if err := validateTestGRPCLoad(scenario, true); err != nil {
+			return printErr("Invalid scenario execution", fmt.Errorf("scenario %q: %w", name, err))
 		}
 		if err := validateTestScenarioExecution(scenario, *engine, profiles...); err != nil {
 			return printErr("Invalid scenario execution", err)
@@ -633,7 +639,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 			return printErr("Not logged in", err)
 		}
 	} else if *engine == "simulated" && len(scenario.Simulation) == 0 {
-		return printErr("No simulation", fmt.Errorf("scenario %q has no simulation command", *scenarioName))
+		return printErr("No simulation", errNoSimulationCommand(*scenarioName))
 	} else if *engine == "local" {
 		if err := validateLocalTestScenario(scenario); err != nil {
 			return printErr("Invalid local scenario", err)
@@ -783,6 +789,9 @@ func decodeTestManifestDocument(data []byte, absolute string, fieldsForScenario 
 		}
 		if err := validateTestScenarioSteps(scenario, fields); err != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q steps: %w", name, err)
+		}
+		if err := validateTestGRPCLoad(scenario, false); err != nil {
+			return testManifest{}, "", fmt.Errorf("scenario %q: %w", name, err)
 		}
 		if scenario.Load != nil && scenario.Load.Relative != nil {
 			return testManifest{}, "", fmt.Errorf("scenario %q: load.relative is only valid on a staged step", name)
@@ -1114,6 +1123,7 @@ func runSimulatedTest(parent context.Context, name string, scenario testScenario
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx = withTestGRPCScenario(ctx, scenario.GRPC, manifestDir)
 	source := scenario.Source
 	if source == "" {
 		source = "."
@@ -1188,6 +1198,7 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	ctx = withTestGRPCScenario(ctx, scenario.GRPC, manifestDir)
 	source := scenario.Source
 	if source == "" {
 		source = "."
@@ -1621,6 +1632,8 @@ func runTestProfile(parent context.Context, client *Client, name string, scenari
 	}
 	proxy, recorder := newTestProxy(target)
 	defer proxy.Close()
+	// gRPC steps dial the app itself: the evidence proxy speaks HTTP/1.
+	ctx = withTestGRPCDialTarget(ctx, proxy.URL, target.String())
 	env := append(testCommandBaseEnv(),
 		"GREGALE_TEST_URL="+proxy.URL,
 		"GREGALE_TEST_APP_SLUG="+session.App.Slug,
@@ -2799,4 +2812,14 @@ func writeTestReport(path string, receipts []testRunReceipt) error {
 		return err
 	}
 	return nil
+}
+
+// errNoSimulationCommand says what --engine simulated needs and what to run
+// instead: the bare "has no simulation command" left users guessing which key
+// to add (microservices-demo feedback 2026-11-16).
+func errNoSimulationCommand(scenario string) error {
+	return fmt.Errorf("scenario %q has no simulation command; --engine simulated runs the scenario's `simulation:` command "+
+		"(for example `simulation: [node, --test, test/checkout.simulated.test.mjs]` in gregale-test.yaml), "+
+		"or run it against a real deployment with --engine real-vm or a local server with --engine local --base-url URL; "+
+		"see "+docsSiteURL+"/scenario-tests", scenario)
 }

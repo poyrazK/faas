@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -82,6 +84,15 @@ func newControlPlaneProxy(rawTarget string, next http.Handler, log *slog.Logger,
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if clientLeftControlPlaneRequest(r, err) {
+				// The caller gave up (a probe timing out, a closed tab):
+				// apid did not fail, so this is not an error and nobody
+				// reads the answer (prod 2026-11-16: three /readyz probes
+				// logged ERROR while apid restarted).
+				log.Info("control-plane API request abandoned by client", "path", r.URL.Path)
+				w.WriteHeader(statusClientClosedRequest)
+				return
+			}
 			log.Error("control-plane API upstream unavailable", "path", r.URL.Path, "err", err)
 			api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "control_plane_unavailable", "Control plane unavailable", "the control-plane API is not reachable"))
 		},
@@ -249,6 +260,10 @@ func (p *controlPlaneProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.next.ServeHTTP(w, r)
 		return
 	}
+	if r.URL.Path == "/" && hostWithoutPort(r.Host) == "sales."+p.platformDomain {
+		p.proxy.ServeHTTP(w, r)
+		return
+	}
 	if apid.IsApidPath(r.URL.Path) && !isComputeOwnedGatewayPath(r.URL.Path) {
 		// ADR-480 (amends spec §4.1.1): platform paths are reserved on
 		// platform hosts only. App subdomains, previews and customer
@@ -335,4 +350,14 @@ func isComputeOwnedLogsPath(path string) bool {
 	// ADR-741: the `gregale dev --debug` tunnel is served by the compute
 	// gateway beside the log stream.
 	return tail == "/logs" || tail == "/debug" || len(tail) > len("/logs/") && tail[:len("/logs/")] == "/logs/"
+}
+
+// statusClientClosedRequest is nginx's 499: the client went away before a
+// response was written.
+const statusClientClosedRequest = 499
+
+// clientLeftControlPlaneRequest reports whether a proxy error is only the
+// client's own cancellation reaching the upstream call.
+func clientLeftControlPlaneRequest(r *http.Request, err error) bool {
+	return errors.Is(err, context.Canceled) && errors.Is(r.Context().Err(), context.Canceled)
 }

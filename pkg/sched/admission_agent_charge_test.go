@@ -106,6 +106,56 @@ func TestAgentMeasuredChargeFollowsSamples(t *testing.T) {
 	}
 }
 
+// Without a fresh measurement every agent run counts at ram_mb + 8 again
+// (its booked reservation plus its discount). Releasing one run takes both
+// parts away, so the node counts exactly the runs still resident.
+func TestAgentDiscountLeavesWithTheReleasedRun(t *testing.T) {
+	m := &fakeMeasurement{mb: map[string]int{"n1": 0}, ok: true}
+	l, clock := newMeasuredLedger(m)
+	m.asOf = clock.now()
+	l.EnableAgentMeasuredCharge((&fakeAgentMemory{}).read)
+	for i := 0; i < 2; i++ {
+		clock.tick()
+		if err := l.Admit(agentChargeReq(i, 2048, 300)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m.ok = false
+	full := api.BillableRAMMB(2048)
+	if used := l.AdmissionUsedMB("n1"); used != 2*full {
+		t.Fatalf("two runs without a measurement count %d MB, want %d", used, 2*full)
+	}
+	l.Release("agent-0")
+	if used := l.AdmissionUsedMB("n1"); used != full {
+		t.Fatalf("after releasing one run the node counts %d MB, want %d", used, full)
+	}
+}
+
+// Samples the reader marks unusable (ok=false) never set a run's charge,
+// however high they read; the run stays at its peak.
+func TestAgentMeasuredChargeIgnoresUnusableSamples(t *testing.T) {
+	m := &fakeMeasurement{mb: map[string]int{"n1": 0}, ok: true}
+	l, clock := newMeasuredLedger(m)
+	m.asOf = clock.now()
+	samples := &fakeAgentMemory{mb: map[string]float64{}, ok: true}
+	l.EnableAgentMeasuredCharge(samples.read)
+	for i := 0; i < 10; i++ {
+		clock.tick()
+		if err := l.Admit(agentChargeReq(i, 2048, 300)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock.tick()
+	samples.asOf = clock.now()
+	for i := 0; i < 10; i++ {
+		samples.mb[fmt.Sprintf("agent-%d", i)] = 700
+	}
+	samples.ok = false
+	if used := l.AdmissionUsedMB("n1"); used != 10*308 {
+		t.Fatalf("used %d MB from unusable samples, want ten peaks of 308", used)
+	}
+}
+
 // Invariant 2 on an agent node (ADR-20261027090015 §3) over random
 // admissions, releases and samples: an admission leaves the measured figure
 // within the ceiling, reservations within the overcommit bound, and each
@@ -152,8 +202,8 @@ func TestPropertyAgentMeasuredChargeBounds(t *testing.T) {
 					samples.mb[id] = float64(r.Intn(ram + 1))
 				}
 			}
-			if booked := l.ResidentRAMForNode("n1"); booked > 2*measuredCeilingMB {
-				t.Fatalf("trial %d: %d MB booked over twice the ceiling", trial, booked)
+			if booked := l.ResidentRAMForNode("n1"); booked > measuredCeilingMB*api.MeasuredAdmissionMaxOvercommitPercent/100 {
+				t.Fatalf("trial %d: %d MB booked over the overcommit bound", trial, booked)
 			}
 		}
 	}
