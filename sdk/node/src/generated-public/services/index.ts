@@ -30,6 +30,7 @@ export { NetworkingService } from './NetworkingService.js';
 export { ObservabilityService } from './ObservabilityService.js';
 export { OperationsService } from './OperationsService.js';
 export { OrgsService } from './OrgsService.js';
+export { OutboundService } from './OutboundService.js';
 export { PreviewsService } from './PreviewsService.js';
 export { ProjectsService } from './ProjectsService.js';
 export { RegistryService } from './RegistryService.js';
