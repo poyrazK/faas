@@ -77,6 +77,20 @@ func (f *asyncFixture) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.alerts = append(f.alerts, req)
 		encode(api.AlertRuleResponse{ID: "rule-1", AppID: appID, Name: req.Name})
+	case r.URL.Path == "/v1/apps/alpha/workflow-attention":
+		// apid refuses any empty query value and requires a scope
+		// (operation.OperationWorkflowAttentionOptions, ValidateScope).
+		for _, values := range r.URL.Query() {
+			if len(values) != 1 || values[0] == "" {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "validation_failed", "Invalid", "operation input or contract is invalid"))
+				return
+			}
+		}
+		if r.URL.Query().Get("scope") != api.DefaultEnvScope {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, "validation_failed", "Invalid", "scope is required"))
+			return
+		}
+		encode(api.OperationWorkflowAttentionResponse{})
 	case r.URL.Path == "/v1/incidents/inc-1" || r.URL.Path == "/v1/incidents/inc-other":
 		app := "alpha"
 		if strings.HasSuffix(r.URL.Path, "other") {
@@ -216,5 +230,14 @@ func TestIncidentNotesStayInsideAppConsent(t *testing.T) {
 	}
 	if len(f.notes) != 1 {
 		t.Fatalf("notes = %v", f.notes)
+	}
+}
+
+// gregale_list_workflow_attention sent `scope=` empty, and apid refuses an
+// empty query value, so the tool failed on every call on production.
+func TestWorkflowAttentionSendsTheDefaultScope(t *testing.T) {
+	m, _ := newAsyncFixture(t, nil)
+	if _, err := m.listWorkflowAttention(t.Context(), appArgs{App: "alpha"}); err != nil {
+		t.Fatal(err)
 	}
 }
