@@ -61,7 +61,18 @@ func TestReconcileStaleInstanceHint(t *testing.T) {
 			},
 			afterStart: past, wantMoved: true, wantState: state.StateFailed,
 		},
-		{name: "inside the grace window: row stays", stats: empty, afterStart: 500 * time.Millisecond, wantState: state.StateRunning},
+		// A replacement that died moments after it started is judged once
+		// the grace has passed, not skipped (the gate's second owner_crash).
+		{name: "inside the grace window: waits, then fails the row", stats: empty, afterStart: 500 * time.Millisecond, wantMoved: true, wantState: state.StateFailed},
+		{
+			name: "inside the grace window: vmmd lists it after the wait: row stays",
+			stats: func(id string) statsFunc {
+				return func(context.Context, string) (*sched.StatsSnapshot, error) {
+					return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{InstanceID: id}}}, nil
+				}
+			},
+			afterStart: 500 * time.Millisecond, wantState: state.StateRunning,
+		},
 		{name: "hint for another app: row stays", stats: empty, afterStart: past, otherApp: true, wantState: state.StateRunning},
 	}
 	for _, tc := range cases {

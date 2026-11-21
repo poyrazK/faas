@@ -69,10 +69,21 @@ func (e *Engine) ReconcileStaleInstanceHint(ctx context.Context, appID, instance
 		e.staleHintSkipped(instanceID, "row is not this app's RUNNING instance", err)
 		return false
 	}
-	// A just-started VM may not be in vmmd's live set yet.
-	if !ins.StartedAt.IsZero() && e.clockNow().Sub(ins.StartedAt) < staleInstanceHintGrace {
-		e.staleHintSkipped(instanceID, "inside the start grace", nil)
-		return false
+	// A just-started VM may not be in vmmd's live set yet, so wait out the
+	// rest of the grace before asking rather than dropping the hint: the
+	// gate's owner_crash crashed the owner about a second after the
+	// replacement started, and the gateway sends this evidence only once.
+	if age := e.clockNow().Sub(ins.StartedAt); !ins.StartedAt.IsZero() && age < staleInstanceHintGrace {
+		select {
+		case <-ctx.Done():
+			e.staleHintSkipped(instanceID, "admission ended inside the start grace", ctx.Err())
+			return false
+		case <-time.After(staleInstanceHintGrace - age):
+		}
+		if ins, err = e.store.InstanceByID(ctx, instanceID); err != nil || ins.State != string(state.StateRunning) {
+			e.staleHintSkipped(instanceID, "row left RUNNING during the start grace", err)
+			return false
+		}
 	}
 	stats, err := e.staleHintStats(ctx, ins.NodeID)
 	if err != nil {
