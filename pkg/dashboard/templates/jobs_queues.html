@@ -48,6 +48,7 @@
   <main>
     {{template "email-verification-banner" .}}
     <h1>Jobs &amp; queues</h1>
+    {{if .Data.RunPipelines}}<p><a href="/dashboard/run-pipelines">Run pipelines</a></p>{{end}}
     <p class="muted">Run-to-completion jobs and queue health for this account. Queue samples are read-only; replay resets one dead-letter message to pending.</p>
 
     {{if eq .Data.Action "replayed"}}<div class="flash ok" role="status">Dead-letter message replayed and returned to the pending queue.</div>{{end}}

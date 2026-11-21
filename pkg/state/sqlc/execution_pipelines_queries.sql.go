@@ -275,6 +275,70 @@ func (q *Queries) PipelineGet(ctx context.Context, db DBTX, jobID pgtype.UUID) (
 	return i, err
 }
 
+const pipelineHistoryPage = `-- name: PipelineHistoryPage :many
+SELECT j.id, j.workflow_id, j.status, j.step_count, j.created_at, j.finished_at,
+       COALESCE(p.policy->'rerun'->>'parent_id', '')::text AS parent_id,
+       COALESCE(p.completion->>'outcome', j.status)::text AS outcome
+FROM agent_execution_workflows j JOIN execution_workflow_pipelines p ON p.job_id=j.id
+WHERE j.account_id=$1
+AND ($2::timestamptz IS NULL OR
+     (j.created_at, j.id) < ($2::timestamptz, $3::uuid))
+ORDER BY j.created_at DESC, j.id DESC
+LIMIT $4::int
+`
+
+type PipelineHistoryPageParams struct {
+	AccountID pgtype.UUID
+	BeforeAt  pgtype.Timestamptz
+	BeforeID  pgtype.UUID
+	PageLimit int32
+}
+
+type PipelineHistoryPageRow struct {
+	ID         pgtype.UUID
+	WorkflowID string
+	Status     string
+	StepCount  int16
+	CreatedAt  pgtype.Timestamptz
+	FinishedAt pgtype.Timestamptz
+	ParentID   string
+	Outcome    string
+}
+
+func (q *Queries) PipelineHistoryPage(ctx context.Context, db DBTX, arg PipelineHistoryPageParams) ([]PipelineHistoryPageRow, error) {
+	rows, err := db.Query(ctx, pipelineHistoryPage,
+		arg.AccountID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PipelineHistoryPageRow{}
+	for rows.Next() {
+		var i PipelineHistoryPageRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkflowID,
+			&i.Status,
+			&i.StepCount,
+			&i.CreatedAt,
+			&i.FinishedAt,
+			&i.ParentID,
+			&i.Outcome,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pipelineInsert = `-- name: PipelineInsert :exec
 INSERT INTO execution_workflow_pipelines(job_id,policy,deadline_at,due_at,journal) VALUES($1,$2,$3,$4,$5)
 `
@@ -496,6 +560,52 @@ func (q *Queries) PipelineRunByLabel(ctx context.Context, db DBTX, arg PipelineR
 		&i.EnvironmentID,
 	)
 	return i, err
+}
+
+const pipelineRunUsage = `-- name: PipelineRunUsage :many
+SELECT execution_id, created_at, started_at, finished_at, wall_time_ms
+FROM execution_usage_ledger
+WHERE account_id=$1
+AND execution_id=ANY($2::uuid[])
+`
+
+type PipelineRunUsageParams struct {
+	AccountID pgtype.UUID
+	RunIds    []pgtype.UUID
+}
+
+type PipelineRunUsageRow struct {
+	ExecutionID pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+	WallTimeMs  int64
+}
+
+func (q *Queries) PipelineRunUsage(ctx context.Context, db DBTX, arg PipelineRunUsageParams) ([]PipelineRunUsageRow, error) {
+	rows, err := db.Query(ctx, pipelineRunUsage, arg.AccountID, arg.RunIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PipelineRunUsageRow{}
+	for rows.Next() {
+		var i PipelineRunUsageRow
+		if err := rows.Scan(
+			&i.ExecutionID,
+			&i.CreatedAt,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.WallTimeMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const pipelineScopedJob = `-- name: PipelineScopedJob :one
