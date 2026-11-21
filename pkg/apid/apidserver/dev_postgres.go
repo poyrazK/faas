@@ -13,10 +13,27 @@ import (
 
 const devPostgresEnvironmentKey = "DATABASE_URL"
 
+// devPostgresMigrationKey carries a migration credential for the developer
+// database. Only release tasks receive migration credentials, so a dev app's
+// release command can create its schema while the serving app and a
+// --postgres-seed keep DATABASE_URL, whose read_write login cannot.
+const devPostgresMigrationKey = "MIGRATION_DATABASE_URL"
+
+// devPostgresBindings are the bindings a developer database gets, the
+// DATABASE_URL one first: the response and the ownership rule name it.
+var devPostgresBindings = []struct {
+	key    string
+	access managedpostgres.CredentialAccess
+}{
+	{devPostgresEnvironmentKey, managedpostgres.CredentialReadWrite},
+	{devPostgresMigrationKey, managedpostgres.CredentialMigration},
+}
+
 const devPostgresStorageLimitBytes int64 = 1 << 30
 
 // ensureDevPostgres creates or reuses the database whose name matches the
-// stable developer app slug, then binds it to DATABASE_URL. The name is an
+// stable developer app slug, then binds it to DATABASE_URL and
+// MIGRATION_DATABASE_URL (devPostgresBindings). The name is an
 // internal idempotency key; callers only receive safe resource metadata.
 func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app state.App, request *api.DevPostgresRequest) (*api.DevPostgresResponse, error) {
 	if request == nil {
@@ -93,58 +110,84 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		return nil, err
 	}
 
-	binding, bindingCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
-		AccountID:      acct.ID,
-		DatabaseID:     database.ID,
-		AppID:          app.ID,
-		Scope:          api.DefaultEnvScope,
-		EnvironmentKey: devPostgresEnvironmentKey,
-		Access:         managedpostgres.CredentialReadWrite,
-	})
-	if err != nil {
+	var created []string
+	var primary managedpostgres.Binding
+	for i, want := range devPostgresBindings {
+		binding, bindingCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
+			AccountID:      acct.ID,
+			DatabaseID:     database.ID,
+			AppID:          app.ID,
+			Scope:          api.DefaultEnvScope,
+			EnvironmentKey: want.key,
+			Access:         want.access,
+		})
 		if bindingCreated && binding.ID != "" {
-			if _, deleteErr := s.managedPostgresBindings.Delete(context.WithoutCancel(ctx), acct.ID, binding.ID); deleteErr != nil && s.log != nil {
-				s.log.Warn("dev postgres binding compensation failed", "binding_id", binding.ID, "err", deleteErr)
-			}
+			created = append(created, binding.ID)
 		}
-		if !wasExisting {
-			if _, deleteErr := s.managedPostgres.Delete(context.WithoutCancel(ctx), acct.ID, database.ID); deleteErr != nil && s.log != nil {
-				s.log.Warn("dev postgres database compensation failed", "database_id", database.ID, "err", deleteErr)
-			}
+		if err != nil {
+			s.compensateDevPostgres(ctx, acct.ID, database.ID, created, !wasExisting)
+			return nil, err
 		}
-		return nil, err
+		if i == 0 {
+			primary = binding
+		}
 	}
 	return &api.DevPostgresResponse{
 		DatabaseID:     database.ID,
 		Name:           database.Name,
 		State:          string(database.State),
-		BindingID:      binding.ID,
-		BindingState:   string(binding.State),
-		EnvironmentKey: binding.EnvironmentKey,
+		BindingID:      primary.ID,
+		BindingState:   string(primary.State),
+		EnvironmentKey: primary.EnvironmentKey,
 	}, nil
 }
 
-// errDevPostgresDatabaseURLSecret reports a customer DATABASE_URL secret in
-// the developer app's default scope.
-var errDevPostgresDatabaseURLSecret = errors.New("developer app already holds a DATABASE_URL secret")
+// compensateDevPostgres undoes what a failed ensureDevPostgres created: the
+// bindings it made and, when it made the database too, the database.
+func (s *server) compensateDevPostgres(ctx context.Context, accountID, databaseID string, bindingIDs []string, deleteDatabase bool) {
+	ctx = context.WithoutCancel(ctx)
+	for _, id := range bindingIDs {
+		if _, err := s.managedPostgresBindings.Delete(ctx, accountID, id); err != nil && s.log != nil {
+			s.log.Warn("dev postgres binding compensation failed", "binding_id", id, "err", err)
+		}
+	}
+	if !deleteDatabase {
+		return
+	}
+	if _, err := s.managedPostgres.Delete(ctx, accountID, databaseID); err != nil && s.log != nil {
+		s.log.Warn("dev postgres database compensation failed", "database_id", databaseID, "err", err)
+	}
+}
+
+// devPostgresSecretConflict reports a customer secret in the developer app's
+// default scope under a key a developer database binding needs.
+type devPostgresSecretConflict struct{ key string }
+
+func (e devPostgresSecretConflict) Error() string {
+	return "developer app already holds a " + e.key + " secret"
+}
 
 // devPostgresDatabaseURLFree refuses --postgres while the developer app holds
-// a DATABASE_URL secret that no managed binding owns. The binding's credential
-// write only replaces a row the same binding owns, so it would fail and retry
-// hourly while the app kept the old value, and nothing would tell the
-// developer. The binding's own row (a renewal) is fine.
+// a DATABASE_URL or MIGRATION_DATABASE_URL secret that no managed binding
+// owns. A binding's credential write only replaces a row the same binding
+// owns, so it would fail and retry hourly while the app kept the old value,
+// and nothing would tell the developer. A binding's own row (a renewal) is
+// fine.
 func (s *server) devPostgresDatabaseURLFree(ctx context.Context, acct state.Account, app state.App) error {
-	secret, err := s.store.GetAppSecret(ctx, acct.ID, app.ID, devPostgresEnvironmentKey)
-	if errors.Is(err, state.ErrNotFound) {
-		return nil
+	for _, want := range devPostgresBindings {
+		secret, err := s.store.GetAppSecret(ctx, acct.ID, app.ID, want.key)
+		if errors.Is(err, state.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("read developer %s secret: %w", want.key, err)
+		}
+		if secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
+			continue
+		}
+		return devPostgresSecretConflict{key: want.key}
 	}
-	if err != nil {
-		return fmt.Errorf("read developer DATABASE_URL secret: %w", err)
-	}
-	if secret.ManagedPostgresBindingID != "" || secret.ManagedObjectStorageCredentialID != "" {
-		return nil
-	}
-	return errDevPostgresDatabaseURLSecret
+	return nil
 }
 
 // describeDevPostgres returns the safe state of the automatically named
@@ -207,16 +250,22 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 		}
 		owned := false
 		for _, binding := range bindings {
-			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || binding.EnvironmentKey != devPostgresEnvironmentKey {
-				continue
-			}
-			owned = true
-			if _, deleteErr := s.managedPostgresBindings.Delete(ctx, app.AccountID, binding.ID); deleteErr != nil && !errors.Is(deleteErr, managedpostgres.ErrNotFound) {
-				return fmt.Errorf("delete dev postgres binding: %w", deleteErr)
+			if binding.AppID == app.ID && binding.Scope == api.DefaultEnvScope && binding.EnvironmentKey == devPostgresEnvironmentKey {
+				owned = true
 			}
 		}
 		if !owned {
 			return nil
+		}
+		// The database's own bindings (devPostgresBindings) go with it; any
+		// other binding makes the delete below refuse.
+		for _, binding := range bindings {
+			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || !isDevPostgresBindingKey(binding.EnvironmentKey) {
+				continue
+			}
+			if _, deleteErr := s.managedPostgresBindings.Delete(ctx, app.AccountID, binding.ID); deleteErr != nil && !errors.Is(deleteErr, managedpostgres.ErrNotFound) {
+				return fmt.Errorf("delete dev postgres binding: %w", deleteErr)
+			}
 		}
 		remaining, listErr := s.managedPostgresBindings.List(ctx, app.AccountID, database.ID)
 		if listErr != nil {
@@ -231,4 +280,15 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 		return nil
 	}
 	return nil
+}
+
+// isDevPostgresBindingKey reports whether key is one of the developer
+// database's own binding keys.
+func isDevPostgresBindingKey(key string) bool {
+	for _, want := range devPostgresBindings {
+		if want.key == key {
+			return true
+		}
+	}
+	return false
 }

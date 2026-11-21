@@ -2162,9 +2162,21 @@ func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Accoun
 	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
 }
 
-// ErrDevPostgresDatabaseURLSecret is ensureDevPostgres's refusal when the
-// developer app already holds its own DATABASE_URL secret.
-var ErrDevPostgresDatabaseURLSecret = errDevPostgresDatabaseURLSecret
+// DevPostgresSecretConflictKey reports the key of ensureDevPostgres's refusal
+// when the developer app already holds a database variable of its own.
+func DevPostgresSecretConflictKey(err error) (string, bool) {
+	var conflict devPostgresSecretConflict
+	if errors.As(err, &conflict) {
+		return conflict.key, true
+	}
+	return "", false
+}
+
+// CleanupDevPostgresForTest tears down a developer environment's database as
+// the janitor and `gregale dev --stop` do.
+func (r *server) CleanupDevPostgresForTest(ctx context.Context, app state.App) error {
+	return r.cleanupDevPostgres(ctx, app)
+}
 
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox

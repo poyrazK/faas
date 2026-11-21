@@ -950,9 +950,9 @@ const (
 	// environment comes back on the first start after the teardown finishes.
 	CodeDevSessionTearingDown = "dev_session_tearing_down"
 	// CodeDevPostgresDatabaseURLSecret refuses `gregale dev --postgres` while
-	// the developer environment holds a DATABASE_URL secret of its own (from
-	// an earlier --env-file or by hand): the managed binding cannot replace
-	// it, so the app would keep the old database.
+	// the developer environment holds a DATABASE_URL or MIGRATION_DATABASE_URL
+	// secret of its own (from an earlier --env-file or by hand): the managed
+	// binding cannot replace it, so the app would keep the old database.
 	CodeDevPostgresDatabaseURLSecret = "dev_postgres_database_url_secret"
 	// ADR-1151 frozen tier. CodeInstanceNotFreezable is vmmd's refusal to
 	// freeze an instance whose traffic or lifecycle does not allow it (warm
@@ -2898,12 +2898,13 @@ func ErrDevSessionTearingDown() *Problem {
 }
 
 // ErrDevPostgresDatabaseURLSecret is returned when `gregale dev --postgres`
-// meets a DATABASE_URL secret the developer environment already holds.
-func ErrDevPostgresDatabaseURLSecret(appSlug string) *Problem {
+// meets a DATABASE_URL or MIGRATION_DATABASE_URL secret the developer
+// environment already holds; key names which.
+func ErrDevPostgresDatabaseURLSecret(appSlug, key string) *Problem {
 	return NewProblem(http.StatusConflict, CodeDevPostgresDatabaseURLSecret,
-		"DATABASE_URL is already set in this developer environment",
-		"--postgres provides DATABASE_URL, but this environment already has a DATABASE_URL secret (from an earlier --env-file or set by hand), and the app would keep using that database").
-		WithHint(fmt.Sprintf("Remove it with `gregale env unset --app %s DATABASE_URL` and run gregale dev --postgres again, or drop --postgres to keep your own database.", appSlug)).
+		"A database variable is already set in this developer environment",
+		fmt.Sprintf("--postgres provides DATABASE_URL and MIGRATION_DATABASE_URL, but this environment already has a %s secret (from an earlier --env-file or set by hand), and the app would keep using that database", key)).
+		WithHint(fmt.Sprintf("Remove it with `gregale env unset --app %s %s` and run gregale dev --postgres again, or drop --postgres to keep your own database.", appSlug, key)).
 		WithDocs(docsBase + "/dev")
 }
 

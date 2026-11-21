@@ -15,8 +15,9 @@ import (
 func (s *server) writeDevSession(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, request api.UpsertDevSessionRequest, status int) {
 	postgres, err := s.ensureDevPostgres(r.Context(), acct, app, request.Postgres)
 	if err != nil {
-		if errors.Is(err, errDevPostgresDatabaseURLSecret) {
-			api.WriteProblem(w, api.ErrDevPostgresDatabaseURLSecret(app.Slug))
+		var conflict devPostgresSecretConflict
+		if errors.As(err, &conflict) {
+			api.WriteProblem(w, api.ErrDevPostgresDatabaseURLSecret(app.Slug, conflict.key))
 			return
 		}
 		if errors.Is(err, managedpostgres.ErrQuotaExceeded) && !errors.Is(err, managedpostgres.ErrNotInPlan) {
