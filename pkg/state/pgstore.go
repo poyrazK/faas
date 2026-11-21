@@ -16741,6 +16741,9 @@ func (s *PgStore) CountNewErrorFingerprintsSince(ctx context.Context, accountID,
 		  from app_errors e
 		 where account_id = $1
 		   and first_seen_at >= $2
+		   -- A 5xx the app never answered (failed wake, platform refusal) is
+		   -- not a new application error (Observe audit 2026-11-21).
+		   and error_class <> 'wake_failed'
 		   and ($3::uuid is null or app_id = $3::uuid)
 		   and ($3::uuid is not null or not exists(select 1 from scenario_test_action_policies p where p.app_id = e.app_id))`,
 		accountID, since.UTC(), appArg).Scan(&total)

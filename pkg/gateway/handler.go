@@ -8754,6 +8754,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		h.metrics.ObserveRequest(appID, plan, code)
 		if platformErrorForSLO(r, status) {
 			h.metrics.ObservePlatformError(appID, plan)
+			ObservedRouteCarrierFrom(r.Context()).MarkUnanswered5xx()
 		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).
 		// The class label is the 3-digit status bucketed to 2xx/3xx/4xx/5xx
