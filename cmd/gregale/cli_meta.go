@@ -5490,6 +5490,16 @@ var cliCommands = []cliCommand{
 		Positionals: []string{"[<slug>]"},
 	},
 	{
+		Name:    "route-resources",
+		DocSlug: "analytics",
+		Short:   "Show which routes an app's memory and CPU peaks come from",
+		Flags: []cliFlag{
+			{Name: "since", Short: "lookback window, at most 336h", Value: "WINDOW"},
+			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
+		},
+		Positionals: []string{"[<slug>]"},
+	},
+	{
 		Name:      "insights",
 		DocSlug:   "flags",
 		Short:     "Product analytics: event series, funnels, retention, flag splits",

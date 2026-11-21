@@ -335,6 +335,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Observe.
 	{"metric requests", "analytics"},
+	{"metric route-resources", "route-resources"},
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},

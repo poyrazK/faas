@@ -37,10 +37,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	SpansWriter_WriteSpansSummary_FullMethodName  = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
-	SpansWriter_IngestGuestSpans_FullMethodName   = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
-	SpansWriter_IngestGuestLogs_FullMethodName    = "/onebox.faas.apid.v1.SpansWriter/IngestGuestLogs"
-	SpansWriter_IngestGuestMetrics_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/IngestGuestMetrics"
+	SpansWriter_WriteSpansSummary_FullMethodName             = "/onebox.faas.apid.v1.SpansWriter/WriteSpansSummary"
+	SpansWriter_IngestGuestSpans_FullMethodName              = "/onebox.faas.apid.v1.SpansWriter/IngestGuestSpans"
+	SpansWriter_IngestGuestLogs_FullMethodName               = "/onebox.faas.apid.v1.SpansWriter/IngestGuestLogs"
+	SpansWriter_IngestGuestMetrics_FullMethodName            = "/onebox.faas.apid.v1.SpansWriter/IngestGuestMetrics"
+	SpansWriter_IngestInstanceResourceMinutes_FullMethodName = "/onebox.faas.apid.v1.SpansWriter/IngestInstanceResourceMinutes"
 )
 
 // SpansWriterClient is the client API for SpansWriter service.
@@ -86,6 +87,13 @@ type SpansWriterClient interface {
 	// cap, translates the export like the public OTLP metrics endpoint and
 	// stores the app's custom metrics. Outcomes ride on the response.
 	IngestGuestMetrics(ctx context.Context, in *IngestGuestSpansRequest, opts ...grpc.CallOption) (*IngestGuestMetricsResponse, error)
+	// IngestInstanceResourceMinutes stores what each app instance's cgroup
+	// did per minute (ADR-20261121170000), as vmmd folded it from guest-init's
+	// ten-second slots. Rows carry the host-owned identity; apid checks each
+	// instance belongs to the calling node and that the app's account has
+	// the route_resource_peaks flag, and names the apps it refused so vmmd
+	// stops forwarding them for a while. Outcomes ride on the response.
+	IngestInstanceResourceMinutes(ctx context.Context, in *IngestInstanceResourceMinutesRequest, opts ...grpc.CallOption) (*IngestInstanceResourceMinutesResponse, error)
 }
 
 type spansWriterClient struct {
@@ -136,6 +144,16 @@ func (c *spansWriterClient) IngestGuestMetrics(ctx context.Context, in *IngestGu
 	return out, nil
 }
 
+func (c *spansWriterClient) IngestInstanceResourceMinutes(ctx context.Context, in *IngestInstanceResourceMinutesRequest, opts ...grpc.CallOption) (*IngestInstanceResourceMinutesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IngestInstanceResourceMinutesResponse)
+	err := c.cc.Invoke(ctx, SpansWriter_IngestInstanceResourceMinutes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SpansWriterServer is the server API for SpansWriter service.
 // All implementations must embed UnimplementedSpansWriterServer
 // for forward compatibility.
@@ -179,6 +197,13 @@ type SpansWriterServer interface {
 	// cap, translates the export like the public OTLP metrics endpoint and
 	// stores the app's custom metrics. Outcomes ride on the response.
 	IngestGuestMetrics(context.Context, *IngestGuestSpansRequest) (*IngestGuestMetricsResponse, error)
+	// IngestInstanceResourceMinutes stores what each app instance's cgroup
+	// did per minute (ADR-20261121170000), as vmmd folded it from guest-init's
+	// ten-second slots. Rows carry the host-owned identity; apid checks each
+	// instance belongs to the calling node and that the app's account has
+	// the route_resource_peaks flag, and names the apps it refused so vmmd
+	// stops forwarding them for a while. Outcomes ride on the response.
+	IngestInstanceResourceMinutes(context.Context, *IngestInstanceResourceMinutesRequest) (*IngestInstanceResourceMinutesResponse, error)
 	mustEmbedUnimplementedSpansWriterServer()
 }
 
@@ -200,6 +225,9 @@ func (UnimplementedSpansWriterServer) IngestGuestLogs(context.Context, *IngestGu
 }
 func (UnimplementedSpansWriterServer) IngestGuestMetrics(context.Context, *IngestGuestSpansRequest) (*IngestGuestMetricsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method IngestGuestMetrics not implemented")
+}
+func (UnimplementedSpansWriterServer) IngestInstanceResourceMinutes(context.Context, *IngestInstanceResourceMinutesRequest) (*IngestInstanceResourceMinutesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestInstanceResourceMinutes not implemented")
 }
 func (UnimplementedSpansWriterServer) mustEmbedUnimplementedSpansWriterServer() {}
 func (UnimplementedSpansWriterServer) testEmbeddedByValue()                     {}
@@ -294,6 +322,24 @@ func _SpansWriter_IngestGuestMetrics_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SpansWriter_IngestInstanceResourceMinutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestInstanceResourceMinutesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SpansWriterServer).IngestInstanceResourceMinutes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SpansWriter_IngestInstanceResourceMinutes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SpansWriterServer).IngestInstanceResourceMinutes(ctx, req.(*IngestInstanceResourceMinutesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SpansWriter_ServiceDesc is the grpc.ServiceDesc for SpansWriter service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -316,6 +362,10 @@ var SpansWriter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IngestGuestMetrics",
 			Handler:    _SpansWriter_IngestGuestMetrics_Handler,
+		},
+		{
+			MethodName: "IngestInstanceResourceMinutes",
+			Handler:    _SpansWriter_IngestInstanceResourceMinutes_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -5394,6 +5394,23 @@
       ]
     },
     {
+      "id": "route-resource-peaks",
+      "name": "Route resource peaks",
+      "category": "observability",
+      "description": "Show which routes an app's memory and CPU peaks come from, from per-minute app memory and CPU joined with the routes each instance served in the same minutes.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261121170000-route-resource-peaks",
+      "acceptance_test": "pkg/routeresources/analyze_test.go::TestAnalyzeFindsHeavyRoute",
+      "parent": "metrics",
+      "routes": [
+        "/v1/apps/{}/analytics/route-resources"
+      ],
+      "cli": [
+        "route-resources"
+      ]
+    },
+    {
       "id": "route-source-impact",
       "name": "Route source impact",
       "category": "delivery",

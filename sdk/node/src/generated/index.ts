@@ -3191,6 +3191,8 @@ export type { RouteRequirementsConfig } from './models/RouteRequirementsConfig.j
 export type { RouteRequirementsFinding } from './models/RouteRequirementsFinding.js';
 export type { RouteRequirementsReport } from './models/RouteRequirementsReport.js';
 export type { RouteRequirementsResult } from './models/RouteRequirementsResult.js';
+export type { RouteResourceAttribution } from './models/RouteResourceAttribution.js';
+export type { RouteResourcesResponse } from './models/RouteResourcesResponse.js';
 export type { RouteRow } from './models/RouteRow.js';
 export type { RouteThrottleRequirement } from './models/RouteThrottleRequirement.js';
 export type { RunStoredWorkflowTestsRequest } from './models/RunStoredWorkflowTestsRequest.js';

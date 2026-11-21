@@ -811,6 +811,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		}
 	}, slog.Default())
 	defer oomWatch.stop()
+	// ADR-20261121170000: the app cgroup's memory and CPU, per 10 s slot,
+	// so apid can tell which routes the app's peaks come from.
+	defer startResourceSlots(mainLeaf, slog.Default())()
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}

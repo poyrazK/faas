@@ -1849,6 +1849,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		recv = nil
 	}
 	if recv != nil {
+		startResourceMinutes(ctx, log, mgr, recv)
 		if readinessStore, ok := store.(state.EnvironmentQualificationFrameworkReadyReceiptStore); ok {
 			record := func(recordCtx context.Context, frame state.EnvironmentQualificationExecution,
 				runtimeName string, warmupMS int64) error {
