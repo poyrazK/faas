@@ -18,7 +18,7 @@ func TestUsageDailyHeaderOrderAndTotal(t *testing.T) {
 		case "/v1/apps":
 			_, _ = w.Write([]byte(`[{"id":"a-1","slug":"small"},{"id":"a-2","slug":"big"}]`))
 		case "/v1/usage/daily":
-			_, _ = w.Write([]byte(`{"items":[{"app_id":"a-1","day":"2026-10-22","mb_seconds":3600000,"requests":10},{"app_id":"a-2","day":"2026-10-22","mb_seconds":36000000,"requests":4}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"app_id":"a-1","day":"2026-10-22","mb_seconds":3686400,"requests":10},{"app_id":"a-2","day":"2026-10-22","mb_seconds":36864000,"requests":4}]}`))
 		default:
 			http.NotFound(w, r)
 		}

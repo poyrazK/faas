@@ -6833,12 +6833,12 @@ DECLARE
   new_billable boolean;
   changed_at timestamptz := clock_timestamp();
 BEGIN
-  new_billable := NEW.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+  new_billable := NEW.state IN ('waking','cold_booting','running','draining','warm')
                   AND COALESCE(NEW.mode, 'normal') NOT IN ('mirror', 'refresh');
   IF TG_OP = 'INSERT' THEN
     old_billable := false;
   ELSE
-    old_billable := OLD.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm')
+    old_billable := OLD.state IN ('waking','cold_booting','running','draining','warm')
                     AND COALESCE(OLD.mode, 'normal') NOT IN ('mirror', 'refresh');
   END IF;
 
