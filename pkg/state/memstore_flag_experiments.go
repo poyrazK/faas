@@ -158,7 +158,7 @@ func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key str
 		return FlagExperiment{}, ErrFlagExperimentLimit
 	}
 	at := now.UTC()
-	x.Status, x.StartedAt, x.TelemetryCursor, x.Weights = flags.ExperimentRunning, &at, at, weights
+	x.Status, x.StartedAt, x.TelemetryCursor, x.Weights = flags.ExperimentRunning, &at, FlagExperimentStartCursor(at), weights
 	x.LayerFrom, x.LayerTo = slice[0], slice[1]
 	return cloneFlagExperiment(x), nil
 }
