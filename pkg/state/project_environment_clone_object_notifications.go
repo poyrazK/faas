@@ -48,10 +48,10 @@ func requireCloneNotificationDestinations(records []projectCloneWorkloadRecord) 
 	apps := map[string]bool{}
 	queues := map[string]bool{}
 	for _, record := range records {
-		apps[record.AppID] = true
+		apps[canonicalMemUUID(record.AppID)] = true
 		if record.snapshot.Policies != nil && record.snapshot.Policies.Queues != nil {
 			for _, binding := range record.snapshot.Policies.Queues.Bindings {
-				queues[record.AppID+"\x00"+binding.QueueName] = true
+				queues[canonicalMemUUID(record.AppID)+"\x00"+binding.QueueName] = true
 			}
 		}
 	}
@@ -65,10 +65,10 @@ func requireCloneNotificationDestinations(records []projectCloneWorkloadRecord) 
 			}
 			for _, r := range bucket.Notifications.Rules {
 				t, err := api.ParseObjectNotificationTarget(r.Destination)
-				if err != nil || !apps[t.AppID] {
+				if err != nil || !apps[canonicalMemUUID(t.AppID)] {
 					return ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable
 				}
-				if t.Kind == "queue" && !queues[t.AppID+"\x00"+t.QueueName] {
+				if t.Kind == "queue" && !queues[canonicalMemUUID(t.AppID)+"\x00"+t.QueueName] {
 					return ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable
 				}
 			}

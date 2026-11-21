@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -24,19 +25,25 @@ func cloneBucketNotificationCapture(t *testing.T, s cloneBucketReservationTestSt
 	source := cloneBindingBucket(t, s, account, app, "assets", "production", true)
 	notifications := s.(state.ObjectNotificationStore)
 
-	stray, err := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "stray-" + app.ID[:8], Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
+	// An app of another project is not a captured workload: the stage will
+	// not hold it.
+	other, err := s.CreateProject(ctx, state.Project{AccountID: account.ID, Slug: "elsewhere"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stray, err := s.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: other.ID, WorkloadName: "stray", Slug: "stray-" + app.ID[:8], Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, source.ID,
-		[]api.ObjectNotificationRule{notificationRuleForTest(source, stray, "function")}); err != nil {
+		[]api.ObjectNotificationRule{cloneNotificationFunctionRule(source, stray)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.CaptureProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, op.ID, op.Revision); !errors.Is(err, state.ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable) {
 		t.Fatalf("captured a rule whose destination the stage will not hold: %v", err)
 	}
 
-	rule := notificationRuleForTest(source, app, "function")
+	rule := cloneNotificationFunctionRule(source, app)
 	if _, err := notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, source.ID, []api.ObjectNotificationRule{rule}); err != nil {
 		t.Fatal(err)
 	}
@@ -51,4 +58,11 @@ func cloneBucketNotificationCapture(t *testing.T, s cloneBucketReservationTestSt
 	if captured == nil || captured.Revision != 2 || len(captured.Rules) != 1 || captured.Rules[0].Destination != rule.Destination || len(captured.ManagedRuleIDs) != 0 {
 		t.Fatalf("captured notifications = %+v", captured)
 	}
+}
+
+// cloneNotificationFunctionRule names the app by its canonical ID: the memory
+// store's IDs are compact, and a destination ARN carries a UUID.
+func cloneNotificationFunctionRule(bucket state.ObjectBucket, app state.App) api.ObjectNotificationRule {
+	app.ID = uuid.MustParse(app.ID).String()
+	return notificationRuleForTest(bucket, app, "function")
 }

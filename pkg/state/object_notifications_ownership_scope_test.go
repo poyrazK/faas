@@ -213,8 +213,14 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 	}
 	notifications := st.(state.ObjectNotificationStore)
 	rule := notificationRuleForTest(bucket, app, "queue")
-	productionBucket := readyCompanyBucket(t, st, account.ID, app.ID)
-	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); !errors.Is(err, state.ErrObjectNotificationInvalid) {
+	// The production bucket belongs to another app of the project: the bucket
+	// fixture names every bucket "assets".
+	producer, err := full.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: account.ID, ProjectID: project.ID, WorkloadName: "producer", Slug: "producer-" + uuid.NewString(), Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker, RAMMB: 128, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	productionBucket := readyCompanyBucket(t, st, account.ID, producer.ID)
+	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, producer.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); !errors.Is(err, state.ErrObjectNotificationInvalid) {
 		t.Fatal("a production bucket reached a staging-only queue", err)
 	}
 	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, bucket.ID, []api.ObjectNotificationRule{rule}); err != nil {
@@ -222,7 +228,7 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 	}
 	captureFrom := func(bucket state.ObjectBucket) state.ObjectNotificationSnapshot {
 		t.Helper()
-		completion, e := st.BeginTrackedGatewayUpload(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: account.ID, AppID: app.ID, BucketID: bucket.ID, SubjectID: "test", Key: uuid.NewString(), Status: "pending", Bytes: 1}, accountingPolicy())
+		completion, e := st.BeginTrackedGatewayUpload(ctx, state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: account.ID, AppID: bucket.AppID, BucketID: bucket.ID, SubjectID: "test", Key: uuid.NewString(), Status: "pending", Bytes: 1}, accountingPolicy())
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -248,11 +254,11 @@ func objectNotificationCapturedScope(t *testing.T, st accountingStore) {
 	}
 	// A same-name production queue no longer makes the ARN ambiguous: each
 	// bucket resolves its own environment's binding.
-	production := newBinding("production")
+	production := newBinding("")
 	if again := captureFrom(bucket); again.QueueBindingID != binding.ID {
 		t.Fatal("a production queue redirected the staging bucket", again)
 	}
-	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, app.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); err != nil {
+	if _, err = notifications.SetObjectBucketNotifications(ctx, account.ID, producer.ID, productionBucket.ID, []api.ObjectNotificationRule{rule}); err != nil {
 		t.Fatal(err)
 	}
 	if own := captureFrom(productionBucket); own.QueueBindingID != production.ID || own.DeploymentScope != "" || own.EnvironmentID != "" {

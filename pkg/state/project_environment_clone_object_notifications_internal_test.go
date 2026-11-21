@@ -18,6 +18,12 @@ func TestMemCloneBucketNotificationsCopyPausedAndResume(t *testing.T) {
 	source := ProjectEnvironmentCloneObjectBucket{ID: "source", Notifications: captured}
 
 	m := NewMemStore()
+	if m.projectEnvironmentCloneOperations == nil {
+		m.projectEnvironmentCloneOperations = map[string]ProjectEnvironmentCloneOperation{}
+	}
+	if m.objectBuckets == nil {
+		m.objectBuckets = map[string]ObjectBucket{}
+	}
 	m.projectEnvironmentCloneOperations["op"] = ProjectEnvironmentCloneOperation{ID: "op", AccountID: "acct", ProjectID: "proj", TargetEnvironment: "stage"}
 	m.projectEnvironments["env"] = ProjectEnvironment{ID: "env", AccountID: "acct", ProjectID: "proj", Slug: "stage"}
 	m.objectBuckets["target"] = ObjectBucket{ID: "target", AccountID: "acct", Scope: "stage", State: "ready",
@@ -98,7 +104,12 @@ func TestRequireCloneNotificationDestinations(t *testing.T) {
 	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{record([]string{"images"}, queueRule)}); err != nil {
 		t.Fatalf("a captured queue refused: %v", err)
 	}
-	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{record(nil, queueRule)}); !errors.Is(err, ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable) {
+	compact := record([]string{"images"}, queueRule)
+	compact.AppID = "00000000000000000000000000000002" // The memory store's form.
+	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{compact}); err != nil {
+		t.Fatalf("a compact app ID refused: %v", err)
+	}
+	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{record(nil, queueRule)});!errors.Is(err, ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable) {
 		t.Fatalf("a queue the stage will not hold accepted: %v", err)
 	}
 }
