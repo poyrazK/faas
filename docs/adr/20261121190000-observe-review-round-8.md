@@ -59,6 +59,20 @@ signal means and need a recorded decision:
 6. **Operator alerts for silent failures.** `FaasPlatformAlertEmailsFailing`
    fires when meterd gives up on a platform alert email, and
    `FaasGuestSpansWritesFailing` when apid's spans writer fails every write.
+7. **`oom_kills` is an alert metric.** It counts the app's workload OOM kill
+   events (ADR-121 amendment) in the window, needs an app and allows every
+   action, so a rule can roll back a release that runs out of memory.
+8. **An app's own wake p95.** `gateway_app_wake_latency_seconds{app}` mirrors
+   the fleet histogram per app (series only for apps that woke on the
+   gateway, the same buckets). The metrics response adds `app_wake_p95_ms`
+   and `app_wake_samples`; clients show it from 20 wakes and otherwise keep
+   the fleet figure.
+9. **Create-only archive keys for compute from the manifest.**
+   `log_archive.compute_write_only` renders `faas_log_archive_write_only` for
+   compute-only hosts, and with static auth they stage
+   `compute_credentials_src` (a PutObject-only key) instead of the control
+   plane's read-write key. The validator refuses static write-only without
+   that key.
 
 ## Consequences
 
