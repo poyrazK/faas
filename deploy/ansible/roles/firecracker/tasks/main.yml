@@ -557,12 +557,7 @@
     owner: root
     group: root
     mode: "0644"
-  register: vmmd_kernel_dropin
-
-- name: firecracker — reload systemd after a kernel digest change
-  ansible.builtin.systemd:
-    daemon_reload: true
-  when: vmmd_kernel_dropin.changed
+  notify: firecracker reload systemd
 
 - name: firecracker — verify installed Firecracker binary matches the release manifest
   ansible.builtin.command: sha256sum /usr/local/bin/firecracker-{{ fc_release }}-{{ fc_arch }}
