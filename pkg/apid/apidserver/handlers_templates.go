@@ -92,6 +92,8 @@ func templateDescription(name string) string {
 		return "Node.js customer platform with tenant authentication and Postgres data isolation"
 	case "mcp-node":
 		return "stateless MCP tool server with streaming and optional external OAuth"
+	case "mcp-node-tasks":
+		return "stateless Node MCP server with external OAuth and encrypted durable Tasks"
 	case "mcp-go":
 		return "stateless Go MCP server with external OAuth and encrypted durable Tasks"
 	case "mcp-python":

@@ -172,7 +172,7 @@ class HostedTaskRehearsalTests(unittest.TestCase):
                 config = json.loads(contents[role]["gregale-mcp.json"])
                 self.assertTrue(config["tasks"]["enabled"])
                 self.assertEqual(config["tasks"]["namespace_env"], "MCP_TASK_NAMESPACE")
-                starter = REPO / "cmd/gregale/templates/mcp-node"
+                starter = REPO / "cmd/gregale/templates/mcp-node-tasks"
                 for name in ("package-lock.json", "tasks-migrate.js", "tasks-worker.js", "task-store.js"):
                     self.assertEqual(contents[role][name], (starter / name).read_bytes())
             self.assertEqual(set(contents["web"]), set(contents["worker"]))

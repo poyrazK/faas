@@ -644,6 +644,9 @@ var BridgeLoopbackOnly = bridgeLoopbackOnly
 var BucketUploadCheckpointPath = bucketUploadCheckpointPath
 var BuildAppNetworkDoctorReport = buildAppNetworkDoctorReport
 var BuildAppScalePlanChanges = buildAppScalePlanChanges
+
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
+var AppScalePlanWarnings = appScalePlanWarnings
 var BuildBaseline = buildBaseline
 var BuildCanarySpec = buildCanarySpec
 var BuildCreateRequest = buildCreateRequest
@@ -3003,3 +3006,6 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
+
+// AppScalePlanWarnings is the scale plan preview's plan-limit warnings.
+var AppScalePlanWarnings = appScalePlanWarnings
