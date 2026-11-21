@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -67,6 +68,13 @@ const (
 	// runtimeConfigKindBuilderSlots is `builder_slots`' per-node object
 	// (ADR-20261118154632); pkg/builderslots validates it.
 	runtimeConfigKindBuilderSlots = "builder_slots"
+
+	// runtimeConfigManagedPostgresPolicy is the managed PostgreSQL operator
+	// policy apid applies without a restart (managedpostgres.LivePolicy):
+	// provisioning switch, per-account limit, fleet, usage ceilings and
+	// rates, production approval. Its kind has the same name.
+	runtimeConfigManagedPostgresPolicy     = "managed_postgres_policy"
+	runtimeConfigKindManagedPostgresPolicy = "managed_postgres_policy"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -127,6 +135,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
 	{Key: runtimeconfig.KeySnapshotCleanRecapture, Label: "Clean init snapshot recapture", Description: "When an instance parks and its deployment has no usable init snapshot on that node (ADR-20261115113000). on destroys the used instance instead of snapshotting its memory and boots, primes, snapshots and parks a fresh instance on the node in the background, unbilled, while the node keeps its headroom; wakes cold-boot until it lands. off snapshots the used instance at park, including the state its requests left in memory.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"on"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotCleanRecapture},
 	{Key: runtimeconfig.KeyBuilderElasticSlots, Label: "Elastic builder slots", Description: "Per-node builder slots that follow builder_slots without a restart (ADR-20261118154632). on lets each node run its reserved builds plus borrowed ones that use only memory its tenant slice is not using, and give it back: builderd cancels and requeues the newest borrowed build above 85% of the tenant slice and vmmd destroys one above 92%, so a build never OOM-kills, refuses or evicts a tenant. off keeps the fixed two-slot builder and the static build slices.", Category: "Builds", Kind: "enum", Default: json.RawMessage(`"` + api.DefaultBuilderElasticSlots + `"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderElasticSlots},
+	{Key: runtimeConfigManagedPostgresPolicy, Label: "Managed PostgreSQL policy", Description: "Managed PostgreSQL operator policy, applied without a restart; a field left out keeps the provider registry file's value (FAAS_MANAGED_POSTGRES_CONFIG) or, for the approval, FAAS_MANAGED_POSTGRES_PRODUCTION_*: {\"provisioning_enabled\": true, \"max_databases_per_account\": 10, \"fleet\": {\"max_databases\": 80, \"max_monthly_cost_millicents\": 50000000}, \"usage\": {usage ceilings and provider rates}, \"production_approval\": {\"backend_id\", \"backend_fingerprint\", \"approved_at\", \"until\"} (at most 90 days)}. A value this platform's registry would refuse (an unknown backend, an invalid merged usage policy) is not stored. Backends, usage metering on/off and its collection timing stay in the file.", Category: "Managed PostgreSQL", Kind: runtimeConfigKindManagedPostgresPolicy, Default: json.RawMessage(`{}`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeconfig.KeyBuilderSlots, Label: "Builder slots per node", Description: "Each node's builder slots while builder_elastic_slots is on (ADR-20261118154632): {\"default\": {\"reserved\": 1, \"max\": 2}, \"nodes\": {\"<node>\": {\"reserved\": 1, \"max\": 8}}}. reserved slots are funded out of tenant capacity and never give a build back; reserved is 1 until nodes re-derive their sizing live. max includes them; the slots above reserved borrow idle tenant memory. A node runs at most its online CPUs / 2 builds and reports what it applied. Lowering max never cancels a running build.", Category: "Builds", Kind: runtimeConfigKindBuilderSlots, Default: builderslots.DefaultJSON(), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderSlots},
 	{Key: runtimeconfig.KeyObjectInventoryQuiet, Label: "Quiet bucket inventory", Description: "How long a bucket's inventory stays fresh when nothing was written to it since its last listing, under gateway-safety accounting (ADR-20261110151628). off holds every bucket to 900 s; shadow still does, but classifies quiet buckets and counts drift when one's listing changes (faas_object_storage_inventory_drift_total); on keeps a quiet bucket's inventory for 24 h and lists it once a day. Move to on only after a shadow week with no drift.", Category: "Object storage", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectInventoryQuiet},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
@@ -173,6 +182,37 @@ type runtimeConfigManager struct {
 	failedReceipts  map[string]int64
 	// requestConcurrency applies the request keys (ADR-20261101215228).
 	requestConcurrency runtimeconfig.RequestConcurrency
+	// managedPostgres receives managed_postgres_policy (nil while managed
+	// PostgreSQL is not configured; the value is then only stored).
+	managedPostgres *managedpostgres.Registry
+}
+
+// bindManagedPostgresPolicy hands managed_postgres_policy to the provider
+// registry and applies the current value, before the durable reconcile so a
+// restart serves the stored policy from the first request.
+func (m *runtimeConfigManager) bindManagedPostgresPolicy(registry *managedpostgres.Registry) error {
+	if m == nil || registry == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.managedPostgres = registry
+	return registry.ApplyLivePolicyJSON(m.values[runtimeConfigManagedPostgresPolicy])
+}
+
+// checkManagedPostgresPolicy is the write-time check: would this apid's
+// registry accept value? Without managed PostgreSQL only the shape counts.
+func (m *runtimeConfigManager) checkManagedPostgresPolicy(value json.RawMessage) error {
+	if m == nil {
+		return nil
+	}
+	m.mu.RLock()
+	registry := m.managedPostgres
+	m.mu.RUnlock()
+	if registry == nil {
+		return nil
+	}
+	return registry.CheckLivePolicyJSON(value)
 }
 
 // enableReceipts makes the manager report what it applies, as daemon on
@@ -447,6 +487,14 @@ func (m *runtimeConfigManager) applyVersion(key string, value json.RawMessage, v
 		m.mu.Unlock()
 		return false, nil
 	}
+	if key == runtimeConfigManagedPostgresPolicy && m.managedPostgres != nil {
+		// Applied first, like the flag snapshot below: a value the registry
+		// refuses never becomes the effective value, and the receipt says why.
+		if err := m.managedPostgres.ApplyLivePolicyJSON(value); err != nil {
+			m.mu.Unlock()
+			return false, err
+		}
+	}
 	if platformflags.IsConfigKey(key) {
 		// Recompile the flag snapshot first so a value the set rejects never
 		// becomes this manager's effective value.
@@ -596,6 +644,10 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		}
 	case runtimeConfigKindBuilderSlots:
 		// Validate below checks the object.
+	case runtimeConfigKindManagedPostgresPolicy:
+		if _, err := managedpostgres.ParseLivePolicy(value); err != nil {
+			return fmt.Errorf("%s: %w", def.Key, err)
+		}
 	case "string", "enum", "secret_reference":
 		var v string
 		if err := json.Unmarshal(value, &v); err != nil {

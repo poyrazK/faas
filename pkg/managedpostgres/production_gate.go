@@ -67,7 +67,7 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	if r == nil {
 		return QualificationReadiness{Reasons: []string{"registry_unavailable"}}
 	}
-	if !r.ProvisioningEnabled {
+	if !r.ProvisioningEnabled() {
 		add("provisioning_disabled")
 	}
 	if !r.UsagePolicy().Enabled {
@@ -76,7 +76,7 @@ func (r *Registry) ProductionReadiness(approval ProductionApproval, now time.Tim
 	if !r.Fleet().Complete() {
 		add("fleet_policy_incomplete")
 	}
-	if r.MaxDatabasesPerAccount < api.ManagedPostgresPlanDatabasesMax() {
+	if r.MaxDatabasesPerAccount() < api.ManagedPostgresPlanDatabasesMax() {
 		// apid takes the lower of this and the plan's limit, so a smaller
 		// value silently sells a plan fewer databases.
 		add("database_limit_below_plan")
@@ -119,9 +119,11 @@ func NewProvisioningGate(registry *Registry, getenv func(string) string, now fun
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	approval := LoadProductionApproval(getenv)
+	// The environment's approval is the fallback; a live approval
+	// (managed_postgres_policy) wins and is read on every check.
+	envApproval := LoadProductionApproval(getenv)
 	return func() bool {
-		return registry.ProductionReadiness(approval, now().UTC()).Ready
+		return registry.ProductionReadiness(registry.ProductionApproval(envApproval), now().UTC()).Ready
 	}
 }
 
@@ -138,6 +140,6 @@ func NewOperationsGate(registry *Registry, getenv func(string) string, now func(
 		return NewStagingProvisioningGate(registry, getenv, now)
 	}
 	return func() bool {
-		return registry != nil && registry.ProvisioningEnabled
+		return registry != nil && registry.ProvisioningEnabled()
 	}
 }
