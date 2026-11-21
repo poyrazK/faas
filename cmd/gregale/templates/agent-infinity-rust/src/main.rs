@@ -34,6 +34,7 @@ use infinity_agent_core::message::InfinityMessage;
 use infinity_agent_core::system::{AgentSystemBuilder, EventCollector, NoDeferral};
 use infinity_agent_core::tools::Tool;
 use infinity_agent_core::traits::{ConversationStore, StateStore};
+use infinity_provider_protocol::AssistantContent;
 use rap_client::http::SimpleHttpClient;
 use serde::{Deserialize, Serialize};
 
@@ -276,14 +277,95 @@ async fn handle(platform: &Arc<Platform>, env: Envelope) -> Response {
         eprintln!("ignored a record that is not an agent-inbox message");
         return json(200, serde_json::json!({ "ignored": true }));
     };
+    let (endpoint_id, thread_id, message_id, attempt) = (
+        rec.endpoint_id.clone(),
+        rec.thread_id.clone(),
+        rec.message_id.clone(),
+        rec.attempt,
+    );
     match slice(platform, rec).await {
         Ok(v) => json(200, v),
-        // A failed slice is retried by the consumer group.
-        Err(e) => {
+        // A failed slice is retried by the consumer group until its last
+        // attempt, which closes the thread instead of blocking it.
+        Err(e) if attempt < max_attempts() => {
             eprintln!("slice failed: {e}");
             json(500, serde_json::json!({ "error": "slice failed" }))
         }
+        Err(e) => {
+            let reason: String = e.to_string().chars().take(500).collect();
+            match close_failed(platform, &endpoint_id, &thread_id, &message_id, &reason).await {
+                Ok(()) => {
+                    eprintln!(
+                        "{}",
+                        serde_json::json!({ "msg": "slice failed on its last attempt; the thread is closed",
+                            "thread_id": thread_id, "message_id": message_id, "attempt": attempt, "reason": reason })
+                    );
+                    json(200, serde_json::json!({ "ok": true, "failed": true }))
+                }
+                // The store is down too: the message dead-letters and its
+                // thread waits for an operator.
+                Err(close) => {
+                    eprintln!("slice failed: {e}; closing the thread failed: {close}");
+                    json(500, serde_json::json!({ "error": "slice failed" }))
+                }
+            }
+        }
     }
+}
+
+/// AGENT_MAX_ATTEMPTS matches the slices group's max_attempts in
+/// gregale.yaml. A message that fails that many times is dead-lettered, and
+/// the group's dead-letter policy is block, so its thread would stop for
+/// good: the last attempt closes the thread instead (close_failed).
+fn max_attempts() -> u32 {
+    parse_max_attempts(std::env::var("AGENT_MAX_ATTEMPTS").ok().as_deref())
+}
+
+fn parse_max_attempts(v: Option<&str>) -> u32 {
+    v.and_then(|v| v.parse().ok())
+        .filter(|n| (1..=10).contains(n))
+        .unwrap_or(5)
+}
+
+/// Record the failure as the thread's final assistant turn, mark the message
+/// processed so a replay skips it, and revoke the thread's callback URLs.
+/// A redelivery of the same last attempt records the failure once.
+async fn close_failed(
+    platform: &Arc<Platform>,
+    endpoint_id: &str,
+    thread_id: &str,
+    message_id: &str,
+    reason: &str,
+) -> Result<(), BoxError> {
+    let db = connect().await?;
+    let conversations = PgConversationStore(db.clone());
+    let states = PgStateStore(db);
+    let thread = ThreadId::from(thread_id.to_owned());
+    let marker = format!("failed:{message_id}");
+    if !states.get_processed_ids(&thread).await?.contains(&marker) {
+        conversations.ensure_root_thread(&thread).await?;
+        conversations
+            .append_messages(
+                &thread,
+                vec![(
+                    InfinityMessage::Assistant {
+                        content: AssistantContent::text(format!(
+                            "This conversation stopped: {reason}"
+                        )),
+                    },
+                    marker.clone(),
+                )],
+            )
+            .await?;
+        states
+            .add_processed_message_ids(&thread, vec![message_id.to_owned(), marker])
+            .await?;
+    }
+    // The URLs still expire on their own; completing matters more.
+    if let Err(e) = platform.revoke_callbacks(endpoint_id, thread_id).await {
+        eprintln!("revoking a failed thread's callback URLs failed: {e}");
+    }
+    Ok(())
 }
 
 fn main() -> io::Result<()> {
@@ -323,6 +405,14 @@ fn main() -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn max_attempts_defaults_to_the_groups_five() {
+        assert_eq!(parse_max_attempts(None), 5);
+        assert_eq!(parse_max_attempts(Some("3")), 3);
+        assert_eq!(parse_max_attempts(Some("99")), 5);
+        assert_eq!(parse_max_attempts(Some("x")), 5);
+    }
 
     #[test]
     fn sslmode_leaves_the_url() {

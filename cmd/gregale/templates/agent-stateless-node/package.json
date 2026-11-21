@@ -8,6 +8,7 @@
     "test": "node --test test/*.test.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "1.6.0",
     "pg": "^8.13.0"
   },
   "engines": {

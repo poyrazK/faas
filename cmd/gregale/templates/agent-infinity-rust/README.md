@@ -103,6 +103,7 @@ its callback URLs.
 | `AGENT_READ_TOKEN` | Enables `GET /threads/:id` for this bearer token |
 | `TOOL_URL` | Optional: a RAP tool server that `lookup` is invoked on |
 | `GREGALE_API_URL` | The Gregale API, and its toolset; defaults to `https://api.gregale.dev` |
+| `AGENT_MAX_ATTEMPTS` | Attempts before a failing message closes its thread; default 5. Keep it equal to `max_attempts` in `gregale.yaml`: the inbox dead-letters with policy `block`, so the last attempt writes a final "This conversation stopped" turn and completes instead of stopping the thread for good |
 
 ## Test
 

@@ -237,3 +237,15 @@ test("artifact delivery helpers use app-owned routes after continuation", async 
   assert.deepEqual(requests.map(r => r.path), ["/v1/apps/reports/run-artifact-deliveries/reports", "/v1/apps/reports/run-artifact-deliveries/reports/delivery", "/v1/apps/reports/run-artifact-deliveries/reports/delivery/download-url"]);
   assert.deepEqual(requests[0].body, intent);
 });
+
+test("a model's response blocks are stored with its turn", async () => {
+  const { deps } = fixture();
+  const blocks = [{ type: "thinking", thinking: "", signature: "s" }, { type: "tool_use", id: "toolu_9", name: "lookup", input: { query: "q" } }];
+  deps.model = { next: async () => ({ call: { tool: "lookup", input: { query: "q" }, provider_call_id: "toolu_9" }, blocks }) };
+  const turn = await runSlice(parseRecord(record("user", "m-1", { text: "q" })), deps);
+  assert.equal(turn.pending.provider_call_id, "toolu_9");
+  assert.deepEqual(deps.store.rows.at(-1).content.blocks, blocks);
+  deps.model = { next: async () => ({ text: "done", final: true, blocks: [{ type: "text", text: "done" }] }) };
+  await runSlice(parseRecord(record("tool_result", "r-1", { text: "found" })), deps);
+  assert.deepEqual(deps.store.rows.at(-1).content, { text: "done", final: true, blocks: [{ type: "text", text: "done" }] });
+});
