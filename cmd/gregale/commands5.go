@@ -1627,6 +1627,10 @@ func cmdQueueSend(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
+	// A push delivery can finish before `queue receive` starts, and receive
+	// waits for the next one: on prod it reported nothing while this row had
+	// already completed with its result (hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: %s invocation get %s\n", recoveryCLI(), recoveryArgument(resp.ID))
 	return 0
 }
 
