@@ -4,10 +4,29 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// projectDeployPlaceholderSlug is the app slug a project deploy carries
+// through the single-app validation it shares with app deploys. A project
+// deploy never targets that app, so a link that selects no single workload
+// (the project-only link linkCheckoutAfterProjectDeploy writes) must not fail
+// the deploy: the linked app wins, then the project slug, then the directory.
+func projectDeployPlaceholderSlug(contextDir, project string) string {
+	if app, err := linkedAppSlug(contextDir); err == nil && api.ValidAppSlug(app) {
+		return app
+	}
+	if api.ValidAppSlug(project) {
+		return project
+	}
+	if dir := sanitizeSlug(filepath.Base(contextDir)); api.ValidAppSlug(dir) {
+		return dir
+	}
+	return "project"
+}
 
 // linkCheckoutAfterProjectDeploy records the deployed project in the
 // checkout's .gregale/project.json when the checkout is not linked yet, so

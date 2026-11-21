@@ -3,6 +3,7 @@
 package rootfs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -55,8 +56,16 @@ func applyOverlayWhiteout(parent, victimName string, markerPaths ...string) erro
 // applyOverlayOpaque clears entries already materialized in the upper tree
 // and marks the directory opaque. Overlayfs consumes the xattr when it merges
 // this directory with drive0. trusted.overlay.opaque is the normal kernel
-// form used by guest-init, which does not mount with userxattr. Refuse when
-// the current owner cannot create that metadata; another namespace is not proof.
+// form used by guest-init, which does not mount with userxattr; no other
+// namespace is ever written in its place.
+//
+// Setting a trusted.* xattr needs CAP_SYS_ADMIN, which imaged does not hold,
+// so every image with an opaque directory (Jib images: /etc/fonts) failed to
+// build with "operation not permitted" (boa multi-service deploy,
+// 2026-11-21). When the kernel refuses, the directory gets a deferred marker
+// instead, and Builder.applyDeferredOverlayOpacity writes the same
+// trusted.overlay.opaque attribute into the finished ext4 image with debugfs,
+// which edits the image file and needs no privilege.
 func applyOverlayOpaque(dir string) error {
 	if err := mkdirImageDirectories(dir, 0o755); err != nil {
 		return fmt.Errorf("create directory: %w", err)
@@ -64,10 +73,18 @@ func applyOverlayOpaque(dir string) error {
 	if err := clearDir(dir); err != nil {
 		return fmt.Errorf("clear directory: %w", err)
 	}
-	if err := overlaySetxattr(dir, overlaymetadata.RootOpaqueXattr, []byte("y"), 0); err != nil {
+	err := overlaySetxattr(dir, overlaymetadata.RootOpaqueXattr, []byte("y"), 0)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, unix.EPERM) || errors.Is(err, unix.EOPNOTSUPP):
+		if markErr := markDeferredOverlayOpaque(dir); markErr != nil {
+			return fmt.Errorf("record deferred overlay opacity: %w", markErr)
+		}
+		return nil
+	default:
 		return fmt.Errorf("set guest overlay opaque xattr: %w", err)
 	}
-	return nil
 }
 
 // Recreating a deleted directory must not expose its previously deleted lower
