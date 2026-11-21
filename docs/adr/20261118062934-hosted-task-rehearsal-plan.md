@@ -18,3 +18,16 @@ The plan and run journals follow the binding identity lifetime and are kept outs
 ## Validation
 
 Native memory and PostgreSQL tests exercise owner authorization, immutable replays, credential or authority drift, and concurrent claims. The OpenAPI and CLI contracts expose the preview owner operations.
+
+## Candidate handoff
+
+The private launch entry checks that the authenticated key holds the exact
+unconsumed approval. It opens the account-encrypted source under the original
+namespace and verifies both reviewed trees before packing deterministic build
+archives in memory. The native claim rechecks the original authority, evidence
+and deadline. Only the call that acquires the reservation receives the archives.
+Retries receive the same run identity. An unavailable or changed source cannot
+spend the approval.
+
+The archive handoff is private to the control plane. Contained workload
+provisioning and execution evidence are separate from this handoff.

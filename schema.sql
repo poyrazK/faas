@@ -79295,6 +79295,13 @@ CREATE INDEX app_tasks_account_app_created_idx ON public.app_tasks USING btree (
 
 
 --
+-- Name: app_tasks_billing_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_billing_window_idx ON public.app_tasks USING btree (started_at) WHERE (started_at IS NOT NULL);
+
+
+--
 -- Name: app_tasks_binding_verification_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 

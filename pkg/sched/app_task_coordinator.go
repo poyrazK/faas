@@ -324,9 +324,10 @@ func (c *AppTaskCoordinator) processClaim(parent context.Context, task state.App
 			return err
 		}
 		code, message := "restore_failed", "app task environment could not be prepared"
-		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) {
+		if errors.Is(restoreErr, state.ErrFinancialBudgetHeld) || errors.Is(restoreErr, ErrAppTaskSpendCap) {
 			// No command was dispatched. Leave the restoring lease to the
-			// normal safe replay sweep; the next claim remains budget-gated.
+			// normal safe replay sweep; the next claim remains budget- and
+			// spend-cap-gated.
 			return restoreErr
 		}
 		if errors.Is(restoreErr, ErrAppTaskNotOwner) {

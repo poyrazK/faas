@@ -38,6 +38,15 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 	if err != nil {
 		return api.FinancialCostsResponse{}, err
 	}
+	recentStart := asOf.Add(-api.FinancialForecastRecentWindow)
+	if recentStart.Before(start) {
+		recentStart = start
+	}
+	recent, err := fs.FinancialSamplingCoverage(ctx, recentStart, asOf)
+	if err != nil {
+		return api.FinancialCostsResponse{}, err
+	}
+	recentExpected := int64(asOf.Sub(recentStart) / time.Minute)
 	head, err := fs.FinancialEvidenceHead(ctx, account, start, end)
 	if err != nil {
 		return api.FinancialCostsResponse{}, err
@@ -57,7 +66,8 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 	}
 	total := new(big.Int)
 	for _, meter := range []string{"compute", "egress"} {
-		m, err := financialMeterCosts(account, start, end, asOf, now, retained, meter, coverage, rows, prices, computeGrant)
+		recentWhole := recentMinutes(recent, meter) == recentExpected
+		m, err := financialMeterCosts(account, start, end, asOf, now, retained, meter, coverage, recentWhole, rows, prices, computeGrant)
 		if err != nil {
 			return out, err
 		}
@@ -137,15 +147,33 @@ func minTime(a, b time.Time) time.Time {
 	return b
 }
 
-func financialMeterCosts(account string, start, end, asOf, now, retained time.Time, meter string, sampling state.FinancialSamplingCoverage, rows []state.FinancialUsageAggregate, snapshots []state.FinancialPriceSnapshot, computeGrant int64) (api.FinancialMeterCosts, error) {
-	expected := int64(asOf.Sub(start) / time.Minute)
-	minutes := sampling.ComputeMinutes
+// recentMinutes is the meter's sampled minutes in a coverage read.
+func recentMinutes(sampling state.FinancialSamplingCoverage, meter string) int64 {
 	if meter == "egress" {
-		minutes = sampling.EgressMinutes
+		return sampling.EgressMinutes
 	}
+	return sampling.ComputeMinutes
+}
+
+// projectableCoverage reports whether a meter's sampling supports a
+// month-end forecast: every elapsed minute, or at least
+// api.FinancialForecastMinCoveragePercent of them with the most recent
+// window whole, so the run rate reflects current usage.
+func projectableCoverage(complete, retainedWhole, recentWhole bool, minutes, expected int64) bool {
+	if complete {
+		return true
+	}
+	return retainedWhole && recentWhole && expected > 0 && minutes <= expected &&
+		minutes*100 >= expected*api.FinancialForecastMinCoveragePercent
+}
+
+func financialMeterCosts(account string, start, end, asOf, now, retained time.Time, meter string, sampling state.FinancialSamplingCoverage, recentWhole bool, rows []state.FinancialUsageAggregate, snapshots []state.FinancialPriceSnapshot, computeGrant int64) (api.FinancialMeterCosts, error) {
+	expected := int64(asOf.Sub(start) / time.Minute)
+	minutes := recentMinutes(sampling, meter)
 	complete := !start.Before(retained) && expected > 0 && minutes == expected
+	projectable := projectableCoverage(complete, !start.Before(retained), recentWhole, minutes, expected)
 	fresh := !now.Before(end) || (!sampling.ObservedAt.IsZero() && now.Sub(sampling.ObservedAt) <= api.FinancialEvidenceFreshness && !sampling.ObservedAt.After(now))
-	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: complete, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: minutes, Reasons: []string{}}, Accrued: financial.ContractCosts{Meter: meter, Contracts: []financial.MeterCost{}}, Forecast: financial.Forecast{AccountID: account, Meter: meter, Currency: api.BillingCurrency, PeriodStart: start, PeriodEnd: end, CompleteThrough: asOf, Method: "elapsed_time_run_rate_v1"}}
+	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: complete, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: minutes, Projectable: projectable, Reasons: []string{}}, Accrued: financial.ContractCosts{Meter: meter, Contracts: []financial.MeterCost{}}, Forecast: financial.Forecast{AccountID: account, Meter: meter, Currency: api.BillingCurrency, PeriodStart: start, PeriodEnd: end, CompleteThrough: asOf, Method: "elapsed_time_run_rate_v1"}}
 	if start.Before(retained) {
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "retention_started_during_or_after_period")
 	}
@@ -255,7 +283,13 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 			return out, nil
 		}
 	}
-	forecast, err := financial.ForecastMeter(account, start, end, asOf, out.Accrued.Quantity, price, out.Coverage.Complete, fresh)
+	// Unpriced usage still blocks the forecast (Coverage.Complete false for
+	// a price reason); sampling gaps alone only shorten the covered time.
+	var covered time.Duration
+	if projectable && !pricesMissing && legacy.Sign() == 0 {
+		covered = time.Duration(minutes) * time.Minute
+	}
+	forecast, err := financial.ForecastMeterOverCovered(account, start, end, asOf, covered, out.Accrued.Quantity, price, fresh)
 	if err != nil {
 		return out, err
 	}

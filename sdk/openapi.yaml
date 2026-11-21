@@ -24780,6 +24780,7 @@ components:
         evidence_through_id: {type: integer, format: int64, minimum: 0}
         known_millicents: {type: integer, format: int64, minimum: 0}
         coverage_complete: {type: boolean}
+        projectable: {type: boolean, description: 'Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.'}
         fresh: {type: boolean}
         reasons: {type: array, items: {type: string}}
         projected_millicents: {type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.'}
@@ -25082,6 +25083,9 @@ components:
         fresh: {type: boolean}
         expected_minutes: {type: integer, format: int64}
         complete_minutes: {type: integer, format: int64}
+        projectable:
+          type: boolean
+          description: Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
         unpriced_quantity: {type: integer, format: int64}
         non_billable_quantity: {type: integer, format: int64}
         reasons: {type: array, items: {type: string}}

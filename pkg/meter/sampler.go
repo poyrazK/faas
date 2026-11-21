@@ -639,6 +639,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	if err != nil {
 		return nil, err
 	}
+	tasksByApp, err := s.appTasksInMinute(ctx, minute)
+	if err != nil {
+		return nil, err
+	}
 	var out []RolledRow
 	// The previous app's unbilled paused usage is recorded when the next app
 	// starts, after every path through its floor below (rollout step 3). An
@@ -664,6 +668,9 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
+		}
+		if out, err = s.rollAppTasks(ctx, out, app, tasksByApp[app.ID], planByAccount, minute, observedAt); err != nil {
+			return out, err
 		}
 		// The quiet_pause_unbilled flag decides per account whether on mode
 		// subtracts this app's paused seconds (ADR-20261023171905).
