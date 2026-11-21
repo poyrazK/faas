@@ -907,10 +907,12 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 // confirmation prompt and existing callers.
 // write is indistinguishable from a malformed terminal and is intentionally
 // handled like the legacy renderer.
-//
-//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
-	plan = withFeatureHints(plan)
+	return printPreparedPlanText(w, withFeatureHints(plan), excludeSet, showAffected, explain)
+}
+
+//nolint:errcheck // terminal output is best effort.
+func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)
