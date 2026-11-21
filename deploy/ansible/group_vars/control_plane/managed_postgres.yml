@@ -6,9 +6,11 @@
 # from its recorded placement fingerprint:
 #   neon-production-canary 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
 # (snapbox-db's; the role refuses any change that would strand a database).
-# fleet, max_databases_per_account and the CU rate are GCP prod's 2026-11-04
-# values; the other usage ceilings and rates were not recorded and are Neon
-# Launch list prices / ceilings above every plan (plans tighten them).
+# Opened to every account 2026-11-21 (owner): fleet 80 databases (Neon Launch
+# allows 100 projects) and $500/month provider cost; per-account usage
+# ceilings sit above Scale's overage ceiling so plans set the real limits.
+# max_databases_per_account and the CU rate are GCP prod's 2026-11-04 values;
+# the other rates are Neon Launch list prices.
 faas_managed_postgres_config:
   default_region: us-east-2
   defaults: {us-east-2: neon-production-canary}
@@ -16,17 +18,17 @@ faas_managed_postgres_config:
   provisioning_enabled: true
   health: {enabled: true, interval_seconds: 60, stale_after_seconds: 300}
   fleet:
-    max_databases: 20
-    max_monthly_cost_millicents: 2000000          # $20/month provider cost
+    max_databases: 80
+    max_monthly_cost_millicents: 50000000         # $500/month provider cost
   usage:
     enabled: true
     collection_interval_seconds: 300
     window_seconds: 3600
     stale_after_seconds: 10800
-    max_monthly_cost_millicents: 2000000
+    max_monthly_cost_millicents: 50000000
     max_monthly_compute_unit_seconds: 2700000      # 750 CU-h
-    max_monthly_storage_byte_seconds: 280000000000000000   # ~100 GiB for a month
-    max_monthly_history_byte_seconds: 280000000000000000
+    max_monthly_storage_byte_seconds: 1000000000000000000  # ~360 GiB for a month
+    max_monthly_history_byte_seconds: 1000000000000000000
     max_monthly_egress_bytes: 1099511627776        # 1 TiB
     compute_unit_hour_millicents: 10600            # Neon Launch $0.106 / CU-h
     storage_gib_hour_millicents: 48                # $0.35 / GB-month
@@ -48,6 +50,10 @@ faas_managed_postgres_config:
 faas_managed_postgres_env_files:
   - /etc/faas/secrets/managed-postgres/provider.env
 
-# No approval here yet: new databases stay closed in production until the
-# owner sets faas_managed_postgres_production_approval (see the role defaults;
-# GCP used 7-day windows).
+# Production provisioning approval (owner, 2026-11-21: 90 days). Renew before
+# `until` or new databases close (existing ones keep working).
+faas_managed_postgres_production_approval:
+  backend: neon-production-canary
+  fingerprint: 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
+  approved_at: "2026-11-21T10:23:57Z"
+  until: "2027-02-19T10:23:57Z"
