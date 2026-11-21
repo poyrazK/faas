@@ -4,6 +4,7 @@ package main
 // listener, vmmd's gRPC listener is not touched.
 
 import (
+	"context"
 	"crypto/tls"
 	"io"
 	"log/slog"
@@ -24,17 +25,17 @@ func TestWrapForwardHopLeavesListenerUnlessOn(t *testing.T) {
 	env := func(v string) func(string) string { return func(string) string { return v } }
 	tlsCfg := &tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, MinVersion: tls.VersionTLS13}
 
-	if got := wrapForwardHop(lis, tlsCfg, nil, env(""), reg, log); got != lis {
+	if got := wrapForwardHop(context.Background(), lis, tlsCfg, nil, env(""), reg, log); got != lis {
 		t.Fatal("switch off wrapped the listener")
 	}
-	if got := wrapForwardHop(lis, tlsCfg, nil, env("0"), reg, log); got != lis {
+	if got := wrapForwardHop(context.Background(), lis, tlsCfg, nil, env("0"), reg, log); got != lis {
 		t.Fatal("switch 0 wrapped the listener")
 	}
-	if got := wrapForwardHop(lis, nil, nil, env("1"), reg, log); got != lis {
+	if got := wrapForwardHop(context.Background(), lis, nil, nil, env("1"), reg, log); got != lis {
 		t.Fatal("a listener without TLS was wrapped")
 	}
 	// No service: the hop refuses to start and gRPC stays alone.
-	if got := wrapForwardHop(lis, tlsCfg, nil, env("1"), reg, log); got != lis {
+	if got := wrapForwardHop(context.Background(), lis, tlsCfg, nil, env("1"), reg, log); got != lis {
 		t.Fatal("a hop without a service was started")
 	}
 }

@@ -59,8 +59,11 @@ type Server struct {
 	draining bool
 }
 
-// NewServer validates cfg. Serving starts with NewListener.
-func NewServer(cfg ServerConfig) (*Server, error) {
+// NewServer validates cfg. Serving starts with NewListener. The hop's
+// connections carry ctx's values; they end through Listener.Close (drain) or
+// Close, not when ctx is cancelled, as gRPC's graceful stop decides when its
+// streams end.
+func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 	if cfg.TLS == nil {
 		return nil, errors.New("vmmdhop: the hop needs vmmd's server TLS config")
 	}
@@ -73,7 +76,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	return &Server{cfg: cfg, tls: hopServerTLS(cfg.TLS), tracer: otel.Tracer("github.com/onebox-faas/faas/pkg/vmmdhop"), ctx: ctx, cancel: cancel, idle: map[*tls.Conn]struct{}{}}, nil
 }
 
@@ -154,13 +157,13 @@ type Listener struct {
 }
 
 // NewListener starts routing lis's connections.
-func NewListener(lis net.Listener, hop *Server) *Listener {
+func NewListener(ctx context.Context, lis net.Listener, hop *Server) *Listener {
 	l := &Listener{Listener: lis, hop: hop, conns: make(chan net.Conn), errc: make(chan error, 1), done: make(chan struct{})}
-	go l.acceptLoop()
+	go l.acceptLoop(ctx)
 	return l
 }
 
-func (l *Listener) acceptLoop() {
+func (l *Listener) acceptLoop(ctx context.Context) {
 	for {
 		c, err := l.Listener.Accept()
 		if err != nil {
@@ -175,14 +178,14 @@ func (l *Listener) acceptLoop() {
 			}
 			return
 		}
-		go l.route(c)
+		go l.route(ctx, c)
 	}
 }
 
-func (l *Listener) route(c net.Conn) {
+func (l *Listener) route(ctx context.Context, c net.Conn) {
 	protos, replay, peeked := peekClientHello(c)
 	if peeked && slices.Contains(protos, ALPN) {
-		l.hop.serveConn(replay)
+		l.hop.serveConn(ctx, replay)
 		return
 	}
 	select {
@@ -268,12 +271,14 @@ func (c *replayConn) Read(p []byte) (int, error) {
 }
 
 // serveConn handshakes a hop connection and serves its exchanges in turn.
-func (s *Server) serveConn(raw net.Conn) {
+func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 	s.wg.Add(1)
 	defer s.wg.Done()
-	defer raw.Close()
-	ctx, cancel := context.WithCancel(s.ctx)
+	defer func() { _ = raw.Close() }()
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	defer cancel()
+	stopServer := context.AfterFunc(s.ctx, cancel)
+	defer stopServer()
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	defer stop()
 

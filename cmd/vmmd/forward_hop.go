@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"log/slog"
@@ -23,7 +24,7 @@ const forwardHopEnv = "FAAS_VMMD_FORWARD_HOP"
 // is on. The hop serves only ForwardHTTPStream, through the same caller
 // policy interceptor as the gRPC server, on impl, with vmmd's server TLS.
 // A unix listener (single box, no TLS) is never wrapped.
-func wrapForwardHop(lis net.Listener, serverTLS *tls.Config, impl *vmmdgrpc.Server, getenv func(string) string, reg prometheus.Registerer, log *slog.Logger) net.Listener {
+func wrapForwardHop(ctx context.Context, lis net.Listener, serverTLS *tls.Config, impl *vmmdgrpc.Server, getenv func(string) string, reg prometheus.Registerer, log *slog.Logger) net.Listener {
 	if strings.TrimSpace(getenv(forwardHopEnv)) != "1" {
 		return lis
 	}
@@ -47,7 +48,7 @@ func wrapForwardHop(lis net.Listener, serverTLS *tls.Config, impl *vmmdgrpc.Serv
 			conns = existing
 		}
 	}
-	srv, err := vmmdhop.NewServer(vmmdhop.ServerConfig{
+	srv, err := vmmdhop.NewServer(ctx, vmmdhop.ServerConfig{
 		TLS:         serverTLS,
 		Service:     impl,
 		Interceptor: vmmdgrpc.CallerPolicyStreamInterceptor(),
@@ -60,5 +61,5 @@ func wrapForwardHop(lis net.Listener, serverTLS *tls.Config, impl *vmmdgrpc.Serv
 		return lis
 	}
 	log.Info("vmmd: forward hop on", "alpn", vmmdhop.ALPN, "listener", lis.Addr().String())
-	return vmmdhop.NewListener(lis, srv)
+	return vmmdhop.NewListener(ctx, lis, srv)
 }

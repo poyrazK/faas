@@ -189,14 +189,14 @@ func startVmmd(t *testing.T, fake *fakeVmmd, hop bool) *testVmmd {
 	var served net.Listener = lis
 	var hopLis *Listener
 	if hop {
-		srv, err := NewServer(ServerConfig{
+		srv, err := NewServer(context.Background(), ServerConfig{
 			TLS: serverCfg, Service: fake, Interceptor: vmmdgrpc.CallerPolicyStreamInterceptor(),
 			Streams: StreamHandlers(&vmmdpb.Vmmd_ServiceDesc, "ForwardHTTPStream"),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		hopLis = NewListener(lis, srv)
+		hopLis = NewListener(context.Background(), lis, srv)
 		served = hopLis
 	}
 	go func() { _ = gsrv.Serve(served) }()
