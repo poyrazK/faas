@@ -603,7 +603,7 @@ func secretsSet(args []string) int {
 			}
 			// Errors name the line number only: a malformed line may hold a
 			// secret value, so it is never echoed (#6662).
-			p, err := parseSecretsPair(line)
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Invalid secret input", fmt.Errorf("stdin line %d: %w", lineNo, err))
 			}
@@ -895,7 +895,7 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		pair, parseErr := parseSecretsPair(line)
+		pair, parseErr := parseDotenvLine(line)
 		if parseErr != nil {
 			return nil, fmt.Errorf("line %d: %w", lineNo, parseErr)
 		}

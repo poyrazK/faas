@@ -1,6 +1,7 @@
 # ADR-20261029171525 · Export the dependency cache after the image handoff
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-19, owner). Amendment 2 lifts amendment 1's
+  refusal; the one-node canary (Rollout step 2) is next.
 - **Date:** 2026-10-29
 - **Amends:** when ADR-190's production BuildKit dependency cache is exported.
   What the cache holds, its keys and its import are unchanged. ADR-003, under
@@ -144,3 +145,30 @@ export inputs (CacheExportOnly manifest, fresh entropy seed, cleared result) rea
 the second VM without a host-side edit: staged by vmmd through pkg/guestdisk as it
 stages secrets.env, which needs a delete operation and a BuildSpec field, or
 delivered on a fresh read-only config drive.
+
+## Amendment 2 (2026-11-19): vmmd stages the export run's inputs
+
+The cache export run now gets its inputs the way amendment 1 asks, without a
+host-side edit of the build's drive.
+
+- **builderd** marshals the run's manifest (`cache_export_only`, the build's
+  plan, `dependency_cache`) and sends it in the new
+  `BuildSpec.cache_export_manifest`. It no longer replays the drive's journal
+  with e2fsck or rewrites it with debugfs; `prepareCacheExportDrive` is gone,
+  and `TestBuilderdDoesNotParseGuestDrivesOnTheHost` no longer allows
+  e2fsck in builderd.
+- **vmmd** validates the manifest (a builder VM only; `cache_export_only` and
+  `dependency_cache` set, `defer_cache_export` not; at most
+  `api.BuildCacheExportManifestMaxBytes`). Before boot it opens drive1 in the
+  vmmd-guestdisk sandbox as the jail uid, as it does for a job's manifest:
+  the session replays the journal, removes `/etc/faas/build-done.json`, and
+  writes `/etc/faas/build.json` and a fresh 256-byte `/etc/faas/entropy.seed`.
+- **Compatibility:** vmmd's Ping reports `supports_cache_export_staging`.
+  builderd defers a build's cache export only when it is set, and checks it
+  again before booting the run. An older vmmd therefore never gets a build
+  whose export it cannot stage; the build exports inline.
+- **The switch:** `ParseDeferCacheExport` accepts `true` again. The default
+  stays off until the canary.
+
+The warm builder refresh still edits a retained drive with debugfs on the
+host; warm builders stay off (H104) and are not part of this amendment.

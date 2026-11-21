@@ -29,7 +29,11 @@ gregale dlq purge my-api --all              # delete every entry (asks first)
 
 A replay keeps the original payload and identity, so a handler that is
 idempotent for the first attempt is idempotent for the replay. An entry
-is marked replayed and is not replayed twice.
+is marked replayed and is not replayed twice. If a replayed message fails
+again, the same entry reopens with the new failure so you can replay it
+again; `gregale dlq get` then shows `replays: N (last <time>)` (API:
+`replay_count`, `last_replayed_at`) so you can tell a repeat failure from a
+first one.
 
 ## From the API
 

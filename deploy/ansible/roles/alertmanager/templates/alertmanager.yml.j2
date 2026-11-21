@@ -45,6 +45,16 @@
 {% set am_heartbeat_enabled = am_heartbeat_path | length > 0 %}
 {% set am_notifications_enabled = am_email_enabled or am_pushover_enabled or am_chat_enabled %}
 {% set am_warn_enabled = am_email_enabled or am_warn_chat_enabled %}
+{% set am_grafana_base = am_grafana_base_url | default('http://127.0.0.1:3000') | trim | trim('/') %}
+{# time.Time.Add takes nanoseconds. Start the resolved window two hours before EndsAt. #}
+{% macro runtime_dashboard_url() -%}
+{% raw %}{{ $path := . -}}
+{{ if and (eq $alert.Status "resolved") (not $alert.EndsAt.IsZero) -}}
+{{ $window := printf "&from=%d&to=%d" ($alert.EndsAt.Add -7200000000000).UnixMilli $alert.EndsAt.UnixMilli -}}
+{{ $path = reReplaceAll "&from=now-2h&to=now$" $window $path -}}
+{{ end -}}
+{{ printf "%s%s" {% endraw %}{{ am_grafana_base | to_json }}{% raw %} $path }}{% endraw %}
+{%- endmacro %}
 
 {% if am_email_enabled %}
 global:
@@ -166,6 +176,29 @@ receivers:
         send_resolved: true
         headers:
           X-Faas-Alert: "warn"
+        html: |-
+          {% raw %}{{ $hasDashboard := false -}}
+          {{ range .Alerts -}}
+          {{ if .Annotations.runtime_dashboard_path }}{{ $hasDashboard = true }}{{ end -}}
+          {{ end -}}
+          {{ if $hasDashboard -}}
+          <!doctype html>
+          <html><body>
+          <h2>{{ template "__subject" . }}</h2>
+          {{ range .Alerts -}}
+          {{ $alert := . -}}
+          {{ with .Annotations.runtime_dashboard_path -}}
+          <p>{{ $alert.Status | toUpper }} {{ $alert.Annotations.summary }}<br>
+          <a href="{% endraw %}{{ runtime_dashboard_url() | indent(10) }}{% raw %}">Runtime Diagnostics</a>
+          {{ with $alert.Annotations.runbook_url }}<a href="{{ . }}">Runbook</a>{{ end }}</p>
+          {{ end -}}
+          {{ end -}}
+          <pre>{{ template "__text_alert_list" .Alerts }}</pre>
+          </body></html>
+          {{ else -}}
+          {{ template "email.default.html" . }}
+          {{ end }}
+{% endraw %}
 {% endif %}
 {% if am_warn_chat_enabled %}
     # The warn-only webhooks when set, else the page webhooks.
@@ -173,6 +206,16 @@ receivers:
 {% for path in [am_discord_warn_path, am_slack_warn_path] if path | length > 0 %}
       - api_url_file: "{{ path }}"
         send_resolved: true
+        mrkdwn_in: [text]
+        text: |-
+          {% raw %}{{ range .Alerts -}}
+          {{ $alert := . -}}
+          {{ with .Annotations.runtime_dashboard_path -}}
+          {{ $alert.Status | toUpper }} {{ $alert.Annotations.summary }}
+          Runtime Diagnostics <{% endraw %}{{ runtime_dashboard_url() | indent(10) }}{% raw %}>{{ with $alert.Annotations.runbook_url }} · Runbook <{{ . }}>{{ end }}
+          {{ end -}}
+          {{ end }}
+{% endraw %}
 {% endfor %}
 {% endif %}
 

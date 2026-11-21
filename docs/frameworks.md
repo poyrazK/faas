@@ -93,6 +93,11 @@ Keep it cheap and free of side effects. A running app must keep answering
 its health path; see [Deployment overrides](deploy-overrides.md) for how
 Gregale restarts an instance that stops answering.
 
+The check calls the app from inside the instance with the instance's
+internal address as the `Host` header. An app that rejects unknown hosts,
+such as Django with `ALLOWED_HOSTS`, must answer its health path before that
+host check; see [Deploy a Django app](deploy-django.md#health-check).
+
 Do not use `/` as the health path. Gregale can answer an app's public health
 path at its edge without running the app, so with `/` visitors get
 `{"status":"ok","source":"edge"}` instead of your page. Add a small route

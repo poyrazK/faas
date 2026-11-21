@@ -742,6 +742,8 @@ const (
 	// CodeAPIRateLimited is the 429 an account gets past its plan's
 	// APIRequestsPerMinute.
 	CodeAPIRateLimited = "api_rate_limited"
+	// CodeObsRuntimeBusy refuses a runtime collection before any source work.
+	CodeObsRuntimeBusy = "obs_runtime_busy"
 	// CodeColdWakeRateLimited is the 429 a client gets past the number of
 	// different parked apps it may wake through one gateway a minute (H75).
 	CodeColdWakeRateLimited = "cold_wake_rate_limited"
@@ -2352,6 +2354,11 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeAPIContractDiffDisabled, CodeDataUpstreamsDisabled, CodeEventsPaused:
 		return http.StatusServiceUnavailable
+	case CodeApplicationStandardsPending:
+		// A busy runtime-state fence or a policy update in flight; both
+		// details say to retry. Across gRPC it had no status and became a
+		// 500 on a mesh call (prod 2026-11-19).
+		return http.StatusServiceUnavailable
 	case CodeScanCritical:
 		// 503 — the base ext4 has a CRITICAL Grype finding
 		// (issue #299). SLO-exempt: a CRITICAL CVE is a known
@@ -3405,6 +3412,16 @@ func ErrAuthRateLimited(retryAfterS int) *Problem {
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithHint(fmt.Sprintf("Try again in %d seconds, then sign in with valid credentials.", retryAfterS)).
 		WithDocs(docsBase + "/auth")
+}
+
+// ErrObsRuntimeBusy describes process-wide runtime collection saturation.
+// The retry interval is a hint; it does not reserve capacity or cause a retry.
+func ErrObsRuntimeBusy(observed int64) *Problem {
+	return NewProblem(http.StatusTooManyRequests, CodeObsRuntimeBusy,
+		"Runtime collection busy", "The runtime collector is at capacity. Retry after the indicated delay.").
+		WithLimit(ObsRuntimeBuildCollectionsMax, observed).
+		WithHeader("Retry-After", strconv.Itoa(int(ObsRuntimeBuildBusyRetryAfter/time.Second))).
+		WithDocs("https://github.com/poyrazK/faas/blob/main/docs/ops/post-deployment-monitoring.md#runtime-collector-overload")
 }
 
 // ErrAPIRateLimited refuses an authenticated API request past the account's
@@ -5451,6 +5468,14 @@ func ErrInboundWebhookInvalid(reason string) *Problem {
 func ErrInboundWebhookBadSignature() *Problem {
 	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
 		"Invalid webhook signature", "the Stripe-Signature header did not verify")
+}
+
+// ErrInboundWebhookBadGenericSignature is the generic provider's refusal; it
+// used the Stripe wording and named the Stripe-Signature header (prod
+// 2026-11-20).
+func ErrInboundWebhookBadGenericSignature() *Problem {
+	return NewProblem(http.StatusBadRequest, CodeInboundWebhookBadSignature,
+		"Invalid webhook signature", "the X-Gregale-Signature header did not verify; send sha256= and the hex HMAC-SHA256, keyed with the signing secret, of X-Gregale-Timestamp, X-Gregale-Event-ID and X-Gregale-Event-Type each followed by a newline, then the raw body; the timestamp must be within 5 minutes")
 }
 
 func ErrInboundWebhookTooLarge() *Problem {

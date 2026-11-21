@@ -158,6 +158,15 @@ deployment with `release_infrastructure_failed`. One-off commands such as
 
 ## Waiting and resuming
 
+While a build runs, its log gets one `build step:` line for each new BuildKit
+step, such as `build step: [build 3/5] RUN mvn package`. `gregale deploy`
+prints them as they arrive. A project deploy shows each building service's
+newest step next to its stage (`orders: image_build [build 3/5] RUN mvn
+package (2m10s)`), and `--json` writes a `service_build_step` event with
+`service`, `deployment_id`, `step` and `elapsed_s`. A step's own output stays
+out of the live view; the end of the build output follows when the build
+finishes, and `gregale logs <app> --deployment <id>` shows the whole log.
+
 Interrupted single-app deploys save a local session. Run
 `gregale release resume --app my-api`, or `gregale release resume SESSION_ID --json`,
 to reconnect to the same accepted deployment and finish pending lifecycle/scaling

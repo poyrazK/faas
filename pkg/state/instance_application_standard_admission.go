@@ -98,19 +98,19 @@ func CheckedInstanceApplicationStandardAdmission(ctx context.Context, store Inst
 		return InstanceApplicationStandardAdmission{}, ErrApplicationStandardRuntimeStale
 	}
 	delete(artifact, "sidecars") // checked by the durable guard; resolved separately by schedd
-	if capture.ArtifactInputHash != "" {
-		delete(artifact, "scan_status")
-		delete(artifact, "scan_result_hash")
-	}
+	// A scan renews the deployment's scan mirrors and changes nothing the
+	// instance runs, so a scan landing between the capture and this read is
+	// not a stale input; the publication guard ignores them the same way (ADR
+	// 20261031190030, ADR-075 amendment 2026-11-19). parked_reason stays.
+	delete(artifact, "scan_status")
+	delete(artifact, "scan_result_hash")
 	artifactJSON, err := json.Marshal(artifact)
 	if err != nil {
 		return InstanceApplicationStandardAdmission{}, err
 	}
 	actual["artifact"] = artifactJSON
 	expected := standardRuntimeCallerInputs(app, account, deployment)
-	if capture.ArtifactInputHash != "" {
-		removeStandardApprovalMirrors(expected["artifact"].(map[string]any))
-	}
+	removeStandardApprovalMirrors(expected["artifact"].(map[string]any))
 	for field, value := range expected {
 		raw, err := json.Marshal(value)
 		if err != nil {
@@ -156,6 +156,26 @@ func unmanagedStandardResidentPlanChange(ctx context.Context, store InstanceAppl
 // every ownership, control, artifact and enrollment input remains immutable.
 func standardRuntimeInputsMatch(captured, current []byte) (bool, error) {
 	return compareStandardRuntimeInputs(captured, current, true)
+}
+
+// standardRuntimeAccountPlanUnchanged reports whether two runtime input
+// snapshots carry the same account_plan, as the PostgreSQL guard compares it
+// for an instance still booting (an absent plan equals an absent plan).
+func standardRuntimeAccountPlanUnchanged(captured, current []byte) (bool, error) {
+	var plans [2]struct {
+		AccountPlan json.RawMessage `json:"account_plan"`
+	}
+	for i, raw := range [][]byte{captured, current} {
+		if err := json.Unmarshal(raw, &plans[i]); err != nil {
+			return false, err
+		}
+	}
+	var before, after any
+	if len(plans[0].AccountPlan) != 0 && json.Unmarshal(plans[0].AccountPlan, &before) != nil ||
+		len(plans[1].AccountPlan) != 0 && json.Unmarshal(plans[1].AccountPlan, &after) != nil {
+		return false, ErrApplicationStandardRuntimeStale
+	}
+	return reflect.DeepEqual(before, after), nil
 }
 
 func unmanagedStandardRuntimeInputs(input map[string]any) bool {

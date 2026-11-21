@@ -75,6 +75,11 @@ func cmdCronsRuns(args []string) int {
 	if logsFlagWasSet(fs, "app") {
 		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
 	}
+	if len(pos) > 1 {
+		// prod 2026-11-20: `cron runs <app> <id>` (the order `cron list
+		// <app>` suggests) printed only the usage line.
+		return printErr("Unexpected argument", fmt.Errorf("cron runs takes one cron ID and no app name: gregale cron runs %s", pos[len(pos)-1]))
+	}
 	if len(pos) != 1 {
 		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--cursor C] [--limit N] [--run TASK-ID]\n")
 		return 1

@@ -50,7 +50,8 @@ native_e2e_phase_files() {
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go source_start_pin_metal_test.go binary_function_metal_test.go \
-      dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go buildkit_seed_metal_test.go ;;
+      dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go buildkit_seed_metal_test.go \
+      elastic_builder_slots_metal_test.go ;;
     # Deploy and safe-release paths: image, canary progression, healthcheck,
     # rollback, port override and secrets.
     deploy) printf '%s\n' \
@@ -127,6 +128,7 @@ native_e2e_phase_files() {
       fleet_wake_dedup_e2e_test.go \
       private_service_tcp_stale_metal_test.go \
       private_tcp_wake_ahead_metal_test.go \
+      managed_redis_metal_test.go \
       service_stale_endpoint_metal_test.go \
       wake_platform_bench_metal_test.go \
       fork_metal_test.go \
@@ -253,6 +255,8 @@ native_e2e_assert_phase_partition() {
 # normal preflight, service restoration, and leakcheck.
 # managed-operation-only — source deployment, guest process death, in-place
 # managed workflow retry, and signed effect delivery on dedicated KVM.
+# managed-redis-only — a managed Valkey cache's create, park, restart and
+# resize handoff (ADR-20261116192126), without the platform-wide matrix.
 # customer-job-operations-only derives every Customer Job Operations scenario.
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # project-worker-release-only qualifies mixed HTTP/push-worker cutover,
@@ -261,7 +265,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only managed-redis-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -279,6 +283,10 @@ NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS=(
 
 NATIVE_E2E_MANAGED_OPERATION_TESTS=(
   TestManagedOperationWorkflowMetal
+)
+
+NATIVE_E2E_MANAGED_REDIS_TESTS=(
+  TestManagedRedisMetal
 )
 
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
@@ -311,6 +319,9 @@ native_e2e_lane_tests() {
       ;;
     managed-operation-only)
       printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
+      ;;
+    managed-redis-only)
+      printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_TESTS[@]}"
       ;;
     customer-job-operations-only)
       # Every customer_job_operations*_metal_test.go file, as the HTTP and

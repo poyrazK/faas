@@ -30,6 +30,10 @@ func TestEgressRefusesLegacyNumericHosts(t *testing.T) {
 	if problem == nil || !strings.Contains(problem.Detail, "legacy form") {
 		t.Fatalf("problem = %+v, want the legacy numeric host refused", problem)
 	}
+	// prod 2026-11-19: webhook creation answered "Invalid alert rule".
+	if problem.Title != "Invalid target URL" {
+		t.Fatalf("title = %q", problem.Title)
+	}
 	for host, want := range map[string]bool{
 		"2130706433": true, "127.1": true, "0x7f000001": true, "0x7f.0.0.1": true, "10.0.0.1.": true,
 		"hooks.example.com": false, "203.0.113.10": false, "2001:db8::1": false,

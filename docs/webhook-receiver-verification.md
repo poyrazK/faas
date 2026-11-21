@@ -105,3 +105,9 @@ Timestamp validation limits how long an intercepted request can be replayed;
 it does not replace delivery-ID deduplication. For CloudEvents deliveries, the
 envelope `id` is also available, while `X-Faas-Delivery-Id` identifies the
 specific receiver delivery.
+
+Two fields count attempts, from different starting points. The
+`X-Faas-Webhook-Attempt` header counts from 1 (the first try is `1`); the JSON
+body's `payload.attempt` counts retries from 0 (the first try is `0`). Both
+describe the same try, so read one of them consistently; the body field keeps
+its original numbering so existing receivers are not broken.

@@ -185,7 +185,10 @@ var catalog = map[string]Render{
 		// Every later cold boot gets the same deadline (H12-10,
 		// ADR-20261114120000), so name the plan windows rather than an
 		// open-ended "raise the deadline" (Hunt 14 H14-4).
-		Fix: "• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: " + startupWindowCopy("answer", "every later cold boot gets the same window"),
+		// A server on a hard-coded port never answers the probe and prints
+		// nothing, so the timeout was all the customer saw (prod
+		// 2026-11-19: listen(8081) under PORT=3000).
+		Fix: "• make the server listen on the PORT environment variable (the deploy output's `listener:` line shows the port Gregale probes); a hard-coded port never becomes ready\n• check `gregale logs <slug>` for startup failures and verify the configured readiness check\n• listen first and defer expensive initialization: " + startupWindowCopy("answer", "every later cold boot gets the same window"),
 	},
 	api.CodeAppStartupCrash: {
 		Title: "Application exited during startup",

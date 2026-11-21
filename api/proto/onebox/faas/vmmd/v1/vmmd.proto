@@ -1033,6 +1033,13 @@ message AppSpec {
   // HTTP liveness probe, so vmmd runs no default probe for it; an explicit
   // liveness_probe_json still applies. An older vmmd ignores the field.
   bool routed_port_raw_tcp = 45;
+  // probe_host (ADR-20261119140000) is the Host header vmmd's readiness and
+  // prime GETs send: the app's public host (`<slug>.<apps domain>`), so an app
+  // that allow-lists its host names (Django ALLOWED_HOSTS, Rails
+  // config.hosts) answers the probe as it answers traffic. Those GETs then
+  // also carry X-Forwarded-Proto: https. Empty keeps the legacy probe, which
+  // sends the instance address. An older vmmd ignores the field.
+  string probe_host = 46;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -1612,6 +1619,20 @@ message BuildSpec {
   // gives the builder no password. Empty from an older builderd: vmmd then
   // opens the passwords as before.
   string build_id = 5;
+  // borrowed runs the builder in faas-borrowed.slice on a borrowed builder
+  // slot (ADR-20261118154632): it uses memory the tenant slice is not using,
+  // its Firecracker process gets oom_score_adj 1000, and vmmd destroys it
+  // itself when tenants need the memory. builderd sets it only when Ping
+  // reports supports_borrowed_builders, so an older vmmd never sees it.
+  bool borrowed = 6;
+  // The /etc/faas/build.json of a deferred dependency cache export run
+  // (ADR-20261029171525 amendment 2): an api.BuildManifest with
+  // cache_export_only set. The run boots on the drive its build left, which
+  // the guest wrote, so the host never edits it: vmmd writes this manifest
+  // and a fresh entropy seed and removes the build's build-done.json through
+  // the guest disk sandbox before boot. builderd sends it only when Ping
+  // reports supports_cache_export_staging.
+  bytes cache_export_manifest = 7;
 }
 
 // BuildRegistryCredential is one app_registry_credentials row: the registry
@@ -1812,6 +1833,10 @@ message DestroyResponse {
   int32  exit_code = 2;
   string rehearsal_worker_fault_id = 3;
   string rehearsal_cold_preparation_id = 4;
+  // preempted_for_tenants is true when vmmd destroyed this borrowed builder
+  // because tenants needed its memory (ADR-20261118154632). builderd returns
+  // the build to the queue instead of failing it.
+  bool preempted_for_tenants = 5;
 }
 
 // StopInstanceRequest is the M-2 / ADR-138 graceful-stop input.
@@ -2048,6 +2073,15 @@ message PingResponse {
   // (ADR-20261022184531). schedd marks a node degraded while one cannot.
   // An older vmmd sends none, which schedd reads as no evidence.
   repeated BaseGenerationReadiness base_generations = 6;
+  // supports_borrowed_builders: builder_elastic_slots is on and
+  // faas-borrowed.slice exists, so this vmmd runs BuildSpec.borrowed
+  // builders (ADR-20261118154632).
+  bool supports_borrowed_builders = 7;
+  // supports_cache_export_staging: this vmmd stages BuildSpec.
+  // cache_export_manifest on a deferred cache export run's drive
+  // (ADR-20261029171525 amendment 2). builderd defers a build's dependency
+  // cache export only when it is set.
+  bool supports_cache_export_staging = 8;
 }
 
 
@@ -2994,7 +3028,16 @@ message RunAgentRequest {
   oneof frame {
     RunAgentStart start = 1;
     RunAgentCancel cancel = 2;
+    RunAgentExtend extend = 3;
   }
+}
+
+// RunAgentExtend moves the run's deadline to deadline_sec + credit_ms, never
+// past the request's timeout_sec (ADR-20261027090016 amendment 3). credit_ms
+// is the run's total credit, so a repeated frame changes nothing. A vmmd
+// that predates it ignores it.
+message RunAgentExtend {
+  int64 credit_ms = 1;
 }
 
 // RunAgentStart names the machine and carries the run. run is an
@@ -3024,6 +3067,11 @@ message RunAgentStart {
   // once it has waited this long on the relay and nothing else. 0 (an older
   // schedd) keeps it running.
   int32 model_wait_pause_after_ms = 13;
+  // deadline_sec is the seller's timeout when it is below the request's
+  // timeout_sec, which is then the guest's ceiling: vmmd stops the run at
+  // deadline_sec plus the credit RunAgentExtend grants (ADR-20261027090016
+  // amendment 3). 0 (an older schedd): the request's timeout_sec.
+  int32 deadline_sec = 14;
 }
 
 // AgentRunSnapshot locates a preset snapshot CaptureAgentSnapshot made.

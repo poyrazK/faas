@@ -958,6 +958,65 @@
         }
       },
       "description": "Memory vmmd measured for finished runs, against configured RAM + 8 MB over the same time. billable is the proposed rule: unpaused seconds at max(private, 256 MB) + 8 MB."
+    },
+    {
+      "type": "timeseries",
+      "title": "Approval-wait deadline credit (hours per hour)",
+      "id": 20,
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(agent_run_deadline_credit_seconds_total[1h])) / 3600",
+          "legendFormat": "credit",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "description": "Time agent run deadlines grew by while a person decided an approval (ADR-20261027090016 amendment 3). Bounded per run by AgentRunApprovalCreditMaxSec."
     }
   ]
 }

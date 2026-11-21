@@ -85,20 +85,18 @@ func validInquiry(in referrals.InquiryInput) bool {
 		boundedText(in.Name, api.SalesNameMaxBytes, false) && boundedText(in.Company, api.SalesFieldMaxBytes, true) && boundedText(in.Message, api.SalesIntakeMessageMaxBytes, false) &&
 		(in.Intent == "contact" || in.Intent == "demo") && (in.Code == "" || referrals.ValidCode(in.Code))
 }
-func (s *Service) intakeOptions() referrals.IntakeOptions {
-	o := referrals.IntakeOptions{MemberEmails: []string{}, RepEmails: []string{}}
-	for email, manager := range s.Config.Members {
-		o.MemberEmails = append(o.MemberEmails, email)
-		if !manager {
-			o.RepEmails = append(o.RepEmails, email)
-		}
+func (s *Service) intakeOptions(ctx context.Context) (referrals.IntakeOptions, error) {
+	team, err := s.roster(ctx)
+	if err != nil {
+		return referrals.IntakeOptions{}, err
 	}
+	o := referrals.IntakeOptions{MemberEmails: team.emails(), RepEmails: team.repEmails()}
 	zone := s.Config.IntakeTimezone
 	if zone == nil {
 		zone = time.UTC
 	}
 	o.DueOn = time.Now().In(zone).AddDate(0, 0, s.Config.IntakeFollowupDays).Format(time.DateOnly)
-	return o
+	return o, nil
 }
 func (s *Service) SubmitInquiry(w http.ResponseWriter, r *http.Request) {
 	if !s.intakeEnabled(w, r) {
@@ -134,7 +132,12 @@ func (s *Service) SubmitInquiry(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)
 	defer cancel()
-	if err = store.SubmitInquiry(ctx, nonce, expires, body.InquiryInput, s.intakeOptions()); err != nil {
+	options, err := s.intakeOptions(ctx)
+	if err != nil {
+		unavailable(w)
+		return
+	}
+	if err = store.SubmitInquiry(ctx, nonce, expires, body.InquiryInput, options); err != nil {
 		unavailable(w)
 		return
 	}
@@ -213,7 +216,12 @@ func (s *Service) AssignInquiry(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)
 	defer cancel()
-	if err := store.AssignInquiry(ctx, id, in.Version, in.OwnerID, s.intakeOptions()); err != nil {
+	options, err := s.intakeOptions(ctx)
+	if err != nil {
+		pipelineError(w, err)
+		return
+	}
+	if err := store.AssignInquiry(ctx, id, in.Version, in.OwnerID, options); err != nil {
 		pipelineError(w, err)
 		return
 	}

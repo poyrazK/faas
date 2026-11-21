@@ -55,6 +55,9 @@ type Claim struct {
 	// PauseDuringModelCalls is the version's model-wait pause opt-in
 	// (ADR-20261027090012 §1); a version opts out with false.
 	PauseDuringModelCalls bool
+	// CapabilityPolicy is the version's capability policy
+	// (ADR-20261027090016 amendment 1); nil allows only the models.
+	CapabilityPolicy *api.AgentCapabilityPolicy
 }
 
 // ClaimRun moves the oldest claimable queued run to starting under token.
@@ -130,12 +133,67 @@ func (s *Store) claimable(ctx context.Context, tx pgx.Tx, accountID string, maxL
 // the run to running: from here a lost lease fails the run instead of
 // queueing it again. The AI gateway enforces the cap (ADR-20261027090010 §7).
 func (s *Store) MarkRunning(ctx context.Context, runID, token, nodeID, instanceID string, aiBudgetMillicents int64) error {
+	return s.MarkRunningCredited(ctx, runID, token, nodeID, instanceID, aiBudgetMillicents, 0)
+}
+
+// MarkRunningCredited is MarkRunning for a run whose deadline may grow by
+// up to creditMaxSec of approval waits (ADR-20261027090016 amendment 3).
+// outboundd reads the cap for an approval's expiry.
+func (s *Store) MarkRunningCredited(ctx context.Context, runID, token, nodeID, instanceID string, aiBudgetMillicents int64, creditMaxSec int) error {
 	if aiBudgetMillicents < 1 {
 		return fmt.Errorf("agents: run %s needs a positive model spend cap", runID)
 	}
+	if creditMaxSec < 0 || creditMaxSec > api.AgentRunApprovalCreditMaxSec {
+		return fmt.Errorf("agents: run %s deadline credit %d s is out of range", runID, creditMaxSec)
+	}
 	n, err := s.q.MarkAgentRunRunning(ctx, s.pool, sqlc.MarkAgentRunRunningParams{NodeID: nodeID, InstanceID: instanceID,
-		AiBudgetMillicents: aiBudgetMillicents, RunID: runID, LeaseToken: token})
+		AiBudgetMillicents: aiBudgetMillicents, DeadlineCreditMaxSec: int32(creditMaxSec), RunID: runID, LeaseToken: token})
 	return fenced(n, err, "mark run running")
+}
+
+// approvalWaitsMax bounds the waits one credit read sums. A run holds at
+// most AgentRunApprovalsPendingMax at a time; past this many in its life it
+// earns no more credit, which only shortens its deadline.
+const approvalWaitsMax = 500
+
+// RunApprovalCredit is the wall time during which at least one of the run's
+// approvals waited, overlapping waits counted once (ADR-20261027090016
+// amendment 3). The caller caps it. A lost lease reads as no waits.
+func (s *Store) RunApprovalCredit(ctx context.Context, runID, token string) (time.Duration, error) {
+	rows, err := s.q.ListAgentRunApprovalWaits(ctx, s.pool, sqlc.ListAgentRunApprovalWaitsParams{RunID: runID, LeaseToken: token,
+		MaxRows: approvalWaitsMax})
+	if err != nil {
+		return 0, fmt.Errorf("read agent run approval waits: %w", err)
+	}
+	waits := make([][2]time.Time, 0, len(rows))
+	for _, r := range rows {
+		waits = append(waits, [2]time.Time{r.CreatedAt.Time, r.EndedAt.Time})
+	}
+	return unionDuration(waits), nil
+}
+
+// unionDuration sums the intervals' union. waits is sorted by start.
+func unionDuration(waits [][2]time.Time) time.Duration {
+	var total time.Duration
+	var start, end time.Time
+	for i, w := range waits {
+		if !w[1].After(w[0]) {
+			continue
+		}
+		switch {
+		case i == 0 || start.IsZero():
+			start, end = w[0], w[1]
+		case w[0].After(end):
+			total += end.Sub(start)
+			start, end = w[0], w[1]
+		case w[1].After(end):
+			end = w[1]
+		}
+	}
+	if !start.IsZero() {
+		total += end.Sub(start)
+	}
+	return total
 }
 
 // RecordBoot records how long the VM took to boot.
@@ -408,6 +466,12 @@ func claimFrom(row sqlc.GetAgentRunClaimRow, token string) (Claim, error) {
 	if row.Prompt.Valid {
 		prompt := row.Prompt.String
 		c.Prompt = &prompt
+	}
+	if len(row.CapabilityPolicy) > 0 {
+		c.CapabilityPolicy = &api.AgentCapabilityPolicy{}
+		if err := json.Unmarshal(row.CapabilityPolicy, c.CapabilityPolicy); err != nil {
+			return Claim{}, fmt.Errorf("decode capability policy: %w", err)
+		}
 	}
 	return c, nil
 }

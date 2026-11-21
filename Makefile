@@ -80,7 +80,11 @@ BINDIR  := bin
 # the operator invokes make.
 ANSIBLE_CONFIG ?= $(CURDIR)/deploy/ansible/ansible.cfg
 ANSIBLE_INVENTORY ?= deploy/ansible/inventory/hosts.ini
-ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
+# ANSIBLE_VARS_FILE: operator variables kept outside the repository (what CD
+# passes as --ansible-vars-file from CP_ANSIBLE_VARS_B64), e.g. for a control
+# plane rebuilt from backups (docs/runbooks/ControlPlaneStateBackup.md).
+ANSIBLE_VARS_FILE ?=
+ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook $(if $(ANSIBLE_VARS_FILE),-e @$(ANSIBLE_VARS_FILE))
 
 .DEFAULT_GOAL := help
 
@@ -1738,6 +1742,10 @@ pricing-check: ## Verify generated customer pricing is in sync
 docs-links-check: ## Verify every Gregale docs URL maps to a customer page source
 	@$(GO) run ./cmd/docs-links-check
 	@python3 scripts/ops/check_live_docs_test.py
+
+.PHONY: docs-commands-check
+docs-commands-check: ## Verify every gregale command in the customer docs runs as written, in the command tree's names
+	@$(GO) test -count=1 -run '^(TestDocsCommandsRunAsWritten|TestDocsSpellCommandsInTheTree)$$' ./cmd/gregale
 
 .PHONY: docs-live-check
 docs-live-check: ## Verify deployed docs headings and require real 404s (DOCS_BASE_URL optional)

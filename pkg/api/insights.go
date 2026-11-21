@@ -122,6 +122,40 @@ type InsightRetention struct {
 	Truncated  bool                  `json:"truncated"`
 }
 
+// InsightCohortRequest creates a cohort (ADR 20261119102741 §3). Kind is
+// did (Event sent at least MinCount times, default 1), did_not (customers
+// active in the last 30 days that did not send Event) or funnel (Steps
+// completed within Window); all look back WithinDays.
+type InsightCohortRequest struct {
+	Key        string               `json:"key"`
+	Kind       string               `json:"kind"`
+	Event      string               `json:"event,omitempty"`
+	Where      map[string]string    `json:"where,omitempty"`
+	WithinDays int                  `json:"within_days"`
+	MinCount   int                  `json:"min_count,omitempty"`
+	Steps      []InsightStepRequest `json:"steps,omitempty"`
+	Window     string               `json:"window,omitempty"`
+}
+
+// InsightCohort is a cohort and its last refresh. Rules target it with the
+// gregale.cohort attribute.
+type InsightCohort struct {
+	InsightCohortRequest
+	Members            int        `json:"members"`
+	Truncated          bool       `json:"truncated"`
+	MaxMembers         int        `json:"max_members"`
+	RefreshedAt        *time.Time `json:"refreshed_at,omitempty"`
+	RefreshRequestedAt time.Time  `json:"refresh_requested_at"`
+	RefreshError       string     `json:"refresh_error,omitempty"`
+	CreatedBy          string     `json:"created_by"`
+	CreatedAt          time.Time  `json:"created_at"`
+}
+
+// InsightCohortList is an environment's cohorts.
+type InsightCohortList struct {
+	Cohorts []InsightCohort `json:"cohorts"`
+}
+
 // InsightRequestVariant is request telemetry for one value of a flag.
 type InsightRequestVariant struct {
 	Value           string  `json:"value"`

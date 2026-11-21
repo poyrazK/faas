@@ -278,19 +278,18 @@ func (r *Runner) CleanupExpiredApp(ctx context.Context, p *Provisioner, app stat
 		return nil
 	}
 	run, err := uuid.Parse(marker)
-	if err != nil || run == uuid.Nil {
-		return nil
-	}
-	target := Prepared{provisioner: p, account: state.Account{ID: app.AccountID}, run: run}
-	for _, role := range workloads {
-		if target.owns(app, role.name) {
-			if role.name != Observer {
-				_, buildID := apidsource.OperationIDs(buildOperation(run.String()), app.ID)
-				if err := r.RemoveSource(ctx, buildID); err != nil {
-					return err
+	if err == nil && run != uuid.Nil {
+		target := Prepared{provisioner: p, account: state.Account{ID: app.AccountID}, run: run}
+		for _, role := range workloads {
+			if target.owns(app, role.name) {
+				if role.name != Observer {
+					_, buildID := apidsource.OperationIDs(buildOperation(run.String()), app.ID)
+					if err := r.RemoveSource(ctx, buildID); err != nil {
+						return err
+					}
 				}
+				return target.removeCredentials(ctx, app.ID)
 			}
-			return target.removeCredentials(ctx, app.ID)
 		}
 	}
 	return nil
