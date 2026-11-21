@@ -194,9 +194,12 @@ func (s State) CountsForRAM() bool {
 // Billable reports whether a resident instance in s is billed plan RAM + 8 MB
 // per second (§4.7). It is CountsForRAM less FROZEN: a frozen instance is
 // resident but unbilled, like a parked one (ADR-1151, ADR-906 decision 4).
-// The instance_billing_intervals trigger encodes the same set.
+// SNAPSHOTTING (a park's terminal capture) and MIGRATING (a platform move)
+// are platform work and unbilled too (account usage audit 2026-11-21,
+// migration 20261121135135716). The instance_billing_intervals trigger
+// encodes the same set.
 func (s State) Billable() bool {
-	return s.CountsForRAM() && s != StateFrozen
+	return s.CountsForRAM() && s != StateFrozen && s != StateSnapshotting && s != StateMigrating
 }
 
 // IsLive reports whether the named state is a live row that the

@@ -3,6 +3,8 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { CreateManagedExecutionWorkflowStep } from './CreateManagedExecutionWorkflowStep.js';
+import type { ExecutionPipelineOptions } from './ExecutionPipelineOptions.js';
+import type { ExecutionTaskBatch } from './ExecutionTaskBatch.js';
 /**
  * Encrypted, server-managed DAG. Every step runs in its own disposable
  * Run. Independent steps may run in parallel up to max_parallel_steps
@@ -21,6 +23,8 @@ export type CreateManagedExecutionWorkflowRequest = {
    * Stop new admissions on a failed Run, or continue steps independent of failed branches.
    */
   failure_policy?: 'fail_fast' | 'continue_independent';
-  steps: Array<CreateManagedExecutionWorkflowStep>;
+  pipeline?: ExecutionPipelineOptions;
+  batch?: ExecutionTaskBatch;
+  steps?: Array<CreateManagedExecutionWorkflowStep>;
 };
 

@@ -10,6 +10,8 @@ import { RunsService } from './generated/services/RunsService.js';
 import type { CreateExecutionRequest } from './generated/models/CreateExecutionRequest.js';
 import type { ExecutionResponse } from './generated/models/ExecutionResponse.js';
 import { streamSse, type SseEvent } from './sse.js';
+import { prepareExecutionFile, uploadPreparedExecutionFile } from './execution-files.js';
+import { mintIdempotencyKey } from './idempotency.js';
 import type { CancelablePromise } from './generated/core/CancelablePromise.js';
 
 /** Event names emitted by `/v1/executions/{id}/events`. */
@@ -62,6 +64,8 @@ export interface WatchExecutionOptions {
 
 /** Options for execution submission and observation. */
 export interface RunExecutionOptions extends WatchExecutionOptions {
+  /** Local immutable data files staged below context.input_dir. */
+  files?: Readonly<Record<string, Blob>>;
   /** Stable key for replaying the create request, when desired. */
   idempotencyKey?: string;
   /** Called in stream order for every status, output, and terminal event. */
@@ -76,7 +80,8 @@ export interface ExecutionHelpers {
 
 /** Internal request boundary shared by isolated and legacy helpers. */
 export interface ExecutionRequests {
-  runs: Pick<typeof RunsService, 'createExecution' | 'getExecution'>;
+  readonly idempotencyKey?: string;
+  runs: Pick<typeof RunsService, 'createExecution' | 'createExecutionV2' | 'getExecution' | 'prepareExecutionFile' | 'uploadExecutionFile'>;
   fetchEvents(path: string, signal?: AbortSignal): Promise<Response>;
 }
 
@@ -171,6 +176,10 @@ function executionHeaders(): Headers {
 // Compatibility exports continue to resolve the process-wide configuration.
 const legacyRequests: ExecutionRequests = {
   runs: RunsService,
+  get idempotencyKey() {
+    const headers = OpenAPI.HEADERS;
+    return typeof headers === 'object' && headers ? new Headers(headers).get('Idempotency-Key') ?? undefined : undefined;
+  },
   fetchEvents(path, signal) {
     return globalThis.fetch(new URL(path, OpenAPI.BASE), {
       method: 'GET', headers: executionHeaders(), signal,
@@ -285,12 +294,28 @@ export async function runExecutionWithClient(
   requestBody: CreateExecutionRequest,
   options: RunExecutionOptions = {},
 ): Promise<ExecutionResponse> {
-  const { idempotencyKey, onEvent, ...watchOptions } = options;
+  const { idempotencyKey: requestedKey, files, onEvent, ...watchOptions } = options;
   if (watchOptions.signal?.aborted) throw abortReason(watchOptions.signal);
 
-  const receipt = await withSignal(
-    client.runs.createExecution({ requestBody, idempotencyKey }), watchOptions.signal,
+  const entries = Object.entries(files ?? {});
+  const idempotencyKey = requestedKey ?? (entries.length ? client.idempotencyKey ?? mintIdempotencyKey() : undefined);
+  if (entries.length + (requestBody.input_files?.length ?? 0) > 8) throw new Error('At most 8 Run input files are allowed');
+  const prepared = [];
+  for (const [path, file] of entries) prepared.push({ path, prepared: await prepareExecutionFile(file, watchOptions.signal, client.runs) });
+  if (prepared.length) requestBody = { ...requestBody, input_files: [...(requestBody.input_files ?? []), ...prepared.map(({ path, prepared }) => ({ path, file_id: prepared.metadata.id }))] };
+  const extended = !!requestBody.environment_id || requestBody.limits?.execution_class === 'extended' || requestBody.input_schema !== undefined || requestBody.result_schema !== undefined || !!requestBody.input_files?.length || requestBody.artifact_storage === 'stored';
+  const create = () => withSignal(
+    extended ? client.runs.createExecutionV2({ requestBody, idempotencyKey }) : client.runs.createExecution({ requestBody, idempotencyKey }),
+    watchOptions.signal,
   );
+  let receipt: ExecutionResponse;
+  try { receipt = await create(); }
+  catch (error) {
+    const problem = error as { status?: number; body?: { code?: string }; problem?: { code?: string } };
+    if (!prepared.length || problem.status !== 409 || (problem.problem?.code ?? problem.body?.code) !== 'execution_files_not_ready') throw error;
+    for (const { prepared: file } of prepared) if (file.metadata.upload_required) await uploadPreparedExecutionFile(file, watchOptions.signal, client.runs);
+    receipt = await create();
+  }
 
   for await (const event of watchExecutionWithClient(client, receipt.id, watchOptions)) {
     if (onEvent) await onEvent(event);

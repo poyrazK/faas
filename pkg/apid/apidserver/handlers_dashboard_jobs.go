@@ -86,7 +86,7 @@ func (s *server) renderJobsQueues(w http.ResponseWriter, r *http.Request, log *s
 			return
 		}
 	}
-	data := dashboard.JobsQueuesData{SelectedApp: selectedApp, Action: dashboardJobsActionFlash(r)}
+	data := dashboard.JobsQueuesData{SelectedApp: selectedApp, Action: dashboardJobsActionFlash(r), RunPipelines: s.executionAPIEnabled}
 	jobs, err := s.store.JobListByAccount(ctx, acct.ID, dashboardJobsPageLimit, 0)
 	if err != nil {
 		log.Warn("dashboard jobs: list jobs", "account_id", acct.ID, "err", err)

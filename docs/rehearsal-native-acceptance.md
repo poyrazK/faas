@@ -26,15 +26,36 @@ python3 scripts/ci/rehearsal-native.py --journey hosted-task --prepare-only \
 ```
 
 The directory contains `fixture/web.tar.gz`, `fixture/worker.tar.gz` and
-`preparation.json` with the archive SHA-256s and the exact `build_report`
-invocation. Both archives use the pinned Node starter and dependency lockfile.
-The web process accepts Tasks and the dedicated worker executes them. The
-contained worker archive also carries the stock Task migration command.
+`preparation.json` with the archive and reviewed source tree SHA-256s and the
+exact `build_report` invocation. Both archives use the pinned Node starter
+and dependency lockfile. The web process accepts Tasks and the dedicated
+worker executes them. The worker archive also carries the stock Task
+migration command.
 
-The native coordinator needs to submit the fixture through the owner-approved
-path, observe the first running lease, stop that worker, and observe a second
-lease on the replacement. Collect the following in `hosted-task-receipt.json`
-in the same private evidence directory.
+The private smoke entry in `pkg/apid/toolregistry` checks the host through
+its in-process adapter before consuming the owner's approval. It scopes the
+smoke run to the exact contained deployments and their original lease, and
+cleans up an owned run even if the smoke is cancelled. Claim replay returns
+the reserved run identity.
+
+The first-claim entry is `StartHostedTaskRehearsal`. The operator wires its
+adapter with `pkg/tasktoolrehearsal/native.Startup` and checks the enrolled
+account, node and platform revision before spending the approval. Supply the
+`source_sha256` values from trusted offline preparation. The private entry
+compares both with the retained review before claiming the run.
+
+The ordinary deployment pipeline starts the worker. The adapter wakes the
+exact web deployment and forwards MCP only to that instance using the
+private gateway forwarder. Both deployments stay at zero traffic. The worker
+fixture logs a digest of the claim token, and the scheduler attributes the
+line to the VM. The restricted observer checks the live lease, Task, worker
+registration and deployment in PostgreSQL. The entry then disposes of the
+fixture. It returns first-claim evidence and leaves full acceptance to the
+recovery run.
+
+Complete the recovery run with a scheduler-owned stop and an observed
+replacement lease. Collect the following in `hosted-task-receipt.json` in the
+same private evidence directory.
 
 | Field | Source and expected value |
 | --- | --- |

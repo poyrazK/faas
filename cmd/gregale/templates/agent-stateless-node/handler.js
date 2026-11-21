@@ -18,12 +18,18 @@ import { parseRecord, runSlice } from "./agent.js";
 import { scriptedModel } from "./model.js";
 import { GregalePlatform } from "./platform.js";
 import { PostgresStore } from "./store.js";
-import { HTTPTools } from "./tools.js";
+import { HTTPTools, GregaleTaskTools } from "./tools.js";
 
 let deps;
 
 function dependencies() {
-  deps ??= { store: new PostgresStore(), model: scriptedModel, platform: new GregalePlatform(), tools: new HTTPTools() };
+  if (!deps) {
+    const platform = new GregalePlatform();
+    const httpTools = new HTTPTools();
+    const taskTools = new GregaleTaskTools({ platform });
+    deps = { store: new PostgresStore(), model: scriptedModel, platform,
+      tools: { dispatch: (threadID, call) => (call.tool === "gregale_task" ? taskTools : httpTools).dispatch(threadID, call) } };
+  }
   return deps;
 }
 

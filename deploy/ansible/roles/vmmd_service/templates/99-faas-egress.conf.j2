@@ -39,9 +39,17 @@ Environment="FAAS_PRIVATE_INGRESS_TCP_PORTS={{ faas_private_ingress_ports | join
 Environment="FAAS_PRIVATE_CONTROL_INGRESS_CIDRS={{ faas_exact_cidrs(faas_control_plane_allowed_exact, faas_control_plane_allowed_cidrs) | trim }}"
 {% endif %}
 {% set faas_peer_ingress_cidrs = (faas_exact_cidrs(faas_compute_peer_exact, faas_control_plane_allowed_cidrs | default([])) | trim) if faas_compute_peer_exact is defined else '' %}
+{# The boot policy also admits peers to gatewayd-internal for the app edge's
+   compute-pool fallback (ADR-1343 §1, §6): a drained or unready node's edge
+   sends its requests to the other nodes' 8080. Without the port here, vmmd's
+   first rebuild drops that rule and a drained node's edge answers 503. #}
+{% set faas_peer_ingress_ports = faas_compute_peer_ports | default([50051, 9091]) | list %}
+{% if (faas_edge_on_compute_nodes | default(false) | string | lower) in ["true", "yes", "on", "1"] and faas_edge_peer_cidrs | default([]) and (faas_edge_peer_gateway_port | default(8080)) not in faas_peer_ingress_ports %}
+{% set faas_peer_ingress_ports = faas_peer_ingress_ports + [faas_edge_peer_gateway_port | default(8080)] %}
+{% endif %}
 {% if faas_peer_ingress_cidrs %}
 Environment="FAAS_PRIVATE_PEER_INGRESS_CIDRS={{ faas_peer_ingress_cidrs }}"
-Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS={{ faas_compute_peer_ports | default([50051, 9091]) | join(',') }}"
+Environment="FAAS_PRIVATE_PEER_INGRESS_TCP_PORTS={{ faas_peer_ingress_ports | join(',') }}"
 {% endif %}
 {% if faas_public_entry_addrs | default([]) %}
 # ADR-20261103163954: no proxy in front; keep 443 open to every source on the

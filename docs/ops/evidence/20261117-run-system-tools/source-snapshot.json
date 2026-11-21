@@ -1,0 +1,28 @@
+{
+  "sha256": "d59371f13ad75c4c21778d4b1fa7da38fe57d46bd4fa2fd588ff70cdb3050911",
+  "bytes": 93321559,
+  "source_files": 55902,
+  "source_bytes": 384195915,
+  "base": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+  "source_manifest_sha256": "661fabb818f9136ee7d88a368fee40c242a3c89ff14ee57e18d6852c27bae508",
+  "final_delta": {
+    "archive_sha256": "6c513583124411b4021eb6066aeef6738eec0aa344e4717b87d18321bc54639f",
+    "source_manifest_sha256": "956ccc8117f64943056c364bffb0725e7e8f1e37e593ec9089d972aed25a9019",
+    "bytes": 2738331,
+    "files": [
+      "docs/gregale-run-roadmap.md",
+      "examples/gregale-run/pdf-report/README.md",
+      "examples/gregale-run/pdf-report/package.json",
+      "examples/gregale-run/pdf-report/run.py",
+      "examples/gregale-run/pdf-report/run.ts",
+      "pkg/apid/runenvironments/service.go",
+      "pkg/apid/runenvironments/service_test.go",
+      "pkg/e2etest/runlifecycle/system_environments_metal_test.go",
+      "scripts/ci/run-run-lifecycle-acceptance.sh",
+      "sdk/python/faas_sdk/preview/__init__.py",
+      "sdk/python/faas_sdk/preview/tasks.py",
+      "sdk/python/tests/test_tasks.py"
+    ],
+    "source_files": 55903
+  }
+}

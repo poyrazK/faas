@@ -139,3 +139,17 @@ func TestCompare(t *testing.T) {
 		t.Error("an exact baseline reported problems")
 	}
 }
+
+func TestRunFileDataKeyExceptionIsNarrow(t *testing.T) {
+	src := `package runfilestore
+func fileIdentity() { _, _ = age.ParseX25519Identity("delegated-object-key"); _, _ = secretbox.LoadHostKey("must-count") }
+func other() { _, _ = age.ParseX25519Identity("must-also-count") }
+`
+	f, err := parser.ParseFile(token.NewFileSet(), "keys.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := countLoaderCalls(f) - countRunFileDataKeyParses(f); got != 2 {
+		t.Fatalf("exception hid credential loaders: %d", got)
+	}
+}

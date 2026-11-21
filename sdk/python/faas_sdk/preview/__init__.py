@@ -659,6 +659,7 @@ from .event_pipelines import (
     EventPipelineOutcome,
     PipelineEvent,
 )
+from .execution_environments import awatch_execution_environment, watch_execution_environment
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
 from .file_pipelines import (
     FILE_PIPELINE_SCHEMA,
@@ -965,6 +966,16 @@ from .stripe_webhook_state import (
     stripe_delivery_context_from_headers,
 )
 from .stripe_webhooks import StripeWebhookAction, StripeWebhookAdapter
+from .tasks import (
+    Task,
+    TaskDeliveryError,
+    TaskDestination,
+    TaskExecutionError,
+    TaskIntent,
+    TaskResult,
+    TaskRun,
+    TaskSubmissionError,
+)
 
 __all__ = (
     "PIPELINE_COMPENSATION_SCHEMA",
@@ -1097,9 +1108,12 @@ __all__ = (
     "CrashSnapshotResult",
     "capture_crash_snapshot",
     "acapture_crash_snapshot",
+    "Task", "TaskRun", "TaskIntent", "TaskResult", "TaskDestination", "TaskExecutionError", "TaskSubmissionError", "TaskDeliveryError",
     "ExecutionEvent",
     "ExecutionID",
     "watch_execution",
+    "watch_execution_environment",
+    "awatch_execution_environment",
     "awatch_execution",
     "decode_execution_artifact",
     "DEV_BRIDGE_CONTEXT_HEADER",

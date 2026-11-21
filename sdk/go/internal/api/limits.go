@@ -314,3 +314,6 @@ const BindingVerificationQualificationMaxConditions = 12800
 
 // Read-after-error creation recovery has no confirmed receipt deadline yet.
 const BindingVerificationCreationReconcileTimeoutMilliseconds = 5000
+
+// RunControlRefMaxBytes mirrors the wire metadata bound in pkg/api/limits.go.
+const RunControlRefMaxBytes = 96

@@ -1,0 +1,35 @@
+{
+  "cohort": "tasks",
+  "functional_pass": true,
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "boot_id_sha256": "042afa9d28179bf5e202b9645a87e63c20defd71720b9eff8b9d9982929571b9",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "machine_id_sha256": "99573da60c00297ef565cd9915d7154c4851fbf1f4834bd613a16204f98332f8",
+    "virtualization": "google"
+  },
+  "limitations": [
+    "node24 on the operator-selected Google KVM fixture; native production release eligibility is separate",
+    "continuation inbox and fresh apid readers; customer model invocation is outside this compute qualification"
+  ],
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-tasks-functional/v1",
+  "sha256": {
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "process-exits.json": "867987e38f09738ebaf8661d3c47a3759f4c6abc6206bc933c87159aafe49f89",
+    "tasks.jsonl": "58f6c8ce29a25ebb88e38f2c9930ed49a52286297d4746759517cd0c20bdd0b7"
+  },
+  "source": {
+    "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "source_files": 55457,
+    "source_manifest_sha256": "ecba7df18ffabcbae8c6675927e7cd82da8e60a8ef94f8004b1311dd249349eb"
+  },
+  "tests": [
+    "TestSourceTaskContinuationMetal"
+  ]
+}

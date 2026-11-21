@@ -1,0 +1,406 @@
+{
+  "bare_metal_host": false,
+  "checks": {
+    "template-auth-checks": {
+      "package_elapsed_seconds": 1.15,
+      "passed_tests": [
+        "TestCallerPolicy",
+        "TestCallerPolicyAllowList",
+        "TestCallerPolicyCoversEveryMethod"
+      ]
+    },
+    "template-clones": {
+      "package_elapsed_seconds": 156.521,
+      "passed_tests": [
+        "TestSourceTemplateClonesMetal",
+        "TestSourceTemplateClonesMetal/automatic_capture_and_publication",
+        "TestSourceTemplateClonesMetal/cancelling_one_clone_spares_its_peer",
+        "TestSourceTemplateClonesMetal/catalog_retention_and_orphan_gc",
+        "TestSourceTemplateClonesMetal/corrupt_backing_cold_fallback",
+        "TestSourceTemplateClonesMetal/corrupt_drive_cold_fallback",
+        "TestSourceTemplateClonesMetal/failed_capture_never_publishes",
+        "TestSourceTemplateClonesMetal/four_live_clones_are_isolated",
+        "TestSourceTemplateClonesMetal/idempotent_publication_after_restart",
+        "TestSourceTemplateClonesMetal/template_unchanged_and_usage_settled",
+        "TestSourceWarmRestoreOOMMetal",
+        "TestSourceWarmRestoreOOMMetal/cold_real_oom",
+        "TestSourceWarmRestoreOOMMetal/corrupt_memory_cold_fallback",
+        "TestSourceWarmRestoreOOMMetal/corrupt_vmstate_cold_fallback",
+        "TestSourceWarmRestoreOOMMetal/payload_erasure_and_single_usage_entry",
+        "TestSourceWarmRestoreOOMMetal/payload_free_capture",
+        "TestSourceWarmRestoreOOMMetal/repeated_restores_are_clean",
+        "TestSourceWarmRestoreOOMMetal/warm_real_oom_and_recovery"
+      ]
+    },
+    "template-publisher-checks": {
+      "package_elapsed_seconds": 7.659,
+      "passed_tests": [
+        "TestExecutionClaimResolverBuildsPayloadFreeRestoreEnvelope",
+        "TestExecutionClaimResolverMissingSnapshotColdBootsSameIdentity",
+        "TestExecutionClaimResolverRequiresNodeAndTrustedArtifacts",
+        "TestExecutionProfileSnapshotSurvivesDurableCatalog",
+        "TestExecutionTemplateLostAcknowledgementKeepsTheWinner",
+        "TestExecutionTemplatePartialCaptureCannotPublish",
+        "TestExecutionTemplatePublicationIsCompleteAndIdempotent",
+        "TestExecutionTemplatePublicationRaceRetiresOnlyItsLoser",
+        "TestExecutionTemplateUnknownCommitRetainsArtifacts",
+        "TestMemoryRuntimeSnapshotIndexConcurrentPublication",
+        "TestMemoryRuntimeSnapshotIndexPublishesImmutably",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/bad_artifact_digest",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/not_sanitized",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/payload-bearing",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/unknown_state",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/unsafe_storage_path",
+        "TestMemoryRuntimeSnapshotIndexRejectsUnsafeEntries/zero_memory_bytes",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/backing",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/drive",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/mem",
+        "TestRuntimeSnapshotBundleAuthenticatesEveryObject/vmstate",
+        "TestRuntimeSnapshotCatalogDoesNotFallbackOnMalformedRequest",
+        "TestRuntimeSnapshotCatalogFallsBackSafely",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/artifact_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/catalog_unwired",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/incompatible",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/index_marks_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/index_unavailable",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/metadata_corrupt",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/missing",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/retired",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/verifier_unavailable",
+        "TestRuntimeSnapshotCatalogFallsBackSafely/verifier_unwired",
+        "TestRuntimeSnapshotCatalogNilReceiverFallsBackAfterIdentityValidation",
+        "TestRuntimeSnapshotCatalogPreservesContextOnLookup",
+        "TestRuntimeSnapshotCatalogRejectsUnsupportedRequestFormat",
+        "TestRuntimeSnapshotCatalogResolvesCompatibleSnapshot",
+        "TestRuntimeSnapshotCatalogRestoresOnlyVerifiedStoragePair",
+        "TestRuntimeSnapshotDigestIsLengthDelimited",
+        "TestRuntimeSnapshotEntryValidateRequiresCanonicalStorageKey",
+        "TestRuntimeSnapshotErrorsRemainSentinels",
+        "TestRuntimeSnapshotIdentityKeyIsCanonical",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/architecture",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/disk_shape",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/format",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/memory_shape",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/runtime",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/short_digest",
+        "TestRuntimeSnapshotIdentityValidationRejectsAmbiguousValues/uppercase_digest",
+        "TestRuntimeSnapshotPlanColdBootKeepsIdentity",
+        "TestRuntimeSnapshotPublisherDoesNotOverwriteCatalogOrLeavePartialObjects",
+        "TestRuntimeSnapshotPublisherPreservesCancellation",
+        "TestRuntimeSnapshotPublisherPublishesVerifiedPair",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/invalid_size",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/missing_reader",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/not_sanitized",
+        "TestRuntimeSnapshotPublisherRejectsUnsafeOrIncompleteCapture/payload-bearing",
+        "TestRuntimeSnapshotReaderIsReadOnlyAndPrefersNative",
+        "TestRuntimeSnapshotVerifierGetsValidatedEntryOnly",
+        "TestStateRuntimeSnapshotIndexMapsMissingRows",
+        "TestStateRuntimeSnapshotIndexResolvesAndRetires",
+        "TestStorageRuntimeSnapshotVerifierAuthenticatesPair",
+        "TestStorageRuntimeSnapshotVerifierPreservesTransientAndCancellation",
+        "TestStorageRuntimeSnapshotVerifierRejectsMissingAndWrongSize"
+      ]
+    },
+    "template-retention-checks": {
+      "package_elapsed_seconds": 1.139,
+      "passed_tests": [
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans",
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans/ready",
+        "TestExecutionTemplateGCProtectsCatalogAndReclaimsOnlyOldOrphans/retired"
+      ]
+    },
+    "template-runtime-checks": {
+      "package_elapsed_seconds": 1.182,
+      "passed_tests": [
+        "TestAdoptionStateInventoryClassifiesEveryInstanceField",
+        "TestAdoptionStateInventoryClassifiesEveryMap",
+        "TestExecutionTemplateCannotAcceptAnExecution",
+        "TestExecutionTemplatePrivatePublicationCannotOverwriteOrEscape"
+      ]
+    },
+    "template-wiring-checks": {
+      "package_elapsed_seconds": 1.138,
+      "passed_tests": [
+        "TestExecutionTemplateShapesFailClosed"
+      ]
+    },
+    "warm-oom-executor-checks": {
+      "package_elapsed_seconds": 1.081,
+      "passed_tests": [
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_regressed",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/counter_unavailable",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/kernel_OOM",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_SIGKILL",
+        "TestExecutionOOMNeedsKernelCounterAndKilledProcess/ordinary_exit",
+        "TestGuestOOMCounterRequiresValidEvidence"
+      ]
+    },
+    "warm-oom-guest-checks": {
+      "package_elapsed_seconds": 1.126,
+      "passed_tests": [
+        "TestExecutionPayloadRevokesPristineRestoreFence",
+        "TestResumeCapabilityAdvertisement",
+        "TestResumeCapabilityAdvertisement/app_guest_whose_barrier_never_started",
+        "TestResumeCapabilityAdvertisement/app_guest_with_barrier",
+        "TestResumeCapabilityAdvertisement/pristine_execution_listener",
+        "TestResumeCapabilityAdvertisement/warm_builder",
+        "TestResumeWithoutEntropyNacks",
+        "TestServeExecutionOnceHandlesOneRequest"
+      ]
+    }
+  },
+  "execution_ledger_assertions": {
+    "retained_payload_rows": 0,
+    "template_account_runs": 0,
+    "template_cohort_customer_runs": 9,
+    "usage_entries_per_customer_run": 1,
+    "warm_oom_customer_runs": 7
+  },
+  "firecracker_version": "1.7.0",
+  "fixture_hashes": {
+    "base_sha256": "de7af69f972d3b582aa03188a22ed9309481e65147529186a3fc17d4c96b222c",
+    "guest_init_sha256": "2d76624b8d8c8726c5c6e6d547385a317d1d194b3829d029a92605d8e57e94b7",
+    "kernel_sha256": "178f50d3a868d8fc08228225cd49fca2d8f117a88c8924385b33166c4f158e3b"
+  },
+  "functional_pass": true,
+  "guest_clone_witnesses": [
+    {
+      "cancelled": false,
+      "count": 4,
+      "overlapping": true,
+      "unique_rng": 4
+    },
+    {
+      "cancelled": true,
+      "count": 2,
+      "overlapping": true,
+      "unique_rng": 1
+    }
+  ],
+  "guest_kernel_oom_witnesses": [
+    {
+      "after": 1,
+      "before": 0
+    },
+    {
+      "after": 1,
+      "before": 0
+    }
+  ],
+  "host": {
+    "acceptance_marker": true,
+    "architecture": "x86_64",
+    "host_kernel": "7.0.0-1014-gcp",
+    "kvm": true,
+    "virtualization": "google"
+  },
+  "limits": [
+    "node24 standard 256 MiB / 64 MiB scratch only",
+    "four simultaneous same-node networkless clones only",
+    "local artifact backend only",
+    "production publisher code uses operator-provided release pins and a dedicated platform account",
+    "fixture scan is not image provenance or vulnerability evidence",
+    "cross-node/CPU-cohort behavior, other profiles, full billing and native release qualification remain open",
+    "Google virtualization does not satisfy repository native acceptance requirements",
+    "full native-process-recovery producer and default quarantine-only recovery remain unqualified"
+  ],
+  "p0_3_complete": false,
+  "pre_teardown_leakchecks": 2,
+  "process_exits": {
+    "leakcheck_after": 0,
+    "leakcheck_before": 0,
+    "template_clones": 0
+  },
+  "production_captures": [
+    {
+      "memory_bytes": 268435456,
+      "private_drive_sha256": "5998ebf22e294ac2200e1980a150f11d5a8116fa603772646c86e0f4169f2217",
+      "snapshot_digest": "871819b5807a9c01cd003136e99dde2850a9e2e0ea597ecc704a9b9c3bd1354f",
+      "vmstate_bytes": 13716
+    },
+    {
+      "memory_bytes": 268435456,
+      "private_drive_sha256": "624fee31e04d5b69e340285c8986c7539c8944f0062bf4a86d663a833517c58d",
+      "snapshot_digest": "a24620a85cfddfe232faa0851f0569ffc47942b6e55d39f9a0e26bf5b304fcbc",
+      "vmstate_bytes": 13716
+    }
+  ],
+  "raw_evidence_sha256": {
+    "artifacts.sha256": "f7eeb74650c0f8dafa7c3ccf4758c98b48d3df70d645a5abb9ecb23bb810e1a0",
+    "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+    "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "linux-lint-cmd-schedd.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-api.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-e2etest-runlifecycle.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-fcvm.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-imaged.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-sched.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-state.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-pkg-vmmdgrpc.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "linux-lint-progress.json": "84da359b414c0ee5af813e493803326df6bb2d07690dc39a50e5b76ac2118069",
+    "linux-lint-result.json": "07ef3021727fc2a71da80b16e755758caa430013a04668cb8ffd6d7a69ecde89",
+    "process-exits.json": "88128b5f99fc9ba255de14ba70dc800d60784d03e1c58bf749ebea149acb9b6e",
+    "report.json": "21dd445f5367a8081eaad621d84af14fb561b14b9c09def817033134d04572cc",
+    "schema-dump.log": "2369ce236a8b9425b07d99b6e1e9adb6a4db13ad00f728671f756ea8e8db8613",
+    "schema-init.log": "af16ad346c1d507640ae6b958e02c2a216df88ed6e75a219d3afeeefbb73d42e",
+    "schema-result.json": "41a6a351d71a842e0aabe109082c65bf5311adda9f7e7bb496f34188e99353c9",
+    "schema-start.log": "66afd0411ccc09366e99fdd99b85f21899c8d2d064f5835126859618802153ad",
+    "schema-stop.log": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d",
+    "schema.regenerated.sql": "ba6523d3e368cb00e2a09f90c3ac1af539767a0da36e3fee29eb3d93524bdd1f",
+    "schema.regenerated.sql.migrations.sha256": "96fd4d3cb3114a357ef05db8f24ea3439826a3d9faea08b9733e51ae0136abac",
+    "source.json": "a722d6375ee87b8b920edc5aa0a9eb2a82874923144cb199149b5c8276f4532f",
+    "template-auth-checks.jsonl": "2a35fc15feb60fdc0300e7665a22c1b0f359a50c9603fc0d41602880f80790e3",
+    "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-clones.jsonl": "681a787e7a66c189998923ae1acbdd3cbcaecd5fada7ffc2108bebeeec574373",
+    "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-publisher-checks.jsonl": "f2a0371ddb1bf79cef763582b4ef88f03af39a446809cc179daa78b54ee0e9e4",
+    "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-retention-checks.jsonl": "cf038e0c653a514c4f86f52827edaab39b5b67ceb6caf47e3a0f0344e9f4c863",
+    "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-runtime-checks.jsonl": "ebc47d2032c7e57cc5d63329e1994999a4cd57a3034e7a3b77cf2627edd213de",
+    "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "template-wiring-checks.jsonl": "996076b52df1a96eceb0e003987b5cab07f31b629f4459203f325aaf2a3e59ff",
+    "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom-executor-checks.jsonl": "2ff36ae96856d0fe68882aa3310ef4f429150d8550c0f36bbc4fa7c0c9b83eb9",
+    "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "warm-oom-guest-checks.jsonl": "f9927ab2ba3835ac53a288a74e8744ddc981a2ba779b9eebd7b55520482d33f3",
+    "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "raw_report_schema": "gregale.run-template-clones-functional/v1",
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-template-clones-summary/v1",
+  "simultaneous_native_isolation": [
+    {
+      "live": 4,
+      "unique_cgroups": 4,
+      "unique_jail_uids": 4,
+      "unique_roots": 4,
+      "unique_writable_drives": 4
+    },
+    {
+      "live": 2,
+      "unique_cgroups": 2,
+      "unique_jail_uids": 2,
+      "unique_roots": 2,
+      "unique_writable_drives": 2
+    }
+  ],
+  "source": {
+    "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+    "go_version": "go version go1.26.11 linux/amd64",
+    "snapshot_commit": "3fc785dde80e849430b8d4ba7f10dcc3001785c5",
+    "snapshot_tree": "ab017607cb8ca613a07124b6f3d2d38242e86103"
+  },
+  "source_recovery_profile": "journal_adoption_v7",
+  "validation": {
+    "final_verdict_script_sha256": "b1e2ca4648f4d5568ac70ba14a6f80e39fe1274d98903df73e078162fb20351d",
+    "fresh_schema_regeneration": {
+      "canonical_schema_matches": true,
+      "current_canonical_schema_matches": true,
+      "fresh_private_postgres": true,
+      "migration_digest_matches": true,
+      "normalized_before_final_functional_run": true,
+      "regenerated_schema_sha256": "ba6523d3e368cb00e2a09f90c3ac1af539767a0da36e3fee29eb3d93524bdd1f"
+    },
+    "independent_hash_and_coverage_check": "passed on node; only whitelisted summary exported",
+    "linux_changed_code_lint": {
+      "checks": [
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-api.log",
+          "package": "./pkg/api"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-state.log",
+          "package": "./pkg/state"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-sched.log",
+          "package": "./pkg/sched"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-fcvm.log",
+          "package": "./pkg/fcvm"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-vmmdgrpc.log",
+          "package": "./pkg/vmmdgrpc"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-imaged.log",
+          "package": "./pkg/imaged"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-cmd-schedd.log",
+          "package": "./cmd/schedd"
+        },
+        {
+          "exit_code": 0,
+          "log": "linux-lint-pkg-e2etest-runlifecycle.log",
+          "package": "./pkg/e2etest/runlifecycle"
+        }
+      ],
+      "execution": "same eight packages separately, concurrency=1, tests enabled, metal tag",
+      "exit_code": 0,
+      "go_memory_limit_gib": 9,
+      "memory_max_gib": 12,
+      "patch_sha256": "465e717cbffa290879fe4507186855edd8f1ef93ebb88d00774389e5a8aa8c78",
+      "scope": "new issues in production template and clone snapshot diff on Linux amd64"
+    },
+    "linux_lint_resource_retry": {
+      "prior_attempt_incomplete": true,
+      "prior_memory_max_bytes": 8589934592,
+      "prior_memory_peak_bytes": 8589938688,
+      "prior_resource_evidence_sha256": "a89d430f3a9f491f37f9508fc8ae0b4253dbef3a84a93430c0dd3626bb2a91ea",
+      "prior_source_snapshot": "5a2faafec16939732285a095fa647472fd834044",
+      "reason": "combined scope reached 8 GiB memory ceiling; same scope repeated package by package"
+    },
+    "portable_checks": {
+      "bash_syntax": "passed",
+      "git_diff_check": "passed",
+      "gofmt": "passed",
+      "migration_expand_contract": {
+        "base_snapshot": "7c4f28da3cd48f819120a1202f0f3f492a8d9338",
+        "new_migrations": 2,
+        "passed": true,
+        "release_comparison": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1"
+      },
+      "protocol_compatibility": {
+        "comparison_snapshot": "7c4f28da3cd48f819120a1202f0f3f492a8d9338",
+        "guest_json_keys_after": 217,
+        "guest_json_keys_before": 217,
+        "messages_after": 493,
+        "messages_before": 491,
+        "passed": true,
+        "release_tag_available": false,
+        "services_after": 14,
+        "services_before": 14
+      },
+      "shellcheck": "passed",
+      "sqlc": {
+        "regeneration_unchanged": true,
+        "version": "v1.31.1"
+      },
+      "verdict_unit_tests": 12
+    },
+    "raw_logs_exported": false,
+    "working_tree_code_matches_tested_snapshot": true
+  },
+  "wake_witness_counts": {
+    "cold_boot": 5,
+    "restore": 11
+  }
+}

@@ -1,0 +1,11 @@
+✔ pipeline submission uses v2 and cancellation preserves encoded workflow identity (18.911416ms)
+✔ named task invocation preserves explicit retry identity and task lineage (21.748708ms)
+✔ Run controls preserve explicit zero limits, revisions, history filters and cursor (21.807375ms)
+ℹ tests 3
+ℹ suites 0
+ℹ pass 3
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 207.874666

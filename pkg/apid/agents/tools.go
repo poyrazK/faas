@@ -106,7 +106,7 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("agent tools are unavailable on this control-plane host"))
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, rapToolset{
+	manifest := rapToolset{
 		Name:        "gregale",
 		Description: "Gregale platform tools for stateless agents. Each result arrives at the call's callback URL.",
 		Endpoint:    h.CallbackBaseURL + ToolsetPath + "/invoke",
@@ -125,7 +125,14 @@ func (h *Handler) Toolset(w http.ResponseWriter, _ *http.Request) {
 			},
 			DisplayScript: `if args.until != () { "Sleeping until " + args.until } else { "Sleeping " + args.seconds + "s" }`,
 		}, runTool(), githubSubscribeTool(), browseTool(), browserTool()},
-	})
+	}
+	if h.PipelineToolEnabled {
+		manifest.Tools = append(manifest.Tools, pipelineTool())
+	}
+	if h.TaskToolEnabled {
+		manifest.Tools = append(manifest.Tools, taskTool())
+	}
+	httpkit.WriteJSON(w, http.StatusOK, manifest)
 }
 
 // InvokeTool handles POST /v1/agent-tools/invoke. As RAP asks, it
@@ -201,6 +208,10 @@ func (h *Handler) runTool(ctx context.Context, grant CallbackToken, inv rapInvoc
 	switch inv.Operation {
 	case toolSleep:
 		return h.sleep(ctx, grant, inv)
+	case toolPipeline:
+		return h.startPipeline(ctx, grant, inv, caller)
+	case toolTask:
+		return h.startTask(ctx, grant, inv, caller)
 	case toolRun:
 		return h.startRun(ctx, grant, inv, caller)
 	case toolGitHubSubscribe:
