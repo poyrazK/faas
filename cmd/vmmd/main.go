@@ -2274,6 +2274,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	impl.Register(gsrv)
+	// ADR-20261121202814: the light ForwardHTTPStream hop shares the gRPC
+	// port, chosen by ALPN; off unless FAAS_VMMD_FORWARD_HOP=1.
+	lis = wrapForwardHop(lis, serverTLS, impl, os.Getenv, ops.Registry(), log)
 	localData := newLocalDataSocket(ctx, cfg.LocalDataSocket, api.VmmdLocalDataSocket, cfg.OwnerUser, impl.Register, log)
 	defer func() {
 		if err := impl.Close(context.WithoutCancel(ctx)); err != nil {
