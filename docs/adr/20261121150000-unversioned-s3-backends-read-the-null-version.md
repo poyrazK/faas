@@ -74,3 +74,21 @@ existing buckets.
 - **Normalize IDs at each call site.** About fifteen read sites and their
   response validators would each need the rule; one transport and three
   listings keep it in one place.
+
+## Amendment 2026-11-21: the S3 gateway's own dispatches
+
+The transport covers every request the SDK sends, but the S3 gateway sends
+presigned requests with its own HTTP client (tracked and legacy PUTs, reads,
+multipart part uploads, mutations and branch overlays) and reads the
+provider's response headers directly. On OVH after the rc.364 rollout, a
+gateway PUT still recorded the provider's `X-Amz-Version-Id`, latched
+`recovery_versions_observed`, returned the ID to the client, and the next
+delete was refused with `OperationAborted`.
+
+`objectstorage.NormalizeProviderResponse` applies the transport's rule to
+those responses: a provider that reports `Versionless()` (an `S3` provider
+on a `"versioning": "unsupported"` backend) has its version-ID headers
+dropped right after each gateway `Do`. `VerifyProviderObjectWriteAcknowledgment`
+also drops them for a versionless provider, so a new dispatch path that
+forgets the call still records no version. The rule stays in one helper; the
+gateway's five dispatch sites each call it once.

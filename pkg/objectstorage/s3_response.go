@@ -20,6 +20,35 @@ type s3ResponseTransport struct {
 	unversioned bool
 }
 
+// VersionlessProvider is a provider whose backend Gregale never versions
+// (BackendVersioningUnsupported): the version IDs it returns name no
+// retained history (ADR-20261121150000).
+type VersionlessProvider interface {
+	Versionless() bool
+}
+
+// Versionless reports a BackendVersioningUnsupported backend.
+func (p *S3) Versionless() bool { return p != nil && p.unversioned }
+
+// NormalizeProviderResponse applies to a response fetched with a presigned
+// request (the S3 gateway's dispatch paths) what s3ResponseTransport applies
+// to SDK responses: a versionless backend's version-ID headers are dropped,
+// so a gateway write never records a provider version and never latches
+// recovery_versions_observed on an unversioned bucket.
+func NormalizeProviderResponse(p Provider, response *http.Response) {
+	if response == nil || response.Header == nil {
+		return
+	}
+	if v, ok := p.(VersionlessProvider); ok && v.Versionless() {
+		dropProviderVersionHeaders(response.Header)
+	}
+}
+
+func dropProviderVersionHeaders(h http.Header) {
+	h.Del("X-Amz-Version-Id")
+	h.Del("X-Amz-Copy-Source-Version-Id")
+}
+
 type s3MetadataResponseError struct{ versionsObserved bool }
 
 func (s3MetadataResponseError) Error() string { return ErrUnavailable.Error() }
@@ -34,8 +63,7 @@ func (t s3ResponseTransport) RoundTrip(request *http.Request) (*http.Response, e
 		return nil, ErrUnavailable
 	}
 	if t.unversioned {
-		response.Header.Del("X-Amz-Version-Id")
-		response.Header.Del("X-Amz-Copy-Source-Version-Id")
+		dropProviderVersionHeaders(response.Header)
 	}
 	if middleware.GetOperationName(request.Context()) == "GetObject" && response.StatusCode >= 200 && response.StatusCode < 300 {
 		return response, nil
