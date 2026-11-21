@@ -1,0 +1,5 @@
+[Service]
+# ADR-20261023171905: off, shadow or on. In on mode meterd subtracts the
+# quiet-paused seconds the pause ledger proves only for the accounts the
+# quiet_pause_unbilled platform flag releases.
+Environment=FAAS_QUIET_PAUSE_UNBILLED={{ meterd_quiet_pause_unbilled }}

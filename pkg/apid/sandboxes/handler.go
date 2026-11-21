@@ -68,6 +68,10 @@ type Handler struct {
 	// Files is the artifact store gregale_browser's screenshots are kept in
 	// (ADR-20261117065818 §5); nil: they cannot be read from this host.
 	Files storage.StorageBackend
+	// EgressPolicy is FAAS_SANDBOX_EGRESS_POLICY: it admits web-mode domain
+	// policies (ADR-20261117091026 §3). Off, a non-empty one is
+	// sandbox_unsupported.
+	EgressPolicy bool
 }
 
 // requestMaxBytes bounds a create or change request.
@@ -82,7 +86,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !httpkit.DecodeJSONLimit(w, r, &body, requestMaxBytes) {
 		return
 	}
-	admission, prob := h.admission(acct, body)
+	admission, prob := h.admission(r.Context(), acct, body)
 	if prob == nil && body.Image != "" {
 		prob = h.image(r.Context(), acct, api.SandboxImageSource{Image: body.Image, Pull: body.Pull, RegistryAuth: body.RegistryAuth}, &admission)
 	}
@@ -272,7 +276,7 @@ var sandboxStates = map[string]bool{agentstore.SandboxQueued: true, agentstore.S
 // token names its node and instance, and carries the plan's command caps.
 func (h *Handler) view(acct state.Account, sb agentstore.Sandbox, withToken bool) api.Sandbox {
 	out := api.Sandbox{ID: sb.ID, State: sb.State, Kind: sb.Kind, Preset: sb.Preset, RAMMB: sb.RAMMB,
-		Network: api.SandboxNetwork{Mode: sb.NetworkMode}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
+		Network: api.SandboxNetwork{Mode: sb.NetworkMode, Allow: sb.EgressAllow, Deny: sb.EgressDeny}, Tenant: sb.TenantID, IdleTimeoutS: sb.IdleTimeoutSec,
 		ExpiresAt: sb.ExpiresAt, Labels: sb.Labels, CloseRequestedAt: sb.CloseRequestedAt, CreatedAt: sb.CreatedAt,
 		UpdatedAt: sb.UpdatedAt, ClosedAt: sb.ClosedAt, SnapshotID: sb.WorkspaceSnapshotID, Browser: sb.Browser}
 	if name, ok := strings.CutPrefix(sb.ImageRef, api.SandboxTemplateRefPrefix); ok {

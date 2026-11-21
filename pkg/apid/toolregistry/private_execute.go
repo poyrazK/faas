@@ -12,14 +12,22 @@ import (
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/toolinvocation"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
 type PrivateExecutionOptions struct {
+	TaskRehearsalProvisioner   *taskrehearsal.Provisioner
+	RehearsalPlanEnabled       bool
+	BindingVerificationEnabled bool
+	// BindingProbeConnect is a trusted driver seam for isolated native tests.
+	// Production leaves it nil and uses the public-destination TLS probe.
+	BindingProbeConnect    tasktoolbinding.Connect
 	SourceRetentionEnabled bool
 	PublicationEnabled     bool
 	PublicationProtocols   func(context.Context, api.ToolInvocationTarget, string, string, mcphosting.Contract, bool, func(http.RoundTripper) http.RoundTripper) error

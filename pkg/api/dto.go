@@ -3065,7 +3065,7 @@ func (o *CreateDeploymentOverrides) Validate(limits Limits) *Problem {
 			fmt.Sprintf("%s plan allows %d env+env_secrets entries per override; got %d (env=%d, env_secrets=%d).",
 				limits.Plan, limits.EnvVarsMax, totalEnv, len(o.Env), len(o.EnvSecrets))).
 			WithLimit(int64(limits.EnvVarsMax), int64(totalEnv)).
-			WithDocs(docsBase + "/deploy-overrides#env")
+			WithDocs(docsBase + "/deploy-overrides")
 	}
 
 	// env: key grammar + per-value byte cap. The same byte cap
@@ -5585,7 +5585,7 @@ func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *P
 			"Concurrency over plan limit",
 			fmt.Sprintf("%s plan caps max_concurrency at %d; requested %d.", l.Plan, l.MaxConcurrency, maxConcurrency)).
 			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency)).
-			WithDocs(docsBase + "/plans#concurrency")
+			WithDocs(docsBase + "/plans#at-a-glance")
 	}
 	if len(guestVCPU) > 0 && guestVCPU[0] != 0 {
 		if prob := ValidateAppCPURAMPair(l, ramMB, guestVCPU[0]); prob != nil {
@@ -5902,6 +5902,15 @@ type AccountDeletionResponse struct {
 	RestoreUntil string `json:"restore_until"` // scheduled_at + 30 d, RFC 3339
 }
 
+// Public status targets: an indicator outside its target marks the status
+// page degraded (apidserver applyStatusIndicatorBreaches), and `gregale
+// status` prints each target beside its value.
+const (
+	StatusTargetAPIAvailabilityPct   = 99.9
+	StatusTargetWakeP95MS            = 350
+	StatusTargetDeploymentSuccessPct = 99
+)
+
 // StatusPage is the JSON shape served by GET /status/slo.json (spec
 // §12, M8 acceptance). Lives in pkg/api so the CLI can import it
 // without a back-reference into cmd/apid; cmd/apid/status.go embeds
@@ -5919,7 +5928,7 @@ type StatusPage struct {
 	// observed, so consumers cannot mistake missing data for a 0 ms wake.
 	WakeP95MS *float64 `json:"wake_p95_ms"`
 	// BuildSuccessPct retains its legacy wire name but represents terminal
-	// deployment success over the last 15 minutes. Platform-attributable build,
+	// deployment success over the last 24 hours. Platform-attributable build,
 	// scan, snapshot, and readiness failures are included; build rows classified
 	// as user_error are excluded.
 	BuildSuccessPct float64 `json:"build_success_pct"`
@@ -6732,6 +6741,12 @@ type DeadLetterEvent struct {
 	LastFailedAt  time.Time       `json:"last_failed_at"`
 	ReplayedAt    *time.Time      `json:"replayed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+	// ReplayCount and LastReplayedAt report earlier replays of an invocation
+	// entry. A replay that fails again reopens the same entry (replayed_at
+	// clears so it can be replayed again); these keep the history visible.
+	// Set by the single-entry read only.
+	ReplayCount    int64      `json:"replay_count,omitempty"`
+	LastReplayedAt *time.Time `json:"last_replayed_at,omitempty"`
 }
 
 type DeadLetterEventsResponse struct {
@@ -7214,9 +7229,10 @@ type AppRoutesResponse struct {
 	Source             string     `json:"source"`
 	CollectorsExpected int        `json:"collectors_expected"`
 	CollectorsHealthy  int        `json:"collectors_healthy"`
-	// CapHit is true when a collector emitted __route_other__ or the fleet
-	// union reaches RouteMetricsPerAppCap. It is encoded false when Source is
-	// unavailable, where cap state is unknown.
+	// CapHit is true when the fleet union reaches RouteMetricsPerAppCap. A
+	// __route_other__ series alone does not set it: that bucket also counts
+	// requests that ended without a route label. It is encoded false when
+	// Source is unavailable, where cap state is unknown.
 	CapHit bool `json:"cap_hit"`
 }
 

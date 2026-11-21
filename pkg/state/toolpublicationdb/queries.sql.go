@@ -324,6 +324,17 @@ func (q *Queries) GetToolPublication(ctx context.Context, db DBTX, arg GetToolPu
 	return payload, err
 }
 
+const hostedTaskBindingClock = `-- name: HostedTaskBindingClock :one
+SELECT clock_timestamp()::timestamptz AS observed_at
+`
+
+func (q *Queries) HostedTaskBindingClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, hostedTaskBindingClock)
+	var observed_at pgtype.Timestamptz
+	err := row.Scan(&observed_at)
+	return observed_at, err
+}
+
 const hostedTaskSourceCounts = `-- name: HostedTaskSourceCounts :one
 SELECT count(*) AS records,count(*) FILTER(WHERE ciphertext IS NOT NULL) AS active,coalesce(sum(octet_length(ciphertext)),0)::bigint AS cipher_bytes
 FROM hosted_task_source_intents WHERE account_id=$1
@@ -340,6 +351,44 @@ func (q *Queries) HostedTaskSourceCounts(ctx context.Context, db DBTX, accountID
 	var i HostedTaskSourceCountsRow
 	err := row.Scan(&i.Records, &i.Active, &i.CipherBytes)
 	return i, err
+}
+
+const insertHostedTaskRehearsalRun = `-- name: InsertHostedTaskRehearsalRun :execrows
+INSERT INTO hosted_task_rehearsal_runs (account_id, id, run_id, plan_sha256, reserved_at, approval_expires_at)
+SELECT $1, $2, $3, $4,
+       $5, $6
+WHERE $6::timestamptz > clock_timestamp()
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = $1 AND k.id = ANY($7::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+`
+
+type InsertHostedTaskRehearsalRunParams struct {
+	AccountID         pgtype.UUID
+	ID                string
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+	AuthorityKeys     []pgtype.UUID
+}
+
+func (q *Queries) InsertHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg InsertHostedTaskRehearsalRunParams) (int64, error) {
+	result, err := db.Exec(ctx, insertHostedTaskRehearsalRun,
+		arg.AccountID,
+		arg.ID,
+		arg.RunID,
+		arg.PlanSha256,
+		arg.ReservedAt,
+		arg.ApprovalExpiresAt,
+		arg.AuthorityKeys,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertHostedTaskSourceIntent = `-- name: InsertHostedTaskSourceIntent :exec
@@ -579,6 +628,181 @@ func (q *Queries) LockDelegatedToolGrant(ctx context.Context, db DBTX, arg LockD
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const lockHostedTaskBinding = `-- name: LockHostedTaskBinding :one
+SELECT payload FROM hosted_task_binding_qualifications WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockHostedTaskBindingParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+func (q *Queries) LockHostedTaskBinding(ctx context.Context, db DBTX, arg LockHostedTaskBindingParams) ([]byte, error) {
+	row := db.QueryRow(ctx, lockHostedTaskBinding, arg.AccountID, arg.ID)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
+const lockHostedTaskBindingCatalog = `-- name: LockHostedTaskBindingCatalog :one
+SELECT id::text,account_id::text,database_account_id::text,database_id::text,app_id::text,
+ scope,environment_key,COALESCE(credential_ref,'')::text AS credential_ref,credential_generation,state,access
+FROM managed_postgres_bindings WHERE account_id=$1 AND id=$2 AND deleted_at IS NULL FOR SHARE NOWAIT
+`
+
+type LockHostedTaskBindingCatalogParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+type LockHostedTaskBindingCatalogRow struct {
+	ID                   string
+	AccountID            string
+	DatabaseAccountID    string
+	DatabaseID           string
+	AppID                string
+	Scope                string
+	EnvironmentKey       string
+	CredentialRef        string
+	CredentialGeneration int64
+	State                string
+	Access               string
+}
+
+func (q *Queries) LockHostedTaskBindingCatalog(ctx context.Context, db DBTX, arg LockHostedTaskBindingCatalogParams) (LockHostedTaskBindingCatalogRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskBindingCatalog, arg.AccountID, arg.ID)
+	var i LockHostedTaskBindingCatalogRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.DatabaseAccountID,
+		&i.DatabaseID,
+		&i.AppID,
+		&i.Scope,
+		&i.EnvironmentKey,
+		&i.CredentialRef,
+		&i.CredentialGeneration,
+		&i.State,
+		&i.Access,
+	)
+	return i, err
+}
+
+const lockHostedTaskBindingDatabase = `-- name: LockHostedTaskBindingDatabase :one
+SELECT id::text,account_id::text,state FROM managed_postgres_databases
+WHERE account_id=$1 AND id=$2 FOR SHARE NOWAIT
+`
+
+type LockHostedTaskBindingDatabaseParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+type LockHostedTaskBindingDatabaseRow struct {
+	ID        string
+	AccountID string
+	State     string
+}
+
+func (q *Queries) LockHostedTaskBindingDatabase(ctx context.Context, db DBTX, arg LockHostedTaskBindingDatabaseParams) (LockHostedTaskBindingDatabaseRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskBindingDatabase, arg.AccountID, arg.ID)
+	var i LockHostedTaskBindingDatabaseRow
+	err := row.Scan(&i.ID, &i.AccountID, &i.State)
+	return i, err
+}
+
+const lockHostedTaskBindingSecret = `-- name: LockHostedTaskBindingSecret :one
+SELECT account_id::text AS account_id,app_id::text AS app_id,scope,key,ciphertext,
+ COALESCE(secret_version,0)::bigint AS secret_version,
+ COALESCE(managed_postgres_binding_id::text,'')::text AS binding_id,
+ COALESCE(managed_credential_ref,'')::text AS credential_ref,
+ COALESCE(managed_credential_generation,0)::bigint AS credential_generation,
+ COALESCE(managed_object_storage_credential_id::text,'')::text AS object_storage_id
+FROM app_secrets WHERE account_id=$1 AND app_id=$2 AND scope='default' AND key=$3 FOR SHARE NOWAIT
+`
+
+type LockHostedTaskBindingSecretParams struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Key       string
+}
+
+type LockHostedTaskBindingSecretRow struct {
+	AccountID            string
+	AppID                string
+	Scope                string
+	Key                  string
+	Ciphertext           []byte
+	SecretVersion        int64
+	BindingID            string
+	CredentialRef        string
+	CredentialGeneration int64
+	ObjectStorageID      string
+}
+
+// NOWAIT keeps a catalog/credential rotation from creating an inverted lock wait.
+func (q *Queries) LockHostedTaskBindingSecret(ctx context.Context, db DBTX, arg LockHostedTaskBindingSecretParams) (LockHostedTaskBindingSecretRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskBindingSecret, arg.AccountID, arg.AppID, arg.Key)
+	var i LockHostedTaskBindingSecretRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.AppID,
+		&i.Scope,
+		&i.Key,
+		&i.Ciphertext,
+		&i.SecretVersion,
+		&i.BindingID,
+		&i.CredentialRef,
+		&i.CredentialGeneration,
+		&i.ObjectStorageID,
+	)
+	return i, err
+}
+
+const lockHostedTaskBindingSource = `-- name: LockHostedTaskBindingSource :one
+SELECT payload,ciphertext,expires_at FROM hosted_task_source_intents WHERE account_id=$1 AND id=$2 FOR UPDATE
+`
+
+type LockHostedTaskBindingSourceParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type LockHostedTaskBindingSourceRow struct {
+	Payload    []byte
+	Ciphertext []byte
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) LockHostedTaskBindingSource(ctx context.Context, db DBTX, arg LockHostedTaskBindingSourceParams) (LockHostedTaskBindingSourceRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskBindingSource, arg.AccountID, arg.ID)
+	var i LockHostedTaskBindingSourceRow
+	err := row.Scan(&i.Payload, &i.Ciphertext, &i.ExpiresAt)
+	return i, err
+}
+
+const lockHostedTaskRehearsalPlan = `-- name: LockHostedTaskRehearsalPlan :one
+SELECT payload, expires_at FROM hosted_task_rehearsal_plans
+WHERE account_id = $1 AND id = $2 FOR UPDATE
+`
+
+type LockHostedTaskRehearsalPlanParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type LockHostedTaskRehearsalPlanRow struct {
+	Payload   []byte
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockHostedTaskRehearsalPlan(ctx context.Context, db DBTX, arg LockHostedTaskRehearsalPlanParams) (LockHostedTaskRehearsalPlanRow, error) {
+	row := db.QueryRow(ctx, lockHostedTaskRehearsalPlan, arg.AccountID, arg.ID)
+	var i LockHostedTaskRehearsalPlanRow
+	err := row.Scan(&i.Payload, &i.ExpiresAt)
+	return i, err
 }
 
 const lockHostedTaskSourceIntent = `-- name: LockHostedTaskSourceIntent :one
@@ -1010,6 +1234,70 @@ func (q *Queries) PurgeExpiredHostedTaskSources(ctx context.Context, db DBTX, li
 	return result.RowsAffected(), nil
 }
 
+const readHostedTaskBindingNamespace = `-- name: ReadHostedTaskBindingNamespace :one
+SELECT COALESCE(a.manifest->'env'->>$1::text,'')::text AS manifest_value,
+ COALESCE(a.manifest->'env' ? $1::text,false)::boolean AS manifest_has,
+ COALESCE((SELECT e.value FROM app_envs e WHERE e.account_id=a.account_id AND e.app_id=a.id AND e.scope='default' AND e.key=$1), '')::text AS env_value,
+ EXISTS(SELECT 1 FROM app_envs e WHERE e.account_id=a.account_id AND e.app_id=a.id AND e.scope='default' AND e.key=$1)::boolean AS env_has,
+ EXISTS(SELECT 1 FROM app_secrets s WHERE s.account_id=a.account_id AND s.app_id=a.id AND s.scope='default' AND s.key=$1)::boolean AS secret
+FROM apps a WHERE a.id=$2
+`
+
+type ReadHostedTaskBindingNamespaceParams struct {
+	EnvKey string
+	AppID  pgtype.UUID
+}
+
+type ReadHostedTaskBindingNamespaceRow struct {
+	ManifestValue string
+	ManifestHas   bool
+	EnvValue      string
+	EnvHas        bool
+	Secret        bool
+}
+
+func (q *Queries) ReadHostedTaskBindingNamespace(ctx context.Context, db DBTX, arg ReadHostedTaskBindingNamespaceParams) (ReadHostedTaskBindingNamespaceRow, error) {
+	row := db.QueryRow(ctx, readHostedTaskBindingNamespace, arg.EnvKey, arg.AppID)
+	var i ReadHostedTaskBindingNamespaceRow
+	err := row.Scan(
+		&i.ManifestValue,
+		&i.ManifestHas,
+		&i.EnvValue,
+		&i.EnvHas,
+		&i.Secret,
+	)
+	return i, err
+}
+
+const readHostedTaskRehearsalRun = `-- name: ReadHostedTaskRehearsalRun :one
+SELECT run_id, plan_sha256, reserved_at, approval_expires_at FROM hosted_task_rehearsal_runs
+WHERE account_id = $1 AND id = $2
+`
+
+type ReadHostedTaskRehearsalRunParams struct {
+	AccountID pgtype.UUID
+	ID        string
+}
+
+type ReadHostedTaskRehearsalRunRow struct {
+	RunID             pgtype.UUID
+	PlanSha256        string
+	ReservedAt        pgtype.Timestamptz
+	ApprovalExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) ReadHostedTaskRehearsalRun(ctx context.Context, db DBTX, arg ReadHostedTaskRehearsalRunParams) (ReadHostedTaskRehearsalRunRow, error) {
+	row := db.QueryRow(ctx, readHostedTaskRehearsalRun, arg.AccountID, arg.ID)
+	var i ReadHostedTaskRehearsalRunRow
+	err := row.Scan(
+		&i.RunID,
+		&i.PlanSha256,
+		&i.ReservedAt,
+		&i.ApprovalExpiresAt,
+	)
+	return i, err
+}
+
 const readTaskRetirementApp = `-- name: ReadTaskRetirementApp :one
 SELECT status,manifest,COALESCE(workload_class,'')::text AS workload_class,COALESCE(park_transition_id::text,'')::text AS park_transition_id FROM apps WHERE account_id=$1 AND id=$2 FOR SHARE
 `
@@ -1074,6 +1362,106 @@ func (q *Queries) RevokeToolGrant(ctx context.Context, db DBTX, arg RevokeToolGr
 	var payload []byte
 	err := row.Scan(&payload)
 	return payload, err
+}
+
+const saveHostedTaskBinding = `-- name: SaveHostedTaskBinding :execrows
+INSERT INTO hosted_task_binding_qualifications(account_id,id,payload,expires_at)
+SELECT $1,$2,$3,$4
+WHERE (NOT $5::boolean OR $6::boolean OR EXISTS(
+ SELECT 1 FROM api_keys k WHERE k.account_id=$1 AND k.id::text=$7::text
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+ AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[] AND k.label IS DISTINCT FROM 'mcp-login'
+ AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+ AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id))))
+AND (NOT $8::boolean OR (
+ $4::timestamptz>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM hosted_task_source_intents t WHERE t.account_id=$1 AND t.id=$2
+ AND t.ciphertext IS NOT NULL AND t.expires_at>clock_timestamp() AND t.payload->>'review_status'='approved')
+ AND EXISTS(SELECT 1 FROM api_keys k WHERE k.account_id=$1 AND k.id::text=$9::text
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+ AND (k.scopes @> ARRAY['admin']::text[] OR k.scopes @> ARRAY['apps:read','deploy:write']::text[])
+ AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+ AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id)))
+ AND ($10::text='' OR EXISTS(SELECT 1 FROM api_keys k
+ WHERE k.account_id=$1 AND k.id::text=$10::text
+ AND k.status IN ('active','grace') AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp())
+ AND k.scopes @> ARRAY['admin']::text[] AND NOT k.scopes @> ARRAY['agent']::text[] AND k.label IS DISTINCT FROM 'mcp-login'
+ AND NOT EXISTS(SELECT 1 FROM api_key_project_limits l WHERE l.key_id=k.id)
+ AND (k.org_id IS NULL OR EXISTS(SELECT 1 FROM orgs o WHERE o.id=k.org_id AND o.personal_org AND o.personal_owner_account_id=k.account_id))))))
+ON CONFLICT(account_id,id) DO UPDATE SET payload=EXCLUDED.payload
+WHERE hosted_task_binding_qualifications.expires_at=EXCLUDED.expires_at
+`
+
+type SaveHostedTaskBindingParams struct {
+	AccountID          pgtype.UUID
+	ID                 string
+	Payload            []byte
+	ExpiresAt          pgtype.Timestamptz
+	CheckOwner         bool
+	OwnerSession       bool
+	OwnerKeyID         string
+	RequireFresh       bool
+	RequesterKeyID     string
+	OriginalOwnerKeyID string
+}
+
+func (q *Queries) SaveHostedTaskBinding(ctx context.Context, db DBTX, arg SaveHostedTaskBindingParams) (int64, error) {
+	result, err := db.Exec(ctx, saveHostedTaskBinding,
+		arg.AccountID,
+		arg.ID,
+		arg.Payload,
+		arg.ExpiresAt,
+		arg.CheckOwner,
+		arg.OwnerSession,
+		arg.OwnerKeyID,
+		arg.RequireFresh,
+		arg.RequesterKeyID,
+		arg.OriginalOwnerKeyID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const saveHostedTaskRehearsalPlan = `-- name: SaveHostedTaskRehearsalPlan :execrows
+INSERT INTO hosted_task_rehearsal_plans (account_id, id, payload, expires_at)
+SELECT $1, $2, $3, $4
+WHERE (NOT $5::boolean OR $4::timestamptz > clock_timestamp())
+AND NOT EXISTS (
+    SELECT 1 FROM api_keys AS k
+    WHERE k.account_id = $1 AND k.id = ANY($6::uuid[])
+      AND k.expires_at <= clock_timestamp()
+)
+ON CONFLICT (account_id, id) DO UPDATE SET payload = excluded.payload
+WHERE hosted_task_rehearsal_plans.expires_at = excluded.expires_at
+`
+
+type SaveHostedTaskRehearsalPlanParams struct {
+	AccountID     pgtype.UUID
+	ID            string
+	Payload       []byte
+	ExpiresAt     pgtype.Timestamptz
+	RequireFresh  bool
+	AuthorityKeys []pgtype.UUID
+}
+
+// The owner, requester and binding keys have already been validated under row
+// locks. Real-clock checks fence their expiration and the observation deadline
+// even if processing lasted past either one.
+func (q *Queries) SaveHostedTaskRehearsalPlan(ctx context.Context, db DBTX, arg SaveHostedTaskRehearsalPlanParams) (int64, error) {
+	result, err := db.Exec(ctx, saveHostedTaskRehearsalPlan,
+		arg.AccountID,
+		arg.ID,
+		arg.Payload,
+		arg.ExpiresAt,
+		arg.RequireFresh,
+		arg.AuthorityKeys,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const searchToolRegistry = `-- name: SearchToolRegistry :many

@@ -49545,12 +49545,14 @@ SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS s
 FROM apps a
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
  AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
 WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
  AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
  AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ AND (a.type <> 'function' OR jsonb_array_length(coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)) > 0)
 ORDER BY a.id, d.id, s.id
 LIMIT $1::int
 `
@@ -49568,6 +49570,10 @@ type ListDefaultRouteProbeTargetsRow struct {
 // default-scope canary and a serving predecessor. apid probes the default
 // path on both so a quiet canary is judged on evidence. An app with several
 // serving predecessors returns several rows and is skipped by the caller.
+// A function is probed only on paths it declares in release_probe_paths:
+// every path of a function is its handler, so a default GET / ran a queue or
+// cron handler with a synthetic event about 20 times a minute for the whole
+// canary (prod 2026-11-20, ADR-1446 amendment).
 func (q *Queries) ListDefaultRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListDefaultRouteProbeTargetsRow, error) {
 	rows, err := db.Query(ctx, listDefaultRouteProbeTargets, batchLimit)
 	if err != nil {
@@ -57162,6 +57168,7 @@ FROM route_health_gates g
 JOIN apps a ON a.id = g.app_id AND a.account_id = g.account_id AND a.status <> 'deleted'
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 WHERE jsonb_path_exists(g.routes, '$[*].probe')
 ORDER BY a.id, d.id
@@ -57249,6 +57256,9 @@ SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status
  (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
 FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
 WHERE c.enabled AND a.status <> 'deleted' AND a.visibility <> 'internal'
+  AND NOT EXISTS (SELECT 1 FROM app_protection_objects o
+                   WHERE o.app_id = c.app_id AND o.item = 'health_check'
+                     AND o.status = 'created' AND o.object_id = c.id::text)
 ORDER BY c.id
 `
 
@@ -57273,6 +57283,8 @@ type ListRunnableSyntheticChecksRow struct {
 // Every enabled check on a live public app, with its app slug and last run
 // time; the runner decides which are due. The public edge does not serve an
 // internal app, so its checks wait until it is public (ADR-20261031144636).
+// A protection-baseline health check is probed by apid, unbilled, not here
+// (ADR-20261116120000 §3).
 func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
 	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
 	if err != nil {

@@ -71,6 +71,7 @@ type PgStore struct {
 	trafficScopedBinding   bool
 	realtimeEventSchemas   *realtimeEventSchemaCache
 	taskToolExecutionSlots *semaphore.Weighted
+	finalUsage             *finalUsageBeforeCache
 }
 
 // NewPgStore wraps a pool. The pool is owned by the caller; PgStore does not
@@ -86,7 +87,8 @@ func NewPgStore(pool *pgxpool.Pool, options ...StoreOption) *PgStore {
 		slots = int64(pool.Config().MaxConns / 2)
 	}
 	return &PgStore{taskToolExecutionSlots: semaphore.NewWeighted(slots), pgCore: core, trafficAppsSuffix: configuredTrafficAppsSuffix(options),
-		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache()}
+		trafficScopedBinding: configuredTrafficScopedBinding(options), realtimeEventSchemas: newRealtimeEventSchemaCache(),
+		finalUsage: newFinalUsageBeforeCache()}
 }
 
 // Ping tests database connectivity through the underlying connection pool.
@@ -5125,6 +5127,41 @@ func (s *PgStore) ClaimAppDeletion(ctx context.Context, id string) error {
 	return nil
 }
 
+// EndAppDeleteGrace implements Store. The bucket check and the deadline
+// update share one transaction with the row locked, so a bucket created
+// against the tombstone cannot slip in between.
+func (s *PgStore) EndAppDeleteGrace(ctx context.Context, id string) (App, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return App{}, fmt.Errorf("state: begin end app delete grace: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	var locked int
+	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 and status = 'deleted' and delete_grace_until is not null for update`, id).Scan(&locked); err != nil {
+		return App{}, mapErr(err)
+	}
+	var activeBuckets int
+	if err := tx.QueryRow(ctx,
+		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
+		return App{}, fmt.Errorf("state: count app buckets for purge: %w", err)
+	}
+	if activeBuckets != 0 {
+		return App{}, ErrConflict
+	}
+	app, err := scanApp(tx.QueryRow(ctx, `
+		update apps
+		   set delete_grace_until = least(delete_grace_until, now())
+		 where id = $1
+		returning `+appsSelectColumns, id))
+	if err != nil {
+		return App{}, mapErr(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return App{}, fmt.Errorf("state: commit end app delete grace: %w", err)
+	}
+	return app, nil
+}
+
 // ListAppDeletionArtifacts projects every durable artifact reference owned by
 // appID. Keys referenced by another app are deliberately excluded; after one
 // deleted owner is purged, the last owner will become eligible on its pass.
@@ -8723,6 +8760,11 @@ func (s *PgStore) SafedeployStampRollout(ctx context.Context, id string, rollout
 		 where id = $1`,
 		id, rolloutState, startedAt, completedAt, abortedAt, abortedReason); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp update: %w", err)
+	}
+	if rolloutState == "aborted" {
+		if _, err := pgRebalanceAbortedTraffic(ctx, tx, dep); err != nil {
+			return Deployment{}, err
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: safedeploy stamp commit: %w", err)
@@ -24053,10 +24095,15 @@ func (s *PgStore) CurrentMonthOverageCents(ctx context.Context, accountID string
 	if err != nil {
 		return 0, err
 	}
-	// Only an account that changed plan this month reads its usage before the
-	// change: the month's total less the usage since, a short indexed range.
+	// Only an account whose plan was activated again this month reads its
+	// usage before the activation's hour. Once that usage is final it is
+	// summed once per process (finalUsageBefore); until then it is the month's
+	// total less the usage since, a range of at most MeterUsageFinalAfter.
 	monthEnd := monthStart.AddDate(0, 1, 0)
 	usageBefore := func(at time.Time) (int64, error) {
+		if usageFinalBefore(at, now) {
+			return s.finalUsageBefore(ctx, accountID, monthStart, at.UTC())
+		}
 		var since int64
 		if err := s.pool.QueryRow(ctx,
 			`select COALESCE(SUM(mb_seconds), 0)::bigint

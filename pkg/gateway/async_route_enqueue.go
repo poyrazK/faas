@@ -96,6 +96,9 @@ func EnqueueAsyncRoute(ctx context.Context, store AsyncRouteInvocationStore, req
 	if asyncRouteScopeKey(existingVersion.Scope) != asyncRouteScopeKey(version.Scope) {
 		return AsyncRouteAccepted{}, state.ErrConflict
 	}
+	if existing, err = withInvocationSend(ctx, store, existing); err != nil {
+		return AsyncRouteAccepted{}, err
+	}
 	if !sameAsyncRouteIntent(existing, prepared) {
 		return AsyncRouteAccepted{}, errors.Join(state.ErrConflict, ErrAsyncRouteIdempotencyConflict)
 	}
@@ -160,4 +163,26 @@ func asyncRouteRetryPolicy(app state.App, override *api.RetryPolicyDTO) (json.Ra
 		return nil, nil
 	}
 	return append(json.RawMessage(nil), app.RetryPolicyJSON...), nil
+}
+
+// withInvocationSend fills a stored invocation's send() record. A row read
+// back from Postgres carries no sender: it lives in invocation_sends. Without
+// it, every retried send() compared as another request (409
+// idempotency_conflict).
+func withInvocationSend(ctx context.Context, store AsyncRouteInvocationStore, inv state.Invocation) (state.Invocation, error) {
+	reader, ok := store.(interface {
+		InvocationSend(context.Context, string) (state.InvocationSend, error)
+	})
+	if !ok || inv.SentByAppID != "" {
+		return inv, nil
+	}
+	send, err := reader.InvocationSend(ctx, inv.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return inv, nil
+	}
+	if err != nil {
+		return state.Invocation{}, err
+	}
+	inv.SentByAppID, inv.OnCompleteAppID = send.SenderAppID, send.OnCompleteAppID
+	return inv, nil
 }

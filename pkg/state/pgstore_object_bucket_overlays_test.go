@@ -38,3 +38,13 @@ func TestPgEnvironmentBranchEgress(t *testing.T) {
 	s, _, _ := pgWithPool(t)
 	environmentBranchEgress(t, s)
 }
+
+func TestPgProjectEnvironmentBranchCopiesAutomationPaused(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	projectEnvironmentBranchCopiesAutomationPaused(t, s)
+}
+
+func TestPgEnvironmentBranchDeploymentSkipsTheParentRelease(t *testing.T) {
+	s, _, _ := pgWithPool(t)
+	environmentBranchDeploymentSkipsTheParentRelease(t, s)
+}

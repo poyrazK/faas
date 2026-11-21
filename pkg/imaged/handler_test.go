@@ -2396,3 +2396,47 @@ func TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow(t *testing.T) 
 		})
 	}
 }
+
+// adr: 20261116192126 — a managed cache's park capture replaces the live row;
+// an ordinary app keeps its existing capture.
+func TestHandleSnapshotWritten_ManagedCacheCaptureReplacesLiveRow(t *testing.T) {
+	for _, cache := range []bool{true, false} {
+		ctx := context.Background()
+		store := state.NewMemStore()
+		acct, _ := store.CreateAccount(ctx, "u@example.com", "pro")
+		app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "sessions", RAMMB: 256})
+		dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+		oldKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "old1")
+		if _, err := store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID, FCVersion: "firecracker-1.10", MemBytes: 256 << 20,
+			StorageKey: oldKey, Tier: state.SnapshotTierInit,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if cache {
+			if _, err := store.CreateManagedValkeyCache(ctx, state.ManagedValkeyCache{
+				AppID: app.ID, AccountID: acct.ID, MemoryMB: 192, EvictionPolicy: "allkeys-lru",
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, "")
+		h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+		newKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "new1")
+		h.HandleNotification(ctx, db.Notification{
+			Channel: db.NotifySnapshotWritten,
+			Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"` + newKey + `","mem_bytes":268435456,"fc_version":"firecracker-1.10"}`,
+		})
+		live, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit)
+		if err != nil {
+			t.Fatalf("LatestSnapshotForTier: %v", err)
+		}
+		want := oldKey
+		if cache {
+			want = newKey
+		}
+		if live.StorageKey != want {
+			t.Fatalf("cache=%v: live snapshot = %q, want %q", cache, live.StorageKey, want)
+		}
+	}
+}

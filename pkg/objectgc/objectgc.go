@@ -30,6 +30,16 @@ func (d Deferrer) DeferDelete(ctx context.Context, key string) error {
 	return d.Requests.RequestStorageObjectDeletion(ctx, key, d.Reason)
 }
 
+// DeferRetireGeneration implements storage.GenerationRetireDeferrer
+// (slice 2): the control plane deletes exactly this generation.
+func (d Deferrer) DeferRetireGeneration(ctx context.Context, key string, generation int64) error {
+	r, ok := d.Requests.(state.StorageObjectRetirementRequester)
+	if !ok {
+		return errors.New("objectgc: this store cannot record generation retirements")
+	}
+	return r.RequestStorageObjectRetirement(ctx, key, generation, d.Reason)
+}
+
 const (
 	// DefaultInterval is how often the worker looks for due requests.
 	DefaultInterval = time.Minute
@@ -59,6 +69,9 @@ type Worker struct {
 	now      func() time.Time
 	Interval time.Duration
 	Batch    int
+	// SweepInterval paces the jobs/ and sources/ sweep (WithSweep).
+	SweepInterval time.Duration
+	sweep         SweepStore
 }
 
 // NewWorker returns a worker that deletes through backend, which must hold
@@ -67,12 +80,12 @@ func NewWorker(store state.StorageObjectDeletionStore, backend storage.StorageBa
 	if log == nil {
 		log = slog.Default()
 	}
-	w := &Worker{store: store, backend: backend, log: log, now: time.Now, Interval: DefaultInterval, Batch: DefaultBatch,
+	w := &Worker{store: store, backend: backend, log: log, now: time.Now, Interval: DefaultInterval, Batch: DefaultBatch, SweepInterval: DefaultSweepInterval,
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "faas_object_gc_requests_total",
 			Help: "Object deletion requests the control plane's object GC decided or retried, by key class and outcome (ADR-20261115180000).",
 		}, []string{"class", "outcome"})}
-	for _, class := range []string{state.StorageObjectClassSnapshot, state.StorageObjectClassLayer, state.StorageObjectClassPlatform, state.StorageObjectClassUnclassified} {
+	for _, class := range []string{state.StorageObjectClassSnapshot, state.StorageObjectClassLayer, state.StorageObjectClassSource, state.StorageObjectClassPlatform, state.StorageObjectClassUnclassified} {
 		for _, outcome := range []string{OutcomeDeleted, OutcomeRefused, OutcomeRetried, OutcomeError} {
 			w.requests.WithLabelValues(class, outcome)
 		}
@@ -87,7 +100,12 @@ func NewWorker(store state.StorageObjectDeletionStore, backend storage.StorageBa
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(w.Interval)
 	defer t.Stop()
+	var lastSweep time.Time
 	for {
+		if w.sweep != nil && w.now().Sub(lastSweep) >= w.SweepInterval {
+			lastSweep = w.now()
+			w.sweepOnce(ctx)
+		}
 		if err := w.Tick(ctx); err != nil && ctx.Err() == nil {
 			w.log.Warn("objectgc: tick", "err", err)
 		}
@@ -128,6 +146,19 @@ func (w *Worker) decide(ctx context.Context, d state.StorageObjectDeletion, now 
 		return w.outcome(ctx, d, class, OutcomeRefused, "still referenced after "+MaxReferencedAge.String())
 	case referenced:
 		return w.retry(ctx, d, class, now, "referenced")
+	}
+	if d.Generation > 0 {
+		// An exclusive artifact's retirement: only the acknowledged
+		// generation goes; a replacement under the key is left alone.
+		err := storage.DeleteGeneration(ctx, w.backend, d.StorageKey, d.Generation)
+		switch {
+		case errors.Is(err, storage.ErrArtifactReceiptMismatch):
+			w.log.Warn("objectgc: refused a retirement whose key holds another generation", "key", d.StorageKey, "generation", d.Generation, "requested_by", d.RequestedBy)
+			return w.outcome(ctx, d, class, OutcomeRefused, "the key holds another generation now")
+		case err != nil:
+			return w.retry(ctx, d, class, now, fmt.Sprintf("delete generation: %v", err))
+		}
+		return w.outcome(ctx, d, class, OutcomeDeleted, "")
 	}
 	if err := w.backend.Delete(ctx, d.StorageKey); err != nil && !storage.IsNotFound(err) {
 		return w.retry(ctx, d, class, now, fmt.Sprintf("delete: %v", err))

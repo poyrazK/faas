@@ -8,6 +8,7 @@ import (
 	"net"
 	"testing"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/peer"
@@ -121,6 +122,49 @@ func TestCallerPolicyAllowList(t *testing.T) {
 		{"unknown method", "schedd.faas", "/onebox.faas.vmmd.v1.Vmmd/NotARealMethod", nil, codes.PermissionDenied},
 	} {
 		if got := status.Code(authorizeCaller(tlsPeer(tc.cn), tc.method, tc.req)); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+type recvStream struct {
+	grpc.ServerStream
+	ctx context.Context
+	req *vmmdpb.LogsRequest
+}
+
+func (r *recvStream) Context() context.Context { return r.ctx }
+func (r *recvStream) RecvMsg(m any) error {
+	m.(*vmmdpb.LogsRequest).Instance = r.req.GetInstance()
+	return nil
+}
+
+// builderd follows its own builder's console for live build steps, and must
+// never read a tenant VM's logs (retail-store feedback A3, 2026-11-18).
+func TestCallerPolicyBuilderLogsOnlyItsBuilders(t *testing.T) {
+	unix := peer.NewContext(context.Background(), &peer.Peer{Addr: &net.UnixAddr{Net: "unix", Name: "/run/faas/vmmd.sock"}})
+	interceptor := CallerPolicyStreamInterceptor()
+	info := &grpc.StreamServerInfo{FullMethod: vmmdpb.Vmmd_Logs_FullMethodName, IsServerStream: true}
+	for _, tc := range []struct {
+		name     string
+		ctx      context.Context
+		instance string
+		want     codes.Code
+	}{
+		{"builderd follows its builder", tlsPeer("builderd.faas"), "build-01a184ea", codes.OK},
+		{"builderd follows a deferred cache VM", tlsPeer("builderd.faas"), "build-01a184ea-cache", codes.OK},
+		{"builderd follows a tenant", tlsPeer("builderd.faas"), "7f6c2a8e-0b1d-4c55-9a3e-2f1b6d9c4e10", codes.PermissionDenied},
+		{"builderd follows a bare prefix", tlsPeer("builderd.faas"), "build-", codes.PermissionDenied},
+		{"schedd follows a tenant", tlsPeer("schedd.faas"), "7f6c2a8e", codes.OK},
+		{"gateway follows a tenant", tlsPeer("gatewayd-internal.faas"), "7f6c2a8e", codes.OK},
+		{"unix socket follows a tenant", unix, "7f6c2a8e", codes.OK},
+		{"imaged follows a builder", tlsPeer("imaged.faas"), "build-x", codes.PermissionDenied},
+	} {
+		stream := &recvStream{ctx: tc.ctx, req: &vmmdpb.LogsRequest{Instance: tc.instance}}
+		err := interceptor(nil, stream, info, func(_ any, ss grpc.ServerStream) error {
+			return ss.RecvMsg(&vmmdpb.LogsRequest{})
+		})
+		if got := status.Code(err); got != tc.want {
 			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
 		}
 	}

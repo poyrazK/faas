@@ -452,6 +452,9 @@ func run(args []string) (status int) {
 		if len(args) > 1 && args[1] == subRestore {
 			return cmdAppsRestore(args[2:])
 		}
+		if len(args) > 1 && args[1] == "purge" {
+			return cmdAppsPurge(args[2:])
+		}
 		// `gregale apps routes <slug>` — ADR-093 Tier B item #2
 		// operator entry point. Must come before the default
 		// fall-through so a slug-shaped token ("routes") is never
@@ -532,6 +535,8 @@ func run(args []string) (status int) {
 		return cmdAuth(args[1:])
 	case dispatchPostgres:
 		return cmdPostgres(args[1:])
+	case "redis":
+		return cmdRedis(args[1:])
 	case "realtime":
 		return cmdRealtime(args[1:])
 	case dispatchDeploys:
@@ -593,6 +598,9 @@ func run(args []string) (status int) {
 	case "park":
 		return cmdPark(args[1:])
 	case "wake":
+		if isAppProjectCommand(args) {
+			return cmdAppProject(args)
+		}
 		return cmdWake(args[1:])
 	case "wake-ahead":
 		return cmdWakeAhead(args[1:])
@@ -616,10 +624,15 @@ func run(args []string) (status int) {
 		return cmdDeployTokens(args[1:])
 	case "sandbox-templates":
 		return cmdSandboxTemplates(args[1:])
+	case "agents":
+		// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+		return cmdAgents(args[1:])
 	case "sites":
 		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
+	case "insights":
+		return cmdInsights(args[1:])
 	case "flags":
 		return cmdFlags(args[1:])
 	case "product":

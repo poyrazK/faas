@@ -46,25 +46,25 @@ const (
 // ErrPreviewNotOffered is the 404 for a key that is not a joinable preview.
 func ErrPreviewNotOffered(key string) *Problem {
 	return NewProblem(http.StatusNotFound, CodePreviewNotOffered, "Preview not offered",
-		fmt.Sprintf("%q is not a preview you can join; list them with GET /v1/previews", key)).WithDocs(docsBase + "/cli#previews")
+		fmt.Sprintf("%q is not a preview you can join; list them with GET /v1/previews", key)).WithDocs(docsBase + "/cli")
 }
 
 // ErrPreviewPlanNotEligible is the 403 for a plan the preview excludes.
 func ErrPreviewPlanNotEligible(key string, plan Plan) *Problem {
 	return NewProblem(http.StatusForbidden, CodePreviewPlanNotEligible, "Plan not eligible for this preview",
-		fmt.Sprintf("the %s plan cannot join the %s preview", plan, key)).WithDocs(docsBase + "/cli#previews")
+		fmt.Sprintf("the %s plan cannot join the %s preview", plan, key)).WithDocs(docsBase + "/cli")
 }
 
 // ErrPreviewFull is the 409 for a preview at capacity.
 func ErrPreviewFull(key string, limit, observed int) *Problem {
 	return NewProblem(http.StatusConflict, CodePreviewFull, "Preview is full",
 		fmt.Sprintf("the %s preview admits %d accounts and organizations and has %d; try again later", key, limit, observed)).
-		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/cli#previews")
+		WithLimit(int64(limit), int64(observed)).WithDocs(docsBase + "/cli")
 }
 
 // ErrPreviewOrgUnsupported is the 409 for an organization joining a preview
 // that can only be released per account.
 func ErrPreviewOrgUnsupported(key string) *Problem {
 	return NewProblem(http.StatusConflict, CodePreviewOrgUnsupported, "Preview cannot be joined by an organization",
-		fmt.Sprintf("the %s preview is released per account; join it with PUT /v1/previews/%s", key, key)).WithDocs(docsBase + "/cli#previews")
+		fmt.Sprintf("the %s preview is released per account; join it with PUT /v1/previews/%s", key, key)).WithDocs(docsBase + "/cli")
 }

@@ -8,14 +8,22 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.flag_experiment_results import FlagExperimentResults
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     slug: str,
     environment: str,
     key: str,
+    *,
+    segment: str | Unset = UNSET,
 ) -> dict[str, Any]:
+
+    params: dict[str, Any] = {}
+
+    params["segment"] = segment
+
+    params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
     _kwargs: dict[str, Any] = {
         "method": "get",
@@ -24,6 +32,7 @@ def _get_kwargs(
             environment=quote(str(environment), safe=""),
             key=quote(str(key), safe=""),
         ),
+        "params": params,
     }
 
     return _kwargs
@@ -51,6 +60,11 @@ def _parse_response(
         response_404 = Problem.from_dict(response.json())
 
         return response_404
+
+    if response.status_code == 422:
+        response_422 = Problem.from_dict(response.json())
+
+        return response_422
 
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
@@ -80,17 +94,20 @@ def sync_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    segment: str | Unset = UNSET,
 ) -> Response[FlagExperimentResults | Problem]:
     """Read a flag experiment's sequential results.
 
      Each variant is compared with control by an always-valid mixture sequential probability ratio test,
     so results may be read at any time. A sample ratio mismatch against the rule's weights is reported
-    first.
+    first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits
+    report each arm's best-arm probability and expected loss instead of p-values.
 
     Args:
         slug (str):
         environment (str):
         key (str):
+        segment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -104,6 +121,7 @@ def sync_detailed(
         slug=slug,
         environment=environment,
         key=key,
+        segment=segment,
     )
 
     response = client.get_httpx_client().request(
@@ -119,17 +137,20 @@ def sync(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    segment: str | Unset = UNSET,
 ) -> FlagExperimentResults | Problem | None:
     """Read a flag experiment's sequential results.
 
      Each variant is compared with control by an always-valid mixture sequential probability ratio test,
     so results may be read at any time. A sample ratio mismatch against the rule's weights is reported
-    first.
+    first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits
+    report each arm's best-arm probability and expected loss instead of p-values.
 
     Args:
         slug (str):
         environment (str):
         key (str):
+        segment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -144,6 +165,7 @@ def sync(
         environment=environment,
         key=key,
         client=client,
+        segment=segment,
     ).parsed
 
 
@@ -153,17 +175,20 @@ async def asyncio_detailed(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    segment: str | Unset = UNSET,
 ) -> Response[FlagExperimentResults | Problem]:
     """Read a flag experiment's sequential results.
 
      Each variant is compared with control by an always-valid mixture sequential probability ratio test,
     so results may be read at any time. A sample ratio mismatch against the rule's weights is reported
-    first.
+    first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits
+    report each arm's best-arm probability and expected loss instead of p-values.
 
     Args:
         slug (str):
         environment (str):
         key (str):
+        segment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,6 +202,7 @@ async def asyncio_detailed(
         slug=slug,
         environment=environment,
         key=key,
+        segment=segment,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -190,17 +216,20 @@ async def asyncio(
     key: str,
     *,
     client: AuthenticatedClient | Client,
+    segment: str | Unset = UNSET,
 ) -> FlagExperimentResults | Problem | None:
     """Read a flag experiment's sequential results.
 
      Each variant is compared with control by an always-valid mixture sequential probability ratio test,
     so results may be read at any time. A sample ratio mismatch against the rule's weights is reported
-    first.
+    first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits
+    report each arm's best-arm probability and expected loss instead of p-values.
 
     Args:
         slug (str):
         environment (str):
         key (str):
+        segment (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,5 +245,6 @@ async def asyncio(
             environment=environment,
             key=key,
             client=client,
+            segment=segment,
         )
     ).parsed

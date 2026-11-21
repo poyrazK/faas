@@ -71,3 +71,14 @@ CREATE TABLE instances (id uuid PRIMARY KEY, app_id uuid NOT NULL, deployment_id
 CREATE TABLE app_custom_metrics (app_id uuid NOT NULL, name text NOT NULL, value double precision NOT NULL, observed_at timestamptz NOT NULL, PRIMARY KEY(app_id,name));
 
 CREATE TABLE hosted_task_source_intents(account_id uuid NOT NULL REFERENCES accounts(id),id text NOT NULL,payload jsonb NOT NULL,ciphertext bytea,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));
+
+CREATE TABLE hosted_task_binding_qualifications(account_id uuid NOT NULL,id text NOT NULL,payload jsonb NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));
+ALTER TABLE app_secrets ADD COLUMN secret_version bigint NOT NULL DEFAULT 0;
+ALTER TABLE app_secrets ADD COLUMN managed_credential_generation bigint;
+CREATE TABLE managed_postgres_bindings(id uuid PRIMARY KEY,account_id uuid NOT NULL,database_account_id uuid NOT NULL,database_id uuid NOT NULL,app_id uuid NOT NULL,scope text NOT NULL,environment_key text NOT NULL,credential_ref text,credential_generation bigint NOT NULL,state text NOT NULL,access text NOT NULL,deleted_at timestamptz);
+CREATE TABLE app_envs(account_id uuid NOT NULL,app_id uuid NOT NULL,scope text NOT NULL,key text NOT NULL,value text NOT NULL,PRIMARY KEY(app_id,scope,key));
+CREATE TABLE managed_postgres_databases(id uuid PRIMARY KEY,account_id uuid NOT NULL,state text NOT NULL);
+
+CREATE TABLE hosted_task_rehearsal_plans(account_id uuid NOT NULL,id text NOT NULL,payload jsonb NOT NULL,expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));
+
+CREATE TABLE hosted_task_rehearsal_runs(account_id uuid NOT NULL,id text NOT NULL,run_id uuid NOT NULL,plan_sha256 text NOT NULL,reserved_at timestamptz NOT NULL,approval_expires_at timestamptz NOT NULL,PRIMARY KEY(account_id,id));

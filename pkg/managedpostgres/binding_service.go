@@ -306,7 +306,7 @@ func (s *BindingService) Reconcile(ctx context.Context, accountID, bindingID str
 	}
 
 	credentialRequest := bindingCredentialRequest(binding, databaseDataResource(database))
-	if credentialRequest.CustomRoles, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
+	if credentialRequest.CustomRoles, credentialRequest.CustomRoleDefault, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
 		return Binding{}, s.releaseKnownError(ctx, binding, BindingStateFailed, "custom_roles_unavailable", ErrUnavailable, s.retryInterval)
 	}
 	providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
@@ -615,4 +615,23 @@ func bindingRequestNamespace(r CreateBindingRequest) string {
 		return r.DatabaseAccountID
 	}
 	return r.AccountID
+}
+
+// CutoverVerifier is implemented by a credential sink that can report whether
+// it can verify a credential staged for a database switch.
+type CutoverVerifier interface {
+	CanVerifyCutoverCredentials() bool
+}
+
+// CanVerifyCutoverCredentials reports whether a database switch staged now
+// could pass its verification phase. A sink that does not say is trusted, as
+// before.
+func (s *BindingService) CanVerifyCutoverCredentials() bool {
+	if s == nil {
+		return false
+	}
+	if v, ok := s.sink.(CutoverVerifier); ok {
+		return v.CanVerifyCutoverCredentials()
+	}
+	return true
 }

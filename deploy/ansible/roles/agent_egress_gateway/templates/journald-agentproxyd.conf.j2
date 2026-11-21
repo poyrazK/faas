@@ -1,0 +1,14 @@
+# {{ ansible_managed }}
+# agentproxyd's journal namespace: the agent egress connection log
+# (ADR-20261117185346 §5). Persistent, and kept longer than the host journal
+# so an abuse report weeks after the traffic still maps to a session.
+[Journal]
+Storage=persistent
+Compress=yes
+MaxRetentionSec={{ faas_agentproxyd_log_retention }}
+SystemMaxUse={{ faas_agentproxyd_log_max_use }}
+SystemKeepFree={{ faas_agentproxyd_log_keep_free }}
+SystemMaxFileSize=128M
+# One line per connection; a busy agent fleet must not be rate-limited out
+# of the record an abuse report needs.
+RateLimitIntervalSec=0

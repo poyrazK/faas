@@ -184,6 +184,11 @@ func TestPKIRenewalIncludesUnavailableRegisteredNodes(t *testing.T) {
 	if !strings.Contains(projection, "selectattr('gateway_target_url', 'defined')") {
 		t.Fatalf("renewal registry projection does not require a deployable split-box endpoint\n%s", projection)
 	}
+	// A retired node has no host to renew. Counting it made the inventory
+	// check refuse every renewal after the 2026-11-20 cutover retired fsn-2/3.
+	if !strings.Contains(projection, "rejectattr('lifecycle', 'equalto', 'retired')") {
+		t.Fatalf("renewal registry projection counts retired nodes as fleet hosts\n%s", projection)
+	}
 }
 
 func TestPKIRenewalOnlyResumesAValidInstalledBundle(t *testing.T) {

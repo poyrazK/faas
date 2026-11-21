@@ -45,16 +45,24 @@ func SlugHolders(ctx context.Context, lookup SlugLookup, workloads []reposcan.Wo
 }
 
 // SlugHolderReasons explains each workload whose slug SlugHolders found held.
-func SlugHolderReasons(accountID string, workloads []reposcan.Workload, holders map[string]state.App) []string {
+// Restoring the caller's deleted app helps only when it was this project's
+// member: an app from another project, or from a deleted one (its project_id
+// is now null), comes back outside this project and still collides. Those
+// get the purge, which frees the name for the same account at once.
+func SlugHolderReasons(accountID, projectID string, workloads []reposcan.Workload, holders map[string]state.App) []string {
 	var reasons []string
 	for _, workload := range workloads {
 		slug := AppSlug(workload)
 		app, held := holders[slug]
 		switch {
 		case !held:
+		case app.AccountID == accountID && app.Status == state.AppDeleted && projectID != "" && app.ProjectID == projectID:
+			reasons = append(reasons, fmt.Sprintf(
+				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale app restore %s`, free the name now with `gregale app purge %s`, or choose another app name",
+				workload.Name, slug, slug, slug))
 		case app.AccountID == accountID && app.Status == state.AppDeleted:
 			reasons = append(reasons, fmt.Sprintf(
-				"workload %q uses app slug %q, held by a deleted app until its grace window ends; restore it with `gregale apps restore %s` or choose another app name",
+				"workload %q uses app slug %q, held by an app you deleted from another project until its grace window ends; free the name now with `gregale app purge %s` or choose another app name",
 				workload.Name, slug, slug))
 		default:
 			reasons = append(reasons, fmt.Sprintf(

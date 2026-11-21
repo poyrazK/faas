@@ -39,7 +39,8 @@
     main { width: min(22rem, calc(100vw - 3rem)); padding: 3rem 0; }
     .brand { font-size: 0.9rem; font-weight: 600; letter-spacing: 0.01em; margin: 0 0 2.5rem; }
     h1 { font-size: 1.25rem; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 0.75rem; }
-    p { margin: 0 0 1.5rem; color: var(--muted); }
+    p, ol { margin: 0 0 1.5rem; color: var(--muted); }
+    ol { padding-left: 1.25rem; }
     p strong { color: var(--fg); font-weight: 600; }
     code { font-family: var(--mono); font-size: 0.9em; }
 
@@ -132,16 +133,33 @@
     {{else if index .Data "Refused"}}
       <p>{{index .Data "Detail"}}</p>
       <p class="fine">Nothing was authorized. Start the connection again from your agent.</p>
+    {{else if index .Data "EmailVerificationRequired"}}
+      <p class="identity">Verify <strong>{{index .Data "AccountEmail"}}</strong> before authorizing this connection.</p>
+      <ol>
+        <li>Open Gregale’s verification email in this signed-in browser.</li>
+        <li>Click <strong>Verify email</strong> and wait for the <strong>Email verified</strong> page.</li>
+        <li>{{if index .Data "MCP"}}Start the connection again from your agent.{{else}}Return to your terminal and run <code>gregale login</code> again.{{end}}</li>
+      </ol>
+      {{with index .Data "ResendToken"}}
+      <form method="post" action="/v1/auth/verify-email/resend">
+        <input type="hidden" name="csrf_token" value="{{.}}">
+        <button type="submit">Send a new verification link</button>
+      </form>
+      {{end}}
+      {{if not (index .Data "MCP")}}<p><a href="{{index .Data "SignInURL"}}">Sign in with a different account</a></p>{{end}}
+    {{else if index .Data "CLIRetry"}}
+      <p>This approval code expired or was already used.</p>
+      {{with index .Data "AccountEmail"}}<p class="identity">This browser is signed in as <strong>{{.}}</strong>.</p>{{end}}
+      <ol>
+        <li>Keep this browser open.</li>
+        <li>In the same terminal, run <code>gregale login</code> to get a fresh approval link.</li>
+        <li>Open the new link in this browser and approve the request from your terminal.</li>
+      </ol>
+      <p class="fine">If your terminal is already signed in, you can continue there. If you started with <code>gregale start</code>, run it again after signing in.</p>
     {{else if index .Data "Error"}}
       {{if index .Data "MCP"}}
       <p>Start the connection again from your agent to get a fresh approval page.</p>
       <p class="fine">Signing in to Gregale does not finish the MCP connection. Return to your agent after completing approval.</p>
-      {{else}}
-      <p>
-        This code was already used or has expired. Codes work exactly once.
-        Run <code>gregale login</code> again for a new one.
-      </p>
-      <p class="fine">Nothing was authorized. You can close this tab.</p>
       {{end}}
     {{else}}
       {{if index .Data "MCP"}}
@@ -159,6 +177,7 @@
         terminal access as <strong>{{index .Data "AccountEmail"}}</strong> — this
         account only.
       </p>
+      {{with index .Data "SignInURL"}}<p><a href="{{.}}">Sign in with a different account</a>{{if not (index $.Data "LoopbackPort")}}, then run <code>gregale login</code> again.{{end}}</p>{{end}}
       {{end}}
 
       {{if and (not (index .Data "MCP")) (index .Data "LoopbackPort")}}

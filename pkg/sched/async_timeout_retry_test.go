@@ -28,12 +28,19 @@ func TestAsyncTimeoutRetryBacksOff(t *testing.T) {
 	if got := sched.AsyncTimeoutRetryDelay(async, timeout, 5*time.Second); got > 15*time.Minute {
 		t.Fatalf("capped timeout retry = %s, want at most 15 min", got)
 	}
+	// prod 2026-11-19: apid stamps the plan's max_attempts on every async
+	// invocation; that alone must not switch the timeout backoff off.
+	stamped := state.Invocation{Source: state.InvocationAsyncInvoke, Attempts: 1, RetryPolicyJSON: []byte(`{"max_attempts":10}`)}
+	if got := sched.AsyncTimeoutRetryDelay(stamped, timeout, 2*time.Second); got < 24*time.Second {
+		t.Fatalf("timeout retry with the stamped plan max_attempts = %s, want about 30 s", got)
+	}
 	cases := []struct {
 		name  string
 		inv   state.Invocation
 		err   error
 		delay time.Duration
 	}{
+		{"declared delay curve", state.Invocation{Source: state.InvocationAsyncInvoke, Attempts: 1, RetryPolicyJSON: []byte(`{"max_attempts":3,"base_seconds":2}`)}, timeout, 5 * time.Second},
 		{"other error", state.Invocation{Source: state.InvocationAsyncInvoke, Attempts: 1}, errors.New("connection reset"), 5 * time.Second},
 		{"queue source", state.Invocation{Source: state.InvocationQueue, Attempts: 1}, timeout, 5 * time.Second},
 		{"terminal failure", state.Invocation{Source: state.InvocationAsyncInvoke, Attempts: 1}, timeout, 0},

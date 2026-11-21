@@ -34,6 +34,11 @@ def _parse_response(*, client: AuthenticatedClient | Client, response: httpx.Res
         response_200 = response.text
         return response_200
 
+    if response.status_code == 401:
+        response_401 = Problem.from_dict(response.json())
+
+        return response_401
+
     if response.status_code == 410:
         response_410 = cast(Any, None)
         return response_410
@@ -65,11 +70,10 @@ def sync_detailed(
 ) -> Response[Any | Problem | str]:
     """Verify a password-signup email address.
 
-     A browser (Accept text/html) gets an HTML page whose button posts the
-    token back, and nothing is consumed, so a mail scanner that prefetches
-    the link cannot use up the token. Any other client consumes the
-    24-hour, single-use token here and the account email is marked
-    verified. No session is created.
+     A browser (Accept text/html) gets confirmation or sign-in guidance.
+    Opening the page does not consume the token. Other GET clients consume
+    the 24-hour, single-use token only with a live session for its account.
+    No session is created.
 
     Args:
         token (str):
@@ -100,11 +104,10 @@ def sync(
 ) -> Any | Problem | str | None:
     """Verify a password-signup email address.
 
-     A browser (Accept text/html) gets an HTML page whose button posts the
-    token back, and nothing is consumed, so a mail scanner that prefetches
-    the link cannot use up the token. Any other client consumes the
-    24-hour, single-use token here and the account email is marked
-    verified. No session is created.
+     A browser (Accept text/html) gets confirmation or sign-in guidance.
+    Opening the page does not consume the token. Other GET clients consume
+    the 24-hour, single-use token only with a live session for its account.
+    No session is created.
 
     Args:
         token (str):
@@ -130,11 +133,10 @@ async def asyncio_detailed(
 ) -> Response[Any | Problem | str]:
     """Verify a password-signup email address.
 
-     A browser (Accept text/html) gets an HTML page whose button posts the
-    token back, and nothing is consumed, so a mail scanner that prefetches
-    the link cannot use up the token. Any other client consumes the
-    24-hour, single-use token here and the account email is marked
-    verified. No session is created.
+     A browser (Accept text/html) gets confirmation or sign-in guidance.
+    Opening the page does not consume the token. Other GET clients consume
+    the 24-hour, single-use token only with a live session for its account.
+    No session is created.
 
     Args:
         token (str):
@@ -163,11 +165,10 @@ async def asyncio(
 ) -> Any | Problem | str | None:
     """Verify a password-signup email address.
 
-     A browser (Accept text/html) gets an HTML page whose button posts the
-    token back, and nothing is consumed, so a mail scanner that prefetches
-    the link cannot use up the token. Any other client consumes the
-    24-hour, single-use token here and the account email is marked
-    verified. No session is created.
+     A browser (Accept text/html) gets confirmation or sign-in guidance.
+    Opening the page does not consume the token. Other GET clients consume
+    the 24-hour, single-use token only with a live session for its account.
+    No session is created.
 
     Args:
         token (str):

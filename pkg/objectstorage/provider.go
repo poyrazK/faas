@@ -183,6 +183,10 @@ type Object struct {
 	ETag         string    `json:"etag,omitempty"`
 	Size         int64     `json:"size_bytes"`
 	LastModified time.Time `json:"last_modified"`
+	// FromParent marks, in apid's listing of an environment branch's
+	// bucket, an object the branch reads from its parent's bucket
+	// (ADR-20261031193635 amendment 2026-11-17).
+	FromParent bool `json:"from_parent,omitempty"`
 }
 
 type ObjectPage struct {

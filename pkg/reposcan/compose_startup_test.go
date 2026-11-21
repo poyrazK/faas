@@ -22,29 +22,25 @@ func startupWarnings(t *testing.T, startPeriod string, files ...string) []string
 	return out
 }
 
-// GREG-01: a Compose start_period longer than the startup deadline is a
-// grace period the service never gets; the plan says so and names the fix.
-func TestComposeStartPeriodBeyondStartupDeadlineWarns(t *testing.T) {
+// GREG-01, then retail-store A5: without gregale.yaml the healthcheck timing
+// raises the service's own startup deadline, and the plan says to what.
+func TestComposeStartPeriodRaisesStartupDeadline(t *testing.T) {
 	got := startupWarnings(t, "60s")
 	if len(got) != 1 {
-		t.Fatalf("start_period warnings = %q, want one", got)
+		t.Fatalf("start_period notes = %q, want one", got)
 	}
 	for _, want := range []string{
-		"orders: healthcheck start_period 1m0s is longer than the 30 s default startup deadline",
-		"cold_boot_timeout",
-		"lifecycle.startup_deadline_s: 60",
+		"orders: startup deadline raised to 120 s from the healthcheck (start_period 1m0s + 3 retries × 30s)",
 		"scale 120 s",
+		"x-gregale-startup-deadline",
 	} {
 		if !strings.Contains(got[0], want) {
-			t.Errorf("warning %q lacks %q", got[0], want)
+			t.Errorf("note %q lacks %q", got[0], want)
 		}
 	}
 }
 
-func TestComposeStartPeriodWithinStartupDeadlineIsQuiet(t *testing.T) {
-	if got := startupWarnings(t, "20s"); len(got) != 0 {
-		t.Fatalf("warnings = %q, want none for a start_period inside the default deadline", got)
-	}
+func TestComposeStartPeriodWithinConfiguredDeadlineIsQuiet(t *testing.T) {
 	if got := startupWarnings(t, "60s", "gregale.yaml", "lifecycle:\n  startup_deadline_s: 120\n"); len(got) != 0 {
 		t.Fatalf("warnings = %q, want none once gregale.yaml raises the deadline", got)
 	}

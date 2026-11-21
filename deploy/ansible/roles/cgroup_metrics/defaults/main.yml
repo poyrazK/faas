@@ -15,6 +15,7 @@ faas_cgroup_metrics_paths:
   - faas-cp.slice
   - faas-cp.slice/*.service
   - faas-cp-build.slice
+  - faas-borrowed.slice
   - faas-obs.slice
   - faas-obs.slice/*.service
   - faas-tenant.slice

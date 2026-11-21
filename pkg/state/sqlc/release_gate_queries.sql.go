@@ -223,6 +223,7 @@ JOIN synthetic_checks c ON c.id = g.synthetic_check_id AND c.app_id = g.app_id A
 JOIN apps a ON a.id = g.app_id
 JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
  AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.rollout_state, ''), 'pending') IN ('pending', 'rolling_out')
  AND coalesce(nullif(d.scope, ''), 'default') = 'default'
 JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
  AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'

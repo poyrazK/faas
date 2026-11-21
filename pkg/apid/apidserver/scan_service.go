@@ -107,9 +107,12 @@ type scanPlanRequest struct {
 	SafeRelease              *api.ProjectSafeRelease
 	RetryTargets             map[string]string
 	AppSlugs                 map[string]string
-	Migration                bool
-	SourcePath               string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256             string // hex digest of the original compressed bytes
+	// AppSlugPrefix is `deploy --project --prefix`: new apps are named
+	// <prefix><service>, replacing a Compose x-gregale-slug-prefix.
+	AppSlugPrefix string
+	Migration     bool
+	SourcePath    string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256  string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -1634,6 +1637,7 @@ func (s *server) scanService(
 	if !preserveNames {
 		scopeGenericRootWorkload(&result, req.ProjectSlug)
 	}
+	reposcan.ApplySlugPrefix(result.Workloads, req.AppSlugPrefix)
 	appSlugs, slugProblem := projectsetup.AppSlugs(result.Workloads, acctApps, projectID, req.ProjectSlug, req.AppSlugs, req.Migration)
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
@@ -2047,7 +2051,7 @@ func (s *server) scanService(
 	}
 	preAdmissionReasons := reconcile.WorkloadAdmissionReasonsWithManaged(result.Workloads, result.Managed, acctApps, projectID)
 	preAdmissionReasons = append(preAdmissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, result.Workloads)...)
-	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, result.Workloads, slugHolders)...)
+	preAdmissionReasons = append(preAdmissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, result.Workloads, slugHolders)...)
 	var admissionReasons []string
 	if len(filteredW) > 0 || len(result.Workloads) == 0 {
 		// An actually empty scan is unsafe and must carry the reconcile
@@ -2056,7 +2060,7 @@ func (s *server) scanService(
 		// applicable no-op; the skipped partition records that intent.
 		admissionReasons = reconcile.WorkloadAdmissionReasonsWithManaged(filteredW, filteredMc, acctApps, projectID, dependencyReferences)
 		admissionReasons = append(admissionReasons, reconcile.ProjectImageLifecycleAdmissionReasons(acct.Plan, filteredW)...)
-		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, filteredW, slugHolders)...)
+		admissionReasons = append(admissionReasons, reconcile.SlugHolderReasons(acct.ID, projectID, filteredW, slugHolders)...)
 	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		stageReasons := reconcile.EnvironmentWorkloadAdmissionReasons(filteredW, projectApps)
@@ -2138,6 +2142,12 @@ func (s *server) scanService(
 	if composePostgresErr != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed databases")
 	}
+	// Compose redis services become managed caches (ADR-20261116192126).
+	composeRedis, composeRedisReasons, composeRedisErr := s.composeRedisPlan(r.Context(), acct, req.ProjectSlug, planScope,
+		filteredMc, filteredW, composeEnv, projectApps)
+	if composeRedisErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not plan the project's managed caches")
+	}
 	// A non-production deploy is served at the environment's own hosts, not
 	// at the production hostname (Hunt 33 H33-33).
 	nonProductionEnvironment := !reconcileProductionEnvironment(req.Environment)
@@ -2196,7 +2206,7 @@ func (s *server) scanService(
 		}
 		envImport := projectsetup.PlanEnvImport(composeEnv, w.Name, callableServices, limits, s.privateServiceHTTPS(acct))
 		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(
-			withoutProvidedKeys(w.Name, unset, composePostgres), envImport)
+			withoutRedisProvidedKeys(w.Name, withoutProvidedKeys(w.Name, unset, composePostgres), composeRedis), envImport)
 		warnings = append(warnings, projectsetup.RewrittenEnvNotes(w.Name, pw.ImportedEnvKeys, envImport)...)
 		slug := w.AppSlug
 		if slug == "" {
@@ -2220,7 +2230,14 @@ func (s *server) scanService(
 			respManaged[i].Provision = planManagedProvision(provision)
 			continue
 		}
+		if provision, ok := composeRedis[m.Name]; ok {
+			respManaged[i].Provision = planRedisProvision(provision)
+			continue
+		}
 		respManaged[i].NotProvisionedReason = composePostgresReasons[m.Name]
+		if reason, ok := composeRedisReasons[m.Name]; ok {
+			respManaged[i].NotProvisionedReason = reason
+		}
 		respManaged[i].Unbound = unboundDatastoreKeys(composeEnv, filteredW, respWorkloads, m)
 		if m.Kind != "postgres" && len(respManaged[i].Unbound) > 0 {
 			warnings = append(warnings, fmt.Sprintf(
@@ -2851,6 +2868,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
+	if len(composeRedis) > 0 {
+		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
+		if err != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not load project cache targets")
+		}
+		if problem := s.applyComposeRedis(r, acct, importScope, composeRedis, apps); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
 	if len(manifestBuckets) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if err != nil {
@@ -2915,6 +2941,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	}
 	var (
 		appSlugs               map[string]string
+		appSlugPrefix          string
 		appSlugsSet            bool
 		migration              bool
 		sourcePath             string
@@ -2993,6 +3020,13 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 			}
 			sourcePath = path
 			_ = n
+		case "app_slug_prefix":
+			b, readErr := io.ReadAll(io.LimitReader(part, 64))
+			appSlugPrefix = strings.TrimSpace(string(b))
+			if readErr != nil || reposcan.ValidateSlugPrefix(appSlugPrefix) != nil {
+				return nil, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+					"Invalid app name prefix", "app_slug_prefix must be at most 30 lowercase letters, digits and hyphens, starting with a letter")
+			}
 		case "project_slug":
 			projectSlugSet = true
 			b, readErr := io.ReadAll(io.LimitReader(part, 64))
@@ -3164,6 +3198,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	parsed = true
 	return &scanPlanRequest{
 		AppSlugs:               appSlugs,
+		AppSlugPrefix:          appSlugPrefix,
 		Migration:              migration,
 		SourcePath:             sourcePath,
 		SourceSHA256:           hash,

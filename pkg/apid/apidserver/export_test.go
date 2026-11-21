@@ -17,6 +17,8 @@ import (
 	"errors"
 	"github.com/onebox-faas/faas/pkg/apid/attention"
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
+	"github.com/onebox-faas/faas/pkg/apid/toolregistry"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"io"
 	"log/slog"
@@ -83,6 +85,8 @@ import (
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
+
+var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
 
 // SealNotificationChannel validates a channel create request (ADR-749).
 var SealNotificationChannel = sealChannel
@@ -928,6 +932,9 @@ func (r *appSecretCredentialSink) Identities() *func() []*age.X25519Identity { r
 func (r *appSecretCredentialSink) Probe() *func(context.Context, string, managedpostgres.CredentialAccess, int) error {
 	return &r.probe
 }
+func (r *appSecretCredentialSink) CutoverProbe() *func(context.Context, managedpostgres.Cutover, managedpostgres.CutoverCredential, managedpostgres.Database) error {
+	return &r.cutoverProbe
+}
 
 // Members of auditor
 func (r *auditor) CloseSignal() *chan struct{}    { return &r.closeSignal }
@@ -1378,6 +1385,13 @@ func (r *server) GetQueueBindingStatus(p0 http.ResponseWriter, p1 *http.Request,
 func (r *server) HandleBillingEventWithOptions(p0 context.Context, p1 billing.Event, p2 state.Account, p3 bool) error {
 	return r.handleBillingEventWithOptions(p0, p1, p2, p3)
 }
+
+// SetPrivateExecutorForTest supplies fixture keys and a catalog dialer before
+// the production route table binds its handlers.
+func (r *server) SetPrivateExecutorForTest(executor *toolregistry.PrivateExecutor) {
+	r.privateToolsOnce.Do(func() { r.privateTools = executor })
+}
+
 func (r *server) Handler() http.Handler { return r.handler() }
 
 func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
@@ -2642,3 +2656,13 @@ func (r pgHandlerEnv) DoSession(p0 *testing.T, p1, p2, p3 string, p4 any, p5 map
 }
 
 var SyntheticCheckAuthWarning = syntheticCheckAuthWarning
+
+// Managed Redis Compose helpers (ADR-20261116192126).
+var (
+	ComposeRedisCacheName = composeRedisCacheName
+	ComposeRedisValue     = composeRedisValue
+)
+
+func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
+	return &s.runtimeBuildAdmission
+}

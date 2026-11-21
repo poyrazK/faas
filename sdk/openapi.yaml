@@ -739,6 +739,56 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/databases/{id}/query:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: queryManagedPostgresDatabase
+      summary: Run one read-only SQL statement.
+      description: |
+        Requires the data:read scope (or admin) and MFA.
+        Runs one statement as the database's agent
+        query login, a read-only login that reads the public schema, inside
+        a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
+        timeout, then rolls back. Returns at most max_rows rows (default
+        100, at most 1000) and 1 MiB of values, each in its PostgreSQL text
+        form or null; truncated is true when a cap stopped reading. One
+        query per database runs at a time. A suspended database wakes and
+        its compute is billed as usage. The SQL and rows are never logged;
+        the audit log records a SHA-256 of the statement. Cache-Control
+        no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedPostgresQueryRequest'}
+      responses:
+        '200':
+          description: The rows read.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresQueryResponse'}
+        '409':
+          description: The database is not ready, or another query of it is running.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '422':
+          description: PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        '501':
+          description: The database's backend cannot run queries (postgres_query_unsupported).
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+        default:
+          description: Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -2037,11 +2087,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -2050,10 +2099,11 @@ paths:
           schema: {type: string}
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '410':
           description: Verification link expired, invalid, or already used.
         '429': {$ref: '#/components/responses/TooManyRequests'}
@@ -2062,9 +2112,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -2078,10 +2129,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -2556,19 +2608,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EmailVerificationResendResponse'}
+            text/html:
+              schema: {type: string}
         '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/auth/sessions/revoke_all:
     post:
@@ -3522,6 +3580,50 @@ paths:
         '409': {$ref: '#/components/responses/Conflict'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /v1/deleted-apps/{id}/purge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+        schema: {type: string, format: uuid}
+    post:
+      tags: [apps]
+      operationId: purgeDeletedApp
+      summary: Permanently remove a deleted app now, freeing its slug.
+      description: |
+        Ends the app's restore window at once and removes the app and its stored
+        artifacts, so the same account can reuse the slug (for example to redeploy
+        a Compose project after a teardown). This cannot be undone. Requires
+        deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Refused with 409 app_not_purgeable, before the window
+        closes, while the app still has object storage buckets. When something
+        else still holds the app the response is 202 with pending_reason; the
+        window stays closed and the grace sweep finishes the purge.
+      requestBody:
+        description: Optional empty object; no fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: false, maxProperties: 0}
+      responses:
+        '200':
+          description: The app is gone and its slug is free for this account.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeletedAppPurgeResponse'}
+        '202':
+          description: The restore window is closed; the purge finishes once pending_reason clears.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DeletedAppPurgeResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -4181,7 +4283,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/wake-timeline:
@@ -4309,7 +4411,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/usage:
@@ -4401,7 +4503,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': {$ref: '#/components/responses/NotFound'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/analytics:
@@ -7804,9 +7906,15 @@ paths:
       tags: [env]
       operationId: listEnv
       summary: List env vars on an app.
+      parameters:
+        - name: values
+          in: query
+          required: false
+          schema: {type: string, enum: ["true"]}
+          description: "`true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value."
       description: |
         Returns every env var key + timestamps on the app. The plaintext
-        value NEVER appears in the response — guest-init reads the value
+        value appears only with `?values=true`; guest-init reads it
         at process start from `/etc/faas/env.json` inside the guest.
 
         **scope filter.** The optional `?scope=`
@@ -24672,6 +24780,7 @@ components:
         evidence_through_id: {type: integer, format: int64, minimum: 0}
         known_millicents: {type: integer, format: int64, minimum: 0}
         coverage_complete: {type: boolean}
+        projectable: {type: boolean, description: 'Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.'}
         fresh: {type: boolean}
         reasons: {type: array, items: {type: string}}
         projected_millicents: {type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.'}
@@ -24974,6 +25083,9 @@ components:
         fresh: {type: boolean}
         expected_minutes: {type: integer, format: int64}
         complete_minutes: {type: integer, format: int64}
+        projectable:
+          type: boolean
+          description: Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
         unpriced_quantity: {type: integer, format: int64}
         non_billable_quantity: {type: integer, format: int64}
         reasons: {type: array, items: {type: string}}
@@ -25473,6 +25585,38 @@ components:
           type: string
           format: date-time
           description: "When the response was made; a restore point must be before it."
+    ManagedPostgresQueryRequest:
+      description: One read-only SQL statement.
+      type: object
+      additionalProperties: false
+      required: [sql]
+      properties:
+        sql: {type: string, minLength: 1, maxLength: 65536, description: One statement; several are refused.}
+        max_rows: {type: integer, minimum: 1, maximum: 1000, description: Rows to return; default 100.}
+    ManagedPostgresQueryResponse:
+      description: The rows one read-only statement read.
+      type: object
+      additionalProperties: false
+      required: [database_id, columns, rows, row_count, truncated, duration_ms]
+      properties:
+        database_id: {type: string}
+        columns:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type]
+            properties:
+              name: {type: string}
+              type: {type: string, description: 'PostgreSQL type name, or oid:N for a type the server did not name.'}
+        rows:
+          type: array
+          items:
+            type: array
+            items: {type: [string, 'null'], description: The value in PostgreSQL text form; null for NULL.}
+        row_count: {type: integer, minimum: 0}
+        truncated: {type: boolean, description: True when the row or 1 MiB cap stopped reading before the result ended.}
+        duration_ms: {type: integer, format: int64, minimum: 0}
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
@@ -26847,7 +26991,7 @@ components:
         label: {type: [string, "null"], example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: {type: string, format: date-time}
@@ -27133,6 +27277,19 @@ components:
         apps: {type: array, maxItems: 50, items: {$ref: '#/components/schemas/DeletedAppSummary'}}
         next_cursor: {type: string, maxLength: 1024}
         evaluated_at: {type: string, format: date-time}
+    DeletedAppPurgeResponse:
+      type: object
+      description: Outcome of an owner's purge. The restore window is closed either way.
+      required: [account_id, id, slug, purged]
+      properties:
+        account_id: {type: string, format: uuid}
+        id: {type: string, format: uuid}
+        slug: {type: string}
+        purged: {type: boolean, description: True once the app is gone and its slug is free for this account.}
+        pending_reason:
+          type: string
+          description: What still holds the app while purged is false; the grace sweep retries.
+          enum: [environment_clone, exclusive_work, foreign_key, managed_postgres_binding, multipart_write, object_bucket, retained_resources, retry_pending]
     AppScalingSettings:
       description: Stored RAM, CPU, concurrency and instance-floor settings.
       type: object
@@ -39133,7 +39290,7 @@ components:
         client_name: {type: string, minLength: 1, maxLength: 80, description: "Printable client name, without control characters or surrounding spaces."}
         client_site: {type: string, maxLength: 253, description: Lower-case host name the client was verified at.}
     AgentBudgetResponse:
-      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      description: "An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."
       type: object
       required: [source, spent_cents, month]
       properties:
@@ -39142,8 +39299,8 @@ components:
         key_monthly_cents: {type: integer, format: int64, description: "The budget set for this agent, when one was."}
         key_unlimited: {type: boolean, description: "The agent was set to have no budget of its own."}
         org_max_cents: {type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one."}
-        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent."}
-        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in."}
+        spent_cents: {type: integer, format: int64, minimum: 0, description: "Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to the cent. It does not reset each month; lowering capacity gives budget back."}
+        month: {type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The current UTC month (kept for compatibility; spent_cents no longer resets monthly)."}
     AgentUndoRequest:
       description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
       type: object
@@ -39356,7 +39513,7 @@ components:
         label: {type: [string, "null"], example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: {type: [string, "null"], format: date-time}
@@ -39438,7 +39595,7 @@ components:
         label: {type: string, maxLength: 100, example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project."}
@@ -39469,7 +39626,7 @@ components:
         label: {type: string, maxLength: 100, example: "ci-deploy"}
         scopes:
           type: array
-          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
+          items: {type: string, enum: [admin, 'apps:read', 'deploy:write', 'secrets:read', 'secrets:write', 'usage:read', 'runs:read', 'runs:write', 'env:read', 'env:write', 'registry_credentials:read', 'registry_credentials:write', 'upstreams:write', 'metrics:write', 'delayed_tasks:read', 'delayed_tasks:write', 'events:publish', 'queues:send', 'queues:consume', 'storage:manage', 'storage:read', 'storage:write', 'postgres:manage', 'postgres:read', 'data:read', 'project_environments:read', 'project_environments:qualify', 'github:manage']}
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: ['apps:read', 'deploy:write']
         projects: {type: array, maxItems: 100, items: {type: string}, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project."}
@@ -40492,7 +40649,7 @@ components:
         deleted: {type: array, items: {type: string}}
         secrets_not_restored: {type: array, items: {$ref: '#/components/schemas/ConfigSecretDifference'}}
     AppEnvResponse:
-      description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
+      description: "An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
@@ -40505,6 +40662,7 @@ components:
           example: "default"
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        value: {type: string, description: "The variable's plaintext; present only with `?values=true`."}
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on env writes: the revision this write recorded and the config guard watching it."
@@ -40516,7 +40674,7 @@ components:
     # branch on `if 'env_by_scope' in response` decodes the
     # nested map; otherwise it decodes the flat `env` array.
     ScopedAppEnvResponse:
-      description: "An env var envelope scoped to one named environment. The plaintext value never appears here."
+      description: "An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [scope, key, created_at, updated_at]
       properties:
@@ -40528,6 +40686,7 @@ components:
         key: {type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL"}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+        value: {type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing."}
     AppEnvListResponse:
       description: |
         List of env var envelopes (no plaintext values). Discriminated

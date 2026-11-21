@@ -600,6 +600,9 @@ type CredentialRequest struct {
 	// SET ROLE to (ADR-20261116213000). Roles not yet created are skipped;
 	// the next custom-role apply grants them.
 	CustomRoles CustomRoleGrants
+	// CustomRoleDefault is the custom role, among CustomRoles, the login
+	// starts every session as (ALTER ROLE ... SET role); "" for none.
+	CustomRoleDefault string
 }
 
 type Meter string

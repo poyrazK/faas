@@ -39,7 +39,7 @@ import (
 //
 // Include private Python module filenames, which directory embedding omits.
 //
-//go:embed hello-node hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
+//go:embed hello-node hello-node-private hello-python hello-go cron-example function-node function-python function-go function-node24 function-python313 function-rust event-worker queue-worker s3-uploader object-storage-node slack-bot rest-api-postgres rest-api-postgres-python cron-worker webhook-receiver ai-chat secret-reload-node customer-platform mcp-node mcp-go mcp-python customer-operation-export customer-operation-job-export customer-operation-workflow-export data-api data-api-starter durable-entity-node data-api-teams data-api-support-console auth agent-stateless-node agent-infinity-rust
 //go:embed rest-api-postgres-python/runtime/*.py object-storage-python object-storage-python/runtime/*.py
 var FS embed.FS
 
@@ -52,6 +52,35 @@ var FS embed.FS
 var agentsGuide string
 
 var agentsGuideTemplate = template.Must(template.New("AGENTS.md").Parse(agentsGuide))
+
+// agentsSection is the marked Gregale section `gregale init --agents` adds
+// to an existing project's AGENTS.md. Its first and last lines are the
+// markers a later run finds to replace it in place.
+//
+//go:embed agents-section.md.tmpl
+var agentsSection string
+
+var agentsSectionTemplate = template.Must(template.New("agents-section").Parse(agentsSection))
+
+// AgentsSectionBegin and AgentsSectionEnd prefix the marker lines that
+// delimit the section AgentsSection renders.
+const (
+	AgentsSectionBegin = "<!-- gregale:begin"
+	AgentsSectionEnd   = "<!-- gregale:end"
+)
+
+// AgentsGuideMarker is a sentence of the full AGENTS.md init --template
+// writes; a file containing it already has Gregale's instructions.
+const AgentsGuideMarker = "This project runs on Gregale (https://gregale.dev)."
+
+// AgentsSection renders the marked AGENTS.md section for app.
+func AgentsSection(app string) (string, error) {
+	var out bytes.Buffer
+	if err := agentsSectionTemplate.Execute(&out, struct{ App string }{app}); err != nil {
+		return "", fmt.Errorf("render agents section: %w", err)
+	}
+	return out.String(), nil
+}
 
 // GoToolchainVersion is the patched toolchain selected by Gregale's built-in
 // Go starters. Unlike a customer-owned go.mod, these generated modules are
@@ -69,6 +98,7 @@ var Names = []string{
 	"hello-node",
 	"hello-python",
 	"hello-go",
+	PrivateNode,
 	"cron-example",
 	"function-node",
 	"function-python",
@@ -527,7 +557,7 @@ func NameIsValid(name string) bool {
 // Adding a template means a new entry in BOTH Names AND this switch.
 func CategoryFor(name string) string {
 	switch name {
-	case "hello-node", "hello-python", "hello-go":
+	case "hello-node", PrivateNode, "hello-python", "hello-go":
 		return "hello"
 	case "function-node", "function-python", "function-go", "function-node24", "function-python313", "function-rust", "cron-example":
 		return "function"
@@ -551,6 +581,7 @@ func CategoryFor(name string) string {
 // the interactive template picker. Every listed template needs one.
 var summaries = map[string]string{
 	"hello-node":                         "Express HTTP app with a JSON greeting and health check",
+	PrivateNode:                          "Internal Node.js HTTP app that fits the Free plan",
 	"hello-python":                       "Flask HTTP app served by gunicorn",
 	"hello-go":                           "Go HTTP app using only the standard library",
 	"cron-example":                       "Handler for a scheduled request",

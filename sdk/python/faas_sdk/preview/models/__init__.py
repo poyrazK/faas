@@ -337,6 +337,13 @@ from .app_private_network_attachment_status import AppPrivateNetworkAttachmentSt
 from .app_private_network_node_status import AppPrivateNetworkNodeStatus
 from .app_private_network_node_status_fabric_status import AppPrivateNetworkNodeStatusFabricStatus
 from .app_private_network_node_status_route_status import AppPrivateNetworkNodeStatusRouteStatus
+from .app_protection_item_status import AppProtectionItemStatus
+from .app_protection_item_status_item import AppProtectionItemStatusItem
+from .app_protection_item_status_kind import AppProtectionItemStatusKind
+from .app_protection_item_status_reason import AppProtectionItemStatusReason
+from .app_protection_item_status_state import AppProtectionItemStatusState
+from .app_protection_response import AppProtectionResponse
+from .app_protection_response_state import AppProtectionResponseState
 from .app_publish_event_request import AppPublishEventRequest
 from .app_publish_event_response import AppPublishEventResponse
 from .app_registry_credential_list_response import AppRegistryCredentialListResponse
@@ -1355,6 +1362,8 @@ from .delete_exclusive_operation_trigger_binding_source import DeleteExclusiveOp
 from .delete_financial_budget_request import DeleteFinancialBudgetRequest
 from .delete_secret_prefer import DeleteSecretPrefer
 from .deleted_app_list_response import DeletedAppListResponse
+from .deleted_app_purge_response import DeletedAppPurgeResponse
+from .deleted_app_purge_response_pending_reason import DeletedAppPurgeResponsePendingReason
 from .deleted_app_summary import DeletedAppSummary
 from .deleted_app_summary_restore_blocker import DeletedAppSummaryRestoreBlocker
 from .deliver_app_event_request import DeliverAppEventRequest
@@ -2167,6 +2176,7 @@ from .failure_rules_uncertain_outcome import FailureRulesUncertainOutcome
 from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
 from .feature_flag import FeatureFlag
+from .feature_flag_kill_response import FeatureFlagKillResponse
 from .feature_flag_type import FeatureFlagType
 from .feature_flag_version import FeatureFlagVersion
 from .feature_hint import FeatureHint
@@ -2245,6 +2255,8 @@ from .flag_decision_reason import FlagDecisionReason
 from .flag_decision_source import FlagDecisionSource
 from .flag_decision_type import FlagDecisionType
 from .flag_event import FlagEvent
+from .flag_event_flags import FlagEventFlags
+from .flag_event_properties import FlagEventProperties
 from .flag_events_request import FlagEventsRequest
 from .flag_events_response import FlagEventsResponse
 from .flag_events_response_dropped import FlagEventsResponseDropped
@@ -2252,10 +2264,19 @@ from .flag_events_response_month import FlagEventsResponseMonth
 from .flag_evidence import FlagEvidence
 from .flag_evidence_page import FlagEvidencePage
 from .flag_experiment import FlagExperiment
+from .flag_experiment_allocation import FlagExperimentAllocation
 from .flag_experiment_arm import FlagExperimentArm
+from .flag_experiment_bandit import FlagExperimentBandit
+from .flag_experiment_bandit_arm import FlagExperimentBanditArm
 from .flag_experiment_breach import FlagExperimentBreach
+from .flag_experiment_comparison import FlagExperimentComparison
 from .flag_experiment_create_request import FlagExperimentCreateRequest
+from .flag_experiment_create_request_allocation import FlagExperimentCreateRequestAllocation
 from .flag_experiment_create_request_metric_kind import FlagExperimentCreateRequestMetricKind
+from .flag_experiment_create_request_unit import FlagExperimentCreateRequestUnit
+from .flag_experiment_cuped import FlagExperimentCuped
+from .flag_experiment_cuped_reason import FlagExperimentCupedReason
+from .flag_experiment_funnel import FlagExperimentFunnel
 from .flag_experiment_guardrail import FlagExperimentGuardrail
 from .flag_experiment_guardrail_name import FlagExperimentGuardrailName
 from .flag_experiment_guardrail_request import FlagExperimentGuardrailRequest
@@ -2265,19 +2286,32 @@ from .flag_experiment_guardrail_status import FlagExperimentGuardrailStatus
 from .flag_experiment_guardrail_variant import FlagExperimentGuardrailVariant
 from .flag_experiment_guardrail_variant_status import FlagExperimentGuardrailVariantStatus
 from .flag_experiment_guardrails_request import FlagExperimentGuardrailsRequest
+from .flag_experiment_holdout import FlagExperimentHoldout
+from .flag_experiment_holdout_report import FlagExperimentHoldoutReport
 from .flag_experiment_latency import FlagExperimentLatency
+from .flag_experiment_layer import FlagExperimentLayer
+from .flag_experiment_layer_list import FlagExperimentLayerList
+from .flag_experiment_layer_request import FlagExperimentLayerRequest
+from .flag_experiment_layer_slice import FlagExperimentLayerSlice
 from .flag_experiment_list import FlagExperimentList
 from .flag_experiment_metric_kind import FlagExperimentMetricKind
 from .flag_experiment_recommendation import FlagExperimentRecommendation
 from .flag_experiment_recommendation_action import FlagExperimentRecommendationAction
 from .flag_experiment_results import FlagExperimentResults
+from .flag_experiment_retention import FlagExperimentRetention
+from .flag_experiment_retention_period import FlagExperimentRetentionPeriod
+from .flag_experiment_segment import FlagExperimentSegment
 from .flag_experiment_ship_request import FlagExperimentShipRequest
 from .flag_experiment_ship_response import FlagExperimentShipResponse
 from .flag_experiment_status import FlagExperimentStatus
 from .flag_experiment_stop_reason import FlagExperimentStopReason
+from .flag_experiment_unit import FlagExperimentUnit
 from .flag_experiment_variant_result import FlagExperimentVariantResult
 from .flag_experiment_variant_result_status import FlagExperimentVariantResultStatus
 from .flag_experiment_weights import FlagExperimentWeights
+from .flag_exposure import FlagExposure
+from .flag_holdout import FlagHoldout
+from .flag_layer import FlagLayer
 from .flag_lifecycle import FlagLifecycle
 from .flag_lifecycle_attention_item import FlagLifecycleAttentionItem
 from .flag_lifecycle_evidence import FlagLifecycleEvidence
@@ -2286,11 +2320,14 @@ from .flag_outcome import FlagOutcome
 from .flag_outcome_type import FlagOutcomeType
 from .flag_outcomes_response import FlagOutcomesResponse
 from .flag_request_evidence import FlagRequestEvidence
+from .flag_rollout_metric import FlagRolloutMetric
 from .flag_rollout_promotion import FlagRolloutPromotion
 from .flag_rollout_promotion_reason import FlagRolloutPromotionReason
 from .flag_rollout_promotion_request import FlagRolloutPromotionRequest
 from .flag_rollout_promotion_status import FlagRolloutPromotionStatus
 from .flag_rule import FlagRule
+from .flag_rule_experiment import FlagRuleExperiment
+from .flag_rule_experiment_unit import FlagRuleExperimentUnit
 from .flag_rule_rollout_unit import FlagRuleRolloutUnit
 from .flag_variant import FlagVariant
 from .flags_bundle import FlagsBundle
@@ -2348,6 +2385,8 @@ from .get_obs_runtime_builds_expected_role import GetObsRuntimeBuildsExpectedRol
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
 from .get_profile_capture_view_kind import GetProfileCaptureViewKind
+from .get_project_insight_events_interval import GetProjectInsightEventsInterval
+from .get_project_insight_events_unit import GetProjectInsightEventsUnit
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -2398,6 +2437,20 @@ from .guarded_debug_regression_action_request import GuardedDebugRegressionActio
 from .guarded_debug_regression_action_request_action import GuardedDebugRegressionActionRequestAction
 from .held_link_review import HeldLinkReview
 from .held_links_response import HeldLinksResponse
+from .hosted_task_binding_check import HostedTaskBindingCheck
+from .hosted_task_binding_result import HostedTaskBindingResult
+from .hosted_task_binding_result_name import HostedTaskBindingResultName
+from .hosted_task_binding_result_status import HostedTaskBindingResultStatus
+from .hosted_task_binding_selection import HostedTaskBindingSelection
+from .hosted_task_binding_verification import HostedTaskBindingVerification
+from .hosted_task_binding_verification_status import HostedTaskBindingVerificationStatus
+from .hosted_task_binding_verification_version import HostedTaskBindingVerificationVersion
+from .hosted_task_rehearsal_decision import HostedTaskRehearsalDecision
+from .hosted_task_rehearsal_decision_decision import HostedTaskRehearsalDecisionDecision
+from .hosted_task_rehearsal_plan import HostedTaskRehearsalPlan
+from .hosted_task_rehearsal_plan_status import HostedTaskRehearsalPlanStatus
+from .hosted_task_rehearsal_plan_version import HostedTaskRehearsalPlanVersion
+from .hosted_task_rehearsal_prepare import HostedTaskRehearsalPrepare
 from .hosted_task_source_check import HostedTaskSourceCheck
 from .hosted_task_source_decision import HostedTaskSourceDecision
 from .hosted_task_source_decision_decision import HostedTaskSourceDecisionDecision
@@ -2449,6 +2502,32 @@ from .inject_scenario_test_chaos_response import InjectScenarioTestChaosResponse
 from .inject_workflow_event_request import InjectWorkflowEventRequest
 from .inject_workflow_event_response import InjectWorkflowEventResponse
 from .inject_workflow_event_response_status import InjectWorkflowEventResponseStatus
+from .insight_cohort import InsightCohort
+from .insight_cohort_list import InsightCohortList
+from .insight_cohort_request import InsightCohortRequest
+from .insight_cohort_request_kind import InsightCohortRequestKind
+from .insight_cohort_request_where import InsightCohortRequestWhere
+from .insight_event_point import InsightEventPoint
+from .insight_event_series import InsightEventSeries
+from .insight_event_series_interval import InsightEventSeriesInterval
+from .insight_event_series_unit import InsightEventSeriesUnit
+from .insight_funnel import InsightFunnel
+from .insight_funnel_breakdown import InsightFunnelBreakdown
+from .insight_funnel_request import InsightFunnelRequest
+from .insight_funnel_request_unit import InsightFunnelRequestUnit
+from .insight_funnel_step import InsightFunnelStep
+from .insight_funnel_unit import InsightFunnelUnit
+from .insight_request_variant import InsightRequestVariant
+from .insight_requests import InsightRequests
+from .insight_retention import InsightRetention
+from .insight_retention_period import InsightRetentionPeriod
+from .insight_retention_request import InsightRetentionRequest
+from .insight_retention_request_period import InsightRetentionRequestPeriod
+from .insight_retention_request_unit import InsightRetentionRequestUnit
+from .insight_retention_row import InsightRetentionRow
+from .insight_retention_unit import InsightRetentionUnit
+from .insight_step_request import InsightStepRequest
+from .insight_step_request_where import InsightStepRequestWhere
 from .inspect_durable_entity_quota_migration_response_200 import InspectDurableEntityQuotaMigrationResponse200
 from .inspect_durable_entity_quota_policy_response_200 import InspectDurableEntityQuotaPolicyResponse200
 from .inspect_durable_entity_registry_cleanup_response_200 import InspectDurableEntityRegistryCleanupResponse200
@@ -2664,6 +2743,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_env_values import ListEnvValues
 from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
 from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
 from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
@@ -2855,6 +2935,9 @@ from .managed_postgres_health_provider_status import ManagedPostgresHealthProvid
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
 from .managed_postgres_overage import ManagedPostgresOverage
 from .managed_postgres_overage_request import ManagedPostgresOverageRequest
+from .managed_postgres_query_request import ManagedPostgresQueryRequest
+from .managed_postgres_query_response import ManagedPostgresQueryResponse
+from .managed_postgres_query_response_columns_item import ManagedPostgresQueryResponseColumnsItem
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -5302,6 +5385,7 @@ from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeCha
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
 from .publish_stored_workflow_request import PublishStoredWorkflowRequest
+from .purge_deleted_app_body import PurgeDeletedAppBody
 from .push_outbound_ai_prompt_version_request import PushOutboundAIPromptVersionRequest
 from .push_outbound_ai_prompt_version_request_defaults import PushOutboundAIPromptVersionRequestDefaults
 from .push_outbound_ai_prompt_version_response import PushOutboundAIPromptVersionResponse
@@ -6191,6 +6275,8 @@ from .session_info import SessionInfo
 from .session_list_response import SessionListResponse
 from .sessions_revoke_all_response import SessionsRevokeAllResponse
 from .set_account_egress_allowlist_extra_request import SetAccountEgressAllowlistExtraRequest
+from .set_app_protection_request import SetAppProtectionRequest
+from .set_app_protection_request_state import SetAppProtectionRequestState
 from .set_app_static_egress_ip_request import SetAppStaticEgressIPRequest
 from .set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 from .set_binding_release_policy_request import SetBindingReleasePolicyRequest
@@ -7470,6 +7556,13 @@ __all__ = (
     "AppPrivateNetworkNodeStatus",
     "AppPrivateNetworkNodeStatusFabricStatus",
     "AppPrivateNetworkNodeStatusRouteStatus",
+    "AppProtectionItemStatus",
+    "AppProtectionItemStatusItem",
+    "AppProtectionItemStatusKind",
+    "AppProtectionItemStatusReason",
+    "AppProtectionItemStatusState",
+    "AppProtectionResponse",
+    "AppProtectionResponseState",
     "AppPublishEventRequest",
     "AppPublishEventResponse",
     "AppRegistryCredentialListResponse",
@@ -8357,6 +8450,8 @@ __all__ = (
     "DelegatedToolInvocationIntent",
     "DeleteAccountSessionBody",
     "DeletedAppListResponse",
+    "DeletedAppPurgeResponse",
+    "DeletedAppPurgeResponsePendingReason",
     "DeletedAppSummary",
     "DeletedAppSummaryRestoreBlocker",
     "DeleteDeploymentScopeExclusionResponse200",
@@ -9135,6 +9230,7 @@ __all__ = (
     "FailureRulesUnmatchedFailure",
     "FailureRulesVersion",
     "FeatureFlag",
+    "FeatureFlagKillResponse",
     "FeatureFlagType",
     "FeatureFlagVersion",
     "FeatureHint",
@@ -9213,6 +9309,8 @@ __all__ = (
     "FlagDecisionSource",
     "FlagDecisionType",
     "FlagEvent",
+    "FlagEventFlags",
+    "FlagEventProperties",
     "FlagEventsRequest",
     "FlagEventsResponse",
     "FlagEventsResponseDropped",
@@ -9220,10 +9318,19 @@ __all__ = (
     "FlagEvidence",
     "FlagEvidencePage",
     "FlagExperiment",
+    "FlagExperimentAllocation",
     "FlagExperimentArm",
+    "FlagExperimentBandit",
+    "FlagExperimentBanditArm",
     "FlagExperimentBreach",
+    "FlagExperimentComparison",
     "FlagExperimentCreateRequest",
+    "FlagExperimentCreateRequestAllocation",
     "FlagExperimentCreateRequestMetricKind",
+    "FlagExperimentCreateRequestUnit",
+    "FlagExperimentCuped",
+    "FlagExperimentCupedReason",
+    "FlagExperimentFunnel",
     "FlagExperimentGuardrail",
     "FlagExperimentGuardrailName",
     "FlagExperimentGuardrailRequest",
@@ -9233,19 +9340,32 @@ __all__ = (
     "FlagExperimentGuardrailStatus",
     "FlagExperimentGuardrailVariant",
     "FlagExperimentGuardrailVariantStatus",
+    "FlagExperimentHoldout",
+    "FlagExperimentHoldoutReport",
     "FlagExperimentLatency",
+    "FlagExperimentLayer",
+    "FlagExperimentLayerList",
+    "FlagExperimentLayerRequest",
+    "FlagExperimentLayerSlice",
     "FlagExperimentList",
     "FlagExperimentMetricKind",
     "FlagExperimentRecommendation",
     "FlagExperimentRecommendationAction",
     "FlagExperimentResults",
+    "FlagExperimentRetention",
+    "FlagExperimentRetentionPeriod",
+    "FlagExperimentSegment",
     "FlagExperimentShipRequest",
     "FlagExperimentShipResponse",
     "FlagExperimentStatus",
     "FlagExperimentStopReason",
+    "FlagExperimentUnit",
     "FlagExperimentVariantResult",
     "FlagExperimentVariantResultStatus",
     "FlagExperimentWeights",
+    "FlagExposure",
+    "FlagHoldout",
+    "FlagLayer",
     "FlagLifecycle",
     "FlagLifecycleAttentionItem",
     "FlagLifecycleEvidence",
@@ -9254,11 +9374,14 @@ __all__ = (
     "FlagOutcomesResponse",
     "FlagOutcomeType",
     "FlagRequestEvidence",
+    "FlagRolloutMetric",
     "FlagRolloutPromotion",
     "FlagRolloutPromotionReason",
     "FlagRolloutPromotionRequest",
     "FlagRolloutPromotionStatus",
     "FlagRule",
+    "FlagRuleExperiment",
+    "FlagRuleExperimentUnit",
     "FlagRuleRolloutUnit",
     "FlagsBundle",
     "FlagsConfig",
@@ -9314,6 +9437,8 @@ __all__ = (
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
     "GetProfileCaptureViewKind",
+    "GetProjectInsightEventsInterval",
+    "GetProjectInsightEventsUnit",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -9362,6 +9487,20 @@ __all__ = (
     "GuardedDebugRegressionActionRequestAction",
     "HeldLinkReview",
     "HeldLinksResponse",
+    "HostedTaskBindingCheck",
+    "HostedTaskBindingResult",
+    "HostedTaskBindingResultName",
+    "HostedTaskBindingResultStatus",
+    "HostedTaskBindingSelection",
+    "HostedTaskBindingVerification",
+    "HostedTaskBindingVerificationStatus",
+    "HostedTaskBindingVerificationVersion",
+    "HostedTaskRehearsalDecision",
+    "HostedTaskRehearsalDecisionDecision",
+    "HostedTaskRehearsalPlan",
+    "HostedTaskRehearsalPlanStatus",
+    "HostedTaskRehearsalPlanVersion",
+    "HostedTaskRehearsalPrepare",
     "HostedTaskSourceCheck",
     "HostedTaskSourceDecision",
     "HostedTaskSourceDecisionDecision",
@@ -9413,6 +9552,32 @@ __all__ = (
     "InjectWorkflowEventRequest",
     "InjectWorkflowEventResponse",
     "InjectWorkflowEventResponseStatus",
+    "InsightCohort",
+    "InsightCohortList",
+    "InsightCohortRequest",
+    "InsightCohortRequestKind",
+    "InsightCohortRequestWhere",
+    "InsightEventPoint",
+    "InsightEventSeries",
+    "InsightEventSeriesInterval",
+    "InsightEventSeriesUnit",
+    "InsightFunnel",
+    "InsightFunnelBreakdown",
+    "InsightFunnelRequest",
+    "InsightFunnelRequestUnit",
+    "InsightFunnelStep",
+    "InsightFunnelUnit",
+    "InsightRequests",
+    "InsightRequestVariant",
+    "InsightRetention",
+    "InsightRetentionPeriod",
+    "InsightRetentionRequest",
+    "InsightRetentionRequestPeriod",
+    "InsightRetentionRequestUnit",
+    "InsightRetentionRow",
+    "InsightRetentionUnit",
+    "InsightStepRequest",
+    "InsightStepRequestWhere",
     "InspectDurableEntityQuotaMigrationResponse200",
     "InspectDurableEntityQuotaPolicyResponse200",
     "InspectDurableEntityRegistryCleanupResponse200",
@@ -9622,6 +9787,7 @@ __all__ = (
     "ListEdgeRuleListsResponse",
     "ListEnvironmentGitReleasesRequest",
     "ListEnvironmentGitReleasesResponse",
+    "ListEnvValues",
     "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
@@ -9779,6 +9945,9 @@ __all__ = (
     "ManagedPostgresHealthStatus",
     "ManagedPostgresOverage",
     "ManagedPostgresOverageRequest",
+    "ManagedPostgresQueryRequest",
+    "ManagedPostgresQueryResponse",
+    "ManagedPostgresQueryResponseColumnsItem",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
@@ -12038,6 +12207,7 @@ __all__ = (
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
     "PublishStoredWorkflowRequest",
+    "PurgeDeletedAppBody",
     "PushOutboundAIPromptVersionRequest",
     "PushOutboundAIPromptVersionRequestDefaults",
     "PushOutboundAIPromptVersionResponse",
@@ -12912,6 +13082,8 @@ __all__ = (
     "SessionsRevokeAllResponse",
     "SetAccountEgressAllowlistExtraRequest",
     "SetApplicationStandardLocalIntentRequest",
+    "SetAppProtectionRequest",
+    "SetAppProtectionRequestState",
     "SetAppStaticEgressIPRequest",
     "SetBindingReleasePolicyRequest",
     "SetBindingReleasePolicyRequestMode",

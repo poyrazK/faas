@@ -26,19 +26,33 @@ one once nothing references it. Both switches are off by default.
    - GCS: give the compute service account `objectCreator` + `objectViewer`
      instead of `objectAdmin`.
    - S3: deny `s3:DeleteObject` and turn on versioning.
-   - Before this step, exclusive-artifact retirement must also run through
-     the outbox (ADR slice 2).
+   - Exclusive-artifact retirement (native capture cohorts) already runs
+     through the outbox in defer mode (ADR slice 2). Native snapshot
+     publication works only on GCS, so S3/OCI fleets have nothing extra.
+   - Check: on a deferring node, a retired cohort shows up as four rows
+     with a `generation`, and no `RetireExclusiveArtifact` errors appear
+     in vmmd's journal.
 
 ## Read it
 
+- The worker also lists `jobs/` and `sources/` every 6 hours and requests
+  the objects their compute-side sweeps would delete (job attempts of
+  deleted, failed or superseded jobs; sources of finished builds older
+  than 24 hours). Look for `objectgc: sweep` in schedd's journal.
 - `refused` rows are evidence. A refused snapshot or layer key means a node
   asked to delete something still live; `requested_by` names the node. A
   refused `platform` or `unclassified` key means a request the control plane
   never deletes. Look at the node:
   `select storage_key, requested_by, last_error, decided_at from storage_object_deletions where state = 'refused' order by decided_at desc limit 50`
 - Rows retried with `last_error = 'referenced'` are normal while a cleanup
-  is still deleting its rows. Rows retried with `delete:` errors mean the
-  control plane's store credentials cannot delete.
+  is still deleting its rows. Rows retried with `delete:` or
+  `delete generation:` errors mean the control plane's store credentials
+  cannot delete.
+- A row with a `generation` is an exclusive retirement. It deletes only
+  that generation. `refused` with `the key holds another generation now`
+  means the key was rewritten after the node published it; the newer
+  object is left alone. That is expected after a republish, and suspicious
+  only in bulk from one node.
 
 ## Turn it off
 

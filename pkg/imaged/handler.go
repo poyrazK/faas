@@ -1709,6 +1709,10 @@ func isDeploymentIDSafe(id string) bool {
 // Advisory listeners may log and ignore the error, while the durable replay
 // worker passes it through to its retry path.
 func (h *Handler) HandleNotification(ctx context.Context, n db.Notification) error {
+	return settleEarlyDependencyStop(h.handleNotification(ctx, n))
+}
+
+func (h *Handler) handleNotification(ctx context.Context, n db.Notification) error {
 	switch n.Channel {
 	case db.NotifyDeploymentChanged, db.NotifyEnvironmentWorkloadImage:
 		var p deploymentChangedPayload
@@ -2390,7 +2394,12 @@ func (h *Handler) applyReleaseTaskOutcome(ctx context.Context, dep state.Deploym
 		// the output is. The output itself stays out of the deployment error,
 		// which reaches notifications; the task receipt keeps it.
 		if task.ExitCode != nil {
-			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/{slug}/tasks/%s)", *task.ExitCode, task.ID)
+			// The path named a literal {slug} (prod 2026-11-19); name the app.
+			appRef := dep.AppID
+			if app, appErr := h.store.AppByID(ctx, dep.AppID); appErr == nil && app.Slug != "" {
+				appRef = app.Slug
+			}
+			detail += fmt.Sprintf(" (exit code %d; the task's captured output is in its receipt, GET /v1/apps/%s/tasks/%s)", *task.ExitCode, appRef, task.ID)
 		}
 		var err error
 		if task.Status == state.AppTaskFailed && task.FailureCode != nil && releaseTaskInfrastructureFailure(*task.FailureCode) {
@@ -2627,6 +2636,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 	if hint, denied := StatefulDenyListMatch(ref); denied {
 		err := fmt.Errorf("%w: %s — %s", errStatefulViolation, ref, hint)
 		_ = h.markDeployFailed(ctx, dep.ID, err, "stateful base image denied")
+		return err
+	}
+	if err := h.managedValkeyImageCheck(ctx, app, ref); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "managed cache image denied")
 		return err
 	}
 
@@ -4024,7 +4037,28 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 			// capture replaces it.
 			unrestorable := state.SnapshotDriveKey(stored) == ""
 			otherFC := snap.FCVersion != "" && stored.FCVersion != snap.FCVersion
-			if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
+			// A managed cache's capture holds its data, so the newest one
+			// always replaces the live row (ADR-20261116192126).
+			cacheCapture := h.isManagedCacheDeployment(ctx, snapshot.DeploymentID)
+			if cacheCapture && !unrestorable && !otherFC && state.SnapshotDriveKey(snap) != "" {
+				// Swap in one transaction: a wake between a retire and a
+				// separate publish found no row and cold-booted the cache
+				// empty (native run redis-20261118T230904).
+				replaced := stored.ID
+				stored, createErr = h.store.PublishSnapshotIfRuntimeFresh(state.WithReplacedSnapshot(ctx, replaced), snap, snapshot.SourceInstanceID, snapshot.SourceStartedAt)
+				if errors.Is(createErr, state.ErrSnapshotRuntimeStale) || errors.Is(createErr, state.ErrDeploymentActivationStale) {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationStaleConfig)
+					h.log.Info("imaged: discarded stale managed cache capture", "deployment", snapshot.DeploymentID,
+						"source_instance", snapshot.SourceInstanceID, "tier", snap.Tier)
+					return h.discardStaleSnapshotCapture(ctx, snap)
+				} else if createErr != nil {
+					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
+					return fmt.Errorf("imaged: replace managed cache snapshot %s: %w", replaced, createErr)
+				}
+				h.log.Info("imaged: managed cache capture replaced the live snapshot",
+					"deployment", snapshot.DeploymentID, "tier", snap.Tier, "replaced", replaced, "snapshot", stored.ID)
+				created = true
+			} else if (unrestorable || otherFC) && state.SnapshotDriveKey(snap) != "" {
 				if markErr := h.store.MarkSnapshotStale(ctx, stored.ID); markErr != nil {
 					h.ops.RecordSnapshotPublication(snap.Tier, wire.SnapshotPublicationWriteError)
 					return fmt.Errorf("imaged: retire unrestorable snapshot %s: %w", stored.ID, markErr)
@@ -4771,6 +4805,11 @@ func hostingPhaseForStage(stage state.StageName) string {
 }
 
 func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, to state.StageName, status state.DeploymentStatus, errMsg string, hostingFlow ...string) error {
+	if dependencyCheckedStage(to) {
+		if err := h.failIfDependencyFailed(ctx, depID); err != nil {
+			return err
+		}
+	}
 	if err := h.transition(ctx, depID, status, errMsg); err != nil {
 		return err
 	}

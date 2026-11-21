@@ -142,7 +142,7 @@ def scorecard(events, agents, metadata):
             "steps": steps, "metrics": metrics, "agents": agent_rows,
             "excluded_agent_records": excluded_agents,
             "limitations": ["Scripted timings start after authentication and exclude human thinking time.",
-                            "No interactive install/login or gregale start acceptance has been recorded.",
+                            "This scripted CLI report does not qualify install/login or interactive Start; use the separate onboarding report.",
                             "One run is a baseline observation, not a percentile or reliability estimate.",
                             "Disposable-app releases use immediate rollouts; default safe-rollout latency is not measured.",
                             "Agent follow-up counts measure harness assistance, not all possible human intervention.",

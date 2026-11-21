@@ -441,10 +441,14 @@ peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
-Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
-`FAAS_MANAGED_POSTGRES_CONFIG` to that path, and expose the API key through the
-environment variable named by `secret_env.api-key`. The API key itself must
-never appear in the JSON file.
+Set `faas_managed_postgres_config` (the shape of
+`deploy/managed-postgres.example.json`, as YAML) in the control plane's Ansible
+vars and converge: the `managed_postgres_config` role renders
+`/etc/faas/managed-postgres.json`, sets `FAAS_MANAGED_POSTGRES_CONFIG` in an
+apid drop-in, and refuses a config under which existing databases would no
+longer resolve (`deploy/ansible/roles/managed_postgres_config/README.md`).
+Expose the API key through the `sealed.env` variable named by
+`secret_env.api-key`. The API key itself must never appear in the config.
 
 `namespace` is the immutable Neon organization ID. `region` is Gregale's
 portable region name; `settings.region_id` is the current Neon placement for
@@ -895,6 +899,11 @@ database owes only the window it was deleted in, which closed less than
 `usage.stale_after_seconds` ago. Admission waits for it only while the account's
 recorded month is at or above 90% of any monthly ceiling
 ([ADR-20261115190000](adr/20261115190000-managed-postgres-final-window-headroom-grace.md)).
+`latest_window_pending` is advisory in the same way: a live database's only
+uncollected window is the one that just closed (the provider publishes an hour's
+usage some minutes after it ends), or it was created in that window. A second
+uncollected window is `coverage_incomplete` (or `coverage_missing`) and blocks
+(amendment 1).
 Shared restores use their root's evidence. Unknown
 legacy tombstones have no confirmed terminal deadline. A disabled policy reports
 no blockers, while retaining identity and coverage metadata. Empty reasons do not

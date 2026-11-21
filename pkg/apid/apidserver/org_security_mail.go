@@ -23,6 +23,16 @@ func (s *server) mailOrgSecurityEvent(ctx context.Context, kind, orgID, change s
 		s.log.Warn("org_security_mail.org", "org", orgID, "err", err)
 		return
 	}
+	now := time.Now()
+	for _, acct := range s.orgSecurityRecipients(ctx, orgID, also...) {
+		subject, body := mailpkg.OrgSecurityEventBody(acct.Email, orgDisplayName(org), change, now)
+		s.sendSecurityNotice(ctx, acct, kind, subject, body)
+	}
+}
+
+// orgSecurityRecipients is the organization's owners plus also, each once,
+// with a mail address.
+func (s *server) orgSecurityRecipients(ctx context.Context, orgID string, also ...string) []state.Account {
 	recipients := map[string]bool{}
 	for _, id := range also {
 		if id != "" {
@@ -38,15 +48,15 @@ func (s *server) mailOrgSecurityEvent(ctx context.Context, kind, orgID, change s
 			recipients[m.AccountID] = true
 		}
 	}
-	now := time.Now()
+	var out []state.Account
 	for id := range recipients {
 		acct, err := s.store.AccountByID(ctx, id)
 		if err != nil || acct.Email == "" {
 			continue
 		}
-		subject, body := mailpkg.OrgSecurityEventBody(acct.Email, orgDisplayName(org), change, now)
-		s.sendSecurityNotice(ctx, acct, kind, subject, body)
+		out = append(out, acct)
 	}
+	return out
 }
 
 // mailOrgBillingEmailChanged tells the previous billing address and the

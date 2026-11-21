@@ -158,6 +158,9 @@ type MemStore struct {
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
+	hostedTaskBindings             map[string]HostedTaskBindingRecord
+	hostedTaskRehearsals           map[string]hostedTaskRehearsalRecord
+	hostedTaskRehearsalRuns        map[string]HostedTaskRehearsalRun
 	taskToolReleaseIntents         map[string]api.TaskToolReleaseIntentRecord
 	taskToolReleaseEffects         sync.Map
 	toolPublicationTestCredentials map[string]*toolPublicationTestCredential
@@ -170,8 +173,16 @@ type MemStore struct {
 	// (ADR-20261110210000 slice 3h); allocated on first use under mu.
 	basicAuthVerifiers map[string]string
 	// platformAlertNotices mirror platform_alert_notices (ADR-20261115194000).
-	platformAlertNotices        []PlatformAlertNotice
-	platformAlertMeta           map[string]platformAlertNoticeMeta
+	platformAlertNotices []PlatformAlertNotice
+	platformAlertMeta    map[string]platformAlertNoticeMeta
+	// appProtection and appProtectionObjects mirror app_protection and
+	// app_protection_objects (ADR-20261116120000); allocated on first use.
+	appProtection              map[string]AppProtection
+	appProtectionObjects       map[string]map[AppProtectionItem]AppProtectionObject
+	appProtectionLeases        map[string]appProtectionLease
+	appProtectionHealthProbeAt map[string]time.Time
+	// platformProbeWakes mirror platform_probe_wakes (ADR-20261116120000).
+	platformProbeWakes          []PlatformProbeWake
 	privateNetworkScopes        map[string]*semaphore.Weighted
 	privateNetworkTransportIDs  map[string]privateNetworkTransportIdentity
 	privateNetworkServiceOwners map[string]privateNetworkServiceOwner
@@ -570,6 +581,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
 	scenarioPostgres          map[string]rehearsalpg.Resource
@@ -714,6 +726,9 @@ type MemStore struct {
 	// buildCoalescedWith maps a deferred build to the identical build it waits
 	// for (builds.coalesced_with, ADR-20261102100000).
 	buildCoalescedWith map[string]string
+	// buildPreemptions counts the times borrowed builder slots gave a build
+	// back to the queue (builds.preemptions, ADR-20261118154632).
+	buildPreemptions map[string]int
 	// ADR-740 developer live patches; allocated on first use.
 	devSourceManifests   map[string]DevSourceManifest
 	devSourceManifestSeq int64
@@ -1115,6 +1130,9 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appTaskNetworks mirrors app_task_networks (ADR-20261118070000), keyed
+	// by task id; created on first use.
+	appTaskNetworks map[string]appTaskNetwork
 	// appTaskCapacityWaits mirrors app_tasks.capacity_wait_started_at.
 	appTaskCapacityWaits map[string]time.Time
 	// releaseOutcomeChecks mirrors release_outcome_checks (ADR-1448
@@ -1863,6 +1881,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		// Starts empty; CreateBuildProvenance fills it.
 		buildProvenance:    map[string]BuildProvenance{},
 		buildCoalescedWith: map[string]string{},
+		buildPreemptions:   map[string]int{},
 		// issue #72 / ADR-125: mirror-rules and mirror-results
 		// stores. Empty until the first create; the per-app count
 		// in CreateMirrorRuleIfUnderQuota walks the map.
@@ -7868,6 +7887,25 @@ func (m *MemStore) ClaimAppDeletion(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *MemStore) EndAppDeleteGrace(_ context.Context, id string) (App, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	a, ok := m.apps[id]
+	if !ok || a.Status != AppDeleted || a.DeleteGraceUntil == nil {
+		return App{}, ErrNotFound
+	}
+	for _, b := range m.objectBuckets {
+		if b.AppID == id && b.State != "deleted" {
+			return App{}, ErrConflict
+		}
+	}
+	if now := time.Now(); a.DeleteGraceUntil.After(now) {
+		a.DeleteGraceUntil = &now
+		m.apps[id] = a
+	}
+	return a, nil
+}
+
 func (m *MemStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -9486,6 +9524,10 @@ func (m *MemStore) SafedeployStampRollout(_ context.Context, id string, rolloutS
 	}
 	d.RolloutAbortedReason = abortedReason
 	m.putDeploymentLocked(id, d)
+	if d.RolloutState == "aborted" {
+		m.rebalanceAbortedTrafficLocked(d)
+		d = m.deployments[id]
+	}
 	m.enqueueRolloutOutcomeWebhooksLocked(before, d)
 	return d, nil
 }
@@ -18023,7 +18065,24 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(ctx context.Context, snap Snaps
 		return Snapshot{}, ErrSnapshotRuntimeStale
 	}
 	snap.RecoveryGeneration = generation
+	// WithReplacedSnapshot: retire the replaced row and publish under one
+	// lock, restoring it if the publication fails.
+	replacedIdx := -1
+	if replaced := replacedSnapshotID(ctx); replaced != "" {
+		for i := range m.snapshots {
+			if m.snapshots[i].ID == replaced {
+				replacedIdx = i
+			}
+		}
+		if replacedIdx < 0 {
+			return Snapshot{}, ErrNotFound
+		}
+		m.snapshots[replacedIdx].Stale = true
+	}
 	stored, err := m.createSnapshotLocked(snap)
+	if err != nil && replacedIdx >= 0 {
+		m.snapshots[replacedIdx].Stale = false
+	}
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {
 			m.snapshotRuntimeConfigReceipts = map[string]RuntimeConfigInputs{}
@@ -25317,6 +25376,17 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 	for key, row := range m.hostedTaskSourceIntents {
 		if row.Record.AccountID == id {
 			delete(m.hostedTaskSourceIntents, key)
+		}
+	}
+	for key, record := range m.hostedTaskBindings {
+		if record.Public.AccountID == id {
+			delete(m.hostedTaskBindings, key)
+		}
+	}
+	for key, record := range m.hostedTaskRehearsals {
+		if record.Plan.AccountID == id {
+			delete(m.hostedTaskRehearsals, key)
+			delete(m.hostedTaskRehearsalRuns, key)
 		}
 	}
 	for key, record := range m.taskToolReleaseIntents {

@@ -114,6 +114,55 @@ func TestCapabilityPagesMustBeRoutes(t *testing.T) {
 	}
 }
 
+// 189 production links named sections no published page had (plans#apps,
+// orgs#members): the site opened them at the top of the page.
+func TestAnchorsMustNameAHeading(t *testing.T) {
+	page := "# Plans\n\n## At a glance\n\n### `plan_limit_apps`\n\n```bash\n## not-a-heading\n```\n\n" +
+		"## Opting out: keep N instances warm (Pro, Scale)\n\n## See [the CLI](cli.md) **now**\n"
+	cat := catalog{Version: 1, Routes: []route{
+		{Path: "plans", Source: "plans.md"},
+		{Path: "events", Source: "events.md", Unpublished: "preview capability"},
+	}}
+	read := func(name string) ([]byte, error) { return []byte(page), nil }
+	tests := []struct {
+		name string
+		l    link
+		ok   bool
+	}{
+		{"level-2 heading", link{Path: "plans", Anchor: "at-a-glance", File: "pkg/api/errors.go"}, true},
+		{"code heading", link{Path: "plans", Anchor: "plan_limit_apps", File: "pkg/api/errors.go"}, true},
+		{"punctuation dropped", link{Path: "plans", Anchor: "opting-out-keep-n-instances-warm-pro-scale", File: "pkg/api/errors.go"}, true},
+		{"link and emphasis text", link{Path: "plans", Anchor: "see-the-cli-now", File: "pkg/api/errors.go"}, true},
+		{"no such heading", link{Path: "plans", Anchor: "apps", File: "pkg/api/errors.go"}, false},
+		{"heading inside a code fence", link{Path: "plans", Anchor: "not-a-heading", File: "pkg/api/errors.go"}, false},
+		{"unpublished page", link{Path: "events", Anchor: "anything", File: "pkg/api/errors.go"}, true},
+		{"test file", link{Path: "plans", Anchor: "apps", File: "pkg/api/errors_test.go"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkAnchors(cat, []link{tt.l}, read)
+			if tt.ok && err != nil {
+				t.Fatalf("refused: %v", err)
+			}
+			if !tt.ok && (err == nil || !strings.Contains(err.Error(), "plans#"+tt.l.Anchor)) {
+				t.Fatalf("accepted: %v", err)
+			}
+		})
+	}
+	for _, m := range [][2]string{
+		{`WithDocs(docsBase + "/plans#at-a-glance")`, "at-a-glance"},
+		{`"https://gregale.dev/docs/plans#apps".`, "apps"},
+	} {
+		re := docsBaseRE
+		if strings.HasPrefix(m[0], `"https`) {
+			re = docsURLRE
+		}
+		if got := re.FindStringSubmatch(m[0]); got == nil || got[2] != m[1] {
+			t.Errorf("anchor of %s = %q, want %q", m[0], got, m[1])
+		}
+	}
+}
+
 // llms.txt audit 2026-11-17: `[Jobs](jobs)` and `[Penalty box](security#penalty-box)`
 // on published pages named no file, so the docs site linked them to GitHub
 // paths that answer 404.

@@ -102,3 +102,52 @@ func TestRenderDiskEncryptionVarsForTangClients(t *testing.T) {
 		t.Errorf("standby peers = %v, want %v", got, want)
 	}
 }
+
+// A fleet addressed by host name (the OVH manifest: fsn-1.gregale.dev,
+// bhs-2.gregale.dev) must not bind Tang to those names: publicly they resolve
+// elsewhere, and /etc/hosts maps them only after the overlay role runs. The
+// listen address is left to the role default (the discovered private
+// address) and the peers are named by inventory host for the storage role to
+// resolve.
+func TestRenderDiskEncryptionVarsForHostNameAddresses(t *testing.T) {
+	m := &manifest.Manifest{
+		Fleet: manifest.Fleet{Hosts: []manifest.Host{
+			{Name: "bhs-1", Role: roleControlPlane, Address: "fsn-1.gregale.dev:9091"},
+			{Name: "bhs-2", Role: roleComputeOnly, Address: "bhs-2.gregale.dev:50051"},
+			{Name: "bhs-3", Role: roleComputeOnly, Address: "10.20.0.3:50051"},
+		}},
+		Overlay:        manifest.Overlay{Provider: "static", CIDR: "10.20.0.0/24", Interface: "vrack0"},
+		DiskEncryption: &manifest.DiskEncryption{RecoveryRecipients: []string{"age1ql3z7hjy54pw3hyww5ayyfg7zqgvc7w3j2elw8zmrj2kg5sfn9aqmcac8p"}},
+	}
+	out, err := renderDiskEncryptionVars(m, m.Fleet.Hosts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := yaml.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("vars are not YAML: %v\n%s", err, out)
+	}
+	if _, ok := got["faas_tang_listen_address"]; ok {
+		t.Errorf("listen address rendered for a host-name address; the role default must resolve it:\n%s", out)
+	}
+	if want := []any{"http://10.20.0.3:7500"}; !reflect.DeepEqual(got["faas_tang_peer_urls"], want) {
+		t.Errorf("peer URLs = %v, want only the IP-addressed peer %v", got["faas_tang_peer_urls"], want)
+	}
+	if want := []any{"bhs-1"}; !reflect.DeepEqual(got["faas_tang_peer_hosts"], want) {
+		t.Errorf("peer hosts = %v, want %v", got["faas_tang_peer_hosts"], want)
+	}
+
+	ip, err := renderDiskEncryptionVars(m, m.Fleet.Hosts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yaml.Unmarshal([]byte(ip), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["faas_tang_listen_address"] != "10.20.0.3" {
+		t.Errorf("an IP-addressed host keeps its manifest listen address:\n%s", ip)
+	}
+	if want := []any{"bhs-1", "bhs-2"}; !reflect.DeepEqual(got["faas_tang_peer_hosts"], want) {
+		t.Errorf("peer hosts = %v, want %v", got["faas_tang_peer_hosts"], want)
+	}
+}

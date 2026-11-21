@@ -8,8 +8,15 @@ Documentation=https://gregale.dev/docs/ops/network
 # the bridge coming up. Do not order this oneshot against network-pre.target
 # or faas-cp.slice: Debian's nftables unit is itself Before=network-pre.target
 # and the slices are pulled from basic.target, which creates a boot cycle.
+# For the same reason this unit takes no default dependencies: the implicit
+# After=basic.target closes nftables -> br-tenants-up -> basic.target ->
+# sysinit.target -> cloud-init.service -> systemd-networkd-wait-online ->
+# network-pre.target -> nftables, and systemd breaks that cycle by dropping
+# the nftables start job, so the host boots with no firewall.
+DefaultDependencies=no
 After=local-fs.target
-Before=nftables.service vmmd.service
+Conflicts=shutdown.target
+Before=nftables.service vmmd.service shutdown.target
 
 [Service]
 Type=oneshot

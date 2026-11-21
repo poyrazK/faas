@@ -31,7 +31,7 @@ const (
 	agentKeyEnv = "GREGALE_AGENT_KEY"
 )
 
-var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex, mcpConnectCursor, mcpConnectVSCode, mcpConnectWindsurf, mcpConnectClaudeDesktop}
+var mcpConnectClients = []string{mcpConnectClaude, mcpConnectCodex, mcpConnectCursor, mcpConnectVSCode, mcpConnectWindsurf, mcpConnectAntigravity, mcpConnectClaudeDesktop}
 
 // Seams for tests: external commands, PATH lookup and the home directory.
 var (
@@ -76,7 +76,7 @@ type mcpConnectSummary struct {
 	Clients  []mcpConnectResult `json:"clients"`
 }
 
-const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check | --ci [--repo OWNER/NAME] [--scopes LIST] [--approvals LIST] [--force] [--dry-run]"
+const mcpConnectUsage = "usage: gregale mcp connect [--client claude-code|codex|cursor|vscode|windsurf|antigravity|claude-desktop]... [--project] [--toolsets LIST] [--headless] [--force] [--dry-run] [--yes] | --check | --ci [--repo OWNER/NAME] [--scopes LIST] [--approvals LIST] [--force] [--dry-run]"
 
 func cmdMCPConnect(args []string) int {
 	fs := newFlagSet("mcp connect", flag.ContinueOnError)
@@ -159,7 +159,7 @@ func mcpConnectSelect(named []string, auto bool) ([]string, int) {
 		}
 	}
 	if len(detected) == 0 {
-		return nil, printErr("No agent client found", fmt.Errorf("found none of Claude Code, Codex, Cursor, VS Code, Windsurf or Claude Desktop; install one, or see https://gregale.dev/docs/agents for other clients"))
+		return nil, printErr("No agent client found", fmt.Errorf("found none of Claude Code, Codex, Cursor, VS Code, Windsurf, Antigravity or Claude Desktop; install one, or see https://gregale.dev/docs/agents for other clients"))
 	}
 	if auto {
 		return detected, 0

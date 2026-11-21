@@ -262,6 +262,13 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 			body += gatewayVars
 		}
+		if host.Role == roleComputeOnly && m.Egress.AgentGateway != nil {
+			agentVars, agErr := renderAgentEgressGatewayVars(m.Egress.AgentGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
+			if agErr != nil {
+				return nil, fmt.Errorf("host %s agent egress gateway: %w", host.Name, agErr)
+			}
+			body += agentVars
+		}
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", host.Name+".yml"),
 			Body: []byte(body),
@@ -287,6 +294,20 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", tenantEgressGatewayHost+".yml"),
 			Body: []byte(gatewayVars),
+		})
+	}
+	if gw := m.Egress.AgentGateway; gw != nil {
+		if slices.Contains(controlPlane, agentEgressGatewayHost) || slices.Contains(computeOnly, agentEgressGatewayHost) || slices.Contains(databaseNodes, agentEgressGatewayHost) {
+			return nil, fmt.Errorf("fleet host name %q is reserved for the agent egress gateway", agentEgressGatewayHost)
+		}
+		agentVars, err := renderAgentEgressGatewayHostVars(gw)
+		if err != nil {
+			return nil, fmt.Errorf("agent egress gateway: %w", err)
+		}
+		writeInventoryGroup(&inventory, "agent_egress_gateway", []string{agentEgressGatewayHost})
+		hostVars = append(hostVars, manifestAnsibleFile{
+			Path: filepath.Join(outputDir, "inventory", "host_vars", agentEgressGatewayHost+".yml"),
+			Body: []byte(agentVars),
 		})
 	}
 	if standby := m.PostgreSQL.Standby; standby != nil {
@@ -879,6 +900,12 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 	listen := net.JoinHostPort(controlPlaneAddress, computeEdgePrivatePort)
 	var b strings.Builder
 	b.WriteString("faas_edge_on_compute_nodes: true\n")
+	// ADR-20261102081618 step 6: entry direct runs no tunnel connector. The
+	// compute roles remove it and the control plane's Prometheus stops
+	// scraping it, so the verify gate and the edge alerts stop expecting it.
+	if !edge.Tunnel() {
+		b.WriteString("faas_edge_tunnel: false\n")
+	}
 	switch role {
 	case roleControlPlane:
 		fmt.Fprintf(&b, "faas_edge_private_listen_addr: %q\n", listen)
@@ -1102,6 +1129,69 @@ func renderTenantEgressGatewayVars(g *manifest.TenantEgressGateway, nodeName str
 	fmt.Fprintf(&b, "faas_tenant_egress_gateway_public_key: %q\n", g.PublicKey)
 	fmt.Fprintf(&b, "faas_tenant_egress_tunnel_cidr: %q\n", g.TunnelCIDR)
 	fmt.Fprintf(&b, "faas_tenant_egress_tunnel_address: %q\n", addr.String())
+	return b.String(), nil
+}
+
+// agentEgressIface is the WireGuard interface agent VMs' egress leaves
+// through when the manifest declares an agent gateway (ADR-20261117185346).
+const agentEgressIface = "wg-agent"
+
+// agentEgressGatewayHost is the inventory name of the agent gateway. It may
+// share an address with the tenant gateway's inventory host.
+const agentEgressGatewayHost = "agent-egress-gateway"
+
+// renderAgentEgressGatewayVars is the compute host's side of the agent
+// tunnel: the gateway endpoint and key, and this node's slice of the tunnel
+// with its own address, both derived from its name (ADR-20261117185346 §2).
+func renderAgentEgressGatewayVars(g *manifest.AgentEgressGateway, nodeName string) (string, error) {
+	slice, addr, err := manifest.AgentNodeSlice(g.TunnelCIDR, g.Prefix(), nodeName)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "faas_agent_egress_iface: %q\n", agentEgressIface)
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_endpoint: %q\n", g.Endpoint)
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_public_key: %q\n", g.PublicKey)
+	fmt.Fprintf(&b, "faas_agent_egress_tunnel_cidr: %q\n", g.TunnelCIDR)
+	fmt.Fprintf(&b, "faas_agent_egress_node_slice: %q\n", slice.String())
+	fmt.Fprintf(&b, "faas_agent_egress_node_address: %q\n", addr.String()+"/32")
+	gw, err := manifest.AgentGatewayAddress(g.TunnelCIDR)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_address: %q\n", gw.Addr().String())
+	proxyURL := ""
+	if g.Proxy {
+		if proxyURL, err = manifest.AgentProxyURL(g.TunnelCIDR); err != nil {
+			return "", err
+		}
+	}
+	fmt.Fprintf(&b, "faas_agent_egress_proxy_url: %q\n", proxyURL)
+	return b.String(), nil
+}
+
+// renderAgentEgressGatewayHostVars is the gateway host's side of the agent
+// tunnel; compute peers register their slices at converge time.
+func renderAgentEgressGatewayHostVars(g *manifest.AgentEgressGateway) (string, error) {
+	addr, err := manifest.AgentGatewayAddress(g.TunnelCIDR)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	b.WriteString("# Generated from the split-box manifest; do not hand-edit.\n")
+	fmt.Fprintf(&b, "ansible_host: %q\n", g.AnsibleHost())
+	fmt.Fprintf(&b, "faas_agent_egress_iface: %q\n", agentEgressIface)
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_public_key: %q\n", g.PublicKey)
+	fmt.Fprintf(&b, "faas_agent_egress_tunnel_cidr: %q\n", g.TunnelCIDR)
+	fmt.Fprintf(&b, "faas_agent_egress_gateway_address: %q\n", addr.String())
+	fmt.Fprintf(&b, "faas_agent_egress_listen_port: %d\n", g.ListenPort())
+	fmt.Fprintf(&b, "faas_agent_egress_node_prefix: %d\n", g.Prefix())
+	fmt.Fprintf(&b, "faas_agentproxyd_enabled: %t\n", g.Proxy)
+	fmt.Fprintf(&b, "faas_agentproxyd_registration_port: %d\n", manifest.AgentProxyRegistrationPort)
+	b.WriteString("faas_agent_egress_addresses:\n")
+	for _, a := range g.Addresses {
+		fmt.Fprintf(&b, "  - %q\n", a)
+	}
 	return b.String(), nil
 }
 

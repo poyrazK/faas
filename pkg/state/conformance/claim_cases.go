@@ -805,3 +805,53 @@ func testTriggerRecordClaimIsBoundedAndScoped(t *testing.T, fx *Fixture) {
 		t.Fatalf("empty trigger returned %d records", len(empty))
 	}
 }
+
+// testEndAppDeleteGraceFreesSlugForOwner pins the owner's early purge
+// (gregale app purge): EndAppDeleteGrace closes a deleted app's restore window
+// so the sweeper's claim and permanent delete run at once, after which the
+// same account can create an app with that slug again. A live app has no
+// window to close.
+func testEndAppDeleteGraceFreesSlugForOwner(t *testing.T, fx *Fixture) {
+	slug := "purging-" + uuid.NewString()[:8]
+	app, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: slug,
+		Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	})
+	if err != nil {
+		t.Fatalf("CreateApp: %v", err)
+	}
+	if _, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("EndAppDeleteGrace on a live app = %v, want ErrNotFound", err)
+	}
+	if _, err := fx.Store.ScheduleAppDeletion(fx.Ctx, app.ID, time.Now().UTC().Add(7*24*time.Hour)); err != nil {
+		t.Fatalf("ScheduleAppDeletion: %v", err)
+	}
+	if err := fx.Store.ClaimAppDeletion(fx.Ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("claim inside the window = %v, want ErrNotFound", err)
+	}
+	ended, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID)
+	if err != nil {
+		t.Fatalf("EndAppDeleteGrace: %v", err)
+	}
+	if ended.Status != state.AppDeleted || ended.DeleteGraceUntil == nil || ended.DeleteGraceUntil.After(time.Now().Add(time.Second)) {
+		t.Fatalf("ended app = status %q grace %v, want deleted with the window closed", ended.Status, ended.DeleteGraceUntil)
+	}
+	if _, err := fx.Store.EndAppDeleteGrace(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("repeated EndAppDeleteGrace = %v, want idempotent success", err)
+	}
+	if _, err := fx.Store.RestoreApp(fx.Ctx, app.ID, api.MustLimitsFor(api.PlanFree)); err == nil {
+		t.Fatal("RestoreApp after the window closed succeeded, want a refusal")
+	}
+	if err := fx.Store.ClaimAppDeletion(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("ClaimAppDeletion after the window closed: %v", err)
+	}
+	if err := fx.Store.DeleteAppPermanently(fx.Ctx, app.ID); err != nil {
+		t.Fatalf("DeleteAppPermanently: %v", err)
+	}
+	if _, err := fx.Store.CreateApp(fx.Ctx, state.App{
+		AccountID: fx.Account.ID, Slug: slug,
+		Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60,
+	}); err != nil {
+		t.Fatalf("owner reusing the purged slug: %v", err)
+	}
+}

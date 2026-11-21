@@ -15,6 +15,15 @@ Keys begin with a letter and contain letters, digits and underscores
 `DOTNET_gcServer` reach the app as written. Values are bounded by the plan. `gregale env pull` and `gregale env push` support
 local workflows; pull never returns sealed secret values.
 
+Files and stdin (`env push -f`, `--from-stdin`, `env set --file`,
+`deploy --secrets-file`, `gregale dev`) are read the way dotenv and Docker
+Compose read them: an optional `export ` prefix, `#` comment lines, and a value
+wrapped in double quotes loses them and has `\n`, `\"` and `\\` unescaped,
+while one in single quotes loses them and stays literal. `env push` skips a
+key with an empty value (`KEY=`) with a warning before saving anything; remove
+a value with `gregale env unset`. `KEY=VALUE` arguments are used as your shell passes
+them.
+
 The effective precedence is OS environment, manifest environment, shared
 project configuration, the app's own variables, then sealed secrets. Changes
 invalidate cached snapshots so old configuration cannot return through restore.
@@ -132,3 +141,5 @@ served with the new config, and gives up after 24 hours without traffic.
 `gregale env set` and `gregale env push` say when a guard is watching.
 Pass `--no-guard` to change config without one, for example while you fix a
 deliberately broken staging app.
+
+Hosted Task binding checks let owners qualify managed PostgreSQL bindings. Agents receive metadata only. See [hosted Task bindings](mcp.md#owner-qualified-hosted-task-bindings).

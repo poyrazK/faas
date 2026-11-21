@@ -38,6 +38,11 @@ def _parse_response(
 
         return response_401
 
+    if response.status_code == 403:
+        response_403 = Problem.from_dict(response.json())
+
+        return response_403
+
     if response.status_code == 429:
         response_429 = Problem.from_dict(response.json())
 
@@ -70,7 +75,8 @@ def sync_detailed(
     unverified, at most once a minute and five times an hour. Returns
     `already_verified` when there is nothing to send. Available after the
     30-day verification period ends, when other routes answer
-    `email_verification_required`.
+    `email_verification_required`. The browser forms also accept a
+    form-encoded CSRF token from the signed-in account and render HTML.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,7 +105,8 @@ def sync(
     unverified, at most once a minute and five times an hour. Returns
     `already_verified` when there is nothing to send. Available after the
     30-day verification period ends, when other routes answer
-    `email_verification_required`.
+    `email_verification_required`. The browser forms also accept a
+    form-encoded CSRF token from the signed-in account and render HTML.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -124,7 +131,8 @@ async def asyncio_detailed(
     unverified, at most once a minute and five times an hour. Returns
     `already_verified` when there is nothing to send. Available after the
     30-day verification period ends, when other routes answer
-    `email_verification_required`.
+    `email_verification_required`. The browser forms also accept a
+    form-encoded CSRF token from the signed-in account and render HTML.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +159,8 @@ async def asyncio(
     unverified, at most once a minute and five times an hour. Returns
     `already_verified` when there is nothing to send. Available after the
     30-day verification period ends, when other routes answer
-    `email_verification_required`.
+    `email_verification_required`. The browser forms also accept a
+    form-encoded CSRF token from the signed-in account and render HTML.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

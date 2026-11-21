@@ -79,50 +79,10 @@ type LogEventPartitionCoverage struct {
 	DefaultLatest       time.Time
 }
 
-// ACCESS EXCLUSIVE makes moving rows from the default partition and attaching
-// a new month atomic with incoming inserts. A short lock timeout lets the next
-// hourly pass retry if the table is busy rather than queueing ingress writes.
-const ensureLogEventPartitionsSQL = `
-DO $$
-DECLARE
-    month_offset integer;
-    range_start timestamptz;
-    range_end timestamptz;
-    partition_name text;
-    schema_name text := current_schema();
-    is_attached boolean;
-BEGIN
-    PERFORM set_config('lock_timeout', '2s', true);
-    EXECUTE format('LOCK TABLE %I.log_events IN ACCESS EXCLUSIVE MODE', schema_name);
-    FOR month_offset IN 0..2 LOOP
-        range_start := (date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => month_offset)) AT TIME ZONE 'UTC';
-        range_end := (date_trunc('month', now() AT TIME ZONE 'UTC') + make_interval(months => month_offset + 1)) AT TIME ZONE 'UTC';
-        partition_name := 'log_events_' || to_char(range_start AT TIME ZONE 'UTC', 'YYYYMM');
-        SELECT EXISTS (
-            SELECT 1 FROM pg_inherits i
-            JOIN pg_class child ON child.oid = i.inhrelid
-            JOIN pg_namespace ns ON ns.oid = child.relnamespace
-            WHERE i.inhparent = format('%I.log_events', schema_name)::regclass
-              AND ns.nspname = schema_name AND child.relname = partition_name
-        ) INTO is_attached;
-        IF is_attached THEN
-            CONTINUE;
-        END IF;
-        IF to_regclass(format('%I.%I', schema_name, partition_name)) IS NOT NULL THEN
-            RAISE EXCEPTION 'log event partition % exists but is not attached', partition_name;
-        END IF;
-        EXECUTE format('CREATE TABLE %I.%I (LIKE %I.log_events INCLUDING ALL)', schema_name, partition_name, schema_name);
-        EXECUTE format(
-            'INSERT INTO %I.%I SELECT * FROM %I.log_events_default WHERE occurred_at >= %L AND occurred_at < %L',
-            schema_name, partition_name, schema_name, range_start, range_end);
-        EXECUTE format(
-            'DELETE FROM %I.log_events_default WHERE occurred_at >= %L AND occurred_at < %L',
-            schema_name, range_start, range_end);
-        EXECUTE format(
-            'ALTER TABLE %I.log_events ATTACH PARTITION %I.%I FOR VALUES FROM (%L) TO (%L)',
-            schema_name, schema_name, partition_name, range_start, range_end);
-    END LOOP;
-END $$;`
+// ensureLogEventPartitionsSQL keeps the current and next two UTC months
+// attached, moving overlapping default rows first, as the schema owner in
+// monthly_partitions_ensure (migration 20261118162630014).
+const ensureLogEventPartitionsSQL = `SELECT monthly_partitions_ensure('log_events'::regclass)`
 
 const logEventPartitionCoverageSQL = `
 WITH expected(name, ordinal) AS (
@@ -159,30 +119,10 @@ func EnsureLogEventPartitions(ctx context.Context, db logEventMaintenanceDB) (Lo
 	return coverage, nil
 }
 
-// A whole partition is safe to drop only after its UTC upper bound has passed
-// the longest plan window. This also reclaims index space after row cleanup.
-const dropExpiredLogEventPartitionsSQL = `
-DO $$
-DECLARE
-    schema_name text := current_schema();
-    partname text;
-    partstart date;
-BEGIN
-    PERFORM set_config('lock_timeout', '2s', true);
-    FOR partname IN
-        SELECT child.relname FROM pg_inherits i
-        JOIN pg_class child ON child.oid = i.inhrelid
-        JOIN pg_namespace ns ON ns.oid = child.relnamespace
-        WHERE i.inhparent = format('%I.log_events', schema_name)::regclass
-          AND ns.nspname = schema_name
-          AND child.relname ~ '^log_events_[0-9]{6}$'
-    LOOP
-        partstart := to_date(substring(partname from '[0-9]{6}$'), 'YYYYMM');
-        IF (partstart + interval '1 month') AT TIME ZONE 'UTC' <= now() - interval '90 days' THEN
-            EXECUTE format('DROP TABLE IF EXISTS %I.%I', schema_name, partname);
-        END IF;
-    END LOOP;
-END $$;`
+// dropExpiredLogEventPartitionsSQL drops a whole partition only after its UTC
+// upper bound has passed the longest plan window (90 days), as the schema owner
+// in monthly_partitions_drop_expired (migration 20261118162630014).
+const dropExpiredLogEventPartitionsSQL = `SELECT monthly_partitions_drop_expired('log_events'::regclass)`
 
 func DropExpiredLogEventPartitions(ctx context.Context, db retentionExecer) error {
 	if _, err := db.Exec(ctx, dropExpiredLogEventPartitionsSQL); err != nil {

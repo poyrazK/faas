@@ -88,6 +88,7 @@ type AgentRun struct {
 	State                  string
 	RamMb                  pgtype.Int4
 	TimeoutSec             int32
+	DeadlineCreditMaxSec   int32
 	Attempt                int32
 	LeaseToken             pgtype.Text
 	LeaseExpiresAt         pgtype.Timestamptz
@@ -115,6 +116,27 @@ type AgentRun struct {
 	WorkflowRunID          pgtype.UUID
 	WorkflowStep           pgtype.Text
 	WorkflowEvent          pgtype.Text
+}
+
+type AgentRunApproval struct {
+	ID               pgtype.UUID
+	RunID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	ReleasedAt       pgtype.Timestamptz
+}
+
+type AgentRunApprovalDecision struct {
+	ApprovalID pgtype.UUID
+	AccountID  pgtype.UUID
+	Decision   string
+	Note       string
+	DecidedBy  string
+	DecidedAt  pgtype.Timestamptz
 }
 
 type AgentRunCallback struct {
@@ -182,6 +204,7 @@ type AgentVersion struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type App struct {
@@ -283,6 +306,13 @@ type SandboxAction struct {
 	ScreenshotBytes pgtype.Int8
 }
 
+type SandboxEgressPolicy struct {
+	AccountID  pgtype.UUID
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
 type SandboxPort struct {
 	SandboxID  pgtype.UUID
 	AccountID  pgtype.UUID
@@ -309,6 +339,7 @@ type SandboxSession struct {
 	LeaseToken          pgtype.Text
 	LeaseExpiresAt      pgtype.Timestamptz
 	NodeID              pgtype.Text
+	PlacedNodeID        pgtype.Text
 	InstanceID          pgtype.Text
 	CloseRequestedAt    pgtype.Timestamptz
 	LastActivityAt      pgtype.Timestamptz
@@ -319,12 +350,21 @@ type SandboxSession struct {
 	TemplateID          pgtype.UUID
 	ImageRef            pgtype.Text
 	ImageJobID          pgtype.UUID
+	EgressAllow         []string
+	EgressDeny          []string
 	Browser             bool
 	TaskKind            pgtype.Text
 	TaskUrl             pgtype.Text
 	TaskMaxChars        pgtype.Int4
 	TaskExitCode        pgtype.Int4
 	TaskOutput          []byte
+}
+
+type SandboxSessionDomain struct {
+	SandboxID pgtype.UUID
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
 }
 
 type SandboxSessionUsage struct {

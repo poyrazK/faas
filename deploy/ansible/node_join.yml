@@ -233,12 +233,27 @@
         that:
           - >-
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_STORAGE_BACKEND=(oci|gcs)\s*$')) is not none
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=(oci|gcs|s3)\s*$')) is not none
           - >-
+            (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=gcs\s*$')) is none) and
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
-            regex_search('(?m)^FAAS_STORAGE_BACKEND=gcs\s*$')) is none) or
+            regex_search('(?m)^FAAS_STORAGE_FALLBACK_BACKEND=gcs\s*$')) is none)) or
             ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_GCS_BUCKET=[a-z0-9][a-z0-9._-]+\s*$')) is not none)
+          - >-
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_STORAGE_BACKEND=s3\s*$')) is none) or
+            (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_BUCKET=[a-z0-9][a-z0-9.-]+\s*$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_ENDPOINT=https://\S+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_REGION=\S+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_ACCESS_KEY_ID=\S+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=\S+$')) is not none))
           - >-
             (((lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_BACKEND=oci\s*$')) is none) and
@@ -259,7 +274,7 @@
             (lookup('ansible.builtin.file', faas_join_storage_env_source) |
             regex_search('(?m)^FAAS_STORAGE_LOCAL_PREFIXES=.*snap/')) is none
         fail_msg: >-
-          storage.env must select OCI or GCS remote storage and configure its
+          storage.env must select OCI, GCS or S3 remote storage and configure its
           endpoint, set FAAS_STORAGE_LOCAL_PREFIXES=none,
           FAAS_REQUIRE_SHARED_ARTIFACTS=1, and set
           FAAS_STORAGE_CACHE_SERVE_STALE=0. It must not route snap/ through
@@ -270,18 +285,23 @@
       ansible.builtin.assert:
         that:
           - >-
-            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_OCI_USERNAME=.+$')) is not none
-          - >-
-            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_OCI_PASSWORD=.+$')) is not none
-          - >-
-            (lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
-            regex_search('(?m)^FAAS_(?!OCI_(USERNAME|PASSWORD)=)')) is none
+            (((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_OCI_USERNAME=.+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_OCI_PASSWORD=.+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_(?!OCI_(USERNAME|PASSWORD)=)')) is none)) or
+            (((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_ACCESS_KEY_ID=.+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_S3_SECRET_ACCESS_KEY=.+$')) is not none) and
+            ((lookup('ansible.builtin.file', faas_join_imaged_storage_env_source) |
+            regex_search('(?m)^FAAS_(?!S3_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)=)')) is none))
         fail_msg: >-
-          imaged-storage.env must contain only non-empty FAAS_OCI_USERNAME and
-          FAAS_OCI_PASSWORD assignments. Registry topology remains owned by
-          the shared read-only storage.env contract.
+          imaged-storage.env must contain only one non-empty credential pair:
+          FAAS_OCI_USERNAME and FAAS_OCI_PASSWORD, or FAAS_S3_ACCESS_KEY_ID and
+          FAAS_S3_SECRET_ACCESS_KEY. Storage topology remains owned by the
+          shared storage.env contract.
       no_log: true
 
     - name: Create the shared daemon group before staging group-readable keys
@@ -1275,9 +1295,11 @@
         that:
           - (vmmd_idle_ladder | default('off')) in ['off', 'observe', 'on']
           - not (vmmd_idle_ladder_apps | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
+          - not (vmmd_idle_ladder_compress | default(false) | bool) or (vmmd_idle_ladder | default('off')) == 'on'
         fail_msg: >-
           vmmd_idle_ladder must be off, observe or on, and vmmd_idle_ladder_apps
-          needs vmmd_idle_ladder = on (group_vars/compute_nodes/vmmd_idle_ladder.yml).
+          and vmmd_idle_ladder_compress need vmmd_idle_ladder = on
+          (group_vars/compute_nodes/vmmd_idle_ladder.yml).
 
     - name: Install the idle ladder switches
       ansible.builtin.copy:
@@ -1292,6 +1314,9 @@
           {% endif %}
           {% if vmmd_idle_ladder_apps | default(false) | bool %}
           Environment=FAAS_IDLE_LADDER_APPS=1
+          {% endif %}
+          {% if vmmd_idle_ladder_compress | default(false) | bool %}
+          Environment=FAAS_IDLE_LADDER_COMPRESS=1
           {% endif %}
 
     # Restore speed-ups (group_vars/compute_nodes/vmmd_restore_speedups.yml),
@@ -1359,6 +1384,25 @@
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
+
+    # ADR-20261023171905: this node's schedd records its quiet pauses in the
+    # billing pause ledger (group_vars/compute_nodes/quiet_pause_billing.yml).
+    # meterd's quiet_pause_unbilled mode on the control plane decides what the
+    # ledger does to bills. The switch was a hand drop-in from 2026-11-17.
+    - name: Install schedd's quiet pause ledger switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-quiet-pause-ledger.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_QUIET_PAUSE_LEDGER={{ '1' if (schedd_quiet_pause_ledger | default(false) | bool) else '0' }}
+
+    - name: Remove the hand-installed quiet pause ledger drop-in
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-schedd.service.d/70-faas-quiet-pause-ledger.conf
+        state: absent
 
     # ADR-20261109170000: refuse v1 layer signatures, which do not name their
     # storage key and can be replayed onto another app's layer. Only true once
@@ -1730,6 +1774,32 @@
       changed_when: false
       when: (faas_join_rollout_phase | default('full')) == 'activate'
 
+    # --activate-prepared starts above, so it also skipped the first play's
+    # compute-node lookup. The no-drain decision and the drain rescue read it:
+    # without it the adoption check never ran and every current-contract
+    # activation drained the node (rc.354: ~5.6 min per node, every live guest
+    # migrated), and a failed drain could not tell the node had been active
+    # (ADR-20261118060000). A run from the top keeps its earlier lookup.
+    - name: Look up the existing compute node skipped by --activate-prepared
+      delegate_to: "{{ faas_join_db_operator_host | default(inventory_hostname) }}"
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - compute-nodes
+          - show
+          - --node
+          - "{{ faas_join_database_node }}"
+          - --break-glass-db
+      register: faas_join_activate_existing_compute_node
+      changed_when: false
+      failed_when: faas_join_activate_existing_compute_node.rc not in [0, 3]
+      when: faas_join_existing_compute_node is not defined
+
+    - name: Use the activation's compute-node lookup
+      ansible.builtin.set_fact:
+        faas_join_existing_compute_node: "{{ faas_join_activate_existing_compute_node }}"
+      when: faas_join_existing_compute_node is not defined
+
     # --activate-prepared starts above, so it skipped the pre-stage check:
     # repeat it here for every mode. Its answer forces the drain, places the
     # deferred pre-stage behind the drain barrier, and guards the rescue's
@@ -1739,6 +1809,13 @@
         path: /opt/faas/current/bin/vmmd
         follow: true
       register: faas_join_serving_vmmd_binary
+
+    # The adoption check reads the active vmmd stat, which --activate-prepared
+    # skipped; this stat reads the same path (ADR-20261118060000).
+    - name: Use the serving vmmd stat when --activate-prepared skipped the earlier one
+      ansible.builtin.set_fact:
+        faas_join_active_vmmd: "{{ faas_join_serving_vmmd_binary }}"
+      when: faas_join_active_vmmd is not defined
 
     - name: Read the serving vmmd process before draining
       ansible.builtin.command:
@@ -2196,10 +2273,8 @@
       when:
         - not (faas_join_skip_drain | bool)
         - faas_edge_on_compute_nodes | default(false) | bool
-      loop:
-        - faas-cloudflared.service
-        - faas-gatewayd-public-edge.socket
-        - faas-gatewayd-public-edge.service
+      # public_edge.entry direct runs no connector (ADR-20261102081618 step 6).
+      loop: "{{ (['faas-cloudflared.service'] if (faas_edge_tunnel | default(true) | bool) else []) + ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] }}"
 
     # A no-drain rollout keeps every daemon serving through the install and
     # restarts them once below: stopping them here would stop vmmd, and the
@@ -2735,10 +2810,7 @@
         name: "{{ item }}"
         state: started
       when: faas_edge_on_compute_nodes | default(false) | bool
-      loop:
-        - faas-gatewayd-public-edge.socket
-        - faas-gatewayd-public-edge.service
-        - faas-cloudflared.service
+      loop: "{{ ['faas-gatewayd-public-edge.socket', 'faas-gatewayd-public-edge.service'] + (['faas-cloudflared.service'] if (faas_edge_tunnel | default(true) | bool) else []) }}"
 
     - name: Wait for vmmd's local socket on single-box targets
       ansible.builtin.wait_for:

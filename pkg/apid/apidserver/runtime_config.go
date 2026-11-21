@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -62,6 +63,10 @@ const (
 	runtimeConfigKindPlatformFlagGroups = "platform_flag_groups"
 	runtimeConfigKindPlatformFlagOptIns = "platform_flag_opt_ins"
 	runtimeConfigCategoryPlatformFlags  = "Platform flags"
+
+	// runtimeConfigKindBuilderSlots is `builder_slots`' per-node object
+	// (ADR-20261118154632); pkg/builderslots validates it.
+	runtimeConfigKindBuilderSlots = "builder_slots"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -121,6 +126,8 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeconfig.KeyCPUSizeApps, Label: "Apps whose CPU follows instance size (retired)", Description: "Retired (ADR-20261109172421): every app instance's CPU follows its size, so no daemon reads this; the entry stays read-only for the value already stored. Was: Comma-separated app IDs, or * for every app, whose CPU follows instance size instead of plan (ADR-20261109172421): one guest vCPU per GB of instance RAM, a cpu.weight of one per 16 MB, no CPU quota unless the app chose 250 or 500 millicores, and a booking of its RAM's CPU baseline. Empty keeps every app on its plan; it takes precedence over guest_vcpu_from_cpu_apps. A listed app whose vCPU count changes cold-boots once. Before listing apps: every node runs a vmmd that accepts cpu_weight and cpu_uncapped, and cpu_admission is observe (the durable guard still books the plan's vCPUs); turn snapshot_refresh on before listing many.", Category: "Retired", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: false, Mutable: false, Validate: validateGuestVCPUApps},
 	{Key: runtimeconfig.KeySnapshotRefresh, Label: "Snapshot refresh after a release", Description: "After a node takes a release, find the snapshots of recently active apps that the release made stale (ADR-20261106214916). off does nothing; shadow logs and counts them without booting anything; on boots each one on its node, captures a fresh snapshot and parks it, unbilled.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotRefresh},
 	{Key: runtimeconfig.KeySnapshotCleanRecapture, Label: "Clean init snapshot recapture", Description: "When an instance parks and its deployment has no usable init snapshot on that node (ADR-20261115113000). on destroys the used instance instead of snapshotting its memory and boots, primes, snapshots and parks a fresh instance on the node in the background, unbilled, while the node keeps its headroom; wakes cold-boot until it lands. off snapshots the used instance at park, including the state its requests left in memory.", Category: "Snapshots", Kind: "enum", Default: json.RawMessage(`"on"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateSnapshotCleanRecapture},
+	{Key: runtimeconfig.KeyBuilderElasticSlots, Label: "Elastic builder slots", Description: "Per-node builder slots that follow builder_slots without a restart (ADR-20261118154632). on lets each node run its reserved builds plus borrowed ones that use only memory its tenant slice is not using, and give it back: builderd cancels and requeues the newest borrowed build above 85% of the tenant slice and vmmd destroys one above 92%, so a build never OOM-kills, refuses or evicts a tenant. off keeps the fixed two-slot builder and the static build slices.", Category: "Builds", Kind: "enum", Default: json.RawMessage(`"` + api.DefaultBuilderElasticSlots + `"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderElasticSlots},
+	{Key: runtimeconfig.KeyBuilderSlots, Label: "Builder slots per node", Description: "Each node's builder slots while builder_elastic_slots is on (ADR-20261118154632): {\"default\": {\"reserved\": 1, \"max\": 2}, \"nodes\": {\"<node>\": {\"reserved\": 1, \"max\": 8}}}. reserved slots are funded out of tenant capacity and never give a build back; reserved is 1 until nodes re-derive their sizing live. max includes them; the slots above reserved borrow idle tenant memory. A node runs at most its online CPUs / 2 builds and reports what it applied. Lowering max never cancels a running build.", Category: "Builds", Kind: runtimeConfigKindBuilderSlots, Default: builderslots.DefaultJSON(), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateBuilderSlots},
 	{Key: runtimeconfig.KeyObjectInventoryQuiet, Label: "Quiet bucket inventory", Description: "How long a bucket's inventory stays fresh when nothing was written to it since its last listing, under gateway-safety accounting (ADR-20261110151628). off holds every bucket to 900 s; shadow still does, but classifies quiet buckets and counts drift when one's listing changes (faas_object_storage_inventory_drift_total); on keeps a quiet bucket's inventory for 24 h and lists it once a day. Move to on only after a shadow week with no drift.", Category: "Object storage", Kind: "enum", Default: json.RawMessage(`"off"`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateObjectInventoryQuiet},
 	{Key: runtimeconfig.KeySnapshotRefreshWindowHours, Label: "Snapshot refresh window (hours)", Description: "An app that parked on a node within this many hours is a snapshot refresh candidate on that node (ADR-20261106214916).", Category: "Snapshots", Kind: "integer", Default: json.RawMessage("168"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateIntSetting(api.SnapshotRefreshWindowHoursMin, api.SnapshotRefreshWindowHoursMax, api.ValidSnapshotRefreshWindowHours)},
 	{Key: runtimeConfigEnvironmentBranches, Label: "Environment branches", Description: "Admit environment branches: lazy copies of a project environment whose workloads activate on first request (ADR-20261031193635). Managed PostgreSQL is copied as of the branch point and object storage is overlaid on the parent's buckets.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -587,6 +594,8 @@ func validateRuntimeConfigValue(def runtimeConfigDefinition, value json.RawMessa
 		if _, err := platformflags.ParseOptIns(value); err != nil {
 			return fmt.Errorf("%s: %w", def.Key, err)
 		}
+	case runtimeConfigKindBuilderSlots:
+		// Validate below checks the object.
 	case "string", "enum", "secret_reference":
 		var v string
 		if err := json.Unmarshal(value, &v); err != nil {
@@ -648,6 +657,22 @@ func validateSnapshotRefresh(value json.RawMessage) error {
 		return fmt.Errorf("%q is not off, shadow or on", mode)
 	}
 	return nil
+}
+
+func validateBuilderElasticSlots(value json.RawMessage) error {
+	mode, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	if !api.ValidBuilderElasticSlots(mode) {
+		return fmt.Errorf("%q is not off or on", mode)
+	}
+	return nil
+}
+
+func validateBuilderSlots(value json.RawMessage) error {
+	_, err := builderslots.Parse(value)
+	return err
 }
 
 func validateSnapshotCleanRecapture(value json.RawMessage) error {

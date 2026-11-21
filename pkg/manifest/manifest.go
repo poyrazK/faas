@@ -358,6 +358,11 @@ type Egress struct {
 	// traffic leaves from the gateway's address instead of the nodes'.
 	// Absent keeps each node's direct path.
 	TenantGateway *TenantEgressGateway `yaml:"tenant_gateway,omitempty"`
+
+	// AgentGateway (ADR-20261117185346) carries every agent VM's egress
+	// through its own WireGuard tunnel and public addresses, apart from
+	// customer apps'. Absent keeps agent VMs on the tenant path.
+	AgentGateway *AgentEgressGateway `yaml:"agent_gateway,omitempty"`
 }
 
 // TenantEgressGateway describes the operator-provisioned egress gateway.
@@ -476,6 +481,7 @@ func TenantTunnelAddress(tunnelCIDR, nodeName string) (netip.Prefix, error) {
 // the row-level mirror of this gate.
 func (e *Egress) validate(overlayCIDR string) Errors {
 	errs := e.TenantGateway.validate(overlayCIDR)
+	errs = append(errs, e.AgentGateway.validate(overlayCIDR, e.TenantGateway)...)
 	if !e.DangerAcceptRFC1918LateralMovement && len(e.OverlayExceptions) == 0 {
 		// Quiet default — no flag, no exceptions. Nothing to do.
 		return errs
@@ -938,10 +944,12 @@ func (c PublicEdgeCertificate) CAOrDefault() string {
 	return c.CA
 }
 
-// Public edge entries (ADR-20261102081618).
+// Public edge entries (ADR-20261102081618). direct is step 6: the cell has
+// left the tunnel, so it runs no Cloudflare Tunnel connector.
 const (
 	PublicEdgeEntryTunnel = "tunnel"
 	PublicEdgeEntryBoth   = "both"
+	PublicEdgeEntryDirect = "direct"
 )
 
 // Public edge fronts (ADR-20261103163954 §6).
@@ -953,10 +961,16 @@ const (
 	PublicEdgeOverloadOn      = "on"
 )
 
-// DirectEntry reports whether the compute edges take Cloudflare's direct
-// connections on port 443.
+// DirectEntry reports whether the compute edges take direct connections on
+// port 443 (entry both or direct).
 func (e PublicEdge) DirectEntry() bool {
-	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
+	return e.ComputeNodes && (e.Entry == PublicEdgeEntryBoth || e.Entry == PublicEdgeEntryDirect)
+}
+
+// Tunnel reports whether the compute edges run the Cloudflare Tunnel
+// connector (entry tunnel, the default, or both).
+func (e PublicEdge) Tunnel() bool {
+	return e.ComputeNodes && e.Entry != PublicEdgeEntryDirect
 }
 
 // NoFront reports whether clients connect to the compute edges' entry
@@ -969,17 +983,15 @@ func (e PublicEdge) NoFront() bool {
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
 	switch e.Entry {
-	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth:
-	case "direct":
-		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
+	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth, PublicEdgeEntryDirect:
 	default:
-		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel, both or direct", e.Entry)}}
 	}
 	switch e.Front {
 	case "", PublicEdgeFrontCloudflare:
 	case PublicEdgeFrontNone:
 		if !e.DirectEntry() {
-			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both, whose listeners clients reach"}}
+			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both or direct, whose listeners clients reach"}}
 		}
 	default:
 		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
@@ -1003,7 +1015,7 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		if e.PlacementRouting {
 			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
 		}
-		if e.Entry == PublicEdgeEntryBoth {
+		if e.Entry == PublicEdgeEntryBoth || e.Entry == PublicEdgeEntryDirect {
 			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
 		}
 		return e.validateEntryAddrs(hosts)
@@ -1069,7 +1081,7 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 	}
 	var errs Errors
 	if !e.DirectEntry() {
-		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both, whose TLS listeners the records point at"})
+		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both or direct, whose TLS listeners the records point at"})
 	}
 	if strings.TrimSpace(e.DNS.ZoneID) == "" {
 		errs = append(errs, Error{"public_edge.dns.zone_id", "is required"})
@@ -1549,6 +1561,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PrivateDNS.validate()...)
 	errs = append(errs, m.PublicEdge.CustomDomains.validate(m.DNS)...)
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
+	errs = append(errs, m.validateDirectEntryOffPlatformDomain()...)
 	errs = append(errs, m.HotPath.validate(m.PublicEdge)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
@@ -1768,6 +1781,57 @@ func (m *Manifest) validateDynamicCompute() Errors {
 // declare an explicit private resolver adapter. Without this gate a typo in
 // the deployment shape can silently fall through to public DNS, which is
 // especially dangerous when the public zone is managed by Cloudflare.
+// validateDirectEntryOffPlatformDomain keeps the platform domain off direct
+// entry once apps have their own domain (ADR-20261112114642, R8-6). Every
+// compute node holds the direct-entry certificate's key, so a name under the
+// platform domain there would let a compromised node answer for the site,
+// dashboard, API (`api.`), object storage (`s3.`) or operations host with a
+// browser-trusted certificate. Old app hosts under the platform domain stay
+// reachable as an alias through the proxied control-plane path, which serves
+// the Cloudflare-only Origin CA certificate.
+//
+// While the platform domain is the apps domain (one shared domain, the
+// pilot's layout) the split is not possible and nothing is refused.
+func (m *Manifest) validateDirectEntryOffPlatformDomain() Errors {
+	edge := m.PublicEdge
+	if edge.DNS == nil {
+		return nil
+	}
+	// An invalid layout is DNS.validate's error; there is no split to guard.
+	d, layoutErr := hostidentity.NewDomains(m.DNS.PlatformDomain, m.DNS.AppsDomain, m.DNS.DeployDomain, m.DNS.AppsDomainAliases, m.DNS.AppsDomainAliasMode)
+	if layoutErr != nil {
+		return Errors{}
+	}
+	if d.Platform == "" || d.Platform == d.Apps {
+		return nil
+	}
+	under := func(name string) bool {
+		host := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(name), "."))
+		host = strings.TrimPrefix(host, "*.")
+		return host == d.Platform || strings.HasSuffix(host, "."+d.Platform)
+	}
+	var errs Errors
+	if cert := edge.DNS.Certificate; cert != nil {
+		for i, name := range cert.Names {
+			if under(name) {
+				errs = append(errs, Error{fmt.Sprintf("public_edge.dns.certificate.names[%d]", i), fmt.Sprintf(
+					"%q is under the platform domain %s; compute nodes would hold a browser-trusted key for the site, dashboard and API. Name only the apps domain %s", name, d.Platform, d.Apps)})
+			}
+		}
+	}
+	proxied := map[string]bool{}
+	for _, name := range edge.DNS.Proxied {
+		proxied[name] = true
+	}
+	for i, name := range edge.DNS.Names {
+		if under(name) && edge.NoFront() && !proxied[name] {
+			errs = append(errs, Error{fmt.Sprintf("public_edge.dns.names[%d]", i), fmt.Sprintf(
+				"%q is under the platform domain %s and would point straight at the compute nodes; keep it behind Cloudflare (public_edge.dns.proxied) or drop it", name, d.Platform)})
+		}
+	}
+	return errs
+}
+
 func (m *Manifest) validatePrivateResolution() Errors {
 	if len(m.Fleet.Hosts) <= 1 {
 		return nil

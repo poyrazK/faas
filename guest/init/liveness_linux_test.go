@@ -110,7 +110,7 @@ func TestLivenessProbeOutcomes(t *testing.T) {
 		addr := ln.Addr().String()
 		_ = addr
 		_ = ln.Close()
-		status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, 8080)
+		status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, 8080, "")
 		if status != 0 {
 			t.Errorf("status = %d, want 0", status)
 		}
@@ -133,9 +133,31 @@ func TestLivenessProbeUsesConfiguredRuntimePort(t *testing.T) {
 	defer srv.Close()
 
 	port := srv.Listener.Addr().(*net.TCPAddr).Port
-	status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, port)
+	status, errStr, wwwAuth := runLivenessProbe("/healthz", 500, port, "")
 	if status != http.StatusOK || errStr != "" || wwwAuth != "" {
 		t.Fatalf("probe = (%d, %q, %q), want (200, empty, empty)", status, errStr, wwwAuth)
+	}
+}
+
+// ADR-20261119140000: with a probe host the guest's HTTP probe names the
+// app's public host and scheme, so an app that allow-lists its host names
+// (Django ALLOWED_HOSTS) answers 200 instead of 400.
+func TestLivenessProbeSendsProbeHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Host != "my-site.gregale.dev" || r.Header.Get("X-Forwarded-Proto") != "https" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
+	if status, errStr, _ := runLivenessProbe("/healthz", 500, port, "my-site.gregale.dev"); status != http.StatusOK || errStr != "" {
+		t.Fatalf("probe with host = (%d, %q), want (200, empty)", status, errStr)
+	}
+	if status, _, _ := runLivenessProbe("/healthz", 500, port, ""); status != http.StatusBadRequest {
+		t.Fatalf("legacy probe = %d, want 400 from the host allow-list", status)
 	}
 }
 
@@ -218,7 +240,7 @@ func runOnPort8080WithHandler(t *testing.T, path string, h http.HandlerFunc, che
 	// Run the probe. timeout_ms = 500ms is comfortable for the
 	// happy path but tight enough to fire the timeout subtest
 	// when the handler blocks.
-	status, errStr, wwwAuth := runLivenessProbe(path, 500, 8080)
+	status, errStr, wwwAuth := runLivenessProbe(path, 500, 8080, "")
 	if wwwAuth != "" {
 		t.Errorf("wwwAuth = %q, want \"\" (no header on 2xx)", wwwAuth)
 	}

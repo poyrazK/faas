@@ -1,0 +1,8 @@
+name: "private-node"
+x-gregale-starter: hello-node-private
+
+services:
+  "private-node":
+    build: ./app
+    ports:
+      - "127.0.0.1:3000:3000"

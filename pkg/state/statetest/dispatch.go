@@ -29,6 +29,8 @@ import (
 var memDispatched = map[string]bool{
 	"CompleteSnapshotPrimeHandoff":           true,
 	"GetEdgeRuleByID":                        true,
+	"LookupEventSchemaForPublish":            true,
+	"LookupPublishedEventAcceptance":         true,
 	"ListEdgeRulesForApp":                    true,
 	"ApplyConfigRestore":                     true,
 	"EvaluateStoredWorkflowFailurePolicies":  true,
@@ -40,6 +42,7 @@ var memDispatched = map[string]bool{
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
 	"DeleteAppPermanently":                   true,
+	"EndAppDeleteGrace":                      true,
 	"DeleteProjectIfNoStages":                true,
 	"ListApplicationStandardRebinds":         true,
 	"RecordApplicationStandardRebind":        true,
@@ -112,6 +115,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"InvocationByID":                                          true,
 	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
@@ -643,6 +647,15 @@ func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
 	return s.MemStore.DeleteAppPermanently(p0, p1)
 }
 
+func (s *Mem) EndAppDeleteGrace(p0 context.Context, p1 string) (state.App, error) {
+	if o, ok := s.over.(interface {
+		EndAppDeleteGrace(context.Context, string) (state.App, error)
+	}); ok {
+		return o.EndAppDeleteGrace(p0, p1)
+	}
+	return s.MemStore.EndAppDeleteGrace(p0, p1)
+}
+
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
 	if o, ok := s.over.(interface {
 		AppByID(context.Context, string) (state.App, error)
@@ -776,6 +789,15 @@ func (s *Mem) CreateTCPListener(p0 context.Context, p1 state.TCPListener) (state
 		return o.CreateTCPListener(p0, p1)
 	}
 	return s.MemStore.CreateTCPListener(p0, p1)
+}
+
+func (s *Mem) InvocationByID(p0 context.Context, p1 string) (state.Invocation, error) {
+	if o, ok := s.over.(interface {
+		InvocationByID(context.Context, string) (state.Invocation, error)
+	}); ok {
+		return o.InvocationByID(p0, p1)
+	}
+	return s.MemStore.InvocationByID(p0, p1)
 }
 
 func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (state.DeadLetterEvent, error) {
@@ -5075,4 +5097,22 @@ func (s *Store) RequestTelemetryAnalyticsTimeseriesGrouped(ctx context.Context, 
 		return override.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
 	}
 	return s.Store.RequestTelemetryAnalyticsTimeseriesGrouped(ctx, arg)
+}
+
+func (s *Mem) LookupEventSchemaForPublish(ctx context.Context, accountID, source, typ, version string) (bool, json.RawMessage, error) {
+	if over, ok := s.over.(interface {
+		LookupEventSchemaForPublish(context.Context, string, string, string, string) (bool, json.RawMessage, error)
+	}); ok {
+		return over.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
+	}
+	return s.MemStore.LookupEventSchemaForPublish(ctx, accountID, source, typ, version)
+}
+
+func (s *Mem) LookupPublishedEventAcceptance(ctx context.Context, account string, payload []byte) (state.PublishedEventAcceptance, error) {
+	if over, ok := s.over.(interface {
+		LookupPublishedEventAcceptance(context.Context, string, []byte) (state.PublishedEventAcceptance, error)
+	}); ok {
+		return over.LookupPublishedEventAcceptance(ctx, account, payload)
+	}
+	return s.MemStore.LookupPublishedEventAcceptance(ctx, account, payload)
 }

@@ -35,6 +35,9 @@ type projectServiceProgress struct {
 	service string
 	stage   string
 	done    bool
+	// step is the newest BuildKit step while the service builds; a stage
+	// change clears it.
+	step string
 }
 
 // projectWaitProgressEvent is the JSON-mode progress line.
@@ -45,7 +48,11 @@ type projectWaitProgressEvent struct {
 	Stage        string `json:"stage"`
 	Status       string `json:"status"`
 	Error        string `json:"error,omitempty"`
-	ElapsedS     int64  `json:"elapsed_s"`
+	// ErrorCode and Fix are the server's stable code and remedy for a
+	// failed deployment (DeploymentResponse.ErrorCode / ErrorFix).
+	ErrorCode string `json:"error_code,omitempty"`
+	Fix       string `json:"fix,omitempty"`
+	ElapsedS  int64  `json:"elapsed_s"`
 }
 
 // projectWaitHeartbeat is how often human mode summarises a wait with no
@@ -104,14 +111,21 @@ func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.Deployment
 	}
 	p.services[build.DeploymentID] = projectServiceProgress{service: service, stage: stage, done: done}
 	elapsed := time.Since(p.start).Truncate(time.Second)
-	errText := failure
-	if errText == "" && stage == "failed" {
-		errText = dep.Error
+	errText, errCode, fix := failure, "", ""
+	if stage == "failed" {
+		if errText == "" {
+			errText = dep.Error
+		}
+		// The server stamps a remedy on a failed deployment (a listening
+		// Compose worker's fix names the expose:/depends_on change,
+		// ADR-20261029120000). The project receipt keeps only the error, so
+		// a failure printed here without it left the user guessing.
+		errCode, fix = dep.ErrorCode, strings.TrimSpace(dep.ErrorFix)
 	}
 	if p.json {
 		line, _ := json.Marshal(projectWaitProgressEvent{
 			Event: "service_stage_changed", Service: service, DeploymentID: build.DeploymentID,
-			Stage: stage, Status: dep.Status, Error: errText, ElapsedS: int64(elapsed / time.Second),
+			Stage: stage, Status: dep.Status, Error: errText, ErrorCode: errCode, Fix: fix, ElapsedS: int64(elapsed / time.Second),
 		})
 		_, _ = fmt.Fprintf(p.w, "%s\n", line)
 		return
@@ -119,6 +133,12 @@ func (p *projectWaitProgress) observe(build api.AppliedBuild, dep api.Deployment
 	switch stage {
 	case "failed":
 		_, _ = fmt.Fprintf(p.w, "  %s: failed after %s: %s\n", service, elapsed, oneLine(errText))
+		if fix != "" {
+			_, _ = fmt.Fprintf(p.w, "    fix:\n")
+			for _, line := range strings.Split(fix, "\n") {
+				_, _ = fmt.Fprintf(p.w, "      %s\n", terminalSafe(strings.TrimSpace(line)))
+			}
+		}
 	case "live":
 		_, _ = fmt.Fprintf(p.w, "  %s: live after %s\n", service, elapsed)
 	default:
@@ -136,7 +156,11 @@ func (p *projectWaitProgress) heartbeat() {
 	var waiting []string
 	for _, s := range p.services {
 		if !s.done {
-			waiting = append(waiting, s.service+" ("+s.stage+")")
+			detail := s.stage
+			if s.step != "" {
+				detail += " " + terminalSafe(s.step)
+			}
+			waiting = append(waiting, s.service+" ("+detail+")")
 		}
 	}
 	if len(waiting) == 0 {

@@ -124,6 +124,7 @@ var previewFields = map[string]map[string]bool{
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
@@ -512,6 +513,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/sandboxes/{id}/task":                               true,
 	"GET /v1/sandboxes/{id}/actions/{seq}":                      true,
 	"GET /v1/sandboxes/{id}/actions/{seq}/screenshot":           true,
+	"GET /v1/sandboxes/{id}/egress":                             true,
+	"GET /v1/sandbox-egress-policy":                             true,
+	"PUT /v1/sandbox-egress-policy":                             true,
 	"GET /v1/agents":                                            true,
 	"GET /v1/agents/{agent}":                                    true,
 	"DELETE /v1/agents/{agent}":                                 true,
@@ -521,6 +525,8 @@ var routeExclude = map[string]bool{
 	"GET /v1/agent-runs":                                        true,
 	"GET /v1/agent-runs/{id}":                                   true,
 	"DELETE /v1/agent-runs/{id}":                                true,
+	"GET /v1/agent-runs/{id}/approvals":                         true,
+	"POST /v1/agent-runs/{id}/approvals/{approval_id}":          true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
 
@@ -842,10 +848,15 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	// ADR-20261117215858: a query result column, declared inline in the
+	// ManagedPostgresQueryResponse schema.
+	"ManagedPostgresQueryColumn":     true,
 	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 	// ADR 20261114180740: the body of an app's call to outboundd's /p/{name}, not an apid route.
 	"OutboundAIPromptCallRequest": true,
+	// ADR-20261116120000: the reconciler's internal baseline item list, never a wire DTO.
+	"ProtectionBaselineItem": true,
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
 	"EventRetentionQuery":         true, // client-only retention query options; route parameters are the wire contract
@@ -1034,6 +1045,7 @@ var dtoExclude = map[string]bool{
 	"ObsOverviewResponse":             true,
 	"ObsOverviewTotals":               true,
 	"ObsBetaFunnel":                   true,
+	"ObsCodingAgent":                  true,
 	"ObsOverviewRateLimited":          true,
 	"ObsOverviewNodeHealth":           true,
 	"ObsOverviewFailureKind":          true,
@@ -1190,6 +1202,8 @@ var schemaSpecOnly = map[string]bool{
 	// including their flattened embedded fields, against the OpenAPI schemas.
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
+	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
@@ -1770,6 +1784,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "tool_publications.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_releases.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_source_intents.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_binding_verification.go"),
+		filepath.Join(root, "pkg", "api", "task_tool_rehearsal.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_quarantine.go"),
 		filepath.Join(root, "pkg", "api", "task_tool_retirement.go"),
 		filepath.Join(root, "pkg", "api", "tool_publication_verification.go"),
@@ -1940,6 +1956,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "notification_channels.go"), // ADR-749 channel DTOs
 		filepath.Join(root, "pkg", "api", "slos.go"),                  // ADR-747 customer SLO DTOs
 		filepath.Join(root, "pkg", "api", "synthetic_checks.go"),      // ADR-748 synthetic check DTOs
+		filepath.Join(root, "pkg", "api", "app_protection.go"),        // ADR-20261116120000 protection DTOs
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
@@ -2200,13 +2217,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
-		filepath.Join(root, "pkg", "api", "debug_rollout.go"),     // ADR-1447 amendment: rollout explanation + debug status
-		filepath.Join(root, "pkg", "api", "agent_connections.go"), // ADR-20261030133644: connected agents
-		filepath.Join(root, "pkg", "api", "agent_approvals.go"),   // ADR-20261104140058: approvals for risky agent actions
-		filepath.Join(root, "pkg", "api", "agent_activity.go"),    // ADR-20261107220000: agent activity log
-		filepath.Join(root, "pkg", "api", "agent_budget.go"),      // ADR-20261111114059: agent budgets
-		filepath.Join(root, "pkg", "api", "agent_undo.go"),        // ADR-20261112080601: agent undo
-		filepath.Join(root, "pkg", "api", "account_health.go"),    // ADR-20261112210000: customer account health
+		filepath.Join(root, "pkg", "api", "debug_rollout.go"),          // ADR-1447 amendment: rollout explanation + debug status
+		filepath.Join(root, "pkg", "api", "agent_connections.go"),      // ADR-20261030133644: connected agents
+		filepath.Join(root, "pkg", "api", "agent_approvals.go"),        // ADR-20261104140058: approvals for risky agent actions
+		filepath.Join(root, "pkg", "api", "agent_activity.go"),         // ADR-20261107220000: agent activity log
+		filepath.Join(root, "pkg", "api", "agent_budget.go"),           // ADR-20261111114059: agent budgets
+		filepath.Join(root, "pkg", "api", "agent_undo.go"),             // ADR-20261112080601: agent undo
+		filepath.Join(root, "pkg", "api", "account_health.go"),         // ADR-20261112210000: customer account health
+		filepath.Join(root, "pkg", "api", "feature_flag_kill.go"),      // ADR-20261117215858: flag kill switch
+		filepath.Join(root, "pkg", "api", "managed_postgres_query.go"), // ADR-20261117215858: read-only queries
 	}
 	dtos, err := scanDTOs(files)
 	if err != nil {

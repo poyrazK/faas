@@ -19,6 +19,7 @@ package e2e
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,6 +50,18 @@ func TestQuotaBreach_ParkInstanceWithinOneTick(t *testing.T) {
 		t.Fatalf("MigrateUp: %v", err)
 	}
 	pgtest.WaitForMigration(t, pool, 12, 10*time.Second)
+
+	// The park destroys a cold-booted instance and queues a clean recapture
+	// (ADR-20261115113000). Without a vmmd the destroy is uncertain and the
+	// row correctly stays RUNNING, so give schedd the fake one.
+	vmmdSockDir, err := os.MkdirTemp("", "faas-e2e-quota-vmmd-*")
+	if err != nil {
+		t.Fatalf("create fake vmmd socket dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(vmmdSockDir) })
+	vmmdSock := filepath.Join(vmmdSockDir, "vmmd.sock")
+	e2etest.StartFakeVMMD(t, vmmdSock)
+	t.Setenv("FAAS_E2E_VMMD_SOCKET", vmmdSock)
 
 	const quotaInterval = 2 * time.Second
 	// StartWithEnv registers its own t.Cleanup(h.stop); the harness

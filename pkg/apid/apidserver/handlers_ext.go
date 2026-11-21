@@ -2732,7 +2732,7 @@ func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"More than one environment serves this app",
 		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // trafficSplit describes a scope whose traffic more than one deployment
@@ -2794,12 +2794,12 @@ func rollbackDuringTrafficSplitProblem(appSlug string, split trafficSplit) *api.
 		return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 			"A release is still rolling out",
 			fmt.Sprintf("the newest release is still rolling out, so traffic is split and there is no single previous release to roll back to. Stop the rollout and return its traffic to the release it replaced: gregale rollouts recover %s --action abort", appSlug)).
-			WithDocs("https://gregale.dev/docs/deploys#rollback")
+			WithDocs("https://gregale.dev/docs/deploys#revisions")
 	}
 	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
 		"Traffic is split between deployments",
 		fmt.Sprintf("more than one deployment serves traffic, so there is no single previous release to roll back to. Return all traffic to the earlier release: gregale traffic promote --app %s --deployment %s", appSlug, split.earlier)).
-		WithDocs("https://gregale.dev/docs/deploys#rollback")
+		WithDocs("https://gregale.dev/docs/deploys#revisions")
 }
 
 // rollbackAppCore performs the shared rollback state transition for the REST
@@ -3438,7 +3438,7 @@ func minInstancesAboveMaxConcurrency(minInstances, appMax int) *api.Problem {
 		"Invalid min_instances",
 		fmt.Sprintf("min_instances (%d) exceeds this app's max_concurrency (%d); raise max_concurrency or lower min_instances.", minInstances, appMax)).
 		WithLimit(int64(appMax), int64(minInstances)).
-		WithDocs("https://gregale.dev/docs/apps#min-instances")
+		WithDocs("https://gregale.dev/docs/scale-to-zero#opting-out-keep-n-instances-warm-pro-scale")
 }
 
 func claimAppRestart(ctx context.Context, store state.Store, appID string) (bool, error) {
@@ -4630,6 +4630,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
 	}
+	commitBudget, answered := s.chargeAgentBudget(w, r, acct.Plan, 0,
+		cronStandingMillicents(app, acct.Plan, req.Schedule, timezone, enabled, cronCommand, commandTimeoutSeconds, time.Now().UTC()))
+	if answered {
+		return
+	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
 		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
@@ -4651,6 +4656,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"created","app_id":"`+app.ID+`"}`)
 	s.log.Info("cron created", "cron", c.ID, "app", app.ID, "account", acct.ID)
 	// IAM-4 (issue #291): record the cron schedule so a stolen CI
@@ -4837,6 +4843,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
+	commitBudget, answered := s.chargeCronUpdate(w, r, acct.Plan, app, c, req, timezonePatch)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if errors.Is(err, state.ErrConflict) {
 		api.WriteProblem(w, api.ErrCronConflict())
@@ -4846,6 +4856,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"updated","cron":"`+id+`"}`)
 	// IAM-4 (issue #291): record what changed and to what. We
 	// capture only the fields the caller actually sent (req.X != nil)

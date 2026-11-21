@@ -6,10 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
 
 // StorageObjectDeletion is one requested delete of a shared-store object
@@ -21,6 +24,9 @@ type StorageObjectDeletion struct {
 	RequestedBy string
 	RequestedAt time.Time
 	Attempts    int
+	// Generation, when positive, is the one object generation to delete
+	// (an exclusive-artifact retirement, slice 2); 0 deletes the key.
+	Generation int64
 }
 
 // Outcomes of a decided object deletion request.
@@ -33,6 +39,12 @@ const (
 // compute side).
 type StorageObjectDeletionRequester interface {
 	RequestStorageObjectDeletion(ctx context.Context, key, reason string) error
+}
+
+// StorageObjectRetirementRequester records generation-conditioned retirements
+// of exclusive artifacts (ADR-20261115180000 slice 2).
+type StorageObjectRetirementRequester interface {
+	RequestStorageObjectRetirement(ctx context.Context, key string, generation int64, reason string) error
 }
 
 // StorageObjectDeletionStore is the control plane's side: due requests,
@@ -49,9 +61,12 @@ type StorageObjectDeletionStore interface {
 
 // Classes of shared-store keys the object GC knows how to check.
 const (
-	StorageObjectClassSnapshot     = "snapshot"
-	StorageObjectClassLayer        = "layer"
-	StorageObjectClassPlatform     = "platform"
+	StorageObjectClassSnapshot = "snapshot"
+	StorageObjectClassLayer    = "layer"
+	StorageObjectClassPlatform = "platform"
+	// StorageObjectClassSource is a build's uploaded source archive
+	// (sources/<build>.tar.gz, ADR-20261117190000).
+	StorageObjectClassSource       = "source"
 	StorageObjectClassUnclassified = "unclassified"
 )
 
@@ -68,6 +83,8 @@ func ClassifyStorageObject(key string) (class, memKey, family string) {
 		return StorageObjectClassPlatform, "", ""
 	case strings.HasPrefix(base, "apps/"), strings.HasPrefix(base, "layers/"), strings.HasPrefix(base, "jobs/"):
 		return StorageObjectClassLayer, "", ""
+	case strings.HasPrefix(key, "sources/"):
+		return StorageObjectClassSource, "", ""
 	case !strings.HasPrefix(base, "snap/"):
 		return StorageObjectClassUnclassified, "", ""
 	}
@@ -91,11 +108,21 @@ func ClassifyStorageObject(key string) (class, memKey, family string) {
 }
 
 func (s *PgStore) RequestStorageObjectDeletion(ctx context.Context, key, reason string) error {
-	if len(reason) > 200 {
-		reason = reason[:200]
-	}
+	reason = safetext.Truncate(reason, 200)
 	if err := sqlc.New().RequestStorageObjectDeletion(ctx, s.pool, sqlc.RequestStorageObjectDeletionParams{StorageKey: key, Reason: reason}); err != nil {
 		return fmt.Errorf("state: request deletion of %q: %w", key, mapErr(err))
+	}
+	return nil
+}
+
+func (s *PgStore) RequestStorageObjectRetirement(ctx context.Context, key string, generation int64, reason string) error {
+	if generation <= 0 {
+		return ErrInvalidArgument
+	}
+	reason = safetext.Truncate(reason, 200)
+	if err := sqlc.New().RequestStorageObjectDeletion(ctx, s.pool, sqlc.RequestStorageObjectDeletionParams{StorageKey: key, Reason: reason,
+		Generation: pgtype.Int8{Int64: generation, Valid: true}}); err != nil {
+		return fmt.Errorf("state: request retirement of %q generation %d: %w", key, generation, mapErr(err))
 	}
 	return nil
 }
@@ -109,7 +136,7 @@ func (s *PgStore) DueStorageObjectDeletions(ctx context.Context, now time.Time, 
 	out := make([]StorageObjectDeletion, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, StorageObjectDeletion{StorageKey: r.StorageKey, Reason: r.Reason, RequestedBy: r.RequestedBy,
-			RequestedAt: r.RequestedAt.Time, Attempts: int(r.Attempts)})
+			RequestedAt: r.RequestedAt.Time, Attempts: int(r.Attempts), Generation: r.Generation.Int64})
 	}
 	return out, nil
 }
@@ -151,8 +178,26 @@ func (s *PgStore) StorageObjectReferenced(ctx context.Context, key string) (bool
 		if !ref.Valid || ref.Bool {
 			return true, class, nil
 		}
-		retained, err := s.OperationJobImageRetained(ctx, base)
-		return retained || err != nil, class, err
+		if retained, err := s.OperationJobImageRetained(ctx, base); retained || err != nil {
+			return true, class, err
+		}
+		if !storagekey.IsJobLayer(base) {
+			return false, class, nil
+		}
+		// A job's published image, or any attempt of a job still
+		// materializing (its worker may be writing an unpublished key).
+		job, _ := storagekey.JobLayerJobID(base)
+		jobUUID, err := uuid.Parse(job)
+		if err != nil {
+			return true, class, nil //nolint:nilerr // a key IsJobLayer accepted always parses
+		}
+		jobRef, err := q.JobArtifactReferenced(ctx, s.pool, sqlc.JobArtifactReferencedParams{JobID: pgtype.UUID{Bytes: jobUUID, Valid: true}, StorageKey: base})
+		if err != nil {
+			return true, class, mapErr(err)
+		}
+		return jobRef, class, nil
+	case StorageObjectClassSource:
+		return s.sourceObjectReferenced(ctx, key)
 	default:
 		return true, class, nil
 	}
@@ -163,4 +208,30 @@ func truncateDetail(s string) string {
 		return s[:1000]
 	}
 	return s
+}
+
+// SourceOrphanGrace is how long a source archive with no build row is kept:
+// apid uploads sources/<build>.tar.gz before it creates the build, so an
+// apid crash in between leaves an orphan (builderd's source GC rule).
+const SourceOrphanGrace = 24 * time.Hour
+
+// sourceObjectReferenced keeps a source archive while its build is queued or
+// running, and keeps any whose name does not carry a UUIDv7 creation time or
+// that is younger than SourceOrphanGrace.
+func (s *PgStore) sourceObjectReferenced(ctx context.Context, key string) (bool, string, error) {
+	const class = StorageObjectClassSource
+	name, ok := strings.CutSuffix(strings.TrimPrefix(key, "sources/"), ".tar.gz")
+	id, err := uuid.Parse(name)
+	if !ok || err != nil || id.Version() != 7 || id.String() != name {
+		return true, class, nil //nolint:nilerr // a name without a UUIDv7 creation time is kept, not an error
+	}
+	sec, nsec := id.Time().UnixTime()
+	if time.Since(time.Unix(sec, nsec)) < SourceOrphanGrace {
+		return true, class, nil
+	}
+	ref, err := sqlc.New().BuildSourceReferenced(ctx, s.pool, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		return true, class, mapErr(err)
+	}
+	return ref, class, nil
 }

@@ -53,6 +53,7 @@ var cliTreeNouns = []cliTreeNoun{
 	{"api", "Manage your API: routes, OpenAPI spec, consumers and tenants", "Configure"},
 	{"flag", "Roll out feature flags to selected customers", "Configure"},
 	{"postgres", "Create, attach and restore managed PostgreSQL databases", "Data"},
+	{"redis", "Create and bind managed Redis-compatible (Valkey) caches", "Data"},
 	{"bucket", "Manage object storage buckets", "Data"},
 	{"export", "Verify and compare saved JSON Lines exports offline", "Data"},
 	{"pipeline", "Sync PostgreSQL sources into read-only mirrors", "Data"},
@@ -72,9 +73,11 @@ var cliTreeNouns = []cliTreeNoun{
 	{"metric", "Show app metrics, request breakdowns and the service map", "Observe"},
 	{"debug", "Inspect requests, traces, issues, profiles and regressions", "Observe"},
 	{"dashboard", "Save dashboards across apps", "Observe"},
+	{"insight", "Count product events, funnels and retention, by flag variant", "Observe"},
 	{"audit", "Search your account's audit log", "Observe"},
 	{"alert", "Manage alert rules, channels, incidents, SLOs and checks", "Observe"},
 	{"mcp", "Connect agents, host MCP servers, or call MCP tools", "Agents"},
+	{"agent", "Approve or deny the tool calls hosted agent runs wait on", "Agents"},
 	{"account", "Manage your account, MFA and data exports", "Account"},
 	{"org", "Manage orgs, members and invitations", "Account"},
 	{"key", "Manage your account's API keys", "Account"},
@@ -150,6 +153,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app list", "apps"},
 	{"app delete", "apps rm"},
 	{"app restore", "apps restore"},
+	{"app purge", "apps purge"},
 	{"app instances", "ps"},
 	{"app park", "park"},
 	{"app wake", "wake"},
@@ -210,10 +214,28 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag experiment promote", "flags experiments ship"},
 	{"flag experiment delete", "flags experiments delete"},
 	{"flag experiment result get", "flags experiments results"},
+	{"flag experiment layer list", "flags experiments layers list"},
+	{"flag experiment layer create", "flags experiments layers create"},
+	{"flag experiment layer delete", "flags experiments layers delete"},
+	{"flag experiment holdout get", "flags experiments holdout get"},
+	{"flag experiment holdout set", "flags experiments holdout set"},
+	{"flag experiment holdout report", "flags experiments holdout report"},
 	{"flag", "flags"},
+	// ADR 20261117084505: product analytics; `analytics` is request analytics.
+	{"insight event list", "insights events"},
+	{"insight funnel get", "insights funnel"},
+	{"insight retention get", "insights retention"},
+	{"insight request list", "insights requests"},
+	{"insight cohort list", "insights cohorts list"},
+	{"insight cohort create", "insights cohorts create"},
+	{"insight cohort get", "insights cohorts get"},
+	{"insight cohort delete", "insights cohorts delete"},
+	{"insight cohort refresh", "insights cohorts refresh"},
+	{"insight", "insights"},
 
 	// Data.
 	{"postgres", "postgres"},
+	{"redis", "redis"},
 	{"bucket multipart get", "bucket uploads status"},
 	{"bucket multipart cancel", "bucket uploads abort"},
 	{"bucket multipart", "bucket uploads"},
@@ -354,6 +376,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client status", "mcp task-get"},
 	{"mcp client wait", "mcp task-wait"},
 	{"mcp client cancel", "mcp task-cancel"},
+	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
+	{"agent run approval list", "agents runs approvals"},
+	{"agent run approve", "agents runs approve"},
+	{"agent run deny", "agents runs deny"},
 
 	// Account.
 	{"account mfa", "mfa"},
@@ -507,6 +533,8 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp server tasks run", "mcp tasks execution"},
 	// Retained hosted Task source review takes its action as an argument too.
 	{"mcp server tasks audit", "mcp tasks source-review"},
+	{"mcp server tasks bind", "mcp tasks bindings"},
+	{"mcp server tasks rehearse", "mcp tasks rehearsal"},
 	{"mcp server approvals get", "mcp approval-channels"},
 	{"mcp server approvals set", "mcp approval-channels"},
 	{"mcp observer", "mcp tasks observer"},
@@ -920,14 +948,15 @@ func rewriteAppPath(args []string) ([]string, error) {
 	if len(args) < 2 || strings.HasPrefix(args[1], "-") {
 		return args, nil
 	}
+	if isAppProjectCommand(args[1:]) {
+		// `app restart|health|update|wake --project P` runs per project
+		// app; checked before the aliases, which send `app wake` to `wake`.
+		return args, nil
+	}
 	if alias, used, ok := matchCliTreeAlias(args); ok {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
-	if isAppProjectCommand(args[1:]) {
-		// `app restart|health|update --project P` runs per project app.
-		return args, nil
-	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

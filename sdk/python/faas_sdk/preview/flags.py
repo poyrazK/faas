@@ -30,16 +30,38 @@ GREGALE_FLAG_CONTEXT_HEADER = "X-Faas-Platform-Tenant-Id"
 GREGALE_FLAG_PROPAGATION_HEADER = "X-Faas-Flag-Context"
 GREGALE_CLIENT_COUNTRY_HEADER = "X-Faas-Client-Country"
 GREGALE_CLIENT_UA_FAMILY_HEADER = "X-Faas-Client-Ua-Family"
-_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1"
+_FLAG_CAPABILITIES = "subject-targeting-v1, attribute-targeting-v1, kill-v1, track-v1, track-v2, cohort-targeting-v1, experiment-layers-v1, subject-exposures-v1"
 # Conversion events for experiments (ADR 20261115163113).
 _EVENT_NAME = re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 _EVENT_BATCH = 100
 _EVENT_QUEUE_MAX = 1000
 _EVENT_FLUSH_S = 5.0
 _EVENT_MAX_ABS_VALUE = 1_000_000_000_000
+# Product analytics event bounds (ADR 20261117084505).
+_EVENT_PROPERTY_KEY = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_EVENT_MAX_PROPERTIES = 10
+_EVENT_PROPERTY_MAX_BYTES = 256
+_EVENT_MAX_FLAGS = 32
+# Subject experiment exposures (ADR 20261119173702 §1).
+_EXPOSURE_BATCH = 100
+_EXPOSURE_QUEUE_MAX = 1000
+_EXPOSURE_DEDUPE_MS = 3_600_000
+_EXPOSURE_DEDUPE_MAX = 10_000
+
+
+def _valid_event_properties(properties: Any) -> bool:
+    if properties is None:
+        return True
+    if not isinstance(properties, dict) or len(properties) > _EVENT_MAX_PROPERTIES:
+        return False
+    return all(
+        isinstance(k, str) and _EVENT_PROPERTY_KEY.match(k) and isinstance(v, str) and len(v.encode()) <= _EVENT_PROPERTY_MAX_BYTES
+        for k, v in properties.items()
+    )
 GREGALE_FLAG_KILLS_HEADER = "X-Faas-Flag-Kills"
+GREGALE_FLAG_COHORTS_HEADER = "X-Faas-Flag-Cohorts"
 _APP_ATTRIBUTE_NAME = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
-_ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$")
+_ATTRIBUTE_NAME = re.compile(r"^(gregale\.(country|ua_family|cohort)|app\.[a-z][a-z0-9_]{0,31})$")
 _COUNTRY = re.compile(r"^[A-Z]{2}$")
 _MAX_APP_ATTRIBUTES = 16
 _MAX_CONDITIONS = 8
@@ -49,7 +71,7 @@ _CUSTOMER_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-
 _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
 _FLAG_KEY = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _FALLBACK_REASONS = {"flag_missing", "configuration_stale", "type_mismatch", "killed"}
-_DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "subject_missing", "rule_match"}
+_DECISION_REASONS = _FALLBACK_REASONS | {"default", "disabled", "customer_missing", "subject_missing", "rule_match", "holdout"}
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
 _MAX_FLAGS = 100
 _MAX_GROUPS = 100
@@ -137,6 +159,36 @@ def flag_subject_variant_bucket(seed: str, key: str, customer: str, subject: str
     return int.from_bytes(digest[:4], "big") % 10_000
 
 
+def _bucket_of(*parts: str) -> int:
+    digest = hashlib.sha256("\0".join(parts).encode()).digest()
+    return int.from_bytes(digest[:4], "big") % 10_000
+
+
+def flag_layer_bucket(seed: str, customer: str, subject: str | None = None) -> int:
+    """SHA-256(seed NUL "layer" NUL customer [NUL subject]) mod 10000 (ADR 20261119173702 §2)."""
+    return _bucket_of(seed, "layer", customer) if subject is None else _bucket_of(seed, "layer", customer, subject)
+
+
+def flag_holdout_bucket(seed: str, customer: str) -> int:
+    """SHA-256(seed NUL "holdout" NUL customer) mod 10000; the holdout is per customer."""
+    return _bucket_of(seed, "holdout", customer)
+
+
+def _experiment_gate(bundle: Mapping[str, Any], experiment: Mapping[str, Any], customer: str, subject: str | None) -> tuple[bool, bool]:
+    """Whether the unit is in the experiment's layer slice, and whether the holdout holds the customer out."""
+    layer_key = experiment.get("layer")
+    if layer_key:
+        layer = next((l for l in bundle.get("layers") or [] if l.get("key") == layer_key), None)
+        if layer is None:
+            return False, False
+        bucket = flag_layer_bucket(layer["seed"], customer, subject if experiment.get("unit") == "subject" else None)
+        if bucket < experiment.get("from", 0) or bucket >= experiment.get("to", 0):
+            return False, False
+    holdout = bundle.get("holdout")
+    held = bool(holdout) and holdout["basis_points"] > 0 and flag_holdout_bucket(holdout["seed"], customer) < holdout["basis_points"]
+    return True, held
+
+
 def _valid_subject_id(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -166,10 +218,32 @@ def _valid_attribute_value(value: Any) -> bool:
     return isinstance(value, str) and 1 <= len(value) <= 128 and all(0x20 <= ord(char) <= 0x7E for char in value)
 
 
+def parse_cohorts(value: str | None) -> list[str] | None:
+    """Parse a gregale.cohort value: cohort keys, or None when malformed."""
+    if value == "-":
+        return []
+    if not value:
+        return None
+    keys = value.split(",")
+    if len(keys) > 20 or any(_FLAG_KEY.fullmatch(k) is None for k in keys):
+        return None
+    return keys
+
+
 def match_conditions(conditions: Any, attributes: Mapping[str, str] | None) -> bool:
     """Every condition must hold; a missing or invalid attribute never matches."""
     for condition in conditions or []:
         value = (attributes or {}).get(condition.get("attribute"))
+        if condition.get("attribute") == "gregale.cohort":
+            # in: a member of any listed cohort; not_in: of none (ADR 20261119102741 §4).
+            cohorts = parse_cohorts(value)
+            if cohorts is None:
+                return False
+            member = any(v in cohorts for v in condition.get("values", []))
+            op = condition.get("op")
+            if (op == "in" and not member) or (op == "not_in" and member) or op not in ("in", "not_in"):
+                return False
+            continue
         if not _valid_attribute_value(value):
             return False
         op, values = condition.get("op"), condition.get("values", [])
@@ -329,6 +403,13 @@ def evaluate_variant(
             continue
         if rule.get("subjects") and subject not in rule["subjects"]:
             continue
+        experiment = rule.get("experiment")
+        if experiment:
+            in_slice, held = _experiment_gate(bundle, experiment, customer, subject)
+            if not in_slice:
+                continue
+            if held:
+                return _replace_decision(decision, value=experiment["control"], reason="holdout", rule_id=rule["id"])
         rollout_bucket = None
         rollout = rule.get("rollout")
         if rollout is not None:
@@ -441,6 +522,27 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
             raise ValueError("Invalid Flags group")
         normalized_groups[name] = list(members)
 
+    def valid_seed(value: Any) -> bool:
+        return isinstance(value, str) and 1 <= len(value) <= 128
+
+    holdout = raw.get("holdout")
+    if "holdout" in raw and holdout is not None and (
+        not isinstance(holdout, Mapping)
+        or not valid_seed(holdout.get("seed"))
+        or not _is_int(holdout.get("basis_points"))
+        or not 0 <= holdout["basis_points"] <= 2000
+    ):
+        raise ValueError("Invalid Flags holdout")
+    layers = raw.get("layers") or []
+    if (
+        not isinstance(layers, list)
+        or len(layers) > 10
+        or not all(isinstance(l, Mapping) and _valid_key(l.get("key")) and valid_seed(l.get("seed")) for l in layers)
+        or len({l["key"] for l in layers}) != len(layers)
+    ):
+        raise ValueError("Invalid Flags layers")
+    layer_keys = {l["key"] for l in layers}
+
     keys: set[str] = set()
     normalized_flags: list[dict[str, Any]] = []
     for raw_flag in flags:
@@ -535,15 +637,41 @@ def validate_bundle(raw: Any) -> dict[str, Any]:
                 or (not customers and not group and not conditions and rollout is None)
             ):
                 raise ValueError("Invalid Flags rule")
+            experiment = rule.get("experiment")
+            if "experiment" in rule and not _valid_rule_experiment(experiment, is_variant, rule, variant_keys, layer_keys):
+                raise ValueError("Invalid Flags rule experiment")
             rule_ids.add(rule_id)
         normalized_flags.append(flag)
 
-    return {
+    out: dict[str, Any] = {
         "environment_id": environment_id,
         "version": version,
         "flags": normalized_flags,
         "groups": normalized_groups,
     }
+    if holdout is not None:
+        out["holdout"] = {"seed": holdout["seed"], "basis_points": holdout["basis_points"]}
+    if layers:
+        out["layers"] = [{"key": l["key"], "seed": l["seed"]} for l in layers]
+    return out
+
+
+_EXPERIMENT_KEY = re.compile(r"^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$")
+
+
+def _valid_rule_experiment(x: Any, is_variant: bool, rule: Mapping[str, Any], variant_keys: set[str], layer_keys: set[str]) -> bool:
+    if not isinstance(x, Mapping) or not is_variant or "value" in rule:
+        return False
+    unit = x.get("unit")
+    if not isinstance(x.get("key"), str) or not _EXPERIMENT_KEY.match(x["key"]) or x.get("control") not in variant_keys:
+        return False
+    if unit not in ("customer", "subject") or (unit == "subject") != (rule.get("rollout_unit") == "subject"):
+        return False
+    layer = x.get("layer")
+    start, end = x.get("from", 0), x.get("to", 0)
+    if not layer:
+        return start == 0 and end == 0
+    return layer in layer_keys and _is_int(start) and _is_int(end) and 0 <= start < end <= 10_000
 
 
 def _valid_ids(value: Any) -> bool:
@@ -653,6 +781,9 @@ def _decode_propagation(value: str) -> tuple[str, dict[str, tuple[dict[str, Any]
             if reason == "rule_match":
                 if rule_id is None:
                     return None
+            elif reason == "holdout":
+                if rule_id is None or decision.get("bucket") is not None or decision.get("rollout_bucket") is not None:
+                    return None
             elif (
                 rule_id is not None or decision.get("bucket") is not None or decision.get("rollout_bucket") is not None
             ):
@@ -726,6 +857,8 @@ class GregaleFlags:
         self._api_url = urljoin(api_url.rstrip("/") + "/", "/v1/runtime/flags")
         self._events_url = urljoin(api_url.rstrip("/") + "/", "/v1/runtime/flags/events")
         self._events: list[dict[str, Any]] = []
+        self._exposures: list[dict[str, Any]] = []
+        self._exposed: dict[str, float] = {}
         self._events_dropped = 0
         self._flush_lock = asyncio.Lock()
         self._flush_task: asyncio.Task[None] | None = None
@@ -839,15 +972,26 @@ class GregaleFlags:
             raise ValueError("Invalid workload identity")
         return token
 
-    def track(self, name: str, value: int = 0) -> bool:
-        """Record a conversion event for this request's verified customer (experiments).
+    def track(
+        self,
+        name: str,
+        value: int = 0,
+        properties: dict[str, str] | None = None,
+        subject: str | None = None,
+    ) -> bool:
+        """Record an event for this request's verified customer.
 
-        Call inside run_request. Returns False, and counts the event in
-        dropped_events(), when the request has no verified customer, the name or
-        value is invalid, or the local queue is full. Events are sent in batches
-        every 5 s; close() or flush() sends the rest.
+        Events feed experiments and product analytics. Each event carries the
+        request's subject (or ``subject``), up to 10 string ``properties`` and
+        every flag decision the request made so far. Call inside run_request.
+        Returns False, and counts the event in dropped_events(), when the
+        request has no verified customer, the name, value, properties or
+        subject are invalid, or the local queue is full. Events are sent in
+        batches every 5 s; close() or flush() sends the rest.
         """
         request = self._request.get()
+        if subject is None and request is not None:
+            subject = request.subject
         if (
             request is None
             or not request.customer
@@ -855,6 +999,8 @@ class GregaleFlags:
             or not _EVENT_NAME.match(name)
             or not _is_int(value)
             or abs(value) > _EVENT_MAX_ABS_VALUE
+            or not _valid_event_properties(properties)
+            or (subject is not None and not _valid_subject_id(subject))
             or len(self._events) >= _EVENT_QUEUE_MAX
         ):
             self._events_dropped += 1
@@ -863,6 +1009,18 @@ class GregaleFlags:
         event: dict[str, Any] = {"name": name, "customer_id": request.customer, "at": at}
         if value:
             event["value"] = value
+        if subject is not None:
+            event["subject"] = subject
+        if properties:
+            event["properties"] = dict(properties)
+        decisions: dict[str, str] = {}
+        for key, decision in request.evidence.items():
+            if len(decisions) >= _EVENT_MAX_FLAGS:
+                break
+            served = decision.get("value")
+            decisions[key] = ("true" if served else "false") if isinstance(served, bool) else str(served)
+        if decisions:
+            event["flags"] = decisions
         self._events.append(event)
         return True
 
@@ -873,14 +1031,19 @@ class GregaleFlags:
     async def flush(self) -> None:
         """Send queued events now. A failed batch is dropped and counted, never retried."""
         async with self._flush_lock:
-            while self._events:
+            while self._events or self._exposures:
                 batch = self._events[:_EVENT_BATCH]
                 del self._events[:_EVENT_BATCH]
+                exposures = self._exposures[:_EXPOSURE_BATCH]
+                del self._exposures[:_EXPOSURE_BATCH]
+                body: dict[str, Any] = {"events": batch}
+                if exposures:
+                    body["exposures"] = exposures
                 try:
                     token = await self._identity_token()
                     response = await self._http_client().post(
                         self._events_url,
-                        json={"events": batch},
+                        json=body,
                         headers={
                             "Authorization": f"Bearer {token}",
                             "X-Faas-Flags-Capabilities": _FLAG_CAPABILITIES,
@@ -896,6 +1059,24 @@ class GregaleFlags:
                         self._events_dropped += len(batch) - accepted
                 except Exception:
                     self._events_dropped += len(batch)
+
+    def _record_exposure(self, decision: FlagDecision, customer: str, subject: str) -> None:
+        """Queue one subject exposure, at most once an hour per flag, customer, subject and variant."""
+        now = self._now()
+        dedupe_key = f"{decision.flag}\0{customer}\0{subject}\0{decision.value}"
+        seen = self._exposed.get(dedupe_key)
+        if seen is not None and now - seen < _EXPOSURE_DEDUPE_MS:
+            return
+        if len(self._exposed) >= _EXPOSURE_DEDUPE_MAX:
+            self._exposed.clear()
+        if len(self._exposures) >= _EXPOSURE_QUEUE_MAX:
+            self._events_dropped += 1
+            return
+        self._exposed[dedupe_key] = now
+        at = datetime.fromtimestamp(now / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        self._exposures.append(
+            {"flag": decision.flag, "rule_id": decision.rule_id or "", "variant": decision.value, "customer_id": customer, "subject": subject, "at": at}
+        )
 
     async def _flush_loop(self) -> None:
         while True:
@@ -960,6 +1141,9 @@ class GregaleFlags:
         ua_family = _single_header(headers, GREGALE_CLIENT_UA_FAMILY_HEADER)
         if _FLAG_KEY.fullmatch(ua_family) is not None:
             attributes["gregale.ua_family"] = ua_family
+        cohorts = _single_header(headers, GREGALE_FLAG_COHORTS_HEADER)
+        if parse_cohorts(cohorts) is not None:
+            attributes["gregale.cohort"] = cohorts
         request = _RequestState(
             attributes=attributes,
             kills=parse_kills(_single_header(headers, GREGALE_FLAG_KILLS_HEADER)),
@@ -1096,6 +1280,11 @@ class GregaleFlags:
                     type_="variant",
                 )
             )
+            if decision.reason == "rule_match" and request.customer and request.subject and request.bundle is not None:
+                flag = _find_flag(request.bundle, key) or {}
+                rule = next((r for r in flag.get("rules", []) if r.get("id") == decision.rule_id), None)
+                if rule is not None and (rule.get("experiment") or {}).get("unit") == "subject":
+                    self._record_exposure(decision, request.customer, request.subject)
         self._record_decision(request, decision)
         return decision
 
@@ -1253,6 +1442,7 @@ __all__ = [
     "GREGALE_CLIENT_COUNTRY_HEADER",
     "GREGALE_CLIENT_UA_FAMILY_HEADER",
     "GREGALE_FLAG_KILLS_HEADER",
+    "GREGALE_FLAG_COHORTS_HEADER",
     "AsyncGregaleFlagsTransport",
     "FlagDecision",
     "GregaleFlags",

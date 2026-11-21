@@ -1,0 +1,104 @@
+# Managed Redis
+
+> Preview. Managed Redis is available on Hobby, Pro and Scale once it is
+> enabled for your account.
+
+Gregale runs Redis-compatible caches on [Valkey](https://valkey.io), the
+open-source fork of Redis. Every Redis client library and `redis-cli` work
+unchanged. A cache runs in its own isolated VM, is reachable only from your
+apps, and scales to zero when nothing uses it.
+
+## Create a cache
+
+```bash
+gregale redis create sessions --memory 128
+```
+
+- `--memory` is the data size in MB: a multiple of 32, from 32 up to 512
+  (448 on Hobby). Default 128.
+- `--eviction-policy` decides what happens when the cache is full. Default
+  `allkeys-lru` (evict the least recently used key). `noeviction` refuses
+  writes with an `OOM` error instead. Also `allkeys-lfu`, `allkeys-random`,
+  `volatile-lru`, `volatile-lfu`, `volatile-random`, `volatile-ttl`.
+- `--idle-timeout` is how long the cache stays up with no traffic before it
+  parks, in seconds. Default 900 (15 minutes).
+
+| Plan | Caches |
+| --- | ---: |
+| Free | — |
+| Hobby | 1 |
+| Pro | 3 |
+| Scale | 10 |
+
+A cache counts as an app towards your plan's app limit.
+
+## Connect an app
+
+```bash
+gregale redis bind sessions --app web
+```
+
+This sets `REDIS_URL` on `web` (use `--env` for another name) to
+`redis://sessions.svc.gregale:6379`. The app picks it up at its next deploy or
+wake.
+
+Caches have no password. A cache has no public address, and only apps in the
+same account that are allowed to call it can connect, so clients configured
+with a bare `host:port` work too.
+
+## Docker Compose
+
+When you deploy a Compose project, a `redis` or `valkey` service becomes a
+managed cache named `<project>-<service>`. Every service that pointed at it
+gets the cache's address in the same form it used: `REDIS_URL=redis://redis:6379/0`
+becomes `redis://<project>-redis.svc.gregale:6379/0`, and
+`REDIS_ADDR=redis:6379` becomes `<project>-redis.svc.gregale:6379`. A key you
+have already set keeps its value. The deploy plan shows each cache it will
+create, or why it will not.
+
+## Scale to zero
+
+An idle cache parks. Its memory is saved with it, so keys are still there when
+it wakes. The next connection wakes it, and the first command waits for the
+wake.
+
+## What is kept
+
+The cache is a cache: it has no disk persistence or replica.
+
+- Kept: data across parking and waking.
+- Lost: data when the cache's machine fails or the cache crashes.
+
+Keep data you cannot lose in [managed PostgreSQL](postgres.md) or object
+storage.
+
+## Resize, update and restart
+
+```bash
+gregale redis resize sessions --memory 256
+gregale redis update sessions
+gregale redis restart sessions
+```
+
+All three keep your data. A resize or update starts a new VM that copies the
+cache before it takes over; writes pause for a moment at the switch. Shrinking
+below the data the cache holds needs `--evict`, which lets the cache evict keys
+by its policy. A restart saves the cache's memory and restores it.
+
+## Limits
+
+- Commands that change the server (`CONFIG`, `DEBUG`, `MODULE`, `SHUTDOWN`,
+  `SAVE`, `BGSAVE`, `BGREWRITEAOF`, `REPLICAOF`, `SLAVEOF`, `FAILOVER`,
+  `CLUSTER`, `ACL`, `MONITOR`, `SYNC`, `PSYNC`, `REPLCONF`) are refused. Lua scripts,
+  functions, pub/sub, streams and transactions work.
+- You cannot deploy your own image to a cache. Use `gregale redis resize` to
+  change its size.
+
+## Delete a cache
+
+```bash
+gregale redis delete sessions
+```
+
+The cache and its data are deleted. Apps bound to it keep their `REDIS_URL`
+until you remove it with `gregale env unset`.

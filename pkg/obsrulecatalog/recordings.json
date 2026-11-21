@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "3e93c0440f7d4515bcdc90945d2463af0b18741220a0330247bb8bd68445db46",
+      "revision": "b7731bf528a9f5649f2f38ecec4c88b1c1d4a78f58d878d3e8b5c95890dd881d",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "20887e41975409bd4289c5469ebff35157840e971bb9b22163bbf5f6f526600e",
+        "revision": "f461cc424714a661fbba58efb94f25cacd8c902fac1f06876269aa06db449693",
         "files": [
           "faas.rules.yml"
         ],
@@ -1434,11 +1434,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_queue_observation_healthy",
             "definition": {
-              "expression_hash": "c103cd56787e134ed1d148df7528c80344667cc1d2091a0446f236240bc52f7b",
+              "expression_hash": "875308efb36d0ab0d3b326e0fedc0014699ea98c5102668ca495a1113c30c095",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "8c2736307a117333c2863940d88575643810f4dd595efd7637d873b423b08ac2"
+              "fingerprint": "5b1c676b51f86556e6523c5249800914bded71b8f2882be7ecdf776c65c39eca"
             }
           },
           {
@@ -1924,8 +1924,8 @@
           }
         ]
       },
-      "alert_set_revision": "0becbf23f289c3da019cb17f62c7654e58545bf440eb53dce8d3b7719c879e49",
-      "alert_count": 569,
+      "alert_set_revision": "49dcf705f1b6fb79fc896c5b64e928bfef3db503b90e208a8fa2766ae5dd0b33",
+      "alert_count": 575,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -4175,6 +4175,12 @@
           "rule_name": "FaasLogArchiveSpoolNearCap"
         },
         {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied"
+        },
+        {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -4279,10 +4285,10 @@
       ]
     },
     {
-      "revision": "0ae071eec06bacc4c95441bad719c0f37eec1e6300f41907c47338e871b77a28",
+      "revision": "1cd52be63de6586217f16c723cf89cce8458386a8dd19f86aad898d52717b876",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "b0b64d7df43b746a5c22674c6208d0516fa62e7b04bd54119308a7f7e64618d1",
+        "revision": "e168e65b33710a28c740898e5c7eda129f8567bdc90f44057f0bc510dc70e1d6",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -5714,11 +5720,11 @@
             "group_name": "faas_billing",
             "rule_name": "builderd_build_queue_observation_healthy",
             "definition": {
-              "expression_hash": "c103cd56787e134ed1d148df7528c80344667cc1d2091a0446f236240bc52f7b",
+              "expression_hash": "875308efb36d0ab0d3b326e0fedc0014699ea98c5102668ca495a1113c30c095",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "8c2736307a117333c2863940d88575643810f4dd595efd7637d873b423b08ac2"
+              "fingerprint": "5b1c676b51f86556e6523c5249800914bded71b8f2882be7ecdf776c65c39eca"
             }
           },
           {
@@ -6204,8 +6210,8 @@
           }
         ]
       },
-      "alert_set_revision": "5d9c6b8b70e8267f55e6de2ec86b9d90e7cabeec591105d5684df5569a062507",
-      "alert_count": 593,
+      "alert_set_revision": "707180ec9fdc603c6e60308798b6a11bda07133b725a7f1b75dda1440afad461",
+      "alert_count": 599,
       "dependents": [
         {
           "rule_id": "0334e9dd652d8034eae35eed898be3ec03fb7548b2af3a4479360eee5f146041",
@@ -8453,6 +8459,12 @@
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
           "rule_name": "FaasLogArchiveSpoolNearCap"
+        },
+        {
+          "id": "42535689b36762c84cd9893f997efa0d4a2566ddd42eef2e9ee1c28bf823db67",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_slo",
+          "rule_name": "FaasDBPermissionDenied"
         },
         {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",

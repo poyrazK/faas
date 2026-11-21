@@ -44,7 +44,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		return "", "", err
 	}
 	request := bindingCredentialRequest(binding, databaseDataResource(database))
-	if request.CustomRoles, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
+	if request.CustomRoles, request.CustomRoleDefault, err = customRoleGrants(ctx, s.databases, database, binding.Access); err != nil {
 		return "", "", err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)

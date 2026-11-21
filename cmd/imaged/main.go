@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagegrant/secretdgrant"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -352,6 +353,13 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	} else if deferred {
 		log.Info("imaged: shared-store deletes deferred to the control plane")
 	}
+	// ADR-20261117190000: with FAAS_STORAGE_ACCESS=secretd the node holds no
+	// store credential; each object is reached through a secretd grant.
+	if _, closeGrants, err := secretdgrant.FromEnv(ctx, getenv, storageBackend, "imaged", log); err != nil {
+		return err
+	} else {
+		defer closeGrants()
+	}
 	indexedSnapshots, err := reconcileSnapshotRepositoryIndex(ctx, store, storageBackend)
 	if err != nil {
 		return fmt.Errorf("imaged: reconcile snapshot repository index: %w", err)
@@ -365,6 +373,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged: storage backend = oci", "registry", envOr("FAAS_OCI_REGISTRY", ""))
 	case "gcs":
 		log.Info("imaged: storage backend = gcs", "bucket", envOr("FAAS_GCS_BUCKET", ""),
+			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
+	case "s3":
+		log.Info("imaged: storage backend = s3", "bucket", envOr("FAAS_S3_BUCKET", ""),
+			"endpoint", envOr("FAAS_S3_ENDPOINT", ""),
 			"fallback", envOr("FAAS_STORAGE_FALLBACK_BACKEND", ""))
 	default:
 		log.Info("imaged: storage backend = local", "fc_root", envOr("FAAS_STORAGE_ROOT", "/srv/fc"),
@@ -630,11 +642,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// ADR-20261020085706 amendment 13: an approved release held before its
 	// release command waits out the break-glass release pause.
 	h.WithReleasePause(startReleasePauseWatcher(ctx, store, pool, log))
-	// ADR-20261029174438: prepare several deployments at once, off by default.
-	// db sizes imaged's direct pool from the same variable.
-	parallelPrep, err := parseBoolEnv(db.ImagedParallelPrepEnv, getenv(db.ImagedParallelPrepEnv))
+	// ADR-20261029174438: prepare several deployments at once, on unless
+	// FAAS_IMAGED_PARALLEL_PREP=false. db sizes imaged's direct pool from the
+	// same variable.
+	parallelPrep, err := db.ImagedParallelPrep(getenv(db.ImagedParallelPrepEnv))
 	if err != nil {
-		return err
+		return fmt.Errorf("imaged: %s must be a boolean", db.ImagedParallelPrepEnv)
 	}
 	prepWorkers := 1
 	if parallelPrep {

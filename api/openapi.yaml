@@ -513,6 +513,295 @@ paths:
           description: Owner decisions for hosted source reviews are currently rate-limited.
         '503':
           description: Source review approval is disabled or the owner review journal is temporarily unavailable.
+  /v1/task-tool-source-intents/{id}/bindings:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity whose native Task binding selection is being inspected or set.
+    get:
+      operationId: getHostedTaskBindings
+      summary: Inspect hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: Fresh original requester or personal owner reads qualification metadata only. Native source, app,
+        credential and authority drift permanently invalidates previously observed evidence. This read can persist
+        terminal invalidation but never opens credentials or repeats probes. Passing evidence expires within one minute,
+        ends at the original source deadline and grants no readiness or execution authority.
+      responses:
+        '200':
+          description: Closed qualification metadata with current terminal invalidation and no source, references
+            or credential values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The retained source identity supplied for metadata inspection is malformed.
+        '401':
+          description: Authenticate the inspecting requester or personal owner before reading qualification metadata.
+        '403':
+          description: This caller lacks permission to inspect the selected source binding metadata.
+        '404':
+          description: No qualification for this source is visible to the current account or reader.
+        '409':
+          description: Qualification metadata could not be refreshed atomically; inspect the same source identity
+            again.
+        '429':
+          description: Metadata reads for this retained Task source are currently rate limited.
+        '503':
+          description: The native qualification journal is temporarily unavailable for metadata inspection.
+    put:
+      operationId: selectHostedTaskBindings
+      summary: Select owner-reviewed native Task bindings
+      tags:
+      - mcp-management
+      description: An authenticated account owner or fresh unscoped non-agent, non-MCP-login personal administrator
+        selects existing native managed PostgreSQL references under the account MFA policy. Both verification and
+        source-retention opt-ins and independent sealing identities are required. Selection immutably pins the approved
+        source digests, queue namespace, app baselines and secret versions for one ready account-owned database with
+        distinct runtime, migration and observer roles. Retries preserve the original non-renewable source deadline;
+        selection starts neither probes nor execution.
+      responses:
+        '200':
+          description: New or identically replayed native-reference selection metadata with its fixed source deadline;
+            no checks or execution are started.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The binding selection contains malformed source digests, namespace or native secret references.
+        '401':
+          description: Authenticate the selecting personal owner before recording native binding references.
+        '403':
+          description: Selecting Task bindings requires personal owner authority and satisfaction of the account MFA
+            policy.
+        '404':
+          description: The retained source or selecting owner is unavailable within this account.
+        '409':
+          description: The source approval, selected references or pinned native facts differ from the immutable qualification.
+        '429':
+          description: Owner requests to select hosted Task bindings are currently rate limited.
+        '503':
+          description: New binding selection, source retention or the required independent seal identities are unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingSelection'
+  /v1/task-tool-source-intents/{id}/bindings/check:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity for the one-time personal-owner binding probe.
+    post:
+      operationId: checkHostedTaskBindings
+      summary: Probe selected hosted Task bindings once
+      tags:
+      - mcp-management
+      description: A fresh personal owner claims the exact selected fingerprint once and runs bounded read-only catalog
+        qualification under the account MFA policy. Native authority and pins are checked before and after the attempt.
+        Validated public destinations, verified TLS and sequential role connections keep credentials private. Concurrent
+        calls and restarts cannot repeat the claim. Success records at most one minute of historical evidence, clamped
+        to source expiry, without proving retained payload readability, migration compatibility, VM connectivity or
+        permission to apply.
+      responses:
+        '200':
+          description: Recorded one-time catalog results or the existing in-progress or terminal receipt for that
+            same immutable selection.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The probe request must name a valid source identity and lowercase SHA256 qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before requesting a one-time catalog probe.
+        '403':
+          description: Probing selected bindings requires fresh personal owner authority and the account MFA policy.
+        '404':
+          description: The source, selected qualification or current probing owner cannot be found in this account.
+        '409':
+          description: The probe fingerprint conflicts with the selection or all bounded private workers are occupied.
+        '429':
+          description: Personal-owner qualification probe requests are currently rate limited.
+        '503':
+          description: Owner probing, retained source admission or the required unseal configuration is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/bindings/revoke:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose selected binding evidence is being revoked.
+    post:
+      operationId: revokeHostedTaskBindings
+      summary: Revoke hosted Task binding qualification
+      tags:
+      - mcp-management
+      description: A fresh personal owner permanently revokes the exact selected qualification under the account MFA
+        policy. Revocation remains available while new admission is disabled and does not require the old requester
+        or native app baseline to remain live. Revoked evidence cannot be revived and previously observed passing
+        checks never supply execution authority.
+      responses:
+        '200':
+          description: Terminal revocation metadata for the exact selected qualification fingerprint.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskBindingVerification'
+        '400':
+          description: The revocation request contains an invalid source identity or qualification fingerprint.
+        '401':
+          description: Authenticate the personal owner before revoking selected binding evidence.
+        '403':
+          description: Revoking binding evidence requires personal owner authority and compliance with the account
+            MFA policy.
+        '404':
+          description: The retained source, selected qualification or current revoking owner is unavailable in this
+            account.
+        '409':
+          description: Revocation names a fingerprint different from the immutable selected qualification.
+        '429':
+          description: Owner revocations of hosted Task qualifications are currently rate limited.
+        '503':
+          description: The native qualification journal cannot currently record binding revocations.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskBindingCheck'
+  /v1/task-tool-source-intents/{id}/rehearsal:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Immutable retained source identity for the contained rehearsal plan.
+    get:
+      operationId: getHostedTaskRehearsal
+      summary: Inspect a hosted Task rehearsal plan
+      tags:
+      - mcp-management
+      description: Read owner-only rehearsal metadata and persist invalidation when evidence expires or native facts drift.
+      responses:
+        '200':
+          description: The current metadata for the immutable rehearsal plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The retained source identity is malformed.
+        '401':
+          description: A personal administrator key must authenticate this inspection.
+        '403':
+          description: Only an unscoped personal administrator can inspect retained rehearsal metadata.
+        '404':
+          description: The hosted Task rehearsal plan is absent or inaccessible to the current account.
+        '409':
+          description: The plan could not be refreshed atomically.
+        '429':
+          description: Owner reads are currently rate limited for hosted Task rehearsal metadata.
+        '503':
+          description: Native rehearsal state cannot be inspected while the journal is unavailable.
+    put:
+      operationId: prepareHostedTaskRehearsal
+      summary: Plan a contained hosted Task rehearsal
+      tags:
+      - mcp-management
+      description: Reserve one disposable target identity for the exact approved source and passing binding observation.
+        Preparation records no approval and allocates no runtime resources.
+      responses:
+        '200':
+          description: The new or identically replayed rehearsal plan.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The source or binding digests are malformed.
+        '401':
+          description: Authenticate the personal administrator reserving the rehearsal target.
+        '403':
+          description: The caller lacks personal administrator authority to reserve this rehearsal target.
+        '404':
+          description: No retained source or native binding observation is visible to this personal account.
+        '409':
+          description: The source or binding observation is unavailable, stale, or differs from the immutable rehearsal plan.
+        '429':
+          description: Rehearsal plan preparation exceeds the owner request budget.
+        '503':
+          description: Planning admission or its source and binding prerequisites are disabled, or the journal is unavailable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskRehearsalPrepare'
+  /v1/task-tool-source-intents/{id}/rehearsal/decision:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: ^[0-9a-f]{64}$
+      description: Retained source identity whose rehearsal plan receives the owner decision.
+    put:
+      operationId: decideHostedTaskRehearsal
+      summary: Approve or revoke a hosted Task rehearsal plan
+      tags:
+      - mcp-management
+      description: Record a separate owner decision against the exact plan digest. Approval cannot renew binding evidence
+        and produces no runtime effects. Identical retries preserve the original decision time.
+      responses:
+        '200':
+          description: The current plan metadata after a decision or an idempotent replay.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HostedTaskRehearsalPlan'
+        '400':
+          description: The plan digest or decision is malformed.
+        '401':
+          description: Authenticate the personal administrator recording the rehearsal decision.
+        '403':
+          description: The current key cannot approve or revoke this disposable rehearsal plan.
+        '404':
+          description: No plan matching this retained source identity is visible to the deciding owner.
+        '409':
+          description: The digest differs from the retained plan or a different owner key already approved it.
+        '429':
+          description: The account decision requests for hosted Task rehearsals are rate limited.
+        '503':
+          description: Approval admission is disabled or the native decision cannot be persisted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HostedTaskRehearsalDecision'
   /v1/task-tool-release-intents/{id}:
     parameters:
     - name: id
@@ -10389,6 +10678,56 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/postgres/databases/{id}/query:
+    parameters:
+      - $ref: '#/components/parameters/ManagedPostgresID'
+    post:
+      tags: [managed_postgres]
+      operationId: queryManagedPostgresDatabase
+      summary: Run one read-only SQL statement.
+      description: |
+        Requires the data:read scope (or admin) and MFA.
+        Runs one statement as the database's agent
+        query login, a read-only login that reads the public schema, inside
+        a READ ONLY transaction with a 5 s statement timeout and a 1 s lock
+        timeout, then rolls back. Returns at most max_rows rows (default
+        100, at most 1000) and 1 MiB of values, each in its PostgreSQL text
+        form or null; truncated is true when a cap stopped reading. One
+        query per database runs at a time. A suspended database wakes and
+        its compute is billed as usage. The SQL and rows are never logged;
+        the audit log records a SHA-256 of the statement. Cache-Control
+        no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresQueryRequest' }
+      responses:
+        '200':
+          description: The rows read.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresQueryResponse' }
+        '409':
+          description: The database is not ready, or another query of it is running.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: PostgreSQL refused or failed the statement (postgres_query_failed); the detail carries its message and SQLSTATE.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '501':
+          description: The database's backend cannot run queries (postgres_query_unsupported).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        default:
+          description: Missing sign-in, data:read scope or MFA, a database this account does not own, an invalid request, managed databases not configured, or the rate limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/postgres/databases/{id}/undelete:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -11499,7 +11838,7 @@ paths:
     get:
       operationId: listBucketObjects
       summary: List objects with opaque cursor pagination
-      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket.
+      description: Requires storage:read or admin. Non-admin keys also require a read or read_write grant on this bucket. An environment branch's bucket lists as the branch reads it, its own objects over its parent bucket's, keys it deleted hidden; each parent object has from_parent.
       tags: [storage]
       parameters:
         - { name: prefix, description: Only return keys starting with this prefix., in: query, schema: { type: string, maxLength: 1024 } }
@@ -11523,6 +11862,7 @@ paths:
                         key: { type: string }
                         size_bytes: { type: integer, format: int64 }
                         last_modified: { type: string, format: date-time }
+                        from_parent: { type: boolean, description: "In an environment branch's bucket, the object is read from the parent environment's bucket." }
                   next_cursor: { type: string }
         default:
           description: Invalid request, access denied, bucket unavailable, or provider error
@@ -16060,11 +16400,10 @@ paths:
       operationId: verifyEmail
       summary: Verify a password-signup email address.
       description: |
-        A browser (Accept text/html) gets an HTML page whose button posts the
-        token back, and nothing is consumed, so a mail scanner that prefetches
-        the link cannot use up the token. Any other client consumes the
-        24-hour, single-use token here and the account email is marked
-        verified. No session is created.
+        A browser (Accept text/html) gets confirmation or sign-in guidance.
+        Opening the page does not consume the token. Other GET clients consume
+        the 24-hour, single-use token only with a live session for its account.
+        No session is created.
       parameters:
         - in: query
           name: token
@@ -16073,10 +16412,11 @@ paths:
           schema: { type: string }
       responses:
         '200':
-          description: The confirmation page, or for a non-browser client the verified-email page.
+          description: Confirmation, sign-in guidance, or the verified-email page.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '410':
           description: Verification link expired, invalid, or already used.
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -16085,9 +16425,10 @@ paths:
       operationId: confirmEmailVerification
       summary: Confirm an email verification from its confirmation page.
       description: |
-        The confirmation page's form posts the token here. It is consumed and
-        the account email marked verified; the HTML answer asks the customer
-        to sign in again rather than creating a session.
+        The confirmation page posts the token here. A live session for the
+        account is required to consume it and mark the address verified.
+        Other browser sessions receive instructions for signing into the
+        correct account. No session is created.
       requestBody:
         required: true
         content:
@@ -16101,10 +16442,11 @@ paths:
                   description: The verification token from the confirmation page's form.
       responses:
         '200':
-          description: Email verified; HTML sign-in prompt.
+          description: Email verified or sign-in guidance for a browser.
           content:
             text/html:
               schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '410':
           description: The posted token is expired, unknown, or was already used.
@@ -16590,19 +16932,25 @@ paths:
         unverified, at most once a minute and five times an hour. Returns
         `already_verified` when there is nothing to send. Available after the
         30-day verification period ends, when other routes answer
-        `email_verification_required`.
+        `email_verification_required`. The browser forms also accept a
+        form-encoded CSRF token from the signed-in account and render HTML.
       responses:
         '200':
           description: The address is already verified.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '202':
           description: A link was sent, or held back by the per-account limit.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EmailVerificationResendResponse' }
+            text/html:
+              schema: { type: string }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/auth/sessions/revoke_all:
@@ -23032,6 +23380,51 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/deleted-apps/{id}/purge:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Exact account-owned deleted-app ID to remove permanently, from the deleted-app inventory.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: purgeDeletedApp
+      summary: Permanently remove a deleted app now, freeing its slug.
+      description: |
+        Ends the app's restore window at once and removes the app and its stored
+        artifacts, so the same account can reuse the slug (for example to redeploy
+        a Compose project after a teardown). This cannot be undone. Requires
+        deploy-write, MFA completion and trusted browser origin for cookie
+        authentication. Refused with 409 app_not_purgeable, before the window
+        closes, while the app still has object storage buckets. When something
+        else still holds the app the response is 202 with pending_reason; the
+        window stays closed and the grace sweep finishes the purge.
+      requestBody:
+        description: Optional empty object; no fields are accepted.
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, maxProperties: 0 }
+      responses:
+        '200':
+          description: The app is gone and its slug is free for this account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppPurgeResponse' }
+        '202':
+          description: The restore window is closed; the purge finishes once pending_reason clears.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedAppPurgeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/restore:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -24265,6 +24658,39 @@ paths:
       responses:
         '204':
           description: The SLO was deleted.
+  /v1/apps/{slug}/protection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: getAppProtection
+      summary: Show the app's production protection
+      description: "Reports whether the app is enrolled in production protection and the state of each protection object: the availability and latency SLOs, the health check, the account email channel, the alert rules and the availability release gate. The health check is run by the platform without billing its requests. An app created before protection was available reports state none."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's production protection.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      operationId: setAppProtection
+      summary: Turn the app's production protection on or off
+      description: "on enrolls the app, including one created before protection was available, and sets up the protection objects after its next live production deploy. off deletes the protection objects the customer has not changed; changed objects, objects a kept alert rule or release gate still uses, and the account email channel stay."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetAppProtectionRequest' }
+      responses:
+        '200':
+          description: The app's production protection after the change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppProtectionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/synthetics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25167,7 +25593,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25296,7 +25722,7 @@ paths:
                 status: 402
                 code: "plan_per_app_metrics_not_allowed"
                 detail: "the free plan does not include per-app metrics; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#per-app-metrics"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -25389,7 +25815,7 @@ paths:
                 status: 402
                 code: "plan_app_usage_summary_not_allowed"
                 detail: "the free plan does not include the per-app usage summary; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#usage-summary"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -27364,7 +27790,7 @@ paths:
                 status: 402
                 code: "plan_app_errors_not_allowed"
                 detail: "the free plan does not include per-app errors; upgrade to Hobby or above."
-                docs_url: "https://gregale.dev/docs/plans#app-errors"
+                docs_url: "https://gregale.dev/docs/plans"
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
@@ -34390,9 +34816,15 @@ paths:
       tags: [env]
       operationId: listEnv
       summary: List env vars on an app.
+      parameters:
+        - name: values
+          in: query
+          required: false
+          schema: { type: string, enum: ["true"] }
+          description: "`true` includes each variable's plaintext `value`. Variables are non-sensitive by contract; sealed secrets are listed separately and never carry a value."
       description: |
         Returns every env var key + timestamps on the app. The plaintext
-        value NEVER appears in the response — guest-init reads the value
+        value appears only with `?values=true`; guest-init reads it
         at process start from `/etc/faas/env.json` inside the guest.
 
         **scope filter.** The optional `?scope=`
@@ -63189,6 +63621,29 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/flags/{key}/kill:
+    parameters:
+      - { $ref: '#/components/parameters/FlagsProjectSlug' }
+      - { $ref: '#/components/parameters/FlagsEnvironment' }
+      - { $ref: '#/components/parameters/FlagsKey' }
+    post:
+      tags: [flags]
+      operationId: killProjectFlag
+      summary: Kill one flag on the latest configuration.
+      description: Requires deploy-write scope and MFA. Sets the flag's kill on the latest published configuration, so every evaluation serves the application's fallback. Takes no expected version, re-reads the configuration when another publish wins the race, and is idempotent; changed is false when the flag was already killed. Unlike other flag writes, an agent connection needs no person's approval for it. Revive a flag by publishing the configuration.
+      responses:
+        '200':
+          description: The flag is killed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeatureFlagKillResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/runtime/flags:
     get:
       tags: [flags]
@@ -63371,11 +63826,12 @@ paths:
       tags: [flags]
       operationId: getProjectFlagExperimentResults
       summary: Read a flag experiment's sequential results.
-      description: "Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first."
+      description: "Each variant is compared with control by an always-valid mixture sequential probability ratio test, so results may be read at any time. A sample ratio mismatch against the rule's weights is reported first. Ratio metrics use the delta method; percentile metrics a fixed-horizon bootstrap; bandits report each arm's best-arm probability and expected loss instead of p-values."
       parameters:
         - { $ref: '#/components/parameters/FlagsProjectSlug' }
         - { $ref: '#/components/parameters/FlagsEnvironment' }
         - { $ref: '#/components/parameters/FlagExperimentKey' }
+        - { name: segment, in: query, required: false, description: "Cohort key: split a binary customer experiment's results by the cohort's members.", schema: { type: string } }
       responses:
         '200':
           description: Per-variant conversion, lift, confidence sequence and status.
@@ -63385,7 +63841,358 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-layers:
+    get:
+      tags: [flags]
+      operationId: listProjectFlagExperimentLayers
+      summary: List the environment's experiment layers.
+      description: "Each layer with the slices its running experiments hold and the basis points still free."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's layers.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentLayerList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [flags]
+      operationId: createProjectFlagExperimentLayer
+      summary: Create an experiment layer.
+      description: "Publishes a flag configuration with the new layer and a random seed. At most 10 layers per environment (409 flag_experiment_layer_limit)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentLayerRequest' }
+      responses:
+        '201':
+          description: The environment's layers with the new one.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentLayerList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}:
+    delete:
+      tags: [flags]
+      operationId: deleteProjectFlagExperimentLayer
+      summary: Delete an experiment layer.
+      description: "Refused with 409 flag_experiment_running while a running experiment holds a slice of it."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the layer to delete., schema: { type: string } }
+      responses:
+        '204': { description: The layer is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-holdout:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperimentHoldout
+      summary: Read the environment holdout.
+      description: "The basis points of customers that see every running experiment's control."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The holdout.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [flags]
+      operationId: setProjectFlagExperimentHoldout
+      summary: Set the environment holdout.
+      description: "0 to 2000 basis points; 0 turns it off. Refused with 409 flag_experiment_running while an experiment runs, so no experiment's population changes under it."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+      responses:
+        '200':
+          description: The holdout as set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldout' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/experiment-holdout/report:
+    get:
+      tags: [flags]
+      operationId: getProjectFlagExperimentHoldoutReport
+      summary: Compare held-out customers with everyone else.
+      description: "The cumulative effect of experimentation: the share of held-out and other active customers that sent the event in the range (default the last 30 days). Requires product analytics."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: event, in: query, required: true, description: The event whose senders count as converted., schema: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' } }
+        - { name: from, in: query, required: false, description: "Report start (RFC 3339); defaults to 30 days ago.", schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: "Report end (RFC 3339); defaults to the request time.", schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The holdout report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FlagExperimentHoldoutReport' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/events:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightEvents
+      summary: Read a product analytics event series.
+      description: "Counts, distinct units and summed value of one track() event per time bucket, optionally filtered by properties and broken down by a flag's served value or a property. Requires the product_analytics platform flag and a plan with analytics retention. The range defaults to the last 7 days and is bounded by the plan's analytics retention and AnalyticsQueryMaxDays."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: event, in: query, required: true, description: Event name., schema: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' } }
+        - { name: interval, in: query, required: false, description: Bucket size., schema: { type: string, enum: [hour, day], default: day } }
+        - { name: unit, in: query, required: false, description: What Units counts., schema: { type: string, enum: [customer, subject], default: customer } }
+        - { name: by, in: query, required: false, description: "Breakdown: flag:KEY or property:KEY.", schema: { type: string, maxLength: 80 } }
+        - { name: where, in: query, required: false, description: "Repeatable KEY:VALUE property filter.", schema: { type: array, items: { type: string } }, style: form, explode: true }
+        - { name: from, in: query, required: false, description: Range start (RFC 3339)., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: Range end (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: The event series.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightEventSeries' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/funnel:
+    post:
+      tags: [flags]
+      operationId: postProjectInsightFunnel
+      summary: Compute a product analytics funnel.
+      description: "Read-only. Units that did the steps in order, each step after the previous one, within the window from the first step. A flag breakdown uses the flag value carried by the unit's first-step event."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightFunnelRequest' }
+      responses:
+        '200':
+          description: Units and conversion per step, overall and per breakdown value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightFunnel' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/retention:
+    post:
+      tags: [flags]
+      operationId: postProjectInsightRetention
+      summary: Compute product analytics retention.
+      description: "Read-only. Cohorts units by the period of their first start event and reports which sent the return event in each following period; only ended periods count. The range defaults to the last 28 days."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightRetentionRequest' }
+      responses:
+        '200':
+          description: Overall, per-cohort and per-breakdown retention.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightRetention' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/insights/requests:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightRequests
+      summary: Read request telemetry by flag value.
+      description: "Requests, server errors and p95 latency per served value of one flag, from request telemetry and within its retention. The range defaults to the last day."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: flag, in: query, required: true, description: Flag key., schema: { type: string } }
+        - { name: from, in: query, required: false, description: Start of the request telemetry range (RFC 3339); defaults to one day ago., schema: { type: string, format: date-time } }
+        - { name: until, in: query, required: false, description: End of the request telemetry range (RFC 3339); defaults to now., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Request telemetry per flag value.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightRequests' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts:
+    get:
+      tags: [flags]
+      operationId: listProjectInsightCohorts
+      summary: List the environment's cohorts.
+      description: "Saved cohorts with their definition, member count, the plan's member bound and the last refresh. Flag rules target a cohort with the gregale.cohort attribute. Requires product analytics."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      responses:
+        '200':
+          description: The environment's cohorts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohortList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    post:
+      tags: [flags]
+      operationId: createProjectInsightCohort
+      summary: Save a cohort.
+      description: "Members are computed within a minute, then hourly. At most 20 cohorts per environment (409 analytics_cohort_limit); members per cohort are bounded by plan (Hobby 1,000, Pro 10,000, Scale 100,000)."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InsightCohortRequest' }
+      responses:
+        '201':
+          description: The saved cohort, before its first refresh.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts/{key}:
+    get:
+      tags: [flags]
+      operationId: getProjectInsightCohort
+      summary: Read one cohort.
+      description: "A cohort's definition, member count and last refresh; a failed refresh keeps the previous members and reports refresh_error."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Cohort key., schema: { type: string } }
+      responses:
+        '200':
+          description: The cohort.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    delete:
+      tags: [flags]
+      operationId: deleteProjectInsightCohort
+      summary: Delete a cohort.
+      description: "Rules that target the cohort stop matching its customers within a minute."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the cohort to delete., schema: { type: string } }
+      responses:
+        '204': { description: The cohort is deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh:
+    post:
+      tags: [flags]
+      operationId: refreshProjectInsightCohort
+      summary: Recompute a cohort now.
+      description: "Asks for the cohort's members to be recomputed on the next reconciler pass instead of at the hourly refresh."
+      parameters:
+        - { $ref: '#/components/parameters/FlagsProjectSlug' }
+        - { $ref: '#/components/parameters/FlagsEnvironment' }
+        - { name: key, in: path, required: true, description: Key of the cohort to recompute., schema: { type: string } }
+      responses:
+        '202':
+          description: The refresh is requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InsightCohort' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
   /v1/runtime/flags/events:
     post:
@@ -63397,7 +64204,7 @@ paths:
         - name: X-Faas-Flags-Capabilities
           in: header
           required: false
-          description: Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1.
+          description: Comma-separated optional runtime SDK capabilities. SDKs that report events advertise track-v1; SDKs that send subject, properties and flags also advertise track-v2.
           schema: { type: string, maxLength: 256 }
       security:
         - flagsWorkloadIdentity: []
@@ -75021,6 +75828,267 @@ components:
           - reject
           - revoke
           description: Owner verdict on this hosted source review, independent of future execution authorization.
+    HostedTaskRehearsalPrepare:
+      type: object
+      additionalProperties: false
+      description: Exact digests of the approved source and passing native qualification.
+      required:
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      properties:
+        intent_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        review_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        binding_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+    HostedTaskRehearsalDecision:
+      type: object
+      additionalProperties: false
+      description: A separate owner decision against an immutable rehearsal plan.
+      required:
+      - plan_sha256
+      - decision
+      properties:
+        plan_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        decision:
+          type: "string"
+          enum: ["approve", "revoke"]
+    HostedTaskRehearsalPlan:
+      type: object
+      additionalProperties: false
+      description: Owner-only plan metadata. A target identity reserves future allocation and creates no resources.
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - target_id
+      - queue_namespace
+      - plan_sha256
+      - status
+      - created_at
+      - binding_checked_at
+      - expires_at
+      - no_traffic
+      properties:
+        version:
+          type: "integer"
+          enum: [1]
+        account_id:
+          type: "string"
+          format: "uuid"
+        intent_id:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        intent_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        review_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        binding_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        target_id:
+          type: "string"
+          format: "uuid"
+        queue_namespace:
+          type: "string"
+          pattern: "^rehearsal-[0-9a-f-]{36}$"
+        plan_sha256:
+          type: "string"
+          pattern: "^[0-9a-f]{64}$"
+        status:
+          type: "string"
+          enum: ["planned", "approved", "claimed", "revoked", "stale", "expired"]
+        created_at:
+          type: "string"
+          format: "date-time"
+        binding_checked_at:
+          type: "string"
+          format: "date-time"
+        expires_at:
+          type: "string"
+          format: "date-time"
+        approved_at:
+          type: "string"
+          format: "date-time"
+        claimed_at:
+          type: "string"
+          format: "date-time"
+        no_traffic:
+          type: "boolean"
+          enum: [true]
+    HostedTaskBindingSelection:
+      type: object
+      additionalProperties: false
+      required:
+      - intent_sha256
+      - review_sha256
+      - namespace
+      - web_database_ref
+      - worker_database_ref
+      - migration_database_ref
+      - observer_database_ref
+      properties:
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        namespace:
+          type: string
+          maxLength: 128
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:/-]*$
+        web_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed web app; never
+            a credential value.
+        worker_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Existing read_write native managed PostgreSQL secret reference on the reviewed worker app sharing
+            the selected queue.
+        migration_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Worker app reference for its separate migration-only PostgreSQL role; qualification never runs
+            a migration.
+        observer_database_ref:
+          type: string
+          pattern: ^secret:[A-Z][A-Z0-9_]*$
+          maxLength: 135
+          description: Native read_only PostgreSQL secret reference on the reviewed observer app, isolated from runtime
+            and migration roles.
+      description: Personal-owner selection of native Task binding references for one approved retained source intent,
+        never plaintext credentials.
+    HostedTaskBindingCheck:
+      type: object
+      additionalProperties: false
+      required:
+      - binding_sha256
+      properties:
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      description: Exact immutable qualification fingerprint supplied by a personal owner for a check or revocation.
+    HostedTaskBindingResult:
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          enum:
+          - namespace
+          - owner_keys
+          - configured_payload_keys
+          - database_schema
+          - runtime_roles
+          - migration_owner
+          - observer_read_only
+        status:
+          type: string
+          enum:
+          - not_checked
+          - passed
+          - failed
+      description: One fixed-name bounded qualification outcome containing no native database facts or secret material.
+    HostedTaskBindingVerification:
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - account_id
+      - intent_id
+      - intent_sha256
+      - review_sha256
+      - binding_sha256
+      - status
+      - checks
+      - created_at
+      - expires_at
+      - ready_to_apply
+      - bindings_verified
+      - owner_authorization_required
+      properties:
+        version:
+          type: integer
+          enum:
+          - 1
+        account_id:
+          type: string
+          format: uuid
+        intent_id:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        intent_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        review_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        binding_sha256:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+        status:
+          type: string
+          enum:
+          - selected
+          - verifying
+          - passed
+          - failed
+          - stale
+          - revoked
+          - expired
+        checks:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/HostedTaskBindingResult'
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        valid_until:
+          type: string
+          format: date-time
+        ready_to_apply:
+          type: boolean
+          enum:
+          - false
+        bindings_verified:
+          type: boolean
+          enum:
+          - false
+        owner_authorization_required:
+          type: boolean
+          enum:
+          - true
+      description: Historical private-binding qualification metadata only. No credential values, references, source,
+        database facts, owner decisions or execution authority.
     TaskToolReleaseIntent:
       type: object
       additionalProperties: false
@@ -88996,6 +90064,7 @@ components:
         evidence_through_id: { type: integer, format: int64, minimum: 0 }
         known_millicents: { type: integer, format: int64, minimum: 0 }
         coverage_complete: { type: boolean }
+        projectable: { type: boolean, description: 'Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.' }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
         projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
@@ -89298,6 +90367,9 @@ components:
         fresh: { type: boolean }
         expected_minutes: { type: integer, format: int64 }
         complete_minutes: { type: integer, format: int64 }
+        projectable:
+          type: boolean
+          description: Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
         unpriced_quantity: { type: integer, format: int64 }
         non_billable_quantity: { type: integer, format: int64 }
         reasons: { type: array, items: { type: string } }
@@ -89629,6 +90701,44 @@ components:
           oneOf:
             - { type: boolean }
             - { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$', description: Directly select a configured variant. }
+        experiment: { $ref: '#/components/schemas/FlagRuleExperiment' }
+    FlagRuleExperiment:
+      description: "The running experiment of a weighted rule, set when the experiment starts and cleared when it stops. Apid writes it; a configuration update must carry it unchanged. Runtime SDKs need capabilities experiment-layers-v1 and subject-exposures-v1."
+      type: object
+      additionalProperties: false
+      required: [key, control, unit]
+      properties:
+        key: { type: string, description: Experiment key. }
+        control: { type: string, description: "The variant held-out customers see." }
+        unit: { type: string, enum: [customer, subject] }
+        layer: { type: string, description: "Exclusive layer whose slice [from, to) the experiment holds." }
+        from: { type: integer, minimum: 0, maximum: 10000 }
+        to: { type: integer, minimum: 0, maximum: 10000 }
+    FlagHoldout:
+      description: "The environment holdout: basis_points of customers, chosen by seed, see every running experiment's control."
+      type: object
+      additionalProperties: false
+      required: [seed, basis_points]
+      properties:
+        seed: { type: string }
+        basis_points: { type: integer, minimum: 0, maximum: 2000 }
+    FlagLayer:
+      description: "An exclusive experiment layer: experiments in one layer hold disjoint slices of its customers (or subjects)."
+      type: object
+      additionalProperties: false
+      required: [key, seed]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        seed: { type: string }
+    FlagRolloutMetric:
+      description: "Gates an automatic stage on a conversion event: customers the stage serves are compared with every other customer that evaluated the flag. The stage rolls back to 0 when their rate is clearly more than max_decrease lower, and advances only with min_units in each group and no such decrease."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        max_decrease: { type: number, minimum: 0, maximum: 1, description: "Tolerated absolute conversion rate decrease; 0 means 0.01." }
+        min_units: { type: integer, minimum: 0, maximum: 1000000, description: "Customers each group needs before a stage advances; 0 means 100." }
     FlagLifecycleReport:
       description: Lifecycle of every flag in the current configuration.
       type: object
@@ -89711,6 +90821,7 @@ components:
           minimum: 60
           maximum: 604800
           description: Evidence lookback window; must fit within debugger retention.
+        metric: { $ref: '#/components/schemas/FlagRolloutMetric' }
     FlagRolloutPromotionRequest:
       description: Optimistic stage promotion request; an expected-version conflict requires a fresh read.
       type: object
@@ -89719,6 +90830,16 @@ components:
       properties:
         expected_version: { type: integer, format: int64, minimum: 0 }
         rule_id: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FeatureFlagKillResponse:
+      description: A killed flag and the configuration version that holds the kill.
+      type: object
+      additionalProperties: false
+      required: [key, killed, changed, version]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        killed: { type: boolean, description: Always true. }
+        changed: { type: boolean, description: False when the flag was already killed and no configuration was published. }
+        version: { type: integer, format: int64, minimum: 1 }
     FlagRolloutPromotion:
       description: Health-gate evaluation for a progressive rollout stage. A held or complete status does not publish a new configuration version.
       type: object
@@ -89784,21 +90905,69 @@ components:
           type: object
           maxProperties: 100
           additionalProperties: { type: array, maxItems: 1000, uniqueItems: true, items: { type: string, format: uuid } }
+        holdout: { $ref: '#/components/schemas/FlagHoldout' }
+        layers: { type: array, maxItems: 10, items: { $ref: '#/components/schemas/FlagLayer' } }
     FlagExperimentCreateRequest:
       description: A flag experiment to create.
       type: object
       additionalProperties: false
-      required: [key, flag, rule_id, control, metric_event]
+      required: [key, flag, rule_id, control]
       properties:
         key: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$' }
         flag: { type: string, description: The variant flag. }
         rule_id: { type: string, description: "The flag's weighted rule." }
         control: { type: string, description: The baseline variant. }
-        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The metric event. }
-        metric_kind: { type: string, enum: [conversion, mean], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer." }
+        metric_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "The metric event; required for conversion and mean metrics, refused for funnel and retention." }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention, ratio, percentile], description: "conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics; ratio compares the metric event's value sum over the denominator event's; percentile compares a percentile of per-customer values (fixed-horizon bootstrap)." }
+        funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
+        retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
+        cuped: { type: boolean, description: "Adjust results for each customer's 14 days before the start (CUPED); default true." }
         mixing_lift: { type: number, exclusiveMinimum: 0, maximum: 1, description: "mSPRT mixing standard deviation: an absolute conversion-rate lift (default 0.02), or a standardized effect size for mean metrics (default 0.1)." }
         guardrails: { $ref: '#/components/schemas/FlagExperimentGuardrailsRequest' }
         start: { type: boolean, description: Start the experiment at once. }
+        unit: { type: string, enum: [customer, subject], description: "customer (default) or subject: end users of a rule with rollout_unit subject, counted from SDK exposures; subject experiments need product analytics, take a conversion, funnel or retention metric and have no guardrails." }
+        layer: { type: string, description: "Exclusive layer; the experiment holds traffic basis points of it while running." }
+        traffic: { type: integer, minimum: 1, maximum: 10000, description: "Basis points of the layer; required with layer." }
+        allocation: { type: string, enum: [fixed, bandit], description: "fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule." }
+        denominator_event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: "A ratio metric's denominator event." }
+        percentile: { type: integer, minimum: 50, maximum: 99, description: "A percentile metric's percentile." }
+    FlagExperimentFunnel:
+      description: "A funnel metric: a customer converts when it completes the steps in order within the window after its first exposure."
+      type: object
+      additionalProperties: false
+      required: [steps, window]
+      properties:
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' } }
+        window: { type: string, description: "Go duration from first exposure, 1h to 720h." }
+    FlagExperimentRetention:
+      description: "A retention metric: a customer converts when it sends the return event in period N after its first exposure."
+      type: object
+      additionalProperties: false
+      required: [return, period, period_number]
+      properties:
+        return: { $ref: '#/components/schemas/InsightStepRequest' }
+        period: { type: string, enum: [day, week] }
+        period_number: { type: integer, minimum: 1, maximum: 12, description: "The period after exposure that counts as returning." }
+    FlagExperimentCuped:
+      description: "CUPED variance reduction on the results; reason says why it was not applied."
+      type: object
+      required: [applied, pre_days]
+      properties:
+        applied: { type: boolean }
+        pre_days: { type: integer, description: Days before the start that make each customer's covariate. }
+        theta: { type: number }
+        variance_reduction: { type: number, description: "Share of the metric's variance removed, 0 to 1." }
+        reason: { type: string, enum: [off, pre_period_pending, no_pre_period_variance, no_pre_period_data, not_supported] }
+    FlagExperimentComparison:
+      description: "A variant's comparison with control without CUPED."
+      type: object
+      required: [lift, relative_lift, low, high, p_value]
+      properties:
+        lift: { type: number }
+        relative_lift: { type: number }
+        low: { type: number }
+        high: { type: number }
+        p_value: { type: number }
     FlagExperimentGuardrailRequest:
       description: Turns one guardrail off or sets its tolerance.
       type: object
@@ -89844,14 +91013,25 @@ components:
     FlagExperiment:
       description: A flag experiment.
       type: object
-      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at]
+      required: [key, flag, rule_id, control, metric_event, metric_kind, status, mixing_lift, weights, created_by, created_at, cuped, unit, allocation]
       properties:
         key: { type: string }
         flag: { type: string }
         rule_id: { type: string }
         control: { type: string }
         metric_event: { type: string }
-        metric_kind: { type: string, enum: [conversion, mean] }
+        metric_kind: { type: string, enum: [conversion, mean, funnel, retention, ratio, percentile] }
+        unit: { type: string, enum: [customer, subject] }
+        allocation: { type: string, enum: [fixed, bandit] }
+        layer: { type: string }
+        traffic: { type: integer }
+        layer_from: { type: integer, description: "Start of the layer slice held while running." }
+        layer_to: { type: integer, description: "End (exclusive) of the layer slice held while running." }
+        denominator_event: { type: string }
+        percentile: { type: integer }
+        funnel: { $ref: '#/components/schemas/FlagExperimentFunnel' }
+        retention: { $ref: '#/components/schemas/FlagExperimentRetention' }
+        cuped: { type: boolean, description: Whether results are adjusted with CUPED. }
         status: { type: string, enum: [draft, running, stopped] }
         mixing_lift: { type: number }
         weights: { type: object, additionalProperties: { type: integer } }
@@ -89892,10 +91072,13 @@ components:
             high: { type: number, description: Upper bound of the 95% confidence sequence on lift. }
             p_value: { type: number, description: Always-valid p-value (running minimum). }
             status: { type: string, enum: [significant, not_significant, insufficient_data, sample_ratio_mismatch] }
+            unadjusted: { $ref: '#/components/schemas/FlagExperimentComparison' }
+            best_probability: { type: number, description: "A bandit arm's posterior probability of being best; bandits report no p-values." }
+            expected_loss: { type: number, description: "Conversion rate a bandit gives up by choosing this arm." }
     FlagExperimentResults:
       description: A flag experiment's sequential results.
       type: object
-      required: [experiment, control, variants, sample_ratio_p_value, sample_ratio_mismatch, crossed_units]
+      required: [experiment, control, variants, sample_ratio_p_value, sample_ratio_mismatch, crossed_units, cuped]
       properties:
         experiment: { $ref: '#/components/schemas/FlagExperiment' }
         control: { $ref: '#/components/schemas/FlagExperimentArm' }
@@ -89906,6 +91089,86 @@ components:
         guardrails: { type: array, items: { $ref: '#/components/schemas/FlagExperimentGuardrail' } }
         latency: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLatency' } }
         recommendation: { $ref: '#/components/schemas/FlagExperimentRecommendation' }
+        cuped: { $ref: '#/components/schemas/FlagExperimentCuped' }
+        fixed_horizon: { type: boolean, description: "Percentile results: bootstrap p-values without a sequential guarantee; read them once, at the planned end." }
+        bandit: { $ref: '#/components/schemas/FlagExperimentBandit' }
+        segments: { type: array, items: { $ref: '#/components/schemas/FlagExperimentSegment' }, description: "Results split by ?segment=COHORT: its members, then everyone else." }
+    FlagExperimentBandit:
+      description: "A bandit's posterior per arm and when it last re-weighted the rule."
+      type: object
+      required: [arms]
+      properties:
+        arms: { type: array, items: { $ref: '#/components/schemas/FlagExperimentBanditArm' } }
+        weighted_at: { type: string, format: date-time }
+    FlagExperimentBanditArm:
+      description: "One bandit arm's served weight, best-arm probability and expected loss."
+      type: object
+      required: [variant, weight, best_probability, expected_loss]
+      properties:
+        variant: { type: string }
+        weight: { type: integer }
+        best_probability: { type: number }
+        expected_loss: { type: number }
+    FlagExperimentSegment:
+      description: "Exploratory results of a cohort's members (members true) or of everyone else, with Benjamini-Hochberg adjusted p-values; segments never drive the recommendation."
+      type: object
+      required: [cohort, members, control, variants]
+      properties:
+        cohort: { type: string }
+        members: { type: boolean }
+        control: { $ref: '#/components/schemas/FlagExperimentArm' }
+        variants: { type: array, items: { $ref: '#/components/schemas/FlagExperimentVariantResult' } }
+    FlagExperimentLayer:
+      description: "An experiment layer and the slices its running experiments hold."
+      type: object
+      required: [key, slices, free]
+      properties:
+        key: { type: string }
+        slices: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLayerSlice' } }
+        free: { type: integer, description: Basis points no experiment holds. }
+    FlagExperimentLayerSlice:
+      description: "The [from, to) slice of a layer one experiment holds."
+      type: object
+      required: [experiment, from, to]
+      properties:
+        experiment: { type: string }
+        from: { type: integer }
+        to: { type: integer }
+    FlagExperimentLayerList:
+      description: "An environment's experiment layers."
+      type: object
+      required: [layers]
+      properties:
+        layers: { type: array, items: { $ref: '#/components/schemas/FlagExperimentLayer' } }
+    FlagExperimentLayerRequest:
+      description: A layer to create.
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+    FlagExperimentHoldout:
+      description: "The environment holdout: basis points of customers that see every experiment's control."
+      type: object
+      additionalProperties: false
+      required: [basis_points]
+      properties:
+        basis_points: { type: integer, minimum: 0, maximum: 2000 }
+    FlagExperimentHoldoutReport:
+      description: "Held-out customers against every other customer active in the range: the share that sent the event, their difference (exposed minus held) and a 95% interval."
+      type: object
+      required: [event, from, until, basis_points, held, exposed, difference, low, high, truncated]
+      properties:
+        event: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        basis_points: { type: integer }
+        held: { $ref: '#/components/schemas/FlagExperimentArm' }
+        exposed: { $ref: '#/components/schemas/FlagExperimentArm' }
+        difference: { type: number }
+        low: { type: number }
+        high: { type: number }
+        truncated: { type: boolean, description: "True when the customer lists hit the analytics unit bound." }
     FlagExperimentGuardrail:
       description: One guardrail across the variants.
       type: object
@@ -89956,23 +91219,215 @@ components:
         customer_id: { type: string, format: uuid, description: Verified customer (platform tenant) of the request the event belongs to. }
         value: { type: integer, format: int64, minimum: -1000000000000, maximum: 1000000000000, description: "Optional integer value, such as cents." }
         at: { type: string, format: date-time, description: "When the event happened; within the last 24 hours. Defaults to now." }
+        subject: { type: string, maxLength: 128, description: "Optional end-user subject of the request; only its hash is stored." }
+        properties:
+          type: object
+          maxProperties: 10
+          description: "Optional string properties; keys match ^[a-z][a-z0-9_]{0,63}$, values are at most 256 bytes."
+          additionalProperties: { type: string, maxLength: 256 }
+        flags:
+          type: object
+          maxProperties: 32
+          description: "Served value, as a string, of each flag the request evaluated before the event."
+          additionalProperties: { type: string }
+    InsightEventPoint:
+      description: One time bucket and breakdown value of an event series.
+      type: object
+      required: [start, events, units, value]
+      properties:
+        start: { type: string, format: date-time }
+        breakdown: { type: string, description: "Breakdown value; (none) without the flag or property, (other) past the breakdown bound." }
+        events: { type: integer, format: int64 }
+        units: { type: integer, format: int64, description: "Distinct customers or subjects; for (other) a sum that may count a unit more than once." }
+        value: { type: integer, format: int64 }
+    InsightEventSeries:
+      description: A product analytics event series.
+      type: object
+      required: [event, unit, interval, from, until, points]
+      properties:
+        event: { type: string }
+        unit: { type: string, enum: [customer, subject] }
+        interval: { type: string, enum: [hour, day] }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        points: { type: array, items: { $ref: '#/components/schemas/InsightEventPoint' } }
+    InsightStepRequest:
+      description: "A funnel or retention step: an event and property values its events must carry."
+      type: object
+      additionalProperties: false
+      required: [event]
+      properties:
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$' }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string }, description: Property values the step's events must carry. }
+    InsightFunnelRequest:
+      description: A funnel query.
+      type: object
+      additionalProperties: false
+      required: [steps]
+      properties:
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' } }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        window: { type: string, description: "Go duration from the first step to the last, 1h to 720h; default 168h." }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "flag:KEY or property:KEY." }
+    InsightFunnelStep:
+      description: Units and conversion of one funnel step.
+      type: object
+      required: [event, units, conversion_from_first, conversion_from_previous]
+      properties:
+        event: { type: string }
+        units: { type: integer, format: int64 }
+        conversion_from_first: { type: number, format: double }
+        conversion_from_previous: { type: number, format: double }
+    InsightFunnelBreakdown:
+      description: A funnel for one breakdown value.
+      type: object
+      required: [value, steps]
+      properties:
+        value: { type: string }
+        steps: { type: array, items: { $ref: '#/components/schemas/InsightFunnelStep' } }
+    InsightFunnel:
+      description: A funnel result.
+      type: object
+      required: [unit, window, from, until, steps, truncated]
+      properties:
+        unit: { type: string, enum: [customer, subject] }
+        window: { type: string }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        steps: { type: array, items: { $ref: '#/components/schemas/InsightFunnelStep' } }
+        breakdowns: { type: array, items: { $ref: '#/components/schemas/InsightFunnelBreakdown' } }
+        truncated: { type: boolean, description: The query read AnalyticsQueryMaxUnits units and left the rest out. }
+    InsightRetentionRequest:
+      description: A retention query.
+      type: object
+      additionalProperties: false
+      required: [start, return]
+      properties:
+        start: { $ref: '#/components/schemas/InsightStepRequest' }
+        return: { $ref: '#/components/schemas/InsightStepRequest' }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        period: { type: string, enum: [day, week], default: day }
+        periods: { type: integer, minimum: 1, maximum: 12 }
+        unit: { type: string, enum: [customer, subject], default: customer }
+        by: { type: string, description: "Split cohorts by flag:KEY or property:KEY." }
+    InsightRetentionRow:
+      description: A retention cohort, breakdown value or the overall row.
+      type: object
+      required: [units, eligible, returned, rates]
+      properties:
+        start: { type: string, format: date-time, description: Cohort start; absent on the overall and breakdown rows. }
+        value: { type: string, description: Breakdown value. }
+        units: { type: integer, format: int64 }
+        eligible: { type: array, items: { type: integer, format: int64 }, description: "Units whose period k has ended (index k-1)." }
+        returned: { type: array, items: { type: integer, format: int64 } }
+        rates: { type: array, items: { type: number, format: double } }
+    InsightRetention:
+      description: A retention result.
+      type: object
+      required: [unit, period, periods, from, until, overall, cohorts, truncated]
+      properties:
+        unit: { type: string, enum: [customer, subject] }
+        period: { type: string, enum: [day, week] }
+        periods: { type: integer }
+        by: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        overall: { $ref: '#/components/schemas/InsightRetentionRow' }
+        cohorts: { type: array, items: { $ref: '#/components/schemas/InsightRetentionRow' } }
+        breakdowns: { type: array, items: { $ref: '#/components/schemas/InsightRetentionRow' } }
+        truncated: { type: boolean }
+    InsightRequestVariant:
+      description: Request telemetry for one value of a flag.
+      type: object
+      required: [value, requests, server_errors, server_error_rate, p95_ms]
+      properties:
+        value: { type: string }
+        requests: { type: integer, format: int64 }
+        server_errors: { type: integer, format: int64 }
+        server_error_rate: { type: number, format: double }
+        p95_ms: { type: integer, format: int64 }
+    InsightCohortRequest:
+      description: "A cohort to save. did: customers that sent the event at least min_count times in the last within_days days; did_not: customers active in the last 30 days that did not send it; funnel: customers that completed the steps within the window, starting in the last within_days days."
+      type: object
+      additionalProperties: false
+      required: [key, kind, within_days]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$', description: "Cohort key, used in gregale.cohort rule conditions." }
+        kind: { type: string, enum: [did, did_not, funnel] }
+        event: { type: string, pattern: '^[a-z][a-z0-9_.-]{0,63}$', description: The event for did and did_not. }
+        where: { type: object, maxProperties: 10, additionalProperties: { type: string }, description: "Property values the did or did_not event must carry." }
+        within_days: { type: integer, minimum: 1, maximum: 90, description: "Look-back in days, at most the plan's analytics retention." }
+        min_count: { type: integer, minimum: 1, maximum: 1000, description: "did: minimum events (default 1)." }
+        steps: { type: array, minItems: 2, maxItems: 6, items: { $ref: '#/components/schemas/InsightStepRequest' }, description: The funnel's steps. }
+        window: { type: string, description: "funnel: Go duration from the first step to the last, 1h to 720h." }
+    InsightCohort:
+      description: "A saved cohort and its last refresh."
+      allOf:
+        - { $ref: '#/components/schemas/InsightCohortRequest' }
+        - type: object
+          required: [members, truncated, max_members, refresh_requested_at, created_by, created_at]
+          properties:
+            members: { type: integer, description: Customers in the cohort after the last refresh. }
+            truncated: { type: boolean, description: "More customers matched than max_members; the lowest customer IDs were kept." }
+            max_members: { type: integer, description: "The plan's member bound." }
+            refreshed_at: { type: string, format: date-time }
+            refresh_requested_at: { type: string, format: date-time }
+            refresh_error: { type: string, description: "Why the last refresh failed; the previous members are kept." }
+            created_by: { type: string }
+            created_at: { type: string, format: date-time }
+    InsightCohortList:
+      description: An environment's cohorts.
+      type: object
+      required: [cohorts]
+      properties:
+        cohorts: { type: array, items: { $ref: '#/components/schemas/InsightCohort' } }
+    InsightRequests:
+      description: Request telemetry by flag value.
+      type: object
+      required: [flag, from, until, variants]
+      properties:
+        flag: { type: string }
+        from: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        variants: { type: array, items: { $ref: '#/components/schemas/InsightRequestVariant' } }
     FlagEventsRequest:
       description: A batch of runtime conversion events.
       type: object
       additionalProperties: false
-      required: [events]
       properties:
         events:
           type: array
-          minItems: 1
           maxItems: 100
           items: { $ref: '#/components/schemas/FlagEvent' }
+          description: "1 to 100 events, or none when the batch carries only exposures."
+        exposures:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/FlagExposure' }
+    FlagExposure:
+      description: "One end user's exposure to a running subject experiment's rule, which SDKs report at most hourly per subject and variant. Only the subject's hash is kept."
+      type: object
+      additionalProperties: false
+      required: [flag, rule_id, variant, customer_id, subject]
+      properties:
+        flag: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        rule_id: { type: string, maxLength: 64 }
+        variant: { type: string, maxLength: 128 }
+        customer_id: { type: string, format: uuid }
+        subject: { type: string, pattern: '^[!-~]{1,128}$' }
+        at: { type: string, format: date-time }
     FlagEventsResponse:
       description: Accepted and dropped events of a batch, with the month's event usage.
       type: object
       required: [accepted, dropped, month]
       properties:
         accepted: { type: integer }
+        exposures: { type: integer, description: "Exposures that matched a running subject experiment of an active customer." }
         dropped:
           type: object
           required: [quota, unknown_customer, name_limit, invalid]
@@ -92387,6 +93842,38 @@ components:
           type: string
           format: date-time
           description: "When the response was made; a restore point must be before it."
+    ManagedPostgresQueryRequest:
+      description: One read-only SQL statement.
+      type: object
+      additionalProperties: false
+      required: [sql]
+      properties:
+        sql: { type: string, minLength: 1, maxLength: 65536, description: One statement; several are refused. }
+        max_rows: { type: integer, minimum: 1, maximum: 1000, description: Rows to return; default 100. }
+    ManagedPostgresQueryResponse:
+      description: The rows one read-only statement read.
+      type: object
+      additionalProperties: false
+      required: [database_id, columns, rows, row_count, truncated, duration_ms]
+      properties:
+        database_id: { type: string }
+        columns:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, type]
+            properties:
+              name: { type: string }
+              type: { type: string, description: 'PostgreSQL type name, or oid:N for a type the server did not name.' }
+        rows:
+          type: array
+          items:
+            type: array
+            items: { type: [string, 'null'], description: The value in PostgreSQL text form; null for NULL. }
+        row_count: { type: integer, minimum: 0 }
+        truncated: { type: boolean, description: True when the row or 1 MiB cap stopped reading before the result ended. }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
     ManagedPostgresDatabaseList:
       description: Account-scoped managed PostgreSQL database collection.
       type: object
@@ -92540,7 +94027,7 @@ components:
         blocking: { type: boolean, description: This resource blocks admission due to stale accounting under the enabled policy. False when the policy is disabled. }
         reasons:
           type: array
-          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending] }
+          items: { type: string, enum: [identity_unknown, legacy_identity_unknown, coverage_missing, window_mismatch, shutdown_unconfirmed, coverage_incomplete, observation_stale, final_correction_pending, final_window_pending, latest_window_pending] }
         collected_window_seconds: { type: integer, format: int64, minimum: 0 }
         required_from: { type: [string, "null"], format: date-time }
         required_until: { type: [string, "null"], format: date-time }
@@ -94028,7 +95515,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins, builder_slots] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -98882,7 +100369,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Permission set attached to the exported key. github:manage controls customer GitHub connection stored workflow; object-storage data scopes additionally require an explicit per-bucket grant; admin remains full access."
           example: [admin]
         created_at: { type: string, format: date-time }
@@ -99278,6 +100765,19 @@ components:
         apps: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/DeletedAppSummary' } }
         next_cursor: { type: string, maxLength: 1024 }
         evaluated_at: { type: string, format: date-time }
+    DeletedAppPurgeResponse:
+      type: object
+      description: Outcome of an owner's purge. The restore window is closed either way.
+      required: [account_id, id, slug, purged]
+      properties:
+        account_id: { type: string, format: uuid }
+        id: { type: string, format: uuid }
+        slug: { type: string }
+        purged: { type: boolean, description: True once the app is gone and its slug is free for this account. }
+        pending_reason:
+          type: string
+          description: What still holds the app while purged is false; the grace sweep retries.
+          enum: [environment_clone, exclusive_work, foreign_key, managed_postgres_binding, multipart_write, object_bucket, retained_resources, retry_pending]
 
     AppScalingSettings:
       description: Stored RAM, CPU, concurrency and instance-floor settings.
@@ -102788,7 +104288,10 @@ components:
       properties:
         workload: { type: string, minLength: 3, maxLength: 40 }
         async: { type: boolean }
-        postgres: { type: string, enum: [read_write] }
+        postgres:
+          description: Access to the disposable PostgreSQL fixture. Task roles require seeded Task tables and a sole read_write primary.
+          type: string
+          enum: [read_write, task_runtime, task_observer]
         objects: { type: string, enum: [read, read_write] }
     ScenarioManagedWorkBinding:
       description: Platform identities and fixture resources bound to a logical workload. Missing identities make evidence incomplete.
@@ -104179,6 +105682,54 @@ components:
       required: [enabled]
       properties:
         enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SetAppProtectionRequest:
+      description: 'Turns production protection on or off. on creates the baseline; off deletes the baseline objects you have not changed.'
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off']
+          description: on enrolls the app; off removes the unchanged protection objects.
+    AppProtectionResponse:
+      description: 'An app''s production protection.'
+      type: object
+      required: [state, protected, items]
+      properties:
+        state:
+          type: string
+          enum: ['on', 'off', none]
+          description: 'on when the app is enrolled, off when its owner turned protection off, none when the app was never enrolled.'
+        protected:
+          type: boolean
+          description: 'True when the app is enrolled and every protection object is active.'
+        items:
+          type: array
+          description: 'Every protection object in a fixed order; empty when state is none.'
+          items: { $ref: '#/components/schemas/AppProtectionItemStatus' }
+    AppProtectionItemStatus:
+      description: 'One production protection object.'
+      type: object
+      required: [item, kind, name, state]
+      properties:
+        item:
+          type: string
+          enum: [availability_slo, latency_slo, health_check, email_channel, availability_burn_alert, latency_burn_alert, health_alert, availability_gate]
+        kind:
+          type: string
+          enum: [slo, synthetic_check, notification_channel, alert_rule, release_gate]
+        name: { type: string, example: availability }
+        state:
+          type: string
+          enum: [active, pending, skipped, removed]
+          description: 'active when the object was created and still exists; pending while the app waits for a live production deployment; skipped when it could not be created yet (see reason), retried automatically; removed when you deleted it, in which case it is not created again.'
+        object_id:
+          type: string
+          description: 'The created object''s id. Present when state is active or removed.'
+        reason:
+          type: string
+          enum: [plan, not_released, email_unverified, name_taken, limit_reached, needs_slo, needs_channel, needs_check, probes_unavailable]
+          description: 'Why a skipped object could not be created yet: the plan does not include it, the feature is not available to the account, the account email is not verified, you already have an object with this name, the app or account is at its limit, the SLO, email channel or health check it needs was not created, or free health probes are not running on this platform.'
     SyntheticCheckResponse:
       description: 'One synthetic check definition.'
       type: object
@@ -122848,7 +124399,7 @@ components:
         client_site: { type: string, maxLength: 253, description: Lower-case host name the client was verified at. }
 
     AgentBudgetResponse:
-      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      description: "An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."
       type: object
       required: [source, spent_cents, month]
       properties:
@@ -122857,8 +124408,8 @@ components:
         key_monthly_cents: { type: integer, format: int64, description: "The budget set for this agent, when one was." }
         key_unlimited: { type: boolean, description: "The agent was set to have no budget of its own." }
         org_max_cents: { type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one." }
-        spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent." }
-        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in." }
+        spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to the cent. It does not reset each month; lowering capacity gives budget back." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The current UTC month (kept for compatibility; spent_cents no longer resets monthly)." }
 
     AgentUndoRequest:
       description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."
@@ -123085,7 +124636,7 @@ components:
         label: { type: [string, "null"] , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Closed permission set attached to the key. github:manage controls customer GitHub connection stored workflow; storage:manage controls bucket lifecycle/grants; storage:read and storage:write also require a matching per-bucket grant; admin remains full access."
           example: [admin]
         last_used_at: { type: [string, "null"], format: date-time }
@@ -123173,7 +124724,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set. The server rejects unknown scopes. github:manage controls customer GitHub connection stored workflow. Object-storage read/write scopes do not expose data until a storage manager grants the key access to a logical bucket."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Project slugs the key is limited to. Only an agent key (scope agent) can be limited; it then reaches only apps in these projects and cannot carry Postgres scopes. Omit for every project." }
@@ -123208,7 +124759,7 @@ components:
         label: { type: string, maxLength: 100 , example: "ci-deploy"}
         scopes:
           type: array
-          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, project_environments:read, project_environments:qualify, github:manage] }
+          items: { type: string, enum: [admin, apps:read, deploy:write, secrets:read, secrets:write, usage:read, runs:read, runs:write, env:read, env:write, registry_credentials:read, registry_credentials:write, upstreams:write, metrics:write, delayed_tasks:read, delayed_tasks:write, events:publish, queues:send, queues:consume, storage:manage, storage:read, storage:write, postgres:manage, postgres:read, data:read, project_environments:read, project_environments:qualify, github:manage] }
           description: "Requested permission set for the org-scoped key. Unknown scopes are rejected; github:manage controls customer GitHub connection stored workflow; object-storage data scopes also require an explicit logical-bucket grant. The legacy and org-scoped key vocabularies remain identical."
           example: [apps:read, deploy:write]
         projects: { type: array, maxItems: 100, items: { type: string }, description: "Slugs of the organization's projects the key is limited to. Only an agent key can be limited; it then reaches only those projects' apps and cannot carry Postgres scopes. Omit for every project." }
@@ -124440,7 +125991,7 @@ components:
         deleted: { type: array, items: { type: string } }
         secrets_not_restored: { type: array, items: { $ref: '#/components/schemas/ConfigSecretDifference' } }
     AppEnvResponse:
-      description: "An env var envelope: key name + scope + timestamps. The plaintext value never appears here."
+      description: "An env var envelope: key name + scope + timestamps. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [key, scope, created_at, updated_at]
       properties:
@@ -124453,6 +126004,7 @@ components:
           example: "default"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "The variable's plaintext; present only with `?values=true`." }
         config_change:
           $ref: '#/components/schemas/ConfigChangeReceipt'
           description: "Present on env writes: the revision this write recorded and the config guard watching it."
@@ -124465,7 +126017,7 @@ components:
     # branch on `if 'env_by_scope' in response` decodes the
     # nested map; otherwise it decodes the flat `env` array.
     ScopedAppEnvResponse:
-      description: "An env var envelope scoped to one named environment. The plaintext value never appears here."
+      description: "An env var envelope scoped to one named environment. The plaintext value appears only on a `?values=true` listing."
       type: object
       required: [scope, key, created_at, updated_at]
       properties:
@@ -124477,6 +126029,7 @@ components:
         key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$', maxLength: 128, example: "DB_URL" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        value: { type: string, description: "This scope's plaintext value of the variable, included only on a `?values=true` listing." }
 
     AppEnvListResponse:
       description: |
@@ -127984,6 +129537,11 @@ components:
         last_failed_at: { type: string, format: date-time }
         replayed_at: { type: [string, "null"], format: date-time }
         created_at: { type: string, format: date-time }
+        replay_count:
+          type: integer
+          format: int64
+          description: Earlier replays of an invocation entry that failed again (single-entry read only; omitted when never replayed).
+        last_replayed_at: { type: string, format: date-time, description: "When the entry was last replayed (single-entry read only)." }
 
     DeadLetterEventsResponse:
       description: "A page of unified dead-letter events ordered newest-first."

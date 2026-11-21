@@ -195,6 +195,7 @@ type Loop struct {
 	targets               *targets.Trigger                        // issue #462 (PR-C) concurrent_requests target trigger; nil opts out
 	floor                 *floor.Trigger                          // issue #557 / ADR-071 proactive min-instances floor reconciler; nil opts out
 	prewarm               *prewarm.Trigger                        // scheduled/predicted demand-window capacity restore; nil opts out
+	cronPrewake           *cronPrewake                            // ADR-20261107122928 amendment 3: prewarm intents before HTTP cron fires; nil opts out
 	recentLoad            *recentload.RecentLoad                  // issue #171 aggressive-reaper signal mirror; nil opts out
 	fleetRates            fleetRequestRates                       // H4-70 fleet-wide demand from instances.request_count
 	livenessWindow        *LivenessWindow                         // issue #554 / ADR-078 per-deployment liveness-restart tracker; nil opts out (Engine does not call ParkDeployment)
@@ -1884,6 +1885,7 @@ func (l *Loop) dispatchRetention(ctx context.Context) {
 		l.runRetention(ctx)
 		l.runDeadLetterRetention(ctx)
 		l.runCronHistoryRetention(ctx)
+		l.runCronPrewakeRetention(ctx)
 	})
 }
 
@@ -2325,9 +2327,9 @@ func (l *Loop) dispatchPrime(ctx context.Context, appID, deploymentID string) {
 }
 
 // finishFailedPrime decides what a prime that failed after its retries does
-// to the deployment: a shutdown or a node-capacity refusal inside
-// api.SnapshotPrimeCapacityMaxWait leaves it snapshotting for prime recovery;
-// anything else fails it.
+// to the deployment: a shutdown, or a node-capacity or financial compute
+// authority refusal inside api.SnapshotPrimeCapacityMaxWait, leaves it
+// snapshotting for prime recovery; anything else fails it.
 func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string, attempts int, err error) {
 	if snapshotPrimeInterruptedByShutdown(ctx, err) {
 		l.log.Info("sched: snapshot prime interrupted by daemon shutdown; leaving deployment recoverable",
@@ -2335,7 +2337,7 @@ func (l *Loop) finishFailedPrime(ctx context.Context, appID, deploymentID string
 		return
 	}
 	if l.engine.primeAwaitsCapacity(ctx, deploymentID, err) {
-		l.log.Info("sched: snapshot prime refused for node capacity; prime recovery will retry",
+		l.log.Info("sched: snapshot prime refused for node capacity or compute authority; prime recovery will retry",
 			"app", appID, "deployment", deploymentID, "max_wait", api.SnapshotPrimeCapacityMaxWait, "err", err)
 		return
 	}
@@ -2916,6 +2918,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 		}
 	}
 	liveByApp := l.reaperLiveInstances(ctx, store, apps)
+	probeWakes := l.recentPlatformProbeWakes(ctx, now)
 	for _, a := range apps {
 		plan := api.Plan("")
 		ladderHold := false
@@ -2984,13 +2987,14 @@ func (l *Loop) runReaper(ctx context.Context) {
 				// ADR-072: carrier for the post-snapshot
 				// app-wide max floor enrichment. Empty on legacy
 				// rows that pre-date the per-deployment column.
-				DeploymentID: ins.DeploymentID,
-				RAMMB:        ins.RAMMB,
-				LastRequest:  lastRequest,
-				Started:      ins.StartedAt,
-				IdleTimeoutS: a.IdleTimeoutS,
-				AppType:      string(a.Type),
-				NodeID:       ins.NodeID,
+				DeploymentID:    ins.DeploymentID,
+				RAMMB:           ins.RAMMB,
+				LastRequest:     lastRequest,
+				Started:         ins.StartedAt,
+				ProbeWakeDoneAt: probeWakes[ins.ID],
+				IdleTimeoutS:    a.IdleTimeoutS,
+				AppType:         string(a.Type),
+				NodeID:          ins.NodeID,
 				// Filled with the pinned environment policy below.
 				MinInstances:           planCappedFloor(plan, a.EffectiveMinInstances()),
 				WarmPoolSize:           a.WarmPoolSize,
@@ -3224,12 +3228,35 @@ func (l *Loop) dispatchReaper(ctx context.Context) {
 func (l *Loop) parkFromReaper(ctx context.Context, info InstanceInfo, allowNewRequests bool) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
+	guest := l.freshGuestActivity(info.Instance)
+	if info.probeOnly() {
+		// A probe-only instance's open flows are the gateway's keep-alive
+		// connections (ADR-20261116120000 §3); only work in flight or a
+		// new request keeps it.
+		guest = l.requestsInFlight(info.Instance)
+	}
 	return l.engine.ParkIdle(parkCtx, info.Instance, IdleParkCheck{
 		LastRequest:      info.LastRequest,
 		RequestCount:     info.RequestCount,
 		AllowNewRequests: allowNewRequests,
-		Guest:            l.freshGuestActivity(info.Instance),
+		Guest:            guest,
 	})
+}
+
+// recentPlatformProbeWakes reads the probe wake ledger for the reaper tick:
+// each instance's latest unbilled health probe end. A store without the
+// ledger, or a failed read, leaves every instance on its idle timeout.
+func (l *Loop) recentPlatformProbeWakes(ctx context.Context, now time.Time) map[string]time.Time {
+	ledger, ok := l.engine.store.(state.PlatformProbeWakeStore)
+	if !ok {
+		return nil
+	}
+	wakes, err := ledger.RecentPlatformProbeWakes(ctx, now.Add(-api.ProtectionProbeWakeLookback))
+	if err != nil {
+		l.log.Warn("reaper: platform probe wakes", "err", err)
+		return nil
+	}
+	return wakes
 }
 
 // supersededDrainPoll is how often a superseded release's busy instances are
@@ -4909,6 +4936,7 @@ const cronSweepSlice = 10 * time.Second
 func (l *Loop) runCronTick(ctx context.Context) {
 	l.cronSweepTried = map[string]struct{}{}
 	l.runCronSweep(ctx)
+	l.runCronPrewake(ctx)
 }
 
 // cronAppBudgetHeld reports an app a compute budget holds. The drain defers

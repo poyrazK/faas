@@ -145,6 +145,13 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		if err := m.checkCloneCronQuotaLocked(clone.capturedCrons, limits); err != nil {
 			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
 		}
+	} else if clone.branch != nil {
+		if err := m.captureBranchAutomationLocked(&clone, apps); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
+		if err := m.checkCloneCronQuotaLocked(clone.capturedCrons, limits); err != nil {
+			return ProjectEnvironment{}, ProjectEnvironmentCloneResult{}, err
+		}
 	}
 	valueScopes, err := m.projectCloneValueScopesLocked(apps, clone)
 	if err != nil {
@@ -385,6 +392,11 @@ func (m *MemStore) CloneProjectEnvironment(ctx context.Context, clone ProjectEnv
 		result.ProjectSecretsCopied = m.copyProjectEnvironmentSharedSecretsLocked(clone, created.CreatedAt)
 		result.SecretReferencesCopied = m.copyProjectEnvironmentSecretReferencesLocked(apps, source.ID, created, now)
 		m.copyProjectEnvironmentSecretSuppressionsLocked(apps, source.ID, created, now)
+	}
+	if clone.capturedPolicies == nil && clone.branch != nil {
+		// A branch's paused automation (captureBranchAutomationLocked).
+		m.copyCapturedCronsLocked(clone, created, created.CreatedAt, &result)
+		m.copyCapturedEventSubscriptionsLocked(clone, created, created.CreatedAt, &result)
 	}
 	if clone.capturedPolicies != nil {
 		m.copyCapturedScopedPoliciesLocked(clone, created.CreatedAt, &result)

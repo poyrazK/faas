@@ -18,7 +18,16 @@ func (s *server) recoveryHandlers() apprecovery.Handler {
 			s.audit.Emit(ctx, "app.restored", &acct.ID, map[string]any{"app_id": app.ID, "slug": app.Slug})
 		},
 		Response: s.appResponseWithContext, ParkedRef: s.withParkedDeploymentRef,
+		PurgeNow: s.purgeDeletedApp,
+		OnPurgeRequested: func(ctx context.Context, r *http.Request, acct state.Account, app state.App) {
+			data := map[string]any{"app_id": app.ID, "slug": app.Slug}
+			s.audit.EmitAs(ctx, requestAuditActor(r, acct.ID, data), "app.purge_requested", &acct.ID, data)
+		},
 	}
+}
+
+func (s *server) purgeDeletedAppNow(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	s.recoveryHandlers().Purge(w, r, acct)
 }
 
 func (s *server) listDeletedApps(w http.ResponseWriter, r *http.Request, acct state.Account) {

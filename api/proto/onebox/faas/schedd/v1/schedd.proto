@@ -652,6 +652,13 @@ message AdmitInstanceRequest {
   // the ledger, placement, RAM, and node limits still apply to every
   // admission. Additive per ADR-016.
   bool burst_continuation = 7;
+  // stale_instance_id names an instance whose forward the gateway just saw
+  // fail with "target not found on node". Before admitting, schedd asks
+  // that instance's vmmd for its live set and fails the row if the VM is
+  // not there, so a row left RUNNING after its VM was retired (for example
+  // during a database outage) stops holding the app's concurrency slot.
+  // Empty means no hint. Older schedds ignore it. Additive per ADR-016.
+  string stale_instance_id = 8;
 }
 
 // AdmitInstanceResponse is the typed result of Engine.AdmitInstance.
@@ -1324,6 +1331,15 @@ message SandboxRunStart {
   // task makes the session a sandbox task (ADR-20261116182615 §3); see
   // vmmd's RunSandboxTask.
   SandboxRunTask task = 14;
+  // egress_allow and egress_deny are a web-mode session's domain policy
+  // (ADR-20261117091026 §3): vmmd grants a name only when no deny rule
+  // matches it and allow is empty or an allow rule matches it.
+  repeated string egress_allow = 15;
+  repeated string egress_deny = 16;
+  // web_domain_log asks for the session's domain log (web_domains frames,
+  // ADR-20261117091026 §4). A sender sets it only when it reads them, since
+  // an older reader ends a session on a frame it does not know.
+  bool web_domain_log = 17;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1406,7 +1422,22 @@ message SandboxRunEvent {
     SandboxRunTaskDone task_done = 10;
     // action_done ends a browser action (ADR-20261117065818 §2).
     SandboxRunActionDone action_done = 11;
+    // web_domains relays vmmd's domain log (ADR-20261117091026 §4).
+    SandboxRunWebDomains web_domains = 12;
   }
+}
+
+message SandboxRunWebDomains {
+  repeated SandboxRunWebDomain domains = 1;
+}
+
+message SandboxRunWebDomain {
+  // domain is the registrable domain of a grant or a budget refusal, or the
+  // name asked for of a policy or platform refusal.
+  string domain = 1;
+  // refused is empty for a grant, else "policy", "budget" or "platform".
+  string refused = 2;
+  int64 at_unix_ms = 3;
 }
 
 // SandboxRunActivity is vmmd's report of the session's calls.
@@ -1457,7 +1488,15 @@ message AgentRunRequest {
     AgentRunStart start = 1;
     AgentRunCancel cancel = 2;
     AgentRunProceed proceed = 3;
+    AgentRunExtend extend = 4;
   }
+}
+
+// AgentRunExtend is the run's total approval-wait credit (ADR-20261027090016
+// amendment 3); schedd forwards it to vmmd. A schedd that predates it
+// ignores it.
+message AgentRunExtend {
+  int64 credit_ms = 1;
 }
 
 // AgentRunProceed lets a placed run boot.
@@ -1488,6 +1527,10 @@ message AgentRunStart {
   // version has AgentSizeHistoryMinRuns of them. schedd's measured charge
   // books and charges the run from it; an older agentd sends 0.
   int32 history_peak_private_mb = 11;
+  // deadline_sec is the seller's timeout when the run's timeout_sec is a
+  // guest ceiling above it (ADR-20261027090016 amendment 3); 0: the run's
+  // timeout_sec.
+  int32 deadline_sec = 12;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
@@ -1524,6 +1567,10 @@ message AgentRunBooted {
   // actions relays vmmd's RunSandboxBooted.actions for a sandbox session
   // (ADR-20261117065818 §2); an agent run leaves it unset.
   bool actions = 3;
+  // egress_policy is set by a vmmd that enforces a session's domain policy
+  // (ADR-20261117091026 §3); agentd closes a session with a policy that
+  // boots without it.
+  bool egress_policy = 4;
 }
 
 message AgentRunOutput {

@@ -51,7 +51,7 @@ func TestAtCapacityWaitsForABootInProgress(t *testing.T) {
 				}
 				return PickResult{}
 			}
-			got, err := h.settleAtCapacity(t.Context(), b.app, api.MustLimitsFor(b.app.Plan), 2, pick)
+			got, err := h.settleAtCapacity(t.Context(), b.app, "", api.MustLimitsFor(b.app.Plan), 2, pick)
 			elapsed := time.Since(start)
 			if tc.wantOK {
 				if err != nil || !got.OK {

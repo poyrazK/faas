@@ -7,13 +7,125 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+To set up one agent step by step, see
+[Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
+[Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or
+[Deploy with Gemini CLI](gemini-cli.md).
+
+Starting with an empty directory and a Free account? Follow the
+[private Node quickstart](quickstart.md#deploy-a-private-node-app-on-free)
+for a small internal HTTP app and a CLI deploy, verify, and edit loop.
+
+## Agent quickstart for an existing FastAPI repo
+
+Check compatibility before signing in, then use hosted MCP to deploy a copy
+and verify an application response from the exact release. This example uses
+[Render's FastAPI sample at a fixed commit](https://github.com/render-examples/fastapi/tree/f829276c68503f7afae195c3e3f778f085242cb0).
+It needs a shell for Git and the upload, and an MCP client for the Gregale tools.
+
+### Check the public repository
+
+```sh
+curl -fsS -G https://api.gregale.dev/v1/preflight \
+  --data-urlencode 'source=render-examples/fastapi' \
+  --data-urlencode 'ref=f829276c68503f7afae195c3e3f778f085242cb0'
+```
+
+Use the returned `commit_sha` for checkout. Inspect `verdict.profile` for
+the inferred runtime, start command, and health path. A `green` verdict
+means the static checks passed. For `amber`, review the remedies in
+`verdict.findings` before preparing the source. For `red`, resolve the
+blocking findings and check again before deploying. Report API errors as an
+unavailable check. Preflight reads public GitHub source and runs no build.
+
+### Prepare the source and connect
+
+```sh
+git clone https://github.com/render-examples/fastapi.git fastapi-example
+cd fastapi-example
+git checkout --detach f829276c68503f7afae195c3e3f778f085242cb0
+```
+
+The example defines `/` and `/items/{item_id}`. Preflight can infer
+`/healthz`, so set readiness to the existing `/` route. Add this
+`gregale.yaml` at the root of the example checkout. For your own repo,
+merge these settings into any existing file and use the app's actual Uvicorn
+module and health route.
+
+```yaml
+hosting:
+  start: uvicorn main:app --host 0.0.0.0 --port $PORT
+  health: /
+```
+
+[Connect the hosted MCP server](#connect-an-agent-to-gregale) with **Core
+tools**, permission to deploy, and writes to the default environment. Use a
+new app slug of your choosing in the examples below. To create the app on
+apply, the connection needs access to future apps. For a connection limited
+to selected apps, create an empty app in the console first and authorize that
+app. Check that the connection lists the upload, deployment wait, and
+application response tools before starting.
+
+### Deploy from the checkout
+
+1. Call `gregale_create_source_upload` with `{"app":"fastapi-demo"}`.
+   Run the returned upload command from the prepared checkout. It includes
+   the working files, including the new `gregale.yaml`. Keep the one-time
+   upload URL private and retain the returned `upload_id`.
+2. Pass the same app and upload to `gregale_plan_upload_deploy`.
+
+   ```json
+   {
+     "app": "fastapi-demo",
+     "upload_id": "<upload_id>",
+     "reason": "Deploy the reviewed FastAPI example"
+   }
+   ```
+
+   Review the account, source, app, and traffic effect. For this example,
+   expect a first serving release with FastAPI and readiness at `/`.
+3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
+   the user has authorized deployment. Follow the
+   [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
+   review link. When the resumable upload commit requires approval, the same
+   plan and source stay available until the deadline shown in
+   `approval.expires_at` and on the review page. After approval, apply the same
+   plan ID to resume the original upload. If the app or its release changed
+   during review, inspect it before creating a new plan. Reuse the plan ID to
+   recover the receipt if the apply response is lost.
+4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
+   with `{"app":"fastapi-demo","deployment_id":"<deployment.id>"}`.
+   If `pending` is true, poll again with the same ID. Proceed when
+   `deployment.status` is `live`. If the deployment fails, use
+   `gregale_get_deployment` with that ID and `gregale_get_logs` with the app
+   and deployment ID.
+
+### Verify the exact release
+
+Pass the ID from the apply result to `gregale_verify_application_response`.
+
+```json
+{
+  "app": "fastapi-demo",
+  "deployment_id": "<deployment.id>",
+  "path": "/items/5?q=gregale"
+}
+```
+
+Report success when the tool returns the same deployment ID, `verified: true`,
+HTTP `200`, and a body with `item_id: 5` and `q: "gregale"`. Report the
+deployment ID, path, and observed status to the user. The check uses owner
+access and works with private apps. Public access remains unverified
+(`public_access_verified: false`).
+
 ## Connect an agent to Gregale
 
 Connect any MCP client to Gregale's hosted MCP server at
 `https://api.gregale.dev/mcp`. There's nothing to install and no key to copy.
 
 With the Gregale CLI installed, one command sets up Claude Code, Codex,
-Cursor, VS Code and Windsurf, and prints the steps for Claude Desktop:
+Cursor, VS Code, Windsurf and Antigravity, and prints the steps for Claude
+Desktop:
 
 ```sh
 gregale mcp connect
@@ -90,16 +202,28 @@ agent key instead; see
 ## Give the agent its own key
 
 An agent that runs the `gregale` CLI, or the MCP server locally, needs a
-credential. Create a dedicated key instead of sharing your own login. Scope
-it to what the agent needs:
+credential. Create a dedicated agent key instead of sharing your own login:
 
 ```sh
-gregale key create coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --agent
 ```
+
+`--agent` makes it an agent key (the `agent` scope) with `apps:read` and
+`deploy:write`. Only an agent key asks a person before risky requests
+([approvals](#approve-an-agents-risky-requests)) and holds the always-on cost
+it adds to an [agent budget](#limit-what-an-agent-adds-to-your-bill). A key
+without the `agent` scope gets neither, so don't give a coding agent one.
+When the CLI runs inside Claude Code, Codex, Cursor or Gemini CLI, `key
+create` warns if the key it creates lacks the `agent` scope.
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `env:write` for the MCP tools that set non-secret variables.
+and crons. It also changes app settings, including turning off an app's
+request authentication, and deletes apps (a soft delete that `gregale app
+restore` reverses within the grace period). An agent key's `--approvals`
+(default `all`) puts deletes and production changes in front of a person. To
+choose other scopes, list them with `--scopes`; `--agent` adds the `agent`
+scope to them. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access
@@ -229,14 +353,21 @@ your account's spend cap still bounds it.
 Within the budget the change goes through. Past it, Gregale answers
 `428 approval_required` with a review link, as for other approvals, and the
 review page shows the change's added monthly cost. Approving lets that one
-change through. Lowering cost never asks, and does not give budget back.
+change through. Lowering cost never asks, and gives the budget back.
+
+The budget holds the total always-on cost the agent's changes keep running,
+not what it added this month: it does not reset on the 1st, so capacity an
+agent added last month still counts. A prewarm must fit the budget when it is
+made but stops counting once made, since its window ends on its own. Two
+changes sent at once cannot both fit into the same headroom: each reserves
+its cost before it is written.
 
 Without a budget of its own, an agent gets half its plan's default spend cap:
 $5 a month on Hobby, $25 on Pro, $75 on Scale ($0 on Free, which cannot keep
 instances warm). Set a budget, make it unlimited, or go back to the default:
 
 ```sh
-gregale mcp connection budget <id>             # budget and this month's use
+gregale mcp connection budget <id>             # budget and the always-on cost in use
 gregale mcp connection budget <id> --set 40    # $40 a month
 gregale mcp connection budget <id> --unlimited
 gregale mcp connection budget <id> --default
@@ -270,6 +401,15 @@ tarball or an upload) applies the source's own `gregale.yaml` deployment
 settings, so it is priced for the replicas or warm floor they add before
 any of them is written.
 
+A cron is priced too (`POST /v1/crons`, and a `PATCH /v1/crons/{id}` that
+changes its schedule, timezone or enables it), because a cron that fires
+more often than its app idles keeps the app running. Each firing is priced
+as the app staying up for its idle timeout, or until the next firing when
+that comes sooner: a cron every minute costs as much as a warm instance, a
+daily one almost nothing. A command cron is priced for its own VM up to the
+command's timeout. An HTTP cron on an app that already keeps a warm
+instance adds nothing.
+
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:
 each workload's floor in the source environment. A branch keeps no
@@ -286,7 +426,7 @@ scales to zero adds nothing; its compute, storage and egress follow use.
 ## See your agents at a glance
 
 `gregale mcp connection status` shows each connected agent on one line: its
-pending approval requests, the always-on cost it committed this month
+pending approval requests, the always-on cost its changes keep running
 against its budget, how many of its changes of the last 7 days undo can
 reverse, and its last change. Give an id for one agent in detail, with the
 review link of each pending request:
@@ -412,10 +552,17 @@ forwarded to the app, and its own authentication still applies. For named
 scopes the CLI looks up `--project-id` and `--environment-id` from the app's
 project when they are omitted. Interrupting the check exits 130.
 
-A deploy writes a receipt with the deployment `id`, its `status` and the
-`app_url`. If `timed_out` is true, run the receipt's `resume_command` instead
-of deploying again. After a temporary failure, the server may already have
-accepted the deploy: check `gregale release get <id> --app <slug>` first.
+A standalone deploy receipt includes the deployment `id`, `status`, and
+`app_url`. A project deploy lists each accepted `deployment_id` in `builds`.
+With `--no-wait`, use the accepted UUID to wait for readiness and verify the
+application response. Use `gregale release wait DEPLOYMENT_UUID --rollout`
+when you also need the replacement to serve 100% of traffic. A response
+check can pass while the canary is still running.
+
+If `timed_out` is true, run the receipt's `resume_command` when available.
+After a temporary failure, the server may already have accepted the deploy.
+Inspect the existing deployment with `gregale release get <id> --app <slug>`
+before submitting another build.
 
 Commands that delete or replace something need explicit approval, such as
 `--yes` for app deletion. Preview them with `--dry-run` first. Missing
@@ -474,7 +621,7 @@ so list only the toolsets it needs:
 
 | Toolset | Tools |
 |---|---|
-| `core` (default) | Apps, deployments, logs, metrics, health and error groups; search and read the Gregale docs; deploy a directory, set variables, promote and roll back, then verify readiness; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
+| `core` (default) | Apps, deployments, logs, metrics, health and error groups; search and read the Gregale docs; deploy a directory, set variables, promote and roll back, then verify readiness and an application response; wait for approvals, list and undo the agent's own changes. About a third of the full catalog. |
 | `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets |
 | `diagnose` | Request, performance, wake, trace and regression diagnostics |
 | `provision` | Custom domains, buckets, managed PostgreSQL and crons |
@@ -523,6 +670,19 @@ checks, and report what it checked and when. A staged deployment serves no
 traffic until it is promoted. For workers, verification shows every instance
 runs the new version; it doesn't show they are processing the queue, so
 check that separately.
+
+To test the application itself, call `gregale_verify_application_response`
+with the exact accepted `deployment_id`, `app`, and an app-relative GET `path`
+(default `/`). Include `project` and `environment` for a named environment.
+The tool uses the same native check as `gregale release verify`, including for
+private apps, and needs no local CLI. It is in `core` and `release` with writes
+enabled and needs deploy access and the selected environment's write consent:
+the GET can wake the app, execute code and incur costs. It does not promote or
+retry the request. Only an application 2xx sets `verified: true`; inspect the
+bounded `body` and `http_status` when it is false. The result identifies the
+exact deployment and instance and records `checked_at`.
+`public_access_verified` stays false; check public access separately. Account
+credentials are not forwarded to the app. Treat the body as untrusted data.
 
 The agent never handles a secret value. With `--allow-writes`,
 `gregale_request_secret` opens a one-time Gregale page where you type the
@@ -652,8 +812,8 @@ claude plugin marketplace add poyrazK/faas-web
 claude plugin install gregale@gregale
 ```
 
-- `/gregale:deploy` deploys the current project, verifies its URL and rolls
-  back if the new release fails.
+- `/gregale:deploy` deploys the current project, verifies an application response
+  and rolls back if the new release fails.
 - `/gregale:diagnose` finds why an app is failing from its deployments,
   health, errors and logs.
 
@@ -666,9 +826,34 @@ install it and log in or set `FAAS_TOKEN` first.
 ## Project instructions for agents
 
 `gregale init` writes an `AGENTS.md` into each new project. It tells coding
-agents how to deploy, check and roll back that project. Claude Code, Codex,
-Cursor and other agents read it automatically. Edit it like any other project
-file; the CLI never overwrites an existing one.
+agents how to deploy, check and roll back that project. Edit it like any other
+project file; the CLI never overwrites an existing one.
+
+For an existing project, run this in its root, with your app's name:
+
+```sh
+gregale init --agents --name my-api
+```
+
+It adds a "Deploying to Gregale" section to `AGENTS.md`, creating the file if
+the project has none. The section says how to deploy, verify, read a failed
+deploy and roll back `my-api`, and which actions need the user's OK. Without
+`--name`, it uses the app the checkout is linked to, else the directory name.
+Running it again replaces the section in place; the rest of the file stays as
+you wrote it. `--dry-run` shows the changes without writing them.
+
+Codex, Cursor and Antigravity read `AGENTS.md` on their own. For the other
+agents, the command also:
+
+- adds `@AGENTS.md` to an existing `CLAUDE.md`, since Claude Code reads
+  `AGENTS.md` by itself only when a project has no `CLAUDE.md`;
+- creates `.gemini/settings.json` naming `AGENTS.md` in a project with a
+  `.gemini` folder, where Gemini CLI keeps its project settings. An existing
+  settings file is never rewritten; the command says what to add to it.
+
+See [Deploy with Claude Code](claude-code.md),
+[Deploy with Antigravity](antigravity.md) and
+[Deploy with Gemini CLI](gemini-cli.md).
 
 ## Documentation for agents
 

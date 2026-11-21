@@ -449,6 +449,26 @@ func (q *Queries) CountSandboxPorts(ctx context.Context, db DBTX, arg CountSandb
 	return column_1, err
 }
 
+const countSandboxSessionDomains = `-- name: CountSandboxSessionDomains :one
+SELECT count(*) FILTER (WHERE refused = '')::integer AS granted,
+       count(*) FILTER (WHERE refused <> '')::integer AS refused
+  FROM sandbox_session_domains WHERE sandbox_id=$1::text::uuid
+`
+
+type CountSandboxSessionDomainsRow struct {
+	Granted int32
+	Refused int32
+}
+
+// How many grants and refusals a session's domain log holds
+// (ADR-20261117091026 §4).
+func (q *Queries) CountSandboxSessionDomains(ctx context.Context, db DBTX, sessionID string) (CountSandboxSessionDomainsRow, error) {
+	row := db.QueryRow(ctx, countSandboxSessionDomains, sessionID)
+	var i CountSandboxSessionDomainsRow
+	err := row.Scan(&i.Granted, &i.Refused)
+	return i, err
+}
+
 const deleteExpiredAgentGitHubSubscriptions = `-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
 DELETE FROM agent_github_subscriptions WHERE id IN (
   SELECT id FROM agent_github_subscriptions WHERE expires_at < $1::timestamptz
@@ -1034,11 +1054,56 @@ func (q *Queries) GetAgentRun(ctx context.Context, db DBTX, arg GetAgentRunParam
 	return i, err
 }
 
+const getAgentRunApproval = `-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=$1::text::uuid AND a.run_id=$2::text::uuid AND a.account_id=$3::text::uuid
+`
+
+type GetAgentRunApprovalParams struct {
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+type GetAgentRunApprovalRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) GetAgentRunApproval(ctx context.Context, db DBTX, arg GetAgentRunApprovalParams) (GetAgentRunApprovalRow, error) {
+	row := db.QueryRow(ctx, getAgentRunApproval, arg.ApprovalID, arg.RunID, arg.AccountID)
+	var i GetAgentRunApprovalRow
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Tool,
+		&i.ArgumentsSha256,
+		&i.ArgumentsSummary,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Decision,
+		&i.Note,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -1069,6 +1134,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutInstallationID pgtype.Int8
 	QueuedAt               pgtype.Timestamptz
 	PauseDuringModelCalls  bool
+	CapabilityPolicy       []byte
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -1099,6 +1165,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutInstallationID,
 		&i.QueuedAt,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1214,7 +1281,7 @@ func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRun
 
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid AND version=$3::integer
 `
 
@@ -1238,6 +1305,7 @@ type GetAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVersionParams) (GetAgentVersionRow, error) {
@@ -1257,6 +1325,7 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1301,6 +1370,24 @@ func (q *Queries) GetSandboxAction(ctx context.Context, db DBTX, arg GetSandboxA
 	return i, err
 }
 
+const getSandboxEgressPolicy = `-- name: GetSandboxEgressPolicy :one
+SELECT allow_rules, deny_rules, updated_at FROM sandbox_egress_policies WHERE account_id = $1::text::uuid
+`
+
+type GetSandboxEgressPolicyRow struct {
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+// ADR-20261117091026 §2: the account's default web-mode domain policy.
+func (q *Queries) GetSandboxEgressPolicy(ctx context.Context, db DBTX, accountID string) (GetSandboxEgressPolicyRow, error) {
+	row := db.QueryRow(ctx, getSandboxEgressPolicy, accountID)
+	var i GetSandboxEgressPolicyRow
+	err := row.Scan(&i.AllowRules, &i.DenyRules, &i.UpdatedAt)
+	return i, err
+}
+
 const getSandboxPreviewRoute = `-- name: GetSandboxPreviewRoute :one
 SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
   coalesce(sb.instance_id, '')::text AS instance_id,
@@ -1337,7 +1424,8 @@ const getSandboxSession = `-- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1370,6 +1458,8 @@ type GetSandboxSessionRow struct {
 	WorkspaceSnapshotID string
 	ImageRef            string
 	Browser             bool
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1399,6 +1489,8 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.WorkspaceSnapshotID,
 		&i.ImageRef,
 		&i.Browser,
+		&i.EgressAllow,
+		&i.EgressDeny,
 	)
 	return i, err
 }
@@ -1414,7 +1506,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(st.start_cmd, '')::text AS start_cmd, coalesce(st.ready_cmd, '')::text AS ready_cmd,
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
-  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars
+  coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -1445,6 +1538,8 @@ type GetSandboxSessionClaimRow struct {
 	TaskKind         string
 	TaskUrl          string
 	TaskMaxChars     int32
+	EgressAllow      []string
+	EgressDeny       []string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1472,6 +1567,8 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.TaskKind,
 		&i.TaskUrl,
 		&i.TaskMaxChars,
+		&i.EgressAllow,
+		&i.EgressDeny,
 	)
 	return i, err
 }
@@ -1808,6 +1905,40 @@ func (q *Queries) InsertAgentRun(ctx context.Context, db DBTX, arg InsertAgentRu
 	return id, err
 }
 
+const insertAgentRunApprovalDecision = `-- name: InsertAgentRunApprovalDecision :execrows
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, $1::text, $2::text, $3::text
+ FROM agent_run_approvals a
+ WHERE a.id=$4::text::uuid AND a.run_id=$5::text::uuid
+   AND a.account_id=$6::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING
+`
+
+type InsertAgentRunApprovalDecisionParams struct {
+	Decision   string
+	Note       string
+	DecidedBy  string
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+// The decision is written once, and only before the approval expires.
+func (q *Queries) InsertAgentRunApprovalDecision(ctx context.Context, db DBTX, arg InsertAgentRunApprovalDecisionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertAgentRunApprovalDecision,
+		arg.Decision,
+		arg.Note,
+		arg.DecidedBy,
+		arg.ApprovalID,
+		arg.RunID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAgentRunCallback = `-- name: InsertAgentRunCallback :exec
 INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
 VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
@@ -1895,14 +2026,14 @@ func (q *Queries) InsertAgentRunOutputs(ctx context.Context, db DBTX, arg Insert
 
 const insertAgentVersion = `-- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES ($1::text::uuid,$2::integer,$3::text::uuid,
   $4::text,$5::text,$6::text[],$7::jsonb,
   $8::text,$9::integer,$10::integer,
   $11::jsonb,$12::bigint,$13::jsonb,
-  $14::boolean)
+  $14::boolean,$15::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy
 `
 
 type InsertAgentVersionParams struct {
@@ -1920,6 +2051,7 @@ type InsertAgentVersionParams struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type InsertAgentVersionRow struct {
@@ -1936,6 +2068,7 @@ type InsertAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAgentVersionParams) (InsertAgentVersionRow, error) {
@@ -1954,6 +2087,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		arg.AiBudgetMillicents,
 		arg.Deliveries,
 		arg.PauseDuringModelCalls,
+		arg.CapabilityPolicy,
 	)
 	var i InsertAgentVersionRow
 	err := row.Scan(
@@ -1970,6 +2104,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -2020,12 +2155,12 @@ func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSa
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
   $13::text::uuid,$14::boolean,$15::text,$16::text,
-  $17::integer)
+  $17::integer,$18::text[],$19::text[])
 RETURNING id::text AS id
 `
 
@@ -2047,6 +2182,8 @@ type InsertSandboxSessionParams struct {
 	TaskKind            pgtype.Text
 	TaskUrl             pgtype.Text
 	TaskMaxChars        pgtype.Int4
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -2068,6 +2205,8 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.TaskKind,
 		arg.TaskUrl,
 		arg.TaskMaxChars,
+		arg.EgressAllow,
+		arg.EgressDeny,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -2238,6 +2377,110 @@ func (q *Queries) ListAgentModelIntegrations(ctx context.Context, db DBTX, arg L
 	for rows.Next() {
 		var i ListAgentModelIntegrationsRow
 		if err := rows.Scan(&i.ID, &i.AiProvider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunApprovalWaits = `-- name: ListAgentRunApprovalWaits :many
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = $1::text::uuid AND r.lease_token = $2::text
+ ORDER BY p.created_at
+ LIMIT $3::integer
+`
+
+type ListAgentRunApprovalWaitsParams struct {
+	RunID      string
+	LeaseToken string
+	MaxRows    int32
+}
+
+type ListAgentRunApprovalWaitsRow struct {
+	CreatedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 3: each approval waits from its request
+// until its decision, its expiry or outboundd's release, whichever is
+// first; one still held waits until now. Fenced by the run's lease.
+func (q *Queries) ListAgentRunApprovalWaits(ctx context.Context, db DBTX, arg ListAgentRunApprovalWaitsParams) ([]ListAgentRunApprovalWaitsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovalWaits, arg.RunID, arg.LeaseToken, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalWaitsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalWaitsRow
+		if err := rows.Scan(&i.CreatedAt, &i.EndedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunApprovals = `-- name: ListAgentRunApprovals :many
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=$1::text::uuid AND a.account_id=$2::text::uuid
+ ORDER BY a.created_at, a.id LIMIT $3::integer
+`
+
+type ListAgentRunApprovalsParams struct {
+	RunID     string
+	AccountID string
+	MaxRows   int32
+}
+
+type ListAgentRunApprovalsRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+func (q *Queries) ListAgentRunApprovals(ctx context.Context, db DBTX, arg ListAgentRunApprovalsParams) ([]ListAgentRunApprovalsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovals, arg.RunID, arg.AccountID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Tool,
+			&i.ArgumentsSha256,
+			&i.ArgumentsSummary,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.Decision,
+			&i.Note,
+			&i.DecidedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2578,11 +2821,51 @@ func (q *Queries) ListSandboxPorts(ctx context.Context, db DBTX, arg ListSandbox
 	return items, nil
 }
 
+const listSandboxSessionDomains = `-- name: ListSandboxSessionDomains :many
+SELECT d.domain, d.refused, d.first_seen
+  FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
+ WHERE d.sandbox_id=$1::text::uuid AND s.account_id=$2::text::uuid
+ ORDER BY d.first_seen, d.refused, d.domain
+`
+
+type ListSandboxSessionDomainsParams struct {
+	SessionID string
+	AccountID string
+}
+
+type ListSandboxSessionDomainsRow struct {
+	Domain    string
+	Refused   string
+	FirstSeen pgtype.Timestamptz
+}
+
+// A session's domain log, for its account (ADR-20261117091026 §4).
+func (q *Queries) ListSandboxSessionDomains(ctx context.Context, db DBTX, arg ListSandboxSessionDomainsParams) ([]ListSandboxSessionDomainsRow, error) {
+	rows, err := db.Query(ctx, listSandboxSessionDomains, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSandboxSessionDomainsRow{}
+	for rows.Next() {
+		var i ListSandboxSessionDomainsRow
+		if err := rows.Scan(&i.Domain, &i.Refused, &i.FirstSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxSessions = `-- name: ListSandboxSessions :many
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
-  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser
+  coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -2622,6 +2905,8 @@ type ListSandboxSessionsRow struct {
 	WorkspaceSnapshotID string
 	ImageRef            string
 	Browser             bool
+	EgressAllow         []string
+	EgressDeny          []string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2664,6 +2949,8 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.WorkspaceSnapshotID,
 			&i.ImageRef,
 			&i.Browser,
+			&i.EgressAllow,
+			&i.EgressDeny,
 		); err != nil {
 			return nil, err
 		}
@@ -3223,16 +3510,18 @@ func (q *Queries) MarkAgentRunCallbackDelivered(ctx context.Context, db DBTX, ru
 
 const markAgentRunRunning = `-- name: MarkAgentRunRunning :execrows
 UPDATE agent_runs SET state='running', running_at=now(), node_id=$1::text, instance_id=$2::text,
-  ai_budget_millicents=$3::bigint, updated_at=now()
- WHERE id=$4::text::uuid AND lease_token=$5::text AND state='starting'
+  ai_budget_millicents=$3::bigint,
+  deadline_credit_max_sec=$4::integer, updated_at=now()
+ WHERE id=$5::text::uuid AND lease_token=$6::text AND state='starting'
 `
 
 type MarkAgentRunRunningParams struct {
-	NodeID             string
-	InstanceID         string
-	AiBudgetMillicents int64
-	RunID              string
-	LeaseToken         string
+	NodeID               string
+	InstanceID           string
+	AiBudgetMillicents   int64
+	DeadlineCreditMaxSec int32
+	RunID                string
+	LeaseToken           string
 }
 
 // The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
@@ -3241,6 +3530,7 @@ func (q *Queries) MarkAgentRunRunning(ctx context.Context, db DBTX, arg MarkAgen
 		arg.NodeID,
 		arg.InstanceID,
 		arg.AiBudgetMillicents,
+		arg.DeadlineCreditMaxSec,
 		arg.RunID,
 		arg.LeaseToken,
 	)
@@ -3257,6 +3547,28 @@ UPDATE sandbox_actions SET delivered_at = now() WHERE id = $1::text::uuid AND de
 func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id string) error {
 	_, err := db.Exec(ctx, markSandboxActionDelivered, id)
 	return err
+}
+
+const markSandboxSessionPlaced = `-- name: MarkSandboxSessionPlaced :execrows
+UPDATE sandbox_sessions SET placed_node_id=$1::text, updated_at=now()
+ WHERE id=$2::text::uuid AND lease_token=$3::text AND state='starting'
+`
+
+type MarkSandboxSessionPlacedParams struct {
+	NodeID     string
+	SessionID  string
+	LeaseToken string
+}
+
+// schedd placed the session (ADR-20261117190000): record the node before it
+// boots the VM, so secretd grants that node the session's image and
+// snapshot. node_id stays unset until the VM is up.
+func (q *Queries) MarkSandboxSessionPlaced(ctx context.Context, db DBTX, arg MarkSandboxSessionPlacedParams) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxSessionPlaced, arg.NodeID, arg.SessionID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const markSandboxSessionReady = `-- name: MarkSandboxSessionReady :execrows
@@ -3339,6 +3651,32 @@ func (q *Queries) NextSandboxActions(ctx context.Context, db DBTX, sessionIds []
 	return items, nil
 }
 
+const putSandboxEgressPolicy = `-- name: PutSandboxEgressPolicy :one
+INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
+VALUES ($1::text::uuid, $2::text[], $3::text[])
+ON CONFLICT (account_id) DO UPDATE SET allow_rules = EXCLUDED.allow_rules, deny_rules = EXCLUDED.deny_rules, updated_at = now()
+RETURNING allow_rules, deny_rules, updated_at
+`
+
+type PutSandboxEgressPolicyParams struct {
+	AccountID  string
+	AllowRules []string
+	DenyRules  []string
+}
+
+type PutSandboxEgressPolicyRow struct {
+	AllowRules []string
+	DenyRules  []string
+	UpdatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) PutSandboxEgressPolicy(ctx context.Context, db DBTX, arg PutSandboxEgressPolicyParams) (PutSandboxEgressPolicyRow, error) {
+	row := db.QueryRow(ctx, putSandboxEgressPolicy, arg.AccountID, arg.AllowRules, arg.DenyRules)
+	var i PutSandboxEgressPolicyRow
+	err := row.Scan(&i.AllowRules, &i.DenyRules, &i.UpdatedAt)
+	return i, err
+}
+
 const recordAgentRunBoot = `-- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=$1::integer, updated_at=now()
  WHERE id=$2::text::uuid AND lease_token=$3::text AND state='running'
@@ -3400,6 +3738,40 @@ func (q *Queries) RecordAgentRunUsage(ctx context.Context, db DBTX, arg RecordAg
 		arg.PeakPrivateMb,
 		arg.ColdBoot,
 		arg.RunID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recordSandboxSessionDomains = `-- name: RecordSandboxSessionDomains :execrows
+INSERT INTO sandbox_session_domains (sandbox_id, domain, refused, first_seen)
+SELECT s.id, x.domain, x.refused, x.first_seen
+  FROM sandbox_sessions s,
+       (SELECT unnest($1::text[]) AS domain, unnest($2::text[]) AS refused,
+               unnest($3::timestamptz[]) AS first_seen) x
+ WHERE s.id=$4::text::uuid AND s.lease_token=$5::text AND s.state IN ('ready','frozen')
+ON CONFLICT DO NOTHING
+`
+
+type RecordSandboxSessionDomainsParams struct {
+	Domains    []string
+	Refused    []string
+	FirstSeen  []pgtype.Timestamptz
+	SessionID  string
+	LeaseToken string
+}
+
+// Adds entries to a session's domain log while the lease is held and the
+// session has a VM; an entry already there keeps its first sighting.
+func (q *Queries) RecordSandboxSessionDomains(ctx context.Context, db DBTX, arg RecordSandboxSessionDomainsParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSandboxSessionDomains,
+		arg.Domains,
+		arg.Refused,
+		arg.FirstSeen,
+		arg.SessionID,
 		arg.LeaseToken,
 	)
 	if err != nil {

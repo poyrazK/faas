@@ -1752,6 +1752,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.Role == role.RoleControlPlane && store != nil {
 		go runOwnerAuthorityMetrics(ctx, ops.Registry(), store, time.Minute, log)
 	}
+	// ADR-20261118160000: the control plane moves parked, long-idle apps back
+	// toward the least owned node, which nothing did after a drain. Every
+	// move is a compare-and-set on apps.node_id, so it is safe under either
+	// owner authority. On unless an operator turns it off.
+	if cfg.Role == role.RoleControlPlane {
+		if os.Getenv("FAAS_OWNER_BALANCE") != "off" {
+			go engine.NewOwnerBalancer().Run(ctx)
+		} else {
+			log.Warn("schedd: ownership balance off (FAAS_OWNER_BALANCE=off)")
+		}
+	}
 	if os.Getenv("FAAS_SCHEDD_OBJECT_GC") == "1" {
 		// ADR-20261115180000: the control plane deletes shared-store objects
 		// compute nodes asked to delete (FAAS_STORAGE_DELETE_MODE=defer),
@@ -1760,7 +1771,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.Role == role.RoleComputeOnly {
 			return fmt.Errorf("schedd: FAAS_SCHEDD_OBJECT_GC runs on the control plane, not a compute node")
 		}
-		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).Run(ctx)
+		// ADR-20261117190000: granted compute nodes cannot list the store,
+		// so the jobs/ and sources/ sweeps run here too.
+		go objectgc.NewWorker(store, storageBackend, ops.Registry(), log).WithSweep(store).Run(ctx)
 		log.Info("schedd: object GC enabled")
 	}
 	if ownerNodeID != "" && owners.recoversOntoOwnNode(cfg.Role) {
@@ -1979,6 +1992,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		})
 		log.Info("idle ladder idle-out enabled (ADR-20261107122928)",
 			"snapshot_after_seconds", api.IdleLadderSnapshotAfterSeconds)
+	}
+	if cfg.ReadinessProbeAppHost {
+		engine.EnableReadinessProbeAppHost(cfg.GetAppsDomain(os.Getenv))
+		log.Info("schedd: readiness probes send the app's public host (ADR-20261119140000)")
 	}
 	if cfg.FrozenTier {
 		engine.EnableFrozenTier()
@@ -2501,6 +2518,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			"lead_time", prewarm.DefaultLeadTime)
 	} else {
 		log.Info("scheduled prewarm reconciler disabled — set FAAS_PREWARM_ENABLED=1 to enable")
+	}
+	switch {
+	case cfg.CronPrewake && !prewarmEnabled(os.Getenv("FAAS_PREWARM_ENABLED")):
+		log.Warn("cron_prewake ignored: it needs the prewarm drain (FAAS_PREWARM_ENABLED=1) (ADR-20261107122928)")
+	case cfg.CronPrewake:
+		// Pre-woken seconds are unbilled only for the accounts meterd's quiet
+		// pause release decides: the same flag decision as the idle-out.
+		loop.WithCronPrewake(func(subject platformflags.Subject) bool {
+			return capabilityFlags.Enabled(platformflags.QuietPauseUnbilled, subject)
+		}, ops.Registry())
+		log.Info("cron pre-wake enabled (ADR-20261107122928)",
+			"lead_seconds", api.CronPrewakeLeadSeconds, "hold_seconds", api.CronPrewakeHoldSeconds)
 	}
 	// Issue #171: wire the recent-load mirror off the same scraper and the
 	// VMMD telemetry reader. Split-box schedulers commonly leave the local

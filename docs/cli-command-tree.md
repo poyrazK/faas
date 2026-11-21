@@ -69,6 +69,7 @@ touch them. The tables below map each earlier name.
 
 | Earlier | Now |
 |---|---|
+| `gregale agents` | `gregale agent` |
 | `gregale alerts` | `gregale alert` |
 | `gregale analytics` | `gregale metric requests` |
 | `gregale approvals` | `gregale release approval` |
@@ -103,6 +104,7 @@ touch them. The tables below map each earlier name.
 | `gregale freeze` | `gregale release freeze` |
 | `gregale functions` | `gregale function` |
 | `gregale incidents` | `gregale alert incident` |
+| `gregale insights` | `gregale insight` |
 | `gregale inspect` | `gregale app health --explain` |
 | `gregale invitations` | `gregale org` |
 | `gregale invocations` | `gregale invocation` |
@@ -164,6 +166,9 @@ touch them. The tables below map each earlier name.
 | `gregale account dpa` | `gregale account dpa get` |
 | `gregale account health` | `gregale account health get` |
 | `gregale account slo` | `gregale alert slo list --account` |
+| `gregale agents runs approvals` | `gregale agent run approval list` |
+| `gregale agents runs approve` | `gregale agent run approve` |
+| `gregale agents runs deny` | `gregale agent run deny` |
 | `gregale ai app-limit` | `gregale ai app-limit get` |
 | `gregale ai app-limit` | `gregale ai app-limit set` |
 | `gregale ai content-policy` | `gregale ai content-policy get` |
@@ -177,6 +182,7 @@ touch them. The tables below map each earlier name.
 | `gregale approvals approve` | `gregale release approve` |
 | `gregale approvals off` | `gregale release approval disable` |
 | `gregale approvals reject` | `gregale release reject` |
+| `gregale apps purge` | `gregale app purge` |
 | `gregale apps restore` | `gregale app restore` |
 | `gregale apps rm` | `gregale app delete` |
 | `gregale apps streaming-cap` | `gregale app streaming-cap` |
@@ -390,6 +396,12 @@ touch them. The tables below map each earlier name.
 | `gregale flags experiments create` | `gregale flag experiment create` |
 | `gregale flags experiments delete` | `gregale flag experiment delete` |
 | `gregale flags experiments get` | `gregale flag experiment get` |
+| `gregale flags experiments holdout get` | `gregale flag experiment holdout get` |
+| `gregale flags experiments holdout report` | `gregale flag experiment holdout report` |
+| `gregale flags experiments holdout set` | `gregale flag experiment holdout set` |
+| `gregale flags experiments layers create` | `gregale flag experiment layer create` |
+| `gregale flags experiments layers delete` | `gregale flag experiment layer delete` |
+| `gregale flags experiments layers list` | `gregale flag experiment layer list` |
 | `gregale flags experiments list` | `gregale flag experiment list` |
 | `gregale flags experiments results` | `gregale flag experiment result get` |
 | `gregale flags experiments ship` | `gregale flag experiment promote` |
@@ -405,6 +417,15 @@ touch them. The tables below map each earlier name.
 | `gregale flags unkill` | `gregale flag kill unset` |
 | `gregale github bind` | `gregale github link` |
 | `gregale incidents note` | `gregale alert incident update --note <NOTE>` |
+| `gregale insights cohorts create` | `gregale insight cohort create` |
+| `gregale insights cohorts delete` | `gregale insight cohort delete` |
+| `gregale insights cohorts get` | `gregale insight cohort get` |
+| `gregale insights cohorts list` | `gregale insight cohort list` |
+| `gregale insights cohorts refresh` | `gregale insight cohort refresh` |
+| `gregale insights events` | `gregale insight event list` |
+| `gregale insights funnel` | `gregale insight funnel get` |
+| `gregale insights requests` | `gregale insight request list` |
+| `gregale insights retention` | `gregale insight retention get` |
 | `gregale invitations accept` | `gregale org invitation accept` |
 | `gregale invitations peek` | `gregale org invitation peek` |
 | `gregale issues bulk` | `gregale debug issue update --issues <ISSUES>` |
@@ -461,9 +482,11 @@ touch them. The tables below map each earlier name.
 | `gregale mcp task-cancel` | `gregale mcp client cancel` |
 | `gregale mcp task-get` | `gregale mcp client status` |
 | `gregale mcp task-wait` | `gregale mcp client wait` |
+| `gregale mcp tasks bindings` | `gregale mcp server tasks bind` |
 | `gregale mcp tasks execution` | `gregale mcp server tasks run` |
 | `gregale mcp tasks intent` | `gregale mcp server tasks review` |
 | `gregale mcp tasks observer` | `gregale mcp observer` |
+| `gregale mcp tasks rehearsal` | `gregale mcp server tasks rehearse` |
 | `gregale mcp tasks release` | `gregale mcp server tasks deploy` |
 | `gregale mcp tasks source-review` | `gregale mcp server tasks audit` |
 | `gregale mcp tools` | `gregale mcp client tools` |

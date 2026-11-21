@@ -57,7 +57,31 @@ const (
 	AppTaskPortForwardCommand = "__gregale_port_forward_v1__"
 )
 
+// AppTaskDebugCommand marks a debug session (ADR-20261117070620): guest-init
+// runs the command that follows with the runtime base's busybox mounted at
+// AppTaskDebugToolsDir in the session's private mount namespace. It is
+// accepted on interactive requests, with or without a tty, never with
+// command_shell, and needs a command after it.
+const (
+	AppTaskDebugCommand  = "__gregale_debug_v1__"
+	AppTaskDebugToolsDir = "/.gregale/debug"
+	// AppTaskDebugDefaultCommand is what `gregale app exec --debug` runs
+	// when no command is given.
+	AppTaskDebugDefaultCommand = "sh"
+)
+
 var ErrAppTaskAttachMessage = errors.New("api: malformed app task attach message")
+
+// IsAppTaskDebugCommand reports whether command starts a debug session.
+func IsAppTaskDebugCommand(command []string) bool {
+	return len(command) > 0 && command[0] == AppTaskDebugCommand
+}
+
+// ValidAppTaskDebugCommand checks a debug session's shape: interactive, not
+// shell-interpreted, with a non-blank command after the marker.
+func ValidAppTaskDebugCommand(command []string, interactive, shell bool) bool {
+	return interactive && !shell && len(command) >= 2 && strings.TrimSpace(command[1]) != ""
+}
 
 // IsAppTaskSessionBuiltin reports whether command names a reserved
 // interactive built-in, valid or not.

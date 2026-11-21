@@ -47,6 +47,7 @@ for scope in /sys/fs/cgroup/faas.slice/faas-tenant.slice/*/ \
              /sys/fs/cgroup/faas.slice/faas-tenant.slice/faas-tenant-*.slice/*/ \
              /sys/fs/cgroup/faas.slice/faas-tenant.slice/tenant-*/*/ \
              /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-cp-build.slice/*/ \
+             /sys/fs/cgroup/faas.slice/faas-borrowed.slice/*/ \
              /sys/fs/cgroup/faas.slice/faas-cp.slice/faas-vmmd.service/gregale-host-helpers/*/ \
              /sys/fs/cgroup/gregale-host-helpers/*/ \
              /sys/fs/cgroup/faas-tenant.slice/*/; do

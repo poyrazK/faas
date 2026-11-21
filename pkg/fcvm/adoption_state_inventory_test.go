@@ -21,6 +21,7 @@ import (
 //	bootonly  daemon wiring, or only for kinds that are never adopted
 var adoptionStateInventory = map[string]map[string]string{
 	"Manager": {
+		"agentDeadlines":                    "reset",    // agent-run guests are refused at adoption, so no run has one
 		"agentWaits":                        "reset",    // agent-run guests are refused at adoption, so no run has one
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
@@ -87,6 +88,7 @@ var adoptionStateInventory = map[string]map[string]string{
 	"JailerVMM": {
 		"bindMounts":               "rebuilt",
 		"bindSourceModes":          "rebuilt",
+		"buildkitSeedSources":      "bootonly", // seed-run builders are killed at adoption, never adopted
 		"characterizationReceipts": "bootonly", // awaited only during a boot
 		"clients":                  "rebuilt",  // created on first use
 		"cpuBoostTails":            "reset",    // adoption writes the steady fence instead
@@ -126,6 +128,7 @@ var adoptionInstanceInventory = map[string]string{
 	"admissionHeldFrom":               "rebuilt",
 	"ExecutionOnly":                   "refused", // execution kind
 	"SandboxID":                       "refused", // sandbox sessions are execution-only
+	"agentEgressIP":                   "refused", // a sandbox session's agent tunnel address (ADR-20261117185346)
 	"ExecutionID":                     "refused",
 	"ExecutionLeaseToken":             "refused",
 	"ExecutionOutboundIntegrationIDs": "refused",
@@ -133,6 +136,7 @@ var adoptionInstanceInventory = map[string]string{
 	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
 	"AgentRunRelay":                   "refused", // agent-run guests only
 	"AgentWaitPauseAfter":             "refused", // agent-run guests only
+	"AgentRunDeadline":                "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",
@@ -169,6 +173,7 @@ var adoptionInstanceInventory = map[string]string{
 	"Plan":                            "rebuilt",
 	"Port":                            "rebuilt",
 	"HealthcheckPath":                 "rebuilt",
+	"ProbeHost":                       "rebuilt", // ADR-20261119140000: liveness and readiness loops name the app host
 	"ImageHealthcheckRequired":        "rebuilt",
 	"StartupDeadlineS":                "rebuilt",
 	"RequestConcurrency":              "rebuilt",
@@ -201,8 +206,12 @@ var adoptionInstanceInventory = map[string]string{
 	"environmentBranch":        "refused", // a contained branch guest is not adopted (ADR-20261031193635)
 	"branchDatabaseEgress":     "refused", // its branch_db pairs go with it
 	"webDomains":               "reset",   // a restart restarts the web session's distinct-domain count (ADR-20261112121456 §4)
-	"TailCount":                "reset",   // the host only ever sees decrements
-	"tailSecondsAccum":         "reset",   // informational, not billed
+	"webAllow":                 "refused", // a sandbox session's domain policy; sessions are not adopted (ADR-20261117091026 §3)
+	"webDeny":                  "refused",
+	"webLog":                   "refused", // its domain log (ADR-20261117091026 §4)
+	"webRefusedLogged":         "refused",
+	"TailCount":                "reset", // the host only ever sees decrements
+	"tailSecondsAccum":         "reset", // informational, not billed
 	"adoptionVCPUs":            "rebuilt",
 	"adoptionMemSizeMiB":       "rebuilt",
 	"adoptionOp":               "reset", // resolved before adoption (slice 3)

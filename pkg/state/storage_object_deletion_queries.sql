@@ -2,16 +2,18 @@
 
 -- name: RequestStorageObjectDeletion :exec
 -- A fresh request, whatever the row held before; the trigger stamps a
--- per-node login's node.
-INSERT INTO storage_object_deletions (storage_key, reason, requested_by)
-VALUES (sqlc.arg(storage_key)::text, sqlc.arg(reason)::text, session_user)
+-- per-node login's node. generation (slice 2) conditions the delete on one
+-- object generation; NULL deletes whatever the key holds.
+INSERT INTO storage_object_deletions (storage_key, reason, requested_by, generation)
+VALUES (sqlc.arg(storage_key)::text, sqlc.arg(reason)::text, session_user, sqlc.narg(generation)::bigint)
 ON CONFLICT (storage_key) DO UPDATE SET
     reason = EXCLUDED.reason, requested_by = session_user, requested_at = clock_timestamp(),
+    generation = EXCLUDED.generation,
     next_attempt_at = clock_timestamp() + interval '10 minutes', state = 'requested',
     attempts = 0, last_error = '', decided_at = NULL;
 
 -- name: DueStorageObjectDeletions :many
-SELECT storage_key, reason, requested_by, requested_at, attempts FROM storage_object_deletions
+SELECT storage_key, reason, requested_by, requested_at, attempts, generation FROM storage_object_deletions
 WHERE state = 'requested' AND next_attempt_at <= sqlc.arg(now)::timestamptz
 ORDER BY next_attempt_at, storage_key
 LIMIT sqlc.arg(max_rows)::int;
@@ -56,3 +58,20 @@ SELECT EXISTS (SELECT 1 FROM snapshots s WHERE NOT s.delete_pending
     OR EXISTS (SELECT 1 FROM migration_admissions m WHERE m.expires_at > clock_timestamp()
         AND (m.mem_storage_key IN (sqlc.arg(storage_key)::text, sqlc.arg(mem_key)::text) OR m.vmstate_storage_key = sqlc.arg(storage_key)::text))
     AS referenced;
+
+-- name: JobArtifactReferenced :one
+-- ADR-20261117190000: a jobs/ key is live while its job is not deleted and
+-- either still materializing (a worker may be writing an unpublished
+-- attempt) or publishes exactly this key.
+SELECT EXISTS (
+    SELECT 1 FROM jobs j
+     WHERE j.id = sqlc.arg(job_id)::uuid AND j.status <> 'deleted'
+       AND (j.image_materialization_status NOT IN ('ready', 'failed')
+            OR j.image_storage_key = sqlc.arg(storage_key)::text)
+)::boolean AS referenced;
+
+-- name: BuildSourceReferenced :one
+-- A build's source archive is live while the build is queued or running.
+SELECT EXISTS (
+    SELECT 1 FROM builds WHERE id = sqlc.arg(id)::uuid AND status IN ('queued', 'running')
+)::boolean AS referenced;

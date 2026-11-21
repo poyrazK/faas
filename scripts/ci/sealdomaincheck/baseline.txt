@@ -45,6 +45,7 @@ loader pkg/internalmail/keyring_config.go 2
 plain account_email_changes.token_hash
 plain accounts.mfa_recovery_codes_hash
 plain agent_approval_requests.body_sha256
+plain analytics_events.subject_hash
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
 plain app_basic_auth_verifiers.sealed_sha256
@@ -85,6 +86,8 @@ plain exclusive_work_operations.request_digest
 plain exclusive_work_submissions.idempotency_digest
 plain execution_artifact_grants.token_hash
 plain executions.artifacts
+# ADR-20261119173702 §1: SHA-256 of an end-user subject ID, as analytics_events.subject_hash; not a credential.
+plain flag_experiment_units.subject_hash
 plain github_webhook_deliveries.payload
 plain hosting_automation_credentials.token_hash
 plain idempotency_keys.request_digest

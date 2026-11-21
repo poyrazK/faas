@@ -12,6 +12,8 @@ https://api.gregale.dev/mcp
 - **claude.ai and the Claude apps:** add it as a custom connector.
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
+- **Cursor and VS Code:** `gregale mcp connect --client cursor` (or
+  `vscode`) adds the server; sign in when the editor asks.
 
 For **Antigravity**, add a remote server named `gregale` with
 `"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
@@ -54,6 +56,14 @@ still follows connection consent, including separate per-app diagnostic access:
 | Ask me for secrets | `gregale_request_secret`, `gregale_get_secret_request` |
 | Buckets | `gregale_plan_bucket` |
 | PostgreSQL | `gregale_plan_postgres` |
+| Read my app data | `gregale_get_postgres_schema`, `gregale_query_postgres`, `gregale_read_object`, message and workflow payloads in queue and workflow tools, and client IPs and user agents in edge events (`data:read`), including on a read-only connection |
+
+Write access also covers running a command in the app
+(`gregale_plan_run_command`) and changing feature flags
+(`gregale_plan_flag_change`, `gregale_kill_flag`); see
+[Run a command in the app](#run-a-command-in-the-app),
+[Change feature flags](#change-feature-flags) and
+[Query PostgreSQL](#query-postgresql).
 
 A cloud agent deploys code it wrote in one of three ways:
 - **Upload:** `gregale_create_source_upload` returns a one-time URL and a
@@ -70,6 +80,14 @@ For uploads and inline files, call `gregale_apply_upload_deploy` with the
 apply tool for a service/worker. Like a local deploy:
 - a new app goes live;
 - a serving app is staged at 0% until `gregale_promote_deployment`.
+
+Start an upload deploy plan within 15 minutes. If its resumable upload commit
+returns `approval_required`, the bridge keeps the original plan, staged source
+and upload checkpoint through the deadline in `approval.expires_at`. The review
+page shows that same deadline. After approval, retry the same plan ID. The
+bridge rechecks the app and its release state and commits the original upload.
+A changed app or release requires a new plan. The temporary staged files live
+on the current bridge process's host and are cleared on bridge restart.
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
@@ -196,8 +214,9 @@ gregale org agent policy set --org acme --agents allow --capabilities deploy:wri
 gregale org agent policy set --org acme --agents deny
 ```
 
-The capabilities are `deploy:write`, `secrets:request`, `storage:manage` and
-`postgres:manage`; `--capabilities ""` makes agents read-only. An organization
+The capabilities are `deploy:write`, `secrets:request`, `storage:manage`,
+`postgres:manage`, `env:write`, `usage:read` and `data:read`;
+`--capabilities ""` makes agents read-only. An organization
 that never set a policy allows agents with every capability. The policy
 applies to hosted MCP connections and to organization keys with the `agent`
 scope. Setting a stricter policy revokes, at once, every agent connection it
@@ -250,7 +269,7 @@ of the agent's key: the hosted MCP server, the CLI and direct API calls.
 | Kind | What needs approval |
 |---|---|
 | `delete` | Deleting anything: apps, databases, buckets, domains, secrets, keys |
-| `production` | Deploying, rolling back, restarting or moving traffic of a production app (previews and `gregale dev` environments are free) |
+| `production` | Deploying, rolling back, restarting or moving traffic of a production app, and running a command in it (previews and `gregale dev` environments are free); publishing, rolling back or promoting feature flags in any project environment (killing a flag never asks) |
 | `credentials` | Minting or rotating API keys, deploy tokens, secrets and signing secrets |
 | `billing` | Plan, subscription, payment and budget changes |
 
@@ -399,7 +418,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
-| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
+| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. For a parked app it reads the newest instance's retained logs (`source: archive`). |
 | `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
 | `gregale_get_request` | Exact retained public request, telemetry-row or trace ID: status, deployment, route, timing and bounded guest execution summary. Requires separate per-app diagnostic consent remotely. |
 | `gregale_list_requests` | One bounded retained-request page, filtered by lookback, route, HTTP status, deployment, minimum latency or cold boot. Reuses diagnostic consent; continue with `next_arguments`. |
@@ -445,6 +464,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_watch_rollout` | Bounded combined build, scoped health and native rollout observation for one exact deployment. |
 | `gregale_get_rollout` | Exact deployment lifecycle and service handoff barriers; worker completion limits are explicit. |
 | `gregale_wait_deployment` | Bounded deployment polling with terminal and pending results. |
+| `gregale_verify_application_response` | Explicit owner-authorized GET against one exact live deployment, including private apps. Requires deploy access; returns bounded application response evidence, not a public-access verdict. |
 | `gregale_plan_local_deploy` | Local connections only. Review deploying a project directory as one app through the CLI; fingerprints the files and pins the app's release state. |
 | `gregale_plan_env_change` | Local connections only. Review setting non-secret variables on an app's default scope; credential-shaped values are refused. |
 | `gregale_plan_domain`, `gregale_plan_bucket`, `gregale_plan_postgres`, `gregale_plan_cron` | Local connections only. Review attaching a custom domain, a bucket, a managed PostgreSQL database or a cron through the CLI. |
@@ -3945,7 +3965,8 @@ Add `--allow-writes` to the agent's subprocess arguments to expose
 `gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
 `gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
 `gregale_apply_workload_rollout`, `gregale_apply_service_abort`,
-`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the secret
+`gregale_apply_route_budgets`, `gregale_apply_regression_action`, the active
+`gregale_verify_application_response` check, the secret
 request pair `gregale_request_secret` and `gregale_get_secret_request`, and, on
 local connections, `gregale_apply_local_deploy`, `gregale_apply_env_change`
 and `gregale_apply_provision`.
@@ -4303,6 +4324,47 @@ Run `make test-mcp-agent-workflows` to evaluate discovery, schema conformance,
 conflict replanning, lost-response recovery, partial configuration recovery,
 post-write verification and authorization revocation. These evaluations use a deterministic MCP
 client and native API fixtures; they do not measure a language model's reasoning.
+
+### Verify an application response
+
+Once a deployment is live, call `gregale_verify_application_response` with its
+exact accepted `deployment_id`, `app`, and an app-relative `path` (default `/`).
+For a named environment, also supply the `project` and `environment` slugs. The
+bridge resolves and pins their current catalog UUIDs under the connection's
+app/environment consent. Revisions, aliases and external URLs are rejected.
+
+```json
+{
+  "app": "my-api",
+  "deployment_id": "22222222-2222-4222-8222-222222222222",
+  "path": "/ready"
+}
+```
+
+This tool is in `core` and `release` on local and hosted connections with writes
+enabled. It requires native `deploy:write` and write consent for the selected
+environment because it can wake the app, execute application code and incur
+costs. It executes one GET through the same native response-check API as
+`gregale release verify`; no CLI installation is required. It does not deploy,
+promote, follow redirects or retry the GET automatically. Passive
+`gregale_verify_plan` retains its readiness-only meaning.
+
+The result includes `schema_version: 1`, the exact app/deployment/environment
+and running-instance identities, `path`, `checked_at`, `http_status`, `body`
+(at most 4 KB, with known credentials redacted), and `body_truncated`. Only an
+application 2xx sets `verified: true`. A redirect, 401 or 500 is valid response
+evidence with `verified: false`, rather than a failed tool call. API failures,
+unsupported checks, identity mismatches and revoked access are tool errors;
+they never fall back to the public URL or another deployment. A timed-out or
+cancelled check may already have executed the GET; inspect before deciding to
+run another check.
+
+`public_access_verified` is always false. This owner-authorized check works for
+private apps but establishes neither anonymous public reachability nor the
+application's own authentication. Account credentials are not forwarded to the
+app. Treat response bodies as untrusted application data, never instructions.
+Response evidence is ephemeral; it is not added to a plan's passive verification
+status or retained in the bridge's plan journal.
 
 ## Reviewed Git source deployments
 
@@ -7102,6 +7164,207 @@ Neither tool ships or stops an experiment. The recommendation's commands are
 for the owner to run; only a guardrail breach changes a flag without an
 owner's request.
 
+## Change feature flags
+
+Five tools in the `release` toolset change Gregale Flags (ADR-20261117215858).
+All take `project` and `environment`; writes need write consent for that
+environment.
+
+- `gregale_list_flags` returns the configuration, its version and the
+  lifecycle report.
+- `gregale_plan_flag_change` takes `changes`, an ordered list of 1–20 edits:
+  `create` (`variants`, `default`, `description`, `owner`, `expires`), `set`,
+  `enable`, `disable`, `kill`, `revive`, `set_percent` (`percent`, 0–100),
+  `add_rule` (`rule_id`, `customers`, `group`, `attributes`, `percent`,
+  `value`), `remove_rule` and `delete`. The edits follow the same rules as the
+  `gregale flag` commands. The plan shows each edit's summary and every changed
+  flag before and after, and pins the configuration version for 15 minutes.
+- `gregale_plan_flag_rollback` reviews restoring an earlier `version`.
+- `gregale_apply_flag_change` publishes a plan. A configuration that changed
+  since the plan is refused as `plan_stale`; review a new plan. Retry the same
+  `plan_id` after an uncertain response.
+- `gregale_kill_flag` kills one flag on the latest configuration at once:
+  every evaluation serves the fallback in the application's code. It needs no
+  plan and no approval, and is idempotent. Revive the flag with a reviewed
+  `revive` change.
+
+Flag publishes, rollbacks and rollout promotions by an agent connection ask a
+person first ([approvals](#approve-an-agents-risky-actions)); the kill switch
+does not.
+
+## Run a command in the app
+
+`gregale_plan_run_command` (toolset `operate`) reviews one non-interactive
+command for `app`: `command` as an argv array, or `shell` as one line run by
+`/bin/sh -c`, with `timeout_seconds` (1–900, default 120) and
+`max_output_bytes` (1024–262144, default 65536). The command runs once in a
+fresh task VM from the app's live default deployment, with its variables and
+secrets, never in a serving instance. Apply the plan with
+`gregale_apply_operation`; a retried apply never starts a second command. On a
+production app an agent connection asks a person first.
+
+`gregale_get_command_run` returns the status, exit code and the stdout and
+stderr tails, waiting up to `wait_seconds` (0–45) for the command to finish.
+Lines that look like credentials, such as an `env` dump, are replaced with
+`[redacted: <kind>]`. `gregale_cancel_command_run` asks a running command to
+stop; work it already did stays done.
+
+## Query PostgreSQL
+
+With the "Read my app data" consent, or an agent key with the
+`data:read` scope, two tools in the `diagnose` toolset read a managed
+database bound to an app (ADR-20261117215858):
+
+- `gregale_get_postgres_schema` lists the tables and views of one schema
+  (default `public`) with their columns, types, NOT NULL, primary keys and
+  indexes. A large schema is listed by name with column counts; name up to
+  20 tables in `tables` for their detail.
+- `gregale_query_postgres` runs one statement and returns up to `max_rows`
+  rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
+  cap stopped reading.
+
+Both take `app`, `database` (an ID or name from `gregale_list_databases`) and
+optional `project` and `environment`; the database must be bound to the app in
+that scope. The statement runs as the database's read-only agent login, which
+reads the public schema, in a READ ONLY transaction with a 5-second timeout.
+Writes, DDL and several statements are refused with PostgreSQL's error. One
+query per database runs at a time. A query wakes a suspended database and its
+compute is billed as usage. The audit log records a hash of each statement,
+never the SQL or rows. The same API is `POST /v1/postgres/databases/{id}/query`.
+
+## Queues, workflows and monitoring
+
+ADR-20261117232109. Reads (toolset `diagnose`): `gregale_get_queue_state`,
+`gregale_list_dead_letters`, `gregale_list_workflow_runs`,
+`gregale_get_workflow_run`, `gregale_list_workflow_attention`,
+`gregale_list_alerts`, `gregale_get_slo_status`, `gregale_list_synthetics`,
+`gregale_list_incidents` and `gregale_get_incident`. Message bodies and
+workflow inputs and outputs are replaced with their size unless the
+connection has "Read my app data" (`data:read`).
+
+Reviewed changes (toolset `operate`), applied with `gregale_apply_operation`:
+
+- `gregale_plan_dead_letter_replay`: up to 50 named dead letters, or the
+  oldest up to 200. A replay runs the app's code again on old input.
+- `gregale_plan_workflow_recovery`: `retry_step`, `resume` (fails if the run
+  was resumed since the plan), `cancel` or `cancel_queued`.
+- `gregale_plan_monitoring_change`: create an SLO; create, enable or disable a
+  synthetic check; create or update an alert rule that notifies existing
+  channels. Agents cannot add webhooks or alert actions, and cannot delete.
+
+`gregale_acknowledge_incident` and `gregale_add_incident_note` act at once.
+Replays and workflow recovery by an agent connection ask a person first
+(workflow run actions in every environment).
+
+## Edge rules, previews, objects and workflow tests
+
+ADR-20261118140000.
+
+- Edge rules: `gregale_list_edge_rules` and `gregale_get_edge_activity`
+  (toolset `diagnose`) read rules, attack mode, rule-set versions, hits and
+  recent rule events. Client IPs and user agents need `data:read`.
+  `gregale_plan_edge_rule_change` (toolset `operate`) reviews creating,
+  updating or deleting a rule, rolling back to a version, or switching attack
+  mode on or off. The plan is pinned to the current rules: apply fails with
+  `plan_stale` if they changed. On a production app the apply asks a person
+  first.
+- Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
+  and `gregale_plan_preview_change` (`create` for a pull request, or
+  `destroy`, which asks a person first). Previews are reached only through
+  their parent app.
+- Objects (toolset `diagnose`): `gregale_list_objects` lists keys and sizes;
+  `gregale_read_object` reads up to 256 KiB from the start of an object and
+  needs `data:read`. No writes or deletes.
+- Workflow tests (toolset `release`): `gregale_list_workflow_tests` and
+  `gregale_run_workflow_tests`, which runs a saved workflow's test cases (mocked
+  simulations) against its current draft.
+
+## Events, audit trail, budgets and API consumers
+
+ADR-20261118161500.
+
+- Events (toolset `diagnose`): `gregale_list_event_subscriptions`,
+  `gregale_get_event_subscription_health`, `gregale_list_event_deliveries`
+  and `gregale_list_event_recoveries`. `gregale_plan_event_change` (toolset
+  `operate`) reviews pausing or resuming a subscription, recovering matched
+  events (the plan shows how many) or cancelling a recovery. On a production
+  app, pauses and recoveries ask a person first.
+- Audit (toolset `diagnose`): `gregale_list_audit_events` reads the account
+  audit log, or one app's events. A connection limited to some apps must name
+  an app.
+- Spend (toolset `operate`, needs "Read usage and billing"):
+  `gregale_get_spend_forecast`, `gregale_list_budgets`,
+  `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
+  and update only budgets that notify; enforcing budgets stay with people.
+  Every budget write asks a person first. The forecast leaves out per-usage
+  allocations; read one app's costs with `gregale_get_costs`. Budget and flag
+  plans live only in the server's memory: after a release restarts the hosted
+  server, plan again.
+- API consumers (toolset `operate`): `gregale_list_api_consumers`,
+  `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
+  revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans
+  and spend caps ask a person first.
+
+## Log search, drains, channels and organization members
+
+ADR-20261119110000.
+
+- Logs (toolset `diagnose`): `gregale_search_logs` filters by source, level,
+  route, status, deployment, request, trace and text over a window (default
+  the last hour); `gregale_get_log_facets` counts matches to narrow a search.
+  `gregale_list_log_drains` and `gregale_get_log_drain_health` show drains
+  and their delivery.
+- Channels (toolset `operate`): `gregale_list_notification_channels` and
+  `gregale_test_notification_channel` (one test message, at most once a
+  minute per channel).
+- Drain and channel destinations show only their host (`https://hooks.slack.com`,
+  `…@example.com`); the rest of a webhook URL is often its credential.
+- `gregale_list_org_members` (toolset `operate`) lists an organization's
+  members, roles and pending invitations.
+
+## Experiments, saved workflows, event schemas and domains
+
+ADR-20261119190000.
+
+- Experiments (toolset `release`): `gregale_plan_experiment_change` reviews
+  creating (never started by create), starting, stopping or shipping a flag
+  experiment; apply with `gregale_apply_reviewed_change`. Production starts
+  and ships ask a person first.
+- Saved workflows (toolset `release`): `gregale_save_workflow_draft` saves a
+  draft (it runs nothing); `gregale_plan_workflow_publish` reviews publishing
+  it and refuses unless the draft's saved tests passed on that version.
+  Production publishes ask a person first.
+- Event schemas: `gregale_list_event_schemas` (toolset `diagnose`) and
+  `gregale_plan_event_schema_registration` (toolset `operate`), which previews
+  which subscriptions accept the new version and validates samples. It needs
+  a connection to every app and asks a person first. Pin or reset a
+  subscription's schema versions with `gregale_plan_event_change`
+  (`set_schema_versions`, `reset_schema_versions`).
+- `gregale_diagnose_domain` (toolset `diagnose`) explains why a custom domain
+  does or does not serve, with the record to change.
+
+## Read product analytics
+
+Five read-only tools in the `diagnose` toolset query product analytics (see
+[Flags](flags.md#analyze-product-events)). All take `project` and
+`environment`; the first three also take optional `from`, `until` (RFC 3339),
+`unit` (`customer` or `subject`) and `by` (`flag:KEY` or `property:KEY`).
+
+- `gregale_get_insight_events` takes `event`, `interval` and `where`, and
+  returns the event's series.
+- `gregale_get_insight_funnel` takes 2 to 6 `steps` and a `window`.
+- `gregale_get_insight_retention` takes `start`, `return`, `period` and
+  `periods`.
+- `gregale_get_insight_requests` takes `flag` and returns requests, server
+  errors and p95 latency per variant.
+- `gregale_list_insight_cohorts` lists saved cohorts with their definition,
+  member count, the plan's member bound and the last refresh; rules target a
+  cohort with the `gregale.cohort` attribute (see
+  [Target a cohort](flags.md#target-a-cohort)).
+
+Each result carries guidance: a flag breakdown is observational, so causal
+claims need an experiment.
+
 ## Watch one rollout
 
 `gregale_watch_rollout` accepts `app`, `deployment_id`, optional `project` and
@@ -9538,3 +9801,54 @@ alone does not remove that retained state. See
 [ADR 20261017191530](adr/20261017191530-mcp-readiness-pagerduty-release.md). Local tests cover memory,
 PostgreSQL restart, signatures, migration replay and client contracts; live
 PagerDuty subscription qualification remains pending.
+
+
+### Owner-qualified hosted Task bindings
+
+After approving a retained hosted source review, its personal owner can select
+existing native managed PostgreSQL bindings and run one bounded catalog probe.
+Enable both `FAAS_MCP_HOSTED_TASK_SOURCE_RETENTION=1` and the separate
+`FAAS_MCP_HOSTED_TASK_BINDING_VERIFICATION=1` on APID; Account source sealing
+and account-bound runtime envelopes remain independent.
+
+```sh
+gregale mcp server tasks bind qualify --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --namespace QUEUE_NAMESPACE \
+  --web-database-ref secret:DATABASE_URL \
+  --worker-database-ref secret:DATABASE_URL \
+  --migration-database-ref secret:MIGRATION_URL \
+  --observer-database-ref secret:DATABASE_URL
+gregale mcp server tasks bind get --id INTENT
+gregale mcp server tasks bind revoke --id INTENT --binding-sha256 BINDING_DIGEST
+```
+
+All four references must identify one ready account-owned native database with
+runtime read/write, migration-only and observer read-only roles. Namespace and
+configured owner/payload keys must agree with the approved source and native
+apps. Selection is immutable; retries never repeat a probe. Changed selections
+require a new retained source identity and approval.
+
+Only metadata is returned. The hosted consent-gated
+`gregale_get_uploaded_task_tool_bindings` tool lets the original requester read
+status and fixed check results; agents cannot select, probe or revoke bindings.
+Evidence expires within one minute and never extends the source's original
+fifteen-minute deadline. Reads may permanently invalidate drift without probing.
+These are historical catalog/configuration observations, not retained payload
+decryption, migration compatibility, VM connectivity or execution readiness.
+All receipts keep `ready_to_apply=false`, `bindings_verified=false` and
+`owner_authorization_required=true`. No deployment or Task execution occurs.
+
+### Plan a contained hosted Task rehearsal
+
+Once a retained source review has a passing binding observation, an unscoped personal administrator API key can reserve a disposable rehearsal target. APID must enable `FAAS_MCP_HOSTED_TASK_REHEARSAL_PLAN=1`, hosted source retention, and binding verification.
+
+```bash
+gregale mcp server tasks rehearse plan --id INTENT \
+  --intent-sha256 INTENT_DIGEST --review-sha256 REVIEW_DIGEST \
+  --binding-sha256 BINDING_DIGEST
+gregale mcp server tasks rehearse approve --id INTENT --plan-sha256 PLAN_DIGEST
+gregale mcp server tasks rehearse get --id INTENT
+```
+
+Review the allocated target identity, queue namespace, and fixed expiry before approving. The plan expires with the passing binding observation and retries preserve its identity and deadline. Use `rehearsal revoke --id INTENT --plan-sha256 PLAN_DIGEST` to withdraw an unconsumed approval. These commands only record planning and approval metadata. Runtime allocation, migration and candidate verification belong to the contained runner. See [the rehearsal plan ADR](adr/20261118062934-hosted-task-rehearsal-plan.md).
