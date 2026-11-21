@@ -75,6 +75,14 @@ type Worker struct {
 	Now          func() time.Time
 	// Outcome, when set, counts each notice's delivery outcome.
 	Outcome func(kind, outcome string)
+	// CheckReleased and SLOReleased decide whether the account's plan and
+	// capability flags still cover a synthetic check or an SLO, the same
+	// gates meterd's runner and SLO rollup apply (ADR-20261028101615). A
+	// check the runner no longer probes keeps its last failed runs for days;
+	// without the gate it was reported as failing every day until they aged
+	// out. nil covers every check and SLO.
+	CheckReleased func(ctx context.Context, check state.RunnableSyntheticCheck) bool
+	SLOReleased   func(ctx context.Context, def state.SLO) bool
 
 	lastDetect, lastTrim time.Time
 }
