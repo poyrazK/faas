@@ -86,6 +86,8 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
+
 // SealNotificationChannel validates a channel create request (ADR-749).
 var SealNotificationChannel = sealChannel
 
