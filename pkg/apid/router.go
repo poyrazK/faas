@@ -60,6 +60,11 @@ const (
 	ApidRootReadyz      = "/readyz"
 	ApidRootCliAuth     = "/cli-auth"
 	ApidRootDocs        = "/docs"
+	// Legal pages (pkg/legal). Sign-up links them, so they must answer on
+	// the platform hosts, not fall through to app routing.
+	ApidRootTerms         = "/terms"
+	ApidRootPrivacy       = "/privacy"
+	ApidRootAcceptableUse = "/acceptable-use"
 )
 
 // IsApidPath returns true when the inbound request path matches one
@@ -95,6 +100,9 @@ func IsApidPath(p string) bool {
 		ApidRootStatus,
 		ApidRootCliAuth,
 		ApidRootDocs,
+		ApidRootTerms,
+		ApidRootPrivacy,
+		ApidRootAcceptableUse,
 	} {
 		if hasApidPrefix(p, root) {
 			return true
