@@ -19,6 +19,21 @@ expiry, rotation, catalog drift and revocation. See the
 It does not certify external OAuth provider login/refresh or API/bridge restart
 recovery; local preparation checks do not establish deployed acceptance.
 
+Flags, experiments and product analytics are not GA rows either: no
+capability registry entry lists them. `TestFlagsAndExperiments` skips when
+Flags answer anything but 404 for a missing project. It deploys a one-service
+Compose project whose Node server uses the repository's flags SDK source
+(`sdk/node/src/flags.ts`, loaded with Node 24 type stripping), registers eight
+platform tenants with consumer keys as verified customers, and checks that the
+SDK's variant matches `flag inspect`, that an experiment counts every
+exposure and conversion in the served arm, that the holdout is refused while
+it runs, that promoting a variant serves it to everyone, layer and holdout
+management, a kill switch, and, when product analytics is on for the account,
+that the tracked events are queryable. A failing step logs the app's `/debug`
+view: the SDK refresh error and the workload-identity and runtime-flags
+statuses. Subject units, ratio, percentile, bandit and segment results stay
+with the apidserver tests.
+
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
 `TestApplicationAuth` runs when the account's `gregale feature list` does not
 report `application-auth` hidden (the `application_auth` platform flag), and
