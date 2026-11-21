@@ -1,0 +1,6 @@
+---
+# ADR-20261112030000 amendment 1: a changed 99-faas-kernel.conf drop-in takes
+# effect on vmmd's next start; vmmd_service restarts it in the same run.
+- name: firecracker reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
