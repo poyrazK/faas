@@ -5887,6 +5887,859 @@ Manage durable workflows
 
 `gregale workflow [<subcommand>]`
 
+### workflow stored
+
+Build, monitor and control stored workflows
+
+Examples:
+
+```sh
+gregale workflow stored init --list
+gregale workflow stored check --app billing --scenarios scenarios.yaml
+gregale workflow stored diff --app billing --name approval-flow
+gregale workflow stored init --template scheduled-report --path reports
+gregale workflow stored runs --app billing --name approval-flow --status failed
+gregale workflow stored diagnose --app billing --name approval-flow --run RUN_ID
+gregale workflow stored recovery-preview --app billing --name approval-flow --since 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z
+gregale workflow stored recover --app billing --name approval-flow --run RUN_ID:COUNT --idempotency-key recovery-batch-1
+gregale workflow stored list --app billing
+gregale workflow stored get --app billing --name paid-invoice
+gregale workflow stored health --app billing --name paid-invoice
+gregale workflow stored pause --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored resume --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored revisions list --app billing --name paid-invoice
+gregale workflow stored revisions show --app billing --name paid-invoice --revision 42
+gregale workflow stored validate --app billing --file stored_workflow.yaml
+gregale workflow stored simulate --app billing --file stored_workflow.yaml --input-file sample.json
+gregale workflow stored apply --app billing --file stored_workflow.yaml --expected-version 0
+gregale workflow stored publish --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored restore --app billing --name paid-invoice --revision 42 --expected-version VERSION
+gregale workflow stored delete --app billing --name paid-invoice --expected-version VERSION --yes
+```
+
+VERSION is the &#34;version&#34; returned by the previous write (or shown by get/list). Versions come from one counter shared by every stored workflow in the app, so a new draft saved with --expected-version 0 usually returns a version greater than 1.
+
+Revision numbers in `revisions list` (&#34;revision&#34;, also &#34;version&#34;) are what --revision takes. Resume restores the published trigger.enabled; it does not enable a definition with trigger.enabled: false.
+
+#### workflow stored recovery
+
+health · suppress · create · cancel · run · evidence
+
+`gregale workflow stored recovery <health|suppress|create|cancel|run|evidence>`
+
+##### workflow stored recovery health
+
+Inspect recovery execution attention and explicit action hints
+
+`gregale workflow stored recovery health --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+##### workflow stored recovery suppress
+
+Stop one queued automatic retry
+
+`gregale workflow stored recovery suppress --app <SLUG> --review <UUID> --action <UUID> --policy-version <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | review ID | required |
+| `--action <UUID>` | queued action ID | required |
+| `--policy-version <N>` | observed policy version | required |
+| `--reason <TEXT>` | why the retry is stopped | required |
+
+##### workflow stored recovery create
+
+Submit a reviewed stored workflow run plan as a durable server job
+
+`gregale workflow stored recovery create --plan <PATH> [--rate <N>] [--execution-deadline <DURATION>] [--execution-stall <DURATION>] [--reason <TEXT>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed run plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--execution-deadline <DURATION>` | advisory execution deadline (zero disables) |  |
+| `--execution-stall <DURATION>` | no-progress warning threshold (default 15m) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+| `--dry-run` | with --job: review recovery failures and save an explicit retry plan (with it: --app, --position, --plan-out, --key) |  |
+
+##### workflow stored recovery cancel
+
+Review or cancel one admitted recovery generation
+
+`gregale workflow stored recovery cancel --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT> --yes [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--yes` | confirm exact generation cancellation | required |
+| `--dry-run` | show the recovery generation it would cancel |  |
+
+##### workflow stored recovery run
+
+Execute a saved recovery plan with a durable per-attempt journal
+
+`gregale workflow stored recovery run --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan file | required |
+| `--journal <PATH>` | new journal file for this execution | required |
+
+##### workflow stored recovery evidence
+
+Diagnose or repair verified automatic retry evidence
+
+`gregale workflow stored recovery evidence --app <SLUG> --review <UUID> --action <UUID> [--parent] [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | automatic retry review | required |
+| `--action <UUID>` | automatic retry action | required |
+| `--parent` | inspect or repair pending retry parent evidence |  |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+#### workflow stored failure
+
+list · policy · resume
+
+`gregale workflow stored failure <list|policy|resume>`
+
+##### workflow stored failure list
+
+List captured initial workflow failures
+
+`gregale workflow stored failure list --app <SLUG> [--name <NAME>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | workflow filter |  |
+| `--cursor <CURSOR>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size (at most 100) |  |
+
+##### workflow stored failure policy
+
+Inspect failure pauses and history, or configure monitoring
+
+`gregale workflow stored failure policy --app <SLUG> --name <NAME> [--enabled <BOOL>] [--expected-version <N>] [--failure-threshold <N>] [--min-completed-runs <N>] [--window-seconds <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--enabled <BOOL>` | enable or disable monitoring; required when configuring |  |
+| `--expected-version <N>` | current failure policy version; required when configuring |  |
+| `--failure-threshold <N>` | terminal failures needed to pause (1..10000, default 3) |  |
+| `--min-completed-runs <N>` | minimum completed outcomes (1..10000, default 5) |  |
+| `--window-seconds <N>` | observation window (60..86400, default 300) |  |
+
+Also previews a resume.
+
+##### workflow stored failure resume
+
+Preview retained work and explicitly clear a failure pause
+
+`gregale workflow stored failure resume --app <SLUG> --name <NAME> --expected-generation <N> [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-generation <N>` | current failure pause generation | required |
+| `--dry-run` | preview the failure and save a reviewed first recovery plan (with it: --failure, --policy, --plan-out, --key) |  |
+
+#### workflow stored policy
+
+Inspect or set required server publishing checks
+
+`gregale workflow stored policy <publish>`
+
+##### workflow stored policy publish
+
+Inspect or set required server publishing checks
+
+`gregale workflow stored policy publish --app <SLUG> [--mode <MODE>] [--expected-version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--mode <MODE>` | set publishing requirement (admin scope) | one of `optional` · `scenarios` · `coverage` |
+| `--expected-version <N>` | current policy version (required when setting mode) |  |
+
+#### workflow stored event
+
+Execute a reviewed event plan with fresh receipt checks and a journal
+
+`gregale workflow stored event <recover>`
+
+##### workflow stored event recover
+
+Execute a reviewed event plan with fresh receipt checks and a journal
+
+`gregale workflow stored event recover --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--journal <PATH>` | new execution journal | required |
+
+#### workflow stored event-recovery
+
+Submit a reviewed stored workflow event plan as a durable server job
+
+`gregale workflow stored event-recovery <start>`
+
+##### workflow stored event-recovery start
+
+Submit a reviewed stored workflow event plan as a durable server job
+
+`gregale workflow stored event-recovery start --plan <PATH> [--rate <N>] [--reason <TEXT>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+| `--dry-run` | save the selected routing actions for review (with it: --app, --name, --source, --event, --idempotency-key, --out) |  |
+
+#### workflow stored failure-recovery
+
+review · evidence · list
+
+`gregale workflow stored failure-recovery <review|evidence|list>`
+
+##### workflow stored failure-recovery review
+
+Prepare, inspect, submit or cancel a durable first recovery review
+
+`gregale workflow stored failure-recovery review --app <SLUG> [--failure <UUID>] [--expected-policy-version <N>] [--review <UUID>] [--decision <DECISION>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--failure <UUID>` | captured initial failure |  |
+| `--expected-policy-version <N>` | saved policy version |  |
+| `--review <UUID>` | durable review |  |
+| `--decision <DECISION>` | submit or cancel |  |
+| `--reason <TEXT>` | operator reason |  |
+
+##### workflow stored failure-recovery evidence
+
+Diagnose or repair verified initial recovery evidence
+
+`gregale workflow stored failure-recovery evidence --app <SLUG> --review <UUID> [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | initial recovery review | required |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+##### workflow stored failure-recovery list
+
+List retained durable first recovery reviews
+
+`gregale workflow stored failure-recovery list --app <SLUG> [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--cursor <UUID>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size |  |
+
+#### workflow stored recovery-policy
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy <evaluate|history|get|set>`
+
+##### workflow stored recovery-policy evaluate
+
+Compare a proposed recovery policy with recent history
+
+`gregale workflow stored recovery-policy evaluate --app <SLUG> --file <PATH> [--workflow <NAME>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | proposed policy JSON with expected_version | required |
+| `--workflow <NAME>` | only sample this workflow |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+##### workflow stored recovery-policy history
+
+Inspect policy decisions and export prepared plans
+
+`gregale workflow stored recovery-policy history --app <SLUG> [--review <UUID>] [--plan-out <PATH>] [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | retained review |  |
+| `--plan-out <PATH>` | export selected prepared plan |  |
+| `--cursor <UUID>` | review pagination cursor (also --after) |  |
+| `--limit <N>` | page limit |  |
+
+##### workflow stored recovery-policy get
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy get --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+##### workflow stored recovery-policy set
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy set --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+#### workflow stored recovery-response
+
+apply · status · check
+
+`gregale workflow stored recovery-response <apply|status|check>`
+
+##### workflow stored recovery-response apply
+
+Apply saved actions with durable receipts
+
+`gregale workflow stored recovery-response apply --plan <PATH> --yes [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+| `--yes` | confirm reviewed actions | required |
+| `--dry-run` | save the cancellation and retry actions for review (with it, 8 more flags: see gregale workflow stored recovery-response apply --dry-run --help) |  |
+
+##### workflow stored recovery-response status
+
+Reconcile retained action receipts and execution outcomes
+
+`gregale workflow stored recovery-response status --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+##### workflow stored recovery-response check
+
+Recheck saved actions without applying
+
+`gregale workflow stored recovery-response check --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+#### workflow stored live
+
+Start, observe and check saved cases against real execution
+
+`gregale workflow stored live <check|run|list|start|get|wait>`
+
+##### workflow stored live check
+
+Require passing suite evidence for a candidate target
+
+`gregale workflow stored live check --app <SLUG> --name <NAME> [--policy <FILE>] [--baseline <UUID>] [--baseline-name <NAME>] --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--policy <FILE>` | versioned required-case coverage policy JSON |  |
+| `--baseline <UUID>` | retained baseline suite UUID; exclusive with baseline-name |  |
+| `--baseline-name <NAME>` | resolve a named baseline; exclusive with baseline |  |
+| `--candidate <UUID>` | distinct retained candidate suite UUID | required |
+| `--expected-version <N>` | expected candidate saved stored workflow version | required |
+| `--expected-published-version <N>` | expected candidate published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate live default deployment UUID | required |
+
+Read-only.
+
+##### workflow stored live run
+
+Run selected live cases sequentially with resumable private progress
+
+`gregale workflow stored live run [--app <SLUG>] [--name <NAME>] [--case <NAME>] [--expected-version <N>] [--expected-published-version <N>] [--expected-deployment-id <UUID>] [--idempotency-key <KEY>] [--journal <PATH>] [--resume <PATH>] [--share] --confirm-real-actions [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for a new suite |  |
+| `--name <NAME>` | stored workflow name for a new suite |  |
+| `--case <NAME>` | explicit case selection; repeat in execution order, at most 32 |  |
+| `--expected-version <N>` | saved stored workflow version for a new suite |  |
+| `--expected-published-version <N>` | published revision for a new suite |  |
+| `--expected-deployment-id <UUID>` | live default deployment UUID for a new suite |  |
+| `--idempotency-key <KEY>` | stable suite key for a new suite |  |
+| `--journal <PATH>` | new private progress file; required for a new suite |  |
+| `--resume <PATH>` | continue the original selection from this suite journal |  |
+| `--share` | save a new suite in shared dashboard history; persisted for resume |  |
+| `--confirm-real-actions` | confirm execution of remaining selected cases | required |
+| `--timeout <DURATION>` | total invocation deadline (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+##### workflow stored live list
+
+Read current target IDs and recent live verifications
+
+`gregale workflow stored live list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+##### workflow stored live start
+
+Explicitly start one saved case against real handlers
+
+`gregale workflow stored live start --app <SLUG> --name <NAME> --case <NAME> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --idempotency-key <KEY> --confirm-real-actions [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--case <NAME>` | saved case with live expectations | required |
+| `--expected-version <N>` | current saved stored workflow version | required |
+| `--expected-published-version <N>` | published stored workflow revision | required |
+| `--expected-deployment-id <UUID>` | live default deployment UUID | required |
+| `--idempotency-key <KEY>` | stable key; retry only with the original start flags | required |
+| `--confirm-real-actions` | confirm this case can perform real actions | required |
+| `--wait` | wait and require a current passing assertion verdict |  |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+##### workflow stored live get
+
+Read one verification without requiring a verdict
+
+`gregale workflow stored live get --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+##### workflow stored live wait
+
+Observe a run, check assertions and require a passing verdict
+
+`gregale workflow stored live wait --app <SLUG> --name <NAME> --run <UUID> [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+#### workflow stored baseline
+
+Manage named baselines and inspect audit history
+
+`gregale workflow stored baseline <retire|list|get|history|promote>`
+
+##### workflow stored baseline retire
+
+Permanently retire a baseline with audit history
+
+`gregale workflow stored baseline retire --app <SLUG> --name <NAME> --baseline-name <NAME> --retirement-id <UUID> --expected-revision <N> --confirm-retirement`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--retirement-id <UUID>` | stable retirement UUID; preserve for retries | required |
+| `--expected-revision <N>` | current positive baseline revision | required |
+| `--confirm-retirement` | confirm permanent retirement; release slot and evidence pin | required |
+
+Protected by revision checks.
+
+##### workflow stored baseline list
+
+Find active baselines and read retained evidence health
+
+`gregale workflow stored baseline list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+Never executes anything.
+
+##### workflow stored baseline get
+
+Read the current immutable promotion receipt
+
+`gregale workflow stored baseline get --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### workflow stored baseline history
+
+Read up to 100 recent promotions
+
+`gregale workflow stored baseline history --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### workflow stored baseline promote
+
+Promote passing evidence to a baseline with revision checks
+
+`gregale workflow stored baseline promote --app <SLUG> --name <NAME> --baseline-name <NAME> --suite <UUID> --promotion-id <UUID> --expected-revision <N> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --policy <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--suite <UUID>` | passing retained suite UUID | required |
+| `--promotion-id <UUID>` | stable promotion UUID; preserve for retries | required |
+| `--expected-revision <N>` | current baseline revision; explicit 0 creates | required |
+| `--expected-version <N>` | expected candidate saved version | required |
+| `--expected-published-version <N>` | expected published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate deployment UUID | required |
+| `--policy <FILE>` | version 2 coverage and age policy JSON | required |
+
+Never executes workflows.
+
+#### workflow stored diff
+
+Compare draft and published definition fields without exposing values
+
+`gregale workflow stored diff --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+#### workflow stored check
+
+Check simulation scenarios and expected step outcomes
+
+`gregale workflow stored check --app <SLUG> --scenarios <PATH> [--require-coverage] [--suggest] [--suggest-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--scenarios <PATH>` | scenario suite YAML or JSON file | required |
+| `--require-coverage` | fail on unexcluded coverage hints |  |
+| `--suggest` | write coverage scenario starters to a new file |  |
+| `--suggest-out <PATH>` | new suggestion file (requires --suggest; defaults beside the suite) |  |
+
+#### workflow stored init
+
+Create a local stored workflow starter with simulation samples
+
+`gregale workflow stored init [--template <NAME>] [--path <DIR>] [--list]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--template <NAME>` | stored workflow starter name |  |
+| `--path <DIR>` | new directory (defaults to starter name) |  |
+| `--list` | list starters without creating files |  |
+
+#### workflow stored list
+
+List stored workflow versions and ownership for an app
+
+`gregale workflow stored list --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+#### workflow stored get
+
+Inspect stored workflow state or export a definition
+
+`gregale workflow stored get --app <SLUG> --name <NAME> [--definition-out <PATH>] [--published]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
+| `--published` | export the published definition instead of the draft |  |
+
+#### workflow stored runs
+
+List run history for one stored workflow
+
+`gregale workflow stored runs --app <SLUG> --name <NAME> [--status <STATUS>] [--limit <N>] [--offset <N>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--status <STATUS>` | pending, running, awaiting_event, succeeded, failed or dead |  |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | page offset |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 creation-time start |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 creation-time end |  |
+
+#### workflow stored diagnose
+
+Diagnose a run belonging to the selected stored workflow
+
+`gregale workflow stored diagnose --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | workflow run UUID | required |
+
+#### workflow stored history
+
+Inspect retained recovery automation history
+
+`gregale workflow stored history --app <SLUG> [--workflow <NAME>] [--run <UUID>] [--policy-version <N>] [--created-after <RFC3339>] [--created-before <RFC3339>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | native workflow filter |  |
+| `--run <UUID>` | native run filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--created-after <RFC3339>` | inclusive start |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+| `--cursor <CURSOR>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size (default 25, max 100) |  |
+
+#### workflow stored health
+
+Inspect app recovery health or named stored workflow run reliability
+
+`gregale workflow stored health [--stall-after-seconds <SECONDS>] --app <SLUG> [--name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stall-after-seconds <SECONDS>` | app recovery evaluation threshold (default 300) |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+
+#### workflow stored report
+
+Summarize workflow recovery outcomes over a time window
+
+`gregale workflow stored report --app <SLUG> [--workflow <NAME>] [--policy-version <N>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | workflow name filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+#### workflow stored recover
+
+Resume selected failed runs with per-run generation checks
+
+`gregale workflow stored recover [--plan-out <PATH>] --app <SLUG> --name <NAME> --run <UUID:COUNT> --idempotency-key <KEY>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan-out <PATH>` | save reviewed selection to a new plan file without resuming |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID:COUNT>` | run UUID and original expected resume count; repeatable, at most 25 | required |
+| `--idempotency-key <KEY>` | stable batch key; reuse for interrupted retries | required |
+
+Reports each run&#39;s outcome.
+
+#### workflow stored pause
+
+Stop future scheduled and event-triggered admissions
+
+`gregale workflow stored pause --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+
+#### workflow stored resume
+
+Resume automatic scheduled and event-triggered admissions
+
+`gregale workflow stored resume --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+
+#### workflow stored revisions
+
+Inspect immutable published snapshots
+
+`gregale workflow stored revisions <list|show>`
+
+##### workflow stored revisions list
+
+List published revisions for a stored workflow
+
+`gregale workflow stored revisions list --app <SLUG> --name <NAME> [--limit <N>] [--offset <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | number of revisions to skip |  |
+
+##### workflow stored revisions show
+
+Inspect a revision or export its definition
+
+`gregale workflow stored revisions show --app <SLUG> --name <NAME> --revision <N> [--definition-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--revision <N>` | published revision number | required |
+| `--definition-out <PATH>` | export the definition as JSON to a new file |  |
+
+#### workflow stored restore
+
+Restore a published revision as a draft
+
+`gregale workflow stored restore --app <SLUG> --name <NAME> --revision <N> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--revision <N>` | published revision number to restore | required |
+| `--expected-version <N>` | current version; use 0 if deleted | required |
+
+#### workflow stored delete
+
+Delete a stored workflow using its current version
+
+`gregale workflow stored delete --app <SLUG> --name <NAME> --expected-version <N> --yes [--restore-manifest]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+| `--yes` | required explicit confirmation of stored workflow deletion | required |
+| `--restore-manifest` | allow the current YAML definition to own this stored workflow again |  |
+
+#### workflow stored validate
+
+Validate a stored workflow definition without saving it
+
+`gregale workflow stored validate --app <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+
+#### workflow stored simulate
+
+Trace a stored workflow with sample input and mocked outputs
+
+`gregale workflow stored simulate --app <SLUG> --file <PATH> [--input-file-id <PATH=FILE_UUID>] [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--mock-item-attempts-file <PATH>] [--require-complete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--input-file-id <PATH=FILE_UUID>` | retained data file below context.input_dir (repeatable) |  |
+| `--input-file <PATH>` | sample workflow input JSON file |  |
+| `--mock-outputs-file <PATH>` | JSON object of action outputs keyed by step name |  |
+| `--mock-item-outputs-file <PATH>` | JSON object of for_each output arrays keyed by step name |  |
+| `--mock-attempts-file <PATH>` | JSON object of ordered attempt outcomes keyed by step name |  |
+| `--mock-item-attempts-file <PATH>` | JSON object mapping loops and zero-based item indexes to attempt outcomes |  |
+| `--require-complete` | fail if mocks leave steps unresolved |  |
+
+Does not run steps.
+
+#### workflow stored apply
+
+Save a stored workflow definition as a draft
+
+`gregale workflow stored apply --app <SLUG> --file <PATH> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--expected-version <N>` | current version; use 0 for a new draft | required |
+
+#### workflow stored publish
+
+Publish the current stored workflow draft
+
+`gregale workflow stored publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current version of the draft | required |
+| `--take-over-manifest` | explicitly take over YAML ownership |  |
+| `--scenarios <PATH>` | check scenarios against the saved draft before publishing |  |
+| `--require-coverage` | require coverage before publishing (requires --scenarios) |  |
+
 ### workflow recover
 
 Recover a saved Workflow run: observe or read diagnostics
