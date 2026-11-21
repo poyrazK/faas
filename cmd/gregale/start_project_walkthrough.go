@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
@@ -40,7 +41,12 @@ func (r *startRunner) projectWalkthrough() int {
 		if code := r.rememberVerifiedDeployment(); code != 0 {
 			return code
 		}
-		PrintOK(osStdout, "Your updated project answered from deployment %s.", r.session.DeploymentID)
+		if r.session.Template == templates.PrivateNode {
+			PrintOK(osStdout, "Verified deployment %s for existing project %s (%s).",
+				r.lastRequest.servedDeployment, r.session.Project, r.session.ProjectID)
+		} else {
+			PrintOK(osStdout, "Your updated project answered from deployment %s.", r.session.DeploymentID)
+		}
 	}
 }
 

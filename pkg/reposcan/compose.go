@@ -16,6 +16,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// ComposeLoopbackPortWarning explains why a loopback-only Compose mapping
+// produces an internal service. It is part of the scan's text response.
+const ComposeLoopbackPortWarning = "ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)"
+
 // composeCandidate is the loose, decoded shape of one
 // docker-compose services entry. The decoder stays non-strict; keys the scan
 // does not apply are reported per service by composeServiceKeyWarnings
@@ -463,8 +467,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		// Compose, so the service stays internal (ADR-20261102192943).
 		portsLoopback := len(ports) > 0 && composePortsLoopbackOnly(s.Ports)
 		if portsLoopback {
-			warnings = append(warnings, "reposcan: "+src+": "+name+
-				": ports are bound to a loopback address, which publishes them only on the machine running Compose; the service is internal, with no public URL (remove the address to publish it)")
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+ComposeLoopbackPortWarning)
 		}
 		// build: path — emit a workloadSeed. Class stays empty so an
 		// explicit hint from another detector can fill it. If no hint
