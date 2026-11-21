@@ -786,8 +786,15 @@ type AdmitInstanceRequest struct {
 	// the ledger, placement, RAM, and node limits still apply to every
 	// admission. Additive per ADR-016.
 	BurstContinuation bool `protobuf:"varint,7,opt,name=burst_continuation,json=burstContinuation,proto3" json:"burst_continuation,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// stale_instance_id names an instance whose forward the gateway just saw
+	// fail with "target not found on node". Before admitting, schedd asks
+	// that instance's vmmd for its live set and fails the row if the VM is
+	// not there, so a row left RUNNING after its VM was retired (for example
+	// during a database outage) stops holding the app's concurrency slot.
+	// Empty means no hint. Older schedds ignore it. Additive per ADR-016.
+	StaleInstanceId string `protobuf:"bytes,8,opt,name=stale_instance_id,json=staleInstanceId,proto3" json:"stale_instance_id,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *AdmitInstanceRequest) Reset() {
@@ -867,6 +874,13 @@ func (x *AdmitInstanceRequest) GetBurstContinuation() bool {
 		return x.BurstContinuation
 	}
 	return false
+}
+
+func (x *AdmitInstanceRequest) GetStaleInstanceId() string {
+	if x != nil {
+		return x.StaleInstanceId
+	}
+	return ""
 }
 
 // AdmitInstanceResponse is the typed result of Engine.AdmitInstance.
@@ -7808,7 +7822,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\awake_id\x18\x05 \x01(\tR\x06wakeId\x12\x12\n" +
 	"\x04port\x18\x06 \x01(\x05R\x04port\x12#\n" +
 	"\rdeployment_id\x18\a \x01(\tR\fdeploymentId\x12C\n" +
-	"\bidentity\x18\b \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\"\xf4\x01\n" +
+	"\bidentity\x18\b \x01(\v2'.onebox.faas.schedd.v1.PlatformIdentityR\bidentity\"\xa0\x02\n" +
 	"\x14AdmitInstanceRequest\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12#\n" +
 	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId\x12\x14\n" +
@@ -7816,7 +7830,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\atrigger\x18\x04 \x01(\tR\atrigger\x12\x1b\n" +
 	"\tis_mirror\x18\x05 \x01(\bR\bisMirror\x12$\n" +
 	"\x0emirror_rule_id\x18\x06 \x01(\tR\fmirrorRuleId\x12-\n" +
-	"\x12burst_continuation\x18\a \x01(\bR\x11burstContinuation\"\x9c\x03\n" +
+	"\x12burst_continuation\x18\a \x01(\bR\x11burstContinuation\x12*\n" +
+	"\x11stale_instance_id\x18\b \x01(\tR\x0fstaleInstanceId\"\x9c\x03\n" +
 	"\x15AdmitInstanceResponse\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x17\n" +

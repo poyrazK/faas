@@ -11,6 +11,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/grpcerr"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -65,6 +66,7 @@ type staleTargetTestBackend struct {
 	recoveredApp    string
 	recoveredScope  string
 	recoveredCap    int
+	recoveredHint   string
 }
 
 func (b *staleTargetTestBackend) EvictInstance(appID, instanceID string) {
@@ -72,7 +74,8 @@ func (b *staleTargetTestBackend) EvictInstance(appID, instanceID string) {
 	b.evictedInstance = instanceID
 }
 
-func (b *staleTargetTestBackend) RecoverStaleTarget(_ context.Context, appID, scope string, maxConcurrency int) {
+func (b *staleTargetTestBackend) RecoverStaleTarget(ctx context.Context, appID, scope string, maxConcurrency int) {
+	b.recoveredHint = sched.StaleInstanceHintFromContext(ctx)
 	b.recoveredApp = appID
 	b.recoveredScope = scope
 	b.recoveredCap = maxConcurrency
@@ -108,6 +111,11 @@ func TestHandlerEvictsOnlyForwarderMarkedStaleTarget(t *testing.T) {
 	}
 	if b.recoveredApp != "app-1" || b.recoveredCap <= 0 {
 		t.Fatalf("recovery = (%q, %q, %d), want app-1 with a positive cap", b.recoveredApp, b.recoveredScope, b.recoveredCap)
+	}
+	// The recovery admission names the dead target so schedd can fail a
+	// row whose VM vmmd no longer has (owner_crash).
+	if b.recoveredHint != "i-fake" {
+		t.Fatalf("recovery stale hint = %q, want i-fake", b.recoveredHint)
 	}
 }
 
