@@ -1182,7 +1182,7 @@ HTTP 409 Conflict · Idempotency key conflict
 
 ### `idempotency_key_reused`
 
-HTTP 422 Unprocessable Entity · Idempotency-Key reused
+HTTP 422 Unprocessable Entity · Idempotency key reused; Idempotency-Key reused
 
 See [Errors](errors.md).
 
@@ -3033,6 +3033,22 @@ See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 ### `route_health_blocked`
 
 HTTP 409 Conflict · Route health gate blocked
+
+### `run_artifact_destination_limit`
+
+HTTP 413 Request Entity Too Large · Artifact exceeds destination limit
+
+### `run_artifact_integrity`
+
+HTTP 422 Unprocessable Entity · Artifact could not be verified
+
+### `run_attribution_denied`
+
+HTTP 403 Forbidden · Run attribution refused
+
+### `run_control_revision_conflict`
+
+HTTP 409 Conflict · Run control changed
 
 ## S
 

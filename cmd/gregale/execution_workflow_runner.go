@@ -275,7 +275,11 @@ func preflightExecutionWorkflowSteps(plan executionWorkflowPlan, storageLabels m
 				return fmt.Errorf("workflow preflight: step %q output path exceeds the %d-byte account limit", step.Label, limits.MaxArtifactPathBytes)
 			}
 		}
-		if err := validateWorkflowResolvedLimits(resolved.Limits, limits); err != nil {
+		requestLimits, err := executionWorkflowRequestLimits(request, capabilities)
+		if err != nil {
+			return fmt.Errorf("workflow preflight: step %q: %w", step.Label, err)
+		}
+		if err := validateWorkflowResolvedLimits(resolved.Limits, &requestLimits); err != nil {
 			return fmt.Errorf("workflow preflight: step %q: %w", step.Label, err)
 		}
 	}
@@ -315,6 +319,26 @@ func workflowCapabilitiesContainNetwork(modes []api.ExecutionNetworkMode, reques
 		}
 	}
 	return false
+}
+
+func executionWorkflowRequestLimits(request api.CreateExecutionRequest, caps api.ExecutionCapabilitiesResponse) (api.ExecutionCapabilityLimits, error) {
+	limits := *caps.Limits
+	if request.UsesExtendedExecution() && !caps.ExtendedAdmissions {
+		return limits, fmt.Errorf("v2 Run admissions are unavailable")
+	}
+	if request.EnvironmentID != "" && (!caps.CustomEnvironments || !workflowCapabilitiesContainRuntime(caps.EnvironmentRuntimes, request.Runtime)) {
+		return limits, fmt.Errorf("custom dependency environments are unavailable for this runtime")
+	}
+	if request.Limits == nil || request.Limits.Class != api.ExecutionClassExtended {
+		return limits, nil
+	}
+	for _, class := range caps.ExecutionClasses {
+		if class.Class == api.ExecutionClassExtended && class.AdmissionAvailable && class.MaxConcurrent > 0 && class.MaxTimeoutMS > 0 {
+			limits.MaxTimeoutMS = min(class.MaxTimeoutMS, api.ExecutionExtendedTimeoutMaxMS)
+			return limits, nil
+		}
+	}
+	return limits, fmt.Errorf("extended Run admissions are unavailable")
 }
 
 func validateWorkflowResolvedLimits(resolved api.ResolvedExecutionLimits, limits *api.ExecutionCapabilityLimits) error {
@@ -575,7 +599,7 @@ func reconcileExecutionWorkflowStates(
 			states[i].run = run
 			states[i].hasRun = true
 			if run.Status == api.ExecutionStatusSucceeded {
-				if contractErr := validateExecutionWorkflowResult(step.Label, run.Result, resultSchemas[step.Label]); contractErr != nil {
+				if contractErr := validateStandaloneWorkflowResult(step.Label, run, resultSchemas[step.Label]); contractErr != nil {
 					states[i].err = contractErr
 					if !continueIndependent {
 						stopAdmissions = true
@@ -1170,7 +1194,7 @@ func runExecutionWorkflowStep(
 	if run.Status != api.ExecutionStatusSucceeded {
 		return run, &executionWorkflowStepFailure{Label: step.Label, Run: run}
 	}
-	if err := validateExecutionWorkflowResult(step.Label, run.Result, resultSchema); err != nil {
+	if err := validateStandaloneWorkflowResult(step.Label, run, resultSchema); err != nil {
 		return run, err
 	}
 	return run, nil
@@ -1208,4 +1232,11 @@ func waitExecutionWorkflowRun(ctx context.Context, client executionWorkflowClien
 		run = updated
 	}
 	return run, nil
+}
+
+func validateStandaloneWorkflowResult(label string, run api.ExecutionResponse, schema *executionworkflow.Schema) error {
+	if run.ContractFailed() {
+		return fmt.Errorf("step %q Run result does not match result_schema", label)
+	}
+	return validateExecutionWorkflowResult(label, run.Result, schema)
 }

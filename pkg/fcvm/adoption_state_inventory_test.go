@@ -126,6 +126,7 @@ var adoptionInstanceInventory = map[string]string{
 	"runtimeAdmissionReceipt":         "rebuilt", // the block's admission (ADR-595 extension)
 	"runtimeAdmissionEgress":          "rebuilt",
 	"admissionHeldFrom":               "rebuilt",
+	"executionTemplateOnly":           "refused", // template captures retain the disposable execution journal kind
 	"ExecutionOnly":                   "refused", // execution kind
 	"SandboxID":                       "refused", // sandbox sessions are execution-only
 	"agentEgressIP":                   "refused", // a sandbox session's agent tunnel address (ADR-20261117185346)

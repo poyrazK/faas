@@ -4,6 +4,7 @@
 /* eslint-disable */
 import type { ExecutionArtifactInput } from './ExecutionArtifactInput.js';
 import type { ExecutionFile } from './ExecutionFile.js';
+import type { ExecutionFileInput } from './ExecutionFileInput.js';
 import type { ExecutionLimitRequest } from './ExecutionLimitRequest.js';
 import type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';
 /**
@@ -24,6 +25,27 @@ import type { ExecutionNetworkPolicy } from './ExecutionNetworkPolicy.js';
  *
  */
 export type CreateExecutionRequest = {
+  customer_ref?: string;
+  /**
+   * Immutable ready dependency environment; requires v2 admission and the standard profile.
+   */
+  environment_id?: string;
+  /**
+   * Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Input is validated before quota consumption.
+   */
+  input_schema?: (Record<string, any> | boolean);
+  /**
+   * Local JSON Schema Draft 2020-12, at most 64 KiB. Requires v2 admission. Validation metadata is separate from execution status and never retries execution.
+   */
+  result_schema?: (Record<string, any> | boolean);
+  /**
+   * Retained data staged below context.input_dir. Requires v2 admission.
+   */
+  input_files?: Array<ExecutionFileInput>;
+  /**
+   * Stored outputs require v2 admission; default inline preserves the original output budget.
+   */
+  artifact_storage?: 'inline' | 'stored';
   /**
    * Optional caller-generated grouping id; control-plane metadata only.
    */

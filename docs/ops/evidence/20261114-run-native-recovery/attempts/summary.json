@@ -1,0 +1,311 @@
+[
+  {
+    "attempt_suffix": "",
+    "failed_tests": {
+      "template-runtime-checks.jsonl": [
+        "TestExecutionTemplateNativeAuthorityDoesNotWidenOrdinaryCapture"
+      ]
+    },
+    "failure_summary": "new authority fixture retained a different netns identity; corrected fixture",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 125
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "6ef7eeed34b538f808ffdfdcf2527e0f158c23464ab9cec984cd9ff32973b0e4",
+      "build-binary-retirement.json": "e5fbe66dd8d5972e755b790dd304a787fb3dd375e133228cad5453d366498129",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "1a2ef231210e2187489ca75ad22db8f3735f676076ce59dfa405b9773a1704b1",
+      "source-archive.json": "e366aed2576d313bd05822169e12db8721bcd9250f05cae6bfb92b570a8a7235",
+      "source.json": "7379d25ea077a1ec27a36ef164ba6a7aadb46451aef4168aa24f3e6a76947719",
+      "template-publisher-checks.jsonl": "39f73aee6a8388dee73ef1e4e7310e9d37ad2f81863adf9539ffa42f046c03b1",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "2421da761edbb9541b9cd8697ea53dc464cd2eba3eb24d7159ef0eea1f279349",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "9ad823e1487ba1128f45312fda4f751941ec4a9c8051d9fd65a358a382956b40",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "85aa272787c173cb7c156e732424988e3d93ac2a334758b1d4e1072564d8df36",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "660e1263733e88894f1e06db8417950777dd7a11"
+  },
+  {
+    "attempt_suffix": "",
+    "failed_tests": {
+      "template-clones.jsonl": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/crash_before_boot",
+        "TestSourceTemplateClonesMetal",
+        "TestSourceTemplateClonesMetal/automatic_capture_and_publication",
+        "TestSourceWarmRestoreOOMMetal",
+        "TestSourceWarmRestoreOOMMetal/cold_real_oom"
+      ],
+      "template-runtime-checks.jsonl": []
+    },
+    "failure_summary": "native networkless boot reached cgroup fence before journaled device readiness",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 1
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "f86ae0437b39ca019ad82b1836aa40b91f2c4d73decffb02dc16b1ba8fb00678",
+      "build-binary-retirement.json": "72be2a0dae56c40544469efc14b86a53abd5ec8aeaedea733cb2a2c26f98c40e",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "ec92394f958dbdb6af319e905f6d30ce07e57e6acf5223701a6bae180b8ad600",
+      "source-archive.json": "d4e81f21d8118848175bab7006b0fd14979b1852acb2a8e94c25fa43f72936a2",
+      "source.json": "45edbf45e5835ef34e7b96b65995c51bd8b046fe2371850ae7e64935480ac24c",
+      "template-auth-checks.jsonl": "5a7d8567bbbdcdc6f0c62486f1196230c427d2794250bd2c0285cb847309ea33",
+      "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-clones.jsonl": "bbbb0f12d6c4e6af3e92fdab6510311de700062eff551b4dc6da154a3af93d63",
+      "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-publisher-checks.jsonl": "7cc736edaa0c1c9440ddfda6b4b9ffef62f2bf007f1ab78b2de23e1e63ce2434",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-retention-checks.jsonl": "a3d11f3f6a4109b7692e6feb849c5b51ddcaf710f59266b05b2e7cb951b16250",
+      "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "c0e28531e590f30a0f3575729f3b1506fa629d97bf9c247f3e0ebc17814b92cb",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-wiring-checks.jsonl": "2d72ca5df57befbe47cedff92ae75cbbb3f2fea22d0898464ae3a4d58d805c5a",
+      "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "475bf168db08d9840fc338e0ab7023ec32c28e0fadda4464e757ba14c67bb0ab",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "ca8f70b7beda8d6b05c3baf7a1c862c44ccf3575953c332e337657002aeea1e5",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "46359b9174c17275c594a7f221e697694e4bf71b"
+  },
+  {
+    "attempt_suffix": "",
+    "failed_tests": {
+      "template-clones.jsonl": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/crash_before_boot",
+        "TestSourceTemplateClonesMetal",
+        "TestSourceTemplateClonesMetal/automatic_capture_and_publication",
+        "TestSourceWarmRestoreOOMMetal",
+        "TestSourceWarmRestoreOOMMetal/cold_real_oom"
+      ],
+      "template-runtime-checks.jsonl": []
+    },
+    "failure_summary": "private diagnostic reproduction of missing native networkless preparation",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 1
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "781f27fad72221a6a27a62a600a2fdd0fe9b28c3d36dedbbb16093dac5d4dcf1",
+      "build-binary-retirement.json": "861a004194a9f5601c97d25ba5e682da144bdd085fa1e205016be1f3e1fab5ef",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "ec92394f958dbdb6af319e905f6d30ce07e57e6acf5223701a6bae180b8ad600",
+      "source-archive.json": "a52b7e691ffc35439f2c12e25b7845cf25ea8ae7a9c931a0b0e5408770f08d11",
+      "source.json": "865c467e459f7ce7fdd3891c31aa6b1287cd302a724cb47c208a656156c3c40b",
+      "template-auth-checks.jsonl": "3038d15766653c5c6516345a1e98d7e17f290f0fa340de37521fe567fd021b35",
+      "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-clones.jsonl": "518ca2b49242174b75caa18a8c4d282da20d2cbc4ee9aed205e316c8e33132b3",
+      "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-publisher-checks.jsonl": "ad027590e78898081540a332a3d2593b29bbfd9e24549d2b1c6dd95ab9620445",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-retention-checks.jsonl": "5246d98f108dcaed0fcbc497f4ed4fcfca843a733ea509b8c2956b4e77e47dc7",
+      "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "dd0b94991500882ca8f2ea357a317b9fd50b08a3c70e24753d56427de9e6428b",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-wiring-checks.jsonl": "0062f6fd3f36b47b2ba8a26bf1b1f00a51e89683b0b23375012e6db5713cc5f4",
+      "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "e803c15d5ea2c55563ca3726fa8439a3dc1586a540b6a3e976e361ff8b1ab92c",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "a6cb0fd86a7480ccc08c17a0159aac61818d3bb5c8d9ba38ba442793e383f6e3",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "a5b33511da9c30335d814bcd7b6efbf206e8b4a3"
+  },
+  {
+    "attempt_suffix": "",
+    "failed_tests": {
+      "template-clones.jsonl": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/crash_before_boot",
+        "TestSourceTemplateClonesMetal",
+        "TestSourceTemplateClonesMetal/cancelling_one_clone_spares_its_peer"
+      ],
+      "template-runtime-checks.jsonl": []
+    },
+    "failure_summary": "KVM-only capture and four clones worked; concurrent image inventory and fresh-channel readiness failed",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 1
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "47727ee86b7bc39d03e6e1fea8fdda391b2cbe5bbc9de90553374864934cc49c",
+      "build-binary-retirement.json": "cc23da4838144500a2864cc772fb26d4904f8c8c2cfbc70d958abd3e379ca0de",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "ec92394f958dbdb6af319e905f6d30ce07e57e6acf5223701a6bae180b8ad600",
+      "source-archive.json": "b591418de584966ece5b87c0926b55f654a5fa6eea3e30860b756c3917693611",
+      "source.json": "32a4189f5d624f34762fde99bba94ab3e60058623af088b116dab61806604459",
+      "template-auth-checks.jsonl": "9df373ac639b80a345190e6a2fefc40baeec6d2ec7b929f9c0444cf441ef67b2",
+      "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-clones.jsonl": "c98ea94c6dee6e378b2e76180e21879e596905825c7d9ba03dcb53e556a85e27",
+      "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-device-checks.jsonl": "e673ca7ea79c9d15441611ea3b8a22820c08846e83e82a78919efdf7d86e0916",
+      "template-device-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-publisher-checks.jsonl": "2f601759694f912c4e2e01d3db6a93ce5bdab404ac04efdfc7abf9fe9bf8fb6a",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-retention-checks.jsonl": "f89232d6362f5e1c130004afda25fd6151e78525b6186df59b9fe9d84be02c88",
+      "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "c137b12732d68f3e1b11f3c6c4551da46c88a0d85c9392f38c4bcb5e6704a77b",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-wiring-checks.jsonl": "8fcbee925755de2114732b05beffe812da291ee66e670992cd9eee7052792521",
+      "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "2b704e7ed504c04bec9de44721192d2c924cb488c5e534e59df886800e932481",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "ec2cfcdaf70bcdb880c221c61fc879798dc9dd09904402e9d0a5efb95ef3638a",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "c3a06d70adc30510a0a0a8ea48381965d27a1abd"
+  },
+  {
+    "attempt_suffix": "",
+    "failed_tests": {
+      "template-clones.jsonl": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/crash_before_boot"
+      ],
+      "template-runtime-checks.jsonl": []
+    },
+    "failure_summary": "all sixteen native regression cases passed; first post-restart fresh restore failed before reaching vmmd",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 1
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "156e2f0332d1badab06bd2706572bc1910e7c2934af8959d8c1e4ff2a1062b18",
+      "build-binary-retirement.json": "b367220cc3dbf0afdb63257d4a03f746652389f899e939f8afea0749772459bb",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "ec92394f958dbdb6af319e905f6d30ce07e57e6acf5223701a6bae180b8ad600",
+      "source-archive.json": "bf4ad630b1ec5961316f82ff5549de77555b5940718a5600c222ac019d0b5df0",
+      "source.json": "dd926558fbad663925e64eb10e913faee142b1e939c4ec53ff98e694ae9c19f1",
+      "template-auth-checks.jsonl": "71121ef70dc837b52220b310c2e6e9ca45344d045c31d3b8652f8db3f7191886",
+      "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-clones.jsonl": "c654b3d0b2c3b66a8ada828968829a6e36ad4dfb06a2905affd887f0c7b63371",
+      "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-device-checks.jsonl": "321ebedbf387ad8db6e4c0ff073ba95eeb5d72bd4c5e78195050e128720db3f4",
+      "template-device-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-publisher-checks.jsonl": "4477a04d6e35e7f873eb5725ad595c63aa1d74b227b27b6951ddf7aecd8deeed",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-retention-checks.jsonl": "e24e64a25476e5245f900811423e027d40df7fb35ca613d9f597c0200d0770cc",
+      "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "1400c5a26f9b83c1a7e3e65ab597ce40d874878544dfefc046f773c3695fdb18",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-wiring-checks.jsonl": "a1bd76206553589d1d8f5595f56779b83ab46f076ce203c05cf1b6e9dcd351ec",
+      "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "a93980448c0ffe73f6bcda65f1e6aa6c176cb2cf5e2f39beb9e2bcfacbf462bc",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "70a8de71db3481eda2d6677323c3ba3ff30425113d838c014b25396eb0c6d553",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "f6232943ca183a98a4518693e4f0ac83f4d1b854"
+  },
+  {
+    "attempt_suffix": "",
+    "failed_tests": {},
+    "failure_summary": "compiler scratch exhaustion before the VM matrix; exact source retried with separate Go build disk",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 125
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "f2a460e55854ae0795f99b267c674e0e098b62f6e7696618123349dde68b4123",
+      "build-binary-retirement.json": "1961b2418e5aa6172f08086c43af9f64d399066d46d6edc589ea7353208e99f7",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "1a2ef231210e2187489ca75ad22db8f3735f676076ce59dfa405b9773a1704b1",
+      "source.json": "2830baf2381b980ac0afc39a6cabd075d8c8f67df49e64109af30cbf2928cb70",
+      "template-publisher-checks.jsonl": "faccc3d4e8dacb8c6b64904d891f4726c6580dacfae0fff4944cc876c345b410",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "9d9a5e096ba819c87c7a7bd9910d459ffc532956288c60119f8f543c56c519e9",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "dd4546c4f94ebcc907cb295a2934ea98e0cf9e5e38e26cf4ca60bde14f96d4da",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "1a61cd7c75981ab2dff909b9794503b5e2aff293"
+  },
+  {
+    "attempt_suffix": "-disk-retry1",
+    "failed_tests": {
+      "template-clones.jsonl": [
+        "TestSourceNativeRecoveryMetal",
+        "TestSourceNativeRecoveryMetal/vmmd_restart_never_reexecutes_running_work"
+      ],
+      "template-runtime-checks.jsonl": []
+    },
+    "failure_summary": "all five capture crashes, scheduler capture death, and publication restart passed; interrupted Run stop did not reach successor",
+    "functional_pass": false,
+    "process_exits": {
+      "leakcheck_after": 0,
+      "leakcheck_before": 0,
+      "native_recovery": 1
+    },
+    "raw_logs_exported": false,
+    "sha256": {
+      "artifacts.sha256": "ffd5c31668e554067ed419f7b963ae7829d971d856f5d69f3e85514e6d0df78e",
+      "build.log": "e5b998ae991d32996b4546d768cd183e4df61da4ab1d7fac885aae3d64696e0b",
+      "host.json": "248f3ec1eae7128e65e09ce8bcf1330ef6730c77897e62de9a377921f0b5c27b",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "ec92394f958dbdb6af319e905f6d30ce07e57e6acf5223701a6bae180b8ad600",
+      "source.json": "2830baf2381b980ac0afc39a6cabd075d8c8f67df49e64109af30cbf2928cb70",
+      "template-auth-checks.jsonl": "1c6f3aea8ff9fb9097ff87cf4135a31881418d1bfa8539f97dfd976b09cbc393",
+      "template-auth-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-clones.jsonl": "7cb74913335cbe6c1106d19ec94a44ff9d84ac2507f63b68596bd72e826cdbb3",
+      "template-clones.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-device-checks.jsonl": "481015c22baf0a176dfb52c1ffe6d32af61ec0e2069e39fdbea7bf1fa09bf6db",
+      "template-device-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-publisher-checks.jsonl": "905a83dbda1608ca54972cdc3fc49d3b2ce6e5ac6b8135506c9cdceb230882c8",
+      "template-publisher-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-retention-checks.jsonl": "2b61da1a826f3459be50b836921360196193fc905cc775daa28ff743c283897b",
+      "template-retention-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-runtime-checks.jsonl": "5886f894a78a1ff047779fa259288226de68ae99e2041694e59112bb12338f26",
+      "template-runtime-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "template-wiring-checks.jsonl": "17a22157fb493fb6ea68dca0f472527ece839eb6c9b3ab387caa7d1f755f3326",
+      "template-wiring-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-executor-checks.jsonl": "b39a197f8e83f9897d06470c957752f96d5ddc51678244b4c25a20df0bdd21de",
+      "warm-oom-executor-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "warm-oom-guest-checks.jsonl": "217bedea5ed2c9eea5706653bcb0596e8b2d07ad0d2a8ddcbb1c76a05499b1fc",
+      "warm-oom-guest-checks.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "snapshot_commit": "1a61cd7c75981ab2dff909b9794503b5e2aff293"
+  }
+]

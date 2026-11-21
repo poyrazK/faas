@@ -227,27 +227,11 @@ func (j *nativeImageSourceJournal) records() ([]nativeImageSourceRecord, error) 
 			return nil, errors.New("native image source: unexpected journal entry")
 		}
 		path := filepath.Join(j.root(), entry.Name())
-		if err := checkNativeJournalPath(path, false); err != nil {
-			return nil, err
-		}
-		file, err := openNativeJournalFile(path, os.O_RDONLY)
+		record, err := j.readSourceRecord(path, boot)
 		if err != nil {
 			return nil, err
 		}
-		var record nativeImageSourceRecord
-		decoder := json.NewDecoder(file)
-		decodeErr := decoder.Decode(&record)
-		if decodeErr == nil {
-			if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-				decodeErr = errors.New("native image source: trailing ownership data")
-			}
-		}
-		if err := errors.Join(decodeErr, file.Close()); err != nil {
-			return nil, err
-		}
-		if err := record.validate(boot); err != nil {
-			return nil, err
-		}
+
 		if j.path(record) != path || epochs[record.Epoch] {
 			return nil, errors.New("native image source: duplicate or changed epoch identity")
 		}
@@ -259,18 +243,82 @@ func (j *nativeImageSourceJournal) records() ([]nativeImageSourceRecord, error) 
 		active[key] = active[key] || !record.Removed
 		records = append(records, record)
 	}
+	return j.withAnchoredEpochs(boot, records, epochs, active)
+}
+
+func (j *nativeImageSourceJournal) readSourceRecord(path, boot string) (record nativeImageSourceRecord, result error) {
+	if err := checkNativeJournalPath(path, false); err != nil {
+		return record, err
+	}
+	file, err := openNativeJournalFile(path, os.O_RDONLY)
+	if err != nil {
+		return record, err
+	}
+	defer func() { result = errors.Join(result, file.Close()) }()
+	decoder := json.NewDecoder(file)
+	if err := decoder.Decode(&record); err != nil {
+		return record, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return record, errors.New("native image source: trailing ownership data")
+	}
+	if err := record.validate(boot); err != nil {
+		return record, err
+	}
+	if j.path(record) != path {
+		return record, errors.New("native image source: changed epoch identity")
+	}
+	return record, nil
+}
+
+// An anchor is created only after its epoch is durable. Another source can
+// publish between the journal and points directory scans. Read that exact
+// original epoch rather than treating a stale directory snapshot as an orphan.
+// Missing, ambiguous or malformed authority still fails closed.
+func (j *nativeImageSourceJournal) withAnchoredEpochs(boot string, records []nativeImageSourceRecord, epochs, active map[string]bool) ([]nativeImageSourceRecord, error) {
 	points := filepath.Join(j.root(), "points")
 	if err := checkNativeJournalPath(points, true); err != nil {
 		return nil, err
 	}
-	entries, err = os.ReadDir(points)
+	entries, err := os.ReadDir(points)
 	if err != nil {
 		return nil, err
 	}
 	for _, entry := range entries {
-		if !epochs[strings.TrimSuffix(entry.Name(), nativeImageStagingSuffix)] {
+		epoch := strings.TrimSuffix(entry.Name(), nativeImageStagingSuffix)
+		if epochs[epoch] {
+			continue
+		}
+		if !canonicalNativeHelperID(epoch) {
 			return nil, errors.New("native image source: anchor has no ownership epoch")
 		}
+		journals, err := os.ReadDir(j.root())
+		if err != nil {
+			return nil, err
+		}
+		var added *nativeImageSourceRecord
+		for _, journal := range journals {
+			if !strings.HasSuffix(journal.Name(), "."+epoch+".json") {
+				continue
+			}
+			if added != nil {
+				return nil, errors.New("native image source: duplicate anchor epoch")
+			}
+			record, err := j.readSourceRecord(filepath.Join(j.root(), journal.Name()), boot)
+			if err != nil {
+				return nil, err
+			}
+			added = &record
+		}
+		if added == nil {
+			return nil, errors.New("native image source: anchor has no ownership epoch")
+		}
+		key := nativeImageSourceKey(added.Identity)
+		if !added.Removed && active[key] {
+			return nil, errors.New("native image source: multiple live epochs own one inode")
+		}
+		epochs[epoch], active[key] = true, active[key] || !added.Removed
+		records = append(records, *added)
 	}
 	return records, nil
 }

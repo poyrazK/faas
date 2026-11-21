@@ -4,8 +4,11 @@
 /* eslint-disable */
 import type { ExecutionArtifact } from './ExecutionArtifact.js';
 import type { ExecutionFailure } from './ExecutionFailure.js';
+import type { ExecutionResultValidation } from './ExecutionResultValidation.js';
+import type { ExecutionTaskRef } from './ExecutionTaskRef.js';
 import type { ExecutionUsage } from './ExecutionUsage.js';
 import type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
+import type { RunAttribution } from './RunAttribution.js';
 /**
  * Disposable execution receipt. Runs-only keys can read only receipts
  * created by their key family; broad credentials retain account-wide
@@ -15,6 +18,13 @@ import type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
  *
  */
 export type ExecutionResponse = {
+  attribution?: RunAttribution;
+  task?: ExecutionTaskRef;
+  /**
+   * Dependency environment used for this Run, when the request selected one.
+   */
+  environment_id?: string;
+  result_validation?: ExecutionResultValidation;
   profile?: 'standard' | 'python-data-v1';
   /**
    * Scheduler-pinned base image digest, recorded before dispatch of a dependency profile.
