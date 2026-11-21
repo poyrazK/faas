@@ -158,8 +158,9 @@ func TestCDPlatformControlSuccessThenComputeFailureIsVisible(t *testing.T) {
 		"COMPUTE_PREPARE_COMPAT_RESULT: ${{ needs.compute-prepare-compat.result }}",
 		"COMPUTE_RESULT: ${{ needs.compute.result }}",
 		"COMPUTE_ROLLOUT_MODE: ${{ inputs.compute_rollout_mode }}",
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then`,
-		`if [[ "$PLAN_RESULT" != "success" || "$CONTROL_RESULT" != "success" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
+		`if [[ "$CONTROL_RESULT" == "success" || ( "$SKIP_CONTROL_STAGE" == "true" && "$CONTROL_RESULT" == "skipped" ) ]]; then control_ok=true; fi`,
+		`if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" ]]; then`,
+		`if [[ "$PLAN_RESULT" != "success" || "$control_ok" != "true" || "$prepare_ok" != "true" || "$COMPUTE_RESULT" != "success" || "$gate_exit" -ne 0 ]]; then`,
 		"active-node-gate=${gate_exit}",
 	} {
 		if !strings.Contains(workflow, required) {

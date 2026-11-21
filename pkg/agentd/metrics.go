@@ -30,6 +30,9 @@ type Metrics struct {
 	// (ADR-20261027090013 step 11).
 	sandboxBilled prometheus.Counter
 	sandboxPaused prometheus.Counter
+	// deadlineCredit is approval-wait credit sent to vmmd
+	// (ADR-20261027090016 amendment 3).
+	deadlineCredit prometheus.Counter
 }
 
 // Measures of agent_run_memory_gb_seconds_total (ADR-20261027090011).
@@ -110,12 +113,16 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "sandbox_session_paused_seconds_total",
 			Help: "Seconds sandbox session VMs spent quiet-paused or frozen, which are not billed (ADR-20261027090013 §5).",
 		}),
+		deadlineCredit: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "agent_run_deadline_credit_seconds_total",
+			Help: "Seconds agent run deadlines grew by while a person decided an approval (ADR-20261027090016 amendment 3).",
+		}),
 	}
 	for _, measure := range []string{measurePrivate, measureUnpausedPrivate, measureBillable, measureConfigured} {
 		m.memory.WithLabelValues(measure)
 	}
 	for _, c := range []prometheus.Collector{m.runs, m.requeues, m.startSeconds, m.runSeconds, m.queueDepth, m.queueOldest,
-		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused} {
+		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused, m.deadlineCredit} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -232,4 +239,11 @@ func (m *Metrics) sandboxUsed(prev, next agentstore.SandboxUsage) {
 	if d := next.PausedMillis - prev.PausedMillis; d > 0 {
 		m.sandboxPaused.Add(float64(d) / 1000)
 	}
+}
+
+func (m *Metrics) creditGranted(d time.Duration) {
+	if m == nil {
+		return
+	}
+	m.deadlineCredit.Add(d.Seconds())
 }

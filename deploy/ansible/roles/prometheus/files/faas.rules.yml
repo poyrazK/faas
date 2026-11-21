@@ -1191,9 +1191,11 @@ groups:
   - name: gcp_ops_agent
     interval: 30s
     rules:
+      # Only GCE hosts run the GCP agent: node_exporter's DMI vendor is
+      # "Google" there. The OVHcloud fleet (2026-11-20) has no agent to miss.
       - alert: FaasGCPOpsAgentMissing
         expr: |
-          up{job="node-compute"} == 1
+          (up{job="node-compute"} == 1 and on(instance) node_dmi_info{job="node-compute",system_vendor="Google"})
           unless on(instance)
           node_systemd_unit_state{job="node-compute",name="google-cloud-ops-agent.service",state="active"} == 1
         for: 5m
@@ -2584,11 +2586,17 @@ groups:
       # tunnel connection. A connector that is down exports no connection
       # series at all, so the expression counts serving nodes instead of
       # summing connections, which is empty, not 0, once every connector stops.
+      # A cell on public_edge.entry direct (ADR-20261102081618 step 6) scrapes
+      # no connector at all; there a node serves while its edge answers.
       - alert: FaasComputeEdgeUnavailable
         expr: |
           count(up{job="gatewayd-public-edge"})
             unless on()
-          (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+          (
+            (count((up{job="gatewayd-public-edge"} == 1) and on(node) (cloudflared_tunnel_ha_connections{job="cloudflared"} > 0)) > 0)
+              or on()
+            ((count(up{job="gatewayd-public-edge"} == 1) > 0) unless on() (count(up{job="cloudflared"}) or count(cloudflared_tunnel_ha_connections{job="cloudflared"})))
+          )
         for: 2m
         labels:
           severity: page
@@ -2597,7 +2605,7 @@ groups:
           public_status: internal
         annotations:
           summary: "No compute-node app edge is serving"
-          description: "For 2 minutes no compute node has both its edge answering and its Cloudflare Tunnel connector connected. App requests routed through the tunnel are failing."
+          description: "For 2 minutes no compute node is serving: with the tunnel, none has both its edge answering and its Cloudflare Tunnel connector connected; with direct entry, no edge answers. App requests are failing."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
       - alert: FaasComputeEdgeDown
@@ -3551,6 +3559,23 @@ groups:
           summary: "The builder parent cgroup OOM-killed an active build"
           description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
+
+      # Elastic builder slots (ADR-20261118154632): a node that keeps giving
+      # borrowed builds back to tenants has a builder_slots max too high for
+      # its tenant load. Tenants are not at risk (that is what the give-back
+      # is for); builds restart and wait longer.
+      - alert: FaasBuildPreemptionsHigh
+        expr: sum by (instance) (increase(builderd_build_preemptions_total[1h])) > 6
+        for: 15m
+        labels:
+          severity: warn
+          component: builderd
+          family: builder_memory
+          public_status: internal
+        annotations:
+          summary: "A node gave more than 6 borrowed builds back to tenants in the last hour"
+          description: "Borrowed builder slots on {{ $labels.instance }} keep giving their memory back to tenants, so builds restart. Lower that node's max in builder_slots, or turn builder_elastic_slots off."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildPreemptionsHigh.md"
 
       - alert: FaasHostOOMKill
         expr: increase(node_vmstat_oom_kill[10m]) > 0
@@ -9075,6 +9100,68 @@ groups:
           summary: "Attack mode refuses most of app {{ $labels.app }}'s requests"
           description: "More than half of the requests app {{ $labels.app }}'s attack mode decided in 15m were refused with 403 challenge_required (not browser navigations, no verified credential). Either a script flood is being turned away, or the app's own API clients are locked out."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+
+  - name: faas_runtime_collector
+    interval: 30s
+    rules:
+      # Use observed refusals rather than sampled occupancy. Hold for a full
+      # lookback window so a single burst can age out without firing.
+      - alert: FaasRuntimeCollectorCapacityRefusals
+        expr: |
+          increase(apid_operator_runtime_refused_collections_total{job="apid"}[5m]) >= 3
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime collector on {{ $labels.instance }} repeatedly refuses collections"
+          description: "At least three capacity refusals per five-minute window have persisted for five minutes. Open Gregale Runtime Diagnostics and check overlapping verifiers on this apid."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorCapacityRefusals.md"
+      # Count report deadlines once per collection. One expired collection
+      # can produce deadline outcomes for several source-read invocations.
+      - alert: FaasRuntimeCollectorDeadlines
+        expr: |
+          increase(apid_operator_runtime_reports_total{job="apid",outcome="deadline_exceeded"}[5m]) >= 3
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime collections on {{ $labels.instance }} repeatedly time out"
+          description: "At least three collections per five-minute window hit their deadline for five minutes. Open Gregale Runtime Diagnostics and check source read duration and outcomes by group."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorDeadlines.md"
+      - alert: FaasRuntimeCollectorIncompleteCoreEvidence
+        expr: |
+          (
+            sum by (job, instance, group) (
+              increase(apid_operator_runtime_group_evaluations_total{job="apid",group=~"identity|readiness|process|loop_health",outcome="incomplete"}[30m])
+            )
+            / (
+              sum by (job, instance, group) (
+                increase(apid_operator_runtime_group_evaluations_total{job="apid",group=~"identity|readiness|process|loop_health",outcome=~"complete|incomplete"}[30m])
+              ) >= 10
+            )
+          ) >= 0.5
+          and on (job, instance) (up{job="apid"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: runtime_collector
+          public_status: internal
+        annotations:
+          summary: "Runtime {{ $labels.group }} evidence on {{ $labels.instance }} is repeatedly incomplete"
+          description: "{{ $value | humanizePercentage }} of this core group's evaluations were incomplete in the last 30 minutes. The group has had at least 10 evaluations and an incomplete rate of at least 50% for 15 consecutive minutes."
+          runtime_dashboard_path: '/d/faas-runtime-diagnostics?var-apid_instance={{ $labels.instance | urlquery }}&var-evidence_group={{ $labels.group | urlquery }}&from=now-2h&to=now'
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRuntimeCollectorIncompleteCoreEvidence.md"
 
   # ─────────────────────────────────────────────────────────────────
   # Spec §12 operator signals (ADR-1235). These rows of the §12 table

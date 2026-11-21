@@ -87,9 +87,12 @@ application response tools before starting.
 3. Call `gregale_apply_upload_deploy` with `{"plan_id":"<plan_id>"}` once
    the user has authorized deployment. Follow the
    [approval flow](#approve-an-agents-risky-requests) if Gregale returns a
-   review link. After approval, apply the same plan ID to resume the original
-   upload. Use that same plan ID to recover the receipt if the apply response
-   is lost.
+   review link. When the resumable upload commit requires approval, the same
+   plan and source stay available until the deadline shown in
+   `approval.expires_at` and on the review page. After approval, apply the same
+   plan ID to resume the original upload. If the app or its release changed
+   during review, inspect it before creating a new plan. Reuse the plan ID to
+   recover the receipt if the apply response is lost.
 4. Save `deployment.id` from the apply result. Call `gregale_wait_deployment`
    with `{"app":"fastapi-demo","deployment_id":"<deployment.id>"}`.
    If `pending` is true, poll again with the same ID. Proceed when
@@ -199,16 +202,28 @@ agent key instead; see
 ## Give the agent its own key
 
 An agent that runs the `gregale` CLI, or the MCP server locally, needs a
-credential. Create a dedicated key instead of sharing your own login. Scope
-it to what the agent needs:
+credential. Create a dedicated agent key instead of sharing your own login:
 
 ```sh
-gregale key create coding-agent --scopes apps:read,deploy:write
+gregale key create coding-agent --agent
 ```
+
+`--agent` makes it an agent key (the `agent` scope) with `apps:read` and
+`deploy:write`. Only an agent key asks a person before risky requests
+([approvals](#approve-an-agents-risky-requests)) and holds the always-on cost
+it adds to an [agent budget](#limit-what-an-agent-adds-to-your-bill). A key
+without the `agent` scope gets neither, so don't give a coding agent one.
+When the CLI runs inside Claude Code, Codex, Cursor or Gemini CLI, `key
+create` warns if the key it creates lacks the `agent` scope.
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
 `deploy:write` lets it create apps, deploy, roll back, and add custom domains
-and crons. Add `env:write` for the MCP tools that set non-secret variables.
+and crons. It also changes app settings, including turning off an app's
+request authentication, and deletes apps (a soft delete that `gregale app
+restore` reverses within the grace period). An agent key's `--approvals`
+(default `all`) puts deletes and production changes in front of a person. To
+choose other scopes, list them with `--scopes`; `--agent` adds the `agent`
+scope to them. Add `env:write` for the MCP tools that set non-secret variables.
 Add `secrets:write` only if the agent stores secrets itself with
 `gregale env push`. Add `storage:manage` for buckets, and `postgres:manage`
 with `postgres:read` for databases. A key without `--scopes` is a full-access
@@ -378,6 +393,15 @@ and `worker_replicas` that `gregale deploy` applies from `gregale.yaml`),
 tarball or an upload) applies the source's own `gregale.yaml` deployment
 settings, so it is priced for the replicas or warm floor they add before
 any of them is written.
+
+A cron is priced too (`POST /v1/crons`, and a `PATCH /v1/crons/{id}` that
+changes its schedule, timezone or enables it), because a cron that fires
+more often than its app idles keeps the app running. Each firing is priced
+as the app staying up for its idle timeout, or until the next firing when
+that comes sooner: a cron every minute costs as much as a warm instance, a
+daily one almost nothing. A command cron is priced for its own VM up to the
+command's timeout. An HTTP cron on an app that already keeps a warm
+instance adds nothing.
 
 Creating an environment from another (`gregale env create --from`, a full
 clone, or an environment branch) is priced at the warm instances it copies:

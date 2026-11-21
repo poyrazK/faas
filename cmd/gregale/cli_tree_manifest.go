@@ -274,7 +274,17 @@ func (d cliTreeDiscovery) treeSubs(prefix []string) []cliSub {
 			for _, sub := range group {
 				verbs = append(verbs, sub.Name)
 			}
-			add(cliSub{Name: head, Short: strings.Join(verbs, " · "), Subcommands: group})
+			short := strings.Join(verbs, " · ")
+			switch {
+			case cliTreeShorts[strings.Join(child, " ")] != "":
+				short = cliTreeShorts[strings.Join(child, " ")]
+			case len(group) == 1 && group[0].Short != "":
+				// A one-verb group (`queue dlq list`) summarized as just
+				// "list" in `queue --help` (prod 2026-11-19); its verb says
+				// what it does.
+				short = group[0].Short
+			}
+			add(cliSub{Name: head, Short: short, Subcommands: group})
 		}
 	}
 	if old, ok := d.runsToday(prefix); ok {

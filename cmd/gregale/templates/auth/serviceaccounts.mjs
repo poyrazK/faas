@@ -165,14 +165,14 @@ export function createRateLimiter(perMinute = limits.serviceAccountTokensPerMinu
 // tokens per account, counted only once the secret matched, so knowing an
 // account's ID is not enough to exhaust its budget.
 export async function issueToken({ pool, signer, issuer, limiter, failures }, request) {
-  const blocked = failures.check(request.address)
+  const blocked = await failures.check(request.address)
   if (blocked > 0) throw new OAuthError(429, 'slow_down', { 'Retry-After': String(blocked) })
   const presented = secretHash(request.secret)
   const { rows } = await pool.query('SELECT secret_id, secret_hash, org_id, org_slug, role, permissions FROM gregale_auth.service_account_credentials($1)', [request.clientId])
   // Compare with every live secret so timing does not tell which matched.
   const match = rows.reduce((found, row) => timingSafeEqual(row.secret_hash, presented) ? row : found, null)
   if (!match) {
-    failures.take(request.address)
+    await failures.take(request.address)
     throw new OAuthError(401, 'invalid_client', request.challenge)
   }
   const wait = limiter.take(request.clientId)

@@ -21,6 +21,12 @@ type memFlagExperimentUnit struct {
 	crossed                        bool
 	requests, errors, tested, slow int64
 	valueSum                       int64
+	convertedAt                    time.Time
+	preValue                       *float64
+	// customer and subjectHash are a subject unit's (ADR 20261119173702 §1).
+	customer    string
+	subjectHash []byte
+	denSum      int64
 }
 
 func (fe *memFlagEvents) experimentsLocked() map[string]*FlagExperiment {
@@ -41,6 +47,11 @@ func cloneFlagExperiment(x *FlagExperiment) FlagExperiment {
 	for k, v := range x.MinPValues {
 		out.MinPValues[k] = v
 	}
+	out.MinCupedPValues = map[string]float64{}
+	for k, v := range x.MinCupedPValues {
+		out.MinCupedPValues[k] = v
+	}
+	out.Bandit = slices.Clone(x.Bandit)
 	if x.Breach != nil {
 		out.Breach = map[string]any{}
 		for k, v := range x.Breach {
@@ -78,6 +89,8 @@ func (m *MemStore) CreateFlagExperiment(_ context.Context, x FlagExperiment, max
 	if x.MetricKind == "" {
 		x.MetricKind = flags.ExperimentMetricConversion
 	}
+	x.Unit = orDefault(x.Unit, flags.ExperimentUnitCustomer)
+	x.Allocation = orDefault(x.Allocation, flags.ExperimentAllocationFixed)
 	x.ID, x.Status, x.CreatedAt = uuid.NewString(), flags.ExperimentDraft, time.Now().UTC()
 	stored := cloneFlagExperiment(&x)
 	m.flagEvents.experiments[x.ID] = &stored
@@ -124,7 +137,7 @@ func compareStrings(a, b string) int {
 }
 
 // StartFlagExperiment implements FlagExperimentStore.
-func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key string, weights map[string]int, now time.Time, maxRunning int) (FlagExperiment, error) {
+func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key string, weights map[string]int, slice [2]int, now time.Time, maxRunning int) (FlagExperiment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	x := m.memExperiment(environmentID, key)
@@ -146,6 +159,7 @@ func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key str
 	}
 	at := now.UTC()
 	x.Status, x.StartedAt, x.TelemetryCursor, x.Weights = flags.ExperimentRunning, &at, at, weights
+	x.LayerFrom, x.LayerTo = slice[0], slice[1]
 	return cloneFlagExperiment(x), nil
 }
 
@@ -188,6 +202,9 @@ func (m *MemStore) FlagExperimentArms(_ context.Context, x FlagExperiment, minUn
 	for _, u := range m.flagEvents.units[x.ID] {
 		if u.crossed {
 			crossed++
+			continue
+		}
+		if !memUnitCounted(x, u) {
 			continue
 		}
 		a := byVariant[u.variant]
@@ -417,11 +434,11 @@ func (m *MemStore) AdvanceFlagExperimentUnits(context.Context, FlagExperiment, t
 }
 
 // SaveFlagExperimentProgress implements FlagExperimentStore.
-func (m *MemStore) SaveFlagExperimentProgress(_ context.Context, experimentID string, cursor time.Time, minPValues map[string]float64) error {
+func (m *MemStore) SaveFlagExperimentProgress(_ context.Context, experimentID string, cursor time.Time, minPValues, minCupedPValues map[string]float64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if x := m.flagEventsLocked().experimentsLocked()[experimentID]; x != nil && x.Status == flags.ExperimentRunning {
-		x.TelemetryCursor, x.MinPValues = cursor, minPValues
+		x.TelemetryCursor, x.MinPValues, x.MinCupedPValues = cursor, minPValues, minCupedPValues
 	}
 	return nil
 }

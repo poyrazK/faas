@@ -712,6 +712,10 @@ const (
 	// (trigger on feature_flag_versions, payload: environment id). gatewayd
 	// empties its X-Faas-Flag-Kills cache (ADR 20261114150000 §3).
 	NotifyFeatureFlagsChanged = "feature_flags_changed"
+	// NotifyAnalyticsCohortsChanged fires when apid refreshes or deletes an
+	// analytics cohort (payload: environment id). gatewayd empties its
+	// X-Faas-Flag-Cohorts cache (ADR 20261119102741 §4).
+	NotifyAnalyticsCohortsChanged = "analytics_cohorts_changed"
 	// NotifyEnvironmentWorkloadImage is a durable apid-to-imaged handoff
 	// for a held GitOps candidate. The deployment row carries its authority;
 	// receiving this event never authorizes priming or live activation.

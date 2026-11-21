@@ -118,6 +118,8 @@ func TestNormalizeFlagDiagnostic(t *testing.T) {
 		`invalid value "abc" for flag -limit: parse error`:    `invalid value "abc" for flag --limit: parse error`,
 		`invalid boolean value "maybe" for -all: parse error`: `invalid boolean value "maybe" for --all: parse error`,
 		"bad flag syntax: ---x":                               "bad flag syntax: ---x",
+		// prod 2026-11-19: `-5` was reported as "unknown flag --5".
+		"flag provided but not defined: -5": "unknown flag -5 (a negative number is read as a flag)",
 	} {
 		if got := main.NormalizeFlagDiagnostic(in); got != want {
 			t.Errorf("normalizeFlagDiagnostic(%q) = %q, want %q", in, got, want)

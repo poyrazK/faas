@@ -523,6 +523,7 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 		attribute.String("gregale.trigger.kind", t.Kind))
 	res := poller.Poll(pollCtx, t)
 	settleRate(len(res.Records))
+	reportTriggerPoll(ctx, len(res.Records))
 	_, storedReplay := poller.(*storedTriggerReplaySource)
 	if !storedReplay {
 		l.recordTriggerConsumerHealth(ctx, store, t, res)
@@ -2458,7 +2459,8 @@ func classifyDLQReason(code, gatewayErr string) string {
 			return triggerReasonMaxAttempts
 		case "payload_b64_invalid",
 			"response_malformed",
-			"broker_message_identity_missing":
+			"broker_message_identity_missing",
+			"function_refused_input": // the handler answered 4xx: the input itself is bad
 			return triggerReasonPoisonRecord
 		case "invoke_error":
 			return triggerReasonBrokerError

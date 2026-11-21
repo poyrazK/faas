@@ -144,6 +144,14 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	if problem != nil {
 		return state.AppTask{}, problem
 	}
+	if app.Type == state.AppTypeFunction && deployment.ImageDigest == "" {
+		// prod 2026-11-20: `app exec` on a live function said it needed "a
+		// live deployment with a materialized runtime image". A function
+		// runs on the shared runner and its release has no image to start a
+		// task VM from; the same refusal, said plainly.
+		return state.AppTask{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "App task deployment unavailable",
+			"app exec and app tasks start a VM from the app's image, and a function's release has none; run the code through an invocation instead (gregale invocation run "+app.Slug+")")
+	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {
 		var problem *api.Problem

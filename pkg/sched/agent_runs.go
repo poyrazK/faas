@@ -79,6 +79,9 @@ type AgentRunAdmission struct {
 	// HistoryPeakMB is the version's p95 private peak (ADR-20261027090015
 	// §3), 0 until it has history. Only measured charge reads it.
 	HistoryPeakMB int
+	// DeadlineSec is the seller's timeout when the run's timeout_sec is a
+	// guest ceiling above it (ADR-20261027090016 amendment 3); 0: none.
+	DeadlineSec int
 }
 
 // AgentRunRelay is the placement data vmmd mints a run's relay assertion
@@ -198,7 +201,7 @@ func (r *AgentRunner) Run(ctx context.Context, a AgentRunAdmission, run agentrun
 	shape := agentSnapshotShape{node: placement.NodeID, vcpu: a.VCPU, memMiB: a.RAMMB, cpuMilli: a.CPUMillicores}
 	spec := AgentRunSpec{Instance: placement.Instance, AccountID: a.AccountID, Plan: a.Plan, BaseKey: r.cfg.BaseKey,
 		LayerKey: r.cfg.LayerKey, VCPU: a.VCPU, MemSizeMiB: a.RAMMB, CPUMillicores: a.CPUMillicores, Relay: a.Relay,
-		InputKey: a.InputKey, Snapshot: r.snapshotFor(shape), ModelWaitPauseAfter: r.modelWaitPauseAfter(a)}
+		InputKey: a.InputKey, Snapshot: r.snapshotFor(shape), ModelWaitPauseAfter: r.modelWaitPauseAfter(a), DeadlineSec: a.DeadlineSec}
 	var method string
 	booted := hooks.Booted
 	hooks.Booted = func(ctx context.Context, m string, bootMs int64) error {
@@ -322,6 +325,8 @@ func (a AgentRunAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("RAM %d MB is outside the %s plan", a.RAMMB, a.Plan)}
 	case a.VCPU < 1 || a.VCPU > api.AgentRunVCPUMax[idx] || a.CPUMillicores < 1:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("vCPU %d is outside the %s plan", a.VCPU, a.Plan)}
+	case a.DeadlineSec < 0 || a.DeadlineSec > api.AgentRunTimeoutMaxSec[idx]:
+		return &AgentRunInvalidError{Reason: fmt.Sprintf("deadline %d s is outside the %s plan", a.DeadlineSec, a.Plan)}
 	}
 	return nil
 }

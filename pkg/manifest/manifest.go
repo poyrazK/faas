@@ -944,10 +944,12 @@ func (c PublicEdgeCertificate) CAOrDefault() string {
 	return c.CA
 }
 
-// Public edge entries (ADR-20261102081618).
+// Public edge entries (ADR-20261102081618). direct is step 6: the cell has
+// left the tunnel, so it runs no Cloudflare Tunnel connector.
 const (
 	PublicEdgeEntryTunnel = "tunnel"
 	PublicEdgeEntryBoth   = "both"
+	PublicEdgeEntryDirect = "direct"
 )
 
 // Public edge fronts (ADR-20261103163954 §6).
@@ -959,10 +961,16 @@ const (
 	PublicEdgeOverloadOn      = "on"
 )
 
-// DirectEntry reports whether the compute edges take Cloudflare's direct
-// connections on port 443.
+// DirectEntry reports whether the compute edges take direct connections on
+// port 443 (entry both or direct).
 func (e PublicEdge) DirectEntry() bool {
-	return e.ComputeNodes && e.Entry == PublicEdgeEntryBoth
+	return e.ComputeNodes && (e.Entry == PublicEdgeEntryBoth || e.Entry == PublicEdgeEntryDirect)
+}
+
+// Tunnel reports whether the compute edges run the Cloudflare Tunnel
+// connector (entry tunnel, the default, or both).
+func (e PublicEdge) Tunnel() bool {
+	return e.ComputeNodes && e.Entry != PublicEdgeEntryDirect
 }
 
 // NoFront reports whether clients connect to the compute edges' entry
@@ -975,17 +983,15 @@ func (e PublicEdge) NoFront() bool {
 // plane to forward credential-bound routes to and compute nodes to run on.
 func (e PublicEdge) validate(hosts []Host) Errors {
 	switch e.Entry {
-	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth:
-	case "direct":
-		return Errors{{"public_edge.entry", "direct comes one release after the move off the tunnel (ADR-20261102081618 step 6); use both"}}
+	case "", PublicEdgeEntryTunnel, PublicEdgeEntryBoth, PublicEdgeEntryDirect:
 	default:
-		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel or both", e.Entry)}}
+		return Errors{{"public_edge.entry", fmt.Sprintf("%q is not tunnel, both or direct", e.Entry)}}
 	}
 	switch e.Front {
 	case "", PublicEdgeFrontCloudflare:
 	case PublicEdgeFrontNone:
 		if !e.DirectEntry() {
-			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both, whose listeners clients reach"}}
+			return Errors{{"public_edge.front", "none needs public_edge.compute_nodes and entry: both or direct, whose listeners clients reach"}}
 		}
 	default:
 		return Errors{{"public_edge.front", fmt.Sprintf("%q is not cloudflare or none", e.Front)}}
@@ -1009,7 +1015,7 @@ func (e PublicEdge) validate(hosts []Host) Errors {
 		if e.PlacementRouting {
 			return Errors{{"public_edge.placement_routing", "needs public_edge.compute_nodes: it routes the compute edges' requests"}}
 		}
-		if e.Entry == PublicEdgeEntryBoth {
+		if e.Entry == PublicEdgeEntryBoth || e.Entry == PublicEdgeEntryDirect {
 			return Errors{{"public_edge.entry", "needs public_edge.compute_nodes: it opens the compute edges' TLS listener"}}
 		}
 		return e.validateEntryAddrs(hosts)
@@ -1075,7 +1081,7 @@ func (e PublicEdge) validateDNS(hosts []Host) Errors {
 	}
 	var errs Errors
 	if !e.DirectEntry() {
-		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both, whose TLS listeners the records point at"})
+		errs = append(errs, Error{"public_edge.dns", "needs public_edge.entry: both or direct, whose TLS listeners the records point at"})
 	}
 	if strings.TrimSpace(e.DNS.ZoneID) == "" {
 		errs = append(errs, Error{"public_edge.dns.zone_id", "is required"})

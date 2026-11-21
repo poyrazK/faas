@@ -124,6 +124,82 @@ receiver_block slack faas-warn | grep -q "$work/slack-webhook-url" || { echo "al
 grep -q 'group_by: \["family"\]' "$work/slack.yml" || { echo "alertmanager config [slack]: warn route does not group by family" >&2; failed=1; }
 grep -q 'repeat_interval: 24h' "$work/slack.yml" || { echo "alertmanager config [slack]: warn route does not repeat daily" >&2; failed=1; }
 
+# Evaluate the receiver templates with the expected Prometheus annotations
+# for the runtime warnings in one notification.
+render runtime_links "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_slack_webhook_url_file\": \"$work/slack-webhook-url\", \"am_discord_webhook_url_file\": \"$work/discord-webhook-url\", \"am_grafana_base_url\": \"https://grafana.example.test/ops/\"}"
+python3 - "$repo_root" "$work" "$amtool" <<'PY'
+import html
+from datetime import datetime
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import yaml
+
+root, work = map(Path, sys.argv[1:3])
+amtool = sys.argv[3]
+rules = yaml.safe_load((root / "pkg/promqlrules/testdata/runtime_collector.test.yml").read_text())
+alerts = [
+    {"status": "firing", "labels": dict(alert["exp_labels"], alertname=test["alertname"]),
+     "annotations": alert["exp_annotations"]}
+    for case in rules["tests"] for test in case["alert_rule_test"] for alert in test["exp_alerts"]
+]
+assert len(alerts) == 3, "expected all three runtime collector warnings in the Prometheus fixture"
+alerts[0]["endsAt"] = "2026-11-18T13:00:00Z"
+alerts[1].update(status="resolved", endsAt="2026-11-18T12:30:40.123456Z")
+alerts[2].update(status="resolved", endsAt="2026-11-18T15:42:15.987654+03:00")
+without_end = {key: value for key, value in alerts[1].items() if key != "endsAt"}
+core_firing = dict(alerts[2], status="firing")
+unrelated = {"status": "firing", "labels": {"alertname": "UnrelatedWarning"},
+             "annotations": {"summary": "Existing warning details"}}
+data = {"receiver": "faas-warn", "status": "firing", "groupLabels": {"component": "apid"},
+        "externalURL": "http://alertmanager.example.test"}
+glob = work / "empty.tmpl"
+glob.touch()
+
+def render(template, kind, alerts):
+    path = work / "template-data.json"
+    path.write_text(json.dumps(dict(data, alerts=alerts)))
+    return subprocess.check_output([
+        amtool, "template", "render", "--template.glob", str(glob), "--template.type", kind,
+        "--template.text", template, "--template.data", str(path),
+    ], text=True)
+
+def dashboard_path(alert):
+    path = alert["annotations"]["runtime_dashboard_path"]
+    if alert["status"] == "resolved" and "endsAt" in alert:
+        end_ms = int(datetime.fromisoformat(alert["endsAt"]).timestamp() * 1000)
+        return path.removesuffix("&from=now-2h&to=now") + f"&from={end_ms - 7_200_000}&to={end_ms}"
+    return path
+
+for case, base in (("email_pushover", "http://127.0.0.1:3000"),
+                   ("discord", "http://127.0.0.1:3000"),
+                   ("runtime_links", "https://grafana.example.test/ops")):
+    config = yaml.safe_load((work / (case + ".yml")).read_text())
+    receiver = next(recv for recv in config["receivers"] if recv["name"] == "faas-warn")
+    for name, field, kind in (("email_configs", "html", "html"), ("slack_configs", "text", "text")):
+        for delivery in receiver.get(name, []):
+            template = delivery[field]
+            output = html.unescape(render(template, kind, alerts))
+            for alert in alerts:
+                annotations = alert["annotations"]
+                for url in (base + dashboard_path(alert), annotations["runbook_url"]):
+                    link = f'href="{url}"' if kind == "html" else f"<{url}>"
+                    assert link in output, f"{case}/{name} missing link {url}"
+                assert annotations["summary"] in output, f"{case}/{name} missing alert summary"
+            for alert in (without_end, core_firing):
+                rolling = html.unescape(render(template, kind, [alert]))
+                url = base + dashboard_path(alert)
+                link = f'href="{url}"' if kind == "html" else f"<{url}>"
+                assert link in rolling, f"{case}/{name} missing rolling link {url}"
+            prior = render(template, kind, [unrelated]).strip()
+            if kind == "html":
+                assert "Existing warning details" in prior and base not in prior, f"{case} changed unrelated email"
+            else:
+                assert not prior, f"{case} changed unrelated chat text"
+PY
+
 # Secrets are referenced by path only; no placeholder URL may be inlined.
 if grep -h 'example.invalid' "$work"/*.yml | grep -v -q 'smtp_smarthost'; then
   echo "alertmanager config: a secret value was inlined into the rendered config" >&2

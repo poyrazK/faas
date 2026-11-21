@@ -1054,11 +1054,56 @@ func (q *Queries) GetAgentRun(ctx context.Context, db DBTX, arg GetAgentRunParam
 	return i, err
 }
 
+const getAgentRunApproval = `-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=$1::text::uuid AND a.run_id=$2::text::uuid AND a.account_id=$3::text::uuid
+`
+
+type GetAgentRunApprovalParams struct {
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+type GetAgentRunApprovalRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) GetAgentRunApproval(ctx context.Context, db DBTX, arg GetAgentRunApprovalParams) (GetAgentRunApprovalRow, error) {
+	row := db.QueryRow(ctx, getAgentRunApproval, arg.ApprovalID, arg.RunID, arg.AccountID)
+	var i GetAgentRunApprovalRow
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.Tool,
+		&i.ArgumentsSha256,
+		&i.ArgumentsSummary,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.Decision,
+		&i.Note,
+		&i.DecidedAt,
+	)
+	return i, err
+}
+
 const getAgentRunClaim = `-- name: GetAgentRunClaim :one
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=$1::text::uuid
@@ -1089,6 +1134,7 @@ type GetAgentRunClaimRow struct {
 	CheckoutInstallationID pgtype.Int8
 	QueuedAt               pgtype.Timestamptz
 	PauseDuringModelCalls  bool
+	CapabilityPolicy       []byte
 }
 
 func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (GetAgentRunClaimRow, error) {
@@ -1119,6 +1165,7 @@ func (q *Queries) GetAgentRunClaim(ctx context.Context, db DBTX, runID string) (
 		&i.CheckoutInstallationID,
 		&i.QueuedAt,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1234,7 +1281,7 @@ func (q *Queries) GetAgentRunUsage(ctx context.Context, db DBTX, arg GetAgentRun
 
 const getAgentVersion = `-- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=$1::text::uuid AND account_id=$2::text::uuid AND version=$3::integer
 `
 
@@ -1258,6 +1305,7 @@ type GetAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVersionParams) (GetAgentVersionRow, error) {
@@ -1277,6 +1325,7 @@ func (q *Queries) GetAgentVersion(ctx context.Context, db DBTX, arg GetAgentVers
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -1856,6 +1905,40 @@ func (q *Queries) InsertAgentRun(ctx context.Context, db DBTX, arg InsertAgentRu
 	return id, err
 }
 
+const insertAgentRunApprovalDecision = `-- name: InsertAgentRunApprovalDecision :execrows
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, $1::text, $2::text, $3::text
+ FROM agent_run_approvals a
+ WHERE a.id=$4::text::uuid AND a.run_id=$5::text::uuid
+   AND a.account_id=$6::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING
+`
+
+type InsertAgentRunApprovalDecisionParams struct {
+	Decision   string
+	Note       string
+	DecidedBy  string
+	ApprovalID string
+	RunID      string
+	AccountID  string
+}
+
+// The decision is written once, and only before the approval expires.
+func (q *Queries) InsertAgentRunApprovalDecision(ctx context.Context, db DBTX, arg InsertAgentRunApprovalDecisionParams) (int64, error) {
+	result, err := db.Exec(ctx, insertAgentRunApprovalDecision,
+		arg.Decision,
+		arg.Note,
+		arg.DecidedBy,
+		arg.ApprovalID,
+		arg.RunID,
+		arg.AccountID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertAgentRunCallback = `-- name: InsertAgentRunCallback :exec
 INSERT INTO agent_run_callbacks (run_id, account_id, endpoint_id, thread_id, tool_call_id, provider_call_id, issued_at)
 VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid,
@@ -1943,14 +2026,14 @@ func (q *Queries) InsertAgentRunOutputs(ctx context.Context, db DBTX, arg Insert
 
 const insertAgentVersion = `-- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES ($1::text::uuid,$2::integer,$3::text::uuid,
   $4::text,$5::text,$6::text[],$7::jsonb,
   $8::text,$9::integer,$10::integer,
   $11::jsonb,$12::bigint,$13::jsonb,
-  $14::boolean)
+  $14::boolean,$15::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy
 `
 
 type InsertAgentVersionParams struct {
@@ -1968,6 +2051,7 @@ type InsertAgentVersionParams struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 type InsertAgentVersionRow struct {
@@ -1984,6 +2068,7 @@ type InsertAgentVersionRow struct {
 	AiBudgetMillicents    pgtype.Int8
 	Deliveries            []byte
 	PauseDuringModelCalls bool
+	CapabilityPolicy      []byte
 }
 
 func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAgentVersionParams) (InsertAgentVersionRow, error) {
@@ -2002,6 +2087,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		arg.AiBudgetMillicents,
 		arg.Deliveries,
 		arg.PauseDuringModelCalls,
+		arg.CapabilityPolicy,
 	)
 	var i InsertAgentVersionRow
 	err := row.Scan(
@@ -2018,6 +2104,7 @@ func (q *Queries) InsertAgentVersion(ctx context.Context, db DBTX, arg InsertAge
 		&i.AiBudgetMillicents,
 		&i.Deliveries,
 		&i.PauseDuringModelCalls,
+		&i.CapabilityPolicy,
 	)
 	return i, err
 }
@@ -2290,6 +2377,110 @@ func (q *Queries) ListAgentModelIntegrations(ctx context.Context, db DBTX, arg L
 	for rows.Next() {
 		var i ListAgentModelIntegrationsRow
 		if err := rows.Scan(&i.ID, &i.AiProvider); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunApprovalWaits = `-- name: ListAgentRunApprovalWaits :many
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = $1::text::uuid AND r.lease_token = $2::text
+ ORDER BY p.created_at
+ LIMIT $3::integer
+`
+
+type ListAgentRunApprovalWaitsParams struct {
+	RunID      string
+	LeaseToken string
+	MaxRows    int32
+}
+
+type ListAgentRunApprovalWaitsRow struct {
+	CreatedAt pgtype.Timestamptz
+	EndedAt   pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 3: each approval waits from its request
+// until its decision, its expiry or outboundd's release, whichever is
+// first; one still held waits until now. Fenced by the run's lease.
+func (q *Queries) ListAgentRunApprovalWaits(ctx context.Context, db DBTX, arg ListAgentRunApprovalWaitsParams) ([]ListAgentRunApprovalWaitsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovalWaits, arg.RunID, arg.LeaseToken, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalWaitsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalWaitsRow
+		if err := rows.Scan(&i.CreatedAt, &i.EndedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAgentRunApprovals = `-- name: ListAgentRunApprovals :many
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=$1::text::uuid AND a.account_id=$2::text::uuid
+ ORDER BY a.created_at, a.id LIMIT $3::integer
+`
+
+type ListAgentRunApprovalsParams struct {
+	RunID     string
+	AccountID string
+	MaxRows   int32
+}
+
+type ListAgentRunApprovalsRow struct {
+	ID               string
+	RunID            string
+	Tool             string
+	ArgumentsSha256  string
+	ArgumentsSummary string
+	CreatedAt        pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	Decision         string
+	Note             string
+	DecidedAt        pgtype.Timestamptz
+}
+
+// ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+func (q *Queries) ListAgentRunApprovals(ctx context.Context, db DBTX, arg ListAgentRunApprovalsParams) ([]ListAgentRunApprovalsRow, error) {
+	rows, err := db.Query(ctx, listAgentRunApprovals, arg.RunID, arg.AccountID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAgentRunApprovalsRow{}
+	for rows.Next() {
+		var i ListAgentRunApprovalsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Tool,
+			&i.ArgumentsSha256,
+			&i.ArgumentsSummary,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.Decision,
+			&i.Note,
+			&i.DecidedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -3319,16 +3510,18 @@ func (q *Queries) MarkAgentRunCallbackDelivered(ctx context.Context, db DBTX, ru
 
 const markAgentRunRunning = `-- name: MarkAgentRunRunning :execrows
 UPDATE agent_runs SET state='running', running_at=now(), node_id=$1::text, instance_id=$2::text,
-  ai_budget_millicents=$3::bigint, updated_at=now()
- WHERE id=$4::text::uuid AND lease_token=$5::text AND state='starting'
+  ai_budget_millicents=$3::bigint,
+  deadline_credit_max_sec=$4::integer, updated_at=now()
+ WHERE id=$5::text::uuid AND lease_token=$6::text AND state='starting'
 `
 
 type MarkAgentRunRunningParams struct {
-	NodeID             string
-	InstanceID         string
-	AiBudgetMillicents int64
-	RunID              string
-	LeaseToken         string
+	NodeID               string
+	InstanceID           string
+	AiBudgetMillicents   int64
+	DeadlineCreditMaxSec int32
+	RunID                string
+	LeaseToken           string
 }
 
 // The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
@@ -3337,6 +3530,7 @@ func (q *Queries) MarkAgentRunRunning(ctx context.Context, db DBTX, arg MarkAgen
 		arg.NodeID,
 		arg.InstanceID,
 		arg.AiBudgetMillicents,
+		arg.DeadlineCreditMaxSec,
 		arg.RunID,
 		arg.LeaseToken,
 	)

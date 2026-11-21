@@ -373,7 +373,7 @@ type featureFlagCapability struct{ feature, capability string }
 // flag's rules depend on. An SDK without one would evaluate the rule without
 // its constraint, so the runtime endpoint refuses it with 426 instead.
 func featureFlagRequiredCapabilities(config flags.Config) []featureFlagCapability {
-	subjects, attributes := false, false
+	subjects, attributes, experiments, subjectExperiments := false, false, false, false
 	for _, definition := range config.Flags {
 		if !definition.Enabled {
 			continue
@@ -381,6 +381,8 @@ func featureFlagRequiredCapabilities(config flags.Config) []featureFlagCapabilit
 		for _, rule := range definition.Rules {
 			subjects = subjects || len(rule.Subjects) > 0 || rule.RolloutUnit == "subject"
 			attributes = attributes || len(rule.Attributes) > 0
+			experiments = experiments || rule.Experiment != nil
+			subjectExperiments = subjectExperiments || rule.Experiment != nil && rule.Experiment.Unit == flags.ExperimentUnitSubject
 		}
 	}
 	var out []featureFlagCapability
@@ -389,6 +391,15 @@ func featureFlagRequiredCapabilities(config flags.Config) []featureFlagCapabilit
 	}
 	if attributes {
 		out = append(out, featureFlagCapability{"attribute targeting", api.FlagSDKAttributeTargetingCapability})
+	}
+	// A rule experiment's layer slice and the holdout change who the rule
+	// serves; an SDK that ignored them would serve the rule to everyone
+	// (ADR 20261119173702 §2).
+	if experiments {
+		out = append(out, featureFlagCapability{"experiment layers and holdout", api.FlagSDKExperimentLayersCapability})
+	}
+	if subjectExperiments {
+		out = append(out, featureFlagCapability{"subject experiment exposures", api.FlagSDKSubjectExposuresCapability})
 	}
 	return out
 }

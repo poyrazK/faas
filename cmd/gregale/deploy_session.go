@@ -84,13 +84,9 @@ func deployConnection(c *Client) string {
 }
 
 func deploySessionDir(c *Client) (string, error) {
-	base := os.Getenv("XDG_STATE_HOME")
-	if base == "" {
-		var err error
-		base, err = os.UserConfigDir()
-		if err != nil {
-			return "", err
-		}
+	base, _, err := gregaleStateHome()
+	if err != nil {
+		return "", err
 	}
 	return filepath.Join(base, "gregale", "deploys", deployConnection(c)), nil
 }
@@ -99,9 +95,15 @@ func deploySessionDir(c *Client) (string, error) {
 // writable before a deploy changes anything remotely. The session was first
 // written after the app was created, so a read-only state directory left a
 // new app behind with "Could not save deploy session" and no word on whether
-// to retry or pick another name (CLI journey 2026-11-05, #6625).
+// to retry or pick another name (CLI journey 2026-11-05, #6625). When the
+// default state directory is read-only (a coding agent's sandbox), the
+// session goes to a temp directory instead and the deploy says where.
 func preflightDeploySessionStorage(c *Client) error {
-	dir, err := deploySessionDir(c)
+	_, fallbackFrom, err := gregaleStateHome()
+	var dir string
+	if err == nil {
+		dir, err = deploySessionDir(c)
+	}
 	if err == nil {
 		err = os.MkdirAll(dir, 0o700)
 	}
@@ -115,6 +117,9 @@ func preflightDeploySessionStorage(c *Client) error {
 	}
 	if err != nil {
 		return fmt.Errorf("the local deploy-session directory is not writable (%w); nothing was created or deployed. Set XDG_STATE_HOME to a writable directory and run the command again", err)
+	}
+	if fallbackFrom != "" {
+		PrintWarn(osStderr, "%s is not writable, so this deploy's session is kept in %s, which a reboot may clear. Set XDG_STATE_HOME to keep it elsewhere.", fallbackFrom, dir)
 	}
 	return nil
 }

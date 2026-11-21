@@ -17,7 +17,7 @@ import (
 // track() events. The tree names alias `gregale insights <verb>`;
 // `gregale analytics` is request analytics.
 
-const insightsVerbs = "events|funnel|retention|requests"
+const insightsVerbs = "events|funnel|retention|requests|cohorts"
 
 type insightsFlags struct {
 	project, environment, from, until, unit, by *string
@@ -77,6 +77,9 @@ func cmdInsights(args []string) int {
 		return 1
 	}
 	verb, args := args[0], args[1:]
+	if verb == "cohorts" {
+		return cmdInsightCohorts(args)
+	}
 	fs := newFlagSet("insights-"+verb, flag.ContinueOnError)
 	f := newInsightsFlags(fs)
 	positionals, err := parseInterleaved(fs, args)

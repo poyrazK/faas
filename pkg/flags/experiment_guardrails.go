@@ -346,6 +346,8 @@ func ServeVariant(cfg Config, flagKey, ruleID, variant string) (Config, bool) {
 	out.Flags = slices.Clone(cfg.Flags)
 	f.Rules = slices.Clone(f.Rules)
 	f.Rules[j].Value = variant
+	// A rule serving one variant carries no experiment (ADR 20261119173702 §2).
+	f.Rules[j].Experiment = nil
 	out.Flags[i] = f
 	return out, true
 }

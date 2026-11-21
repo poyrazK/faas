@@ -361,6 +361,11 @@ jobs:
       - name: CD Ansible toolchain cache
         run: bash scripts/ci/ensure-ansible-toolchain_test.sh
 
+      # The OVH key installer handles production secrets; keep the secret
+      # off command lines and output, and the merge from dropping lines.
+      - name: OVH key installer
+        run: bash deploy/ovh/install-s3-key_test.sh
+
       # The public CLI distribution channels (ADR-172). install.sh runs as
       # `curl | sh` on machines we do not control, so its checksum
       # enforcement and platform detection are gated on every PR, not just

@@ -16,7 +16,10 @@ import (
 const (
 	flagAttributeCountry  = "gregale.country"
 	flagAttributeUAFamily = "gregale.ua_family"
-	flagAppAttributePref  = "app."
+	// flagAttributeCohort is the gateway's X-Faas-Flag-Cohorts value
+	// (ADR 20261119102741 §4).
+	flagAttributeCohort  = "gregale.cohort"
+	flagAppAttributePref = "app."
 
 	maxFlagConditions      = 8
 	maxFlagConditionValues = 100
@@ -26,8 +29,47 @@ const (
 var (
 	flagCountryPattern       = regexp.MustCompile(`^[A-Z]{2}$`)
 	flagAppAttributePattern  = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
-	flagAttributeNamePattern = regexp.MustCompile(`^(gregale\.(country|ua_family)|app\.[a-z][a-z0-9_]{0,31})$`)
+	flagAttributeNamePattern = regexp.MustCompile(`^(gregale\.(country|ua_family|cohort)|app\.[a-z][a-z0-9_]{0,31})$`)
 )
+
+// parseFlagCohorts reads a gregale.cohort value: cohort keys, "-" for none;
+// ok is false for a malformed value.
+func parseFlagCohorts(value string) (keys []string, ok bool) {
+	if value == "-" {
+		return nil, true
+	}
+	if value == "" {
+		return nil, false
+	}
+	keys = strings.Split(value, ",")
+	if len(keys) > 20 {
+		return nil, false
+	}
+	for _, k := range keys {
+		if !validFlagKey(k) {
+			return nil, false
+		}
+	}
+	return keys, true
+}
+
+// matchFlagCohorts applies a gregale.cohort condition: in matches a member
+// of any listed cohort, not_in a customer in none of them.
+func matchFlagCohorts(c flagCondition, value string) bool {
+	keys, ok := parseFlagCohorts(value)
+	if !ok || (c.op != "in" && c.op != "not_in") {
+		return false
+	}
+	member := false
+	for _, v := range c.values {
+		for _, k := range keys {
+			if v == k {
+				member = true
+			}
+		}
+	}
+	return member == (c.op == "in")
+}
 
 type flagCondition struct {
 	attribute string
@@ -82,6 +124,12 @@ func decodeFlagConditions(raw json.RawMessage) ([]flagCondition, error) {
 func matchFlagConditions(conditions []flagCondition, attributes map[string]string) bool {
 	for _, c := range conditions {
 		value, ok := attributes[c.attribute]
+		if c.attribute == flagAttributeCohort {
+			if !ok || !matchFlagCohorts(c, value) {
+				return false
+			}
+			continue
+		}
 		if !ok || !validFlagAttributeValue(value) {
 			return false
 		}

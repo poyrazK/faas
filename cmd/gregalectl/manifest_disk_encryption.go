@@ -26,7 +26,14 @@ func renderDiskEncryptionVars(m *manifest.Manifest, self manifest.Host) (string,
 	if err != nil {
 		return "", fmt.Errorf("host %s tang address: %w", self.Name, err)
 	}
-	var peers []string
+	// A peer whose manifest address is an IP is bound at that address. A peer
+	// named by host name is listed by inventory name instead: the storage
+	// role binds it at the private address the discovery play resolved
+	// (tasks/resolve_private_address.yml). The private names are only in
+	// /etc/hosts once the overlay role has run, later in the same bootstrap,
+	// publicly they resolve elsewhere, and the bound URLs stay in the LUKS
+	// header for good.
+	var peers, peerHosts []string
 	for _, host := range manifest.TangServers(m.Fleet.Hosts) {
 		if host.Name == self.Name {
 			continue
@@ -35,14 +42,22 @@ func renderDiskEncryptionVars(m *manifest.Manifest, self manifest.Host) (string,
 		if err != nil {
 			return "", fmt.Errorf("host %s tang address: %w", host.Name, err)
 		}
+		if net.ParseIP(address) == nil {
+			peerHosts = append(peerHosts, host.Name)
+			continue
+		}
 		peers = append(peers, "http://"+net.JoinHostPort(address, port))
 	}
 	b.WriteString("faas_disk_encryption: true\n")
 	fmt.Fprintf(&b, "faas_tang_port: %s\n", port)
-	// The manifest address is the private one; on bare metal the default
-	// route's address is the public card.
-	fmt.Fprintf(&b, "faas_tang_listen_address: %q\n", listen)
+	// An IP manifest address is the private one; on bare metal the default
+	// route's address is the public card. A host name is left to the role
+	// default, the discovered private address, for the same reason as above.
+	if net.ParseIP(listen) != nil {
+		fmt.Fprintf(&b, "faas_tang_listen_address: %q\n", listen)
+	}
 	fmt.Fprintf(&b, "faas_tang_peer_urls: [%s]\n", quotedYAMLList(peers))
+	fmt.Fprintf(&b, "faas_tang_peer_hosts: [%s]\n", quotedYAMLList(peerHosts))
 	fmt.Fprintf(&b, "faas_tang_allowed_cidrs: [%q]\n", m.Overlay.CIDR)
 	fmt.Fprintf(&b, "faas_disk_recovery_recipients: [%s]\n", quotedYAMLList(d.RecoveryRecipients))
 	return b.String(), nil

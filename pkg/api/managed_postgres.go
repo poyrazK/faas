@@ -430,6 +430,10 @@ type ManagedPostgresCustomRole struct {
 	GrantedTo []string `json:"granted_to"`
 	// MemberOf lists other custom roles of the database it is a member of.
 	MemberOf []string `json:"member_of"`
+	// DefaultFor lists the access modes (read_write, read_only) whose
+	// logins start every session as this role (ADR-20261116213000
+	// amendment 2).
+	DefaultFor []string `json:"default_for"`
 	// State is pending until the role is applied to the database, ready
 	// after, and deleting until a deleted role is dropped.
 	State         string `json:"state"`
@@ -447,6 +451,9 @@ type PutManagedPostgresCustomRoleRequest struct {
 	BypassRLS bool     `json:"bypass_rls"`
 	GrantedTo []string `json:"granted_to"`
 	MemberOf  []string `json:"member_of"`
+	// DefaultFor, when present, replaces the access modes whose logins
+	// start as this role; absent keeps the current ones still granted.
+	DefaultFor *[]string `json:"default_for,omitempty"`
 }
 
 // ManagedPostgresCutover reports staging and control-plane SQL evidence only.

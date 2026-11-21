@@ -280,6 +280,10 @@ type PGBackend struct {
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache
+	// flagCohorts caches each deployment and customer's
+	// X-Faas-Flag-Cohorts value (ADR 20261119102741 §4); nil until
+	// WithFlagCohortLoader.
+	flagCohorts *FlagCohortCache
 	// boots tracks other gateways' boots in progress (at-capacity waits).
 	boots   bootTracker
 	router  Router
@@ -845,6 +849,13 @@ func (b *PGBackend) EnsureWarm(ctx context.Context, appID, scope, trigger string
 		return "", WakeMethodUnspecified, false, err
 	}
 	markWakeAdmissionStarted(ctx)
+	if b.log != nil {
+		rpcStart := time.Now()
+		b.log.Debug("gateway: ensure wake rpc start", "app_id", appID, "trigger", trigger)
+		defer func() {
+			b.log.Debug("gateway: ensure wake rpc end", "app_id", appID, "took", time.Since(rpcStart).String(), "err", err)
+		}()
+	}
 	var identity api.PlatformIdentity
 	var instanceID, nodeID, deploymentID, wakeID string
 	var rawMethod int32
@@ -1931,6 +1942,37 @@ func (b *PGBackend) CapacityCount(appID string) int {
 	b.tgtMu.RLock()
 	n := b.targetCountLocked(appID)
 	b.tgtMu.RUnlock()
+	return n
+}
+
+// LaneCapacityCount counts the live cached instances of one serving lane of
+// the app. An exact deployment outside the production weights (a stage or
+// preview environment) is its own lane; otherwise the lane is the production
+// traffic set. Environments carry their own max_concurrency, so a warm stage
+// instance must not count against production's ceiling (prod 2026-11-19).
+func (b *PGBackend) LaneCapacityCount(appID, deploymentID string) int {
+	b.tgtMu.RLock()
+	defer b.tgtMu.RUnlock()
+	picker := b.appsPicker[appID]
+	if picker == nil {
+		return 0
+	}
+	production := make(map[string]bool, len(picker.weights))
+	for _, weight := range picker.weights {
+		production[weight.DeploymentID] = true
+	}
+	if deploymentID != "" && !production[deploymentID] {
+		if set := picker.sets[deploymentID]; set != nil {
+			return len(set.entries)
+		}
+		return 0
+	}
+	n := 0
+	for id, set := range picker.sets {
+		if production[id] {
+			n += len(set.entries)
+		}
+	}
 	return n
 }
 

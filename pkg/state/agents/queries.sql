@@ -30,18 +30,18 @@ UPDATE agents SET state='deleted', deleted_at=now(), updated_at=now()
 
 -- name: InsertAgentVersion :one
 INSERT INTO agent_versions (agent_id,version,account_id,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls)
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy)
  VALUES (sqlc.arg(agent_id)::text::uuid,sqlc.arg(version)::integer,sqlc.arg(account_id)::text::uuid,
   sqlc.narg(harness_preset)::text,sqlc.narg(harness_image)::text,sqlc.arg(harness_run)::text[],sqlc.arg(harness_models)::jsonb,
   sqlc.arg(prompt_template)::text,sqlc.narg(ram_mb)::integer,sqlc.arg(timeout_sec)::integer,
   sqlc.arg(model_integrations)::jsonb,sqlc.narg(ai_budget_millicents)::bigint,sqlc.arg(deliveries)::jsonb,
-  sqlc.arg(pause_during_model_calls)::boolean)
+  sqlc.arg(pause_during_model_calls)::boolean,sqlc.narg(capability_policy)::jsonb)
  RETURNING version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls;
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy;
 
 -- name: GetAgentVersion :one
 SELECT version,harness_preset,harness_image,harness_run,harness_models,prompt_template,ram_mb,timeout_sec,created_at,
-  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls FROM agent_versions
+  model_integrations,ai_budget_millicents,deliveries,pause_during_model_calls,capability_policy FROM agent_versions
  WHERE agent_id=sqlc.arg(agent_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND version=sqlc.arg(version)::integer;
 
 -- name: ListAgentModelIntegrations :many
@@ -161,7 +161,8 @@ UPDATE agent_runs SET state='starting', lease_token=sqlc.arg(lease_token)::text,
 SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::text AS agent_id, ag.name AS agent_name,
   r.agent_version, coalesce(r.tenant_id::text, '')::text AS tenant_id, r.prompt, r.inputs, r.ram_mb, r.timeout_sec, r.attempt,
   v.harness_preset, v.harness_image, v.harness_run, v.harness_models, v.prompt_template, v.model_integrations, v.ai_budget_millicents,
-  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls
+  r.checkout_repository, r.checkout_commit, r.checkout_installation_id, r.queued_at, v.pause_during_model_calls,
+  v.capability_policy
  FROM agent_runs r JOIN accounts a ON a.id=r.account_id JOIN agents ag ON ag.id=r.agent_id
   JOIN agent_versions v ON v.agent_id=r.agent_id AND v.version=r.agent_version
  WHERE r.id=sqlc.arg(run_id)::text::uuid;
@@ -169,8 +170,22 @@ SELECT r.id::text AS id, r.account_id::text AS account_id, a.plan, r.agent_id::t
 -- name: MarkAgentRunRunning :execrows
 -- The at-most-once fence (ADR-20261027090010 §4): from here a lost lease fails the run.
 UPDATE agent_runs SET state='running', running_at=now(), node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
-  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint, updated_at=now()
+  ai_budget_millicents=sqlc.arg(ai_budget_millicents)::bigint,
+  deadline_credit_max_sec=sqlc.arg(deadline_credit_max_sec)::integer, updated_at=now()
  WHERE id=sqlc.arg(run_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+
+-- name: ListAgentRunApprovalWaits :many
+-- ADR-20261027090016 amendment 3: each approval waits from its request
+-- until its decision, its expiry or outboundd's release, whichever is
+-- first; one still held waits until now. Fenced by the run's lease.
+SELECT p.created_at,
+       least(coalesce(p.released_at, now()), p.expires_at, coalesce(d.decided_at, 'infinity'::timestamptz))::timestamptz AS ended_at
+  FROM agent_run_approvals p
+  JOIN agent_runs r ON r.id = p.run_id
+  LEFT JOIN agent_run_approval_decisions d ON d.approval_id = p.id
+ WHERE p.run_id = sqlc.arg(run_id)::text::uuid AND r.lease_token = sqlc.arg(lease_token)::text
+ ORDER BY p.created_at
+ LIMIT sqlc.arg(max_rows)::integer;
 
 -- name: RecordAgentRunBoot :execrows
 UPDATE agent_runs SET boot_ms=sqlc.arg(boot_ms)::integer, updated_at=now()
@@ -939,3 +954,26 @@ SELECT d.domain, d.refused, d.first_seen
   FROM sandbox_session_domains d JOIN sandbox_sessions s ON s.id = d.sandbox_id
  WHERE d.sandbox_id=sqlc.arg(session_id)::text::uuid AND s.account_id=sqlc.arg(account_id)::text::uuid
  ORDER BY d.first_seen, d.refused, d.domain;
+
+-- name: ListAgentRunApprovals :many
+-- ADR-20261027090016 amendment 2: a run's approvals with their decisions, oldest first.
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid
+ ORDER BY a.created_at, a.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: GetAgentRunApproval :one
+SELECT a.id::text AS id, a.run_id::text AS run_id, a.tool, a.arguments_sha256, a.arguments_summary, a.created_at, a.expires_at,
+  coalesce(d.decision, '')::text AS decision, coalesce(d.note, '')::text AS note, d.decided_at
+ FROM agent_run_approvals a LEFT JOIN agent_run_approval_decisions d ON d.approval_id=a.id
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid;
+
+-- name: InsertAgentRunApprovalDecision :execrows
+-- The decision is written once, and only before the approval expires.
+INSERT INTO agent_run_approval_decisions (approval_id, account_id, decision, note, decided_by)
+SELECT a.id, a.account_id, sqlc.arg(decision)::text, sqlc.arg(note)::text, sqlc.arg(decided_by)::text
+ FROM agent_run_approvals a
+ WHERE a.id=sqlc.arg(approval_id)::text::uuid AND a.run_id=sqlc.arg(run_id)::text::uuid
+   AND a.account_id=sqlc.arg(account_id)::text::uuid AND a.expires_at > now()
+ON CONFLICT (approval_id) DO NOTHING;
