@@ -1531,6 +1531,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -1552,6 +1553,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -17560,6 +17562,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize",
       "qualify"
     ],

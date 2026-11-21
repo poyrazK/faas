@@ -45,7 +45,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
+	sharedSecrets, err := m.cloneSharedSecretsLocked(accountID, projectID, op.SourceEnvironment)
+	if err != nil {
+		return nil, err
+	}
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot, SharedSecrets: &sharedSecrets})
 	if err != nil {
 		return nil, err
 	}
@@ -85,9 +89,6 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		}
 		if _, pinned := m.releaseEnvironmentPins[source.ID]; pinned {
 			return nil, ErrReleaseConfigurationTransferUnsupported
-		}
-		if len(m.projectEnvironmentSecretsLocked(projectID, op.SourceEnvironment)) > 0 {
-			return nil, ErrProjectSecretCloneTransferUnsupported
 		}
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
 		snapshot.PublicBuildURLs = maps.Clone(m.publicBuildURLs[source.ID])

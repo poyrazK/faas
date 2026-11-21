@@ -183,10 +183,9 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if hasReleasePin {
 		return snapshot, ErrReleaseConfigurationTransferUnsupported
 	}
-	if shared, err := projectEnvironmentSecretsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment); err != nil {
+	sharedSecrets, err := readCloneSharedSecretsDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
+	if err != nil {
 		return snapshot, err
-	} else if len(shared) > 0 {
-		return snapshot, ErrProjectSecretCloneTransferUnsupported
 	}
 
 	config, err := readCloneProjectConfigDB(ctx, tx, op.AccountID, op.ProjectID, op.SourceEnvironment)
@@ -201,7 +200,7 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if err != nil {
 		return snapshot, err
 	}
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot, SharedSecrets: &sharedSecrets})
 	if err != nil {
 		return snapshot, err
 	}
