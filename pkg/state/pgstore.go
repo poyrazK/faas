@@ -24240,17 +24240,23 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 
 // pendingBillingSubjectsSQL lists provider's billing identities whose subject,
 // an account or a company organization, is on a paid plan. A cancelled
-// subject keeps its identity but is Free, and the pusher never delivers a Free
-// subject's hours, so scanning them only grew every pass and let their
-// month-old hours fill the row limit ahead of paying subjects' current ones
-// (ADR-20261031100000).
+// subject keeps its identity but is Free; scanning all its hours only grew
+// every pass and let their month-old hours fill the row limit ahead of paying
+// subjects' current ones (ADR-20261031100000). Only its hours before the
+// plan change that made it Free are listed (paid_until), so a paid hour still
+// undelivered when the subscription ended reaches the pusher, which holds it
+// by the hour's recorded plan (ADR-20261121231500); every other Free subject
+// lists nothing.
 const pendingBillingSubjectsSQL = `paid as (
-		   select bi.account_id, bi.billing_from
+		   select bi.account_id, bi.billing_from,
+		          case when coalesce(a.plan, o.plan, 'free') <> 'free' then null::timestamptz
+		               else coalesce(a.plan_changed_at, o.plan_changed_at) end as paid_until
 		     from billing_identities bi
 		     left join accounts a on a.id = bi.account_id
 		     left join orgs o on o.id = bi.account_id and not o.personal_org
 		    where bi.provider = $1
-		      and coalesce(a.plan, o.plan, 'free') <> 'free'
+		      and (coalesce(a.plan, o.plan, 'free') <> 'free'
+		           or coalesce(a.plan_changed_at, o.plan_changed_at) > bi.billing_from)
 		 )`
 
 // PendingBillingUsageWindows returns bounded positive hourly usage without a
@@ -24268,6 +24274,7 @@ func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider strin
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.mb_seconds) > 0
 			 ), pending as (
@@ -24333,6 +24340,7 @@ func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider 
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.net_tx_bytes) > 0
 			 ), pending as (

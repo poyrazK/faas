@@ -55,8 +55,11 @@ customer caused that is never billed:
    reconciles the previous month, writing at its last minute so the bytes
    stay in the month they were delivered in. A report for a deleted endpoint
    is attributed to the owner its earlier usage rows recorded.
-5. A Free subject's window whose hour was on a paid plan, by a recorded return
-   to Free after it, is held as `subscription_ended`
+5. Pending usage windows list a now-Free subject's hours from before the
+   plan change that made it Free (its `plan_changed_at`, when after its
+   `billing_from`); other Free subjects still list nothing. Such a window
+   whose hour was on a paid plan, by a recorded return to Free after it, is
+   held as `subscription_ended`
    (`meterd_billing_usage_held_windows`), so the existing expiring-held alert
    lets an operator bill, settle or waive it. It is delivered if the subject
    subscribes again within the lookback.
