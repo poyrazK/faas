@@ -430,7 +430,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "call" {
 		fs.Func("task-submission-key", "saved UUIDv7 for retrying a Task submission (requires --tasks)", func(value string) error {
 			if value == "" {
-				return errors.New("Task submission key must be a lowercase UUIDv7")
+				return errors.New("task submission key must be a lowercase UUIDv7")
 			}
 			submissionKey = value
 			return nil
