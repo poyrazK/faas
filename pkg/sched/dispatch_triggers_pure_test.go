@@ -463,6 +463,7 @@ func TestClassifyDLQReason_CodeBranches(t *testing.T) {
 		{"function_state_lost", "", triggerReasonMaxAttempts},
 		{"payload_b64_invalid", "", triggerReasonPoisonRecord},
 		{"response_malformed", "", triggerReasonPoisonRecord},
+		{"function_refused_input", "", triggerReasonPoisonRecord}, // prod 2026-11-20
 		{"invoke_error", "", triggerReasonBrokerError},
 		{"unknown_code", "", triggerReasonPoisonRecord}, // default
 	}

@@ -131,6 +131,7 @@ func TestInitPrimePath(t *testing.T) {
 	}{
 		// prod 2026-11-19: a function's handler ran 20 times per deploy.
 		{name: "function is not primed", dep: state.Deployment{Handler: "handler.handler"}, want: ""},
+		{name: "config-in-code function is not primed", app: state.App{Type: state.AppTypeFunction}, want: ""},
 		{name: "function with warmup is primed", dep: state.Deployment{Handler: "handler.handler"}, app: state.App{Manifest: state.AppManifest{Warmup: &api.WarmupHook{Path: "/warm"}}}, want: "/warm"},
 		{name: "TCP readiness primes /", want: "/"},
 		{name: "image health path", app: state.App{Manifest: state.AppManifest{Healthz: "/status"}}, want: "/status"},

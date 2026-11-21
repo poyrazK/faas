@@ -167,6 +167,7 @@ type InspectAppSummary = inspectAppSummary
 type InspectHealthSummary = inspectHealthSummary
 type InspectReleaseSummary = inspectReleaseSummary
 type InspectRuntimeSummary = inspectRuntimeSummary
+type InspectRuntimeWarning = inspectRuntimeWarning
 type InspectSummary = inspectSummary
 type InspectSummaryInputs = inspectSummaryInputs
 type InspectRecommendation = inspectRecommendation

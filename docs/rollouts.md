@@ -231,6 +231,11 @@ Pick cheap, read-only routes your app answers without a login; each path must
 be concrete, with no query, wildcard, or `{parameter}`. The setting is
 `release_probe_paths` in the app manifest and the API.
 
+A function is not probed unless it sets `release_probe_paths`: every path of
+a function is its handler, so a probe of `/` would run a queue or cron
+handler on an empty event. Its canary is judged on real traffic and runtime
+signals instead.
+
 Probes are ordinary requests to your app: they wake the new release and the
 one it replaces and keep both running while the rollout waits for evidence,
 and that running time is billed like any other request (about 0.09 GB-h for a

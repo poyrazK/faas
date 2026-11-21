@@ -52,7 +52,9 @@ func TestPreviewDoesNotReceiveGateCredential(t *testing.T) {
 		{name: "preview basic", mode: publicAuthModeBasic, header: basic, preview: true, want: ""},
 		{name: "preview bearer", mode: publicAuthModeBearer, header: bearer, preview: true, want: ""},
 		{name: "production basic", mode: publicAuthModeBasic, header: basic, want: basic},
-		{name: "production bearer", mode: publicAuthModeBearer, header: bearer, want: bearer},
+		// prod 2026-11-20 (R12-1): a production app received the caller's
+		// account API key (ADR-20261120060000).
+		{name: "production bearer", mode: publicAuthModeBearer, header: bearer, want: ""},
 		{name: "open preview keeps the app's own scheme", mode: publicAuthModeOpen, header: "Token app-owned", preview: true, want: "Token app-owned"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -82,5 +84,36 @@ func TestWithheldPreviewCredentialStillBypassesSharedCache(t *testing.T) {
 	}
 	if !hasCacheCredentials(req) {
 		t.Fatal("a request whose credential was withheld must still bypass the shared cache")
+	}
+}
+
+// prod 2026-11-20 (R12-1): require_authn on a production app verified the
+// caller's account API key and then handed it to the app. The key is
+// withheld; an app's own scheme and a production basic-auth password still
+// reach the app (ADR-20261120060000).
+func TestProductionAppDoesNotReceiveVerifiedAPIKey(t *testing.T) {
+	key := "Bearer " + validKeyFormat("000000000000000000000000000000000000000000000002")
+	for _, tc := range []struct {
+		name   string
+		app    App
+		header string
+		want   string
+	}{
+		{"require_authn key", App{RequireAuthn: true}, key, ""},
+		{"ungated app's own token", App{}, "Bearer app-own-jwt", "Bearer app-own-jwt"},
+		{"ungated app receives a key it reads itself", App{}, key, key},
+		{"production basic password", App{PublicAuth: PublicAuthConfig{Mode: publicAuthModeBasic}}, "Basic YWxpY2U6czNjcmV0", "Basic YWxpY2U6czNjcmV0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+			req.Header.Set("Authorization", tc.header)
+			withholdPreviewGateCredential(req, tc.app)
+			if got := req.Header.Get("Authorization"); got != tc.want {
+				t.Fatalf("Authorization = %q, want %q", got, tc.want)
+			}
+			if tc.want == "" && !hasCacheCredentials(req) {
+				t.Fatal("a withheld key must still bypass the shared cache")
+			}
+		})
 	}
 }

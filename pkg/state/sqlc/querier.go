@@ -4051,6 +4051,10 @@ type Querier interface {
 	// default-scope canary and a serving predecessor. apid probes the default
 	// path on both so a quiet canary is judged on evidence. An app with several
 	// serving predecessors returns several rows and is skipped by the caller.
+	// A function is probed only on paths it declares in release_probe_paths:
+	// every path of a function is its handler, so a default GET / ran a queue or
+	// cron handler with a synthetic event about 20 times a minute for the whole
+	// canary (prod 2026-11-20, ADR-1446 amendment).
 	ListDefaultRouteProbeTargets(ctx context.Context, db DBTX, batchLimit int32) ([]ListDefaultRouteProbeTargetsRow, error)
 	// Stable per-app revision names. Join deployments for the human-readable
 	// revision while retaining aliases whose targets later become superseded;

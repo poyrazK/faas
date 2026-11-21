@@ -135,6 +135,24 @@ var guidePages = []guidePage{
 		Notes: []string{"The default policy is a health-gated canary when a release is already live."},
 	},
 	{
+		Task: "functions-and-queues", Title: "Functions, queues and crons",
+		Summary: "A function is a handler(event, ctx) in functions/<name>/; its config in code names the queue or cron that calls it.",
+		Steps: []guideStep{
+			{Do: "Write a queue-triggered function with a test", Command: "gregale add function <name> --trigger queue"},
+			{Do: "Write a cron-triggered function", Command: "gregale add function <name> --trigger cron --schedule \"0 8 * * *\""},
+			{Do: "Deploy every function in the repo", Command: "gregale deploy"},
+			{Do: "Send a message", Command: "gregale queue send <app> --queue-name <queue> --payload '<json>'"},
+			{Do: "See queue depth, bindings and consumer liveness", Command: "gregale queue status <app>"},
+			{Do: "List and replay dead letters", Command: "gregale dlq list <app>"},
+			{Do: "List an app's crons, then one cron's runs", Command: "gregale cron list <app>"},
+		},
+		Notes: []string{
+			"A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.",
+			"An HTTP app cannot consume a queue: use a function, or a worker app with a pull binding.",
+			"Every path of a function is its handler, so canary probes skip a function unless it sets release_probe_paths.",
+		},
+	},
+	{
 		Task: "debug-a-failure", Title: "Debug a failed deploy or a failing app",
 		Summary: "Every failure names its code and a fix; start from the fix.",
 		Steps: []guideStep{
