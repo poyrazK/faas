@@ -267,6 +267,10 @@ type JailerVMM struct {
 	// fileConsole launches guests with their console file as stdout and
 	// stderr (console_file.go). Guarded by mu.
 	fileConsole bool
+	// bootFailedConsoles holds instances whose cold boot never became
+	// ready; Kill keeps their console (console_file.go) instead of deleting
+	// it, so the guest's own account of the slow boot survives cleanup.
+	bootFailedConsoles sync.Map
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -1606,6 +1610,27 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		readinessStartedAt := time.Now()
 		err = v.waitApplicationReady(ctx, l, healthcheckPath, healthcheckGRPC, healthcheckGRPCService, startupDeadlineS, executionMode, workerPushDelivery, imageHealthcheckRequired, characterization)
 		if err != nil {
+			// The wake's own phase log reports one opaque bring_up span,
+			// and cleanup deleted the console: concurrent Bank of Anthos
+			// cold boots failed at ~30 s with nothing left to say where
+			// the time went (2026-11-21). Split host setup from the wait
+			// for the app, and keep this guest's console.
+			slog.Default().Warn("vmm: cold boot never became ready; boot breakdown",
+				"instance", l.Instance, "err", err,
+				"chroot_ms", chrootReadyAt.Sub(bootStartedAt).Milliseconds(),
+				"provision_ms", provisionedAt.Sub(chrootReadyAt).Milliseconds(),
+				"stage_runtime_ms", stagedRuntimeAt.Sub(provisionedAt).Milliseconds(),
+				"prepare_config_ms", preparedConfigAt.Sub(stagedRuntimeAt).Milliseconds(),
+				"helper_ms", helperReadyAt.Sub(preparedConfigAt).Milliseconds(),
+				"start_jailer_ms", startedJailerAt.Sub(helperReadyAt).Milliseconds(),
+				"bind_tun_ms", boundTunAt.Sub(startedJailerAt).Milliseconds(),
+				"cgroup_ms", cgroupReadyAt.Sub(boundTunAt).Milliseconds(),
+				"write_config_ms", configWrittenAt.Sub(cgroupReadyAt).Milliseconds(),
+				"pre_ready_ms", readinessStartedAt.Sub(bootStartedAt).Milliseconds(),
+				"wait_ready_ms", time.Since(readinessStartedAt).Milliseconds())
+			if v.fileConsoleEnabled() {
+				v.bootFailedConsoles.Store(l.Instance, struct{}{})
+			}
 			return fmt.Errorf("vmm: readiness: %w", err)
 		}
 		readyAt = time.Now()

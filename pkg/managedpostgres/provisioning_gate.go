@@ -45,7 +45,7 @@ func NewStagingProvisioningGate(registry *Registry, getenv func(string) string, 
 		}
 	}
 	return func() bool {
-		if registry == nil || !registry.ProvisioningEnabled || getenv == nil {
+		if registry == nil || !registry.ProvisioningEnabled() || getenv == nil {
 			return false
 		}
 		if !strings.EqualFold(strings.TrimSpace(getenv(EnvironmentEnv)), QualificationStagingEnvironment) {

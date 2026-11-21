@@ -37154,6 +37154,30 @@ func (q *Queries) InsertPrivateNetworkTransportIdentity(ctx context.Context, db 
 	return vni, err
 }
 
+const insertProjectEnvironmentCloneBucketNotifications = `-- name: InsertProjectEnvironmentCloneBucketNotifications :exec
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules, clone_paused)
+VALUES ($1::uuid, $2::bigint, $3::jsonb, $4::jsonb, true)
+ON CONFLICT (bucket_id) DO NOTHING
+`
+
+type InsertProjectEnvironmentCloneBucketNotificationsParams struct {
+	BucketID     pgtype.UUID
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+}
+
+// A full clone's target bucket gets its source's configuration paused.
+func (q *Queries) InsertProjectEnvironmentCloneBucketNotifications(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneBucketNotificationsParams) error {
+	_, err := db.Exec(ctx, insertProjectEnvironmentCloneBucketNotifications,
+		arg.BucketID,
+		arg.Revision,
+		arg.Rules,
+		arg.ManagedRules,
+	)
+	return err
+}
+
 const insertProjectEnvironmentCloneCapturedEdgePolicy = `-- name: InsertProjectEnvironmentCloneCapturedEdgePolicy :exec
 INSERT INTO project_environment_edge_policies(account_id, project_id, app_id, environment_slug, rules)
 VALUES($1::uuid, $2::uuid, $3::uuid, $4::text, $5::jsonb)
@@ -74206,6 +74230,17 @@ func (q *Queries) ObjectNodeSettlementStats(ctx context.Context, db DBTX) (Objec
 	return i, err
 }
 
+const objectNotificationEnvironmentSlug = `-- name: ObjectNotificationEnvironmentSlug :one
+SELECT slug FROM project_environments WHERE id = $1::uuid
+`
+
+func (q *Queries) ObjectNotificationEnvironmentSlug(ctx context.Context, db DBTX, environmentID pgtype.UUID) (string, error) {
+	row := db.QueryRow(ctx, objectNotificationEnvironmentSlug, environmentID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
 const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
 SELECT app_id,account_id,source,queue_name,payload FROM invocations WHERE id=$1
 `
@@ -74355,17 +74390,31 @@ func (q *Queries) ObjectNotificationTargetInReach(ctx context.Context, db DBTX, 
 }
 
 const objectNotificationTargetQueue = `-- name: ObjectNotificationTargetQueue :many
-SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2
+SELECT id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id FROM queue_bindings WHERE account_id=$1::uuid AND app_id=$2::uuid
+  AND queue_name=$3::text AND enabled AND retired_at IS NULL
+  AND deployment_scope = $4::text
+  AND environment_id IS NOT DISTINCT FROM $5::uuid
+LIMIT 2
 `
 
 type ObjectNotificationTargetQueueParams struct {
-	AccountID pgtype.UUID
-	AppID     pgtype.UUID
-	QueueName string
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	QueueName     string
+	Scope         string
+	EnvironmentID pgtype.UUID
 }
 
+// A rule's queue resolves in its bucket's environment (ADR-20261104120000
+// amendment 2026-11-16): production's unscoped binding, or the stage's.
 func (q *Queries) ObjectNotificationTargetQueue(ctx context.Context, db DBTX, arg ObjectNotificationTargetQueueParams) ([]QueueBinding, error) {
-	rows, err := db.Query(ctx, objectNotificationTargetQueue, arg.AccountID, arg.AppID, arg.QueueName)
+	rows, err := db.Query(ctx, objectNotificationTargetQueue,
+		arg.AccountID,
+		arg.AppID,
+		arg.QueueName,
+		arg.Scope,
+		arg.EnvironmentID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -74437,8 +74486,17 @@ func (q *Queries) ObjectNotificationsCapture(ctx context.Context, db DBTX, arg O
 	return result.RowsAffected(), nil
 }
 
+const objectNotificationsClearClonePause = `-- name: ObjectNotificationsClearClonePause :exec
+UPDATE object_bucket_notifications SET clone_paused = false WHERE bucket_id = $1::uuid AND clone_paused
+`
+
+func (q *Queries) ObjectNotificationsClearClonePause(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectNotificationsClearClonePause, bucketID)
+	return err
+}
+
 const objectNotificationsGet = `-- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id, n.clone_paused
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1
 `
@@ -74451,6 +74509,7 @@ type ObjectNotificationsGetRow struct {
 	Region       string
 	AccountID    pgtype.UUID
 	AppID        pgtype.UUID
+	ClonePaused  bool
 }
 
 func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectNotificationsGetRow, error) {
@@ -74464,13 +74523,14 @@ func (q *Queries) ObjectNotificationsGet(ctx context.Context, db DBTX, bucketID 
 		&i.Region,
 		&i.AccountID,
 		&i.AppID,
+		&i.ClonePaused,
 	)
 	return i, err
 }
 
 const objectNotificationsSave = `-- name: ObjectNotificationsSave :exec
 INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules, clone_paused=false
 `
 
 type ObjectNotificationsSaveParams struct {
@@ -74480,6 +74540,8 @@ type ObjectNotificationsSaveParams struct {
 	ManagedRules []byte
 }
 
+// Any explicit write of the rules clears a clone's pause (ADR-20261104120000
+// amendment 2026-11-16).
 func (q *Queries) ObjectNotificationsSave(ctx context.Context, db DBTX, arg ObjectNotificationsSaveParams) error {
 	_, err := db.Exec(ctx, objectNotificationsSave,
 		arg.BucketID,
@@ -90242,7 +90304,7 @@ func (q *Queries) ReadProjectEnvironmentCloneObjectBucket(ctx context.Context, d
 }
 
 const readProjectEnvironmentCloneObjectBuckets = `-- name: ReadProjectEnvironmentCloneObjectBuckets :many
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
@@ -90265,7 +90327,13 @@ SELECT jsonb_build_object(
         SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
         FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
     ), '[]'::jsonb)
-) AS definition, (b.state = 'ready')::boolean AS ready
+) || coalesce((
+    -- ADR-20261104120000 amendment 2026-11-16: present only when the bucket
+    -- has a notification configuration, as the Go capture omits it.
+    SELECT jsonb_build_object('notifications', jsonb_build_object('revision', n.revision, 'rules', n.rules,
+        'managed_rule_ids', (SELECT coalesce(jsonb_agg(m->>'id' ORDER BY m->>'id'), '[]'::jsonb) FROM jsonb_array_elements(n.managed_rules) m)))
+    FROM object_bucket_notifications n WHERE n.bucket_id = b.id
+), '{}'::jsonb))::jsonb AS definition, (b.state = 'ready')::boolean AS ready
 FROM object_buckets b
 WHERE b.account_id = $1::uuid AND b.app_id = $2::uuid
   AND b.scope = $3::text AND b.state <> 'deleted'
@@ -91747,6 +91815,58 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetArtifact(ctx context.Context,
 	var artifact []byte
 	err := row.Scan(&artifact)
 	return artifact, err
+}
+
+const readProjectEnvironmentCloneTargetBucketNotifications = `-- name: ReadProjectEnvironmentCloneTargetBucketNotifications :many
+SELECT b.id AS bucket_id, (n.bucket_id IS NOT NULL)::boolean AS present, coalesce(n.revision, 0)::bigint AS revision,
+    coalesce(n.rules, '[]'::jsonb)::jsonb AS rules, coalesce(n.managed_rules, '[]'::jsonb)::jsonb AS managed_rules,
+    coalesce(n.clone_paused, false)::boolean AS clone_paused
+FROM object_buckets b LEFT JOIN object_bucket_notifications n ON n.bucket_id = b.id
+WHERE b.environment_clone_operation_id = $1::uuid AND b.account_id = $2::uuid
+  AND b.environment_clone_source_bucket_id = $3::uuid AND b.state <> 'deleted'
+ORDER BY b.id
+`
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsParams struct {
+	OperationID    pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceBucketID pgtype.UUID
+}
+
+type ReadProjectEnvironmentCloneTargetBucketNotificationsRow struct {
+	BucketID     pgtype.UUID
+	Present      bool
+	Revision     int64
+	Rules        []byte
+	ManagedRules []byte
+	ClonePaused  bool
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetBucketNotifications(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneTargetBucketNotificationsParams) ([]ReadProjectEnvironmentCloneTargetBucketNotificationsRow, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneTargetBucketNotifications, arg.OperationID, arg.AccountID, arg.SourceBucketID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ReadProjectEnvironmentCloneTargetBucketNotificationsRow{}
+	for rows.Next() {
+		var i ReadProjectEnvironmentCloneTargetBucketNotificationsRow
+		if err := rows.Scan(
+			&i.BucketID,
+			&i.Present,
+			&i.Revision,
+			&i.Rules,
+			&i.ManagedRules,
+			&i.ClonePaused,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const readProjectEnvironmentCloneTargetOperationID = `-- name: ReadProjectEnvironmentCloneTargetOperationID :one
@@ -104796,6 +104916,42 @@ func (q *Queries) RestrictApplicationStandardWorkerEvidence(ctx context.Context,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const resumeEnvironmentClonePausedBucketNotifications = `-- name: ResumeEnvironmentClonePausedBucketNotifications :many
+UPDATE object_bucket_notifications n SET clone_paused = false
+FROM object_buckets b JOIN project_environment_clone_operations o ON o.id = b.environment_clone_operation_id
+WHERE n.bucket_id = b.id AND n.clone_paused AND b.account_id = $1::uuid
+  AND o.project_id = $2::uuid AND b.scope = $3::text
+RETURNING n.bucket_id
+`
+
+type ResumeEnvironmentClonePausedBucketNotificationsParams struct {
+	AccountID   pgtype.UUID
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+// Resumes the notifications a full clone paused on its target buckets in one
+// stage.
+func (q *Queries) ResumeEnvironmentClonePausedBucketNotifications(ctx context.Context, db DBTX, arg ResumeEnvironmentClonePausedBucketNotificationsParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, resumeEnvironmentClonePausedBucketNotifications, arg.AccountID, arg.ProjectID, arg.Environment)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var bucket_id pgtype.UUID
+		if err := rows.Scan(&bucket_id); err != nil {
+			return nil, err
+		}
+		items = append(items, bucket_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const resumeEnvironmentClonePausedCrons = `-- name: ResumeEnvironmentClonePausedCrons :many

@@ -432,8 +432,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-06-30",
 	},
 	{
-		Key:   ProductAnalytics,
-		Label: "Product analytics",
+		Key:        ProductAnalytics,
+		Capability: "product-analytics",
+		Label:      "Product analytics",
 		Description: "Keep raw track() events for the plan's analytics retention and serve event series, flag breakdowns, funnels and retention. " +
 			"Off, events still feed flag experiments, no raw event is stored and the insights routes refuse.",
 		ADR:          "ADR-20261117084505",

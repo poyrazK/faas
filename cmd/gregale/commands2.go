@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -2999,14 +3000,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Could not read local project context", linkErr)
 		}
 		if linkedProject != "" {
-			// The app slug is unused by a project deploy; a project link
-			// that selects no single workload must not fail here.
-			if app, appErr := linkedAppSlug(contextDir); appErr == nil {
-				slug = app
-			} else {
-				slug = linkedProject
-			}
+			slug = projectDeployPlaceholderSlug(contextDir, linkedProject)
 		}
+	}
+	// An explicit --project-slug skips the link lookup above, but the checkout
+	// may still carry the project-only link the previous project deploy wrote
+	// (linkCheckoutAfterProjectDeploy). linkedDefaultAppName below refuses
+	// such a link, so `deploy --project --project-slug X` failed on every run
+	// after the first (boa multi-service deploy, 2026-11-21).
+	if projectRequested && slug == "" && *projectSlug != "" {
+		slug = projectDeployPlaceholderSlug(contextDir, *projectSlug)
 	}
 	if slug == "" {
 		var nameErr error
@@ -4172,7 +4175,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
-		plan = withProvidedEnvKeys(plan, deploySecrets)
+		var secretOwners projectSecretOwners
+		if len(deploySecrets) > 0 {
+			secretOwners = projectSecretOwnersFor(sourceDir, plan.Workloads)
+		}
+		plan = withProvidedEnvKeys(plan, deploySecrets, secretOwners)
 		if execution.projectPlan != nil && plan.CanApply {
 			if err := execution.projectPlan(ctx, client, plan); err != nil {
 				return printErr("Could not review project target", err)
@@ -4227,7 +4234,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		applyCtx = api.ContextWithDeploymentAttempt(applyCtx, projectSession.record.Project.AttemptID)
 		apply, err := client.ApplyProjectPlanWithInitialSecrets(applyCtx, plan.PlanToken, openTarball2, filepath.Base(*tarball),
 			*projectSlug, *bindingRepo, prodBranch, *installID, onlyList, excludeList, *deployPersistExclude, *noTriggers, *environment, approvalToken,
-			projectDeployInitialSecrets(plan.Workloads, deploySecrets), platformTenantRequiredPtr)
+			projectDeployInitialSecrets(plan.Workloads, deploySecrets, secretOwners), platformTenantRequiredPtr)
 		if err != nil {
 			var apiErr *APIError
 			if errors.As(err, &apiErr) && apiErr.Problem.Code == "project_submission_mismatch" {
@@ -4260,6 +4267,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		if len(deploySecrets) > 0 && !jsonOutput {
 			PrintOK(osStdout, "Configured %d secret(s) before deployment across %d workload(s)", len(deploySecrets), len(plan.Workloads))
+			skipped := secretOwners.skipped(plan.Workloads, deploySecrets)
+			for _, key := range slices.Sorted(maps.Keys(skipped)) {
+				PrintProgress(osStdout, "%s not set on %s: only other services reference it", key, strings.Join(skipped[key], ", "))
+			}
 		}
 		if *safeProjectDeploy {
 			if apply.SafeRelease == nil || apply.SafeRelease.PreviousReleaseID != plan.SafeRelease.PreviousReleaseID {
@@ -6357,7 +6368,7 @@ func cmdKeys(args []string) int {
 			PrintUsage(osStdout, "usage: gregale key create <label> [--agent] [--scopes scope,...] [--projects slug,...] [--approvals category,...|none]", "keys")
 			return 0
 		}
-		flags, positional := splitArgsForFlags(args[1:])
+		flags, positional := splitArgsForFlags(args[1:], "agent")
 		fs := newFlagSet("keys add", flag.ContinueOnError)
 		scopesCSV := fs.String("scopes", "", "comma-separated API key scopes (default: admin)")
 		projectsCSV := fs.String("projects", "", "limit an agent key to these projects, comma-separated slugs")

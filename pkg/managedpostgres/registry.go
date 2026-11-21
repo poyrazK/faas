@@ -203,14 +203,15 @@ func (b Backend) LiveHub(databaseID string) string {
 type Factory func(BackendConfig, func(string) string) (Provider, error)
 
 type Registry struct {
-	DefaultRegion          string
-	MaxDatabasesPerAccount int
-	ProvisioningEnabled    bool
-	usage                  UsagePolicy
-	health                 HealthPolicy
-	fleet                  FleetPolicy
-	backends               map[string]Backend
-	defaults               map[string]string
+	DefaultRegion string
+	health        HealthPolicy
+	// policy holds the operator policy: the file's values with the live
+	// runtime config policy laid over them (live_policy.go). Read it only
+	// through ProvisioningEnabled, MaxDatabasesPerAccount, UsagePolicy,
+	// Fleet and ProductionApproval.
+	policy   *livePolicyState
+	backends map[string]Backend
+	defaults map[string]string
 }
 
 func NewRegistry(config Config, getenv func(string) string, factories map[string]Factory) (*Registry, error) {
@@ -238,15 +239,23 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 		return nil, err
 	}
 	registry := &Registry{
-		DefaultRegion:          config.DefaultRegion,
-		MaxDatabasesPerAccount: config.MaxDatabasesPerAccount,
-		ProvisioningEnabled:    config.ProvisioningEnabled,
-		usage:                  usagePolicy,
-		health:                 healthPolicy,
-		fleet:                  fleetPolicy,
-		backends:               make(map[string]Backend, len(config.Backends)),
-		defaults:               make(map[string]string, len(config.Defaults)),
+		DefaultRegion: config.DefaultRegion,
+		health:        healthPolicy,
+		policy: &livePolicyState{file: filePolicy{
+			provisioningEnabled:    config.ProvisioningEnabled,
+			maxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+			usage:                  config.Usage,
+			fleet:                  config.Fleet,
+		}},
+		backends: make(map[string]Backend, len(config.Backends)),
+		defaults: make(map[string]string, len(config.Defaults)),
 	}
+	registry.policy.current.Store(&effectivePolicy{
+		provisioningEnabled:    config.ProvisioningEnabled,
+		maxDatabasesPerAccount: config.MaxDatabasesPerAccount,
+		usage:                  usagePolicy,
+		fleet:                  fleetPolicy,
+	})
 	validID := regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 	validEnv := regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	for _, backendConfig := range config.Backends {
@@ -305,10 +314,7 @@ func NewRegistry(config Config, getenv func(string) string, factories map[string
 }
 
 func (r *Registry) UsagePolicy() UsagePolicy {
-	if r == nil {
-		return UsagePolicy{}
-	}
-	return r.usage
+	return r.effective().usage
 }
 
 func Load(getenv func(string) string, factories map[string]Factory) (*Registry, error) {

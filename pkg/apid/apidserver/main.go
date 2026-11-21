@@ -1845,6 +1845,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1700: report what this apid applies so the console shows
 	// convergence per consumer, not only the database acknowledgement.
 	srv.runtimeConfig.enableReceipts("apid")
+	// The managed PostgreSQL operator policy is hot runtime configuration;
+	// bind it before the durable reconcile so the stored policy, not the
+	// file's, serves the first request.
+	// A stored policy this registry refuses (for example after a backend
+	// change) must not stop apid: it keeps the file's values and says so.
+	if err := srv.runtimeConfig.bindManagedPostgresPolicy(managedPostgresService.Registry()); err != nil {
+		log.Error("managed postgres policy refused; serving the provider registry file's values", "error", err)
+	}
 	// Seed legacy consumers from the same bootstrap snapshot before the
 	// durable reconciliation. The durable operator value must win after a
 	// restart; calling WithDataPlacement after reconcile would overwrite it

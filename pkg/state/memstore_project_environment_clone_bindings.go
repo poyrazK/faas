@@ -31,6 +31,9 @@ func (m *MemStore) captureCloneBindingsLocked(accountID, appID, scope string, va
 				capture.AccessGrants = append(capture.AccessGrants, ProjectEnvironmentCloneObjectAccessGrant{APIKeyID: grant.APIKeyID, Permission: grant.Permission})
 			}
 		}
+		if p, ok := m.objectNotifications[bucket.ID]; ok {
+			capture.Notifications = cloneObjectNotificationsFrom(p)
+		}
 		definitions.Buckets = append(definitions.Buckets, capture)
 	}
 	return normalizeCloneBindingDefinitions(appID, scope, values, definitions)

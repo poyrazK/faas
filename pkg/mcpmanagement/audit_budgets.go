@@ -271,6 +271,10 @@ func (m *management) planBudgetChange(ctx context.Context, a planBudgetArgs) (an
 	}
 	p.ID = hex.EncodeToString(id)
 	m.budgetPlans[p.ID] = p
+	if err := m.persistMemoryPlansLocked(); err != nil {
+		delete(m.budgetPlans, p.ID)
+		return nil, err
+	}
 	return *p, nil
 }
 
@@ -279,7 +283,7 @@ func (m *management) applyBudgetChange(ctx context.Context, a applyArgs) (any, e
 	defer m.mu.Unlock()
 	p := m.budgetPlans[a.PlanID]
 	if p == nil {
-		return nil, invalid("invalid_plan", "unknown budget plan; plans end with the connection, so review a new one")
+		return nil, invalid("invalid_plan", "unknown or expired budget plan; review a new one")
 	}
 	if p.receipt != nil {
 		return p.receipt, nil
@@ -306,6 +310,9 @@ func (m *management) applyBudgetChange(ctx context.Context, a applyArgs) (any, e
 		return nil, err
 	}
 	p.receipt = map[string]any{"plan_id": p.ID, "op": p.Op, "budget": out}
+	// The write succeeded under its idempotency key; a failed journal only
+	// costs the replayed receipt.
+	_ = m.persistMemoryPlansLocked()
 	return p.receipt, nil
 }
 

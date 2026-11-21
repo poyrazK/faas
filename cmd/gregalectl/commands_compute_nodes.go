@@ -158,8 +158,8 @@ func cmdComputeNodesDrain(args []string) int {
 //
 // Per the state-machine RAM invariant, an instance is "live" iff its
 // state counts resident RAM (WAKING, COLD_BOOTING, RUNNING,
-// SNAPSHOTTING, or MIGRATING). The state package exposes
-// ListInstancesOnNodeID; we filter to that live subset here.
+// SNAPSHOTTING, or MIGRATING). ListResidentInstancesOnNodeID returns
+// that live subset without the node's parked history.
 func cmdComputeNodesDrainStatus(args []string) int {
 	fs := flag.NewFlagSet("drain-status", flag.ContinueOnError)
 	fs.SetOutput(osStderr)
@@ -192,7 +192,7 @@ func computeNodeDrainStatusFromDB(node string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
-	insts, err := st.ListInstancesOnNodeID(ctx, computeNode.ID)
+	insts, err := st.ListResidentInstancesOnNodeID(ctx, computeNode.ID)
 	if err != nil {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
@@ -364,7 +364,7 @@ func mutateComputeNodeBreakGlass(node, reason string, ack bool, action string) i
 			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes retire: maintenance lifecycle required; got %s\n", current)
 			return 1
 		}
-		instances, listErr := st.ListInstancesOnNodeID(ctx, computeNode.ID)
+		instances, listErr := st.ListResidentInstancesOnNodeID(ctx, computeNode.ID)
 		if listErr != nil {
 			_, _ = fmt.Fprintf(osStderr, "gregalectl compute-nodes retire: inspect instances: %v\n", listErr)
 			return 1
@@ -723,13 +723,13 @@ func computeNodeShowFromDB(node string) (state.ComputeNode, int, error) {
 	if err != nil {
 		return state.ComputeNode{}, 0, err
 	}
-	insts, err := st.ListInstancesOnNodeID(ctx, row.ID)
+	insts, err := st.ListResidentInstancesOnNodeID(ctx, row.ID)
 	if err != nil {
 		// Live-instance count is informational (drives the
 		// drain-status UX); a query failure must NOT hide the
 		// row data. Emit a WARN to stderr and continue with
 		// live=0 so the operator still sees the node.
-		fmt.Fprintf(os.Stderr, "warn: ListInstancesOnNodeID(%q): %v (live_instance_count reported as 0)\n", row.ID, err)
+		fmt.Fprintf(os.Stderr, "warn: ListResidentInstancesOnNodeID(%q): %v (live_instance_count reported as 0)\n", row.ID, err)
 		insts = nil
 	}
 	live := 0

@@ -120955,8 +120955,8 @@ components:
 
     ResumeEnvironmentAutomationResponse:
       type: object
-      description: Crons and event subscriptions enabled by resuming a stage's automation after a full environment clone.
-      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids]
+      description: Crons, event subscriptions and bucket notifications enabled by resuming a stage's automation after a full environment clone.
+      required: [environment, crons_resumed, cron_ids, event_subscriptions_resumed, event_subscription_ids, bucket_notifications_resumed, bucket_ids]
       properties:
         environment: { type: string, description: "Stage whose paused automation was enabled.", example: "staging" }
         crons_resumed: { type: integer, minimum: 0, description: "Number of crons enabled." }
@@ -120968,6 +120968,11 @@ components:
         event_subscription_ids:
           type: array
           description: Event subscriptions enabled by this call.
+          items: { type: string }
+        bucket_notifications_resumed: { type: integer, minimum: 0, description: "Number of buckets whose copied notification rules were resumed." }
+        bucket_ids:
+          type: array
+          description: Buckets whose notification rules this call resumed.
           items: { type: string }
     ProjectEnvironmentCloneOperationResponse:
       description: Durable clone progress within one account and project, excluding private source configuration and worker credentials.

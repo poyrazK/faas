@@ -31,6 +31,11 @@ type ObjectNotificationSnapshot struct {
 	BucketRegion   string                     `json:"bucket_region"`
 	QueueBindingID string                     `json:"queue_binding_id,omitempty"`
 	RetryPolicy    json.RawMessage            `json:"retry_policy,omitempty"`
+	// DeploymentScope and EnvironmentID are the bucket's stage; a function
+	// target runs as that stage's work (ADR-20261104120000 amendment
+	// 2026-11-16). Empty is production.
+	DeploymentScope string `json:"deployment_scope,omitempty"`
+	EnvironmentID   string `json:"environment_id,omitempty"`
 }
 
 func cloneObjectNotificationSnapshot(s ObjectNotificationSnapshot) ObjectNotificationSnapshot {
@@ -61,8 +66,11 @@ func notificationEntitled(plan api.Plan, kind string) bool {
 	return ok && (kind == "queue" && l.MaxQueueDepth > 0 || kind == "function" && l.AsyncInvokeAllowed)
 }
 
-func notificationRecipients(b ObjectBucket, p api.ObjectBucketNotifications, typ string, d api.ObjectStorageEvent, queue func(api.ObjectNotificationTarget) (QueueBinding, error)) ([]PublishedEventRecipient, error) {
+func notificationRecipients(b ObjectBucket, env notificationEnvironment, p api.ObjectBucketNotifications, typ string, d api.ObjectStorageEvent, queue func(api.ObjectNotificationTarget, notificationEnvironment) (QueueBinding, error)) ([]PublishedEventRecipient, error) {
 	out := []PublishedEventRecipient{}
+	if env.Gone {
+		return out, nil
+	}
 	for _, r := range p.Rules {
 		if !api.MatchObjectNotification(r, typ, d) {
 			continue
@@ -71,10 +79,10 @@ func notificationRecipients(b ObjectBucket, p api.ObjectBucketNotifications, typ
 		if err != nil {
 			return nil, err
 		}
-		s := ObjectNotificationSnapshot{Rule: r, BucketName: b.Name, BucketRegion: b.Region}
+		s := ObjectNotificationSnapshot{Rule: r, BucketName: b.Name, BucketRegion: b.Region, DeploymentScope: env.Scope, EnvironmentID: env.ID}
 		if t.Kind == "queue" {
 			var binding QueueBinding
-			binding, err = queue(t)
+			binding, err = queue(t, env)
 			if err != nil && !errors.Is(err, ErrNotFound) {
 				return nil, err
 			}

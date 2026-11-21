@@ -18,6 +18,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -61,9 +62,51 @@ func (c *cappedConsoleFile) Write(p []byte) (int, error) {
 // life of the node (B15). A failed restore's preserved console has another
 // name and stays.
 func (v *JailerVMM) removeConsoleFile(instance string) {
+	if _, failed := v.bootFailedConsoles.LoadAndDelete(instance); failed {
+		if kept, err := v.keepBootFailedConsole(instance); err == nil {
+			slog.Warn("vmm: kept console of a cold boot that never became ready", "instance", instance, "path", kept)
+			return
+		} else if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("vmm: keep failed boot console", "instance", instance, "err", err)
+		}
+	}
 	if err := os.Remove(v.consoleLogPath(instance)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		slog.Warn("vmm: remove console file", "instance", instance, "err", err)
 	}
+}
+
+// bootFailedConsolesKept bounds the failed-boot consoles a node keeps; the
+// oldest go first. Each file is already capped by cappedConsoleFile.
+const bootFailedConsolesKept = 16
+
+const bootFailedConsoleSuffix = ".boot-failed.console"
+
+// keepBootFailedConsole renames the console of a cold boot that never became
+// ready and prunes the oldest kept ones.
+func (v *JailerVMM) keepBootFailedConsole(instance string) (string, error) {
+	src := v.consoleLogPath(instance)
+	dst := strings.TrimSuffix(src, ".console") + bootFailedConsoleSuffix
+	if err := os.Rename(src, dst); err != nil {
+		return "", err
+	}
+	// The pattern is fixed, so Glob cannot fail; a short list needs no pruning.
+	kept, _ := filepath.Glob(filepath.Join(filepath.Dir(src), "vm-*"+bootFailedConsoleSuffix))
+	if len(kept) <= bootFailedConsolesKept {
+		return dst, nil
+	}
+	modTimes := make(map[string]time.Time, len(kept))
+	for _, path := range kept {
+		if info, statErr := os.Stat(path); statErr == nil {
+			modTimes[path] = info.ModTime()
+		}
+	}
+	sort.Slice(kept, func(i, j int) bool { return modTimes[kept[i]].Before(modTimes[kept[j]]) })
+	for _, path := range kept[:len(kept)-bootFailedConsolesKept] {
+		if path != dst {
+			_ = os.Remove(path)
+		}
+	}
+	return dst, nil
 }
 
 // defaultConsoleLogDir holds each VM's serial console copy,
