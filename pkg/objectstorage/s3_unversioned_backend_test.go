@@ -78,6 +78,9 @@ func TestS3ResponseTransportStripsVersionHeadersOnlyWhenUnversioned(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
+		if err := response.Body.Close(); err != nil {
+			t.Fatal(err)
+		}
 		kept := response.Header.Get("X-Amz-Version-Id") != "" || response.Header.Get("X-Amz-Copy-Source-Version-Id") != ""
 		if kept == unversioned || response.Header.Get("ETag") == "" {
 			t.Fatalf("unversioned=%v kept version headers=%v headers=%v", unversioned, kept, response.Header)
