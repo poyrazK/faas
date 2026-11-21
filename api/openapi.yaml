@@ -25969,6 +25969,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/analytics/route-resources:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRouteResources
+      summary: Which routes the app's memory and CPU peaks come from.
+      description: |
+        Joins each instance's per-minute memory and CPU with the routes that
+        instance served in the same minutes. A memory peak is a minute whose
+        memory rose by at least high_memory_rise_mb above where it started; a
+        CPU peak is a minute whose busiest second reached 80% of the CPU limit.
+        For each route the response gives the share of peaks it was in flight
+        for, how often it ran at all, and the p95 peak in minutes with and
+        without it. This is a correlation over minutes, not a per-request
+        measurement: a route that runs in every minute shares every peak.
+        Available only where route resource peaks are enabled for the account.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration, at least 1m and at most 336h."
+      responses:
+        '200':
+          description: Route attribution of the app's memory and CPU peaks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteResourcesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -128325,6 +128361,54 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    RouteResourcesResponse:
+      type: object
+      description: "Route attribution of an app's memory and CPU peaks over a window."
+      required: [slug, from, until, truncated, resource_minutes, active_minutes, route_minutes_without_resources, mem_peak_p50_mb, mem_peak_p95_mb, mem_peak_max_mb, mem_limit_mb, high_memory_rise_mb, high_memory_minutes, unattributed_high_memory_minutes, cpu_peak_p95_millicores, cpu_limit_millicores, high_cpu_minutes, routes, routes_omitted]
+      properties:
+        slug: { type: string }
+        from: { type: string, format: date-time, description: "Inclusive start of the analysed window." }
+        until: { type: string, format: date-time, description: "Exclusive end of the analysed window." }
+        truncated: { type: boolean, description: "The window held more minutes than one read analyses; the newest were used." }
+        resource_minutes: { type: integer, description: "Instance-minutes with memory and CPU samples." }
+        active_minutes: { type: integer, description: "Instance-minutes with samples that also served requests." }
+        route_minutes_without_resources: { type: integer, description: "Instance-minutes that served requests but have no samples; left out of every share." }
+        mem_peak_p50_mb: { type: integer }
+        mem_peak_p95_mb: { type: integer }
+        mem_peak_max_mb: { type: integer }
+        mem_limit_mb: { type: integer, description: "The app's memory limit; 0 when unknown." }
+        high_memory_rise_mb: { type: integer, description: "Rise above the minute's starting memory that counted as a memory peak in this window." }
+        high_memory_minutes: { type: integer }
+        unattributed_high_memory_minutes: { type: integer, description: "Memory peaks with no request in flight, such as background work." }
+        cpu_peak_p95_millicores: { type: integer }
+        cpu_limit_millicores: { type: integer, description: "The app's CPU limit; 0 when unknown." }
+        high_cpu_minutes: { type: integer }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RouteResourceAttribution' }
+        routes_omitted: { type: integer, description: "Routes past the 50 reported." }
+    RouteResourceAttribution:
+      type: object
+      description: "One route's share of the window's memory and CPU peaks."
+      required: [route, method, requests, busy_ms, active_minutes, presence_share, high_memory_minutes, high_memory_share, sole_high_memory_minutes, mem_peak_p95_with_mb, mem_peak_p95_without_mb, mem_rise_p95_with_mb, mem_rise_p95_without_mb, high_cpu_minutes, high_cpu_share, cpu_peak_p95_with_millicores, cpu_peak_p95_without_millicores]
+      properties:
+        route: { type: string }
+        method: { type: string }
+        requests: { type: integer, format: int64 }
+        busy_ms: { type: integer, format: int64, description: "Time requests of the route were in flight, summed over concurrent requests." }
+        active_minutes: { type: integer }
+        presence_share: { type: number, description: "Share of active minutes the route ran in." }
+        high_memory_minutes: { type: integer }
+        high_memory_share: { type: number, description: "Share of attributed memory peaks the route was in flight for." }
+        sole_high_memory_minutes: { type: integer, description: "Memory peaks the route was the only route in flight for." }
+        mem_peak_p95_with_mb: { type: integer }
+        mem_peak_p95_without_mb: { type: integer, description: "p95 memory peak in active minutes without the route." }
+        mem_rise_p95_with_mb: { type: integer }
+        mem_rise_p95_without_mb: { type: integer }
+        high_cpu_minutes: { type: integer }
+        high_cpu_share: { type: number }
+        cpu_peak_p95_with_millicores: { type: integer }
+        cpu_peak_p95_without_millicores: { type: integer }
     RouteCustomerUsageResponse:
       type: object
       description: "Bounded observed customer usage for one app, deployment and half-open retained telemetry window."

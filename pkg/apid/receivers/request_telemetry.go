@@ -106,6 +106,9 @@ type requestTelemetryReceiver struct {
 	// rollups, when set, counts every row a plan keeps into the analytics
 	// rollups before the ingest cap (ADR-20261103113952).
 	rollups *RequestAnalyticsRollups
+	// routeResources, when set, stores gateway route minutes
+	// (ADR-20261121170000).
+	routeResources *RouteResources
 }
 
 // RequestTelemetryOption configures RegisterRequestTelemetryReceiver.

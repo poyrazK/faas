@@ -219,6 +219,7 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/apps/{slug}/analytics":                 authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/timeseries":      authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/analytics/route-customers": authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/analytics/route-resources": authz.OrgActionReadApp,
 
 	// Credentials a company app issues (ADR-20261026151103 amendment 1).
 	// Each one is shown once to the member who mints or sets it and keeps

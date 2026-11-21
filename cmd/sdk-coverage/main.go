@@ -2794,6 +2794,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/analytics":                 "GetAppRequestAnalytics",
 	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
 	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
+	"GET /v1/apps/{slug}/analytics/route-resources": "GetAppRouteResources",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests
