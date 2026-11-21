@@ -3222,6 +3222,9 @@ type Querier interface {
 	InsertProjectEnvironmentClonePostgresVerificationReadAllocation(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationReadAllocationParams) (ProjectEnvironmentClonePostgresVerificationReadDebit, error)
 	InsertProjectEnvironmentClonePostgresVerificationReadBudget(ctx context.Context, db DBTX, arg InsertProjectEnvironmentClonePostgresVerificationReadBudgetParams) (ProjectEnvironmentClonePostgresVerificationReadBudget, error)
 	InsertProjectEnvironmentCloneProjectConfiguration(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneProjectConfigurationParams) (int64, error)
+	InsertProjectEnvironmentCloneSecretRef(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSecretRefParams) (int64, error)
+	InsertProjectEnvironmentCloneSecretSuppression(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSecretSuppressionParams) (int64, error)
+	InsertProjectEnvironmentCloneSharedSecret(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSharedSecretParams) error
 	InsertProjectEnvironmentCloneSidecarLayer(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarLayerParams) error
 	InsertProjectEnvironmentCloneSidecarSignal(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneSidecarSignalParams) error
 	InsertProjectEnvironmentCloneWorkload(ctx context.Context, db DBTX, arg InsertProjectEnvironmentCloneWorkloadParams) error
@@ -6883,10 +6886,15 @@ type Querier interface {
 	ReadProjectEnvironmentCloneRestoredDatabases(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneRestoredDatabasesParams) ([]ReadProjectEnvironmentCloneRestoredDatabasesRow, error)
 	ReadProjectEnvironmentCloneScopedEdgePolicy(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedEdgePolicyParams) ([]byte, error)
 	ReadProjectEnvironmentCloneScopedPolicyProof(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneScopedPolicyProofParams) ([]byte, error)
+	ReadProjectEnvironmentCloneSecretRefs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretRefsParams) ([]ReadProjectEnvironmentCloneSecretRefsRow, error)
+	ReadProjectEnvironmentCloneSecretSuppressions(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretSuppressionsParams) ([]ReadProjectEnvironmentCloneSecretSuppressionsRow, error)
 	// Decode the explicit configuration fields in Go; delivery observations do
 	// not enter the fingerprint. No encrypted content leaves the store boundary.
 	ReadProjectEnvironmentCloneSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSecretsParams) ([][]byte, error)
 	ReadProjectEnvironmentCloneSelectedArtifact(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSelectedArtifactParams) ([]byte, error)
+	// A full clone captures the source environment's shared secrets as sealed
+	// envelopes (ADR-20261104120000 amendment 2026-11-21).
+	ReadProjectEnvironmentCloneSharedSecrets(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSharedSecretsParams) ([]ReadProjectEnvironmentCloneSharedSecretsRow, error)
 	ReadProjectEnvironmentCloneSidecarLayers(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([][]byte, error)
 	ReadProjectEnvironmentCloneSidecarSignals(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]ReadProjectEnvironmentCloneSidecarSignalsRow, error)
 	ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceAppIDsParams) ([]string, error)
@@ -8372,6 +8380,9 @@ type Querier interface {
 	SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg SetOutboundBindingProbePolicyParams) (pgtype.UUID, error)
 	SetProjectBindingVerificationRunStatus(ctx context.Context, db DBTX, arg SetProjectBindingVerificationRunStatusParams) error
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
+	// A clone's target deployment carries the build URLs captured from its source
+	// deployment (ADR-20261104120000 amendment 2026-11-21).
+	SetProjectEnvironmentCloneDeploymentPublicBuildURLs(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams) error
 	SetProjectReleaseAdditionDormant(ctx context.Context, db DBTX, arg SetProjectReleaseAdditionDormantParams) error
 	SetPromotionWorkerSetPublicationGuard(ctx context.Context, db DBTX, token string) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)

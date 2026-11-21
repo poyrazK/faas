@@ -1531,6 +1531,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -1552,6 +1553,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -2148,7 +2150,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -2356,7 +2359,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -2386,7 +2390,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -5604,7 +5609,10 @@
       "urls"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "deployment"
     }
@@ -6319,7 +6327,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -6351,7 +6360,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -17552,6 +17562,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize",
       "qualify"
     ],
@@ -18812,7 +18823,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -20075,7 +20087,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
