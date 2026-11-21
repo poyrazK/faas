@@ -109,7 +109,7 @@ func TestRequireCloneNotificationDestinations(t *testing.T) {
 	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{compact}); err != nil {
 		t.Fatalf("a compact app ID refused: %v", err)
 	}
-	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{record(nil, queueRule)});!errors.Is(err, ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable) {
+	if err := requireCloneNotificationDestinations([]projectCloneWorkloadRecord{record(nil, queueRule)}); !errors.Is(err, ErrProjectEnvironmentCloneObjectNotificationDestinationUnavailable) {
 		t.Fatalf("a queue the stage will not hold accepted: %v", err)
 	}
 }
