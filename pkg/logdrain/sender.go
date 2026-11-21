@@ -82,7 +82,8 @@ type Config struct {
 	Kind       Kind
 	TargetURL  string
 	AuthHeader string
-	// Service is the Datadog service tag (the app slug) for KindDatadog.
+	// Service is the app slug: the Datadog service tag for KindDatadog and
+	// the OTLP service.name resource attribute for KindOTLP.
 	Service string
 	// DurableQueue, when set, makes Enqueue synchronous with a local fsync.
 	// The sender then acknowledges records only after a successful 2xx
@@ -662,7 +663,7 @@ func encodeBatch(kind Kind, service string, records []Record) ([]byte, string, e
 	case KindOTLP:
 		payload := otlpLogsPayload{}
 		for _, record := range records {
-			payload.ResourceLogs = append(payload.ResourceLogs, makeOTLPPayload(record).ResourceLogs...)
+			payload.ResourceLogs = append(payload.ResourceLogs, makeOTLPPayload(service, record).ResourceLogs...)
 		}
 		body, err := json.Marshal(payload)
 		return body, "application/json", err
@@ -703,9 +704,45 @@ type otlpScope struct {
 type otlpLogRecord struct {
 	TimeUnixNano         string         `json:"timeUnixNano"`
 	ObservedTimeUnixNano string         `json:"observedTimeUnixNano"`
+	SeverityNumber       int            `json:"severityNumber,omitempty"`
 	SeverityText         string         `json:"severityText,omitempty"`
 	Body                 otlpAnyValue   `json:"body"`
 	Attributes           []otlpKeyValue `json:"attributes"`
+	// TraceID is the W3C trace id in the OTLP/JSON hex form, so backends
+	// correlate the line with the request's trace without custom mapping.
+	TraceID string `json:"traceId,omitempty"`
+}
+
+// OTLP SeverityNumber values (logs data model) for the two levels a runtime
+// line maps to.
+const (
+	otlpSeverityInfo  = 9
+	otlpSeverityError = 17
+)
+
+// otlpSeverity maps a line's stream to an OTLP severity the same way the
+// Datadog drain maps it to a status: stderr is ERROR, everything else INFO.
+func otlpSeverity(stream string) (int, string) {
+	if stream == "stderr" {
+		return otlpSeverityError, "ERROR"
+	}
+	return otlpSeverityInfo, "INFO"
+}
+
+// otlpTraceID returns id when it is a valid, non-zero W3C trace id (32
+// lowercase hex characters), and "" otherwise: OTLP receivers reject a
+// malformed traceId, and a whole export with it.
+func otlpTraceID(id string) string {
+	if len(id) != 32 || strings.Trim(id, "0") == "" {
+		return ""
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return ""
+		}
+	}
+	return id
 }
 
 type otlpKeyValue struct {
@@ -717,7 +754,10 @@ type otlpAnyValue struct {
 	StringValue string `json:"stringValue,omitempty"`
 }
 
-func makeOTLPPayload(record Record) otlpLogsPayload {
+// makeOTLPPayload encodes one record. service is the app slug for the
+// service.name resource attribute; the faas.* record attributes are kept
+// unchanged for existing queries.
+func makeOTLPPayload(service string, record Record) otlpLogsPayload {
 	nanos := record.WrittenAt.UnixNano()
 	if record.WrittenAt.IsZero() {
 		nanos = time.Now().UnixNano()
@@ -757,15 +797,40 @@ func makeOTLPPayload(record Record) otlpLogsPayload {
 	for _, key := range keys {
 		attrs = append(attrs, otlpKeyValue{Key: key, Value: otlpAnyValue{StringValue: record.Attributes[key]}})
 	}
+	if service == "" {
+		service = record.AppID
+	}
+	if service == "" {
+		service = "gregale"
+	}
+	resource := []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: service}}}
+	resourceOptional := []struct {
+		key   string
+		value string
+	}{
+		{key: "service.instance.id", value: record.InstanceID},
+		{key: "service.version", value: record.CommitSHA},
+		{key: "deployment.environment.name", value: record.Environment},
+		{key: "cloud.region", value: record.Region},
+	}
+	for _, field := range resourceOptional {
+		if field.value != "" {
+			resource = append(resource, otlpKeyValue{Key: field.key, Value: otlpAnyValue{StringValue: field.value}})
+		}
+	}
+	severityNumber, severityText := otlpSeverity(record.Stream)
 	return otlpLogsPayload{ResourceLogs: []otlpResourceLogs{{
-		Resource: otlpResource{Attributes: []otlpKeyValue{{Key: "service.name", Value: otlpAnyValue{StringValue: "gregale"}}}},
+		Resource: otlpResource{Attributes: resource},
 		ScopeLogs: []otlpScopeLogs{{
 			Scope: otlpScope{Name: "gregale/log-drain"},
 			LogRecords: []otlpLogRecord{{
 				TimeUnixNano:         fmt.Sprint(nanos),
 				ObservedTimeUnixNano: fmt.Sprint(time.Now().UnixNano()),
+				SeverityNumber:       severityNumber,
+				SeverityText:         severityText,
 				Body:                 otlpAnyValue{StringValue: record.Line},
 				Attributes:           attrs,
+				TraceID:              otlpTraceID(record.TraceID),
 			}},
 		}},
 	}}}
