@@ -1239,6 +1239,7 @@ paths:
       security: [{bearerAuth: []}]
       parameters:
         - name: workflow_id
+          description: "Caller-supplied workflow identifier for the pipeline to cancel."
           in: path
           required: true
           schema: {type: string, minLength: 1, maxLength: 96}
@@ -22006,6 +22007,7 @@ components:
         /members/:user_id routes.
   schemas:
     RunBudgetRefusal:
+      description: "Budget limit that prevented admission and the current usage against it."
       type: object
       required: [kind, ref, metric]
       properties:
@@ -22013,6 +22015,7 @@ components:
         ref: {type: string, maxLength: 96}
         metric: {type: string, enum: [enabled, concurrent, invocations, compute_mb_ms]}
     RunBudgetKind:
+      description: "Whether a budget applies to one customer or a named task."
       type: string
       enum:
         - customer
@@ -42308,6 +42311,7 @@ components:
           items: {$ref: '#/components/schemas/DelayedTaskResponse'}
         next_before: {type: string, pattern: '^[a-f0-9]{32}$'}
     ExecutionFinishedWebhookPayload:
+      description: "Account webhook payload emitted when a disposable Run reaches a terminal status."
       type: object
       required: [event_id, execution_id, status, runtime, finished_at, receipt_url]
       properties:
@@ -42493,6 +42497,7 @@ components:
         cpu_time_ms: {type: integer, format: int64, minimum: 0}
         peak_memory_mb: {type: integer, minimum: 0}
     ExecutionTaskRef:
+      description: "Identity of a published executable task version."
       type: object
       required:
         - id
@@ -42510,6 +42515,7 @@ components:
         digest:
           type: string
     InvokeExecutionTaskRequest:
+      description: "Task selection, invocation input and optional file or completion configuration."
       type: object
       required:
         - name
@@ -42706,6 +42712,7 @@ components:
           maxItems: 16
           items: {$ref: '#/components/schemas/ExecutionPipelineCompletedStep'}
     ExecutionPipelineCompletedStep:
+      description: "A terminal step outcome with attempts and retained output references."
       type: object
       required: [label, outcome, attempts]
       properties:
@@ -42720,6 +42727,7 @@ components:
           maxItems: 3
           items: {$ref: '#/components/schemas/ExecutionPipelineCompletedAttempt'}
     ExecutionPipelineCompletedAttempt:
+      description: "Recorded final status and timing for one attempt in a completed pipeline."
       type: object
       required: [run_id, attempt, status, receipt, usage, artifacts]
       properties:
@@ -42734,6 +42742,7 @@ components:
           maxItems: 8
           items: {$ref: '#/components/schemas/ExecutionPipelineArtifactRef'}
     ExecutionPipelineArtifactRef:
+      description: "Checksum and locator for a retained file written by a completed step."
       type: object
       required: [name, size_bytes, sha256, url]
       properties:
@@ -42752,12 +42761,14 @@ components:
         finished_at: {type: string, format: date-time}
         receipt_url: {type: string}
     ExecutionPipelineProgress:
+      description: "Current pipeline sequence and observed progress for each step."
       type: object
       required: [status, steps]
       properties:
         status: {type: string, enum: [queued, running, succeeded, failed, cancelled, deadline_exceeded]}
         steps: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineStepProgress'}}
     ExecutionPipelineStepProgress:
+      description: "Current state of a named step and its latest attempt metadata."
       type: object
       required: [label, state]
       properties:
@@ -42769,6 +42780,7 @@ components:
         retry_at: {type: string, format: date-time}
         events_url: {type: string}
     ExecutionPipelineRerun:
+      description: "Rerun receipt linking the replacement pipeline to its original job and reused outputs."
       type: object
       required: [parent_id, parent_workflow_id, parent_plan_id, reused]
       properties:
@@ -42777,6 +42789,7 @@ components:
         parent_plan_id: {type: string}
         reused: {type: array, maxItems: 16, items: {$ref: '#/components/schemas/ExecutionPipelineReusedStep'}}
     ExecutionPipelineReusedStep:
+      description: "Successful earlier step and its verified Run reference reused by a rerun."
       type: object
       required: [label, run_id, output_sha256]
       properties:
@@ -42814,6 +42827,7 @@ components:
           maxItems: 16
           items: {$ref: '#/components/schemas/ExecutionTaskBatchItem'}
     ExecutionTaskBatchItem:
+      description: "A labeled invocation input submitted as part of a task batch."
       type: object
       additionalProperties: false
       required: [label]
@@ -42825,6 +42839,7 @@ components:
           maxItems: 8
           items: {$ref: '#/components/schemas/ExecutionFileInput'}
     ExecutionPipelineResponse:
+      description: "Managed task pipeline state, steps and available completion details."
       type: object
       required: [deadline_at, steps]
       properties:
@@ -42838,6 +42853,7 @@ components:
           maxItems: 16
           items: {$ref: '#/components/schemas/ExecutionPipelineStepResponse'}
     ExecutionPipelineStepResponse:
+      description: "One declared task step with its dependencies and execution attempts."
       type: object
       required: [label, max_attempts, attempts]
       properties:
@@ -42849,6 +42865,7 @@ components:
           maxItems: 3
           items: {$ref: '#/components/schemas/ExecutionPipelineAttemptResponse'}
     ExecutionPipelineAttemptResponse:
+      description: "Runtime state and linked Run receipt for a pipeline attempt."
       type: object
       required: [run_id, attempt, status]
       properties:

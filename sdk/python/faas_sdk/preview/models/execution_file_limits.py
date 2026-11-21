@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ExecutionFileLimits")
 
 @_attrs_define
 class ExecutionFileLimits:
+    """Per-file and account storage limits for Run inputs and retained outputs."""
+
     max_file_bytes: int
     max_input_bytes: int
     max_output_bytes: int

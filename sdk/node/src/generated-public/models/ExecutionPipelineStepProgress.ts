@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Current state of a named step and its latest attempt metadata.
+ */
 export type ExecutionPipelineStepProgress = {
   label: string;
   state: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled' | 'retrying' | 'blocked' | 'contract_failed' | 'reused';

@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ExecutionPipelineCompletedAttempt } from './ExecutionPipelineCompletedAttempt.js';
 import type { ExecutionTaskRef } from './ExecutionTaskRef.js';
+/**
+ * A terminal step outcome with attempts and retained output references.
+ */
 export type ExecutionPipelineCompletedStep = {
   reused_run_id?: string;
   output_sha256?: string;

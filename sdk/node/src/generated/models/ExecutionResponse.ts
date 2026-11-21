@@ -21,7 +21,7 @@ export type ExecutionResponse = {
   attribution?: RunAttribution;
   task?: ExecutionTaskRef;
   /**
-   * Immutable ready dependency environment; requires v2 admission and the standard profile.
+   * Dependency environment used for this Run, when the request selected one.
    */
   environment_id?: string;
   result_validation?: ExecutionResultValidation;

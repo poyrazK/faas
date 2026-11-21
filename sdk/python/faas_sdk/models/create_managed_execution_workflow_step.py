@@ -40,6 +40,7 @@ class CreateManagedExecutionWorkflowStep:
     dependents can consume the result. Local fragment references are supported; external resources are not loaded.
     Each schema is limited to 64 KiB and all schemas in a workflow together are limited to 1 MiB."""
     task: InvokeExecutionTaskRequest | Unset = UNSET
+    """Task selection, invocation input and optional file or completion configuration."""
     retry: ExecutionRetryPolicy | Unset = UNSET
     """Multiple attempts require safe_to_repeat=true. Only restore_failed, execution_transport_failed and
     lease_expired are retried. Each attempt has a separate Run and budget reservation; external side effects may

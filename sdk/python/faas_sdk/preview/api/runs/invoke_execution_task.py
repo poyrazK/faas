@@ -108,7 +108,8 @@ def sync_detailed(
 
     Args:
         idempotency_key (str):
-        body (InvokeExecutionTaskRequest):
+        body (InvokeExecutionTaskRequest): Task selection, invocation input and optional file or
+            completion configuration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,7 +142,8 @@ def sync(
 
     Args:
         idempotency_key (str):
-        body (InvokeExecutionTaskRequest):
+        body (InvokeExecutionTaskRequest): Task selection, invocation input and optional file or
+            completion configuration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -169,7 +171,8 @@ async def asyncio_detailed(
 
     Args:
         idempotency_key (str):
-        body (InvokeExecutionTaskRequest):
+        body (InvokeExecutionTaskRequest): Task selection, invocation input and optional file or
+            completion configuration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -200,7 +203,8 @@ async def asyncio(
 
     Args:
         idempotency_key (str):
-        body (InvokeExecutionTaskRequest):
+        body (InvokeExecutionTaskRequest): Task selection, invocation input and optional file or
+            completion configuration.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

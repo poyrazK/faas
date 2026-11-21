@@ -18,6 +18,8 @@ T = TypeVar("T", bound="InvokeExecutionTaskRequest")
 
 @_attrs_define
 class InvokeExecutionTaskRequest:
+    """Task selection, invocation input and optional file or completion configuration."""
+
     name: str
     version: int
     customer_ref: str | Unset = UNSET

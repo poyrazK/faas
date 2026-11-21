@@ -19,11 +19,14 @@ T = TypeVar("T", bound="ExecutionPipelineEvent")
 
 @_attrs_define
 class ExecutionPipelineEvent:
+    """One ordered, metadata-only update to a pipeline journal."""
+
     sequence: int
     type_: ExecutionPipelineEventType
     created_at: datetime.datetime
     status: str | Unset = UNSET
     step: ExecutionPipelineStepProgress | Unset = UNSET
+    """Current state of a named step and its latest attempt metadata."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

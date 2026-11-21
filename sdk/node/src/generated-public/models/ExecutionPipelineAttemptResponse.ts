@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Runtime state and linked Run receipt for a pipeline attempt.
+ */
 export type ExecutionPipelineAttemptResponse = {
   run_id: string;
   attempt: number;

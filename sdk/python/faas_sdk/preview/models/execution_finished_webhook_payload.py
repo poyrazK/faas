@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ExecutionFinishedWebhookPayload")
 
 @_attrs_define
 class ExecutionFinishedWebhookPayload:
+    """Account webhook payload emitted when a disposable Run reaches a terminal status."""
+
     event_id: str
     execution_id: str
     status: str

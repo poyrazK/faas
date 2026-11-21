@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ExecutionPipelineRerun")
 
 @_attrs_define
 class ExecutionPipelineRerun:
+    """Rerun receipt linking the replacement pipeline to its original job and reused outputs."""
+
     parent_id: UUID
     parent_workflow_id: str
     parent_plan_id: str

@@ -61,13 +61,16 @@ class ExecutionCapabilitiesResponse:
     task_pipelines: bool | Unset = UNSET
     """Whether new version-pinned task pipelines and batches are enabled."""
     run_controls: RunControlCapabilities | Unset = UNSET
+    """Available budget, attribution and history controls for this account."""
     custom_environments: bool | Unset = UNSET
     environment_runtimes: list[ExecutionCapabilitiesResponseEnvironmentRuntimesItem] | Unset = UNSET
     environment_limits: ExecutionEnvironmentLimits | Unset = UNSET
+    """Dependency recipe and image limits for the current account."""
     execution_classes: list[ExecutionClassCapability] | Unset = UNSET
     extended_admissions: bool | Unset = UNSET
     """New standalone contract and stored-file admissions are enabled."""
     file_limits: ExecutionFileLimits | Unset = UNSET
+    """Per-file and account storage limits for Run inputs and retained outputs."""
     max_contract_schema_bytes: int | Unset = UNSET
     unavailable_reasons: list[ExecutionCapabilitiesResponseUnavailableReasonsItem] | Unset = UNSET
     limits: ExecutionCapabilityLimits | Unset = UNSET

@@ -12,6 +12,8 @@ T = TypeVar("T", bound="AgentExecutionFileGrant")
 
 @_attrs_define
 class AgentExecutionFileGrant:
+    """Short-lived opaque token for staging one private input in the authorized Agent call."""
+
     grant_token: str
     """Opaque private staging token for the authorized logical call."""
     expires_at: datetime.datetime

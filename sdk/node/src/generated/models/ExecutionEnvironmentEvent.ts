@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * A numbered lifecycle or build diagnostic record for a dependency environment.
+ */
 export type ExecutionEnvironmentEvent = {
   sequence: number;
   stage: string;

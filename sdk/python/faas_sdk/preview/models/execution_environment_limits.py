@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ExecutionEnvironmentLimits")
 
 @_attrs_define
 class ExecutionEnvironmentLimits:
+    """Dependency recipe and image limits for the current account."""
+
     max_environments: int
     max_artifact_bytes: int
     max_recipe_bytes: int

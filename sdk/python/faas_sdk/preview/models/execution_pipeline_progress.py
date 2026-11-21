@@ -20,6 +20,8 @@ T = TypeVar("T", bound="ExecutionPipelineProgress")
 
 @_attrs_define
 class ExecutionPipelineProgress:
+    """Current pipeline sequence and observed progress for each step."""
+
     status: ExecutionPipelineProgressStatus
     steps: list[ExecutionPipelineStepProgress]
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

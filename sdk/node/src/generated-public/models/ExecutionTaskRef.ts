@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Identity of a published executable task version.
+ */
 export type ExecutionTaskRef = {
   id: string;
   name: string;

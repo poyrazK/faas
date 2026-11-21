@@ -14,7 +14,10 @@ T = TypeVar("T", bound="RunBudgetRefusal")
 
 @_attrs_define
 class RunBudgetRefusal:
+    """Budget limit that prevented admission and the current usage against it."""
+
     kind: RunBudgetKind
+    """Whether a budget applies to one customer or a named task."""
     ref: str
     metric: RunBudgetRefusalMetric
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

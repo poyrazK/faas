@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Available budget, attribution and history controls for this account.
+ */
 export type RunControlCapabilities = {
   configuration_available: boolean;
   max_customers: number;

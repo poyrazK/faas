@@ -105,7 +105,8 @@ def sync_detailed(
     replay before uploading missing bytes. Preparing a file does not admit a Run or reserve storage.
 
     Args:
-        body (CreateExecutionFileRequest):
+        body (CreateExecutionFileRequest): Declared byte length and checksum for a prepared
+            immutable Run input file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -137,7 +138,8 @@ def sync(
     replay before uploading missing bytes. Preparing a file does not admit a Run or reserve storage.
 
     Args:
-        body (CreateExecutionFileRequest):
+        body (CreateExecutionFileRequest): Declared byte length and checksum for a prepared
+            immutable Run input file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -164,7 +166,8 @@ async def asyncio_detailed(
     replay before uploading missing bytes. Preparing a file does not admit a Run or reserve storage.
 
     Args:
-        body (CreateExecutionFileRequest):
+        body (CreateExecutionFileRequest): Declared byte length and checksum for a prepared
+            immutable Run input file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -194,7 +197,8 @@ async def asyncio(
     replay before uploading missing bytes. Preparing a file does not admit a Run or reserve storage.
 
     Args:
-        body (CreateExecutionFileRequest):
+        body (CreateExecutionFileRequest): Declared byte length and checksum for a prepared
+            immutable Run input file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

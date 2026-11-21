@@ -99,17 +99,11 @@ def sync_detailed(
 ) -> Response[Any | ExecutionResponse | Problem]:
     """Execute source with stored files or standalone contracts.
 
-     Queues one bounded Node.js or Python source execution. Source and
-    input are sealed by the control plane before dispatch; the guest has
-    loopback-only networking and an internal ephemeral scratch filesystem.
-    The VM is always destroyed before a terminal result is persisted.
-    This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled. Requires `deploy:write`,
-    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
-    under its stable key-family identity, which is preserved during key
-    rotation. Agent workflow step labels beginning with `gwf:` are unique
-    within the same workflow and key family; retry clients should reload
-    the existing workflow receipt after a 409.
+     Queues source in an isolated disposable Run with optional stored inputs and outputs, standalone JSON
+    contracts, and a ready dependency environment. The extended execution class can use up to five
+    minutes when enabled for the account. Source and input are sealed before dispatch, and the VM is
+    destroyed before the terminal receipt is persisted. Requires deploy:write, runs:write, or admin.
+    Replay the same idempotency key to recover the same admission.
 
     Args:
         idempotency_key (str | Unset):
@@ -156,17 +150,11 @@ def sync(
 ) -> Any | ExecutionResponse | Problem | None:
     """Execute source with stored files or standalone contracts.
 
-     Queues one bounded Node.js or Python source execution. Source and
-    input are sealed by the control plane before dispatch; the guest has
-    loopback-only networking and an internal ephemeral scratch filesystem.
-    The VM is always destroyed before a terminal result is persisted.
-    This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled. Requires `deploy:write`,
-    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
-    under its stable key-family identity, which is preserved during key
-    rotation. Agent workflow step labels beginning with `gwf:` are unique
-    within the same workflow and key family; retry clients should reload
-    the existing workflow receipt after a 409.
+     Queues source in an isolated disposable Run with optional stored inputs and outputs, standalone JSON
+    contracts, and a ready dependency environment. The extended execution class can use up to five
+    minutes when enabled for the account. Source and input are sealed before dispatch, and the VM is
+    destroyed before the terminal receipt is persisted. Requires deploy:write, runs:write, or admin.
+    Replay the same idempotency key to recover the same admission.
 
     Args:
         idempotency_key (str | Unset):
@@ -208,17 +196,11 @@ async def asyncio_detailed(
 ) -> Response[Any | ExecutionResponse | Problem]:
     """Execute source with stored files or standalone contracts.
 
-     Queues one bounded Node.js or Python source execution. Source and
-    input are sealed by the control plane before dispatch; the guest has
-    loopback-only networking and an internal ephemeral scratch filesystem.
-    The VM is always destroyed before a terminal result is persisted.
-    This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled. Requires `deploy:write`,
-    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
-    under its stable key-family identity, which is preserved during key
-    rotation. Agent workflow step labels beginning with `gwf:` are unique
-    within the same workflow and key family; retry clients should reload
-    the existing workflow receipt after a 409.
+     Queues source in an isolated disposable Run with optional stored inputs and outputs, standalone JSON
+    contracts, and a ready dependency environment. The extended execution class can use up to five
+    minutes when enabled for the account. Source and input are sealed before dispatch, and the VM is
+    destroyed before the terminal receipt is persisted. Requires deploy:write, runs:write, or admin.
+    Replay the same idempotency key to recover the same admission.
 
     Args:
         idempotency_key (str | Unset):
@@ -263,17 +245,11 @@ async def asyncio(
 ) -> Any | ExecutionResponse | Problem | None:
     """Execute source with stored files or standalone contracts.
 
-     Queues one bounded Node.js or Python source execution. Source and
-    input are sealed by the control plane before dispatch; the guest has
-    loopback-only networking and an internal ephemeral scratch filesystem.
-    The VM is always destroyed before a terminal result is persisted.
-    This endpoint is an explicit opt-in on the control plane and may return
-    501 while the host isolation gate is disabled. Requires `deploy:write`,
-    `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
-    under its stable key-family identity, which is preserved during key
-    rotation. Agent workflow step labels beginning with `gwf:` are unique
-    within the same workflow and key family; retry clients should reload
-    the existing workflow receipt after a 409.
+     Queues source in an isolated disposable Run with optional stored inputs and outputs, standalone JSON
+    contracts, and a ready dependency environment. The extended execution class can use up to five
+    minutes when enabled for the account. Source and input are sealed before dispatch, and the VM is
+    destroyed before the terminal receipt is persisted. Requires deploy:write, runs:write, or admin.
+    Replay the same idempotency key to recover the same admission.
 
     Args:
         idempotency_key (str | Unset):

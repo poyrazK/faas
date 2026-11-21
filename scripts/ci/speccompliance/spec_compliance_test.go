@@ -2081,6 +2081,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "execution_pipeline_progress.go"),
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
 		filepath.Join(root, "pkg", "api", "execution_files.go"),
+		filepath.Join(root, "pkg", "api", "agent_execution_files.go"),
 		filepath.Join(root, "pkg", "api", "execution_contracts.go"),
 		filepath.Join(root, "pkg", "api", "execution_tasks.go"),
 		filepath.Join(root, "pkg", "api", "run_controls.go"),

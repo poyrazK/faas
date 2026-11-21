@@ -98,19 +98,12 @@ def sync_detailed(
     body: CreateManagedExecutionWorkflowRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Any | ManagedExecutionWorkflowResponse | Problem]:
-    """Submit a server-managed Runs DAG.
+    """Submit a versioned Run pipeline or workflow.
 
-     Stores a bounded dependency graph encrypted with the host age identity
-    and admits each step as a separate disposable Run after its dependencies
-    succeed. Independent steps may run in parallel up to the submitted
-    workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and the API
-    restarts. Source and input are never returned; the encrypted plan is
-    erased when the workflow reaches a terminal state. Requires
-    `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
-    plane with the host age recipient and identity configured. Each account
-    may have at most 16 active managed workflows; terminal workflows
-    release their encrypted plan and queue slot.
+     Submits a durable workflow that can invoke versioned tasks, expand a batch, and apply a pipeline
+    deadline and retry policy. Independent steps run within the workflow and account limits. The control
+    plane continues the encrypted plan across restarts and releases it at terminal settlement. Requires
+    runs:write, deploy:write, or admin and the matching Run capability gates.
 
     Args:
         idempotency_key (str | Unset):
@@ -146,19 +139,12 @@ def sync(
     body: CreateManagedExecutionWorkflowRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Any | ManagedExecutionWorkflowResponse | Problem | None:
-    """Submit a server-managed Runs DAG.
+    """Submit a versioned Run pipeline or workflow.
 
-     Stores a bounded dependency graph encrypted with the host age identity
-    and admits each step as a separate disposable Run after its dependencies
-    succeed. Independent steps may run in parallel up to the submitted
-    workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and the API
-    restarts. Source and input are never returned; the encrypted plan is
-    erased when the workflow reaches a terminal state. Requires
-    `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
-    plane with the host age recipient and identity configured. Each account
-    may have at most 16 active managed workflows; terminal workflows
-    release their encrypted plan and queue slot.
+     Submits a durable workflow that can invoke versioned tasks, expand a batch, and apply a pipeline
+    deadline and retry policy. Independent steps run within the workflow and account limits. The control
+    plane continues the encrypted plan across restarts and releases it at terminal settlement. Requires
+    runs:write, deploy:write, or admin and the matching Run capability gates.
 
     Args:
         idempotency_key (str | Unset):
@@ -189,19 +175,12 @@ async def asyncio_detailed(
     body: CreateManagedExecutionWorkflowRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Response[Any | ManagedExecutionWorkflowResponse | Problem]:
-    """Submit a server-managed Runs DAG.
+    """Submit a versioned Run pipeline or workflow.
 
-     Stores a bounded dependency graph encrypted with the host age identity
-    and admits each step as a separate disposable Run after its dependencies
-    succeed. Independent steps may run in parallel up to the submitted
-    workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and the API
-    restarts. Source and input are never returned; the encrypted plan is
-    erased when the workflow reaches a terminal state. Requires
-    `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
-    plane with the host age recipient and identity configured. Each account
-    may have at most 16 active managed workflows; terminal workflows
-    release their encrypted plan and queue slot.
+     Submits a durable workflow that can invoke versioned tasks, expand a batch, and apply a pipeline
+    deadline and retry policy. Independent steps run within the workflow and account limits. The control
+    plane continues the encrypted plan across restarts and releases it at terminal settlement. Requires
+    runs:write, deploy:write, or admin and the matching Run capability gates.
 
     Args:
         idempotency_key (str | Unset):
@@ -235,19 +214,12 @@ async def asyncio(
     body: CreateManagedExecutionWorkflowRequest,
     idempotency_key: str | Unset = UNSET,
 ) -> Any | ManagedExecutionWorkflowResponse | Problem | None:
-    """Submit a server-managed Runs DAG.
+    """Submit a versioned Run pipeline or workflow.
 
-     Stores a bounded dependency graph encrypted with the host age identity
-    and admits each step as a separate disposable Run after its dependencies
-    succeed. Independent steps may run in parallel up to the submitted
-    workflow limit and the account's concurrent Run limit. Continuation is
-    owned by the control plane and survives CLI disconnects and the API
-    restarts. Source and input are never returned; the encrypted plan is
-    erased when the workflow reaches a terminal state. Requires
-    `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
-    plane with the host age recipient and identity configured. Each account
-    may have at most 16 active managed workflows; terminal workflows
-    release their encrypted plan and queue slot.
+     Submits a durable workflow that can invoke versioned tasks, expand a batch, and apply a pipeline
+    deadline and retry policy. Independent steps run within the workflow and account limits. The control
+    plane continues the encrypted plan across restarts and releases it at terminal settlement. Requires
+    runs:write, deploy:write, or admin and the matching Run capability gates.
 
     Args:
         idempotency_key (str | Unset):

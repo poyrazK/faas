@@ -13,6 +13,8 @@ T = TypeVar("T", bound="RunAttribution")
 
 @_attrs_define
 class RunAttribution:
+    """Verified customer and Agent references recorded with a Run."""
+
     customer_ref: str
     agent_ref: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

@@ -19,12 +19,15 @@ T = TypeVar("T", bound="ExecutionPipelineEventsResponse")
 
 @_attrs_define
 class ExecutionPipelineEventsResponse:
+    """Resumable page of pipeline journal entries with the current state and gap information."""
+
     pipeline_id: UUID
     events: list[ExecutionPipelineEvent]
     next_sequence: int
     terminal: bool
     gap: bool | Unset = UNSET
     progress: ExecutionPipelineProgress | Unset = UNSET
+    """Current pipeline sequence and observed progress for each step."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

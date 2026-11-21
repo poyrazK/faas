@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ExecutionPipelineCompletedAttempt")
 
 @_attrs_define
 class ExecutionPipelineCompletedAttempt:
+    """Recorded final status and timing for one attempt in a completed pipeline."""
+
     run_id: UUID
     attempt: int
     status: ExecutionPipelineCompletedAttemptStatus

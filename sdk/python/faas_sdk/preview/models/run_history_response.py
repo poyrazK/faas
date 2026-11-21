@@ -17,6 +17,8 @@ T = TypeVar("T", bound="RunHistoryResponse")
 
 @_attrs_define
 class RunHistoryResponse:
+    """Filtered page of authorized invocation records and its continuation cursor."""
+
     runs: list[RunHistoryEntry]
     next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

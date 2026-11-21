@@ -66,19 +66,8 @@ export class RunsService {
   }
   /**
    * Execute source with stored files or standalone contracts.
-   * Queues one bounded Node.js or Python source execution. Source and
-   * input are sealed by the control plane before dispatch; the guest has
-   * loopback-only networking and an internal ephemeral scratch filesystem.
-   * The VM is always destroyed before a terminal result is persisted.
-   * This endpoint is an explicit opt-in on the control plane and may return
-   * 501 while the host isolation gate is disabled. Requires `deploy:write`,
-   * `runs:write`, or `admin`. A Runs-only key owns the resulting receipt
-   * under its stable key-family identity, which is preserved during key
-   * rotation. Agent workflow step labels beginning with `gwf:` are unique
-   * within the same workflow and key family; retry clients should reload
-   * the existing workflow receipt after a 409.
-   *
-   * @returns ExecutionResponse Execution admitted and queued.
+   * Queues source in an isolated disposable Run with optional stored inputs and outputs, standalone JSON contracts, and a ready dependency environment. The extended execution class can use up to five minutes when enabled for the account. Source and input are sealed before dispatch, and the VM is destroyed before the terminal receipt is persisted. Requires deploy:write, runs:write, or admin. Replay the same idempotency key to recover the same admission.
+   * @returns ExecutionResponse Run v2 receipt queued for dispatch, or the existing receipt for an exact replay.
    * @throws ApiError
    */
   public static createExecutionV2({
@@ -104,7 +93,7 @@ export class RunsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        409: `An agent workflow step with this workflow ID and step label already has a Run receipt.`,
+        409: `A workflow step already has a receipt, or a referenced input file is not ready.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -117,20 +106,9 @@ export class RunsService {
     });
   }
   /**
-   * Submit a server-managed Runs DAG.
-   * Stores a bounded dependency graph encrypted with the host age identity
-   * and admits each step as a separate disposable Run after its dependencies
-   * succeed. Independent steps may run in parallel up to the submitted
-   * workflow limit and the account's concurrent Run limit. Continuation is
-   * owned by the control plane and survives CLI disconnects and the API
-   * restarts. Source and input are never returned; the encrypted plan is
-   * erased when the workflow reaches a terminal state. Requires
-   * `runs:write`, `deploy:write`, or `admin` and an enabled Runs control
-   * plane with the host age recipient and identity configured. Each account
-   * may have at most 16 active managed workflows; terminal workflows
-   * release their encrypted plan and queue slot.
-   *
-   * @returns ManagedExecutionWorkflowResponse Encrypted DAG accepted for control-plane continuation.
+   * Submit a versioned Run pipeline or workflow.
+   * Submits a durable workflow that can invoke versioned tasks, expand a batch, and apply a pipeline deadline and retry policy. Independent steps run within the workflow and account limits. The control plane continues the encrypted plan across restarts and releases it at terminal settlement. Requires runs:write, deploy:write, or admin and the matching Run capability gates.
+   * @returns ManagedExecutionWorkflowResponse Versioned managed workflow admitted or recovered by exact replay.
    * @throws ApiError
    */
   public static createManagedExecutionWorkflowV2({
@@ -156,7 +134,7 @@ export class RunsService {
       errors: {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        409: `This workflow identifier already has a different managed plan for the caller's Runs principal.`,
+        409: `The workflow identifier is already associated with a different normalized request.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
@@ -203,12 +181,15 @@ export class RunsService {
   }
   /**
    * List account task metadata, including retirement tombstones.
-   * @returns ExecutionTaskListResponse Task receipt or metadata. Source and invocation input are never returned.
+   * @returns ExecutionTaskListResponse Page of published task versions visible to this principal.
    * @throws ApiError
    */
   public static listExecutionTasks({
     cursor,
   }: {
+    /**
+     * Continue listing from the cursor returned by the previous task page.
+     */
     cursor?: string,
   }): CancelablePromise<ExecutionTaskListResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -238,14 +219,20 @@ export class RunsService {
   }
   /**
    * Read task metadata without retained code.
-   * @returns ExecutionTaskVersionResponse Task receipt or metadata. Source and invocation input are never returned.
+   * @returns ExecutionTaskVersionResponse Requested immutable version with its published metadata and lifecycle state.
    * @throws ApiError
    */
   public static getExecutionTask({
     name,
     version,
   }: {
+    /**
+     * Published task name.
+     */
     name: string,
+    /**
+     * Immutable task version number.
+     */
     version: number,
   }): CancelablePromise<ExecutionTaskVersionResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -283,7 +270,13 @@ export class RunsService {
     name,
     version,
   }: {
+    /**
+     * Published task name.
+     */
     name: string,
+    /**
+     * Immutable task version number.
+     */
     version: number,
   }): CancelablePromise<any> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -314,13 +307,16 @@ export class RunsService {
   }
   /**
    * Invoke an explicit task version with key-family-scoped inputs and receipt. Requires a stable Idempotency-Key.
-   * @returns ExecutionResponse Task receipt or metadata. Source and invocation input are never returned.
+   * @returns ExecutionResponse Invocation admitted for the selected task version or recovered by idempotency key.
    * @throws ApiError
    */
   public static invokeExecutionTask({
     idempotencyKey,
     requestBody,
   }: {
+    /**
+     * Stable key to reuse when retrying the same task invocation.
+     */
     idempotencyKey: string,
     requestBody: InvokeExecutionTaskRequest,
   }): CancelablePromise<ExecutionResponse> {
@@ -407,6 +403,9 @@ export class RunsService {
   public static getExecutionEnvironment({
     id,
   }: {
+    /**
+     * Identifier of the dependency environment to read or retire.
+     */
     id: string,
   }): CancelablePromise<ExecutionEnvironmentResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -428,6 +427,9 @@ export class RunsService {
   public static deleteExecutionEnvironment({
     id,
   }: {
+    /**
+     * Identifier of the dependency environment to read or retire.
+     */
     id: string,
   }): CancelablePromise<{
     status?: 'retiring';
@@ -453,7 +455,13 @@ export class RunsService {
     id,
     after,
   }: {
+    /**
+     * Dependency environment whose diagnostic records to read.
+     */
     id: string,
+    /**
+     * Return build diagnostic records after this sequence number.
+     */
     after?: number,
   }): CancelablePromise<ExecutionEnvironmentEventsResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -645,12 +653,15 @@ export class RunsService {
   }
   /**
    * Read account and key-family scoped file metadata.
-   * @returns ExecutionFileResponse Authenticated Run file metadata. No storage key or credential is returned.
+   * @returns ExecutionFileResponse Private file state and checksum metadata visible to this caller.
    * @throws ApiError
    */
   public static getExecutionFile({
     id,
   }: {
+    /**
+     * Private Run file whose metadata to read.
+     */
     id: string,
   }): CancelablePromise<ExecutionFileResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -663,7 +674,7 @@ export class RunsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `File upload is busy or inputs are not published.`,
+        409: `The file is in a transient publication state.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -684,6 +695,9 @@ export class RunsService {
   public static deleteExecutionFile({
     id,
   }: {
+    /**
+     * File to revoke for future imports.
+     */
     id: string,
   }): CancelablePromise<{
     status: 'cleanup_scheduled';
@@ -698,7 +712,7 @@ export class RunsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `File upload is busy or inputs are not published.`,
+        409: `The file is busy and cannot be revoked at this time.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -721,6 +735,9 @@ export class RunsService {
     id,
     requestBody,
   }: {
+    /**
+     * Owned uploaded file to delegate to the Agent call.
+     */
     id: string,
     requestBody: CreateAgentExecutionFileGrantRequest,
   }): CancelablePromise<AgentExecutionFileGrant> {
@@ -749,7 +766,7 @@ export class RunsService {
   /**
    * Stream a bounded immutable Run input file.
    * Requires Content-Length and X-Content-SHA256 matching the prepared file. Reserves account storage before transfer. Length and SHA-256 must verify before publication; ready objects are never overwritten. No Run is admitted by this call.
-   * @returns ExecutionFileResponse Authenticated Run file metadata. No storage key or credential is returned.
+   * @returns ExecutionFileResponse Published file metadata after the uploaded length and digest have been verified.
    * @throws ApiError
    */
   public static uploadExecutionFile({
@@ -757,7 +774,13 @@ export class RunsService {
     xContentSha256,
     requestBody,
   }: {
+    /**
+     * Prepared file identifier returned before uploading bytes.
+     */
     id: string,
+    /**
+     * SHA-256 digest of the request bytes in the same format supplied at preparation.
+     */
     xContentSha256: string,
     requestBody: Blob,
   }): CancelablePromise<ExecutionFileResponse> {
@@ -776,7 +799,7 @@ export class RunsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `File upload is busy or inputs are not published.`,
+        409: `Upload already in progress or the prepared file state changed.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses
@@ -797,6 +820,9 @@ export class RunsService {
   public static downloadExecutionFile({
     id,
   }: {
+    /**
+     * Retained input or output file to download.
+     */
     id: string,
   }): CancelablePromise<Blob> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -810,7 +836,7 @@ export class RunsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `File upload is busy or inputs are not published.`,
+        409: `The requested file has not been published for download.`,
         410: `File retention expired or content is unavailable.`,
         413: `code: payload_too_large — the PATCH chunk body exceeds the per-plan or per-account cap. Distinct from \`source_too_large\` (POST /v1/uploads when total_size exceeds SourceTarballMaxMB), this fires mid-upload when the customer's chunk size or accumulated spool crosses the limit.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
@@ -1028,9 +1054,21 @@ export class RunsService {
     limit = 256,
     lastEventId,
   }: {
+    /**
+     * Internal managed pipeline job UUID used to observe progress.
+     */
     id: string,
+    /**
+     * Return pipeline updates after this journal cursor.
+     */
     after?: number,
+    /**
+     * Maximum number of pipeline journal entries in a page.
+     */
     limit?: number,
+    /**
+     * Last pipeline event received on the previous stream, used to resume SSE.
+     */
     lastEventId?: string,
   }): CancelablePromise<ExecutionPipelineEventsResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1068,6 +1106,9 @@ export class RunsService {
     id,
     requestBody,
   }: {
+    /**
+     * Original managed pipeline job UUID whose failed branches should run again.
+     */
     id: string,
     requestBody: RerunExecutionPipelineRequest,
   }): CancelablePromise<ManagedExecutionWorkflowResponse> {
@@ -1101,6 +1142,9 @@ export class RunsService {
   public static cancelExecutionPipeline({
     workflowId,
   }: {
+    /**
+     * Caller-supplied workflow identifier for the pipeline to cancel.
+     */
     workflowId: string,
   }): CancelablePromise<ExecutionWorkflowResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1593,7 +1637,13 @@ export class RunsService {
     kind,
     ref,
   }: {
+    /**
+     * Controls whether the policy limits a customer or a task.
+     */
     kind: RunBudgetKind,
+    /**
+     * Customer reference or task name covered by this budget.
+     */
     ref: string,
   }): CancelablePromise<RunBudgetPolicy> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1624,7 +1674,7 @@ export class RunsService {
   }
   /**
    * Replace a Run budget using its expected revision. Zero limits refuse new work; omitted limits add no restriction.
-   * @returns RunBudgetPolicy Revisioned Run control or payload-free history.
+   * @returns RunBudgetPolicy Updated budget with its new revision and usage snapshot.
    * @throws ApiError
    */
   public static setRunBudget({
@@ -1632,7 +1682,13 @@ export class RunsService {
     ref,
     requestBody,
   }: {
+    /**
+     * Controls whether the policy limits a customer or a task.
+     */
     kind: RunBudgetKind,
+    /**
+     * Customer reference or task name covered by this budget.
+     */
     ref: string,
     requestBody: SetRunBudgetRequest,
   }): CancelablePromise<RunBudgetPolicy> {
@@ -1666,14 +1722,20 @@ export class RunsService {
   }
   /**
    * Read an attribution binding by public API key or owned Agent endpoint ID.
-   * @returns RunAttributionBinding Revisioned Run control or payload-free history.
+   * @returns RunAttributionBinding Active or retired attribution binding and its recorded revision.
    * @throws ApiError
    */
   public static getRunAttributionBinding({
     kind,
     id,
   }: {
+    /**
+     * Public API key or Agent endpoint subject type.
+     */
     kind: RunBindingKind,
+    /**
+     * Public identifier of the API key or owned Agent endpoint.
+     */
     id: string,
   }): CancelablePromise<RunAttributionBinding> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1704,7 +1766,7 @@ export class RunsService {
   }
   /**
    * Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
-   * @returns RunAttributionBinding Revisioned Run control or payload-free history.
+   * @returns RunAttributionBinding Replacement binding identifying the assigned customer for later Runs.
    * @throws ApiError
    */
   public static setRunAttributionBinding({
@@ -1712,7 +1774,13 @@ export class RunsService {
     id,
     requestBody,
   }: {
+    /**
+     * Public API key or Agent endpoint subject type.
+     */
     kind: RunBindingKind,
+    /**
+     * Public identifier of the API key or owned Agent endpoint.
+     */
     id: string,
     requestBody: SetRunAttributionBindingRequest,
   }): CancelablePromise<RunAttributionBinding> {
@@ -1754,8 +1822,17 @@ export class RunsService {
     id,
     expectedRevision,
   }: {
+    /**
+     * Public API key or Agent endpoint subject type.
+     */
     kind: RunBindingKind,
+    /**
+     * Public identifier of the API key or owned Agent endpoint.
+     */
     id: string,
+    /**
+     * Current binding revision required to disable it.
+     */
     expectedRevision: number,
   }): CancelablePromise<void> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1789,7 +1866,7 @@ export class RunsService {
   }
   /**
    * Read metadata-only invocation history under existing account/key-family visibility.
-   * @returns RunHistoryResponse Revisioned Run control or payload-free history.
+   * @returns RunHistoryResponse Page of metadata-only invocations matching the history filters.
    * @throws ApiError
    */
   public static listRunHistory({
@@ -1802,13 +1879,37 @@ export class RunsService {
     until,
     cursor,
   }: {
+    /**
+     * Return only invocations of this task name.
+     */
     taskName?: string,
+    /**
+     * Return only invocations of this published task version.
+     */
     taskVersion?: number,
+    /**
+     * Filter history by the recorded customer reference.
+     */
     customerRef?: string,
+    /**
+     * Filter history by the recorded Agent reference.
+     */
     agentRef?: string,
+    /**
+     * Filter invocations by their recorded execution status.
+     */
     status?: 'queued' | 'restoring' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'out_of_memory' | 'cancelled',
+    /**
+     * Start timestamp for filtering invocation history.
+     */
     since?: string,
+    /**
+     * End timestamp for filtering invocation history.
+     */
     until?: string,
+    /**
+     * Continue from the cursor supplied by the previous history page.
+     */
     cursor?: string,
   }): CancelablePromise<RunHistoryResponse> {
     return __request(this?.clientConfig ?? OpenAPI, {

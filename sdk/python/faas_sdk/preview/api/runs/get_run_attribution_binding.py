@@ -103,7 +103,7 @@ def sync_detailed(
     """Read an attribution binding by public API key or owned Agent endpoint ID.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
 
     Raises:
@@ -135,7 +135,7 @@ def sync(
     """Read an attribution binding by public API key or owned Agent endpoint ID.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
 
     Raises:
@@ -162,7 +162,7 @@ async def asyncio_detailed(
     """Read an attribution binding by public API key or owned Agent endpoint ID.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
 
     Raises:
@@ -192,7 +192,7 @@ async def asyncio(
     """Read an attribution binding by public API key or owned Agent endpoint ID.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
 
     Raises:
