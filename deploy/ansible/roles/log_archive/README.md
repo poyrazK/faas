@@ -78,8 +78,11 @@ credentials:
    reads it (`objectViewer`, `objectUser`, `objectAdmin`, legacy bucket
    roles). S3 (static keys): a key whose policy allows `s3:PutObject` on the
    bucket and nothing else. The control plane keeps its read-write grant.
-2. **Ansible.** Set `faas_log_archive_write_only: true` for the compute hosts
-   (`group_vars/compute_nodes`) and converge. The envelope gains
+2. **Ansible.** Set `log_archive.compute_write_only: true` in the manifest
+   (with `auth: static`, also `compute_credentials_src`, the create-only key
+   pair) and regenerate the inventory, or set `faas_log_archive_write_only:
+   true` for the compute hosts (`group_vars/compute_nodes`) by hand, then
+   converge. The envelope gains
    `"access": "write-only"`, vmmd ships part objects (one create-only PUT per
    flush; GCS PUTs carry `x-goog-if-generation-match: 0`, and a 412 on a
    retry means the part is already there), and gatewayd-internal skips
