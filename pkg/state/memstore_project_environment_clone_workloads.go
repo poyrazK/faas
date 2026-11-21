@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -89,6 +90,7 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 			return nil, ErrProjectSecretCloneTransferUnsupported
 		}
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
+		snapshot.PublicBuildURLs = maps.Clone(m.publicBuildURLs[source.ID])
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{appID: scopes[appID]})
 		snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
 		bindings, err := m.captureCloneBindingsLocked(accountID, appID, scopes[appID], *snapshot.Values)
@@ -235,5 +237,11 @@ func (m *MemStore) attachCloneDeploymentLocked(input projectEnvironmentCloneDepl
 	}
 	for name, signal := range record.snapshot.SidecarSignals {
 		m.sidecarSecretReloadSignals[deployment.ID+"\x00"+name] = signal
+	}
+	if len(record.snapshot.PublicBuildURLs) > 0 {
+		if m.publicBuildURLs == nil {
+			m.publicBuildURLs = map[string]map[string]string{}
+		}
+		m.publicBuildURLs[deployment.ID] = maps.Clone(record.snapshot.PublicBuildURLs)
 	}
 }

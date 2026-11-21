@@ -8372,6 +8372,9 @@ type Querier interface {
 	SetOutboundBindingProbePolicy(ctx context.Context, db DBTX, arg SetOutboundBindingProbePolicyParams) (pgtype.UUID, error)
 	SetProjectBindingVerificationRunStatus(ctx context.Context, db DBTX, arg SetProjectBindingVerificationRunStatusParams) error
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
+	// A clone's target deployment carries the build URLs captured from its source
+	// deployment (ADR-20261104120000 amendment 2026-11-21).
+	SetProjectEnvironmentCloneDeploymentPublicBuildURLs(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams) error
 	SetProjectReleaseAdditionDormant(ctx context.Context, db DBTX, arg SetProjectReleaseAdditionDormantParams) error
 	SetPromotionWorkerSetPublicationGuard(ctx context.Context, db DBTX, token string) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)

@@ -169,6 +169,13 @@ func captureCloneWorkloadDB(ctx context.Context, tx pgx.Tx, op ProjectEnvironmen
 	if snapshot.Artifact.AppID != appID || snapshot.Artifact.Scope != scope {
 		return snapshot, ErrConflict
 	}
+	urls, err := q.GetDeploymentPublicBuildURLs(ctx, tx, mustPgUUID(snapshot.Artifact.ID))
+	if err != nil {
+		return snapshot, mapErr(err)
+	}
+	if err := json.Unmarshal(urls, &snapshot.PublicBuildURLs); err != nil {
+		return snapshot, ErrConflict
+	}
 	hasReleasePin, err := q.HasDeploymentReleaseEnvironmentSnapshot(ctx, tx, snapshot.Artifact.ID)
 	if err != nil {
 		return snapshot, err
@@ -363,6 +370,15 @@ func attachCloneDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnviro
 	}
 	for name, signal := range record.snapshot.SidecarSignals {
 		if err := q.InsertProjectEnvironmentCloneSidecarSignal(ctx, tx, sqlc.InsertProjectEnvironmentCloneSidecarSignalParams{DeploymentID: mustPgUUID(deployment.ID), SidecarName: name, Signal: signal}); err != nil {
+			return mapErr(err)
+		}
+	}
+	if len(record.snapshot.PublicBuildURLs) > 0 {
+		urls, err := json.Marshal(record.snapshot.PublicBuildURLs)
+		if err != nil {
+			return err
+		}
+		if err := q.SetProjectEnvironmentCloneDeploymentPublicBuildURLs(ctx, tx, sqlc.SetProjectEnvironmentCloneDeploymentPublicBuildURLsParams{DeploymentID: mustPgUUID(deployment.ID), Urls: urls}); err != nil {
 			return mapErr(err)
 		}
 	}
