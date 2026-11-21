@@ -238,7 +238,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			return nil, exactErr
 		}
 		body += exactVars
-		body += renderHotPathVars(m.HotPath, host)
+		body += renderHotPathVars(m.HotPath, m.Daemons.Schedd, host)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
@@ -986,9 +986,11 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 }
 
 // renderHotPathVars hands each compute node the request- and wake-path
-// switches its roles turn into drop-ins (manifest.HotPath). The control plane
-// runs none of the daemons they touch on the request path.
-func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
+// switches its roles turn into drop-ins (manifest.HotPath), and the schedd
+// early-freeze seconds (daemons.schedd.frozen_tier_early_freeze_after_s),
+// which compute schedds read only from that drop-in. The control plane runs
+// none of the daemons they touch on the request path.
+func renderHotPathVars(h manifest.HotPath, schedd *manifest.DaemonConfig, host manifest.Host) string {
 	if host.Role != roleComputeOnly {
 		return ""
 	}
@@ -1015,6 +1017,9 @@ func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
 	}
 	if h.InvocationDispatchConcurrency > 0 {
 		fmt.Fprintf(&b, "faas_schedd_invocation_dispatch_concurrency: %d\n", h.InvocationDispatchConcurrency)
+	}
+	if schedd != nil && schedd.FrozenTierEarlyFreezeAfterS != nil {
+		fmt.Fprintf(&b, "faas_schedd_frozen_tier_early_freeze_after_s: %d\n", *schedd.FrozenTierEarlyFreezeAfterS)
 	}
 	return b.String()
 }
