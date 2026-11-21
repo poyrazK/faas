@@ -3123,6 +3123,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/edge-protection/attack-mode":    "GetAppEdgeAttackMode",
 	"PUT /v1/apps/{slug}/edge-protection/attack-mode":    "EnableAppEdgeAttackMode",
 	"DELETE /v1/apps/{slug}/edge-protection/attack-mode": "DisableAppEdgeAttackMode",
+
+	"POST /v1/execution-files/{id}/agent-grants":                                   "CreateAgentExecutionFileGrant",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":                         "DeliverRunArtifact",
+	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}":               "GetRunArtifactDelivery",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url": "SignRunArtifactDelivery",
 }
 
 func main() {
