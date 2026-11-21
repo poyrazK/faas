@@ -131,7 +131,10 @@ func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id strin
 	if err := tx.Commit(ctx); err != nil {
 		return zero, err
 	}
-	return HostedTaskRehearsalResult{Plan: r.Plan, ClaimAcquired: acquired, Run: run}, nil
+	return HostedTaskRehearsalResult{
+		Plan: r.Plan, ClaimAcquired: acquired, Run: run,
+		ReadyToClaim: r.Plan.Status == tasktoolrehearsal.Approved && r.ApprovalKeyID == owner,
+	}, nil
 }
 
 func saveHostedTaskRehearsalRun(ctx context.Context, tx pgx.Tx, plan api.HostedTaskRehearsalPlan, keys []pgtype.UUID, acquired bool) (*HostedTaskRehearsalRun, error) {

@@ -11,6 +11,67 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appTasksInBillingWindow = `-- name: AppTasksInBillingWindow :many
+SELECT task.id, task.app_id, task.status, task.started_at, task.finished_at,
+       task.lease_expires_at, task.updated_at, task.timeout_seconds
+FROM app_tasks task
+WHERE task.started_at IS NOT NULL
+  AND task.started_at < $1::timestamptz
+  AND task.started_at >= $2::timestamptz
+  AND (task.finished_at IS NULL OR task.finished_at > $3::timestamptz)
+ORDER BY task.app_id, task.id
+`
+
+type AppTasksInBillingWindowParams struct {
+	WindowEnd     pgtype.Timestamptz
+	EarliestStart pgtype.Timestamptz
+	WindowStart   pgtype.Timestamptz
+}
+
+type AppTasksInBillingWindowRow struct {
+	ID             pgtype.UUID
+	AppID          pgtype.UUID
+	Status         string
+	StartedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	LeaseExpiresAt pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	TimeoutSeconds int32
+}
+
+// App task VMs are billed like instances (cost-control review 2026-11-19,
+// N16). A task overlaps the window from started_at until finished_at; the
+// caller bounds an unfinished task by its lease and timeout. started_at is
+// bounded below by the longest a task can run so the index stays selective.
+func (q *Queries) AppTasksInBillingWindow(ctx context.Context, db DBTX, arg AppTasksInBillingWindowParams) ([]AppTasksInBillingWindowRow, error) {
+	rows, err := db.Query(ctx, appTasksInBillingWindow, arg.WindowEnd, arg.EarliestStart, arg.WindowStart)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppTasksInBillingWindowRow{}
+	for rows.Next() {
+		var i AppTasksInBillingWindowRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Status,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.LeaseExpiresAt,
+			&i.UpdatedAt,
+			&i.TimeoutSeconds,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const billingMeterUsageDeliveryRecordFromSource = `-- name: BillingMeterUsageDeliveryRecordFromSource :exec
 INSERT INTO billing_meter_usage_deliveries (provider, account_id, meter, window_start, quantity, usage_source)
 VALUES ($1::text, $2::uuid, $3::text,
