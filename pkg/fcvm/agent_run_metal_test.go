@@ -272,6 +272,32 @@ echo "now=$(date +%s)"`
 		}
 	})
 
+	// adr: 20261027090016 amendment 3 — vmmd stops a run at the seller's
+	// deadline, below the guest's ceiling, and approval-wait credit granted
+	// while it runs moves that deadline.
+	t.Run("seller deadline moves with credit", func(t *testing.T) {
+		const id = "agent-run-deadline"
+		const deadline, credit = 5 * time.Second, 8 * time.Second
+		if _, err := m.WakeAgentRun(ctx, AgentRunWakeRequest{Instance: id, AccountID: "acct-agent-run", Plan: api.PlanPro,
+			BaseKey: base, LayerKey: layer, VcpuCount: 1, MemSizeMiB: 1024, CPUMillicores: 1000, Deadline: deadline}); err != nil {
+			t.Fatalf("wake: %v", err)
+		}
+		t.Cleanup(func() { _ = m.Destroy(context.Background(), id) })
+		time.AfterFunc(2*time.Second, func() { m.ExtendAgentRun(id, credit) })
+		start := time.Now()
+		result, _, err := m.RunAgent(ctx, id, request(120, `sleep 600`), nil, nil)
+		took := time.Since(start)
+		if err != nil || result.Status != agentrunproto.StatusTimedOut {
+			t.Fatalf("result %+v, %v; want timed_out", result, err)
+		}
+		if want := deadline + credit; took < want || took > want+time.Duration(2*api.AgentRunStopGraceSec+30)*time.Second {
+			t.Fatalf("stopped after %s, want the %s deadline plus %s credit, well under the 120 s ceiling", took, deadline, credit)
+		}
+		if live := m.LiveCount(); live != 0 {
+			t.Fatalf("left %d live VMs", live)
+		}
+	})
+
 	t.Run("runs out of memory", func(t *testing.T) {
 		script := `node -e 'const a = []; for (;;) a.push(Buffer.alloc(32 << 20, 1))'`
 		result, _ := run(t, "agent-run-oom", 512, request(120, script), nil)
