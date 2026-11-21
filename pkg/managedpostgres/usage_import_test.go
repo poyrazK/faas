@@ -77,13 +77,13 @@ func TestUsageImportPreviewApplyAndDurableReplay(t *testing.T) {
 			if err != nil || !reflect.DeepEqual(applied, replay) {
 				t.Fatalf("replay: %+v %v", replay, err)
 			}
-			originalPolicy := service.registry.usage
-			service.registry.usage.Window = 24 * time.Hour
-			service.registry.usage.Enabled = false
+			originalPolicy := service.registry.UsagePolicy()
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage.Window = 24 * time.Hour })
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage.Enabled = false })
 			if replay, err := restarted.ImportUsage(ctx, database.AccountID, "operator", request, true); err != nil || !reflect.DeepEqual(applied, replay) {
 				t.Fatalf("replay after policy disable/change: %+v %v", replay, err)
 			}
-			service.registry.usage = originalPolicy
+			service.registry.mutatePolicy(func(e *effectivePolicy) { e.usage = originalPolicy })
 			request.Reason = "different evidence"
 			if _, err := service.ImportUsage(ctx, database.AccountID, "operator", request, true); !errors.Is(err, ErrConflict) {
 				t.Fatalf("conflicting replay: %v", err)

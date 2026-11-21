@@ -114,7 +114,7 @@ func runConfigurationPreflight(getenv func(string) string, output, errorOutput i
 
 	regions := registry.Regions()
 	addCheck("single_default_backend", len(regions) == 1, "default_backend_count_invalid")
-	addCheck("provisioning_disabled", !registry.ProvisioningEnabled, "provisioning_must_remain_disabled")
+	addCheck("provisioning_disabled", !registry.ProvisioningEnabled(), "provisioning_must_remain_disabled")
 
 	backend, backendErr := registry.Default(registry.DefaultRegion)
 	addCheck("default_backend", backendErr == nil, "default_backend_unavailable")
@@ -133,7 +133,7 @@ func runConfigurationPreflight(getenv func(string) string, output, errorOutput i
 	}
 	addCheck("plan_entitlements", preflightPlanEntitlements(backend), "plan_entitlement_unsupported")
 	scaleLimits, scalePlanOK := api.ManagedPostgresLimitsFor(api.PlanScale)
-	addCheck("global_database_ceiling", scalePlanOK && registry.MaxDatabasesPerAccount <= scaleLimits.DatabasesMax, "global_database_ceiling_invalid")
+	addCheck("global_database_ceiling", scalePlanOK && registry.MaxDatabasesPerAccount() <= scaleLimits.DatabasesMax, "global_database_ceiling_invalid")
 
 	_, canaryErr := managedpostgres.ParseStagingCanaryAccounts(getenv(managedpostgres.CanaryAccountsEnv))
 	addCheck("canary_accounts", canaryErr == nil, "canary_accounts_invalid")
