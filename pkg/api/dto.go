@@ -905,6 +905,10 @@ type DevPostgresResponse struct {
 	BindingID      string `json:"binding_id"`
 	BindingState   string `json:"binding_state"`
 	EnvironmentKey string `json:"environment_key"`
+	// MigrationEnvironmentKey names the release-only migration credential the
+	// database is also bound to (MIGRATION_DATABASE_URL). Empty from a control
+	// plane that binds none.
+	MigrationEnvironmentKey string `json:"migration_environment_key,omitempty"`
 }
 
 // DevSessionResponse is returned when a developer preview is created or its
