@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -56,7 +57,7 @@ type Server struct {
 
 	mu       sync.Mutex
 	idle     map[*tls.Conn]struct{} // connections waiting for an exchange
-	draining bool
+	draining bool                   // no new connection or exchange starts
 }
 
 // NewServer validates cfg. Serving starts with NewListener. The hop's
@@ -116,12 +117,33 @@ func (s *Server) Drain() {
 	}
 }
 
+// Wait returns once every hop connection has ended. Call it after Drain: a
+// draining server starts no connection, so none is missed.
+func (s *Server) Wait() { s.wg.Wait() }
+
 // Close ends every hop connection, exchanges in flight included, and waits
 // for them.
 func (s *Server) Close() {
 	s.Drain()
 	s.cancel()
 	s.wg.Wait()
+}
+
+// track counts a new connection for Wait, unless the server is draining.
+func (s *Server) track() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.draining {
+		return false
+	}
+	s.wg.Add(1)
+	return true
+}
+
+func (s *Server) isDraining() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.draining
 }
 
 // awaitExchange marks conn idle until its next exchange starts. It reports
@@ -163,14 +185,22 @@ func NewListener(ctx context.Context, lis net.Listener, hop *Server) *Listener {
 	return l
 }
 
+// acceptLoop feeds route. A temporary accept error (EMFILE, ECONNABORTED)
+// is retried with backoff, as grpc-go's own accept loop does; any other ends
+// the loop and is returned by Accept.
 func (l *Listener) acceptLoop(ctx context.Context) {
+	var backoff time.Duration
 	for {
 		c, err := l.Listener.Accept()
 		if err != nil {
-			var ne net.Error
-			if errors.As(err, &ne) && ne.Timeout() {
-				time.Sleep(5 * time.Millisecond)
-				continue
+			if temporaryAcceptError(err) {
+				backoff = min(max(2*backoff, 5*time.Millisecond), time.Second)
+				select {
+				case <-time.After(backoff):
+					continue
+				case <-l.done:
+					return
+				}
 			}
 			select {
 			case l.errc <- err:
@@ -178,8 +208,18 @@ func (l *Listener) acceptLoop(ctx context.Context) {
 			}
 			return
 		}
+		backoff = 0
 		go l.route(ctx, c)
 	}
+}
+
+func temporaryAcceptError(err error) bool {
+	var ne interface{ Temporary() bool }
+	if errors.As(err, &ne) && ne.Temporary() {
+		return true
+	}
+	var te interface{ Timeout() bool }
+	return errors.As(err, &te) && te.Timeout()
 }
 
 func (l *Listener) route(ctx context.Context, c net.Conn) {
@@ -272,9 +312,11 @@ func (c *replayConn) Read(p []byte) (int, error) {
 
 // serveConn handshakes a hop connection and serves its exchanges in turn.
 func (s *Server) serveConn(parent context.Context, raw net.Conn) {
-	s.wg.Add(1)
-	defer s.wg.Done()
 	defer func() { _ = raw.Close() }()
+	if !s.track() {
+		return
+	}
+	defer s.wg.Done()
 	// The connection outlives vmmd's run context on purpose: shutdown drains it
 	// through Listener.Close, as gRPC's GracefulStop lets streams finish.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent)) //nolint:contextcheck // see above
@@ -312,13 +354,19 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 	hc := &serverConn{s: s, conn: conn, r: bufio.NewReaderSize(conn, 32<<10), w: bufio.NewWriterSize(conn, 32<<10), peer: p}
 	for {
 		if !s.awaitExchange(conn) {
+			hc.goAway()
 			return
 		}
 		method, md, err := readPreamble(hc.r)
 		s.exchangeStarted(conn)
 		if err != nil {
-			if !errors.Is(err, io.EOF) && !errors.Is(err, os.ErrDeadlineExceeded) && ctx.Err() == nil {
-				s.cfg.Log.Debug("vmmdhop: bad preamble", "remote", raw.RemoteAddr().String(), "err", err)
+			switch {
+			case errors.Is(err, os.ErrDeadlineExceeded) && ctx.Err() == nil:
+				// Drain or idle timeout: nothing after the last exchange was
+				// processed, so the client may send it again elsewhere.
+				hc.goAway()
+			case !errors.Is(err, io.EOF) && ctx.Err() == nil:
+				s.cfg.Log.Debug("vmmdhop: bad preamble", "remote", raw.RemoteAddr().String(), "err", fmt.Errorf("read preamble: %w", err))
 			}
 			return
 		}
@@ -326,6 +374,14 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 		if !hc.exchange(ctx, method, md) {
 			return
 		}
+	}
+}
+
+// goAway tells the client this connection ends without reading anything more.
+func (c *serverConn) goAway() {
+	_ = c.conn.SetWriteDeadline(time.Now().Add(time.Second))
+	if writeFrame(c.w, frameGoAway, nil) == nil {
+		_ = c.w.Flush()
 	}
 }
 
@@ -437,7 +493,9 @@ func (c *serverConn) exchange(parent context.Context, method string, md metadata
 		clean = <-readerDone
 		_ = c.conn.SetReadDeadline(time.Time{})
 	}
-	reusable := clean && ctx.Err() == nil
+	// A draining server keeps no connection, and says so in the status so
+	// the client does not pool it.
+	reusable := clean && ctx.Err() == nil && !c.s.isDraining()
 	return st.writeStatus(appStatus, reusable) == nil && reusable
 }
 

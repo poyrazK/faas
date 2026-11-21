@@ -9,6 +9,8 @@
 //	client: preamble (version, full method, metadata)
 //	        frameMessage* frameCloseSend
 //	server: frameMessage* (frameStatus | frameStatusClose), a google.rpc.Status
+//	        or frameGoAway alone: vmmd closed the connection without reading
+//	        the exchange, which the client may send again on a new one
 //
 // A frame is a type byte, a varint length and the payload. One exchange runs
 // on a connection at a time; a connection is reused only after a clean one.
@@ -43,6 +45,10 @@ const (
 	// connection: the exchange did not end cleanly on its side (the handler
 	// returned before the client's close-send, or the client broke framing).
 	frameStatusClose = 4
+	// frameGoAway is the server's last frame on a connection it ends between
+	// exchanges (drain, idle timeout). Whatever the client sent after it was
+	// not read, as an HTTP/2 GOAWAY says of streams above its last ID.
+	frameGoAway = 5
 )
 
 // Limits (ADR-20261121202814, security requirement 3).

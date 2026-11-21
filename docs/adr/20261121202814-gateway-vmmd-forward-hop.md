@@ -66,19 +66,33 @@ measured on prod before the next.
    send side and the server's final status says it keeps the connection
    (`frameStatus`; `frameStatusClose` otherwise). An idle pooled connection
    is watched by a blocked read, so one vmmd closed is never reused.
+   vmmd ends a connection between exchanges (drain, idle timeout) with a
+   `frameGoAway` frame and reads nothing after it, as HTTP/2's GOAWAY does.
+   A client that sent an exchange on that connection before the GOAWAY
+   arrived resends it on a new connection (`retried`), up to 256 KiB of
+   request; beyond that, or after a failed send, the call fails Unavailable,
+   as a gRPC stream refused by a GOAWAY does.
 5. **Cancellation.** The gateway cancels by closing the connection. vmmd
    reads the connection for as long as the handler runs, and cancels the
    handler's context when it ends early.
 6. **Fallback.** If the TLS handshake does not negotiate the hop protocol
    (a vmmd without the switch, or before this release), the gateway uses
-   gRPC for that node and retries the hop after a minute. Fallback happens
-   before any request byte is sent, so it never duplicates a request.
+   gRPC for that node and retries the hop after a minute. A dial or handshake
+   that fails otherwise (2 second limit) keeps the node on gRPC for 5
+   seconds, so calls do not each pay a failed dial. Fallback happens before
+   any request byte is sent, so it never duplicates a request.
 7. **Switches.** vmmd: `FAAS_VMMD_FORWARD_HOP=1` installs the ALPN demux.
    gatewayd-internal: `FAAS_GATEWAY_VMMD_FORWARD_HOP=1` makes it offer the
    hop. Both default off. With vmmd's off nothing on its listener changes.
 8. **Metrics.** `gateway_vmmd_forward_hop_total{result}` (`hop`, `fallback`,
-   `dial_error`) on the gateway; `vmmd_forward_hop_conns_total{result}` on
-   vmmd.
+   `dial_error`, `retried`) on the gateway; `vmmd_forward_hop_conns_total{result}`
+   on vmmd. Hop exchanges do not appear in otelgrpc's `rpc.server.*` metrics
+   on vmmd; the gateway-side forward metrics and traces (spans keep the full
+   method name) cover them. The A/B compares those.
+9. **Shutdown.** vmmd stops the hop with its gRPC server: a graceful stop
+   drains the hop and waits for its exchanges, a hard stop ends them, and
+   the service is closed only after either. The ALPN router retries
+   temporary accept errors (EMFILE) as grpc-go does.
 
 ### Phase 2: binary HTTP to the stream bridge
 

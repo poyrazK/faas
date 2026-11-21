@@ -2,9 +2,11 @@ package vmmdhop
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -24,18 +26,33 @@ import (
 // sent: the caller uses gRPC instead.
 var ErrFallback = errors.New("vmmdhop: use gRPC for this call")
 
-// fallbackFor is how long a node that does not offer the hop is left on gRPC.
-const fallbackFor = time.Minute
-
-// maxIdlePerNode bounds the idle connections kept for one vmmd.
-const maxIdlePerNode = 64
+const (
+	// fallbackFor is how long a node whose vmmd does not offer the hop stays
+	// on gRPC.
+	fallbackFor = time.Minute
+	// dialErrorFor is how long a node the hop could not reach stays on gRPC,
+	// so each call does not pay a dial attempt first.
+	dialErrorFor = 5 * time.Second
+	// dialTimeout bounds the hop's TCP dial and TLS handshake; a slower node
+	// is left to gRPC.
+	dialTimeout = 2 * time.Second
+	// maxIdlePerNode bounds the idle connections kept for one vmmd.
+	maxIdlePerNode = 64
+	// maxReplayBytes bounds what a stream keeps to replay an exchange vmmd
+	// turned away unprocessed (GOAWAY); a larger request is not replayed.
+	maxReplayBytes = 256 << 10
+	// alertNoApplicationProtocol is TLS alert 120: the server offers none of
+	// the client's ALPN protocols.
+	alertNoApplicationProtocol = tls.AlertError(120)
+)
 
 // Client keeps hop connections to one vmmd.
 type Client struct {
 	address string
 	tls     *tls.Config
 	dial    func(ctx context.Context, network, address string) (net.Conn, error)
-	// Result, when set, counts how each call was carried.
+	// Result, when set, counts how each call was carried: hop, fallback,
+	// dial_error, retried.
 	Result func(result string)
 
 	mu            sync.Mutex
@@ -53,11 +70,11 @@ func NewClient(address string, tlsCfg *tls.Config) (*Client, error) {
 		return nil, errors.New("vmmdhop: the hop needs the gateway's vmmd client TLS config")
 	}
 	if _, _, err := net.SplitHostPort(address); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("vmmdhop: client address %q: %w", address, err)
 	}
 	cfg := tlsCfg.Clone()
 	cfg.NextProtos = []string{ALPN}
-	d := &net.Dialer{Timeout: handshakeTimeout, KeepAlive: 30 * time.Second}
+	d := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
 	return &Client{address: address, tls: cfg, dial: d.DialContext, now: time.Now}, nil
 }
 
@@ -84,9 +101,9 @@ type clientConn struct {
 	w        *bufio.Writer
 	idleFrom time.Time
 
-	// While the connection is idle a watcher blocks reading it: nothing may
-	// arrive between exchanges, so any return but our own deadline means
-	// vmmd closed it (or broke the protocol).
+	// While the connection is idle a watcher blocks reading it: nothing but
+	// vmmd's GOAWAY may arrive between exchanges, so any return but our own
+	// deadline means vmmd closed it or is closing it.
 	watchDone chan struct{}
 	stopping  atomic.Bool
 	dead      atomic.Bool
@@ -119,13 +136,12 @@ func (cc *clientConn) claim() bool {
 }
 
 // get returns an idle connection that is still open, or dials one.
-// ErrFallback means vmmd does not offer the hop or could not be reached;
-// nothing was sent.
-func (c *Client) get(ctx context.Context) (*clientConn, error) {
+// ErrFallback means the caller must use gRPC; nothing was sent.
+func (c *Client) get(ctx context.Context) (*clientConn, bool, error) {
 	c.mu.Lock()
 	if c.closed || c.now().Before(c.fallbackUntil) {
 		c.mu.Unlock()
-		return nil, ErrFallback
+		return nil, false, ErrFallback
 	}
 	for len(c.idle) > 0 {
 		cc := c.idle[len(c.idle)-1]
@@ -133,37 +149,59 @@ func (c *Client) get(ctx context.Context) (*clientConn, error) {
 		fresh := c.now().Sub(cc.idleFrom) < clientIdleTimeout
 		c.mu.Unlock()
 		if fresh && cc.claim() {
-			return cc, nil
+			return cc, true, nil
 		}
 		_ = cc.conn.Close()
 		c.mu.Lock()
 	}
 	c.mu.Unlock()
-
-	raw, err := c.dial(ctx, "tcp", c.address)
+	cc, err := c.dialConn(ctx)
 	if err != nil {
-		c.result("dial_error")
-		return nil, ErrFallback
+		return nil, false, ErrFallback
+	}
+	return cc, false, nil
+}
+
+// dialConn opens a hop connection. A vmmd that does not offer the hop keeps
+// the node on gRPC for fallbackFor; any other failure for dialErrorFor.
+func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
+	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
+	defer cancel()
+	raw, err := c.dial(dctx, "tcp", c.address)
+	if err != nil {
+		c.noteFailure(ctx, "dial_error", dialErrorFor)
+		return nil, fmt.Errorf("vmmdhop: dial %s: %w", c.address, err)
 	}
 	conn := tls.Client(raw, c.tls)
-	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
-	err = conn.HandshakeContext(hctx)
-	cancel()
+	err = conn.HandshakeContext(dctx)
+	noHop := errors.Is(err, alertNoApplicationProtocol)
 	if err == nil && conn.ConnectionState().NegotiatedProtocol != ALPN {
-		err = errors.New("vmmdhop: vmmd did not select the hop protocol")
+		err, noHop = errors.New("vmmd did not select the hop protocol"), true
 	}
 	if err != nil {
 		_ = raw.Close()
-		if ctx.Err() == nil {
-			// A vmmd without the hop refuses the protocol: stay on gRPC a while.
-			c.mu.Lock()
-			c.fallbackUntil = c.now().Add(fallbackFor)
-			c.mu.Unlock()
+		if noHop {
+			c.noteFailure(ctx, "fallback", fallbackFor)
+		} else {
+			c.noteFailure(ctx, "dial_error", dialErrorFor)
 		}
-		c.result("fallback")
-		return nil, ErrFallback
+		return nil, fmt.Errorf("vmmdhop: handshake with %s: %w", c.address, err)
 	}
 	return &clientConn{conn: conn, r: bufio.NewReaderSize(conn, 32<<10), w: bufio.NewWriterSize(conn, 32<<10)}, nil
+}
+
+// noteFailure keeps the node on gRPC for d, unless the caller gave up (its
+// cancellation says nothing about the node).
+func (c *Client) noteFailure(ctx context.Context, result string, d time.Duration) {
+	c.result(result)
+	if ctx.Err() != nil {
+		return
+	}
+	c.mu.Lock()
+	if until := c.now().Add(d); until.After(c.fallbackUntil) {
+		c.fallbackUntil = until
+	}
+	c.mu.Unlock()
 }
 
 func (c *Client) put(cc *clientConn) {
@@ -181,19 +219,26 @@ func (c *Client) put(cc *clientConn) {
 // NewStream starts method on a hop connection, carrying the outgoing
 // metadata in ctx as gRPC would. ErrFallback means the caller must use gRPC.
 func NewStream[Req, Resp any](ctx context.Context, c *Client, method string) (grpc.BidiStreamingClient[Req, Resp], error) {
-	cc, err := c.get(ctx)
+	cc, reused, err := c.get(ctx)
 	if err != nil {
 		return nil, err
 	}
 	md, _ := metadata.FromOutgoingContext(ctx)
 	md = md.Copy()
 	otel.GetTextMapPropagator().Inject(ctx, metadataCarrier(md))
-	if err := writePreamble(cc.w, method, md); err != nil {
+	var preamble bytes.Buffer
+	pw := bufio.NewWriter(&preamble)
+	if err := writePreamble(pw, method, md); err != nil || pw.Flush() != nil {
+		c.put(cc)
+		return nil, ErrFallback
+	}
+	if _, err := cc.w.Write(preamble.Bytes()); err != nil {
 		_ = cc.conn.Close()
 		return nil, ErrFallback
 	}
 	c.result("hop")
-	s := &clientStream[Req, Resp]{c: c, cc: cc, ctx: ctx}
+	s := &clientStream[Req, Resp]{c: c, cc: cc, ctx: ctx, reused: reused}
+	s.replay = append([]byte(nil), preamble.Bytes()...)
 	s.stop = context.AfterFunc(ctx, func() { s.abort() })
 	return s, nil
 }
@@ -201,14 +246,20 @@ func NewStream[Req, Resp any](ctx context.Context, c *Client, method string) (gr
 // clientStream is the grpc.BidiStreamingClient the gateway's forwarder uses.
 // One goroutine may Send while another calls Recv, as with gRPC.
 type clientStream[Req, Resp any] struct {
-	c    *Client
-	cc   *clientConn
-	ctx  context.Context
-	stop func() bool
+	c      *Client
+	ctx    context.Context
+	stop   func() bool
+	reused bool
 
 	sendMu     sync.Mutex
+	cc         *clientConn // swapped only under sendMu, by the reader
 	sendFailed bool
 	closedSend bool
+	// replay holds every byte sent until the first answer, so an exchange
+	// vmmd turned away unprocessed (GOAWAY) can be sent again; nil once it
+	// grew past maxReplayBytes or an answer arrived.
+	replay   []byte
+	answered atomic.Bool
 
 	mu       sync.Mutex
 	finished bool
@@ -221,11 +272,34 @@ func (s *clientStream[Req, Resp]) abort() {
 	finished := s.finished
 	s.mu.Unlock()
 	if !finished {
-		_ = s.cc.conn.Close()
+		s.sendMu.Lock()
+		cc := s.cc
+		s.sendMu.Unlock()
+		_ = cc.conn.Close()
 	}
 }
 
 func (s *clientStream[Req, Resp]) Send(m *Req) error { return s.SendMsg(m) }
+
+// writeLocked writes one frame and flushes it, recording it for a replay.
+// The caller holds sendMu.
+func (s *clientStream[Req, Resp]) writeLocked(typ byte, payload []byte) error {
+	if !s.answered.Load() && s.replay != nil {
+		if len(s.replay)+len(payload)+16 > maxReplayBytes {
+			s.replay = nil
+		} else {
+			var frame bytes.Buffer
+			fw := bufio.NewWriter(&frame)
+			_ = writeFrame(fw, typ, payload)
+			_ = fw.Flush()
+			s.replay = append(s.replay, frame.Bytes()...)
+		}
+	}
+	if err := writeFrame(s.cc.w, typ, payload); err != nil {
+		return err
+	}
+	return s.cc.w.Flush()
+}
 
 // SendMsg writes and flushes one message. As with gRPC, a failed send
 // returns io.EOF and Recv reports the call's status.
@@ -246,13 +320,11 @@ func (s *clientStream[Req, Resp]) SendMsg(m any) error {
 	if s.sendFailed || s.closedSend {
 		return io.EOF
 	}
-	if err := writeFrame(s.cc.w, frameMessage, b); err == nil {
-		if err = s.cc.w.Flush(); err == nil {
-			return nil
-		}
+	if err := s.writeLocked(frameMessage, b); err != nil {
+		s.sendFailed = true
+		return io.EOF
 	}
-	s.sendFailed = true
-	return io.EOF
+	return nil
 }
 
 // CloseSend ends the request side.
@@ -262,13 +334,11 @@ func (s *clientStream[Req, Resp]) CloseSend() error {
 	if s.sendFailed || s.closedSend {
 		return nil
 	}
-	if err := writeFrame(s.cc.w, frameCloseSend, nil); err == nil {
-		if err = s.cc.w.Flush(); err == nil {
-			s.closedSend = true
-			return nil
-		}
+	if err := s.writeLocked(frameCloseSend, nil); err != nil {
+		s.sendFailed = true
+		return nil
 	}
-	s.sendFailed = true
+	s.closedSend = true
 	return nil
 }
 
@@ -284,43 +354,82 @@ func (s *clientStream[Req, Resp]) Recv() (*Resp, error) {
 // status or the status error, as gRPC does; a broken connection is
 // Unavailable and a cancelled call Canceled.
 func (s *clientStream[Req, Resp]) RecvMsg(m any) error {
-	s.mu.Lock()
-	if s.finished {
-		err := s.err
+	for {
+		s.mu.Lock()
+		if s.finished {
+			err := s.err
+			s.mu.Unlock()
+			return err
+		}
 		s.mu.Unlock()
-		return err
-	}
-	s.mu.Unlock()
-	typ, payload, err := readFrame(s.cc.r, max(MaxMessageBytes, maxStatusBytes))
-	if err != nil {
-		return s.finish(s.transportErr(err), false)
-	}
-	switch typ {
-	case frameMessage:
-		msg, ok := m.(proto.Message)
-		if !ok {
-			return s.finish(status.Errorf(codes.Internal, "vmmdhop: %T is not a protobuf message", m), false)
-		}
-		if err := proto.Unmarshal(payload, msg); err != nil {
-			return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode message: %v", err), false)
-		}
-		return nil
-	case frameStatus, frameStatusClose:
-		keep := typ == frameStatus
-		if len(payload) > maxStatusBytes {
-			return s.finish(status.Error(codes.Internal, "vmmdhop: status over its limit"), false)
-		}
-		st, err := decodeStatus(payload)
+		s.sendMu.Lock()
+		cc := s.cc
+		s.sendMu.Unlock()
+		typ, payload, err := readFrame(cc.r, max(MaxMessageBytes, maxStatusBytes))
 		if err != nil {
-			return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode status: %v", err), false)
+			return s.finish(s.transportErr(err), false)
 		}
-		if st.Code() == codes.OK {
-			return s.finish(io.EOF, keep)
+		if typ == frameGoAway && !s.answered.Load() {
+			// vmmd turned this connection away before reading the exchange:
+			// nothing was processed, so it can be sent again, as gRPC retries
+			// a stream an HTTP/2 GOAWAY says was not processed.
+			if s.resend() {
+				continue
+			}
+			return s.finish(status.Error(codes.Unavailable, "vmmdhop: vmmd closed the connection before the exchange"), false)
 		}
-		return s.finish(st.Err(), keep)
-	default:
-		return s.finish(status.Error(codes.Internal, "vmmdhop: unexpected frame from vmmd"), false)
+		s.answered.Store(true)
+		switch typ {
+		case frameMessage:
+			msg, ok := m.(proto.Message)
+			if !ok {
+				return s.finish(status.Errorf(codes.Internal, "vmmdhop: %T is not a protobuf message", m), false)
+			}
+			if err := proto.Unmarshal(payload, msg); err != nil {
+				return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode message: %v", err), false)
+			}
+			return nil
+		case frameStatus, frameStatusClose:
+			keep := typ == frameStatus
+			if len(payload) > maxStatusBytes {
+				return s.finish(status.Error(codes.Internal, "vmmdhop: status over its limit"), false)
+			}
+			st, err := decodeStatus(payload)
+			if err != nil {
+				return s.finish(status.Errorf(codes.Internal, "vmmdhop: decode status: %v", err), false)
+			}
+			if st.Code() == codes.OK {
+				return s.finish(io.EOF, keep)
+			}
+			return s.finish(st.Err(), keep)
+		default:
+			return s.finish(status.Error(codes.Internal, "vmmdhop: unexpected frame from vmmd"), false)
+		}
 	}
+}
+
+// resend replays the exchange on a fresh connection after a GOAWAY. It
+// reports false when the request was too large to keep, a send already
+// failed (the caller has stopped sending), or no connection could be opened.
+func (s *clientStream[Req, Resp]) resend() bool {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
+	old := s.cc
+	_ = old.conn.Close()
+	if s.replay == nil || s.sendFailed || s.ctx.Err() != nil {
+		return false
+	}
+	cc, err := s.c.dialConn(s.ctx)
+	if err != nil {
+		return false
+	}
+	if _, err := cc.w.Write(s.replay); err != nil || cc.w.Flush() != nil {
+		_ = cc.conn.Close()
+		return false
+	}
+	s.cc = cc
+	s.c.result("retried")
+	return true
 }
 
 func (s *clientStream[Req, Resp]) transportErr(err error) error {
@@ -343,12 +452,14 @@ func (s *clientStream[Req, Resp]) finish(err error, statusRead bool) error {
 	s.mu.Unlock()
 	s.stop()
 	s.sendMu.Lock()
+	cc := s.cc
 	clean := statusRead && s.closedSend && !s.sendFailed && s.ctx.Err() == nil
+	s.replay = nil
 	s.sendMu.Unlock()
 	if clean {
-		s.c.put(s.cc)
+		s.c.put(cc)
 	} else {
-		_ = s.cc.conn.Close()
+		_ = cc.conn.Close()
 	}
 	return err
 }
