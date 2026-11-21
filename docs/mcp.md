@@ -86,8 +86,10 @@ returns `approval_required`, the bridge keeps the original plan, staged source
 and upload checkpoint through the deadline in `approval.expires_at`. The review
 page shows that same deadline. After approval, retry the same plan ID. The
 bridge rechecks the app and its release state and commits the original upload.
-A changed app or release requires a new plan. The temporary staged files live
-on the current bridge process's host and are cleared on bridge restart.
+A changed app or release requires a new plan. The encrypted journal restores
+approval-bound plans for the same connection after a restart using the same
+bridge upload directory. One-time upload URLs and source for plans that
+have yet to reach commit approval expire with the process.
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
@@ -120,10 +122,11 @@ of those tools are listed.
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. The hosted journal preserves completed receipts and resumable release plans
-for the same key across bridge restarts. Pending upload files are temporary;
-after a restart, inspect deployments and resources before uploading or planning
-again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+its next request. The hosted journal preserves completed receipts and resumable
+release plans for the same key across bridge restarts. A pending resumable
+upload commit approval keeps its staged source through the original review
+deadline. `gregale_get_plan` recovers an unexpired plan or receipt without
+repeating a write.
 
 Hosted agent-key connections use the `core` catalog unless the client sends a
 `Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
