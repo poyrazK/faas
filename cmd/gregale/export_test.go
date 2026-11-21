@@ -2998,3 +2998,6 @@ func BucketUploadContentType(args []string) (string, error) {
 func RenderInspectFailureDetails(w io.Writer, slug string, failed api.DeploymentResponse) {
 	renderInspectFailureDetails(w, inspectSummary{App: inspectAppSummary{Slug: slug}, Failure: inspectPersistedFailure(&failed, nil)})
 }
+
+// AppScalePlanWarnings returns the checks `app scale --plan` prints.
+var AppScalePlanWarnings = appScalePlanWarnings
