@@ -7,10 +7,15 @@ page can be published.
 - The runtime requires `FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and the
   existing gateway executor configuration. Saving and validating drafts alone
   does not enable it.
-- Outbound integration steps additionally require
-  `FAAS_WORKFLOW_OUTBOUND_ENABLED=1` on schedd and outboundd, an active cluster
-  signing key and the attempt-token migration (ADR-489). These flags are
-  independent of saving draft intent.
+- Integration steps need `FAAS_WORKFLOW_OUTBOUND_ENABLED=1` on schedd and
+  outboundd (ADR-489). The generated control-plane units and the compute-only
+  schedd unit set it since stored workflows reached beta. outboundd verifies
+  each step's identity against the active cluster signing key. schedd with a
+  local minter needs that key active; schedd minting through secretd does not
+  read it. When schedd cannot run integration steps it logs
+  `schedd: workflow integration steps disabled` with the reason and keeps
+  running; each such step then fails with "workflow outbound executor is
+  disabled or unavailable". It no longer exits at boot.
 - Step guards (ADR-490) and branch joins (ADR-491): apply the guard migration
   and deploy updated apid and schedd before publishing definitions that use
   them. Before downgrading, pause starts, drain or cancel affected runs and

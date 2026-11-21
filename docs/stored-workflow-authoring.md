@@ -1838,6 +1838,24 @@ Apply migration `20261006062359228_generic_inbound_webhook.sql` before creating
 generic endpoints. The down migration is forward-only; remove generic endpoints
 before rolling back application binaries.
 
+## Start on an event
+
+An `event` trigger starts a run for each matching event. `source` and
+`event_type` accept a `*` wildcard at either edge, and `filter` matches the
+event body:
+
+```json
+{ "type": "event", "source": "gregale.storage", "event_type": "object.created" }
+```
+
+Sources under `gregale.` are platform events, such as bucket notifications,
+and work on every plan that allows workflows. Any other source, including a
+wildcard such as `*`, matches your own custom events, which need custom events
+enabled for your account. Without them, publishing or enabling the stored
+workflow is refused with `stored_workflow_events_unavailable` instead of
+accepting a workflow that would never start. Use a `gregale.` source, a
+schedule, a manual start or an inbound webhook binding instead.
+
 ## Preview scheduled fire times
 
 Inspect a deployed schedule before relying on its cadence or catch-up behavior:

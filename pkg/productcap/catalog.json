@@ -4091,7 +4091,7 @@
       "name": "Outbound integrations",
       "category": "data",
       "description": "Call third-party APIs through managed integrations with key pools and limits.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",

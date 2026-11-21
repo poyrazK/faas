@@ -111,7 +111,7 @@
     {"path": "private-networks", "source": "docs/private-networks.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "object-storage", "source": "docs/object-storage.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "operations", "source": "docs/operations.md", "unpublished": "preview capability; published when it reaches beta"},
-    {"path": "outbound-integrations", "source": "docs/outbound-integrations.md", "unpublished": "preview capability; published when it reaches beta"},
+    {"path": "outbound-integrations", "source": "docs/outbound-integrations.md"},
     {"path": "orgs", "source": "docs/account.md"},
     {"path": "plans", "source": "docs/plans.md"},
     {"path": "postgres", "source": "docs/postgres.md"},
