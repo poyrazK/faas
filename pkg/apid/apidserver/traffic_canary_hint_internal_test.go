@@ -10,12 +10,13 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type liveDeploymentsStore struct {
-	state.Store
-	live []state.Deployment
-	err  error
+	Store state.Store
+	live  []state.Deployment
+	err   error
 }
 
 func (s liveDeploymentsStore) LiveDeployments(context.Context, string) ([]state.Deployment, error) {
@@ -23,7 +24,7 @@ func (s liveDeploymentsStore) LiveDeployments(context.Context, string) ([]state.
 }
 
 func canaryServer(live []state.Deployment, err error) *server {
-	return &server{store: liveDeploymentsStore{live: live, err: err}}
+	return &server{store: statetest.NewStore(liveDeploymentsStore{Store: state.NewMemStore(), live: live, err: err})}
 }
 
 func boaCanaryRows() []state.Deployment {
