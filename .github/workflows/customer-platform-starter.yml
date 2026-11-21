@@ -126,11 +126,11 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: cmd/gregale/templates/mcp-node/package-lock.json
+          cache-dependency-path: cmd/gregale/templates/mcp-node-tasks/package-lock.json
       - name: Install MCP starter dependencies
-        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix cmd/gregale/templates/mcp-node-tasks
       - name: Verify durable task SQL against PostgreSQL 16
         env:
           MCP_TASKS_TEST_DATABASE_URL: postgres://faas:faas@127.0.0.1:5432/faas?sslmode=disable
           MCP_TASKS_REQUIRE_POSTGRES: "1"
-        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node
+        run: npm run test:postgres --prefix cmd/gregale/templates/mcp-node-tasks
