@@ -12,6 +12,8 @@ https://api.gregale.dev/mcp
 - **claude.ai and the Claude apps:** add it as a custom connector.
 - **ChatGPT:** add it as a connector.
 - **Claude Code:** `claude mcp add --transport http gregale https://api.gregale.dev/mcp`.
+- **Cursor and VS Code:** `gregale mcp connect --client cursor` (or
+  `vscode`) adds the server; sign in when the editor asks.
 
 For **Antigravity**, add a remote server named `gregale` with
 `"serverUrl": "https://api.gregale.dev/mcp"` to its MCP configuration. In
@@ -416,7 +418,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_app` | One app's status, URLs, deployment availability, resource settings and, with the resource-labels preview, labels. |
 | `gregale_list_deployments` | Account deployment history; bounded `limit`; continue with `next_before`. |
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
-| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
+| `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. For a parked app it reads the newest instance's retained logs (`source: archive`). |
 | `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
 | `gregale_get_request` | Exact retained public request, telemetry-row or trace ID: status, deployment, route, timing and bounded guest execution summary. Requires separate per-app diagnostic consent remotely. |
 | `gregale_list_requests` | One bounded retained-request page, filtered by lookback, route, HTTP status, deployment, minimum latency or cold boot. Reuses diagnostic consent; continue with `next_arguments`. |
@@ -7215,7 +7217,8 @@ database bound to an app (ADR-20261117215858):
 
 - `gregale_get_postgres_schema` lists the tables and views of one schema
   (default `public`) with their columns, types, NOT NULL, primary keys and
-  indexes.
+  indexes. A large schema is listed by name with column counts; name up to
+  20 tables in `tables` for their detail.
 - `gregale_query_postgres` runs one statement and returns up to `max_rows`
   rows (default 100, at most 1000, and 1 MiB) as text, with `truncated` when a
   cap stopped reading.
@@ -7293,7 +7296,10 @@ ADR-20261118161500.
   `gregale_get_spend_forecast`, `gregale_list_budgets`,
   `gregale_plan_budget_change` and `gregale_apply_budget_change`. Agents create
   and update only budgets that notify; enforcing budgets stay with people.
-  Every budget write asks a person first.
+  Every budget write asks a person first. The forecast leaves out per-usage
+  allocations; read one app's costs with `gregale_get_costs`. Budget and flag
+  plans live only in the server's memory: after a release restarts the hosted
+  server, plan again.
 - API consumers (toolset `operate`): `gregale_list_api_consumers`,
   `gregale_get_api_consumer` and `gregale_plan_api_consumer_change` (create,
   revoke, spend cap, plan). Keys are never shown or issued. Revoking, plans

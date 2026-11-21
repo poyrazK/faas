@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -86,6 +87,9 @@ func renderProjectApplyResultWithTimeouts(w io.Writer, plan api.PlanResponse, ap
 		// so "Created project" was wrong (Hunt 33 H33-33).
 		PrintOK(w, "Deployed project %s to environment %s with %d app(s)",
 			apply.ProjectID, plan.Environment, len(apply.Apps))
+	case slices.ContainsFunc(plan.Workloads, func(workload api.PlanWorkload) bool { return workload.ExistingAppID != "" }):
+		PrintOK(w, "Applied project %s with %d app(s) and %d cron(s)",
+			apply.ProjectID, len(apply.Apps), len(plan.Crons))
 	default:
 		PrintOK(w, "Created project %s with %d app(s) and %d cron(s)",
 			apply.ProjectID, len(apply.Apps), len(plan.Crons))

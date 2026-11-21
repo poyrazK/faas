@@ -12,6 +12,8 @@ import { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID,
 import { createResourceUpdateHub, createSubscriptionOutput, validResourceUpdateURI } from './resource-updates.js';
 
 const MCP_PROTOCOL_VERSION_META_KEY = 'io.modelcontextprotocol/protocolVersion';
+const CURRENT_PROTOCOL_VERSION = '2026-07-28';
+const LEGACY_PROTOCOL_VERSION = '2025-11-25';
 const taskCallContext = new AsyncLocalStorage();
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
 const MCP_SUBSCRIPTION_ID_META_KEY = 'io.modelcontextprotocol/subscriptionId';
@@ -643,6 +645,13 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   app.all(config.endpoint, (req, res, next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Accel-Buffering', 'no');
+    // Echo the negotiated revision like the Go and Python starters. Gregale's
+    // per-replica deploy qualification requires it, and without it no Node
+    // starter deployment was ever promoted.
+    const protocolVersion = req.headers['mcp-protocol-version'];
+    if (typeof protocolVersion === 'string' && (protocolVersion === CURRENT_PROTOCOL_VERSION || (config.legacy && protocolVersion === LEGACY_PROTOCOL_VERSION))) {
+      res.setHeader('MCP-Protocol-Version', protocolVersion);
+    }
     const observation = observeProtocolRequest(req, res, log);
     res.protocolObservation = observation;
     protocolContext.run(observation, () => {
