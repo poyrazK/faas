@@ -94,6 +94,7 @@ func TestEarlyAnswerToLargeUploadSurvivesWriteFirstClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no answer after the upload: %v", err)
 	}
+	defer resp.Body.Close()
 	got, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || !bytes.Contains(got, []byte(`"early":true`)) {
 		t.Fatalf("status=%d body=%q, want 200 with the app's answer", resp.StatusCode, got)
