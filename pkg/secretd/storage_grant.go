@@ -112,6 +112,14 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			access = accessWrite
 		}
 		key := storageSubject{subject: storagegrant.Resolve(r.Key), access: access}
+		// Platform objects and build outputs are created by nodes, never
+		// replaced (ADR-20261117190000 amendment 1).
+		if access == accessWrite && createOnlyClass(key.subject.Class) && replaces(r) {
+			s.log.Warn("secretd: refused storage grant", "node", logsanitize.Field(name), "class", string(key.subject.Class),
+				"key", logsanitize.Field(r.Key), "why", "replace of a create-only object")
+			s.metrics.refuse(rpcGrantStorageObjects, ReasonNotAuthorized)
+			return nil, rpcErr(codes.PermissionDenied, "secretd refused: nodes create "+string(key.subject.Class)+" objects but never replace them")
+		}
 		if counts[key] == 0 {
 			order = append(order, key)
 		}
@@ -175,10 +183,23 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 	var appID, budgetKey string
 	switch sub.subject.Class {
 	case storagegrant.ClassPlatform:
+		// Writes reach here create-only (GrantStorageObjects).
 		if sub.access == accessWrite {
-			return refuse("no node writes platform objects")
+			s.log.Info("secretd: platform object create granted", "node", logsanitize.Field(name))
 		}
 		return "", nil
+	case storagegrant.ClassBuildOutput:
+		run, err := s.store.BuildRunner(ctx, sub.subject.ID)
+		if errors.Is(err, ErrUnknownBuild) {
+			return refuse("the object's build does not exist")
+		}
+		if err != nil {
+			return lookupFailed("build", err)
+		}
+		if run.Node == "" || run.Node != name || !s.now().Before(run.StartedAt.Add(buildRunWindow)) {
+			return refuse("the caller did not run the object's build")
+		}
+		appID, budgetKey = run.AppID, run.AppID
 	case storagegrant.ClassDeployment:
 		var err error
 		appID, err = s.storage.store.DeploymentApp(ctx, sub.subject.ID)
@@ -278,4 +299,15 @@ func (s *Server) jobPlaced(ctx context.Context, name, nodeID, jobID string) (boo
 		return true, nil
 	}
 	return s.storage.store.NodeRunsJob(ctx, jobID, nodeID)
+}
+
+// createOnlyClass: nodes may create these objects but never replace them.
+func createOnlyClass(c storagegrant.Class) bool {
+	return c == storagegrant.ClassPlatform || c == storagegrant.ClassBuildOutput
+}
+
+// replaces reports whether r overwrites an existing object: a replace, or
+// a multipart completion conditioned on the current object.
+func replaces(r storagegrant.Request) bool {
+	return r.Op == storagegrant.OpReplace || (r.Op == storagegrant.OpCompleteMultipart && (r.ETag != "" || r.Generation != 0))
 }

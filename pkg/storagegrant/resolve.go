@@ -18,8 +18,10 @@ type Class string
 
 const (
 	// ClassPlatform keys (base images, kernels, agent and sandbox layers,
-	// the shared sandbox preset snapshot) are readable by every node and
-	// writable by none.
+	// the shared sandbox preset snapshot, base scan sidecars) are readable
+	// by every node; a node may create a missing one but never replace one
+	// (ADR amendment 1: compute imaged stages bases, and their integrity
+	// rests on the control plane's signature, not on who wrote them).
 	ClassPlatform Class = "platform"
 	// ClassDeployment keys belong to one deployment of one app.
 	ClassDeployment Class = "deployment"
@@ -29,6 +31,9 @@ const (
 	ClassJob Class = "job"
 	// ClassBuild keys (a build's uploaded source) belong to one build.
 	ClassBuild Class = "build"
+	// ClassBuildOutput keys (a build's SBOM) are created by the node
+	// running that build.
+	ClassBuildOutput Class = "build_output"
 	// ClassUnknown keys are refused.
 	ClassUnknown Class = "unknown"
 )
@@ -59,6 +64,23 @@ func Resolve(key string) Subject {
 	switch top {
 	case "base", "kernel":
 		return Subject{Class: ClassPlatform}
+	case "sigs":
+		// sigs/<key>.sig is the signature of <key> and belongs to its
+		// owner (pkg/cosign SignatureKey).
+		if inner, ok := strings.CutSuffix(rest, ".sig"); ok && !strings.HasPrefix(inner, "sigs/") {
+			return Resolve(inner)
+		}
+	case "scans":
+		// Grype sidecars of platform bases (pkg/wire BaseScanKeyForArch,
+		// ScanKeyForBaseKey): scans/<base name>.scan.json.
+		if name, ok := strings.CutSuffix(rest, ".scan.json"); ok && name != "" && !strings.Contains(name, "/") &&
+			Resolve("base/"+name).Class == ClassPlatform {
+			return Subject{Class: ClassPlatform}
+		}
+	case "sboms":
+		if build, ok := strings.CutSuffix(rest, ".cdx.json"); ok && canonicalUUID(build) {
+			return Subject{Class: ClassBuildOutput, ID: build}
+		}
 	case "snap":
 		return resolveSnapshot(rest)
 	case "apps":

@@ -63,6 +63,18 @@ func TestResolve(t *testing.T) {
 		"snap/" + dep + "/warm/captures/" + capture + "/v2/drive":            deployment,
 		"snap/sandbox-template-" + acct + "/captures/" + capture + "/v2/mem": sandbox,
 		"snap/sandbox-preset/captures/" + capture + "/v2/mem":                platform,
+		// Sidecars belong to what they describe.
+		"sigs/" + storagekey.AppLayer("shop", dep) + ".sig":          deployment,
+		"sigs/" + storagekey.BaseForArch("node22", "amd64") + ".sig": platform,
+		"sigs/" + storagekey.JobLayer(job) + ".sig":                  jobSubject,
+		"sigs/sigs/" + storagekey.Layer(dep) + ".sig.sig":            unknown,
+		"sigs/" + storagekey.Layer(dep):                              unknown,
+		"scans/runner-node22-amd64.ext4.scan.json":                   platform,
+		"scans/base-amd64.ext4.scan.json":                            platform,
+		"scans/x/y.scan.json":                                        unknown,
+		"scans/.scan.json":                                           unknown,
+		"sboms/" + job + ".cdx.json":                                 {Class: storagegrant.ClassBuildOutput, ID: job},
+		"sboms/nope.cdx.json":                                        unknown,
 		// Refused: unknown prefixes, traversal, non-canonical IDs, odd shapes.
 		"sbom/whatever.json":            unknown,
 		"base":                          unknown,
