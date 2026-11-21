@@ -75,8 +75,14 @@ type DeferredCacheSpec struct {
 type VMRequest struct {
 	// Borrowed runs the builder on a borrowed builder slot, in
 	// faas-borrowed.slice (ADR-20261118154632).
-	Borrowed              bool
-	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	Borrowed bool
+	// SliceShared reports whether this build has shared faas-cp-build.slice
+	// with another builder since its slot was granted. The slice's oom_kill
+	// counter then cannot say whose VM was killed, so only the VM's own exit
+	// status classifies an OOM (ADR-20261118154632 amendment 1). nil means
+	// never shared.
+	SliceShared           func() bool `json:"-"`
+	BuildDependencyDigest string      `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
 	GoCommand             string                      // cmd/<name> a Go module build compiles (ADR-20261025134512)
@@ -167,12 +173,14 @@ type BuildHandle struct {
 	DependencyCacheRestored bool      // a prior BuildKit cache was staged into drive1
 	WarmScopeKey            string    // scope bound to a retained warm drive
 	// BuilderSliceOOMKillsAtStart snapshots the parent builder slice's
-	// cumulative oom_kill counter before vmmd starts this operation. With the
-	// host fence limited to one admitted builder, a later delta belongs to
-	// this build and can be reported even when Firecracker dies before writing
-	// build-done.json.
+	// cumulative oom_kill counter before vmmd starts this operation. While
+	// this build is the slice's only builder (SliceShared reports false), a
+	// later delta belongs to it and can be reported even when Firecracker dies
+	// before writing build-done.json.
 	BuilderSliceOOMKillsAtStart uint64
 	BuilderSliceOOMCounterValid bool
+	// SliceShared is VMRequest.SliceShared.
+	SliceShared func() bool `json:"-"`
 	// Borrowed is a builder on a borrowed slot (ADR-20261118154632). It runs
 	// outside faas-cp-build.slice, so that slice's oom_kill counter says
 	// nothing about it.
@@ -253,7 +261,7 @@ type BuildOutcome struct {
 	// artifact remains authoritative and can still complete successfully.
 	WarmSnapshotError string
 	// BuilderSliceOOMKills is the parent faas-cp-build.slice oom_kill delta
-	// observed while this build owned the single host builder slot.
+	// observed while this build was the slice's only builder.
 	BuilderSliceOOMKills uint64
 	// BuildKitSeeded reports that BuildKit ran on the seeded drive2
 	// (api.BuildDone.BuildKitSeeded).

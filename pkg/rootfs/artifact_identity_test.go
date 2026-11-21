@@ -97,3 +97,68 @@ func TestArtifactIdentityRejectsEmptyAndFailedReads(t *testing.T) {
 		t.Fatalf("interrupted artifact: %+v %v", value, err)
 	}
 }
+
+func TestArtifactPublicationRepublishesAfterWriteConflict(t *testing.T) {
+	payload := append([]byte("shared runtime base"), make([]byte, 4096)...)
+	for _, conflicts := range []int{1, 2} {
+		t.Run(fmt.Sprintf("%d conflicts", conflicts), func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "base.ext4")
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			f, err := os.Open(path) //nolint:forbidigo // This regular artifact was created in the test-owned temporary directory.
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = f.Close() }()
+			var attempts int
+			var published []byte
+			be := artifactPutBackend{put: func(_ context.Context, _ string, r io.Reader) error {
+				attempts++
+				body, err := io.ReadAll(r)
+				if err != nil {
+					return err
+				}
+				if attempts <= conflicts {
+					return fmt.Errorf("storage: s3 put: %w", storage.ErrWriteConflict)
+				}
+				published = body
+				return nil
+			}}
+			got, err := publishArtifactIdentity(t.Context(), be, "base/runner-builder-amd64.ext4", f)
+			if conflicts == 1 {
+				if err != nil || attempts != 2 || !bytes.Equal(published, payload) ||
+					got.Bytes != int64(len(payload)) || got.Digest != fmt.Sprintf("sha256:%x", sha256.Sum256(payload)) {
+					t.Fatalf("republish after one conflict: identity %+v err %v attempts %d", got, err, attempts)
+				}
+				return
+			}
+			// A second conflict is reported, not retried without bound.
+			if !errors.Is(err, storage.ErrWriteConflict) || attempts != 2 || got != (ArtifactIdentity{}) {
+				t.Fatalf("second conflict: identity %+v err %v attempts %d", got, err, attempts)
+			}
+		})
+	}
+}
+
+func TestArtifactPublicationDoesNotRepublishOtherFailures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "layer.ext4")
+	if err := os.WriteFile(path, []byte("layer"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(path) //nolint:forbidigo // This regular artifact was created in the test-owned temporary directory.
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	attempts := 0
+	denied := errors.New("access denied")
+	be := artifactPutBackend{put: func(_ context.Context, _ string, r io.Reader) error {
+		attempts++
+		_, _ = io.ReadAll(r)
+		return denied
+	}}
+	if _, err := publishArtifactIdentity(t.Context(), be, "apps/app/dep.ext4", f); !errors.Is(err, denied) || attempts != 1 {
+		t.Fatalf("err %v attempts %d, want one attempt and the original error", err, attempts)
+	}
+}

@@ -32,7 +32,11 @@ func TestParse(t *testing.T) {
 		{name: "unknown field", raw: `{"default":{"reserved":1,"maximum":4}}`, wantErr: "unknown field"},
 		{name: "trailing data", raw: `{} {}`, wantErr: "trailing data"},
 		{name: "reserved zero", raw: `{"default":{"reserved":0,"max":2}}`, wantErr: "default.reserved is 0"},
-		{name: "reserved two", raw: `{"default":{"reserved":2,"max":4}}`, wantErr: "default.reserved is 2"},
+		{
+			name: "reserved two", raw: `{"default":{"reserved":2,"max":4}}`,
+			want: builderslots.Config{Default: builderslots.Slots{Reserved: 2, Max: 4}},
+		},
+		{name: "reserved above bound", raw: `{"default":{"reserved":5,"max":6}}`, wantErr: "default.reserved is 5"},
 		{name: "max below reserved", raw: `{"default":{"reserved":1,"max":0}}`, wantErr: "default.max is 0"},
 		{name: "max above bound", raw: `{"nodes":{"n1":{"reserved":1,"max":17}}}`, wantErr: "nodes.n1.max is 17"},
 		{name: "bad node name", raw: `{"nodes":{"bad name":{"reserved":1,"max":2}}}`, wantErr: "not a compute node name"},
@@ -95,6 +99,31 @@ func TestForAndClamp(t *testing.T) {
 		if got != tt.want || clamped != tt.wantClamp || got.Borrowed() != tt.wantBorrow {
 			t.Fatalf("Clamp(For(%q), %d) = %+v, %t (borrowed %d); want %+v, %t (borrowed %d)",
 				tt.node, tt.cpus, got, clamped, got.Borrowed(), tt.want, tt.wantClamp, tt.wantBorrow)
+		}
+	}
+}
+
+// A node runs the reserved slots it was provisioned with, whatever
+// builder_slots asks for, and keeps max at or above them (ADR-20261118154632
+// amendment 1).
+func TestProvisioned(t *testing.T) {
+	tests := []struct {
+		in          builderslots.Slots
+		provisioned int
+		want        builderslots.Slots
+		wantChanged bool
+	}{
+		{in: builderslots.Slots{Reserved: 1, Max: 2}, provisioned: 1, want: builderslots.Slots{Reserved: 1, Max: 2}},
+		{in: builderslots.Slots{Reserved: 1, Max: 2}, provisioned: 2, want: builderslots.Slots{Reserved: 2, Max: 2}, wantChanged: true},
+		{in: builderslots.Slots{Reserved: 1, Max: 8}, provisioned: 2, want: builderslots.Slots{Reserved: 2, Max: 8}, wantChanged: true},
+		{in: builderslots.Slots{Reserved: 3, Max: 3}, provisioned: 1, want: builderslots.Slots{Reserved: 1, Max: 3}, wantChanged: true},
+		{in: builderslots.Slots{Reserved: 1, Max: 1}, provisioned: 0, want: builderslots.Slots{Reserved: 1, Max: 1}},
+		{in: builderslots.Slots{Reserved: 1, Max: 2}, provisioned: 9, want: builderslots.Slots{Reserved: 4, Max: 4}, wantChanged: true},
+	}
+	for _, tt := range tests {
+		got, changed := builderslots.Provisioned(tt.in, tt.provisioned)
+		if got != tt.want || changed != tt.wantChanged {
+			t.Fatalf("Provisioned(%+v, %d) = %+v, %t; want %+v, %t", tt.in, tt.provisioned, got, changed, tt.want, tt.wantChanged)
 		}
 	}
 }

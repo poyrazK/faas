@@ -57,7 +57,7 @@ func (s *server) obsAttentionSummary(w http.ResponseWriter, r *http.Request, _ s
 	out := api.ObsAttentionSummaryResponse{WindowDays: int(api.AttentionSummaryWindow / (24 * time.Hour)), Items: make([]api.ObsAttentionKindSummary, 0, len(rows))}
 	for _, k := range rows {
 		out.Items = append(out.Items, api.ObsAttentionKindSummary{Kind: k.Kind, Total: k.Total, Open: k.Open, Contacted: k.Contacted,
-			FalsePositive: k.FalsePositive, OtherDismissed: k.OtherDismissed, ResolvedOnOwn: k.ResolvedOnOwn,
+			FalsePositive: k.FalsePositive, OtherDismissed: k.OtherDismissed, ResolvedOnOwn: k.ResolvedOnOwn, NoOutcome: k.NoOutcome,
 			FalsePositivePercent: k.FalsePositivePercent(), MedianActSeconds: k.MedianActSeconds})
 	}
 	writeJSON(w, http.StatusOK, out)
