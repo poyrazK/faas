@@ -7,7 +7,15 @@
  */
 export type ExecutionLimitRequest = {
   /**
-   * Zero uses the plan default.
+   * Standard preserves existing plan limits; extended opts into an admission-to-result budget up to 300000 ms and a smaller shared concurrency cap.
+   */
+  execution_class?: 'standard' | 'extended';
+  /**
+   * Independent stored output byte budget; requires stored output_files. Zero selects the plan default constrained by scratch headroom.
+   */
+  max_artifact_bytes?: number;
+  /**
+   * Zero uses the class default: standard 5000 ms, extended 300000 ms. Standard plan maxima remain unchanged.
    */
   timeout_ms?: number;
   memory_mb?: 0 | 128 | 256 | 512 | 1024;

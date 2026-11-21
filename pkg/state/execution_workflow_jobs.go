@@ -55,11 +55,13 @@ type CreateExecutionWorkflowJobParams struct {
 }
 
 type ExecutionWorkflowJobUpdate struct {
-	Status       api.ManagedExecutionWorkflowStatus
-	NextStep     int
-	ScheduledFor time.Time
-	LastError    string
-	UpdatedAt    time.Time
+	PipelineProgress   *api.ExecutionPipelineProgress
+	PipelineCompletion *api.ExecutionPipelineCompletion
+	Status             api.ManagedExecutionWorkflowStatus
+	NextStep           int
+	ScheduledFor       time.Time
+	LastError          string
+	UpdatedAt          time.Time
 }
 
 // ExecutionWorkflowJobStore is the durable queue seam used by apid's

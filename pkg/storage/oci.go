@@ -325,6 +325,8 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		return "", "", fmt.Errorf("%w: %q has no namespace", ErrInvalidKey, key)
 	}
 	switch parts[0] {
+	case repoRunEnvironments:
+		return planRunEnvironment(key)
 	case repoApps:
 		// apps/<slug>/<dep>.ext4 → repo "apps", tag "<slug>__<dep>".
 		// The "__" separator is unambiguous because the slug charset
@@ -396,6 +398,9 @@ func (o *OCIRegistryStorageBackend) plan(key string) (repo, ref string, err erro
 		}
 		return repoKernel, parts[1], nil
 	case repoScans:
+		if strings.HasPrefix(key, "scans/run-environments/") {
+			return planRunEnvironment(key)
+		}
 		// scans/<base-name>.scan.json → repo "scans", tag
 		// "<base-name>.scan.json". Scan sidecars are opaque JSON
 		// artifacts, but their names already satisfy the OCI tag
@@ -939,7 +944,9 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix s
 	case repoKernel:
 		return []string{repoKernel}, nil
 	case repoScans:
-		return []string{repoScans}, nil
+		return []string{repoScans, repoRunEnvironmentScans}, nil
+	case repoRunEnvironments:
+		return []string{repoRunEnvironments}, nil
 	case repoSigs:
 		var out []string
 		sigPrefix := o.prefix + "/" + repoSigs + "/"
@@ -956,6 +963,12 @@ func (o *OCIRegistryStorageBackend) reposForPrefix(ctx context.Context, prefix s
 	case repoSBOMs:
 		return []string{repoSBOMs}, nil
 	default:
+		if strings.HasPrefix(prefix, repoRunEnvironments+"/") {
+			return []string{repoRunEnvironments}, nil
+		}
+		if strings.HasPrefix(prefix, "scans/run-environments") {
+			return []string{repoRunEnvironmentScans}, nil
+		}
 		parts := strings.Split(prefix, "/")
 		if len(parts) >= 2 && parts[0] == repoSnap && depIDCharset.MatchString(parts[1]) {
 			return []string{"snap-" + parts[1]}, nil
@@ -1083,6 +1096,8 @@ func (o *OCIRegistryStorageBackend) ReconcileSnapshotRepositoryIndex(ctx context
 // deployment portion itself contains four dashes.)
 func (o *OCIRegistryStorageBackend) unplan(repo, tag string) (string, bool) {
 	switch repo {
+	case repoRunEnvironments, repoRunEnvironmentScans:
+		return unplanRunEnvironment(repo, tag)
 	case repoApps:
 		idx := strings.Index(tag, appsTagSep)
 		if idx < 0 {

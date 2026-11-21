@@ -155,6 +155,13 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	executionEnvironments          map[string]ExecutionEnvironment
+	executionTaskVersions          map[string]ExecutionTaskVersion
+	executionTaskInvocations       map[string]ExecutionTaskInvocation
+	runBudgets                     map[string]api.RunBudgetPolicy
+	runBindings                    map[string]api.RunAttributionBinding
+	runReservations                map[string]runControlReservation
+	runBudgetAlerts                map[string]api.RunBudgetAlert
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
@@ -1117,7 +1124,12 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionFiles                  map[string]ExecutionFile
+	executionFileLinks              map[string][]string
+	executionAdmissionMu            sync.Mutex
+	executionAdmissions             map[executionAdmissionKey]executionAdmission
 	executionWorkflowJobs           map[string]ExecutionWorkflowJob
+	executionPipelines              map[string]ExecutionPipeline
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -2064,6 +2076,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		executionArtifactGrants:              map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs:      map[string][]string{},
 		executionWorkflowJobs:                map[string]ExecutionWorkflowJob{},
+		executionPipelines:                   map[string]ExecutionPipeline{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -25207,6 +25220,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		if workflow.AccountID == id {
 			clear(workflow.SealedPlan)
 			delete(m.executionWorkflowJobs, workflowID)
+			delete(m.executionPipelines, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

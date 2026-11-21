@@ -15,12 +15,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"google.golang.org/grpc/status"
+
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/ociidentity"
+	"github.com/onebox-faas/faas/pkg/runfile"
 	"github.com/onebox-faas/faas/pkg/wakeownershipwire"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc/codes"
@@ -264,6 +267,8 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 			api.CodeValidation, "Invalid execution request", "version is outside the supported range")
 	}
 	wireReq := executionproto.Request{
+		EnvironmentID:   req.GetEnvironmentId(),
+		Class:           api.ExecutionClass(req.GetExecutionClass()),
 		Profile:         api.ExecutionProfile(req.GetProfile()),
 		Version:         uint16(req.GetVersion()),
 		ExecutionID:     req.GetExecutionId(),
@@ -279,6 +284,9 @@ func executionRequestFromProto(req *vmmdpb.ExecuteExecutionRequest) (executionpr
 	}
 	for _, file := range req.GetFiles() {
 		wireReq.Files = append(wireReq.Files, api.ExecutionFile{Path: file.GetPath(), Content: append([]byte{}, file.GetContent()...)})
+	}
+	if err := decodeExecutionFileManifest(req, &wireReq); err != nil {
+		return executionproto.Request{}, err
 	}
 	if err := wireReq.Validate(); err != nil {
 		return executionproto.Request{}, api.NewProblem(int(codes.InvalidArgument),
@@ -303,7 +311,7 @@ func executionResponseFromResult(executionID string, result executionproto.Resul
 		PeakMemoryMb:    int32(result.Usage.PeakMemoryMB),
 	}
 	for _, artifact := range result.Artifacts {
-		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...)})
+		resp.Artifacts = append(resp.Artifacts, &vmmdpb.ExecutionArtifact{Name: artifact.Name, SizeBytes: int32(artifact.SizeBytes), Sha256: artifact.SHA256, Content: append([]byte{}, artifact.Content...), FileId: artifact.FileID})
 	}
 	if result.ExitCode != nil {
 		resp.ExitCode = wrapperspb.Int32(int32(*result.ExitCode))
@@ -1173,4 +1181,29 @@ func quietPauseAfterFromWire(ms int64) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func decodeExecutionFileManifest(req *vmmdpb.ExecuteExecutionRequest, wire *executionproto.Request) error {
+	if len(req.GetPrivateFileManifest()) == 0 {
+		if wire.Version == executionproto.FileVersion {
+			return status.Error(codes.InvalidArgument, "file manifest required")
+		}
+		return nil
+	}
+	if wire.Version < executionproto.FileVersion || len(req.GetPrivateFileManifest()) > api.ExecutionContractSchemaMaxBytes {
+		return status.Error(codes.InvalidArgument, "invalid file manifest")
+	}
+	var manifest executionproto.FileManifest
+	if json.Unmarshal(req.GetPrivateFileManifest(), &manifest) != nil || !runfile.ValidOwnerID(manifest.AccountID) {
+		return status.Error(codes.InvalidArgument, "invalid file manifest")
+	}
+	wire.Manifest = &manifest
+	wire.MaxArtifactBytes = req.GetMaxArtifactBytes()
+	for _, ref := range manifest.Inputs {
+		wire.InputFiles = append(wire.InputFiles, ref.Descriptor)
+	}
+	for _, ref := range manifest.Outputs {
+		wire.StoredOutputs = append(wire.StoredOutputs, ref.Descriptor)
+	}
+	return nil
 }

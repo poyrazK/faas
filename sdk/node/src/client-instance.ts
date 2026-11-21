@@ -25,6 +25,7 @@ type Methods<T> = {
 export type ClientConfig = Readonly<OpenAPIConfig> & {
   readonly FETCH: typeof fetch;
   readonly timeoutMs?: number;
+  readonly idempotencyKey?: IdempotencyKey;
   readonly requestFetch: (options: RequestOptions) => typeof fetch;
 };
 
@@ -99,7 +100,7 @@ export function bindClient<Services extends Record<string, object>, Helpers exte
       config = Object.freeze({ ...config, BASE: normalizeBaseURL(value) });
     },
     setIdempotencyKey(key: IdempotencyKey | undefined) {
-      config = Object.freeze({ ...config, ...transports(key) });
+      config = Object.freeze({ ...config, idempotencyKey: key, ...transports(key) });
     },
   };
   for (const [name, service] of Object.entries(services)) {

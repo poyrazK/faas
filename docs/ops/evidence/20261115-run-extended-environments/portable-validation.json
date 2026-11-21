@@ -1,0 +1,99 @@
+{
+  "checks": {
+    "acceptance_verdict": {
+      "portable_negative_tests": 18,
+      "result": "pass"
+    },
+    "api_and_image_publication": {
+      "package_result": "pass",
+      "selected_test_and_subtest_passes": 122
+    },
+    "api_writer_rollback_replay": {
+      "package_result": "pass",
+      "selected_tests": 1
+    },
+    "builder": {
+      "bounded_export_reader_and_cleanup_rerun": "pass",
+      "package_result": "pass",
+      "selected_test_and_subtest_passes": 9
+    },
+    "cli": {
+      "guarded_manifest_reader_rerun": "pass",
+      "package_result": "pass",
+      "selected_test_and_subtest_passes": 52
+    },
+    "compatibility": {
+      "api_schema_parity": "pass",
+      "clone_schema_registry": "pass",
+      "env_contract": "pass",
+      "migration_expand_contract_lint": "pass",
+      "schema_dump_and_sqlc": "pass",
+      "test_store_check": "pass",
+      "version_skew": "pass"
+    },
+    "environment_service": {
+      "package_result": "pass",
+      "selected_tests": 2
+    },
+    "lint": {
+      "bash_syntax": "pass",
+      "changed_core_and_light_go_packages": "pass",
+      "linux_metal_selected_packages": {
+        "evidence": "linux-lint.json",
+        "packages": [
+          "guest/init",
+          "guest/executor",
+          "pkg/builderd",
+          "pkg/e2etest/runlifecycle"
+        ],
+        "result": "pass"
+      },
+      "shellcheck": "pass"
+    },
+    "private_protocol": {
+      "result": "pass",
+      "scope": "class/environment v5 and stored-file v4/v5 12 MiB round trips"
+    },
+    "scheduler": {
+      "package_result": "pass",
+      "selected_test_and_subtest_passes": 168
+    },
+    "sdk": {
+      "node_tests": 6,
+      "python_tests": 8,
+      "standalone_go_contracts": "pass"
+    },
+    "state_mem_and_postgresql": {
+      "result": "pass",
+      "scope": "class quotas/claim separation and environment admission, leases, retirement and GC"
+    },
+    "storage": {
+      "result": "pass",
+      "scope": "closed namespace, private umask, OCI transport/restart/list/delete"
+    }
+  },
+  "initial_infrastructure_failures": "An earlier API/imaged link ran out of local disk; both packages passed the subsequent selected rerun. Shared caches were not cleared by this task.",
+  "post_compiled_snapshot_changes": "Only documentation, generated protobuf tool-version comments, and the spec-compliance DTO discovery test changed after the compiled source manifest. Production behavior is unchanged.",
+  "raw_local_log_sha256": {
+    "builder-final.log": "60f4900b238425c5fc51d614601c56ffba7dd9abbcfd05cf371e3c1a96b6d2f3",
+    "cli-final.log": "7ffe41290a0d39a6a663e9eb4a9cc688b3f280ab166e2226c66bdf9afbea2f3a",
+    "env-contract-tests.log": "a8e03c0d69e90a2f390b99f5f21a054e4007eb6625e4a90b4e09553d4c898a46",
+    "go-sdk-tests.log": "7921ef8d170c758b0560a91573ad8cb40cec9d43ebd7086a0ba4e70247b079c9",
+    "light-tests.log": "dd8f01410b328e9a4f88ddd41b1027091eb403d3f8e1b39577ae2b1addb8cbd0",
+    "lint-core.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "lint-light.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "node-tests.log": "9d551e206f3ffe2c19a48548887d7cb545451724f596b924be48ffb3f5fd7bed",
+    "protocol-tests.log": "b0f4a0100c7d883e0f786289e651e70d66ca24a70173043df8a018dcd805f6dc",
+    "python-tests.log": "e7626ae5dafe90912f5a0283d1aca52aa9b1b490f7d5c96c6b0602b691f4b4fe",
+    "registry-tests.log": "1c9772dfb50c9eff41e354c32d7c81e079c12c6df4ea17bcfffc78d857ec2730",
+    "schema.log": "223aa4c720db91ad49c7fe7cc4a9010dd65a2b4385c34aadd24d285acea812b4",
+    "spec-tests.log": "aed45142f2a15756cda2c3af4e58f4cd372b35deeb5cf2a530075371a44b9917",
+    "sqlc.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "state-tests.log": "cf6872ad33c32d7070af8cc98f2edb5d3f178a862e01268578d6be4fdc463a1c",
+    "storage-tests.log": "18d6abab6b928717e8fc064c0814ab6a5a2d2df8f3b0ad5a0848c8b6fe056887",
+    "teststorecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "version-skew.log": "15e79d5f21c48174d939f379852c2624eb767fb4c78bd0df1c744231dbc49281"
+  },
+  "schema": "gregale.run-extended-environments-portable-validation/v1",
+  "scope": "selected feature regressions, not the full repository test suite"
+}

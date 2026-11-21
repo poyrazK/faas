@@ -82,8 +82,9 @@ const (
 	applicationStandardMutationsFile = "application_standard_mutations.go"
 	standardAssignmentsFile          = "application_standard_assignments.go"
 	standardRolloutMutationsFile     = "application_standard_operation_mutations.go"
-	executionCapabilitiesFile        = "execution_capabilities.go"     // ADR-171 — Runs preflight capability DTOs
-	executionArtifactGrantsFile      = "execution_artifact_grants.go"  // ADR-171 — one-time cross-agent artifact capabilities
+	executionCapabilitiesFile        = "execution_capabilities.go"    // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile      = "execution_artifact_grants.go" // ADR-171 — one-time cross-agent artifact capabilities
+	executionPipelineFile            = "execution_pipelines.go"
 	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
@@ -529,6 +530,10 @@ var routeExclude = map[string]bool{
 	"POST /v1/agent-runs/{id}/approvals/{approval_id}":          true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
+	"GET /v1/agent-tools/pipelines/{id}/events":                 true, // internal app/workload Agent progress
+	"GET /v1/agent-tools/pipelines/{id}":                        true, // internal app/workload Agent continuation receipt
+	"GET /v1/agent-tools/runs/{id}":                             true,
+	"GET /v1/agent-tools/runs/{id}/artifacts/{artifact...}":     true,
 
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -848,6 +853,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"RunHistoryFilter": true, // Go-only URL query options; selectors are declared on the route.
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
@@ -1166,6 +1172,8 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"RunBudgetKind":  true, // Closed route selector; Go clients use a string.
+	"RunBindingKind": true, // Closed route selector; Go clients use a string.
 	// Browser management envelopes are anonymous structs in
 	// handlers_github_accounts.go and middleware's named-CSRF decoder.
 	"GitHubAccountConnections":      true,
@@ -2068,7 +2076,18 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
+		filepath.Join(root, "pkg", "api", executionPipelineFile),
+		filepath.Join(root, "pkg", "api", "execution_pipeline_completion.go"),
+		filepath.Join(root, "pkg", "api", "execution_pipeline_progress.go"),
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
+		filepath.Join(root, "pkg", "api", "execution_files.go"),
+		filepath.Join(root, "pkg", "api", "agent_execution_files.go"),
+		filepath.Join(root, "pkg", "api", "execution_contracts.go"),
+		filepath.Join(root, "pkg", "api", "execution_tasks.go"),
+		filepath.Join(root, "pkg", "api", "run_controls.go"),
+		filepath.Join(root, "pkg", "api", "run_artifact_deliveries.go"),
+		filepath.Join(root, "pkg", "api", "execution_environments.go"),
+		filepath.Join(root, "pkg", "api", "execution_environment_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", imageRunsFile),

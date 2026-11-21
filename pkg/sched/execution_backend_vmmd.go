@@ -1,6 +1,7 @@
 package sched
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/executioncontract"
 	"github.com/onebox-faas/faas/pkg/executionpayload"
 	"github.com/onebox-faas/faas/pkg/executionproto"
 )
@@ -228,12 +230,14 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 		// fixed structural error at this boundary.
 		return ExecutionOutcome{}, errors.New("sched: decode execution payload failed")
 	}
-	if decoded.Profile.Normalized() != s.request.Profile.Normalized() {
+	if decoded.EnvironmentID != s.request.EnvironmentID || decoded.Profile.Normalized() != s.request.Profile.Normalized() {
 		return ExecutionOutcome{}, errors.New("sched: execution profile differs from sealed request")
 	}
 	resolved := api.ResolvedExecutionRequest{
-		Profile: s.request.Profile.Normalized(),
-		Runtime: s.request.Runtime, Source: decoded.Source,
+		EnvironmentID: s.request.EnvironmentID,
+		Profile:       s.request.Profile.Normalized(),
+		Runtime:       s.request.Runtime, Source: decoded.Source,
+		StoredInputs: decoded.StoredInputs, StoredOutputs: decoded.StoredOutputs,
 		Entrypoint:  decoded.Entrypoint,
 		Files:       append([]api.ExecutionFile(nil), decoded.Files...),
 		OutputFiles: append([]string(nil), decoded.OutputFiles...),
@@ -241,6 +245,9 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 		Limits:      s.request.Limits, Network: api.ExecutionNetworkPolicy{Mode: s.request.NetworkMode},
 	}
 	wireRequest := executionproto.RequestFromResolvedExecution(s.request.ID, resolved)
+	if wireRequest.UsesFileTransport() {
+		wireRequest.Manifest = &executionproto.FileManifest{AccountID: s.request.AccountID, Inputs: decoded.StoredInputs, Outputs: decoded.StoredOutputs}
+	}
 	// The durable deadline includes queue and restore time. Never grant a
 	// restored guest the full admitted timeout after a slow restore.
 	if deadline, ok := ctx.Deadline(); ok {
@@ -257,12 +264,14 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 	}
 
 	var result executionproto.Result
-	if receive != nil {
+	if receive != nil || wireRequest.UsesFileTransport() {
 		if streaming, ok := s.transport.(streamingVmmdExecutionTransport); ok {
 			result, err = streaming.ExecuteWithOutput(ctx, wireRequest, receive)
-			if err != nil && executionOutputUnavailable(err) {
+			if err != nil && executionOutputUnavailable(err) && !wireRequest.UsesFileTransport() {
 				result, err = s.transport.Execute(ctx, wireRequest)
 			}
+		} else if wireRequest.UsesFileTransport() {
+			return ExecutionOutcome{}, errors.New("sched: file execution transport unavailable")
 		} else {
 			result, err = s.transport.Execute(ctx, wireRequest)
 		}
@@ -278,7 +287,15 @@ func (s *vmmdExecutionSession) execute(ctx context.Context, payload ExecutionPay
 	if result.Status == api.ExecutionStatusSucceeded && !api.ExecutionArtifactsMatch(decoded.OutputFiles, result.Artifacts) {
 		return ExecutionOutcome{}, errors.New("sched: missing requested execution artifacts")
 	}
-	return outcomeFromProtocolResult(result), nil
+	outcome := outcomeFromProtocolResult(result)
+	if result.Status == api.ExecutionStatusSucceeded {
+		validation, err := executioncontract.Validate(result.Result, decoded.ResultSchema)
+		if err != nil {
+			return ExecutionOutcome{}, err
+		}
+		outcome.ResultValidation = validation
+	}
+	return outcome, nil
 }
 
 func executionOutputUnavailable(err error) bool {
@@ -291,13 +308,17 @@ func (s *vmmdExecutionSession) Destroy(ctx context.Context) error {
 		return nil
 	}
 	s.destroyMu.Lock()
+	defer s.destroyMu.Unlock()
 	if s.destroyed {
-		s.destroyMu.Unlock()
 		return nil
 	}
+	// A failed or still-running transport stop is not a retirement receipt.
+	// Join concurrent callers and retain the ability to retry an idempotent stop.
+	if err := s.transport.Destroy(ctx); err != nil {
+		return err
+	}
 	s.destroyed = true
-	s.destroyMu.Unlock()
-	return s.transport.Destroy(ctx)
+	return nil
 }
 
 func outcomeFromProtocolResult(result executionproto.Result) ExecutionOutcome {
@@ -313,6 +334,12 @@ func outcomeFromProtocolResult(result executionproto.Result) ExecutionOutcome {
 	}
 	if result.Status == api.ExecutionStatusSucceeded {
 		return outcome
+	}
+	// The guest wire protocol requires a JSON value even on failure, using
+	// null as its empty sentinel. Durable failed receipts have no result.
+	// Keep non-null payloads for the coordinator to reject as malformed.
+	if bytes.Equal(bytes.TrimSpace(outcome.Result), []byte("null")) {
+		outcome.Result = nil
 	}
 	// Guest language errors are not safe public detail: they may contain source
 	// snippets, filesystem paths, or secrets from a stack trace. Keep only a
