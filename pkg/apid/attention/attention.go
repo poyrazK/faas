@@ -38,8 +38,12 @@ var ErrNotFound = errors.New("attention: no open signal with this id")
 // ErrInvalid wraps rejected dismiss input.
 var ErrInvalid = errors.New("attention: invalid input")
 
-// refusedBurstIgnored are problem codes that repeat in healthy use.
-var refusedBurstIgnored = []string{api.CodeNotFound}
+// refusedBurstIgnored are problem codes that repeat in healthy use. The MFA
+// prompts belong to a person signing in: a dashboard fires its reads while the
+// session still waits for the authenticator code, and each comes back
+// mfa_required (or step_up_required before a sensitive action). Repeated
+// mfa_invalid_code still counts; that customer may have lost their device.
+var refusedBurstIgnored = []string{api.CodeNotFound, api.CodeMFARequired, api.CodeStepUpRequired}
 
 // limitCodePredicate selects plan-limit and quota refusals: the
 // plan_limit_* family, *_quota_exceeded and *_limit_exceeded. Rate limits
@@ -480,6 +484,10 @@ type KindSummary struct {
 	Kind                                  string
 	Total, Open, Contacted, FalsePositive int64
 	OtherDismissed, ResolvedOnOwn         int64
+	// NoOutcome counts closed signals with no outcome: those dismissed or
+	// resolved before outcomes were recorded. With it the columns add up
+	// to Total.
+	NoOutcome int64
 	// MedianActSeconds is the median time from first seen to contact or
 	// dismissal; nil when nobody acted.
 	MedianActSeconds *float64
@@ -516,6 +524,7 @@ func (e *Evaluator) Summary(ctx context.Context, since time.Time) ([]KindSummary
 		count(*) FILTER (WHERE outcome = 'false_positive'),
 		count(*) FILTER (WHERE outcome IN ('platform_issue', 'already_in_touch', 'not_needed')),
 		count(*) FILTER (WHERE outcome = 'resolved_on_own'),
+		count(*) FILTER (WHERE state <> 'open' AND outcome IS NULL),
 		percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM dismissed_at - first_seen_at))
 			FILTER (WHERE dismissed_at IS NOT NULL AND outcome IS NOT NULL AND outcome <> 'resolved_on_own')
 		FROM customer_attention_signals WHERE first_seen_at >= $1 GROUP BY kind`, since)
@@ -526,7 +535,7 @@ func (e *Evaluator) Summary(ctx context.Context, since time.Time) ([]KindSummary
 	byKind := map[string]KindSummary{}
 	for rows.Next() {
 		var k KindSummary
-		if err := rows.Scan(&k.Kind, &k.Total, &k.Open, &k.Contacted, &k.FalsePositive, &k.OtherDismissed, &k.ResolvedOnOwn, &k.MedianActSeconds); err != nil {
+		if err := rows.Scan(&k.Kind, &k.Total, &k.Open, &k.Contacted, &k.FalsePositive, &k.OtherDismissed, &k.ResolvedOnOwn, &k.NoOutcome, &k.MedianActSeconds); err != nil {
 			return nil, fmt.Errorf("attention: summary: %w", err)
 		}
 		byKind[k.Kind] = k
