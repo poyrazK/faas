@@ -63,7 +63,9 @@ measured on prod before the next.
 4. **One exchange per connection at a time**, and a per-node pool of idle
    connections on the gateway, as the edge's binary hop does. A connection
    goes back to the pool only after a clean exchange: the client ended its
-   send side and the server sent the final status. Anything else closes it.
+   send side and the server's final status says it keeps the connection
+   (`frameStatus`; `frameStatusClose` otherwise). An idle pooled connection
+   is watched by a blocked read, so one vmmd closed is never reused.
 5. **Cancellation.** The gateway cancels by closing the connection. vmmd
    reads the connection for as long as the handler runs, and cancels the
    handler's context when it ends early.
@@ -107,7 +109,9 @@ a test that runs before the switches can be turned on.
    The context never carries a peer without TLS state, so the unix-socket
    trust branch of `authorizeCaller` cannot be reached. Only
    `ForwardHTTPStream` is served; any other method name is refused before a
-   handler runs. Tests: a gateway certificate is served; schedd's is allowed
+   handler runs. vmmd reads none of the client's frames until the handler's
+   first receive, which the interceptor allows only after authorizing the
+   caller, so a refused certificate cannot make vmmd buffer messages. Tests: a gateway certificate is served; schedd's is allowed
    as the policy allows it; builderd's and imaged's are refused; a connection
    without a client certificate fails the handshake.
 3. **Same limits, strict framing.** A message is at most 4 MiB (gRPC's
@@ -123,6 +127,11 @@ a test that runs before the switches can be turned on.
    handshake still fills `peer.AuthInfo`.
 
 ## Consequences
+
+- `BenchmarkForward{GRPC,Hop}` (`-cpu 1`, both ends in one process, mTLS,
+  a hello-world exchange) on an M3 Pro under load from parallel builds:
+  gRPC 218–391 µs and 224 allocations per exchange, the hop 73–112 µs and
+  109. A prod A/B on one node decides whether phase 1 ships on.
 
 - Phase 1 removes gRPC's HTTP/2 transport, hpack and per-stream goroutines
   from both daemons on the request path, keeping protobuf, TLS and every
