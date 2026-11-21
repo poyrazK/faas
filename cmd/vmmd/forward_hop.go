@@ -27,6 +27,10 @@ func wrapForwardHop(lis net.Listener, serverTLS *tls.Config, impl *vmmdgrpc.Serv
 	if strings.TrimSpace(getenv(forwardHopEnv)) != "1" {
 		return lis
 	}
+	if impl == nil {
+		log.Warn("vmmd: forward hop has no service; staying on gRPC only")
+		return lis
+	}
 	if serverTLS == nil || lis.Addr().Network() != "tcp" {
 		log.Warn("vmmd: forward hop needs the TCP mTLS listener; staying on gRPC only", "listener", lis.Addr().String())
 		return lis

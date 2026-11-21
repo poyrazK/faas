@@ -151,10 +151,10 @@ func TestRestartNoticeReadsAreShared(t *testing.T) {
 
 func TestNodeClientCacheHoldsOnlyWithNotices(t *testing.T) {
 	plain := NewNodeClientCache(nil, nil)
-	if _, held := plain.client("n", nil).(restartHoldClient); held {
+	if _, held := plain.client("n", &nodeConn{}).(restartHoldClient); held {
 		t.Fatal("a cache without notices wrapped its client")
 	}
-	if _, held := NewNodeClientCache(nil, nil).WithRestartNotices(&noticeTable{}).client("n", nil).(restartHoldClient); !held {
+	if _, held := NewNodeClientCache(nil, nil).WithRestartNotices(&noticeTable{}).client("n", &nodeConn{}).(restartHoldClient); !held {
 		t.Fatal("a cache with notices did not wrap its client")
 	}
 	if plain.WithRestartNotices(nil).restartNotices != nil {

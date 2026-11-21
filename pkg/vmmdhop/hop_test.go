@@ -111,6 +111,7 @@ type fakeVmmd struct {
 	vmmdpb.UnimplementedVmmdServer
 	calls   atomic.Int64
 	block   bool
+	release chan struct{} // when set, the handler waits for it before answering
 	ended   chan error
 	details bool
 }
@@ -130,6 +131,9 @@ func (f *fakeVmmd) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		<-ctx.Done()
 		f.ended <- ctx.Err()
 		return ctx.Err()
+	}
+	if f.release != nil {
+		<-f.release
 	}
 	cn, _ := wire.PeerCN(ctx)
 	md, _ := metadata.FromIncomingContext(ctx)
@@ -164,6 +168,7 @@ func firstOf(v []string) string {
 }
 
 type testVmmd struct {
+	hop  *Listener
 	addr string
 	fake *fakeVmmd
 	pki  *testPKI
@@ -181,7 +186,8 @@ func startVmmd(t *testing.T, fake *fakeVmmd, hop bool) *testVmmd {
 	}
 	gsrv := grpc.NewServer(grpc.Creds(credentials.NewTLS(serverCfg)), grpc.ChainStreamInterceptor(vmmdgrpc.CallerPolicyStreamInterceptor()))
 	vmmdpb.RegisterVmmdServer(gsrv, fake)
-	served := lis
+	var served net.Listener = lis
+	var hopLis *Listener
 	if hop {
 		srv, err := NewServer(ServerConfig{
 			TLS: serverCfg, Service: fake, Interceptor: vmmdgrpc.CallerPolicyStreamInterceptor(),
@@ -190,11 +196,12 @@ func startVmmd(t *testing.T, fake *fakeVmmd, hop bool) *testVmmd {
 		if err != nil {
 			t.Fatal(err)
 		}
-		served = NewListener(lis, srv)
+		hopLis = NewListener(lis, srv)
+		served = hopLis
 	}
 	go func() { _ = gsrv.Serve(served) }()
 	t.Cleanup(gsrv.Stop)
-	return &testVmmd{addr: lis.Addr().String(), fake: fake, pki: pki}
+	return &testVmmd{hop: hopLis, addr: lis.Addr().String(), fake: fake, pki: pki}
 }
 
 func (v *testVmmd) client(t *testing.T, cn string) *Client {
@@ -434,5 +441,43 @@ func TestFrameLimits(t *testing.T) {
 	}
 	if _, _, err := readFrame(bufioReader([]byte{frameMessage, 5, 1, 2}), MaxMessageBytes); err == nil {
 		t.Fatal("a truncated frame was read")
+	}
+}
+
+// Closing the listener drains the hop as gRPC's graceful stop does: an
+// exchange in flight finishes, and an idle connection ends.
+func TestListenerCloseDrains(t *testing.T) {
+	fake := &fakeVmmd{release: make(chan struct{})}
+	v := startVmmd(t, fake, true)
+	c := v.client(t, "gatewayd-internal.faas")
+	done := make(chan error, 1)
+	go func() {
+		_, body, err := forward(t, context.Background(), c, "inflight")
+		if err == nil && body != "inflight" {
+			err = errors.New("wrong body " + body)
+		}
+		done <- err
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for fake.calls.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if err := v.hop.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(fake.release)
+	if err := <-done; err != nil {
+		t.Fatalf("in-flight exchange: %v", err)
+	}
+	// The connection went back to the pool clean; the draining server then
+	// closed it, so the pool must not hand it out.
+	time.Sleep(50 * time.Millisecond)
+	c.mu.Lock()
+	idle := append([]*clientConn(nil), c.idle...)
+	c.mu.Unlock()
+	for _, cc := range idle {
+		if cc.alive() {
+			t.Fatal("an idle connection survived the drain")
+		}
 	}
 }
