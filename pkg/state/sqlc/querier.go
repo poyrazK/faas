@@ -5763,6 +5763,7 @@ type Querier interface {
 	PipelineDeliveryForRun(ctx context.Context, db DBTX, arg PipelineDeliveryForRunParams) (PipelineDeliveryForRunRow, error)
 	PipelineDeliveryGet(ctx context.Context, db DBTX, arg PipelineDeliveryGetParams) (PipelineDeliveryGetRow, error)
 	PipelineGet(ctx context.Context, db DBTX, jobID pgtype.UUID) (ExecutionWorkflowPipeline, error)
+	PipelineHistoryPage(ctx context.Context, db DBTX, arg PipelineHistoryPageParams) ([]PipelineHistoryPageRow, error)
 	PipelineInsert(ctx context.Context, db DBTX, arg PipelineInsertParams) error
 	PipelineJobExists(ctx context.Context, db DBTX, arg PipelineJobExistsParams) (bool, error)
 	PipelineJobInsert(ctx context.Context, db DBTX, arg PipelineJobInsertParams) (pgtype.UUID, error)
@@ -5770,6 +5771,7 @@ type Querier interface {
 	PipelineLock(ctx context.Context, db DBTX, jobID pgtype.UUID) (ExecutionWorkflowPipeline, error)
 	PipelinePreviousRun(ctx context.Context, db DBTX, id pgtype.UUID) (PipelinePreviousRunRow, error)
 	PipelineRunByLabel(ctx context.Context, db DBTX, arg PipelineRunByLabelParams) (Execution, error)
+	PipelineRunUsage(ctx context.Context, db DBTX, arg PipelineRunUsageParams) ([]PipelineRunUsageRow, error)
 	PipelineScopedJob(ctx context.Context, db DBTX, arg PipelineScopedJobParams) (AgentExecutionWorkflow, error)
 	PipelineSetCompletion(ctx context.Context, db DBTX, arg PipelineSetCompletionParams) error
 	PipelineSetJournal(ctx context.Context, db DBTX, arg PipelineSetJournalParams) error

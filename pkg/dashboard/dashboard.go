@@ -114,6 +114,7 @@ type MFAChallengeData struct {
 
 // IndexData is the /dashboard/ overview payload.
 type IndexData struct {
+	RunPipelines       bool
 	DeployedAppCount   int
 	DeveloperAppCount  int
 	DeveloperAppsLimit int
@@ -685,6 +686,7 @@ type AppInstancesData struct {
 // and queues page. Jobs, runs, and async invocation history are account-scoped;
 // queue sections are app-scoped and include bounded pending/dead-letter samples.
 type JobsQueuesData struct {
+	RunPipelines            bool
 	Jobs                    []JobPageItem
 	Runs                    []JobRunPageItem
 	Queues                  []QueuePageItem

@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/runfiles"
 	"github.com/onebox-faas/faas/pkg/apid/runpipeline"
+	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/runtask"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -190,6 +191,18 @@ func exercisePipelineRecovery(t *testing.T, s contractTestStore, oldClaim func(s
 	if e != nil || childMeta.Completion == nil || childMeta.Completion.Outcome != "succeeded" || childMeta.Completion.Usage.WallTimeMS != 14 || childMeta.Completion.Steps[0].ReusedRunID == "" || len(childMeta.Completion.Steps[0].Attempts) != 0 {
 		t.Fatal("child receipt", childMeta.Completion, e)
 	}
+	usageStore, ok := s.(state.PipelineRunUsageStore)
+	if !ok {
+		t.Fatal("pipeline usage unavailable")
+	}
+	childUsage, err := runpipeline.ReadUsage(ctx, usageStore, account.ID, &api.ExecutionPipelineResponse{Completion: childMeta.Completion})
+	if err != nil || childUsage.NewRuns != 2 || childUsage.ReusedSteps != 1 || childUsage.SettledRuns != 2 || childUsage.WallTimeMS != 14 {
+		t.Fatalf("child usage = %+v, %v", childUsage, err)
+	}
+	foreignUsage, err := usageStore.PipelineRunUsage(ctx, foreign, []string{childUsage.Attempts[0].RunID})
+	if err != nil || len(foreignUsage) != 0 {
+		t.Fatalf("foreign pipeline usage = %+v, %v", foreignUsage, err)
+	}
 	runs, e := s.ListExecutionsByWorkflow(ctx, account.ID, "rerun", &principal, "", 100, 0)
 	if e != nil || len(runs) != 2 {
 		t.Fatal("reused step charged again", len(runs), e)
@@ -216,6 +229,23 @@ func exercisePipelineRecovery(t *testing.T, s contractTestStore, oldClaim func(s
 	original, _ := s.ExecutionPipelineByID(ctx, parent.ID)
 	if original.Completion.Outcome != "failed" || original.Completion.Rerun != nil {
 		t.Fatal("parent modified")
+	}
+	history, ok := s.(state.ExecutionPipelineHistoryStore)
+	if !ok {
+		t.Fatal("pipeline history unavailable")
+	}
+	entries, err := history.ListExecutionPipelineHistory(ctx, account.ID, cursor.Key{}, 1)
+	if err != nil || len(entries) != 1 || entries[0].ID != child.ID || entries[0].ParentID != parent.ID || entries[0].Outcome != "succeeded" {
+		t.Fatalf("newest history page = %+v, %v", entries, err)
+	}
+	before := cursor.Key{ID: entries[0].ID, CreatedAt: entries[0].CreatedAt}
+	entries, err = history.ListExecutionPipelineHistory(ctx, account.ID, before, 1)
+	if err != nil || len(entries) != 1 || entries[0].ID != parent.ID || entries[0].Outcome != "failed" {
+		t.Fatalf("older history page = %+v, %v", entries, err)
+	}
+	entries, err = history.ListExecutionPipelineHistory(ctx, foreign, cursor.Key{}, 1)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("foreign history page = %+v, %v", entries, err)
 	}
 	exerciseProgressTail(t, s, account.ID, &principal)
 }

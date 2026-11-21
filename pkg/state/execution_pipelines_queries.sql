@@ -75,3 +75,20 @@ SELECT j.* FROM agent_execution_workflows j JOIN execution_workflow_pipelines p 
 WHERE j.account_id=$1 AND j.id=$2 AND (sqlc.narg(principal_id)::uuid IS NULL OR j.runs_principal_id=sqlc.narg(principal_id)::uuid);
 -- name: PipelineSetJournal :exec
 UPDATE execution_workflow_pipelines SET journal=$2 WHERE job_id=$1;
+
+-- name: PipelineHistoryPage :many
+SELECT j.id, j.workflow_id, j.status, j.step_count, j.created_at, j.finished_at,
+       COALESCE(p.policy->'rerun'->>'parent_id', '')::text AS parent_id,
+       COALESCE(p.completion->>'outcome', j.status)::text AS outcome
+FROM agent_execution_workflows j JOIN execution_workflow_pipelines p ON p.job_id=j.id
+WHERE j.account_id=sqlc.arg(account_id)
+AND (sqlc.narg(before_at)::timestamptz IS NULL OR
+     (j.created_at, j.id) < (sqlc.narg(before_at)::timestamptz, sqlc.narg(before_id)::uuid))
+ORDER BY j.created_at DESC, j.id DESC
+LIMIT sqlc.arg(page_limit)::int;
+
+-- name: PipelineRunUsage :many
+SELECT execution_id, created_at, started_at, finished_at, wall_time_ms
+FROM execution_usage_ledger
+WHERE account_id=sqlc.arg(account_id)
+AND execution_id=ANY(sqlc.arg(run_ids)::uuid[]);

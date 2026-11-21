@@ -177,6 +177,32 @@ replay and completion delivery. Keep capable workers until callback pipelines
 and pending completion obligations have drained before rolling back binaries.
 Already-terminal legacy pipelines may have no manifest; no output backfill occurs.
 
+## Pipeline history in the dashboard
+
+Open **Run pipelines** from **Jobs & queues** to browse the signed-in account's
+pipeline receipts. A pipeline page shows live step status, terminal attempts,
+and links to the parent of a rerun. It also downloads retained artifacts from
+the attempts that produced them. App-owned deliveries continue to use their
+separate delivery receipts and retention policies.
+
+**Usage** counts each newly admitted Run once, including retry attempts. Reused
+steps do not add execution time or output bytes to the child pipeline. The
+execution totals come from the Run usage ledger as attempts finish. The wait
+column measures admission to the recorded start of each Run, and times for
+parallel Runs can overlap. Submission to completion measures elapsed pipeline
+time. Run output times show when the producing attempt recorded its artifacts.
+App-owned delivery can finish later. The platform does not currently expose
+settled compute or storage charges per pipeline.
+
+For an unsuccessful pipeline that belongs to the account session, select the
+original JSON manifest and choose **Review rerun**. Review which steps will run,
+which can reuse their existing outputs, and which require approval to repeat.
+The dashboard uses the same child workflow UUID for retries from the parent
+page. The Run API verifies the manifest, task versions and retained outputs
+before admission. Pipelines started with an API key use the original key
+family from the app or CLI. Agent callback pipelines use a new delegated tool
+call from the original Agent.
+
 ## Live progress
 
 New submission receipts include `id`, the pipeline ID used for observation and
