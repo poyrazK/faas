@@ -25,12 +25,12 @@ app, under the same edge rules, until you switch it to redirect.
    `*.gregale.app`. Install it on the control plane as
    `/etc/caddy/tls/cloudflare-origin-gregale.app.{pem,key}` (mode 0600,
    owner caddy). gregale.dev keeps its existing certificate.
-2. Add the Worker route and tunnel ingress for the new zone:
-
-   ```sh
-   APPS_DOMAIN=gregale.app APPS_DOMAIN_ALIASES=gregale.dev \
-     deploy/scripts/cloudflare-app-edge-tunnel.sh
-   ```
+2. Route the new zone's app hosts through the existing app tunnel: in Zero
+   Trust > Networks > Tunnels > `gregale-apps-production-us` > Public
+   Hostname, add `*` + `gregale.app` -> HTTP `127.0.0.1:8090`, and check that
+   gregale.app has a proxied CNAME `*` -> `<tunnel id>.cfargotunnel.com`.
+   Keep the `*.gregale.dev` hostname. (`deploy/scripts/cloudflare-app-edge-tunnel.sh`
+   still names the GCP nodes; do not run it against the OVHcloud fleet.)
 
 3. If edgednsd will manage the new zone, give its Cloudflare token
    (`FAAS_EDGEDNS_CF_TOKEN_FILE`) Zone > DNS: Edit on gregale.app and note
