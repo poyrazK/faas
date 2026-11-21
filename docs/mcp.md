@@ -4952,6 +4952,21 @@ gregale mcp server export --app my-mcp --name my-mcp
 gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
+The first `gregale mcp server deploy` of an app makes it reachable to MCP
+clients: streaming on, no Gregale API key, open public auth (access is then
+controlled by `gregale-mcp.json`). It also raises an unset request timeout to
+300 seconds or the plan's ceiling, whichever is lower (Free 30, Hobby 60,
+Pro and Scale 300), so tool calls slower than the 30-second HTTP default do not
+fail with `request_budget_exceeded`. Scale apps can go up to 900 seconds with
+`gregale app my-mcp --request-timeout 900`. A timeout you set yourself is kept.
+An app that already serves behind an API key, public auth or with streaming
+off is refused before anything is uploaded; the error names the
+`gregale app` commands that open it (ADR-20261121160000).
+
+The starters negotiate the protocol revision: they speak 2026-07-28 and, in
+legacy mode (the default), 2025-11-25, 2025-06-18 and 2025-03-26, so clients
+built on older MCP SDKs connect too.
+
 `mcp resources` and `mcp prompts` return definitions only. Resource reads and
 prompt rendering require the explicit `resource-read --uri` and `prompt-get --prompt`
 commands. Returned resource contents and rendered prompt messages may
