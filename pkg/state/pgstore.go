@@ -23169,8 +23169,10 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		   -- VM's interval starts billing when the older deployment's VM
 		   -- stops, at most api.ManagedValkeyHandoffWindowS after it started.
 		   left join lateral (
-		        select least(max(coalesce(o.ended_at, $2::timestamptz)),
-		                     b.started_at + make_interval(secs => $4)) as until
+		        -- least() ignores NULL, so no older VM must stay NULL here.
+		        select case when count(*) = 0 then null
+		                    else least(max(coalesce(o.ended_at, $2::timestamptz)),
+		                               b.started_at + make_interval(secs => $4)) end as until
 		          from instances bi
 		          join managed_valkey_caches c on c.app_id = bi.app_id
 		          join instances oi on oi.app_id = bi.app_id and oi.id <> bi.id

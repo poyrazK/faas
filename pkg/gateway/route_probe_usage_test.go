@@ -21,26 +21,30 @@ func TestRouteProbeNotCountedAsCustomerUsage(t *testing.T) {
 		probe bool
 	}{{"customer request", false}, {"route probe", true}} {
 		t.Run(tc.name, func(t *testing.T) {
-			app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro}
+			app := App{ID: uuid.NewString(), AccountID: uuid.NewString(), Plan: api.PlanPro, SessionAffinity: true}
 			target := Target{AppID: app.ID, DeploymentID: uuid.NewString(), InstanceID: uuid.NewString(), NodeID: "node-1"}
 			backend := &retryCompletionBackend{fakeBackend: &fakeBackend{app: app, host: "app.test"}}
 			backend.AddTarget(target)
-			h := NewHandlerWith(backend, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			h := NewHandlerWith(backend, nil, slog.New(slog.NewTextHandler(io.Discard, nil))).
+				WithRetryEnabled(false).WithRetryDefault(RetryPolicy{MaxAttempts: 2})
 			h.lastSeen = NewMemoryLastSeen()
 			h.egressSink = egresssink.NewEgressSink()
+			h.requestTelemetry = makeTestRecorder()
+			forwarded := 0
 			h.WithForwarding(func(Target) http.Handler {
 				return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					forwarded++
 					_, _ = w.Write([]byte("response"))
 				})
 			})
-			req := httptest.NewRequest(http.MethodGet, "http://app.test/healthz", nil)
+			req := httptest.NewRequest(http.MethodGet, "http://app.test/work", nil)
 			if tc.probe {
 				req = req.WithContext(withRouteProbe(req.Context(), target.DeploymentID, "probe-token", false))
 			}
 			response := httptest.NewRecorder()
 			h.ServeHTTP(response, req)
-			if response.Code != http.StatusOK {
-				t.Fatalf("status = %d body=%s", response.Code, response.Body)
+			if response.Code != http.StatusOK || forwarded != 1 {
+				t.Fatalf("status = %d forwarded = %d body=%s", response.Code, forwarded, response.Body)
 			}
 			records := h.egressSink.DrainRecords()
 			if tc.probe {

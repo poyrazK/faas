@@ -29,6 +29,7 @@ func TestPushPendingHoldsPaidHoursAfterSubscriptionEnded(t *testing.T) {
 	paidHour := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
 	freeAt := paidHour.Add(90 * time.Minute)
 	provider := &recordingStripe{}
+	store.SetPlanChangedAt(acct.ID, paidHour.Add(-24*time.Hour)) // Pro since before the paid hour
 	if err := meter.RecordFinancialPricingForTest(ctx, store, provider, paidHour.Add(time.Minute)); err != nil {
 		t.Fatal(err)
 	}
