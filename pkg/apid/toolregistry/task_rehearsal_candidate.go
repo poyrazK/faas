@@ -27,10 +27,10 @@ type HostedTaskRehearsalCandidate struct {
 // cannot spend a valid approval, while the final transaction rechecks drift
 // and expiry under lock.
 func (e *PrivateExecutor) ClaimHostedTaskRehearsalCandidate(ctx context.Context, account, id, ownerKeyID, planDigest string) (HostedTaskRehearsalCandidate, error) {
-	return e.claimHostedTaskRehearsalCandidate(ctx, account, id, ownerKeyID, planDigest, false)
+	return e.claimHostedTaskRehearsalCandidate(ctx, account, id, ownerKeyID, planDigest, false, nil)
 }
 
-func (e *PrivateExecutor) claimHostedTaskRehearsalCandidate(ctx context.Context, account, id, ownerKeyID, planDigest string, runner bool) (HostedTaskRehearsalCandidate, error) {
+func (e *PrivateExecutor) claimHostedTaskRehearsalCandidate(ctx context.Context, account, id, ownerKeyID, planDigest string, runner bool, fixture *taskrehearsal.StartupFixture) (HostedTaskRehearsalCandidate, error) {
 	var zero HostedTaskRehearsalCandidate
 	journal, ok := e.store.(state.HostedTaskRehearsalStore)
 	if !ok || !toolpublication.ValidID(planDigest) {
@@ -49,7 +49,7 @@ func (e *PrivateExecutor) claimHostedTaskRehearsalCandidate(ctx context.Context,
 		if !view.ReadyToClaim || !e.opts.RehearsalPlanEnabled || !e.opts.SourceRetentionEnabled || !e.opts.BindingVerificationEnabled {
 			return zero, state.ErrConflict
 		}
-		candidate, err = e.packRehearsalCandidate(ctx, view.Plan, runner)
+		candidate, err = e.packRehearsalCandidate(ctx, view.Plan, runner, fixture)
 		if err != nil {
 			return zero, err
 		}
@@ -68,13 +68,16 @@ func (e *PrivateExecutor) claimHostedTaskRehearsalCandidate(ctx context.Context,
 	return candidate, nil
 }
 
-func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.HostedTaskRehearsalPlan, runner bool) (HostedTaskRehearsalCandidate, error) {
+func (e *PrivateExecutor) packRehearsalCandidate(ctx context.Context, plan api.HostedTaskRehearsalPlan, runner bool, fixture *taskrehearsal.StartupFixture) (HostedTaskRehearsalCandidate, error) {
 	var zero HostedTaskRehearsalCandidate
 	source, err := e.loadHostedTaskSource(ctx, plan.AccountID, plan.IntentID)
 	if err != nil {
 		return zero, err
 	}
 	if source.intent.IntentSHA256 != plan.IntentSHA256 || source.intent.ReviewSHA256 != plan.ReviewSHA256 {
+		return zero, state.ErrConflict
+	}
+	if fixture != nil && (source.review.Sources["web"] != fixture.WebSHA256 || source.review.Sources["worker"] != fixture.WorkerSHA256) {
 		return zero, state.ErrConflict
 	}
 	var bindings tasktoolbinding.Policy

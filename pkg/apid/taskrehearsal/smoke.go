@@ -23,11 +23,7 @@ func (r *Runner) Smoke(ctx context.Context, p *Provisioner, account state.Accoun
 	if err != nil {
 		return evidence, err
 	}
-	scope := tasktoolrehearsal.SmokeScope{
-		AccountID: account.ID, RunID: run.ID, PlanSHA256: run.PlanSHA256, Namespace: target.Namespace(),
-		WebAppID: target.AppID(Web), WorkerAppID: target.AppID(Worker), ObserverAppID: target.AppID(Observer),
-		WebDeploymentID: execution.WebDeploymentID, WorkerDeploymentID: execution.WorkerDeploymentID,
-	}
+	scope := target.smokeScope(run.PlanSHA256, execution)
 	execute, stop := context.WithDeadline(ctx, run.ReservedAt.Add(leaseDuration))
 	err = r.checkSmokeDeployments(execute, scope)
 	if err == nil {
@@ -63,11 +59,22 @@ func (r *Runner) checkSmokeDeployments(ctx context.Context, scope tasktoolrehear
 		if err != nil {
 			return fmt.Errorf("inspect rehearsal deployment: %w", err)
 		}
-		if deployment.ID != id || deployment.AppID != pair.app || deployment.Scope != api.DefaultEnvScope ||
-			!deployment.TrafficPercentExplicit || deployment.TrafficPercent != 0 || deployment.RootfsKey == "" ||
-			deployment.Status.IsTerminal() {
+		if !validSmokeDeployment(deployment, pair.app, id) {
 			return state.ErrConflict
 		}
 	}
 	return ctx.Err()
+}
+
+func (target *Prepared) smokeScope(planSHA256 string, execution Execution) tasktoolrehearsal.SmokeScope {
+	return tasktoolrehearsal.SmokeScope{
+		AccountID: target.account.ID, RunID: target.run.String(), PlanSHA256: planSHA256, Namespace: target.Namespace(),
+		WebAppID: target.AppID(Web), WorkerAppID: target.AppID(Worker), ObserverAppID: target.AppID(Observer),
+		WebDeploymentID: execution.WebDeploymentID, WorkerDeploymentID: execution.WorkerDeploymentID,
+	}
+}
+
+func validSmokeDeployment(d state.Deployment, app, id string) bool {
+	return d.ID == id && d.AppID == app && d.Scope == api.DefaultEnvScope &&
+		d.TrafficPercentExplicit && d.TrafficPercent == 0 && d.RootfsKey != "" && !d.Status.IsTerminal()
 }
