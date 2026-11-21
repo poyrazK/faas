@@ -881,6 +881,18 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		}
 		seedJoinPrivateAddressFacts(files, privateAddresses)
 	}
+	// The manifest-rendered inventory and the operator vars are convergence
+	// inputs too: hash them before the per-run connection overrides below
+	// (temporary known_hosts and key paths) so they move the contract only
+	// when the configuration they render moves.
+	environmentSHA256, err := controlPlaneEnvironmentHash(tempRoot, files, opts.AnsibleVarsFile)
+	if err != nil {
+		return 3, err
+	}
+	bootstrapContractSHA256 = joinContractWithEnvironment(bootstrapContractSHA256, environmentSHA256)
+	if roleRecord, err = withJoinRecordEnvironment(roleRecord, environmentSHA256); err != nil {
+		return 3, err
+	}
 	for i := range files {
 		base := filepath.Base(files[i].Path)
 		if base == opts.Node+".yml" {
@@ -946,6 +958,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 		"faas_join_builder_base_ref":           builderBaseRef,
 		"faas_join_bootstrap_contract_sha256":  bootstrapContractSHA256,
 		"faas_join_peer_contract_sha256":       peerContractSHA256,
+		"faas_join_environment_sha256":         environmentSHA256,
 		"faas_join_rollout_phase":              rolloutPhase,
 		"faas_join_converge_roles_requested":   joinRolesVar(opts.ConvergeRoles),
 		"faas_join_role_record":                roleRecord,
