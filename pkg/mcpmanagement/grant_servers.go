@@ -79,7 +79,30 @@ func (m *management) holdsPlans() bool {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return len(m.plans)+len(m.environmentPlans) > 0
+	return len(m.plans)+len(m.environmentPlans)+len(m.flagPlans)+len(m.budgetPlans)+len(m.reviewedPlans) > 0
+}
+
+// memoryPlansLive reports an unexpired flag, budget or reviewed plan. They are
+// kept only in memory, so dropping an idle server lost them while the agent
+// waited for a person to agree (10 minutes idle, 15-minute plans). Caller
+// holds m.mu.
+func (m *management) memoryPlansLive(now time.Time) bool {
+	for _, p := range m.flagPlans {
+		if now.Before(p.ExpiresAt) {
+			return true
+		}
+	}
+	for _, p := range m.budgetPlans {
+		if now.Before(p.ExpiresAt) {
+			return true
+		}
+	}
+	for _, p := range m.reviewedPlans {
+		if now.Before(p.ExpiresAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *management) idle(now time.Time) bool {
@@ -110,6 +133,10 @@ func (m *management) idle(now time.Time) bool {
 			m.mu.Unlock()
 			return false
 		}
+	}
+	if m.memoryPlansLive(now) {
+		m.mu.Unlock()
+		return false
 	}
 	m.mu.Unlock()
 	if m.grantLifecycle != nil && m.grantLifecycle.busy() {
