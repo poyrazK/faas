@@ -59,6 +59,10 @@ func TestStartSignInEnterStartsBrowserLogin(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout, stderr := main.StartTestEnvironment(t)
 			t.Setenv("FAAS_TOKEN", "")
+			t.Setenv("DISPLAY", ":0")
+			for _, name := range []string{"SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"} {
+				t.Setenv(name, "")
+			}
 			main.SetFakeKeyring(t)
 			var minted atomic.Bool
 			main.StartTestAPI(t, func(w http.ResponseWriter, r *http.Request) {

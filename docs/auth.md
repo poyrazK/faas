@@ -1,12 +1,17 @@
 # Authentication
 
-Log in locally with the CLI; it stores a short-lived session in the operating-system keychain.
+Log in with the CLI. It uses the operating-system keychain by default.
 
 ```bash
 gregale login
 gregale whoami
 gregale logout
 ```
+
+On SSH or Linux without a display, `gregale login` prints a browser approval
+link and a code to enter there. Use `gregale login --device` to select this
+flow on other terminals. If the keychain is unavailable, the CLI asks before
+saving your API key in a plaintext file readable only by you.
 
 Browser-approved logins mint a 30-day CLI key tied to this device. The CLI
 stores that key's non-secret id and `gregale logout` revokes exactly that key

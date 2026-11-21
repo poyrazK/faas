@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -50,9 +52,7 @@ func oneClickEnv(t *testing.T, apiURL string, b browser.Launcher) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", apiURL)
 	t.Setenv("FAAS_TOKEN", "")
-	for _, k := range []string{"SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"} {
-		t.Setenv(k, "")
-	}
+	localLoginBrowser(t)
 	old := browser.Default
 	browser.Default = b
 	t.Cleanup(func() { browser.Default = old })
@@ -195,7 +195,8 @@ func TestCmdLogin_DeviceFlagUsesTypedCode(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	oneClickEnv(t, srv.URL, &stubLauncher{})
+	launcher := &stubLauncher{}
+	oneClickEnv(t, srv.URL, launcher)
 	fastLoginPoll(t)
 	out, _ := captureStdout(t)
 	errBuf, _ := captureStderr(t)
@@ -205,5 +206,74 @@ func TestCmdLogin_DeviceFlagUsesTypedCode(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Your code: ABCD-1234") {
 		t.Errorf("stdout missing the code to type: %q", out.String())
+	}
+	if len(launcher.urls) != 0 || !strings.Contains(out.String(), "Open this link in a browser") {
+		t.Errorf("device login should present the manual link, opened=%v stdout=%s", launcher.urls, out)
+	}
+}
+
+func TestCmdLogin_DeclinesHeadlessFileStorageBeforeMint(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	oneClickEnv(t, srv.URL, &stubLauncher{})
+	t.Setenv("SSH_CONNECTION", "remote")
+	t.Setenv(keyringModeEnv, "")
+	setFakeKeyring(t, withGetErr(errors.New("no D-Bus")))
+	pipeStdin(t, "\n")
+	out, _ := captureStdout(t)
+	if code := cmdLogin(nil); code == 0 || requests.Load() != 0 {
+		t.Fatalf("declining file storage returned %d and sent %d requests", code, requests.Load())
+	}
+	if !strings.Contains(out.String(), "plaintext file readable only by you") || !strings.Contains(out.String(), "(y/N) [n]") {
+		t.Errorf("stdout missing the storage choice and its No default: %q", out.String())
+	}
+	if _, err := os.Stat(mustTokenPath(t)); !os.IsNotExist(err) {
+		t.Fatalf("login persisted a token after declining storage: %v", err)
+	}
+}
+
+func TestCmdLogin_RevokesHeadlessLoginWhenKeychainWriteFailsAndFileStorageIsDeclined(t *testing.T) {
+	plaintext := testAPIKey('f')
+	var revoked atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/cli-auth/code":
+			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{
+				Code: "ABCD-1234",
+				URL:  "https://api.example.test/cli-auth?code=ABCD-1234",
+			})
+		case "/v1/cli-auth/exchange":
+			_ = json.NewEncoder(w).Encode(api.CliAuthExchangeResponse{
+				Plaintext: plaintext,
+				KeyID:     "key-1",
+				Account:   api.AccountResponse{Email: "headless@example.test", Plan: "free"},
+			})
+		case "/v1/keys/key-1":
+			if r.Method == http.MethodDelete && r.Header.Get("Authorization") == "Bearer "+plaintext {
+				revoked.Store(true)
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			http.NotFound(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	oneClickEnv(t, srv.URL, &stubLauncher{})
+	t.Setenv(keyringModeEnv, "")
+	setFakeKeyring(t, withSetErr(errors.New("keychain write refused")))
+	fastLoginPoll(t)
+	pipeStdin(t, "n\n")
+	out, _ := captureStdout(t)
+	if code := cmdLogin([]string{"--device"}); code == 0 || !revoked.Load() {
+		t.Fatalf("login returned %d, new credential revoked=%t, stdout=%s", code, revoked.Load(), out)
+	}
+	if _, err := os.Stat(mustTokenPath(t)); !os.IsNotExist(err) {
+		t.Fatalf("login persisted a token after declining storage: %v", err)
 	}
 }
