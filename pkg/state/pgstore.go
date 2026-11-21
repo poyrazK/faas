@@ -23153,7 +23153,8 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		              ceil(sum(greatest(0, extract(epoch from
 		                least(coalesce(b.ended_at, $2::timestamptz), $2::timestamptz,
 		                      coalesce(dead.last_heartbeat_at, 'infinity'::timestamptz))
-		                - greatest(b.started_at, $1::timestamptz)))))::bigint) as resident_seconds
+		                - greatest(b.started_at, $1::timestamptz,
+		                           coalesce(handoff.until, '-infinity'::timestamptz))))))::bigint) as resident_seconds
 		   from instance_billing_intervals b
 		   left join lateral (
 		        select n.last_heartbeat_at
@@ -23162,11 +23163,29 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		         where i.id = b.instance_id
 		           and n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3)
 		   ) dead on true
+		   -- A managed Redis resize or upgrade starts the new VM beside the
+		   -- serving one and copies the data over; only the serving VM is
+		   -- billed (ADR-20261116192126 step 1, ADR-20261121231500). The new
+		   -- VM's interval starts billing when the older deployment's VM
+		   -- stops, at most api.ManagedValkeyHandoffWindowS after it started.
+		   left join lateral (
+		        select least(max(coalesce(o.ended_at, $2::timestamptz)),
+		                     b.started_at + make_interval(secs => $4)) as until
+		          from instances bi
+		          join managed_valkey_caches c on c.app_id = bi.app_id
+		          join instances oi on oi.app_id = bi.app_id and oi.id <> bi.id
+		                           and oi.deployment_id is distinct from bi.deployment_id
+		          join instance_billing_intervals o on o.instance_id = oi.id
+		         where bi.id = b.instance_id
+		           and o.started_at < b.started_at
+		           and (o.ended_at is null or o.ended_at > b.started_at)
+		   ) handoff on true
 		  where b.started_at < $2
 		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
 		    -- spelled so instance_billing_intervals_ended_idx serves it.
 		    and (b.ended_at > $1 or b.ended_at is null)
-		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds))
+		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds),
+		float64(api.ManagedValkeyHandoffWindowS))
 	if err != nil {
 		return nil, err
 	}
@@ -24550,7 +24569,12 @@ func (s *PgStore) AppendSnapshotStorage(ctx context.Context, accountID, appID st
 func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64, int64, error) {
 	var memBytes, diskBytes int64
 	err := s.pool.QueryRow(ctx,
-		`select coalesce(s.mem_bytes, 0), coalesce(s.disk_bytes, 0)
+		// The view counts what the memory image holds on disk: stored_bytes
+		// is the published mem + vmstate artifacts' allocation, mem_bytes the
+		// guest's nominal RAM (ADR-20261121231500). A legacy row without it
+		// keeps the logical bytes.
+		`select case when s.stored_bytes > 0 then s.stored_bytes else coalesce(s.mem_bytes, 0) end,
+		        coalesce(s.disk_bytes, 0)
 		   from snapshots s
 		   join deployments d on s.deployment_id = d.id
 		  where d.app_id = $1

@@ -1943,9 +1943,14 @@ func (a storageStoreAdapter) ListAllApps(ctx context.Context) ([]meter.AppRow, e
 	if err != nil {
 		return nil, err
 	}
-	out := make([]meter.AppRow, len(rows))
-	for i, r := range rows {
-		out[i] = meter.AppRow{AccountID: r.AccountID, AppID: r.ID}
+	out := make([]meter.AppRow, 0, len(rows))
+	for _, r := range rows {
+		// A deleted app's snapshots are being torn down; the storage view
+		// stops counting it (ADR-20261121231500).
+		if r.DeletedAt != nil {
+			continue
+		}
+		out = append(out, meter.AppRow{AccountID: r.AccountID, AppID: r.ID})
 	}
 	return out, nil
 }
