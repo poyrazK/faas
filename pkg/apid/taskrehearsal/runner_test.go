@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding/taskacl"
+	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
@@ -220,8 +221,14 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 						}
 					}
 				}
-				if err := p.Cleanup(t.Context(), account.ID, run.ID); err != nil {
-					t.Fatal(err)
+				smokeCtx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				driver := &cancelledSmokeDriver{
+					cancel: cancel, runID: run.ID, workerID: got.WorkerDeploymentID,
+				}
+				evidence, err := r.Smoke(smokeCtx, p, account, run, got, driver)
+				if !errors.Is(err, context.Canceled) || !evidence.CleanupConfirmed {
+					t.Fatalf("cancelled smoke must clean the owned rehearsal: %+v %v", evidence, err)
 				}
 			}
 			if removed != 3 {
@@ -236,6 +243,24 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 			}
 		})
 	}
+}
+
+type cancelledSmokeDriver struct {
+	tasktoolrehearsal.SmokeDriver
+	cancel          context.CancelFunc
+	runID, workerID string
+}
+
+func (d *cancelledSmokeDriver) SubmitReport(_ context.Context, scope tasktoolrehearsal.SmokeScope) (string, error) {
+	if scope.RunID != d.runID || scope.WorkerDeploymentID != d.workerID || scope.Namespace != "rehearsal-"+d.runID {
+		return "", errors.New("worker smoke scope drifted")
+	}
+	d.cancel()
+	return "", context.Canceled
+}
+
+func (*cancelledSmokeDriver) VerifyCleanup(ctx context.Context, _ tasktoolrehearsal.SmokeScope) error {
+	return ctx.Err()
 }
 
 func runnerTestPolicy() tasktoolbinding.Policy {
