@@ -169,7 +169,7 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 // or secretd refused the node: a passing run must prove the path.
 func (h *Harness) checkStorageGrants(t *testing.T) {
 	t.Helper()
-	if h.grants == nil || t.Failed() {
+	if h.grants == nil {
 		return
 	}
 	var grants, objects int
@@ -190,7 +190,7 @@ func (h *Harness) checkStorageGrants(t *testing.T) {
 		}
 		rows.Close()
 	}
-	if grants == 0 {
+	if grants == 0 && !t.Failed() {
 		t.Errorf("e2etest: storage grants were on but secretd issued none: the compute daemons did not use them")
 	}
 	t.Logf("e2etest: storage grants: %d grant requests, %d objects", grants, objects)

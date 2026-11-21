@@ -1,6 +1,6 @@
 # ADR-20261117190000: Compute reaches the shared store only through per-object signed grants
 
-- Status: Accepted (slices 1–4 implemented, off by default)
+- Status: Accepted (slices 1–4 implemented, off by default; amendment 1, 2026-11-21)
 - Date: 2026-11-17
 - Amends: ADR-054 (compute nodes read and write the shared artifact store
   with bucket-wide credentials)
@@ -50,7 +50,9 @@ Owner decisions (2026-11-17):
 
    | key | subject |
    |---|---|
-   | `base/…`, `kernel/…` | platform: any node may read, no node may write |
+   | `base/…`, `kernel/…`, `scans/<base name>.scan.json` | platform: any node may read; a node may create a missing one, never replace one (amendment 1) |
+   | `sigs/<key>.sig` | the subject of `<key>` |
+   | `sboms/<build>.cdx.json` | build output: the node that ran the build creates it |
    | `snap/<deployment>/…`, `apps/<slug>/<deployment>[-<sidecar>].ext4`, `layers/<deployment>.ext4` | deployment |
    | `snap/sandbox[-template]-<account>/captures/…`, `sandbox-screenshots/<account>/…` | sandbox account |
    | `jobs/<job>[__<artifact>].ext4` | job |
@@ -70,7 +72,7 @@ Owner decisions (2026-11-17):
      its tasks.
    - Build: the node claimed the running build (`builds.builder_node_name`),
      within the build's run window. Sources are read-only for nodes.
-   - Platform keys are read-only.
+   - Platform keys and build outputs are create-only (amendment 1).
    - Every grant counts against the per-node distinct-app budget, is
      audited (`secret_open_audit`, via `storage_get`/`storage_put`) and is
      counted in `faas_secretd_storage_grants_total{op,class,outcome}`.
@@ -121,6 +123,34 @@ Owner decisions (2026-11-17):
   does for sealed snapshots.
 - A key class the resolver does not know is refused. New key classes must
   be added to the table before they ship.
+
+## Amendment 1 (2026-11-21): companion objects and platform creates
+
+The first end-to-end run with real daemons on grants (the native
+`storage-grants-only` lane: imaged, builderd and vmmd with no store key,
+secretd signing for a loopback MinIO) found what the unit tests could not:
+
+- **Companion objects were outside the keyspace.** Every artifact's
+  signature (`sigs/<key>.sig`), the Grype sidecars of platform bases
+  (`scans/…`) and build SBOMs (`sboms/<build>.cdx.json`) are read or written
+  by compute daemons. A signature now resolves to the subject of the key it
+  signs, base scan sidecars to platform, and an SBOM to a new
+  `build_output` class: the node that ran the build may create and read it.
+- **Compute imaged stages platform bases.** It writes `base/…` and its
+  `sigs/` and `scans/` sidecars when a base is missing. Owner decision:
+  nodes may *create* platform objects and SBOMs but never replace them
+  (`replace`, or a multipart completion conditioned on the current
+  object, is refused). Integrity rests on the control plane's signature
+  (signd), which readers verify; create-only stops a node from overwriting
+  a base everyone already uses. A node could still publish a missing key
+  first; the signature check is what refuses its content.
+- **An S3 node could not start without a key.** The S3 backend required
+  `FAAS_S3_ACCESS_KEY_ID`/`SECRET` even under `FAAS_STORAGE_ACCESS=secretd`,
+  so deleting compute's key (slice 5) would have stopped the daemons. Under
+  grants the key is optional and the client is anonymous.
+
+With these, 100 image deploy → park → wake cycles ran through grants on
+the nested-KVM test host with no refusal.
 
 ## Slices
 
