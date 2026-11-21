@@ -51919,6 +51919,60 @@ func (q *Queries) ListEvents(ctx context.Context, db DBTX, arg ListEventsParams)
 	return items, nil
 }
 
+const listEventsByKindSince = `-- name: ListEventsByKindSince :many
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = $1::text AND at >= $2::timestamptz
+ORDER BY at DESC
+LIMIT $3::int
+`
+
+type ListEventsByKindSinceParams struct {
+	Kind     string
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type ListEventsByKindSinceRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// The operator wake-latency report (ADR-20261121200409): one kind's rows at
+// or after since, newest first, as a backward scan of events_kind_at_idx
+// (kind, at DESC). The caller asks for one row more than it keeps to learn
+// whether the window was cut.
+func (q *Queries) ListEventsByKindSince(ctx context.Context, db DBTX, arg ListEventsByKindSinceParams) ([]ListEventsByKindSinceRow, error) {
+	rows, err := db.Query(ctx, listEventsByKindSince, arg.Kind, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventsByKindSinceRow{}
+	for rows.Next() {
+		var i ListEventsByKindSinceRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEventsBySubjectKind = `-- name: ListEventsBySubjectKind :many
 select id, at, actor, kind, subject, data
 from events
