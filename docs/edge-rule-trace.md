@@ -42,7 +42,7 @@ The version 1 format is:
 The equivalent flags are:
 
 ```sh
-gregale edge rule trace --app demo --project payments --environment staging \
+gregale edge rule trace --app demo --project payments --env staging \
   --url https://replace-with-environment-host/submit --method POST
 ```
 

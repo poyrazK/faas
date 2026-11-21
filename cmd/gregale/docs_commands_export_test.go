@@ -48,7 +48,7 @@ func CheckDocCommand(args []string) DocCommandCheck {
 		return check
 	}
 	listed := map[string]bool{}
-	for _, f := range manifestLeafFlags(rewritten) {
+	for _, f := range docLeafFlags(rewritten) {
 		listed[f.Name] = true
 		if f.ShortName != "" {
 			listed[f.ShortName] = true
@@ -65,6 +65,21 @@ func CheckDocCommand(args []string) DocCommandCheck {
 		}
 	}
 	return check
+}
+
+// docLeafFlags are the manifest flags of the command args name. A slug-first
+// family (`app <slug> wait`) also runs its verbs without the slug
+// (`app wait -l SELECTOR`), so a verb in the slug's place lists its flags too.
+func docLeafFlags(args []string) []cliFlag {
+	flags := manifestLeafFlags(args)
+	command, ok := lookupCliCommand(args[0])
+	if !ok || !command.SubcommandsAfterPositionals || len(args) < 2 {
+		return flags
+	}
+	if _, ok := findCliSubcommand(command.Subcommands, args[1]); ok {
+		flags = append(flags, manifestLeafFlags(append([]string{args[0], "_"}, args[1:]...))...)
+	}
+	return flags
 }
 
 // docCommandPathProblem reports a command or verb the manifest does not

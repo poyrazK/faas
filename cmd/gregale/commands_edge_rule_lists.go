@@ -45,6 +45,10 @@ func cmdEdgeRuleListsList(args []string) int {
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
+	if fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregale edge rule-list list [--app SLUG]", "edge-rule-lists")
+		return 1
+	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

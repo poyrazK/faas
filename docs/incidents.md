@@ -11,8 +11,8 @@ Incidents are an internal preview (ADR-20261022193512).
 
 ```sh
 gregale alert incident
-gregale alert incident --app shop --open
-gregale alert incident --since 24h
+gregale alert incident list --app shop --open
+gregale alert incident list --since 24h
 ```
 
 ```text

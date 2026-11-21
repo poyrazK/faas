@@ -467,7 +467,7 @@ exact retained predecessor, then pin both deployments:
 
 ```sh
 gregale app binding verify public-api --release v41 --all
-gregale rollouts recover public-api --action abort --deployment v42 \
+gregale rollouts recover public-api --action abort --release v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 ```
 
@@ -515,7 +515,7 @@ then request the abort and wait for the selected rollout:
 
 ```sh
 gregale app binding verify public-api --release v41 --all
-gregale rollouts recover public-api --action abort --deployment v42 \
+gregale rollouts recover public-api --action abort --release v42 \
   --expected-predecessor v41 --reason 'Restore verified predecessor'
 gregale rollouts status public-api --release v42 --wait --timeout 10m
 ```
