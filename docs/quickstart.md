@@ -28,6 +28,10 @@ whether to update it or create an app with another name. The review shows your
 account's app allowance and compute usage when available. Build logs are available
 through `gregale logs`.
 
+Over SSH or on Linux without a display, open the sign-in link printed by the
+CLI and enter the terminal's code. If your keychain is unavailable, the CLI
+asks whether to save the API key in a plaintext file readable only by you.
+
 After you finish, Start remembers the app in the selected source directory.
 From there, `gregale logs --follow`, `gregale metrics`, `gregale inspect`, and
 `gregale deploy` reuse that target. Use `gregale config context get` to see or change your

@@ -58,6 +58,14 @@ func stubBrowser(t *testing.T, err error) *stubLauncher {
 	return rec
 }
 
+func localLoginBrowser(t *testing.T) {
+	t.Helper()
+	t.Setenv("DISPLAY", ":0")
+	for _, name := range []string{"SSH_CONNECTION", "SSH_TTY", "SSH_CLIENT"} {
+		t.Setenv(name, "")
+	}
+}
+
 // pipeStdin replaces osStdin with a pipe containing `data` and
 // restores the original at test end. Used to drive the "paste code"
 // prompt without blocking on the real terminal.
@@ -140,6 +148,7 @@ func TestCmdLogin_InteractiveHappyPath_BrowserOpens(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	setFakeKeyring(t)
 	out, _ := captureStdout(t)
@@ -196,6 +205,7 @@ func TestCmdLogin_BrowserOpenFailure_FallsBackToURL(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, errors.New("no display"))
 	setFakeKeyring(t) // hermetic on macOS: success branch reaches saveToken
 	out, _ := captureStdout(t)
@@ -243,6 +253,7 @@ func TestCmdLogin_CodeExpired(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	out, _ := captureStdout(t)
 	errBuf, _ := captureStderr(t)
@@ -308,6 +319,7 @@ func TestCmdLogin_CodeConsumed_Race(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	errBuf, _ := captureStderr(t)
 	pipeStdin(t, "\n")
@@ -330,6 +342,7 @@ func TestCmdLogin_ServerUnreachable(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", "http://127.0.0.1:1") // closed port → immediate failure
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	errBuf, _ := captureStderr(t)
 	pipeStdin(t, "\n")
@@ -383,6 +396,7 @@ func TestCmdLogin_PollingBackoff(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	setFakeKeyring(t) // hermetic on macOS: success branch reaches saveToken
 	pipeStdin(t, "\n")
@@ -434,6 +448,7 @@ func TestCmdLogin_AutoCreatesAccount(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("FAAS_API", srv.URL)
 	t.Setenv("FAAS_TOKEN", "")
+	localLoginBrowser(t)
 	stubBrowser(t, nil)
 	setFakeKeyring(t)
 	out, _ := captureStdout(t)

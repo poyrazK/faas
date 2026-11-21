@@ -121,7 +121,8 @@ func cmdLogin(args []string) int {
 	// typed code with --device and over SSH.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	return browserLogin(ctx, NewClient(apiBase(), ""), *device)
+	prompt := startPrompt{reader: bufio.NewReader(osStdin), writer: osStdout}
+	return browserLogin(ctx, NewClient(apiBase(), ""), *device || manualBrowserLogin(), &prompt, storedTokenLookup{})
 }
 
 // readLoginTokenStdin reads `login --token-stdin`. Piped input is read whole
@@ -174,7 +175,7 @@ func errEnvTokenShadowsLogin(command string) error {
 // Package-level so tests can shrink it; production keeps 1 s.
 var loginPollBackoff = 1 * time.Second
 
-func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse) int {
+func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse, confirmFile func(error) error) int {
 	expiry, _ := time.Parse(time.RFC3339, codeResp.ExpiresAt)
 	backoff := loginPollBackoff
 	for {
@@ -189,7 +190,7 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 		// The device code when the server issued one, else the code.
 		resp, err := c.ExchangeCliAuthLogin(ctx, codeResp)
 		if err == nil {
-			return finalizeLogin(ctx, c, resp.Plaintext, resp.KeyID, resp.Account)
+			return finalizeLoginWithStorage(ctx, c, resp.Plaintext, resp.KeyID, resp.Account, confirmFile)
 		}
 		var ae *APIError
 		if errors.As(err, &ae) {
@@ -213,20 +214,31 @@ func waitForApproval(ctx context.Context, c *Client, codeResp api.CliAuthCodeRes
 // and prints the success line. Shared by the one-click and typed-code
 // flows and --token.
 func finalizeLogin(ctx context.Context, c *Client, plaintext, managedKeyID string, acct api.AccountResponse) int {
+	return finalizeLoginWithStorage(ctx, c, plaintext, managedKeyID, acct, nil)
+}
+
+func finalizeLoginWithStorage(ctx context.Context, c *Client, plaintext, managedKeyID string, acct api.AccountResponse, confirmFile func(error) error) int {
 	previousCredential := loginErrorCredential
 	loginErrorCredential = plaintext
 	defer func() { loginErrorCredential = previousCredential }()
 	previous := currentManagedLogin()
-	store, err := saveTokenStore(plaintext)
+	revokeNewKey := func() {
+		if managedKeyID == "" {
+			return
+		}
+		revokeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = NewClient(c.BaseURL(), plaintext).DeleteKey(revokeCtx, managedKeyID)
+	}
+	store, err := saveTokenStoreWithFallback(plaintext, confirmFile)
 	if err != nil {
+		revokeNewKey()
 		return printErr("Could not save token", err)
 	}
 	if err := saveManagedSession(plaintext, managedKeyID, c.BaseURL()); err != nil {
 		// Do not leave an untracked server credential behind when local
 		// session metadata cannot be committed.
-		if managedKeyID != "" {
-			_ = NewClient(c.BaseURL(), plaintext).DeleteKey(ctx, managedKeyID)
-		}
+		revokeNewKey()
 		deleteToken()
 		return printErr("Could not save CLI session", err)
 	}

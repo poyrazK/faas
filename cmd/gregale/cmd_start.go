@@ -150,8 +150,13 @@ func cmdStart(args []string) (code int) {
 
 func (r *startRunner) authenticate() int {
 	PrintProgress(osStdout, "1/4 · Connect your account")
-	if loadToken() != "" {
-		client, _ := authedClient()
+	manual := manualBrowserLogin()
+	lookup := lookupStoredToken(os.Stderr)
+	if lookup.keychainErr != nil && (!manual || lookup.token != "") {
+		warnKeychainRead(os.Stderr, lookup.keychainErr)
+	}
+	if lookup.token != "" {
+		client := NewClient(apiBase(), lookup.token)
 		account, err := client.Whoami(r.ctx)
 		if err == nil {
 			return r.useAccount(client, account)
@@ -162,7 +167,11 @@ func (r *startRunner) authenticate() int {
 		}
 		PrintWarn(osStdout, "Your saved login has expired.")
 	}
-	ok, err := r.prompt.confirmYes(r.ctx, "Open your browser to sign in")
+	loginPrompt := "Open your browser to sign in"
+	if manual {
+		loginPrompt = "Sign in with a browser link"
+	}
+	ok, err := r.prompt.confirmYes(r.ctx, loginPrompt)
 	if err != nil {
 		// Login is required: declining/EOF must stop the entire flow.
 		if errors.Is(err, context.Canceled) {
@@ -174,7 +183,7 @@ func (r *startRunner) authenticate() int {
 		return printErr("Login required", errors.New("sign in with gregale login before starting a deployment"))
 	}
 	client := NewClient(apiBase(), "")
-	if result := browserLogin(r.ctx, client, false); result != 0 {
+	if result := browserLogin(r.ctx, client, manual, &r.prompt, lookup); result != 0 {
 		if r.ctx.Err() != nil {
 			return 130
 		}
