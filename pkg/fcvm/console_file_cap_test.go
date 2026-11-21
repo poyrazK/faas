@@ -2,9 +2,12 @@ package fcvm
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 // Every byte a tenant app writes lands in its console file on the node's
@@ -53,5 +56,32 @@ func TestRemoveConsoleFileDeletesOnlyTheLiveConsole(t *testing.T) {
 	}
 	if _, err := os.Stat(preserved); err != nil {
 		t.Fatalf("preserved failed-restore console removed: %v", err)
+	}
+}
+
+// A fresh host had no /var/log/faas: every console open failed silently and
+// agent-run captures waited 60 s for a marker that could never appear
+// (metal, 2026-11-21). The directory is created on demand.
+func TestOpenConsoleFileCreatesItsDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "log", "faas", "vm-x.console")
+	f := openConsoleFile(path)
+	if f == nil {
+		t.Fatal("console file not opened under a missing directory")
+	}
+	_ = f.Close()
+	if info, err := os.Stat(filepath.Dir(path)); err != nil || info.Mode().Perm() != consoleLogDirMode {
+		t.Fatalf("directory %v %v", info, err)
+	}
+}
+
+// Without a console file the marker can never appear, so the wait says so at
+// once instead of running out its window.
+func TestWaitConsoleMarkerFailsFastWithoutAConsoleFile(t *testing.T) {
+	v := NewJailerVMM(t.TempDir(), time.Second)
+	v.recs["vm-1"] = &instanceRecord{consolePath: filepath.Join(t.TempDir(), "missing.console"), done: make(chan struct{})}
+	started := time.Now()
+	err := v.WaitAgentRunReady(context.Background(), "vm-1", time.Minute)
+	if err == nil || !strings.Contains(err.Error(), "no console file") || time.Since(started) > 5*time.Second {
+		t.Fatalf("err %v after %s", err, time.Since(started))
 	}
 }

@@ -3,7 +3,12 @@ package taskrehearsal
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
+	"os/exec"
+	"strconv"
 	"testing"
 	"time"
 
@@ -18,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding/taskacl"
+	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 	"github.com/onebox-faas/faas/pkg/toolpublication"
 )
 
@@ -78,6 +84,7 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 		t.Fatal("cannot connect to fixture administrator")
 	}
 	defer func() { _ = admin.Close(t.Context()) }()
+	starter := os.Getenv("FAAS_REHEARSAL_TASK_STARTER_DIR")
 
 	for _, corrupt := range []bool{false, true} {
 		name := "migration receipt grants runtime roles"
@@ -145,7 +152,11 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 						if string(input.Archive) != string(worker) || !input.Migration {
 							return apidsource.EnqueueResult{}, errors.New("migration build source drifted")
 						}
-						if err := rehearseTestMigration(ctx, store, adminConfig, seal, identity); err != nil {
+						migrationStarter := starter
+						if corrupt {
+							migrationStarter = ""
+						}
+						if err := rehearseTestMigration(ctx, store, adminConfig, seal, identity, migrationStarter); err != nil {
 							return apidsource.EnqueueResult{}, err
 						}
 						d.ReleaseCommand = MigrationCommand()
@@ -199,8 +210,25 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 				if err != nil || got.MigrationTaskID != pipeline.release.ID || got.WebDeploymentID == "" || got.WorkerDeploymentID == "" || submitted != 3 {
 					t.Fatalf("rehearsal did not finish three pinned builds: builds=%d, err=%v", submitted, err)
 				}
-				if err := p.Cleanup(t.Context(), account.ID, run.ID); err != nil {
-					t.Fatal(err)
+				if starter != "" {
+					for _, role := range []string{Web, Worker} {
+						env, err := rehearsalTestEnvironment(t.Context(), store, adminConfig, seal, identity, role, databaseKey)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if err := runRehearsalTestStarter(t.Context(), starter, env, "--input-type=module", "-e", startRehearsalTestRuntime, role); err != nil {
+							t.Fatalf("start stock %s runtime with its rehearsal login: %v", role, err)
+						}
+					}
+				}
+				smokeCtx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				driver := &cancelledSmokeDriver{
+					cancel: cancel, runID: run.ID, workerID: got.WorkerDeploymentID,
+				}
+				evidence, err := r.Smoke(smokeCtx, p, account, run, got, driver)
+				if !errors.Is(err, context.Canceled) || !evidence.CleanupConfirmed {
+					t.Fatalf("cancelled smoke must clean the owned rehearsal: %+v %v", evidence, err)
 				}
 			}
 			if removed != 3 {
@@ -217,30 +245,61 @@ func TestPostgresRealTaskRehearsalRunner(t *testing.T) {
 	}
 }
 
+type cancelledSmokeDriver struct {
+	tasktoolrehearsal.SmokeDriver
+	cancel          context.CancelFunc
+	runID, workerID string
+}
+
+func (d *cancelledSmokeDriver) SubmitReport(_ context.Context, scope tasktoolrehearsal.SmokeScope) (string, error) {
+	if scope.RunID != d.runID || scope.WorkerDeploymentID != d.workerID || scope.Namespace != "rehearsal-"+d.runID {
+		return "", errors.New("worker smoke scope drifted")
+	}
+	d.cancel()
+	return "", context.Canceled
+}
+
+func (*cancelledSmokeDriver) VerifyCleanup(ctx context.Context, _ tasktoolrehearsal.SmokeScope) error {
+	return ctx.Err()
+}
+
 func runnerTestPolicy() tasktoolbinding.Policy {
 	return tasktoolbinding.Policy{WebDatabaseEnv: databaseKey, WorkerDatabaseEnv: databaseKey,
 		WebOwnerEnv: "MCP_TASK_OWNER_KEY", WorkerOwnerEnv: "MCP_TASK_OWNER_KEY",
 		WebNamespaceEnv: namespaceKey, WorkerNamespaceEnv: namespaceKey, OwnerKeyID: "default"}
 }
 
-func rehearseTestMigration(ctx context.Context, store *state.MemStore, admin *pgx.ConnConfig, seal *age.X25519Identity, p *Prepared) error {
-	row, err := store.GetAppSecret(ctx, p.account.ID, p.AppID(Migration), migrationDatabaseKey)
+func rehearsalTestEnvironment(ctx context.Context, store *state.MemStore, admin *pgx.ConnConfig, seal *age.X25519Identity, p *Prepared, role, databaseEnv string) (map[string]string, error) {
+	rows, err := store.ListAppSecretsInScope(ctx, p.account.ID, p.AppID(role), api.DefaultEnvScope)
+	if err != nil {
+		return nil, err
+	}
+	env := make(map[string]string, len(rows))
+	for _, row := range rows {
+		values, binding, err := secretbox.OpenMultiBound([]*age.X25519Identity{seal}, row.Ciphertext)
+		if err != nil || binding.AccountID != p.account.ID || len(values) != 1 || values[row.Key] == "" {
+			return nil, errors.New("could not read the bound rehearsal test environment")
+		}
+		env[row.Key] = values[row.Key]
+	}
+	databaseURL, err := url.Parse(env[databaseEnv])
+	if err != nil || databaseURL.Scheme != "postgres" && databaseURL.Scheme != "postgresql" || databaseURL.User == nil {
+		return nil, errors.New("invalid rehearsal test database binding")
+	}
+	databaseURL.Host = net.JoinHostPort(admin.Host, strconv.Itoa(int(admin.Port)))
+	env[databaseEnv] = databaseURL.String()
+	return env, nil
+}
+
+func rehearseTestMigration(ctx context.Context, store *state.MemStore, admin *pgx.ConnConfig, seal *age.X25519Identity, p *Prepared, starter string) error {
+	env, err := rehearsalTestEnvironment(ctx, store, admin, seal, p, Migration, migrationDatabaseKey)
 	if err != nil {
 		return err
 	}
-	env, binding, err := secretbox.OpenMultiBound([]*age.X25519Identity{seal}, row.Ciphertext)
-	if err != nil {
-		return err
+	if starter != "" {
+		return runRehearsalTestStarter(ctx, starter, env, MigrationCommand()[1:]...)
 	}
-	if binding.AccountID != p.account.ID {
-		return errors.New("migration credential is missing the account binding")
-	}
-	config, err := pgx.ParseConfig(env[migrationDatabaseKey])
-	if err != nil {
-		return errors.New("invalid migration database environment")
-	}
-	config.Host, config.Port = admin.Host, admin.Port
-	connection, err := pgx.ConnectConfig(ctx, config)
+	connection, err := pgx.Connect(ctx, env[migrationDatabaseKey])
 	if err != nil {
 		return errors.New("could not open migration database")
 	}
@@ -251,8 +310,33 @@ func rehearseTestMigration(ctx context.Context, store *state.MemStore, admin *pg
 			return errors.New("could not install controlled Task migration fixture")
 		}
 	}
+	if _, err := connection.Exec(ctx, "CREATE SEQUENCE public.gregale_mcp_task_claim_order_seq"); err != nil {
+		return errors.New("could not install controlled Task claim sequence")
+	}
 	return nil
 }
+
+func runRehearsalTestStarter(ctx context.Context, starter string, env map[string]string, args ...string) error {
+	command := exec.CommandContext(ctx, "node", args...)
+	command.Dir = starter
+	command.Env = make([]string, 0, len(env))
+	for key, value := range env {
+		command.Env = append(command.Env, key+"="+value)
+	}
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("Task starter command failed: %w", err)
+	}
+	return nil
+}
+
+const startRehearsalTestRuntime = `
+import { readFileSync } from 'node:fs';
+import { startMcpTaskRuntime } from './task-runtime.js';
+const config = JSON.parse(readFileSync('gregale-mcp.json', 'utf8'));
+const runtime = await startMcpTaskRuntime(config, { role: process.argv[1] });
+if (!runtime.taskRuntime) throw new Error('Task runtime did not start');
+await runtime.close();
+`
 
 func simulatedMigrationReceipt(p *Prepared, d state.Deployment) (state.AppTask, error) {
 	argv, err := rehearsalcommand.ContainedRelease(p.scenarioID(), d.ID, d.ReleaseCommand, false)
