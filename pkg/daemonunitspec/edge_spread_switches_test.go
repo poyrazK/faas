@@ -124,3 +124,50 @@ print(env.from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads
 		}
 	}
 }
+
+// adr: 20261021215353
+// The compute schedd reads early freeze only from its role drop-in: an
+// explicit 0 must render (schedd's own default is 15 s while the frozen tier
+// is on), and an unset value must render nothing.
+func TestScheddEarlyFreezeRenders(t *testing.T) {
+	if err := exec.Command("python3", "-c", "import jinja2").Run(); err != nil {
+		t.Skip("python3 with jinja2 required for drop-in rendering")
+	}
+	template := filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "compute_only_service", "templates", "99-faas-schedd-role.conf.j2")
+	script := `import json, pathlib, sys
+from jinja2 import Environment
+env = Environment(trim_blocks=True)
+print(env.from_string(pathlib.Path(sys.argv[1]).read_text()).render(**json.loads(sys.argv[2])), end="")
+`
+	const key = "Environment=FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S="
+	for _, tc := range []struct {
+		value any
+		want  string
+	}{
+		{value: 0, want: key + "0\n"},
+		{value: 15, want: key + "15\n"},
+		{value: nil, want: ""},
+	} {
+		values := map[string]any{"faas_box_role": "compute-only"}
+		if tc.value != nil {
+			values["faas_schedd_frozen_tier_early_freeze_after_s"] = tc.value
+		}
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("python3", "-c", script, template, string(encoded)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("render: %v: %s", err, out)
+		}
+		got := ""
+		for _, line := range strings.SplitAfter(string(out)+"\n", "\n") {
+			if strings.HasPrefix(line, key) {
+				got = line
+			}
+		}
+		if got != tc.want {
+			t.Errorf("value %v rendered %q, want %q:\n%s", tc.value, got, tc.want, out)
+		}
+	}
+}
