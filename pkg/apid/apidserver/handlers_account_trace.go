@@ -60,10 +60,23 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		appSlugs[app.ID] = app.Slug
 	}
 
-	invocationRows, err := s.store.ListInvocationsByTraceID(r.Context(), acct.ID, traceID, limit)
-	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("list trace invocations"))
-		return
+	// Rows are stored under each app's own account (its creator for an
+	// organization app), so reading them under the caller's id alone hid a
+	// teammate's organization apps from the lookup (Observe audit
+	// 2026-11-21, finding 17). Read under every owner of the visible apps.
+	owners := traceOwnerAccounts(acct.ID, apps)
+	var invocationRows []state.Invocation
+	for _, owner := range owners {
+		rows, err := s.store.ListInvocationsByTraceID(r.Context(), owner, traceID, limit)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("list trace invocations"))
+			return
+		}
+		invocationRows = append(invocationRows, rows...)
+	}
+	if len(invocationRows) > limit {
+		sort.SliceStable(invocationRows, func(i, j int) bool { return invocationRows[i].CreatedAt.After(invocationRows[j].CreatedAt) })
+		invocationRows = invocationRows[:limit]
 	}
 	result := api.AccountTraceLookupResponse{
 		TraceID:     traceID,
@@ -111,7 +124,9 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 	if logLimit > state.MaxLogEventPage {
 		logLimit = state.MaxLogEventPage
 	}
-	s.addAccountTraceEvidence(r.Context(), acct.ID, apps, traceID, now.Add(-retention), now, logLimit, &result)
+	for _, owner := range owners {
+		s.addAccountTraceEvidence(r.Context(), owner, appsOwnedBy(apps, owner, acct.ID), traceID, now.Add(-retention), now, logLimit, &result)
+	}
 	sort.SliceStable(result.Logs, func(i, j int) bool {
 		left, leftErr := time.Parse(time.RFC3339Nano, result.Logs[i].Timestamp)
 		right, rightErr := time.Parse(time.RFC3339Nano, result.Logs[j].Timestamp)
@@ -178,6 +193,13 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		return
 	}
 	seenSpans := make(map[string]struct{})
+	for _, span := range result.Spans {
+		if span.SpanID != "" {
+			seenSpans[span.SpanID] = struct{}{}
+		}
+	}
+	// Evidence is read once per owner account; this read's matches start here.
+	firstMatch := len(result.Matches)
 	var wakeRequests []wakehistory.TraceRequest
 	for _, row := range rows {
 		appID := uuidFromPg(row.AppID)
@@ -211,7 +233,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 		return
 	}
 	for i, wake := range wakes {
-		result.Matches[i].Wake = wake
+		result.Matches[firstMatch+i].Wake = wake
 	}
 }
 
@@ -227,4 +249,31 @@ func accountTraceTelemetryRow(row sqlc.ListRequestTelemetryByAccountTraceRow) sq
 		ConsumerID: row.ConsumerID, NodeID: row.NodeID, Region: row.Region, CommitSha: row.CommitSha,
 		DeploymentTag: row.DeploymentTag, DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,
 	}
+}
+
+// traceOwnerAccounts is the caller's account plus each visible app's own
+// account, deduplicated, in a stable order. request_telemetry, log_events and
+// invocations keep an app's rows under app.AccountID.
+func traceOwnerAccounts(callerID string, apps []state.App) []string {
+	out := []string{callerID}
+	seen := map[string]bool{callerID: true}
+	for _, app := range apps {
+		if app.AccountID != "" && !seen[app.AccountID] {
+			seen[app.AccountID] = true
+			out = append(out, app.AccountID)
+		}
+	}
+	return out
+}
+
+// appsOwnedBy returns the apps whose rows are stored under owner. The
+// caller's own read also covers apps without a recorded account.
+func appsOwnedBy(apps []state.App, owner, callerID string) []state.App {
+	var out []state.App
+	for _, app := range apps {
+		if app.AccountID == owner || (app.AccountID == "" && owner == callerID) {
+			out = append(out, app)
+		}
+	}
+	return out
 }
