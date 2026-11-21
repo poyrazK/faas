@@ -27,6 +27,8 @@ T = TypeVar("T", bound="RunHistoryEntry")
 
 @_attrs_define
 class RunHistoryEntry:
+    """One invocation's attribution, status and usage without its payload."""
+
     id: UUID
     status: RunHistoryEntryStatus
     runtime: RunHistoryEntryRuntime
@@ -35,7 +37,9 @@ class RunHistoryEntry:
     receipt_url: str
     result_validation_status: RunHistoryEntryResultValidationStatus | Unset = UNSET
     task: ExecutionTaskRef | Unset = UNSET
+    """Identity of a published executable task version."""
     attribution: RunAttribution | Unset = UNSET
+    """Verified customer and Agent references recorded with a Run."""
     started_at: datetime.datetime | Unset = UNSET
     finished_at: datetime.datetime | Unset = UNSET
     usage: ExecutionUsage | Unset = UNSET

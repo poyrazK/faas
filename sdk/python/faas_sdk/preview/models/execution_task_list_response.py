@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ExecutionTaskListResponse")
 
 @_attrs_define
 class ExecutionTaskListResponse:
+    """Page of visible task versions and its continuation token."""
+
     tasks: list[ExecutionTaskVersionResponse]
     next_cursor: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

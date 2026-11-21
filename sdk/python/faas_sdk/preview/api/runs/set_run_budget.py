@@ -113,9 +113,10 @@ def sync_detailed(
     restriction.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
-        body (SetRunBudgetRequest):
+        body (SetRunBudgetRequest): Replacement budget policy and the revision required to update
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,9 +150,10 @@ def sync(
     restriction.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
-        body (SetRunBudgetRequest):
+        body (SetRunBudgetRequest): Replacement budget policy and the revision required to update
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -180,9 +182,10 @@ async def asyncio_detailed(
     restriction.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
-        body (SetRunBudgetRequest):
+        body (SetRunBudgetRequest): Replacement budget policy and the revision required to update
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -214,9 +217,10 @@ async def asyncio(
     restriction.
 
     Args:
-        kind (RunBudgetKind):
+        kind (RunBudgetKind): Whether a budget applies to one customer or a named task.
         ref (str):
-        body (SetRunBudgetRequest):
+        body (SetRunBudgetRequest): Replacement budget policy and the revision required to update
+            it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -13,6 +13,8 @@ T = TypeVar("T", bound="SetRunAttributionBindingRequest")
 
 @_attrs_define
 class SetRunAttributionBindingRequest:
+    """Customer and optional Agent attribution to assign at a specific binding revision."""
+
     expected_revision: int
     customer_ref: str
     agent_ref: str | Unset = UNSET

@@ -113,9 +113,10 @@ def sync_detailed(
     """Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
-        body (SetRunAttributionBindingRequest):
+        body (SetRunAttributionBindingRequest): Customer and optional Agent attribution to assign
+            at a specific binding revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -148,9 +149,10 @@ def sync(
     """Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
-        body (SetRunAttributionBindingRequest):
+        body (SetRunAttributionBindingRequest): Customer and optional Agent attribution to assign
+            at a specific binding revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,9 +180,10 @@ async def asyncio_detailed(
     """Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
-        body (SetRunAttributionBindingRequest):
+        body (SetRunAttributionBindingRequest): Customer and optional Agent attribution to assign
+            at a specific binding revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -211,9 +214,10 @@ async def asyncio(
     """Bind a public API key or Agent endpoint to a customer. Key bindings follow rotation.
 
     Args:
-        kind (RunBindingKind):
+        kind (RunBindingKind): Credential or Agent endpoint type used for Run attribution.
         id (UUID):
-        body (SetRunAttributionBindingRequest):
+        body (SetRunAttributionBindingRequest): Customer and optional Agent attribution to assign
+            at a specific binding revision.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

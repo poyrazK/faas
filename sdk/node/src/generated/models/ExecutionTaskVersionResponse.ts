@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ExecutionTaskRef } from './ExecutionTaskRef.js';
 import type { ResolvedExecutionLimits } from './ResolvedExecutionLimits.js';
+/**
+ * Published task configuration, lifecycle status and version metadata.
+ */
 export type ExecutionTaskVersionResponse = (ExecutionTaskRef & {
   runtime: string;
   profile: string;

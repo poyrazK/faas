@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * File locator, publication status and integrity metadata visible to the caller.
+ */
 export type ExecutionFileResponse = {
   id: string;
   status: 'missing' | 'expired' | 'uploading' | 'pending' | 'ready' | 'failed' | 'deleting';

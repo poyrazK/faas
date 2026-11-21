@@ -6,6 +6,9 @@ import type { ExecutionPipelineCompletion } from './ExecutionPipelineCompletion.
 import type { ExecutionPipelineProgress } from './ExecutionPipelineProgress.js';
 import type { ExecutionPipelineRerun } from './ExecutionPipelineRerun.js';
 import type { ExecutionPipelineStepResponse } from './ExecutionPipelineStepResponse.js';
+/**
+ * Managed task pipeline state, steps and available completion details.
+ */
 export type ExecutionPipelineResponse = {
   progress?: ExecutionPipelineProgress;
   rerun?: ExecutionPipelineRerun;

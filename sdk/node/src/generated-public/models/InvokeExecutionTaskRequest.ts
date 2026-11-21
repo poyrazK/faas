@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ExecutionArtifactInput } from './ExecutionArtifactInput.js';
 import type { ExecutionFileInput } from './ExecutionFileInput.js';
+/**
+ * Task selection, invocation input and optional file or completion configuration.
+ */
 export type InvokeExecutionTaskRequest = {
   customer_ref?: string;
   name: string;

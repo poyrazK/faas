@@ -13,6 +13,8 @@ T = TypeVar("T", bound="CreateAgentExecutionFileGrantRequest")
 
 @_attrs_define
 class CreateAgentExecutionFileGrantRequest:
+    """Scoped Agent endpoint, thread, call, task version and input path for staging a file."""
+
     endpoint_id: UUID
     thread_id: str
     tool_call_id: str

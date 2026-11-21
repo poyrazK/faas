@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Checksum and locator for a retained file written by a completed step.
+ */
 export type ExecutionPipelineArtifactRef = {
   name: string;
   size_bytes: number;

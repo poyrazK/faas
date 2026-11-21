@@ -14,6 +14,8 @@ T = TypeVar("T", bound="PublishExecutionTaskRequest")
 
 @_attrs_define
 class PublishExecutionTaskRequest:
+    """Source, execution configuration and contracts for a new immutable task version."""
+
     name: str
     version: int
     definition: Any

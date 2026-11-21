@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ExecutionTaskRef")
 
 @_attrs_define
 class ExecutionTaskRef:
+    """Identity of a published executable task version."""
+
     id: UUID
     name: str
     version: int

@@ -12,6 +12,8 @@ T = TypeVar("T", bound="ExecutionPipelineReusedStep")
 
 @_attrs_define
 class ExecutionPipelineReusedStep:
+    """Successful earlier step and its verified Run reference reused by a rerun."""
+
     label: str
     run_id: UUID
     output_sha256: str

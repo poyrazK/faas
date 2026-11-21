@@ -17,6 +17,8 @@ T = TypeVar("T", bound="ExecutionEnvironmentEventsResponse")
 
 @_attrs_define
 class ExecutionEnvironmentEventsResponse:
+    """An ordered page of retained dependency environment build records."""
+
     events: list[ExecutionEnvironmentEvent]
     next_sequence: int
     status: str

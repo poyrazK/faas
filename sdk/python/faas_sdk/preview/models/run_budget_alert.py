@@ -20,8 +20,11 @@ T = TypeVar("T", bound="RunBudgetAlert")
 
 @_attrs_define
 class RunBudgetAlert:
+    """Recorded customer or task budget threshold event."""
+
     event_id: UUID
     kind: RunBudgetKind
+    """Whether a budget applies to one customer or a named task."""
     ref: str
     day: datetime.date
     metric: RunBudgetAlertMetric

@@ -15,8 +15,11 @@ T = TypeVar("T", bound="RunAttributionBinding")
 
 @_attrs_define
 class RunAttributionBinding:
+    """Saved attribution binding and its current revision."""
+
     enabled: bool
     subject_kind: RunBindingKind
+    """Credential or Agent endpoint type used for Run attribution."""
     subject_id: UUID
     customer_ref: str
     revision: int

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Optional concurrency, invocation and compute caps for a customer or task.
+ */
 export type RunBudgetLimits = {
   max_concurrent?: number;
   max_invocations_per_day?: number;

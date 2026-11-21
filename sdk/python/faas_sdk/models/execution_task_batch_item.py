@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ExecutionTaskBatchItem")
 
 @_attrs_define
 class ExecutionTaskBatchItem:
+    """A labeled invocation input submitted as part of a task batch."""
+
     label: str
     input_: Any | Unset = UNSET
     """JSON input for this batch item."""

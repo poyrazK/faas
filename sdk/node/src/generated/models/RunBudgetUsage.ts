@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Active reservations and metered usage in the current UTC-day window.
+ */
 export type RunBudgetUsage = {
   day: string;
   active: number;

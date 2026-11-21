@@ -45,6 +45,7 @@ class ExecutionPipelineCompletion:
     """Host-measured resource usage for a terminal execution."""
     steps: list[ExecutionPipelineCompletedStep]
     rerun: ExecutionPipelineRerun | Unset = UNSET
+    """Rerun receipt linking the replacement pipeline to its original job and reused outputs."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

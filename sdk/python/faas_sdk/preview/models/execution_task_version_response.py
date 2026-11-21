@@ -27,6 +27,8 @@ T = TypeVar("T", bound="ExecutionTaskVersionResponse")
 
 @_attrs_define
 class ExecutionTaskVersionResponse:
+    """Published task configuration, lifecycle status and version metadata."""
+
     id: UUID
     name: str
     version: int

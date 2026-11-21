@@ -106,7 +106,8 @@ def sync_detailed(
 
     Args:
         id (UUID):
-        body (CreateAgentExecutionFileGrantRequest):
+        body (CreateAgentExecutionFileGrantRequest): Scoped Agent endpoint, thread, call, task
+            version and input path for staging a file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,7 +146,8 @@ def sync(
 
     Args:
         id (UUID):
-        body (CreateAgentExecutionFileGrantRequest):
+        body (CreateAgentExecutionFileGrantRequest): Scoped Agent endpoint, thread, call, task
+            version and input path for staging a file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -179,7 +181,8 @@ async def asyncio_detailed(
 
     Args:
         id (UUID):
-        body (CreateAgentExecutionFileGrantRequest):
+        body (CreateAgentExecutionFileGrantRequest): Scoped Agent endpoint, thread, call, task
+            version and input path for staging a file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -216,7 +219,8 @@ async def asyncio(
 
     Args:
         id (UUID):
-        body (CreateAgentExecutionFileGrantRequest):
+        body (CreateAgentExecutionFileGrantRequest): Scoped Agent endpoint, thread, call, task
+            version and input path for staging a file.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

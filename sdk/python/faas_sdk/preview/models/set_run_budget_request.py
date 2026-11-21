@@ -15,9 +15,12 @@ T = TypeVar("T", bound="SetRunBudgetRequest")
 
 @_attrs_define
 class SetRunBudgetRequest:
+    """Replacement budget policy and the revision required to update it."""
+
     expected_revision: int
     enabled: bool
     limits: RunBudgetLimits
+    """Optional concurrency, invocation and compute caps for a customer or task."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

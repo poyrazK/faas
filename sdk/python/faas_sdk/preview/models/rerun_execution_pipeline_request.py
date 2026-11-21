@@ -16,6 +16,8 @@ T = TypeVar("T", bound="RerunExecutionPipelineRequest")
 
 @_attrs_define
 class RerunExecutionPipelineRequest:
+    """New workflow identity and acknowledgement of previously started steps that may repeat."""
+
     workflow_id: str
     original: CreateManagedExecutionWorkflowRequest
     """Encrypted, server-managed DAG. Every step runs in its own disposable

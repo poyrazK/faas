@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Per-file and account storage limits for Run inputs and retained outputs.
+ */
 export type ExecutionFileLimits = {
   max_file_bytes: number;
   max_input_bytes: number;
