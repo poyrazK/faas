@@ -57,7 +57,7 @@ func (m *management) createSourceUpload(ctx context.Context, args createUploadAr
 		"method":     "PUT",
 		"max_bytes":  limit,
 		"expires_at": up.expires.Format(time.RFC3339),
-		"command":    "tar -czf - --exclude=.git --exclude=node_modules . | curl --fail -T - '" + url + "'",
+		"command":    "tar -czf - --exclude=.git --exclude=.gregale --exclude=node_modules . | curl --fail -T - '" + url + "'",
 		"next":       "Run command in the project directory, then call gregale_plan_upload_deploy with this upload_id. Links, devices and .git are refused.",
 	}, nil
 }

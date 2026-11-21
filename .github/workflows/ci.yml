@@ -1261,7 +1261,7 @@ jobs:
           FAAS_REHEARSAL_PG_TEST_ADMIN_URL: postgres://faas:faas@127.0.0.1:5433/gregale_rehearsal_admin?sslmode=disable
         run: >-
           go test -race -p 1 -count=1 -v -timeout=5m
-          ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
+          ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance ./pkg/apid/taskrehearsal
           -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass|TestPostgresRealTask'
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.id == 'b' || startsWith(matrix.id, 'd') || matrix.gates

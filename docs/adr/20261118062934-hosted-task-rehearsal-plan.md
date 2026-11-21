@@ -18,3 +18,37 @@ The plan and run journals follow the binding identity lifetime and are kept outs
 ## Validation
 
 Native memory and PostgreSQL tests exercise owner authorization, immutable replays, credential or authority drift, and concurrent claims. The OpenAPI and CLI contracts expose the preview owner operations.
+
+## Candidate handoff
+
+The private launch entry checks that the authenticated key holds the exact
+unconsumed approval. It opens the account-encrypted source under the original
+namespace and verifies both reviewed trees before packing deterministic build
+archives in memory. The native claim rechecks the original authority, evidence
+and deadline. Only the call that acquires the reservation receives the archives.
+Retries receive the same run identity. An unavailable or changed source cannot
+spend the approval.
+
+The archive handoff is private to the control plane. Contained workload
+provisioning and execution evidence are separate from this handoff.
+
+## Contained resource preparation
+
+The private provisioner takes the winning claim and derives workload IDs,
+scenario membership and the queue namespace from the reserved target. It
+creates four internal-only preview workloads for migration, web, worker and
+observation. The workloads enter the existing contained-network and webhook
+capture policy before the PostgreSQL fixture is created. Only the migration
+workload receives a credential during initial preparation. The native fixture
+starts with a platform-owned capture marker. The release runner must install
+the Task schema in containment before it can request separate restricted
+web, worker and observer logins.
+
+Preparation must complete within the original approval window. The existing
+preview and PostgreSQL cleanup services expire these resources fifteen minutes
+from reservation. The PostgreSQL fixture journal records the backend, database,
+migration owner and membership needed to remove the database and logins.
+Failure cleanup also removes the app-local credentials and tombstones the
+workloads. A restarted executor can clean the same account and run without
+recovering archives or credentials. Claim replay never allocates resources
+or takes ownership of an existing run.

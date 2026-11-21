@@ -441,10 +441,14 @@ peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
-Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
-`FAAS_MANAGED_POSTGRES_CONFIG` to that path, and expose the API key through the
-environment variable named by `secret_env.api-key`. The API key itself must
-never appear in the JSON file.
+Set `faas_managed_postgres_config` (the shape of
+`deploy/managed-postgres.example.json`, as YAML) in the control plane's Ansible
+vars and converge: the `managed_postgres_config` role renders
+`/etc/faas/managed-postgres.json`, sets `FAAS_MANAGED_POSTGRES_CONFIG` in an
+apid drop-in, and refuses a config under which existing databases would no
+longer resolve (`deploy/ansible/roles/managed_postgres_config/README.md`).
+Expose the API key through the `sealed.env` variable named by
+`secret_env.api-key`. The API key itself must never appear in the config.
 
 `namespace` is the immutable Neon organization ID. `region` is Gregale's
 portable region name; `settings.region_id` is the current Neon placement for

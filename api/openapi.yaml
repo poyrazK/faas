@@ -90064,6 +90064,7 @@ components:
         evidence_through_id: { type: integer, format: int64, minimum: 0 }
         known_millicents: { type: integer, format: int64, minimum: 0 }
         coverage_complete: { type: boolean }
+        projectable: { type: boolean, description: 'Every selected meter was sampled enough to project the month: complete coverage, or at least 99% of the elapsed minutes with the last hour complete. Projected-overrun alerts need it.' }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
         projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate: an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
@@ -90366,6 +90367,9 @@ components:
         fresh: { type: boolean }
         expected_minutes: { type: integer, format: int64 }
         complete_minutes: { type: integer, format: int64 }
+        projectable:
+          type: boolean
+          description: Enough of the period was sampled to forecast it, either every minute or at least 99% of the elapsed minutes with the last hour complete. A forecast over a partly sampled period uses the covered_time_run_rate_v1 method.
         unpriced_quantity: { type: integer, format: int64 }
         non_billable_quantity: { type: integer, format: int64 }
         reasons: { type: array, items: { type: string } }
@@ -124395,7 +124399,7 @@ components:
         client_site: { type: string, maxLength: 253, description: Lower-case host name the client was verified at. }
 
     AgentBudgetResponse:
-      description: "An agent connection's monthly budget for always-on capacity, and what it committed this month."
+      description: "An agent connection's monthly budget for always-on capacity, and the always-on cost its changes keep running."
       type: object
       required: [source, spent_cents, month]
       properties:
@@ -124404,8 +124408,8 @@ components:
         key_monthly_cents: { type: integer, format: int64, description: "The budget set for this agent, when one was." }
         key_unlimited: { type: boolean, description: "The agent was set to have no budget of its own." }
         org_max_cents: { type: integer, format: int64, description: "The organization's ceiling on agents' budgets, when it set one." }
-        spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on capacity the agent added this UTC month, priced at the overage rate and rounded up to the cent." }
-        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The UTC month spend counts in." }
+        spent_cents: { type: integer, format: int64, minimum: 0, description: "Always-on cost a month that the agent's changes keep running, priced at the overage rate and rounded up to the cent. It does not reset each month; lowering capacity gives budget back." }
+        month: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$', description: "The current UTC month (kept for compatibility; spent_cents no longer resets monthly)." }
 
     AgentUndoRequest:
       description: "Chooses an agent's changes to undo: those since a time (default the last 24 hours), or the activity entries named."

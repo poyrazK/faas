@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -133,6 +134,12 @@ func (m *management) operationBase(ctx context.Context, a operationArgs, kind st
 func (m *management) planRestart(ctx context.Context, a operationArgs) (any, error) {
 	if a.Project != "" || a.Environment != "" {
 		return nil, invalid("unsupported_scope", "the native restart is app-wide; use an approved environment rollout for a named target")
+	}
+	// A parked app has nothing to restart: its next request boots it with the
+	// current configuration. The apply used to be refused with a recovery
+	// that said to plan the same restart again.
+	if instances, err := m.client.ListInstancesWithHistory(ctx, a.App, false); err == nil && !anyInstanceRunning(instances) {
+		return nil, invalid("nothing_to_restart", a.App+" is parked, so nothing is running to restart; its next request boots it with the current variables and secrets. No restart is needed.")
 	}
 	p, err := m.operationBase(ctx, a, "restart", struct{}{})
 	if err != nil {
@@ -491,4 +498,18 @@ func (m *management) previewScaling(ctx context.Context, p *releasePlan, a scale
 		return nil
 	}
 	return &out
+}
+
+// anyInstanceRunning reports an instance holding host memory or booting.
+func anyInstanceRunning(instances []api.InstanceResponse) bool {
+	for _, ins := range instances {
+		switch strings.ToLower(ins.State) {
+		case "running", "waking", "cold_booting":
+			return true
+		}
+		if ins.Resident {
+			return true
+		}
+	}
+	return false
 }

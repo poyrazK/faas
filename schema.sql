@@ -31192,6 +31192,18 @@ CREATE TABLE public.agent_budget_spend (
 
 
 --
+-- Name: agent_budget_standing; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_budget_standing (
+    key_id uuid NOT NULL,
+    standing_millicents bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_budget_standing_standing_millicents_check CHECK ((standing_millicents >= 0))
+);
+
+
+--
 -- Name: agent_callback_revocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -63746,6 +63758,14 @@ ALTER TABLE ONLY public.agent_budget_spend
 
 
 --
+-- Name: agent_budget_standing agent_budget_standing_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_standing
+    ADD CONSTRAINT agent_budget_standing_pkey PRIMARY KEY (key_id);
+
+
+--
 -- Name: agent_callback_revocations agent_callback_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79292,6 +79312,13 @@ CREATE INDEX app_task_network_address ON public.app_task_networks USING btree (n
 --
 
 CREATE INDEX app_tasks_account_app_created_idx ON public.app_tasks USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: app_tasks_billing_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_tasks_billing_window_idx ON public.app_tasks USING btree (started_at) WHERE (started_at IS NOT NULL);
 
 
 --
@@ -97711,6 +97738,14 @@ ALTER TABLE ONLY public.agent_approval_requests
 
 ALTER TABLE ONLY public.agent_budget_spend
     ADD CONSTRAINT agent_budget_spend_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_budget_standing agent_budget_standing_key_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_budget_standing
+    ADD CONSTRAINT agent_budget_standing_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
 
 
 --

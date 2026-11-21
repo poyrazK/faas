@@ -178,7 +178,16 @@ func (j *hostedMCPJourney) connectionRevoked(t *testing.T) {
 
 func (j *hostedMCPJourney) orgCreated(t *testing.T) {
 	j.org = j.tg.slug("mcp-org")
-	j.tg.ok(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	res := j.tg.run(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	if res.exit != 0 && strings.Contains(string(res.stderr)+string(res.stdout), "org_free_limit_exceeded") {
+		// Each run deletes the Free organization it made, and a Free
+		// organization deleted this month still counts, so only the first
+		// run of a month can make one on the same account.
+		t.Skip("the account has used its Free organization this month; the organization agent policy steps need another account or next month")
+	}
+	if res.exit != 0 {
+		t.Fatalf("gregale org create failed (exit %d): %s", res.exit, res.problem())
+	}
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "delete", j.org, "--yes") })
 }
 
