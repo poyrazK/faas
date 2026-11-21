@@ -736,16 +736,18 @@ After the checks in phase 1 step 9, stop it
   manifest's `postgresql.standby` refuses today (its address must be inside
   `overlay.cidr`). It needs a cross-site option first (TLS replication
   already verifies the primary), then `ControlPlaneFailover.md` step 10.
-- **Customer object storage on OVH**, before it launches: a separate OVH
-  Public Cloud project for customer buckets (100 buckets per project,
-  1,000 after a support request), an S3 user there that creates and
-  deletes buckets, a backend such as `ovh-bhs-prod-v1` (`driver: s3`) as
-  the `us-east-1` default in `object-storage.json`, the `object_storage`
-  block in `ovh-live.template.yaml`, the OVH usage driver with its API keys
-  and access-log bucket for billing
-  (`docs/ops/object-storage-operator-notes.md`), and creation-time Object
-  Lock (ADR-20261119065000), because OVH cannot turn it on for an existing
-  bucket.
+- **Customer object storage on OVH** (set up 2026-11-21): project
+  `gregale-customer-storage-us-1`, users and policies in
+  `deploy/ovh/customer-object-storage-policies/`, backend `ovh-bhs-prod-v1`
+  (`driver: s3`, `max_buckets: 95` until OVH raises the project quota to
+  1,000) as the `us-east-1` default, and the `object_storage` block in
+  `ovh-live.template.yaml`. The gateway runs on the control plane behind
+  Cloudflare. Launch runs `gateway_safety_v1` accounting, which needs no
+  OVH usage driver, and no Object Lock (no `object_lock` in the registry)
+  until creation-time Object Lock (ADR-20261119065000) ships. The 11-19
+  restore brought back the seven deleted GCS test buckets as `ready`
+  catalog rows with no upstream bucket; they are retired in the catalog
+  before `s3_enabled` turns on.
 - **Billing**: the egress allowance numbers were set for GCP egress costs
   (billing review R8-1); revisit them now.
 - **Managed PostgreSQL**: the provider registry (`FAAS_MANAGED_POSTGRES_CONFIG`)
