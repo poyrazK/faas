@@ -121,7 +121,8 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 	}
 	identity := filepath.Join(dir, "runtime.age")
 	secretFile := filepath.Join(dir, "s3-secret")
-	if err := os.WriteFile(identity, []byte(id.String()+"\n"), 0o600); err != nil {
+	// secretbox refuses an identity anything but its owner may write.
+	if err := os.WriteFile(identity, []byte(id.String()+"\n"), 0o400); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(secretFile, []byte(g.SecretKey), 0o600); err != nil {
