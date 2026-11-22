@@ -164,7 +164,7 @@ call it.
 
 ### 5. Parked input waits
 
-Not built in this change. The design direction, for a follow-up ADR:
+Not built in this change; designed in ADR-20261123003000. The direction:
 
 - Input waits use durable Tasks (`input_required`); the VM parks between the
   client's `tasks/get` polls today. That already lets a person take minutes to
