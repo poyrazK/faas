@@ -5694,6 +5694,17 @@ endpoint. Use the same endpoint and provide the original caller's credential
 when reading it. Use a new receipt path for each new submission. An existing
 receipt remains available for status lookup after a lost reply or CLI exit.
 
+To wait for the result directly from a receipt, use the same endpoint and
+provide the caller's current credential. This resolves the original Task even
+after the one-minute submission window, for as long as the Task is retained
+and the caller has tool access. Use `--cancel-on-timeout` to request cancellation
+if the wait times out after resolving the Task.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
