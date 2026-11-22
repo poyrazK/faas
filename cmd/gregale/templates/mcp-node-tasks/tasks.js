@@ -485,14 +485,16 @@ export function createMcpTaskRuntime({ store, handlers, deploymentID = '', onDra
       })();
       return stopping;
     },
-    async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema) {
+    supportsTaskSubmission: () => store.supportsTaskSubmission === true,
+    async create(toolName, args, authInfo, authMode, clientCapabilities = {}, outputSchema, submissionKey) {
       if (stopping) throw new Error('MCP task runtime is draining');
       const handler = handlers[toolName];
       if (!handler || typeof handler.execute !== 'function') throw new Error('MCP task tool is not registered');
       const outputContract = snapshotTaskOutputSchema(outputSchema);
       await handler.validate?.(args);
       if (stopping) throw new Error('MCP task runtime is draining');
-      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities), outputSchema: outputContract });
+      if (submissionKey !== undefined && store.supportsTaskSubmission !== true) throw new Error('Keyed Task submission is unavailable');
+      const task = await store.create({ toolName, handlerVersion: handler.version, args, authInfo, authMode, inputMethods: inputMethodsFor(clientCapabilities), outputSchema: outputContract, submissionKey });
       if (workerEnabled) void drain();
       return {
         resultType: 'task', taskId: task.task_id, status: 'working',

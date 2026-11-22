@@ -5645,6 +5645,28 @@ the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
 
+The Node/PostgreSQL starter supports retrying a lost submission reply on an
+authenticated endpoint. Run the updated `tasks:migrate` before starting the
+updated starter. Generate and save a lowercase UUIDv7 before the first call.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-submission-key "$TASK_SUBMISSION_KEY"
+```
+
+If the reply is lost, repeat the command with the same key, tool, arguments and
+caller within one minute of the key's UUIDv7 timestamp. A matching retry returns
+the original Task handle. A different request or caller is rejected. The
+server uses its PostgreSQL clock and rejects expired or future-dated keys.
+After the window closes, reconcile the original request before submitting again
+with a fresh key. Check or wait for the result using the returned Task ID.
+
+The CLI requires the server to advertise the `io.gregale/task-submission`
+extension. Keyed submission deduplicates Task creation within this window.
+Worker execution retains its existing at-least-once contract. See
+[ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
