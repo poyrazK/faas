@@ -202,6 +202,7 @@ jobs:
           OUT_DIR: ${{ runner.temp }}/gregale-units
           GH_TOKEN: ${{ github.token }}
           BLAST_CAP: "5"
+          UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
@@ -260,8 +261,21 @@ jobs:
             if [[ "$target" != "$(git rev-parse HEAD)" ]]; then
               git checkout --quiet --detach "$target"
             fi
-            python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code --code-cache "$CODE_CACHE" \
-              --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+            # One build ("One build" in the ADR): the units this release
+            # carries are built once, here, with the release recipe; code
+            # selection measures those very binaries (normalised to the code
+            # build) instead of building every one of them again.
+            python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --output "$OUT_DIR/report-closure.json"
+            if [[ "$(jq -r .eligible "$OUT_DIR/report-closure.json")" == true ]]; then
+              rm -rf "$UNITS_BIN_DIR"
+              release_out="$OUT_DIR/release" closure="$OUT_DIR/report-closure.json"
+              UNITS_BUILD_ONLY=1 LANES="$tools/release_units.json" REPORT="$closure" OUT_DIR="$release_out" \
+                scripts/build-unit-release.sh
+              python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code --code-cache "$CODE_CACHE" \
+                --code-from "$UNITS_BIN_DIR" --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+            else
+              cp "$OUT_DIR/report-closure.json" "$OUT_DIR/report.json"
+            fi
           fi
           # Empty when no commit is releasable; nothing downstream runs then.
           echo "release_sha=${target}" >> "$GITHUB_OUTPUT"
@@ -382,6 +396,8 @@ jobs:
           # The lane table the report was made with (head's), not the
           # checked-out prefix commit's.
           LANES: ${{ runner.temp }}/unit-tools/release_units.json
+          # The units the selection step built and measured.
+          UNITS_BIN_DIR: ${{ runner.temp }}/unit-bin
         run: scripts/build-unit-release.sh
 
       - name: Install pinned cosign

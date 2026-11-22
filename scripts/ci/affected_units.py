@@ -802,7 +802,21 @@ def write_code_cache(path, base_sha, go, digests):
         fh.write("\n")
 
 
-def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workdir=None):
+def prebuilt_digests(names, prebuilt, stamps, workdir=None):
+    """({binary: digests}, missing) for names whose release binary is in
+    prebuilt, normalised to the code build (binary_code.normalised_digests);
+    stamps(name) gives its (stamped, neutral) pairs."""
+    found, missing = {}, []
+    for n in names:
+        path = os.path.join(prebuilt, n)
+        if os.path.isfile(path):
+            found[n] = binary_code.normalised_digests(path, stamps(n), workdir)
+        else:
+            missing.append(n)
+    return found, missing
+
+
+def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workdir=None, prebuilt=None, stamps=None):
     """({binary: {"code", "code_digest", "base_code_digest"}}, binaries
     whose base digests came from the cache, binaries built at base) for
     names, built at base (an exported tree) and at head (the checkout) with
@@ -825,7 +839,12 @@ def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workd
             buildable = [n for n in missing if n in base.binaries and os.path.isdir(os.path.join(base.path, "cmd", n))]
             if buildable:
                 base_hashes.update(binary_code.build(base, buildable, out))
-        head_hashes = binary_code.build(BuildSide(head_sha, root), names, out)
+        # One build (ADR-20261122170000): the release binaries already built
+        # at head, normalised, are the code builds; anything missing builds.
+        head_hashes, rest = (prebuilt_digests(names, prebuilt, stamps, tmp) if prebuilt and stamps
+                             else ({}, list(names)))
+        if rest:
+            head_hashes.update(binary_code.build(BuildSide(head_sha, root), rest, out))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if cache_path:
@@ -846,7 +865,8 @@ def code_candidates(rep):
                   if b["closure"] and b["lane"] in DEPLOY_LANES and not rep["lanes"][b["lane"]]["blocked_by"])
 
 
-def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_cache=None, workdir=None):
+def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_cache=None, workdir=None,
+           code_from=None):
     config = load_config(config_path)
     base_sha = git("rev-parse", "--verify", f"{base}^{{commit}}", root=root).strip()
     head_sha = git("rev-parse", "--verify", f"{head}^{{commit}}", root=root).strip()
@@ -904,10 +924,15 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
         try:
             selection["go"] = binary_code.go_version(root)
             if names:
+                # Release binaries already built at head carry their unit
+                # version and the head commit as stamps.
+                versions = {n: b["version"] for n, b in out["binaries"].items()}
                 measured, selection["base_cached"], selection["base_built"] = measure_code(
-                    names, base_sha, head_sha, selection["go"], root, code_cache, workdir)
+                    names, base_sha, head_sha, selection["go"], root, code_cache, workdir, code_from,
+                    lambda n: binary_code.release_stamps(versions[n], head_sha))
+                selection["prebuilt"] = bool(code_from)
                 out = analyze(commits, closures, config, exists, recipes, data, host, measured, comments)
-        except (RuntimeError, subprocess.CalledProcessError) as err:
+        except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
             # Selecting by closure restarts more units, never fewer: the
             # release carries no digests and hosts compare unit versions.
             detail = getattr(err, "stderr", "") or ""
@@ -964,11 +989,13 @@ def main():
                     help="build each deployable closure binary at base and head and select by code")
     ap.add_argument("--code-cache", help="JSON file of base code digests, read and updated (with --code)")
     ap.add_argument("--workdir", help="parent directory for the exported base tree and binaries (with --code)")
+    ap.add_argument("--code-from", help="directory of the release binaries already built at head (with --code): "
+                                        "measured normalised instead of built again")
     ap.add_argument("--output", help="write the JSON report here instead of stdout")
     args = ap.parse_args()
     try:
         rep = report(args.base, args.head, args.config, code=args.code, code_cache=args.code_cache,
-                     workdir=args.workdir)
+                     workdir=args.workdir, code_from=args.code_from)
     except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
         detail = getattr(err, "stderr", "") or ""
         print(f"affected_units: {err} {detail}".strip(), file=sys.stderr)
