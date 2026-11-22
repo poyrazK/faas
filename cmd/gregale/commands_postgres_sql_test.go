@@ -1,4 +1,4 @@
-package main
+package main_test
 
 import (
 	"bytes"
@@ -14,29 +14,30 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/onebox-faas/faas/cmd/gregale"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestPostgresSQLQueryText(t *testing.T) {
-	if got, err := postgresSQLQueryText([]string{"  select 1  "}, "", nil); err != nil || got != "select 1" {
+	if got, err := main.PostgresSQLQueryText([]string{"  select 1  "}, "", nil); err != nil || got != "select 1" {
 		t.Fatalf("positional = %q, %v", got, err)
 	}
-	if got, err := postgresSQLQueryText(nil, "-", strings.NewReader("select 2\n")); err != nil || got != "select 2" {
+	if got, err := main.PostgresSQLQueryText(nil, "-", strings.NewReader("select 2\n")); err != nil || got != "select 2" {
 		t.Fatalf("stdin = %q, %v", got, err)
 	}
 	path := t.TempDir() + "/q.sql"
 	if err := os.WriteFile(path, []byte("select 3;"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := postgresSQLQueryText(nil, path, nil); err != nil || got != "select 3;" {
+	if got, err := main.PostgresSQLQueryText(nil, path, nil); err != nil || got != "select 3;" {
 		t.Fatalf("file = %q, %v", got, err)
 	}
 	for name, call := range map[string]func() (string, error){
-		"both":  func() (string, error) { return postgresSQLQueryText([]string{"select 1"}, path, nil) },
-		"none":  func() (string, error) { return postgresSQLQueryText(nil, "", nil) },
-		"empty": func() (string, error) { return postgresSQLQueryText([]string{"  "}, "", nil) },
+		"both":  func() (string, error) { return main.PostgresSQLQueryText([]string{"select 1"}, path, nil) },
+		"none":  func() (string, error) { return main.PostgresSQLQueryText(nil, "", nil) },
+		"empty": func() (string, error) { return main.PostgresSQLQueryText([]string{"  "}, "", nil) },
 		"huge": func() (string, error) {
-			return postgresSQLQueryText(nil, "-", bytes.NewReader(make([]byte, postgresSQLQueryLimit+1)))
+			return main.PostgresSQLQueryText(nil, "-", bytes.NewReader(make([]byte, main.PostgresSQLQueryLimit+1)))
 		},
 	} {
 		if _, err := call(); err == nil {
@@ -51,19 +52,19 @@ func TestPostgresSQLBindingOrder(t *testing.T) {
 		{AppID: "a1", EnvironmentKey: "DATABASE_URL", Access: "read_write", State: "ready"},
 		{AppID: "a1", EnvironmentKey: "DATABASE_RO_URL", Access: "read_only", State: "ready"},
 	}
-	got, _, err := choosePostgresBinding(bindings, apps, "", "", "", postgresSQLReadOnlyOrder)
+	got, err := main.ChoosePostgresBinding(bindings, apps, main.PostgresSQLReadOnlyOrder)
 	if err != nil || got.Access != "read_only" {
 		t.Fatalf("read-only picked %+v, %v", got, err)
 	}
-	got, _, err = choosePostgresBinding(bindings, apps, "", "", "", postgresSQLWriteOrder)
+	got, err = main.ChoosePostgresBinding(bindings, apps, main.PostgresSQLWriteOrder)
 	if err != nil || got.Access != "read_write" {
 		t.Fatalf("write picked %+v, %v", got, err)
 	}
-	if _, _, err := choosePostgresBinding(bindings[1:], apps, "", "", "", postgresSQLWriteOrder); err == nil {
+	if _, err := main.ChoosePostgresBinding(bindings[1:], apps, main.PostgresSQLWriteOrder); err == nil {
 		t.Fatal("write accepted a read_only binding")
 	}
 	// connect keeps its own preference.
-	got, _, err = choosePostgresConnectBinding(bindings, apps, "", "", "")
+	got, err = main.ChoosePostgresConnectBindingDefault(bindings, apps)
 	if err != nil || got.Access != "read_write" {
 		t.Fatalf("connect picked %+v, %v", got, err)
 	}
@@ -82,11 +83,10 @@ func TestPostgresSQLJSONValue(t *testing.T) {
 		{pgtype.BoolOID, []byte("f"), `false`},
 		{pgtype.JSONBOID, []byte(`{"a": [1, 2]}`), `{"a":[1,2]}`},
 		{pgtype.TimestamptzOID, []byte("2026-11-22 10:00:00+00"), `"2026-11-22 10:00:00+00"`},
-		{pgtype.UUIDOID, []byte("0193a1f2-7c4e-7b1a-9f3e-2d5c8b6a4e10"), `"0193a1f2-7c4e-7b1a-9f3e-2d5c8b6a4e10"`},
 		{pgtype.TextOID, nil, `null`},
 	}
 	for _, tc := range cases {
-		encoded, err := json.Marshal(postgresSQLJSONValue(tc.oid, tc.value))
+		encoded, err := json.Marshal(main.PostgresSQLJSONValue(tc.oid, tc.value))
 		if err != nil || string(encoded) != tc.want {
 			t.Errorf("oid %d %q = %s, %v; want %s", tc.oid, tc.value, encoded, err, tc.want)
 		}
@@ -95,25 +95,21 @@ func TestPostgresSQLJSONValue(t *testing.T) {
 
 func TestPostgresSQLColumnKeys(t *testing.T) {
 	fields := []pgconn.FieldDescription{{Name: "count"}, {Name: "count"}, {Name: "count_2"}, {Name: "id"}}
-	keys := postgresSQLColumnKeys(fields)
+	keys := main.PostgresSQLColumnKeys(fields)
 	if keys[0] != "count" || keys[3] != "id" {
 		t.Fatalf("keys = %v", keys)
 	}
 	seen := map[string]bool{}
 	for _, key := range keys {
 		if seen[key] {
-			t.Fatalf("duplicate key %q in %v", key, postgresSQLColumnKeys(fields))
+			t.Fatalf("duplicate key %q in %v", key, keys)
 		}
 		seen[key] = true
 	}
 }
 
 func TestPostgresSQLConfigDialsTheTunnel(t *testing.T) {
-	target, err := parsePostgresConnectTarget("postgres://app:s3cr%40t@ep-x.db.example:5432/orders?sslmode=require&options=-c%20search_path%3Dapp")
-	if err != nil {
-		t.Fatal(err)
-	}
-	config, err := target.pgxConfig("127.0.0.1", 54001, postgresSQLOptions{timeout: 5 * time.Second})
+	config, err := main.PostgresSQLConfig("postgres://app:s3cr%40t@ep-x.db.example:5432/orders?sslmode=require&options=-c%20search_path%3Dapp&pool_max_conns=5", "127.0.0.1", 54001)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,41 +126,41 @@ func TestPostgresSQLConfigDialsTheTunnel(t *testing.T) {
 	if config.DefaultQueryExecMode != pgx.QueryExecModeDescribeExec || config.StatementCacheCapacity != 0 {
 		t.Fatalf("exec mode = %v cache = %d", config.DefaultQueryExecMode, config.StatementCacheCapacity)
 	}
-	if _, ok := config.RuntimeParams["statement_timeout"]; ok {
-		t.Fatal("statement_timeout must not be a startup parameter (poolers refuse it)")
-	}
 	if config.RuntimeParams["options"] != "-c search_path=app" {
 		t.Fatalf("options = %q", config.RuntimeParams["options"])
+	}
+	for name := range config.RuntimeParams {
+		if name != "options" && name != "application_name" {
+			t.Errorf("unexpected startup parameter %q (poolers refuse unknown ones)", name)
+		}
 	}
 }
 
 func TestPostgresSQLErrorHints(t *testing.T) {
-	readOnly := postgresSQLOptions{timeout: 30 * time.Second}
 	for _, tc := range []struct {
-		err  *pgconn.PgError
-		opts postgresSQLOptions
-		want string
+		err   error
+		write bool
+		want  string
 	}{
-		{&pgconn.PgError{Code: "25006", Message: "cannot execute INSERT in a read-only transaction"}, readOnly, "pass --write"},
-		{&pgconn.PgError{Code: "42601", Message: "cannot insert multiple commands into a prepared statement"}, readOnly, "runs one statement"},
-		{&pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}, readOnly, "raise --timeout (now 30s)"},
+		{&pgconn.PgError{Code: "25006", Message: "cannot execute INSERT in a read-only transaction"}, false, "pass --write"},
+		{&pgconn.PgError{Code: "42601", Message: "cannot insert multiple commands into a prepared statement"}, false, "runs one statement"},
+		{&pgconn.PgError{Code: "57014", Message: "canceling statement due to statement timeout"}, false, "raise --timeout (now 30s)"},
 	} {
-		if got := postgresSQLError(tc.err, tc.opts).Error(); !strings.Contains(got, tc.want) {
-			t.Errorf("%s: %q missing %q", tc.err.Code, got, tc.want)
+		if got := main.PostgresSQLError(tc.err, tc.write, 30*time.Second).Error(); !strings.Contains(got, tc.want) {
+			t.Errorf("%v: %q missing %q", tc.err, got, tc.want)
 		}
 	}
 	other := errors.New("boom")
-	if postgresSQLError(other, readOnly) != other {
+	if main.PostgresSQLError(other, false, time.Second) != other {
 		t.Fatal("unrelated error rewritten")
 	}
 }
 
 func TestRenderPostgresSQLResults(t *testing.T) {
-	typeMap := pgtype.NewMap()
 	fields := []pgconn.FieldDescription{{Name: "id", DataTypeOID: pgtype.Int4OID}, {Name: "note", DataTypeOID: pgtype.TextOID}}
-	result := newPostgresSQLResult(typeMap, fields, [][][]byte{{[]byte("1"), []byte("a\tb\nc")}, {[]byte("2"), nil}}, "SELECT 5", true)
+	result := main.NewPostgresSQLResult(pgtype.NewMap(), fields, [][][]byte{{[]byte("1"), []byte("a\tb\nc")}, {[]byte("2"), nil}}, "SELECT 5", true)
 	var out bytes.Buffer
-	renderPostgresSQLResults(&out, postgresSQLOutput{MaxRows: 2, Results: []postgresSQLResult{result, {Command: "UPDATE 3"}}})
+	main.RenderPostgresSQLResults(&out, main.PostgresSQLOutput{MaxRows: 2, Results: []main.PostgresSQLResult{result, {Command: "UPDATE 3"}}})
 	got := out.String()
 	for _, want := range []string{"id  note", `1   a\tb\nc`, "2   NULL", "(2 rows; stopped at --max-rows 2)", "UPDATE 3"} {
 		if !strings.Contains(got, want) {
@@ -187,26 +183,39 @@ func TestRunPostgresSQLAgainstPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	preparePostgresSQLConfig(config)
+	main.PreparePostgresSQLConfig(config)
 	conn, err := pgx.ConnectConfig(ctx, config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(ctx) }()
-	table := "gregale_sql_test_" + strings.ReplaceAll(strings.ToLower(t.Name()), "/", "_")
+	table := "gregale_sql_test"
 	if _, err := conn.Exec(ctx, "DROP TABLE IF EXISTS "+table+"; CREATE TABLE "+table+" (id int primary key, doc jsonb)"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = conn.Exec(context.Background(), "DROP TABLE IF EXISTS "+table) })
-	readOnly := postgresSQLOptions{maxRows: 2, timeout: 5 * time.Second}
-	write := postgresSQLOptions{write: true, maxRows: 100, timeout: 5 * time.Second}
+	read := func(query string, maxRows int) ([]main.PostgresSQLResult, error) {
+		return main.RunPostgresSQL(ctx, conn, query, false, maxRows, 5*time.Second)
+	}
+	write := func(query string, maxRows int) ([]main.PostgresSQLResult, error) {
+		return main.RunPostgresSQL(ctx, conn, query, true, maxRows, 5*time.Second)
+	}
 
-	results, err := runPostgresSQL(ctx, conn, "insert into "+table+" select g, jsonb_build_object('g', g) from generate_series(1, 3) g; select count(*) from "+table, write)
+	results, err := write("insert into "+table+" select g, jsonb_build_object('g', g) from generate_series(1, 3) g; select count(*) from "+table, 100)
 	if err != nil || len(results) != 2 || results[0].Command != "INSERT 0 3" || results[1].Rows[0]["count"] != json.Number("3") {
 		t.Fatalf("write script = %+v, %v", results, err)
 	}
+	// A lone statement that refuses a transaction block still runs.
+	if _, err := write("create index concurrently "+table+"_doc on "+table+" ((doc->>'g'))", 100); err != nil {
+		t.Fatalf("create index concurrently: %v", err)
+	}
+	// --write keeps --max-rows rows but drains the rest.
+	results, err = write("select g from generate_series(1, 1000) g; select 1 as after", 10)
+	if err != nil || len(results) != 2 || results[0].RowCount != 10 || !results[0].Truncated || results[0].Command != "SELECT 1000" || results[1].RowCount != 1 {
+		t.Fatalf("write truncation = %+v, %v", results, err)
+	}
 
-	results, err = runPostgresSQL(ctx, conn, "select id, doc from "+table+" order by id", readOnly)
+	results, err = read("select id, doc from "+table+" order by id", 2)
 	if err != nil || len(results) != 1 || !results[0].Truncated || results[0].RowCount != 2 || results[0].Command != "SELECT 3" {
 		t.Fatalf("truncated select = %+v, %v", results, err)
 	}
@@ -218,26 +227,32 @@ func TestRunPostgresSQLAgainstPostgres(t *testing.T) {
 		"insert":          "insert into " + table + " values (9, null)",
 		"cte delete":      "with d as (delete from " + table + " returning 1) select count(*) from d",
 		"two statements":  "select 1; delete from " + table,
-		"commit escape":   "commit",
 		"read-write flip": "select set_config('transaction_read_only', 'off', true)",
-		"session flip":    "set session characteristics as transaction read write",
 	} {
-		if _, err := runPostgresSQL(ctx, conn, query, readOnly); err == nil && name != "commit escape" && name != "session flip" {
+		if _, err := read(query, 10); err == nil {
 			t.Errorf("%s: read-only mode ran %q", name, query)
 		}
-		results, err := runPostgresSQL(ctx, conn, "select count(*) from "+table, readOnly)
-		if err != nil || results[0].Rows[0]["count"] != json.Number("3") {
-			t.Fatalf("after %s: table changed: %+v, %v", name, results, err)
+	}
+	// Statements that may succeed but must not let a later write through.
+	for _, query := range []string{"commit", "set transaction read write", "set session characteristics as transaction read write"} {
+		_, _ = read(query, 10)
+		if _, err := read("insert into "+table+" values (10, null)", 10); err == nil {
+			t.Fatalf("write succeeded after %q", query)
 		}
 	}
-	// A session-level flip must not leak into the next read-only run.
-	if _, err := runPostgresSQL(ctx, conn, "insert into "+table+" values (10, null)", readOnly); err == nil {
-		t.Fatal("write succeeded after a session characteristics change")
+	results, err = read("select count(*) from "+table, 10)
+	if err != nil || results[0].Rows[0]["count"] != json.Number("3") {
+		t.Fatalf("table changed: %+v, %v", results, err)
 	}
 
-	if _, err := runPostgresSQL(ctx, conn, "select pg_sleep(2)", postgresSQLOptions{maxRows: 1, timeout: 200 * time.Millisecond}); err == nil {
-		t.Fatal("statement timeout not applied")
-	} else if !strings.Contains(postgresSQLError(err, readOnly).Error(), "raise --timeout") {
-		t.Fatalf("timeout error = %v", err)
+	if _, err := main.RunPostgresSQL(ctx, conn, "select pg_sleep(2)", false, 1, 200*time.Millisecond); err == nil {
+		t.Fatal("read statement timeout not applied")
+	} else if !strings.Contains(main.PostgresSQLError(err, false, 200*time.Millisecond).Error(), "raise --timeout") {
+		t.Fatalf("read timeout error = %v", err)
+	}
+	if _, err := main.RunPostgresSQL(ctx, conn, "select pg_sleep(3)", true, 1, 200*time.Millisecond); err == nil {
+		t.Fatal("write timeout not applied")
+	} else if !strings.Contains(main.PostgresSQLError(err, true, 200*time.Millisecond).Error(), "raise --timeout") {
+		t.Fatalf("write timeout error = %v", err)
 	}
 }

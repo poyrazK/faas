@@ -33,6 +33,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgconn/ctxwatch"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -263,9 +264,13 @@ func postgresSQLQueryText(positional []string, file string, stdin io.Reader) (st
 // pgxConfig points pgx at the tunnel while keeping the binding's host for
 // certificate verification and SNI, as libpqEnv does for psql.
 func (t postgresConnectTarget) pgxConfig(hostAddr string, localPort int, opts postgresSQLOptions) (*pgx.ConnConfig, error) {
+	// Only what psql gets from libpqEnv, plus TLS files: pgx sends any
+	// parameter it does not know to the server as a startup parameter.
 	params := url.Values{}
-	for name, values := range t.params {
-		params[name] = slices.Clone(values)
+	for _, name := range postgresSQLForwardedParams {
+		if values, ok := t.params[name]; ok {
+			params[name] = slices.Clone(values)
+		}
 	}
 	params.Set("sslmode", t.sslMode)
 	params.Set("application_name", "gregale-postgres-sql")
@@ -289,13 +294,20 @@ func (t postgresConnectTarget) pgxConfig(hostAddr string, localPort int, opts po
 	return config, nil
 }
 
+// postgresSQLForwardedParams are the binding URL parameters passed on.
+var postgresSQLForwardedParams = []string{"options", "sslrootcert", "sslcert", "sslkey", "sslpassword"}
+
 // preparePostgresSQLConfig keeps the session pooler-safe: an unnamed
-// statement (no prepared-statement cache) and no extra startup parameters,
-// which transaction-mode poolers refuse. Guards are set per transaction.
+// statement (no prepared-statement cache) and no statement_timeout startup
+// parameter, which transaction-mode poolers refuse. A cancelled context
+// sends a cancel request, so a client-side timeout stops the server query.
 func preparePostgresSQLConfig(config *pgx.ConnConfig) {
 	config.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
 	config.StatementCacheCapacity = 0
 	config.DescriptionCacheCapacity = 0
+	config.BuildContextWatcherHandler = func(conn *pgconn.PgConn) ctxwatch.Handler {
+		return &pgconn.CancelRequestContextWatcherHandler{Conn: conn, DeadlineDelay: 5 * time.Second}
+	}
 }
 
 // postgresSQLTimeoutStatement is the per-transaction statement timeout.
@@ -304,9 +316,9 @@ func postgresSQLTimeoutStatement(opts postgresSQLOptions) string {
 }
 
 func runPostgresSQLOverConfig(ctx context.Context, config *pgx.ConnConfig, query string, opts postgresSQLOptions) ([]postgresSQLResult, error) {
-	queryCtx, cancel := context.WithTimeout(ctx, opts.timeout+30*time.Second)
-	defer cancel()
-	conn, err := pgx.ConnectConfig(queryCtx, config)
+	connectCtx, cancelConnect := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelConnect()
+	conn, err := pgx.ConnectConfig(connectCtx, config)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", redactPostgresConnectError(err))
 	}
@@ -315,42 +327,55 @@ func runPostgresSQLOverConfig(ctx context.Context, config *pgx.ConnConfig, query
 		defer closeCancel()
 		_ = conn.Close(closeCtx)
 	}()
-	return runPostgresSQL(queryCtx, conn, query, opts)
+	return runPostgresSQL(ctx, conn, query, opts)
 }
 
 // runPostgresSQL runs query on conn. Read-only runs exactly one statement in
-// a READ ONLY transaction that is always rolled back; write runs the text as
-// a simple-protocol script (one implicit transaction unless it commits
-// itself).
+// a READ ONLY transaction that is always rolled back, with a server-side
+// statement timeout. The extended protocol refuses a second statement, so
+// the query cannot end the transaction and keep going; that, the rollback
+// and the READ ONLY mode are what keep it from writing.
 //
-// Read-only sets the statement timeout before the query inside the same
-// transaction, so the query is never the transaction's first statement and
-// cannot switch it to read-write (PostgreSQL allows that only before any
-// query).
+// Write sends the text unchanged as a simple-protocol script, so a lone
+// statement that refuses a transaction block (VACUUM, CREATE INDEX
+// CONCURRENTLY) still runs. Its timeout is client-side: the context
+// deadline sends a cancel request. Rows past --max-rows are drained, not
+// kept.
 func runPostgresSQL(ctx context.Context, conn *pgx.Conn, query string, opts postgresSQLOptions) ([]postgresSQLResult, error) {
 	typeMap := conn.TypeMap()
 	if opts.write {
-		// One simple-query message: the timeout and the script reach the
-		// same server connection even through a transaction pooler.
-		results, err := conn.PgConn().Exec(ctx, postgresSQLTimeoutStatement(opts)+";\n"+query).ReadAll()
-		if len(results) > 0 && results[0].Err == nil {
-			results = results[1:]
-		}
-		out := make([]postgresSQLResult, 0, len(results))
-		for _, result := range results {
-			if result.Err != nil {
-				return nil, result.Err
+		writeCtx, cancel := context.WithTimeout(ctx, opts.timeout)
+		defer cancel()
+		multi := conn.PgConn().Exec(writeCtx, query)
+		var out []postgresSQLResult
+		for multi.NextResult() {
+			reader := multi.ResultReader()
+			fields := slices.Clone(reader.FieldDescriptions())
+			var raw [][][]byte
+			truncated := false
+			for reader.NextRow() {
+				if len(raw) == opts.maxRows {
+					truncated = true
+					continue
+				}
+				raw = append(raw, clonePostgresSQLRow(reader.Values()))
 			}
-			rows := result.Rows
-			truncated := len(rows) > opts.maxRows
-			if truncated {
-				rows = rows[:opts.maxRows]
+			tag, err := reader.Close()
+			if err != nil {
+				_ = multi.Close()
+				return nil, postgresSQLDeadline(writeCtx, err)
 			}
-			out = append(out, newPostgresSQLResult(typeMap, result.FieldDescriptions, rows, result.CommandTag.String(), truncated))
+			out = append(out, newPostgresSQLResult(typeMap, fields, raw, tag.String(), truncated))
 		}
-		return out, err
+		if err := multi.Close(); err != nil {
+			return nil, postgresSQLDeadline(writeCtx, err)
+		}
+		return out, nil
 	}
 
+	queryCtx, cancel := context.WithTimeout(ctx, opts.timeout+30*time.Second)
+	defer cancel()
+	ctx = queryCtx
 	tx, err := conn.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, err
@@ -371,14 +396,7 @@ func runPostgresSQL(ctx context.Context, conn *pgx.Conn, query string, opts post
 			truncated = true
 			break
 		}
-		values := rows.RawValues()
-		row := make([][]byte, len(values))
-		for i, value := range values {
-			if value != nil {
-				row[i] = slices.Clone(value)
-			}
-		}
-		raw = append(raw, row)
+		raw = append(raw, clonePostgresSQLRow(rows.RawValues()))
 	}
 	fields := rows.FieldDescriptions()
 	rows.Close()
@@ -388,6 +406,27 @@ func runPostgresSQL(ctx context.Context, conn *pgx.Conn, query string, opts post
 	// Close drained the rest, so the tag counts every row, kept or not.
 	return []postgresSQLResult{newPostgresSQLResult(typeMap, fields, raw, rows.CommandTag().String(), truncated)}, nil
 }
+
+// clonePostgresSQLRow copies a row out of the reader's reused buffer.
+func clonePostgresSQLRow(values [][]byte) [][]byte {
+	row := make([][]byte, len(values))
+	for i, value := range values {
+		if value != nil {
+			row[i] = slices.Clone(value)
+		}
+	}
+	return row
+}
+
+// postgresSQLDeadline reports a client-side --write timeout as one.
+func postgresSQLDeadline(ctx context.Context, err error) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("%w: %w", errPostgresSQLTimeout, err)
+	}
+	return err
+}
+
+var errPostgresSQLTimeout = errors.New("statement timeout")
 
 func newPostgresSQLResult(typeMap *pgtype.Map, fields []pgconn.FieldDescription, raw [][][]byte, command string, truncated bool) postgresSQLResult {
 	result := postgresSQLResult{
@@ -483,9 +522,12 @@ func postgresSQLError(err error, opts postgresSQLOptions) error {
 			return fmt.Errorf("%w; the statement writes, and this command is read-only unless you pass --write", err)
 		case pgErr.Code == "42601" && !opts.write && strings.Contains(pgErr.Message, "multiple commands"):
 			return fmt.Errorf("%w; read-only mode runs one statement: split them, or pass --write to run a script", err)
-		case pgErr.Code == "57014":
+		case pgErr.Code == "57014" && !opts.write:
 			return fmt.Errorf("%w; raise --timeout (now %s) if the query is expected to run longer", err, opts.timeout)
 		}
+	}
+	if errors.Is(err, errPostgresSQLTimeout) {
+		return fmt.Errorf("%w; raise --timeout (now %s) if the script is expected to run longer", err, opts.timeout)
 	}
 	return err
 }

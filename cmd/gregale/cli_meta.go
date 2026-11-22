@@ -5210,11 +5210,11 @@ var cliCommands = []cliCommand{
 		Short:   "Look up a distributed trace by its trace ID or a request ID",
 		HelpNotes: []string{
 			"A trace ID is 32 hex characters and spans the account: edge and app requests, wake method and restore fallback, queue, delayed and cron invocations to dead letter, access logs and spans.",
-			"Any other argument is an x-faas-request-id, resolved to its trace through the app's retained request evidence (--app, else the linked app). A request with no trace shows its own evidence.",
+			"An x-faas-request-id works too: request ids have the same 32-hex shape, so when no trace has the id it is resolved as a request of the app (--app, else the linked app) to the request's trace. A request with no trace shows its own evidence.",
 		},
 		Examples: []string{
 			"gregale debug trace 4bf92f3577b34da6a3ce929d0e0e4736",
-			"gregale debug trace 0193a1f2-7c4e-7b1a-9f3e-2d5c8b6a4e10 --app my-api --json",
+			"gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app my-api --json",
 		},
 		Flags: []cliFlag{
 			{Name: "app", Short: "app the request ID belongs to (default: the linked app)", Value: "SLUG"},

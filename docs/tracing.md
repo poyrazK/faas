@@ -112,11 +112,12 @@ your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 
 You can also start from a request id, the `x-faas-request-id` on a response
-or in the access log. It belongs to one app, so name it with `--app` or run
-in a linked directory:
+or in the access log. It has the same 32-hex shape as a trace id, so when no
+trace has the id, it is looked up as a request of one app: name it with
+`--app` or run in a linked directory:
 
 ```sh
-gregale debug trace 0193a1f2-7c4e-7b1a-9f3e-2d5c8b6a4e10 --app public-api --json
+gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app public-api --json
 ```
 
 The request is resolved to its trace, and the `--json` output gains a
