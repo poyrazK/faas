@@ -3,6 +3,7 @@ package mcphosting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,64 @@ func TestWaitTaskAcceptsDefaultFormMode(t *testing.T) {
 		{"empty consent", `{}`, map[string]any{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) { testWaitTaskForm(t, tc.properties, tc.content) })
+	}
+}
+
+func TestWaitTaskReconcilesOnlyAmbiguousInputUpdates(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		update      int
+		recheck     int
+		wantReads   int32
+		unconfirmed bool
+	}{
+		{"status unavailable", http.StatusServiceUnavailable, http.StatusServiceUnavailable, 2, true},
+		{"tool access revoked before recheck", http.StatusServiceUnavailable, http.StatusForbidden, 2, false},
+		{"definitive update denial", http.StatusForbidden, http.StatusBadRequest, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var reads, updates, prompts atomic.Int32
+			client := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					ID     int    `json:"id"`
+					Method string `json:"method"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				switch request.Method {
+				case "tasks/get":
+					if reads.Add(1) > 1 {
+						w.WriteHeader(tc.recheck)
+						return
+					}
+					writeTaskResponse(w, request.ID, fmt.Sprintf(`{"resultType":"complete","taskId":"approval-task","status":"input_required","createdAt":%q,"lastUpdatedAt":%q,"ttlMs":60000,"inputRequests":{"approval":{"method":"elicitation/create","params":{"message":"Approve?","requestedSchema":{"type":"object","properties":{}}}}}}`, taskTimestamp, taskTimestamp))
+				case "tasks/update":
+					updates.Add(1)
+					w.WriteHeader(tc.update)
+				default:
+					t.Errorf("unexpected method %s", request.Method)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			})
+			advertiseTasks(client)
+			task, err := client.WaitTask(t.Context(), "approval-task", CallOptions{Responder: func(context.Context, InputRequest) (InputResponse, error) {
+				prompts.Add(1)
+				return InputResponse{Action: "accept", Content: map[string]any{}}, nil
+			}})
+			var unconfirmed *TaskInputUpdateUnconfirmedError
+			if err == nil || errors.As(err, &unconfirmed) != tc.unconfirmed || reads.Load() != tc.wantReads ||
+				updates.Load() != 1 || prompts.Load() != 1 {
+				t.Fatalf("err=%v reads=%d updates=%d prompts=%d", err, reads.Load(), updates.Load(), prompts.Load())
+			}
+			if unconfirmed != nil && (unconfirmed.Task.TaskID != "approval-task" || unconfirmed.Task.Status != "") {
+				t.Fatalf("unconfirmed update exposed stale status: %+v", unconfirmed.Task)
+			}
+			if tc.wantReads == 2 && task.TaskID != "" {
+				t.Fatalf("failed recheck returned a stale Task: %+v", task)
+			}
+		})
 	}
 }
 

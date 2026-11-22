@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -70,6 +71,19 @@ type Task struct {
 	Result        json.RawMessage             `json:"result,omitempty"`
 	Error         json.RawMessage             `json:"error,omitempty"`
 }
+
+// TaskInputUpdateUnconfirmedError carries metadata for a Task whose input
+// update could not be confirmed by a subsequent read.
+type TaskInputUpdateUnconfirmedError struct {
+	Task  Task
+	cause error
+}
+
+func (e *TaskInputUpdateUnconfirmedError) Error() string {
+	return "MCP task input update outcome is unclear"
+}
+
+func (e *TaskInputUpdateUnconfirmedError) Unwrap() error { return e.cause }
 
 // PollDelay returns the bounded delay before reading this task again.
 func (t Task) PollDelay() time.Duration {
@@ -210,27 +224,62 @@ func (c *Client) CancelTask(ctx context.Context, taskID string) (Exchange, error
 	return x, nil
 }
 
-func (c *Client) updateTask(ctx context.Context, taskID string, responses map[string]InputResponse) error {
+func (c *Client) updateTask(ctx context.Context, taskID string, responses map[string]InputResponse) (uncertain bool, err error) {
 	if len(responses) == 0 {
-		return errors.New("MCP task update requires at least one input response")
+		return false, errors.New("MCP task update requires at least one input response")
 	}
 	if err := validateTaskID(taskID); err != nil {
-		return err
+		return false, err
 	}
 	if err := c.requireTasksCapability(ctx); err != nil {
-		return err
+		return false, err
 	}
 	x, err := c.taskRequest(ctx, "tasks/update", taskID, map[string]any{"inputResponses": responses})
 	if err != nil {
-		return err
+		return taskResponseUncertain(x.HTTPStatus, err), err
 	}
 	var result struct {
 		ResultType string `json:"resultType"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil || result.ResultType != "complete" {
-		return errors.New("MCP task update returned an invalid acknowledgement")
+		return true, errors.New("MCP task update returned an invalid acknowledgement")
 	}
-	return nil
+	return false, nil
+}
+
+func taskResponseUncertain(status int, err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return false
+	}
+	var transport *url.Error
+	var rpc *RPCError
+	return errors.As(err, &transport) || status == http.StatusRequestTimeout || status >= 500 ||
+		status >= 200 && status < 300 && !errors.As(err, &rpc)
+}
+
+// A lost update response may follow a commit. Inspect the durable state once
+// and let the caller decide how to handle an answer that is still pending.
+func (c *Client) reconcileTaskInputUpdate(ctx context.Context, taskID string, responses map[string]InputResponse) (Task, error) {
+	if err := ctx.Err(); err != nil {
+		if errors.Is(err, context.Canceled) {
+			return Task{}, err
+		}
+		return Task{}, &TaskInputUpdateUnconfirmedError{Task: Task{TaskID: taskID}, cause: err}
+	}
+	current, exchange, err := c.GetTask(ctx, taskID)
+	if err != nil {
+		if taskResponseUncertain(exchange.HTTPStatus, err) || exchange.HTTPStatus == http.StatusTooManyRequests {
+			return Task{}, &TaskInputUpdateUnconfirmedError{Task: Task{TaskID: taskID}, cause: err}
+		}
+		return Task{}, err
+	}
+	for id := range responses {
+		if _, pending := current.InputRequests[id]; pending {
+			snapshot := Task{TaskID: taskID, Status: current.Status, LastUpdatedAt: current.LastUpdatedAt}
+			return current, &TaskInputUpdateUnconfirmedError{Task: snapshot}
+		}
+	}
+	return current, nil
 }
 
 // listenTaskUpdate opens a fresh Tasks subscription and returns the first
@@ -623,6 +672,15 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 	responded := make(map[string]TaskInputRequest)
 	inputUpdates := 0
 	lastStatus, lastUpdated := task.Status, task.LastUpdatedAt
+	observe := func(updated Task) {
+		task = updated
+		if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
+			if options.OnTask != nil {
+				options.OnTask(task)
+			}
+			lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
+		}
+	}
 	subscriptionsSupported := true
 	reconnectDelay := taskStreamReconnectBase
 	streamFailures := 0
@@ -679,13 +737,21 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 				if inputUpdates >= maxInteractiveInputRounds {
 					return task, fmt.Errorf("MCP task exceeded the %d input update limit", maxInteractiveInputRounds)
 				}
-				if err := c.updateTask(ctx, task.TaskID, responses); err != nil {
-					return task, err
+				updated := task
+				if uncertain, updateErr := c.updateTask(ctx, task.TaskID, responses); updateErr != nil {
+					if !uncertain {
+						return task, updateErr
+					}
+					updated, err = c.reconcileTaskInputUpdate(ctx, task.TaskID, responses)
+					if err != nil {
+						return updated, err
+					}
 				}
 				for id := range responses {
 					responded[id] = task.InputRequests[id]
 				}
 				inputUpdates++
+				observe(updated)
 				continue
 			}
 		}
@@ -707,13 +773,7 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 			case err == nil:
 				reconnectDelay = taskStreamReconnectBase
 				streamFailures = 0
-				task = updated
-				if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
-					if options.OnTask != nil {
-						options.OnTask(task)
-					}
-					lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
-				}
+				observe(updated)
 				continue
 			case errors.Is(err, errTaskSubscriptionsUnsupported):
 				subscriptionsSupported = false
@@ -742,13 +802,7 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 		if err != nil {
 			return task, err
 		}
-		task = updated
-		if task.Status != lastStatus || task.LastUpdatedAt != lastUpdated {
-			if options.OnTask != nil {
-				options.OnTask(task)
-			}
-			lastStatus, lastUpdated = task.Status, task.LastUpdatedAt
-		}
+		observe(updated)
 	}
 }
 
