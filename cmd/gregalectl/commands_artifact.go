@@ -16,6 +16,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,7 +27,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/manifest"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 )
+
+// errArtifactDigestMismatch marks an object that exists under a key but holds
+// other bytes than the manifest pins.
+var errArtifactDigestMismatch = errors.New("artifact digest mismatch")
 
 const dispatchArtifact = "artifact"
 
@@ -68,6 +74,13 @@ type artifactReport struct {
 	SHA256         string `json:"sha256"`
 	CachePinned    bool   `json:"cache_pinned,omitempty"`
 	AlreadyPresent bool   `json:"already_present,omitempty"`
+	// LegacyKey and LegacyKeyState report the version-only alias
+	// kernel/<firecracker_version> that nodes without kernel_digest read
+	// (ADR-20261112030000 amendment 1): "present" (same bytes), "published"
+	// (it was absent), or "kept" (it holds an earlier release's kernel, which
+	// stays for N-1 nodes and is never overwritten).
+	LegacyKey      string `json:"legacy_key,omitempty"`
+	LegacyKeyState string `json:"legacy_key_state,omitempty"`
 }
 
 // cmdArtifactDispatch exposes the small operator surface used by release
@@ -102,8 +115,12 @@ func printArtifactUsage(w io.Writer) {
        gregalectl artifact resign --env-file PATH [--db-env PATH] [--sign-key PATH] [--dry-run] [--json]
 
 Publish copies the release-pinned kernel from --file into the shared storage
-backend at kernel/<release.firecracker_version>. Existing content is accepted
-only when its digest matches release.kernel_digest; it is never overwritten.
+backend at kernel/<release.firecracker_version>-<release.kernel_digest>.
+Existing content is accepted only when its digest matches
+release.kernel_digest; it is never overwritten. The version-only alias
+kernel/<release.firecracker_version> is written too when it is empty, and
+kept as it is when it holds an earlier release's kernel. Verify checks the
+content-addressed key.
 
 Flags:
   --env-file PATH       storage.env containing the shared storage contract (required)
@@ -200,6 +217,11 @@ func cmdArtifactPublish(args []string) int {
 	if err != nil {
 		return printErr("gregalectl artifact publish", err)
 	}
+	state, err := publishLegacyKernelAlias(ctx, be, contract.legacyKey, contract.digest, opts.file)
+	if err != nil {
+		return printErr("gregalectl artifact publish", err)
+	}
+	report.LegacyKey, report.LegacyKeyState = contract.legacyKey, state
 	report.Backend = os.Getenv("FAAS_STORAGE_BACKEND")
 	if jsonEnabled() {
 		jsonEmit(osStdout, report)
@@ -380,9 +402,14 @@ func verifyArtifactLifecycle(ctx context.Context, be storage.StorageBackend, key
 	}
 }
 
+// artifactContract is the release kernel's storage identity. key is the
+// content-addressed kernel/<firecracker_version>-<digest> that vmmd boots when
+// it has kernel_digest; legacyKey is the version-only kernel/<version> that
+// older vmmds read.
 type artifactContract struct {
-	key    string
-	digest string
+	key       string
+	legacyKey string
+	digest    string
 }
 
 func loadArtifactContract(path string) (artifactContract, error) {
@@ -401,7 +428,11 @@ func loadArtifactContract(path string) (artifactContract, error) {
 	if version == "" || strings.ContainsAny(version, "/\\\x00") {
 		return artifactContract{}, fmt.Errorf("release.firecracker_version %q is not a valid storage-key component", version)
 	}
-	return artifactContract{key: "kernel/" + version, digest: digest}, nil
+	return artifactContract{
+		key:       storagekey.KernelForDigest(version, digest),
+		legacyKey: storagekey.Kernel(version),
+		digest:    digest,
+	}, nil
 }
 
 func normalizeArtifactDigest(raw string) (string, error) {
@@ -461,6 +492,27 @@ func publishArtifact(ctx context.Context, be storage.StorageBackend, key, expect
 	return report, nil
 }
 
+// publishLegacyKernelAlias keeps kernel/<firecracker_version> readable for
+// vmmds that boot the version-only key. It writes the release kernel there
+// only when the key is empty. A key that already holds another release's
+// kernel is kept, not an error: before ADR-20261112030000 amendment 1 that
+// collision failed every release whose kernel bytes changed.
+func publishLegacyKernelAlias(ctx context.Context, be storage.StorageBackend, key, digest, path string) (string, error) {
+	_, err := verifyArtifact(ctx, be, key, digest)
+	switch {
+	case err == nil:
+		return "present", nil
+	case errors.Is(err, errArtifactDigestMismatch):
+		return "kept", nil
+	case !storage.IsNotFound(err):
+		return "", fmt.Errorf("check legacy %s: %w", key, err)
+	}
+	if _, err := publishArtifact(ctx, be, key, digest, path); err != nil {
+		return "", fmt.Errorf("legacy alias: %w", err)
+	}
+	return "published", nil
+}
+
 func verifyArtifact(ctx context.Context, be storage.StorageBackend, key, expectedDigest string) (artifactReport, error) {
 	expectedDigest, err := normalizeArtifactDigest(expectedDigest)
 	if err != nil {
@@ -479,7 +531,7 @@ func verifyArtifact(ctx context.Context, be storage.StorageBackend, key, expecte
 		return artifactReport{}, fmt.Errorf("close %s: %w", key, closeErr)
 	}
 	if got != expectedDigest {
-		return artifactReport{}, fmt.Errorf("artifact digest mismatch: key=%s got=%s manifest=%s", key, got, expectedDigest)
+		return artifactReport{}, fmt.Errorf("%w: key=%s got=%s manifest=%s", errArtifactDigestMismatch, key, got, expectedDigest)
 	}
 	return artifactReport{Operation: "verify", Key: key, Bytes: size, SHA256: got}, nil
 }
