@@ -1,0 +1,16 @@
+# ADR-20261114100000 (billing review R8-2): whether meterd leaves the guest's
+# own traffic to Gregale-internal destinations out of billed app egress. The
+# control_plane_service role renders it into faas-meterd's
+# zz-faas-internal-egress-unbilled.conf.
+#
+# Billed egress is the instance veth counter plus gateway response bytes
+# (ADR-20261121210517). Without this, uploads to Gregale object storage,
+# service and private-network calls, managed database connections and
+# realtime publishes are billed and count toward the egress allowance.
+#
+# Evidence for turning it on (2026-11-22): every running VM on bhs-2 and
+# bhs-3 (13) has the faas_internal_tx counter and it is counting;
+# TestMetalInternalEgressCounted passes on the EC2 KVM box with no leaked
+# namespaces. An instance whose vmmd has not reported the counter yet stays
+# billed on its whole veth counter (the subtraction needs a valid reading).
+meterd_internal_egress_unbilled: true

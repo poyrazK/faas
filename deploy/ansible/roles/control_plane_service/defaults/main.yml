@@ -63,6 +63,13 @@ faas_release_commands: false
 # group_vars/control_plane/gateway_response_egress.yml sets the fleet's value.
 meterd_gateway_response_egress: false
 
+# Leave the guest's own traffic to Gregale-internal destinations (object
+# storage, services, managed databases, the host bridge) out of billed egress
+# (ADR-20261114100000). Needs every compute node's vmmd to install and report
+# the per-namespace faas_internal_tx counter.
+# group_vars/control_plane/internal_egress_unbilled.yml sets the fleet's value.
+meterd_internal_egress_unbilled: false
+
 # FAAS_ENVIRONMENT for apid. CD sets "production" for production
 # environments; apid then refuses new object storage buckets while the
 # operator safety policy is smaller than the largest plan

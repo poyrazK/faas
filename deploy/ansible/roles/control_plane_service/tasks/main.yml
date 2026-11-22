@@ -845,6 +845,15 @@
     group: root
     mode: "0644"
 
+- name: control_plane_service — set whether meterd leaves internal egress unbilled
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-internal-egress-unbilled.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-internal-egress-unbilled.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: control_plane_service — remove the hand-installed quiet pause billing drop-in
   notify: restart faas-meterd
   ansible.builtin.file:
