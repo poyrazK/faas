@@ -163,6 +163,21 @@ func (f *fakeStore) PauseSandbox(_ context.Context, accountID, id string) (agent
 	return f.pauseOrResume(accountID, id, true)
 }
 
+func (f *fakeStore) GrowPausedSandboxVolume(_ context.Context, accountID, id string, gb int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.find(accountID, id)
+	if err != nil {
+		return false, err
+	}
+	s := &f.sessions[i]
+	if s.Kind != api.SandboxKindPersistent || s.State != agentstore.SandboxPaused || gb < s.VolumeGB {
+		return false, nil
+	}
+	s.VolumeGB = gb
+	return true, nil
+}
+
 func (f *fakeStore) ResumeSandbox(_ context.Context, accountID, id string) (agentstore.Sandbox, error) {
 	return f.pauseOrResume(accountID, id, false)
 }

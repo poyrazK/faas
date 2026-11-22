@@ -56,9 +56,13 @@ type SandboxClaim struct {
 	// Resume is the capture a paused persistent session resumes from, when
 	// the claim resumed one (ADR-20261122132055 §2). A resume without a live
 	// capture has Resuming set and Resume nil: it cold-boots.
-	Resuming   bool
-	Resume     *SandboxCapture
-	LeaseToken string
+	Resuming bool
+	Resume   *SandboxCapture
+	// VolumeGB is a persistent session's workspace volume size (0: none)
+	// and VolumeBackupID its newest backup (ADR-20261122132055 §4).
+	VolumeGB       int
+	VolumeBackupID string
+	LeaseToken     string
 	SandboxLease
 }
 
@@ -78,8 +82,15 @@ type SandboxCapture struct {
 	// Remote: the shared store holds the whole capture (durability
 	// remote), so any node can restore it; otherwise only NodeID can.
 	Remote bool
-	// SessionID is the capture's session, in a durability check.
+	// SessionID and AccountID are the capture's session, in a durability
+	// check.
 	SessionID string
+	AccountID string
+	// VolumeBackupID is the session's volume backup as the capture left it;
+	// HasVolume marks a session with a volume, whose capture is remote only
+	// with that backup.
+	VolumeBackupID string
+	HasVolume      bool
 }
 
 // SandboxLease is what a renewal reports: the fields apid may change while
@@ -139,7 +150,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
 			Remote: row.Durability == "remote"}
 	}
-	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
+	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
+		VolumeGB: int(row.VolumeGb), VolumeBackupID: row.VolumeBackupID, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
 		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
@@ -213,7 +225,8 @@ func (s *Store) ReturnSandboxResume(ctx context.Context, id, token string, retry
 func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration) error {
 	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token,
 		CaptureID: c.ID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey, FcVersion: c.FCVersion,
-		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, RetentionSeconds: retention.Seconds()})
+		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, VolumeBackupID: c.VolumeBackupID,
+		RetentionSeconds: retention.Seconds()})
 	return fenced(n, err, "mark session paused")
 }
 
@@ -240,8 +253,8 @@ func (s *Store) NodeOnlySandboxCaptures(ctx context.Context, limit int) ([]Sandb
 	}
 	out := make([]SandboxCapture, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, SandboxCapture{ID: r.ID, SessionID: r.SessionID, StorageKey: r.StorageKey,
-			VMStateStorageKey: r.VmstateStorageKey, HasBacking: r.HasBacking})
+		out = append(out, SandboxCapture{ID: r.ID, SessionID: r.SessionID, AccountID: r.AccountID, StorageKey: r.StorageKey,
+			VMStateStorageKey: r.VmstateStorageKey, HasBacking: r.HasBacking, VolumeBackupID: r.VolumeBackupID, HasVolume: r.HasVolume})
 	}
 	return out, nil
 }

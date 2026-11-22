@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/volbackup"
@@ -24,7 +25,7 @@ func TestFirstBackupSkipsHoles(t *testing.T) {
 	}
 	writeAt(t, vol, 5*volbackup.ChunkBytes+3, []byte("data"))
 	data := []storage.Range{{Start: 5*volbackup.ChunkBytes + 3, End: 5*volbackup.ChunkBytes + 7}}
-	m, st, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, data)
+	m, st, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, data, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}

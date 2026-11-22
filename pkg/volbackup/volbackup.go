@@ -73,7 +73,7 @@ func ManifestKey(accountID, sandboxID, backupID string) string {
 // backup of the same volume, or nil; changed lists the byte ranges that may
 // differ from it, or with a nil prev the ranges that hold data (the rest are
 // holes). A nil changed reads every chunk.
-func Backup(ctx context.Context, store storage.StorageBackend, accountID, sandboxID, id, path string, prev *Manifest, changed []storage.Range) (Manifest, Stats, error) {
+func Backup(ctx context.Context, store storage.StorageBackend, accountID, sandboxID, id, path string, prev *Manifest, changed []storage.Range, takenAt time.Time) (Manifest, Stats, error) {
 	if err := checkIDs(accountID, sandboxID, id); err != nil {
 		return Manifest{}, Stats{}, err
 	}
@@ -86,7 +86,7 @@ func Backup(ctx context.Context, store storage.StorageBackend, accountID, sandbo
 	if err != nil {
 		return Manifest{}, Stats{}, fmt.Errorf("volbackup: stat volume: %w", err)
 	}
-	m := Manifest{Version: manifestVersion, ID: id, SizeBytes: info.Size(), ChunkBytes: ChunkBytes, CreatedAt: time.Now().UTC()}
+	m := Manifest{Version: manifestVersion, ID: id, SizeBytes: info.Size(), ChunkBytes: ChunkBytes, CreatedAt: takenAt.UTC()}
 	n := int((info.Size() + ChunkBytes - 1) / ChunkBytes)
 	m.Chunks = make([]string, n)
 	reuse := prev != nil && changed != nil && prev.ChunkBytes == ChunkBytes

@@ -66,7 +66,8 @@ func open(t *testing.T) *pgxpool.Pool {
 	}
 	// Persistent sessions (ADR-20261122132055): the first is NO TRANSACTION,
 	// so each runs statement by statement as goose runs it.
-	for _, name := range []string{"20261122132055100_sandbox_sessions_persistent.sql", "20261122160000100_sandbox_session_captures.sql"} {
+	for _, name := range []string{"20261122132055100_sandbox_sessions_persistent.sql", "20261122160000100_sandbox_session_captures.sql",
+		"20261122200000100_sandbox_volumes.sql"} {
 		raw, err := migrations.FS.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

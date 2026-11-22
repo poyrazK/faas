@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 const (
@@ -30,6 +31,9 @@ const (
 	// plan's own cap is api.SandboxVolumeMaxGB.
 	SandboxVolumeMinGB = 1
 	SandboxVolumeMaxGB = 1024
+	// DefaultSandboxVolumeRoot is where vmmd keeps volumes: on /srv/fc, the
+	// node's XFS with reflinks, beside the jails' images.
+	DefaultSandboxVolumeRoot = "/srv/fc/sandbox-volumes"
 	// sandboxVolumeOwnerUID is guest-init's sandboxUID, the session's user.
 	sandboxVolumeOwnerUID = 1000
 )
@@ -45,6 +49,9 @@ type SandboxVolumes struct {
 	Root string
 	// run runs mkfs.ext4, dumpe2fs, e2fsck and resize2fs; tests replace it.
 	run func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
 }
 
 // NewSandboxVolumes keeps volumes under root.
@@ -192,6 +199,8 @@ func (v *SandboxVolumes) Remove(accountID, sandboxID string) error {
 	if err != nil {
 		return err
 	}
+	unlock := v.lockVolume(path)
+	defer unlock()
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("fcvm: remove sandbox volume: %w", err)
 	}

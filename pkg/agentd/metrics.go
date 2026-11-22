@@ -37,6 +37,10 @@ type Metrics struct {
 	sandboxPause       prometheus.Histogram
 	sandboxResume      *prometheus.HistogramVec
 	sandboxResumedCold *prometheus.CounterVec
+	// Workspace volume backups taken while sessions run
+	// (ADR-20261122132055 §4, Metrics).
+	volumeBackupSeconds prometheus.Histogram
+	volumeBackupBytes   prometheus.Histogram
 }
 
 // Sources of sandbox_session_resume_seconds: the capture restored on its
@@ -139,6 +143,16 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Help:    "Time from a paused sandbox session's claim to its VM up, by source: node (its capture on its own node), remote (another node) or cold (no capture restored).",
 			Buckets: []float64{.25, .5, 1, 2, 5, 10, 30, 60, 120},
 		}, []string{"source"}),
+		volumeBackupSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "sandbox_volume_backup_seconds",
+			Help:    "Time vmmd took to back up a running persistent sandbox session's workspace volume (ADR-20261122132055 §4).",
+			Buckets: []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120, 300},
+		}),
+		volumeBackupBytes: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name:    "sandbox_volume_backup_bytes",
+			Help:    "Compressed bytes one workspace volume backup added to the store: the chunks it had not held (ADR-20261122132055 §4).",
+			Buckets: prometheus.ExponentialBuckets(4096, 4, 12),
+		}),
 		sandboxResumedCold: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "sandbox_resumed_cold_total",
 			Help: "Paused sandbox sessions that resumed by cold boot, losing their memory state, by reason: no_capture or restore_failed (ADR-20261122132055 §2).",
@@ -152,7 +166,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 	}
 	for _, c := range []prometheus.Collector{m.runs, m.requeues, m.startSeconds, m.runSeconds, m.queueDepth, m.queueOldest,
 		m.deliveries, m.deliveryAttempts, m.attemptSeconds, m.memory, m.sampleGap, m.sandboxBilled, m.sandboxPaused, m.deadlineCredit,
-		m.sandboxPause, m.sandboxResume, m.sandboxResumedCold} {
+		m.sandboxPause, m.sandboxResume, m.sandboxResumedCold, m.volumeBackupSeconds, m.volumeBackupBytes} {
 		if err := reg.Register(c); err != nil {
 			return nil, err
 		}
@@ -277,6 +291,15 @@ func (m *Metrics) sandboxPausedIn(took time.Duration) {
 		return
 	}
 	m.sandboxPause.Observe(took.Seconds())
+}
+
+// volumeBackedUp records one backup of a running session's volume.
+func (m *Metrics) volumeBackedUp(took time.Duration, uploaded int64) {
+	if m == nil {
+		return
+	}
+	m.volumeBackupSeconds.Observe(took.Seconds())
+	m.volumeBackupBytes.Observe(float64(uploaded))
 }
 
 // sandboxResumed records one resume by its source, and why a cold one was.

@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -17,6 +19,9 @@ import (
 // SandboxRunner is the sched.AgentRunner surface RunSandbox uses.
 type SandboxRunner interface {
 	RunSandbox(ctx context.Context, a sched.SandboxAdmission, placed func(sched.AgentRunPlacement) error, hooks sched.SandboxHooks, control <-chan sched.SandboxControl) error
+	// DeleteSandboxVolume removes a session's volume from one node
+	// (ADR-20261122132055 §4).
+	DeleteSandboxVolume(ctx context.Context, nodeID, accountID, sandboxID string) (bool, error)
 }
 
 // WithSandboxRunner serves RunSandbox (ADR-20261027090013 §4). Without it,
@@ -54,7 +59,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		StartCmd: start.GetStartCmd(), ReadyCmd: start.GetReadyCmd(), ReadyTimeout: time.Duration(start.GetReadyTimeoutMs()) * time.Millisecond,
 		Browser: start.GetBrowser(), Task: sandboxTaskFromProto(start.GetTask()),
 		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog(),
-		Persistent: start.GetPersistent()}
+		Persistent: start.GetPersistent(),
+		Volume: sched.SandboxVolume{GB: int(start.GetVolumeGb()), BackupID: start.GetVolumeBackupId(),
+			BackupEvery: time.Duration(start.GetVolumeBackupIntervalMs()) * time.Millisecond}}
 	if r := start.GetResume(); r != nil {
 		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
 			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
@@ -125,7 +132,13 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		Paused: func(_ context.Context, p sched.SandboxPaused) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
 				StorageKey: p.Snapshot.StorageKey, VmstateStorageKey: p.Snapshot.VMStateStorageKey, FcVersion: p.Snapshot.FCVersion,
-				MemBytes: p.Snapshot.MemBytes, VmstateBytes: p.VMStateBytes, PauseMs: p.PauseMs, HasBacking: p.HasBacking}}})
+				MemBytes: p.Snapshot.MemBytes, VmstateBytes: p.VMStateBytes, PauseMs: p.PauseMs, HasBacking: p.HasBacking,
+				VolumeBackupId: p.VolumeBackupID}}})
+		},
+		VolumeBackup: func(_ context.Context, b sched.SandboxVolumeBackup) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_VolumeBackup{VolumeBackup: &scheddpb.SandboxRunVolumeBackup{
+				BackupId: b.ID, SizeBytes: b.SizeBytes, DataChunks: int32(b.DataChunks), UploadedBytes: b.UploadedBytes, //nolint:gosec // G115: a volume's chunk count.
+				BackupMs: b.BackupMs, Incremental: b.Incremental}}})
 		},
 		PauseRefused: func(_ context.Context, reason string) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: reason}}})
@@ -223,4 +236,20 @@ func sandboxActionFromProto(a *scheddpb.SandboxRunAction) *sched.SandboxAction {
 	return &sched.SandboxAction{ID: a.GetActionId(), Kind: a.GetKind(), URL: a.GetUrl(), Ref: int(a.GetRef()), Text: a.GetText(),
 		Submit: a.GetSubmit(), Key: a.GetKey(), Direction: a.GetDirection(), MaxChars: int(a.GetMaxChars()),
 		Timeout: time.Duration(a.GetTimeoutMs()) * time.Millisecond, MaxOutputBytes: a.GetMaxOutputBytes(), Screenshot: a.GetScreenshot()}
+}
+
+// DeleteSandboxVolume removes a persistent session's workspace volume from
+// one node for agentd (ADR-20261122132055 §4).
+func (s *Server) DeleteSandboxVolume(ctx context.Context, req *scheddpb.DeleteSandboxVolumeRequest) (*scheddpb.DeleteSandboxVolumeResponse, error) {
+	if s.sandboxRuns == nil {
+		return nil, status.Error(codes.Unimplemented, "schedd sandbox sessions are not enabled")
+	}
+	if req.GetNodeId() == "" || uuid.Validate(req.GetAccountId()) != nil || uuid.Validate(req.GetSandboxId()) != nil {
+		return nil, status.Error(codes.InvalidArgument, "node_id, and account_id and sandbox_id as UUIDs, are required")
+	}
+	deleted, err := s.sandboxRuns.DeleteSandboxVolume(ctx, req.GetNodeId(), req.GetAccountId(), req.GetSandboxId())
+	if err != nil {
+		return nil, agentRunStatus(err)
+	}
+	return &scheddpb.DeleteSandboxVolumeResponse{Deleted: deleted}, nil
 }
