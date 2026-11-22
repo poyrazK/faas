@@ -426,6 +426,10 @@ func cmdMCPRemote(command string, args []string) int {
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
+	var deferFormInput bool
+	if command == "call" {
+		fs.BoolVar(&deferFormInput, "defer-form-input", false, "allow a keyed Task to request forms for a later wait")
+	}
 	var submissionKey, taskReceiptPath string
 	if command == "call" || command == "task-get" {
 		fs.Func("task-submission-key", "saved UUIDv7 for a keyed Task submission or status lookup", func(value string) error {
@@ -489,6 +493,9 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
 	}
 	keyed := submissionKey != "" || taskReceiptPath != ""
+	if deferFormInput && !keyed {
+		return printErr("Invalid MCP task flags", errors.New("--defer-form-input requires --task-receipt or --task-submission-key"))
+	}
 	if command == "call" && keyed && (!*enableTasks || *waitForTask || inputMode) {
 		return printErr("Invalid MCP Tasks flags", errors.New("--task-receipt and --task-submission-key require a handle-only call with --tasks"))
 	}
@@ -595,7 +602,7 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	options := mcphosting.CallOptions{
 		Responder: responder, EnableTasks: *enableTasks || *waitForTask, WaitForTask: *waitForTask,
-		CancelOnTimeout: *waitForTask, TaskSubmissionKey: submissionKey,
+		CancelOnTimeout: *waitForTask, TaskSubmissionKey: submissionKey, DeferFormInput: deferFormInput,
 	}
 	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, options, *cancelOnTimeout, taskReceiptPath)
 }
