@@ -52,9 +52,9 @@ func objectVersionsControlJourney(t *testing.T, s *apidserver.Server, st state.S
 			}
 			cursor := ""
 			if latest == "true" {
-				cursor = "<NextKeyMarker>" + url.PathEscape(key) + "</NextKeyMarker><NextVersionIdMarker>" + version + "</NextVersionIdMarker>"
+				cursor = "<NextKeyMarker>" + url.QueryEscape(key) + "</NextKeyMarker><NextVersionIdMarker>" + version + "</NextVersionIdMarker>"
 			}
-			_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>%s<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%s</IsLatest><ETag>&quot;etag&quot;</ETag><Size>3</Size><LastModified>2026-10-07T10:00:00Z</LastModified></Version></ListVersionsResult>`, latest == "true", cursor, url.PathEscape(key), version, latest)
+			_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>%t</IsTruncated>%s<Version><Key>%s</Key><VersionId>%s</VersionId><IsLatest>%s</IsLatest><ETag>&quot;etag&quot;</ETag><Size>3</Size><LastModified>2026-10-07T10:00:00Z</LastModified></Version></ListVersionsResult>`, latest == "true", cursor, url.QueryEscape(key), version, latest)
 			return
 		}
 		v := r.URL.Query().Get("versionId")

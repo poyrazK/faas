@@ -70,8 +70,11 @@ support_*
 labels_changed
 slo_*
 
-# Outbound integrations and the AI gateway (preview; docs unpublished).
-outbound_*
+# The AI gateway and agent runs (preview; docs unpublished). Outbound
+# integration codes are published with the integrations page.
+outbound_ai_*
+outbound_access_token_*
+outbound_agent_run_*
 
 # Postgres change workers, preview databases and production forks (preview;
 # docs unpublished).
@@ -99,7 +102,6 @@ environment_qualification_unconfirmed
 # search, route lifecycle review and route requirements, release review,
 # deployment staging, application standards, Gregale Commit, data repair,
 # rehearsals, sales referrals, change timeline, incidents, service map.
-stored_workflow_*
 upstream_*
 plan_data_upstreams_not_allowed
 plan_limit_data_upstreams

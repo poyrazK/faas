@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -211,6 +212,16 @@ func (c *Config) overlayQuietPauseUnbilled() error {
 	}
 	if _, err := meter.ParseUsageSource(c.Meter.BillingUsageSource); err != nil {
 		return fmt.Errorf("meterd: %w", err)
+	}
+	// FAAS_GATEWAY_RESPONSE_EGRESS overrides [meter] gateway_response_egress
+	// (ADR-20261121210517). A value that is not a boolean refuses to start
+	// rather than guessing whether to bill.
+	if v := os.Getenv("FAAS_GATEWAY_RESPONSE_EGRESS"); v != "" {
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("meterd: FAAS_GATEWAY_RESPONSE_EGRESS=%q is not a boolean", v)
+		}
+		c.Meter.GatewayResponseEgress = on
 	}
 	return nil
 }

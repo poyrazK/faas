@@ -131,17 +131,23 @@
     faas_require_host_firewall_on: "{{ faas_require_host_firewall | bool }}"
   notify: reload systemd for the host-firewall start guard
 
+# The release installer (pkg/roleTemplating) writes 99-faas-role.conf for
+# every daemon with only the role lines, after this role on a fresh join and
+# at every release install. Sharing that name dropped the manifest hot_path
+# switches on OVH from the 2026-11-20 cutover. This drop-in has its own name
+# and sorts after the installer's, so both apply and these settings win
+# (as zz-faas-realtimed-role.conf did for realtimed).
 - name: compute_only_service — install schedd role gate (M9)
   notify: restart faas-schedd
   ansible.builtin.template:
     src: 99-faas-schedd-role.conf.j2
-    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-schedd-role.conf
     owner: root
     group: root
     mode: "0644"
 
 # Manifest hot_path: these switches were first turned on by hand on
-# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# production (2026-11-06). The role drop-in now carries them, so the hand-made
 # drop-ins go; left behind they would keep a switch on after the manifest
 # turned it off.
 - name: compute_only_service — remove the hand-made hot-path drop-ins
@@ -1024,6 +1030,11 @@
 # actually run on (rather than the control-plane where the units
 # never activate). The role loops over the per-unit lookup so
 # adding a fourth unit is a one-line list append.
+#
+# systemd's "-" prefix (ignore a missing path) and "+" prefix (relative to
+# the host root) are not part of the path. Stat the path itself: the role
+# still creates every listed directory, optional or not (#7747 added
+# -/srv/fc/run-environments; the literal "-/srv/..." stat failed rc.366).
 - name: compute_only_service — assert ReadWritePaths= targets exist per unit (spec §11)
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -1039,6 +1050,7 @@
          | map('first')
          | map('split')
          | flatten
+         | map('regex_replace', '^[-+]', '')
          | unique
          | list }}
   register: faas_rwp_stat

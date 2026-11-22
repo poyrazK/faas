@@ -1,10 +1,10 @@
 # Watch the scheduled deployment canary
 
-The production deploy canary runs at minute 37 every six hours (UTC), with a
-45-minute job limit. Its failure page and chat fallback depend on a workflow
-actually running. A dedicated external missing-run monitor covers disabled
-schedules, jobs stuck waiting for a runner or environment approval, cancelled
-or timed-out runs, and lost runner processes.
+The `production-us` deploy canary runs on `faas-fleet-us` at minute 37 every
+six hours (UTC), with a 45-minute job limit. Its failure page and chat fallback
+depend on a workflow actually running. A dedicated external missing-run
+monitor covers disabled schedules, jobs stuck waiting for a runner or
+environment approval, cancelled or timed-out runs, and lost runner processes.
 
 ## Set up before rollout
 
@@ -19,10 +19,10 @@ or timed-out runs, and lost runner processes.
    Prometheus and its Alertmanager are unavailable. Give the check a name such
    as `Gregale scheduled deployment canary` and link it to the GitHub Actions
    `synthetic-canary` workflow.
-3. Store the **success** URL as `CANARY_HEARTBEAT_URL` in the repository's
-   GitHub **production environment secrets**. The canary job already uses that
-   environment. The URL is a credential; do not put it in variables, commit it,
-   or copy it into issues. Provision it before merging the workflow change.
+3. Store the **success** URL as `CANARY_HEARTBEAT_URL` and the independent chat
+   destination as `CANARY_FALLBACK_WEBHOOK_URL` in the GitHub **production-us
+   environment secrets**. Both must be configured for the scheduled probe to
+   start. Keep the URLs in the environment's secrets.
 4. Watch the first automatic scheduled run. The heartbeat step must print
    `canary-heartbeat: scheduled_success_reported`, and the external service
    must show that check's new success at the matching time. Confirm the check
@@ -33,6 +33,9 @@ or timed-out runs, and lost runner processes.
    with the same delivery settings. Record the alarm and recovery receipts.
    A successful HTTP response alone does not prove an armed deadline or a
    notification reaching the operator.
+6. Dispatch `synthetic-canary` with `test_fallback=true` to send a labeled test
+   directly to the fallback destination. Confirm its receipt using the
+   workflow run link in the message. This mode skips the deployment and SSH.
 
 Use a new check and URL for this workflow. Reusing `FaasWatchdog`, a node's
 serving-probe check, or another job's success URL lets unrelated activity hide
@@ -75,7 +78,7 @@ Heartbeat failures use fixed error codes:
 
 | Code | Action |
 |---|---|
-| `heartbeat_url_unconfigured` | Provision `CANARY_HEARTBEAT_URL` in the production environment. |
+| `heartbeat_url_unconfigured` | Provision `CANARY_HEARTBEAT_URL` in the `production-us` environment. |
 | `invalid_heartbeat_url` | Correct the success URL: HTTPS, no whitespace, user/password credentials or fragment. Do not print it to diagnose. |
 | `heartbeat_delivery_failed` | Check the provider's status, URL validity, TLS and runner egress. Redirects and HTTP errors are failures. |
 | `skipped_ineligible_run` | Expected for manual, rerun or unsuccessful contexts. Such runs do not establish schedule liveness. |

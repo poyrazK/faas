@@ -46,9 +46,9 @@ A failed history read is reported as unavailable instead of an empty history.
 
 Scheduled starters remain disabled after publication until **Enable automatic
 starts** is selected. Manual runs remain distinct from that setting. The console
-cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
-configure outbound worker flags, or establish native KVM qualification. The
-existing permissions, publication policies and execution gates still apply.
+cannot enable a disabled workflow runtime or satisfy tenant admission
+requirements. The existing permissions, publication policies and execution
+gates still apply.
 
 The `stored-workflows` capability controls access to this authoring surface. Turning
 it off does not pause published schedules, accepted events, or existing runs.
@@ -1238,8 +1238,7 @@ The snapshot does not estimate queue position, completion time or global worker
 saturation. Older servers may omit `queue`; the CLI reports diagnostics as
 unavailable. No customer payloads, errors or tenant identities are returned.
 
-The preview runtime requires `FAAS_WORKFLOWS_ENABLED=1` on apid and schedd and the
-existing gateway executor configuration. The list response reports when runtime,
+The list response reports when runtime,
 plan, app maintenance, tenant requirements, or missing deployment prevents
 execution. Saving and validating drafts alone does not enable the runtime.
 
@@ -1354,7 +1353,7 @@ Dynamic path values cannot contain `/`, `\\`, `%`, or dot segments. Requests
 are bounded to 32 query parameters, 2 KiB per query value, 4 KiB of encoded query,
 and 512 bytes per dynamic path value. Integration and app binding route policies
 are checked at publication and again against the resolved request at execution.
-Origins and credentials stay managed by outboundd, and existing provider
+Origins and credentials stay managed by Gregale, and existing provider
 idempotency requirements apply to mutating retries. Simulation shows sample
 URLs; runtime route authorization and provider behavior still require real
 execution.
@@ -1495,8 +1494,7 @@ also apply: 128 items, 1 MiB total resolved item inputs and 1 MiB aggregate outp
 Oversized requests, template expansions or traces return 413 with limit metadata.
 Use representative, nonsecret sample data; the trace includes resolved values.
 Go `Client.SimulateStoredWorkflow`, Node `WorkflowsService.simulateStoredWorkflow` and
-Python `workflows.simulate_stored_workflow` expose this API. No new migration is needed.
-See [ADR-575](adr/575-stored-workflow-simulation.md).
+Python `workflows.simulate_stored_workflow` expose this API.
 
 ## Conditional actions
 
@@ -1551,8 +1549,7 @@ Descendants skipped by a dependency have no guard decision of their own.
 Each guard permits 32 predicate nodes, eight levels and 16 KiB. Compared
 numbers permit 4096 bytes and exponent magnitude 4096. Invalid definitions
 fail validation; invalid runtime numbers fail the step without running its
-action. Apply the guard migration before deploying apid/schedd and publishing
-definitions. See [ADR-490](adr/490-declarative-workflow-step-guards.md).
+action.
 
 ## Shared branch continuations
 
@@ -1600,11 +1597,6 @@ Joins consume zero execution attempts. Inspect the selected `source` and `value`
 through the existing step output API. Put guards, input mappings, retries and
 exception routes on action steps; those options cannot be configured on a join.
 Joins cannot be or depend directly on failure/timeout handlers.
-
-No additional migration is needed beyond the existing guard migration. Deploy
-updated apid and schedd before publishing joined definitions. Before downgrading,
-pause starts, drain/cancel joined runs and replace joined definitions. See
-[ADR-491](adr/491-native-workflow-branch-joins.md).
 
 ## Process a list
 
@@ -1675,7 +1667,7 @@ must deduplicate that key for side effects: an interrupted request can execute
 again. For managed integrations, declare provider idempotency support only when
 the operation honors the key. An unknown mutating result without that support
 fails the batch. Credentials, route permissions and revocation remain enforced
-by outboundd.
+by Gregale.
 
 Each batch permits 128 items. Parent names permit 64 UTF-8 bytes. The source
 array and total prepared inputs each permit 1 MiB; collected output permits
@@ -1688,11 +1680,6 @@ Parents expose `for_each_count`; items expose `for_each_parent` and
 `for_each_index`, plus input, output, status and attempts. Use the returned item
 name with the existing attempts endpoint to inspect retries. Parents consume
 zero execution attempts.
-
-Apply the iteration migration before deploying apid, schedd and outboundd.
-Before downgrade, pause starts, drain/cancel runs and replace iteration
-definitions. Migration rollback removes item and item-attempt history; export it
-first if needed. See [ADR-572](adr/572-bounded-workflow-iteration.md).
 
 ## External service actions
 
@@ -1731,11 +1718,6 @@ Successful output is `{ "status": 200, "body": { ... } }`. Later steps can use
 `{{steps.update-crm.output.body.id}}`. Failures expose HTTP status and a bounded
 error without saving the provider error body. Read runs, steps, and attempts
 through the existing workflow inspection APIs.
-
-Outbound execution additionally requires `FAAS_WORKFLOW_OUTBOUND_ENABLED=1` on
-schedd and outboundd, an active cluster signing key, and the attempt-token
-migration. See [ADR-489](adr/489-workflow-outbound-integration-steps.md) for rollout
-and recovery semantics. These flags are independent of saving draft intent.
 
 ## Start from a Stripe webhook
 
@@ -1796,7 +1778,7 @@ lasts for the plan's [settled-receipt window](events.md#settled-receipt-retentio
 inside steps still require the normal action idempotency contract.
 
 Paused/unpublished targets and nonmatching event types receive an `ignored`
-receipt. Content filters are evaluated by schedd: a mismatch reports
+receipt. Content filters are evaluated before a run starts: a mismatch reports
 `routing_status: filtered` and starts no run. Pausing or editing a definition
 affects future events; already accepted definitions and filters stay captured.
 When the workflows capability is disabled, captured workflow recipients wait
@@ -1812,12 +1794,6 @@ for the receipt, ignored reason, routing status and admitted `run_id`. Use the
 existing workflow run/step APIs for execution history. Quota pressure uses the
 existing bounded event fanout retry and failure replay APIs; look up failures
 with the receipt's `event_source` and `provider_event_id`.
-
-Apply `20261003200000001_workflow_webhook_starts.sql` and update all apid and
-schedd workers before creating bindings. Before downgrade, stop new ingress,
-drain accepted webhook fanout, export bindings/receipts and remove bindings
-before stopping updated binaries and rolling the migration back. See
-[ADR-574](adr/574-verified-webhook-stored-workflow-starts.md).
 
 ## Start from a generic signed webhook
 
@@ -1862,6 +1838,24 @@ Apply migration `20261006062359228_generic_inbound_webhook.sql` before creating
 generic endpoints. The down migration is forward-only; remove generic endpoints
 before rolling back application binaries.
 
+## Start on an event
+
+An `event` trigger starts a run for each matching event. `source` and
+`event_type` accept a `*` wildcard at either edge, and `filter` matches the
+event body:
+
+```json
+{ "type": "event", "source": "gregale.storage", "event_type": "object.created" }
+```
+
+Sources under `gregale.` are platform events, such as bucket notifications,
+and work on every plan that allows workflows. Any other source, including a
+wildcard such as `*`, matches your own custom events, which need custom events
+enabled for your account. Without them, publishing or enabling the stored
+workflow is refused with `stored_workflow_events_unavailable` instead of
+accepting a workflow that would never start. Use a `gregale.` source, a
+schedule, a manual start or an inbound webhook binding instead.
+
 ## Preview scheduled fire times
 
 Inspect a deployed schedule before relying on its cadence or catch-up behavior:
@@ -1895,8 +1889,7 @@ The account route is
 use `GET /v1/platform-tenant-self/apps/{slug}/workflows/schedules/{name}/preview`
 to preview only their own configurable schedule. Go clients expose
 `GetWorkflowSchedulePreview` and `GetPlatformTenantSelfWorkflowSchedulePreview`;
-Node and Python SDKs expose the same two operations. No migration is needed.
-See [ADR-645](adr/645-workflow-schedule-preview.md).
+Node and Python SDKs expose the same two operations.
 
 ## Resume after a terminal failure
 
@@ -1992,8 +1985,7 @@ tokens use `GET /v1/platform-tenant-self/workflows/runs/{id}/diagnostics`, restr
 to their own runs and current app links. Both routes use `Cache-Control: no-store`.
 Go `GetWorkflowRunDiagnostics`, Node `WorkflowsService.getWorkflowRunDiagnostics`
 and Python `workflows.get_workflow_run_diagnostics` expose the account route,
-with corresponding tenant-self methods. No new migration is needed.
-See [ADR-644](adr/644-workflow-run-diagnostics-and-resume-preview.md).
+with corresponding tenant-self methods.
 
 After resolving a provider outage or integration configuration issue, inspect
 `GET /v1/workflows/runs/{id}` and send its current `resume_count`:
@@ -2085,7 +2077,7 @@ or definition changed, the schedule is disabled, a tenant link is no longer
 active, overlap is active, or the app quota is full. History displays the
 resulting replay run ID, and retries of the same occurrence return that ID
 without creating another run. Legacy history without a definition fingerprint
-cannot be replayed. See [ADR-654](adr/654-controlled-workflow-schedule-replay.md).
+cannot be replayed.
 
 Tenant/workflow pairs share the app's active-run quota and are evaluated in
 least-recently-admitted order. Admission priority persists through scheduler
@@ -2317,7 +2309,6 @@ migration `20261010071515271_automation_failure_pauses.sql` and update all
 scheduler, admission and API replicas before enabling policies. Rollback
 requires explicitly resuming every failure pause and removes policies, guard
 state and guard history. Committed webhook events remain deliverable.
-See [ADR-905](adr/905-stored-workflow-failure-admission-pauses.md).
 
 For terminal failures, enable the opt-in `stored_workflow_failures` preset for an
 app on Hobby or higher. It sends a signed webhook when at least one run has
@@ -3209,7 +3200,7 @@ The inventory has a separate 30-day/10,000-entry per-app retention budget and
 survives run pruning. Capture excludes cancellations, inputs, outputs and error
 text, creates no reviews, and never executes recovery actions.
 
-Recovery policy evaluation includes separately timed `later_eligibility` checks for unreviewed failures. A bounded background observer runs even without a recovery policy and checks retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and become stale after 15 minutes. These observations do not change historical preparation totals or authorize retries. See [ADR-1026](adr/1026-workflow-failure-eligibility-observer.md).
+Recovery policy evaluation includes separately timed `later_eligibility` checks for unreviewed failures. A bounded background observer runs even without a recovery policy and checks retained recovery parents, generation fences and resume blockers. Checks refresh no sooner than five minutes and become stale after 15 minutes. These observations do not change historical preparation totals or authorize retries.
 
 ## Recover a captured initial workflow failure
 
@@ -3231,7 +3222,7 @@ gregale workflow stored recovery create --plan first-recovery.json --reason "Rev
 
 Plan preparation does not create a job or resume the workflow. The plan retains the captured failure ID and expected generation zero. Creation and admission recheck retained evidence and generation; resume rechecks safety and capacity. A run that advances after review cannot be resumed by the stale plan. Keep the same plan/key when reconciling an uncertain submission. Inspect the returned native job and its execution results to distinguish admission from workflow completion. Submit these plans through `recovery-start`; the per-run journal executor cannot preserve their evidence checks.
 
-The API exposes `GET /v1/apps/{slug}/workflow-failures` and `GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview`. First recovery remains an explicit operator action; automatic policies still retry saved failed recovery generations only. See [ADR-1259](adr/1259-reviewed-initial-workflow-recovery.md).
+The API exposes `GET /v1/apps/{slug}/workflow-failures` and `GET /v1/apps/{slug}/workflow-failures/{failureID}/recovery-preview`. First recovery remains an explicit operator action; automatic policies still retry saved failed recovery generations only.
 
 ### Dry-run initial-failure policy filters
 

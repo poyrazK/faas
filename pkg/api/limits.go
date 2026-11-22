@@ -216,6 +216,19 @@ const (
 	ObsInstanceListMax     = 1000
 )
 
+// Operator wake-latency report (ADR-20261121200409). The report reads each
+// wake event kind over the window, at most ObsWakeLatencyEventsPerKind rows
+// per kind (newest first; beyond that it says it was truncated). The restore
+// target is the spec's <350 ms snapshot restore interval (§14).
+const (
+	ObsWakeLatencyRestoreTargetMS = 350
+	ObsWakeLatencyEventsPerKind   = 20000
+	ObsWakeLatencySlowestMax      = 25
+	ObsWakeLatencyAppsMax         = 25
+	ObsWakeLatencyWindowDefault   = time.Hour
+	ObsWakeLatencyWindowMax       = 24 * time.Hour
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -4110,6 +4123,18 @@ const (
 	OwnerBalanceMovesPerTick     = 5
 	OwnerBalanceInterval         = time.Minute
 	OwnerBalanceMinIdle          = 24 * time.Hour
+	// Return home (ADR-20261121203000). A drain or a dead node displaces
+	// apps onto a peer; a rolling release displaces every node's apps in
+	// turn, so the last node to stay up ended up owning all of them
+	// (production 2026-11-21: 91 apps and 60.9 GB on bhs-2, none on bhs-3).
+	// A displacement does not count as a move for OwnerBalanceMinIdle, and
+	// once the home node is active again the control plane returns parked
+	// displaced apps to it, at most OwnerReturnHomeMovesPerTick every
+	// OwnerBalanceInterval. An app displaced longer than
+	// OwnerReturnHomeWindow ago has settled where it is and is left to the
+	// balance.
+	OwnerReturnHomeMovesPerTick = 20
+	OwnerReturnHomeWindow       = 6 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.

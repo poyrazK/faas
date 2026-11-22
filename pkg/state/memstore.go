@@ -591,6 +591,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
@@ -6957,6 +6958,7 @@ func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
+	delete(m.appOwnerHome, appID)
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -7819,7 +7821,54 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 			m.crons[cronID] = anchorCronSchedule(cron, restored, time.Now())
 		}
 	}
+	m.returnDeletedAppCanaryTrafficLocked(id)
 	return a, nil
+}
+
+// returnDeletedAppCanaryTrafficLocked mirrors restoreAppTx: a canary aborted
+// because its app was deleted hands its share to the live release with the
+// most traffic in its scope (ties: newest, then id).
+func (m *MemStore) returnDeletedAppCanaryTrafficLocked(appID string) {
+	stuck := map[string]bool{}
+	for depID, d := range m.deployments {
+		if d.AppID == appID && d.Status == DeployLive && d.RolloutState == "aborted" &&
+			d.RolloutAbortedReason == RolloutAbortedAppDeleted && d.TrafficPercent > 0 {
+			stuck[depID] = true
+		}
+	}
+	ids := make([]string, 0, len(stuck))
+	for depID := range stuck {
+		ids = append(ids, depID)
+	}
+	sort.Strings(ids)
+	for _, depID := range ids {
+		d := m.deployments[depID]
+		heir := ""
+		for otherID, o := range m.deployments {
+			if stuck[otherID] || o.AppID != appID || o.Status != DeployLive ||
+				normalizedDeploymentScope(o.Scope) != normalizedDeploymentScope(d.Scope) {
+				continue
+			}
+			if heir == "" {
+				heir = otherID
+				continue
+			}
+			h := m.deployments[heir]
+			if o.TrafficPercent > h.TrafficPercent ||
+				(o.TrafficPercent == h.TrafficPercent && (o.CreatedAt.After(h.CreatedAt) ||
+					(o.CreatedAt.Equal(h.CreatedAt) && otherID < heir))) {
+				heir = otherID
+			}
+		}
+		if heir == "" {
+			continue
+		}
+		h := m.deployments[heir]
+		h.TrafficPercent += d.TrafficPercent
+		d.TrafficPercent = 0
+		m.putDeploymentLocked(heir, h)
+		m.putDeploymentLocked(depID, d)
+	}
 }
 
 func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {
@@ -8748,6 +8797,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -9143,6 +9196,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return Deployment{}, 0, err
 		}
 		d.StagedReview = &review
+	}
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = d.ID
+		schedule.result.Created, schedule.result.Replaced = m.scheduleReleaseLocked(schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
 	}
 	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
@@ -21789,9 +21846,14 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
-		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000),
+		// and a now-Free subject's hours before the change that made it Free
+		// (ADR-20261121231500).
 		if !m.billingSubjectPaidLocked(row.AccountID) {
-			continue
+			changed, ok := m.planChangedAt[row.AccountID]
+			if !ok || !changed.After(identity.BillingFrom) || !row.Minute.Before(changed) {
+				continue
+			}
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
 		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {

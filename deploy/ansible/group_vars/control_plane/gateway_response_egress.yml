@@ -1,0 +1,13 @@
+# ADR-20261121210517: whether meterd bills the response bytes gatewayd-internal
+# forwards from an instance as app egress. The control_plane_service role
+# renders it into faas-meterd's zz-faas-gateway-response-egress.conf.
+#
+# Every compute node runs the namespace-local bridge (public forwarding,
+# ADR-1749, is off), so a public response never crosses the instance veth
+# that usage_minutes.net_tx_bytes counts. Without this the response bytes
+# would be outside the egress allowance and never billed (billing review
+# R12-1).
+#
+# Turn this off in the same change that turns faas_public_forwarding on for
+# any compute node; the role refuses the two together.
+meterd_gateway_response_egress: true

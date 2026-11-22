@@ -101,6 +101,14 @@ type Config struct {
 	// node runs a vmmd that reports the counter and test-metal plus
 	// leakcheck pass on the native hosts.
 	InternalEgressUnbilled bool `toml:"internal_egress_unbilled"`
+	// GatewayResponseEgress (ADR-20261121210517) bills the response bytes
+	// gatewayd-internal forwards from an instance as that instance's app
+	// egress (usage_minutes.net_tx_bytes). It is for compute nodes on the
+	// namespace-local bridge, whose public responses never cross the
+	// instance veth that net_tx_bytes otherwise counts. Turn it off before
+	// any compute node runs public forwarding (ADR-1749), which moves those
+	// bytes onto the veth. FAAS_GATEWAY_RESPONSE_EGRESS overrides it.
+	GatewayResponseEgress bool `toml:"gateway_response_egress"`
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration

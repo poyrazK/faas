@@ -698,9 +698,11 @@ type DaemonConfig struct {
 	// FrozenTierEarlyFreezeAfterS is schedd's
 	// frozen_tier_early_freeze_after_s (ADR-20261021215353): freeze a quiet
 	// between_requests instance this many seconds after its last request.
-	// Omitted renders nothing, which keeps schedd's default (0, off); 0
-	// turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
+	// Omitted renders nothing, which keeps schedd's default
+	// (api.FrozenEarlyFreezeDefaultSeconds, 15 s, whenever the frozen tier is
+	// on); 0 turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
 	// api.FrozenEarlyFreezeMaxSeconds. It needs schedd's frozen tier on.
+	// Compute schedds receive it as a drop-in via gregalectl's hot-path vars.
 	FrozenTierEarlyFreezeAfterS *int `yaml:"frozen_tier_early_freeze_after_s,omitempty"`
 
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal

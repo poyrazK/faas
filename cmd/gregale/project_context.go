@@ -468,3 +468,10 @@ func fillLinkedApp(slug *string) {
 		*slug = linked
 	}
 }
+
+// linkedProjectOnly reports whether start's checkout is linked to a project
+// without naming one of its apps, the link a project deploy writes.
+func linkedProjectOnly(start string) bool {
+	context, _, err := targetProjectContext(start)
+	return err == nil && context.Project != "" && context.App == ""
+}

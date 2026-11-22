@@ -83,3 +83,26 @@ interrupted build or migration.
 Roll out the imaged and scheduler prime fences before connecting a caller to
 the private runner. These owners must agree that the migration workload may
 execute its release task without starting an ordinary app VM.
+
+## Native worker recovery
+
+The enrolled acceptance caller pins the independently prepared web and
+worker fixtures before claiming the owner-approved run. The worker fixture
+pauses attempt one at its logged checkpoint before entering the report
+handler. The observer matches that log to a live PostgreSQL lease without
+exporting its token, then rechecks the lease before requesting interruption.
+
+The local scheduler socket accepts only a fresh observation for the exact
+reserved run, contained worker, zero-traffic deployment, node, instance
+and wake. The scheduler checks that vmmd observes the resident worker and
+moves the instance out of RUNNING before requesting hard teardown. A lost
+or failed teardown suspends the proof and leaves the run to cleanup.
+A confirmed teardown retires the instance and uses the ordinary worker
+reconciler to restore capacity.
+
+Recovery requires another live lease for the same Task on a distinct
+worker VM, the fixed report through the pinned private MCP connection,
+and one completed result in the reserved PostgreSQL namespace. The
+observer reads counts and the attempt number through its restricted login.
+The report is private to the harness. Native acceptance additionally
+requires running the journey on the enrolled KVM host.
