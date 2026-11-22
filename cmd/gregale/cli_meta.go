@@ -2164,6 +2164,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "verify",
+		DocSlug: "verification-contracts",
+		Short:   "Check new deployments against gregale.verify.yaml before they take traffic",
+		Examples: []string{
+			"gregale release check validate",
+			"gregale release check set --app my-api",
+			"gregale release check get --app my-api --json",
+		},
+		Subcommands: []cliSub{
+			{Name: "validate", Short: "Validate gregale.verify.yaml locally", Flags: []cliFlag{
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+			}},
+			{Name: "set", Short: "Store the contract on an app; new deployments must pass it", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+				{Name: "expected-revision", Short: "refuse unless the stored revision matches (0: none stored)", Value: "N"},
+			}},
+			{Name: "get", Short: "Show an app's stored contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "delete", Short: "Remove an app's contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "freeze",
 		DocSlug: "freeze",
 		Short:   "Pause production releases for a window, weekly, or after rollbacks",
@@ -3001,7 +3027,7 @@ var cliCommands = []cliCommand{
 			"gregale deployment latest --app my-api",
 		},
 		Subcommands: []cliSub{
-			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release verify DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
+			{Name: "verify", Short: "Verify an application response from an exact live deployment", Positionals: []string{"<deployment-uuid>"}, Notes: []string{"Available on every plan with deployment-write access. Sends an owner-authorized GET; public access is not verified."}, Examples: []string{"gregale release check DEPLOYMENT_UUID --app my-api --path /", "gregale --non-interactive --json release verify DEPLOYMENT_UUID --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Req: true}, {Name: "path", Value: "PATH", Short: "app-relative GET path (default /)"}, {Name: "project-id", Value: "UUID", Short: "project identity for a named environment (looked up when omitted)"}, {Name: "environment-id", Value: "UUID", Short: "environment identity for a named environment (looked up when omitted)"}}},
 			{Name: "retry-hold", Positionals: []string{"<ID|vN>"}, Short: "Schedule an MCP promotion hold retry with all activation checks", Examples: []string{"gregale deployment retry-hold v42 --app my-api"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},
 			{Name: "runtime", Positionals: []string{"<ID|vN>"}, Short: "Inspect runtime identity or preview a published runtime change", Examples: []string{"gregale release runtime v42 --app my-function", "gregale release runtime v42 --app my-function --target RELEASE_ID --json"}, Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "app slug for a vN revision"}, {Name: "target", Value: "RELEASE_ID", Short: "published runtime release to preview without applying"}}},
 			{Name: "advance", Positionals: []string{"<ID|vN>"}, Short: "Advance a canary by one stage with route enforcement", Examples: []string{"gregale deployment advance DEPLOYMENT_UUID --expected-step 1", "gregale deployment advance v42 --app my-api --expected-step 1"}, Flags: []cliFlag{{Name: "expected-step", Value: "N", Short: "observed current canary step (see deployment summary)", Req: true}, {Name: "app", Value: "SLUG", Short: "app slug, to resolve a vN revision"}}},

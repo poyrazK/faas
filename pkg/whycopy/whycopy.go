@@ -342,7 +342,7 @@ var catalog = map[string]Render{
 	api.CodeDeploymentVerificationContractFailed: {
 		Hint: "your new release failed a required check in gregale.verify.yaml",
 		Why:  "before taking traffic Gregale ran the app's verification contract against the new release; a required check failed or could not run, so the release was not promoted and the previous one keeps serving",
-		Fix:  "• run `gregale deployments get <id> --json` and read smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
+		Fix:  "• run `gregale deployment <id> --json` and read smoke.verification_contract for the failing check\n• fix the app or the check, then deploy again\n• mark a check `advisory: true` to report it without blocking",
 	},
 	api.CodeImageNotFound: {
 		Hint: "the container image you asked for could not be pulled",
