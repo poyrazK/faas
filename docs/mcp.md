@@ -5613,7 +5613,7 @@ caller credential. It emits JSON with the Task ID, state, last update,
 is limited to those fields.
 
 - `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
-- `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
+- `provide_input` means the Task is waiting for a form response. Use `client respond` with a reviewed file, or `client wait` with `--interactive` or `--input-responses-file`.
 - `read_result` means the Task completed. Use `client status` with the Task ID or use `--read-result` with a receipt.
 - `none` means the Task failed or was cancelled.
 - `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
@@ -5775,9 +5775,25 @@ gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKE
 ```
 
 After reviewing a form, fill in its `response` field. For the example report,
-`{"action":"accept","content":{"approved":true}}` is an approval. Resume using
-the same endpoint and Task receipt. The CLI checks the Task and live form
-before sending any answer.
+`{"action":"accept","content":{"approved":true}}` is an approval. Use the same
+endpoint, Task receipt, and the caller's current credential. The CLI checks
+the Task and each live form against the review before sending any answers.
+
+```sh
+gregale mcp client respond --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
+```
+
+`respond` sends at most one update, then returns the Task's status metadata
+without waiting for completion. If the reply is lost, it checks status once
+without resending the update. Exit code 3 with `provide_input` means an
+answer is still pending. Review the live form before submitting again.
+Exit code 3 with `retry_status` means status is temporarily unavailable.
+Check the receipt before taking another action. Use `client status --read-result`
+with the same receipt to retrieve a completed result.
+
+To submit reviewed input and wait for completion in the same process, use
+`client wait`.
 
 ```sh
 gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \

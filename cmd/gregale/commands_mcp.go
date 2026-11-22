@@ -24,7 +24,7 @@ import (
 
 func cmdMCP(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-cancel|watch|config|lock|diff [flags]", "mcp")
+		PrintUsage(os.Stderr, "usage: gregale mcp serve|connect|connections|approval-channels|init|capabilities|validate|test|deploy|readiness|overview|status|monitor|diagnostics|health|retirements|access|policy|tasks|doctor|tools|resources|resource-read|resource-watch|prompts|prompt-get|complete|call|task-get|task-wait|task-respond|task-cancel|watch|config|lock|diff [flags]", "mcp")
 		return 1
 	}
 	switch args[0] {
@@ -102,7 +102,7 @@ func cmdMCP(args []string) int {
 			}
 		}
 		return cmdMCPRemote("doctor", args[1:])
-	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-cancel", "config":
+	case "tools", "resources", "resource-read", "prompts", "prompt-get", "call", "task-get", "task-wait", "task-respond", "task-cancel", "config":
 		return cmdMCPRemote(args[0], args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
@@ -440,7 +440,7 @@ func cmdMCPRemote(command string, args []string) int {
 			return nil
 		})
 	}
-	if command == "call" || command == "task-get" || command == "task-wait" || command == "task-cancel" {
+	if command == "call" || command == "task-get" || command == "task-wait" || command == "task-respond" || command == "task-cancel" {
 		fs.Func("task-receipt", "private Task submission receipt file", func(value string) error {
 			if value == "" {
 				return errors.New("task receipt path is required")
@@ -472,7 +472,7 @@ func cmdMCPRemote(command string, args []string) int {
 			return nil
 		})
 	}
-	if command == "task-wait" {
+	if command == "task-wait" || command == "task-respond" {
 		fs.Func("reviewed-input-file", "answer forms from a reviewed private Task input template", func(value string) error {
 			if value == "" {
 				return errors.New("reviewed Task input file path is required")
@@ -504,7 +504,7 @@ func cmdMCPRemote(command string, args []string) int {
 	if inputMode && reviewedInputPath != "" {
 		return printErr("Invalid MCP input flags", errors.New("choose --reviewed-input-file, --interactive or --input-responses-file"))
 	}
-	inputMode = inputMode || reviewedInputPath != ""
+	inputMode = inputMode || reviewedInputPath != "" && command == "task-wait"
 	if inputMode && ((command != "call" && command != "task-wait") || *legacy) {
 		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only for modern mcp call and mcp task-wait"))
 	}
@@ -547,6 +547,9 @@ func cmdMCPRemote(command string, args []string) int {
 		if *legacy || hasTaskID == hasReceipt {
 			return printErr("Invalid MCP task flags", fmt.Errorf("modern %s requires exactly one of --task-id or --task-receipt", command))
 		}
+	}
+	if command == "task-respond" && (*legacy || taskReceiptPath == "" || reviewedInputPath == "") {
+		return printErr("Invalid MCP task flags", errors.New("modern task-respond requires --task-receipt and --reviewed-input-file"))
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
@@ -615,6 +618,9 @@ func cmdMCPRemote(command string, args []string) int {
 		if err != nil {
 			return printErr("MCP Task input review", err)
 		}
+	}
+	if command == "task-respond" {
+		return runMCPTaskInputResponse(ctx, c, submissionKey, review)
 	}
 	if command == "task-cancel" && submissionKey != "" {
 		return runMCPTaskReceiptCancel(ctx, c, submissionKey)

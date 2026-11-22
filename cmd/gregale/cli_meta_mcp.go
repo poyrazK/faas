@@ -52,6 +52,11 @@ func mcpCLICommand() cliCommand {
 	taskCancelFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "task-receipt", Short: "cancel a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 	)
+	taskRespondFlags := append(append([]cliFlag{}, remote[:4]...),
+		cliFlag{Name: "task-receipt", Short: "private receipt for the retained Task", Value: "FILE", Req: true},
+		cliFlag{Name: "reviewed-input-file", Short: "answer forms from a reviewed private Task input template", Value: "FILE", Req: true},
+		cliFlag{Name: "timeout", Short: "total request timeout (default 30s)", Value: "DURATION"},
+	)
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "task-receipt", Short: "resume a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
@@ -263,6 +268,7 @@ func mcpCLICommand() cliCommand {
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
+		{Name: "task-respond", Short: "Submit reviewed Task input and return a status snapshot", Positionals: []string{"[<slug>]"}, Flags: taskRespondFlags, Examples: []string{"gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskCancelFlags, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
 

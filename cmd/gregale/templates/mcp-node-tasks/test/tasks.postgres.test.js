@@ -2255,13 +2255,16 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, cancelReplyFault, timeout } of [
+for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
+  { title: 'receipt respond submits reviewed input and returns a snapshot after restart', useReceipt: true, deferredForm: true, respondOnce: true, timeout: 45_000 },
+  { title: 'receipt respond verifies a form reply lost after commit', useReceipt: true, deferredForm: true, respondOnce: true, formReplyFault: 'after', timeout: 45_000 },
+  { title: 'receipt respond reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, respondOnce: true, formReplyFault: 'before', timeout: 45_000 },
   { title: 'receipt cancel recovers cancellation committed before the reply was lost', useReceipt: true, deferredForm: true, cancelReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt cancel reports pending state without repeating a lost cancellation', useReceipt: true, deferredForm: true, cancelReplyFault: 'before', timeout: 35_000 },
 ]) test(title, {
@@ -2311,8 +2314,8 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
   const requests = [];
   const server = createServer((req, res) => {
     // The relay commits the request through the real handler. Count only
-    // cancellation requests sent by the CLI when checking for repeats.
-    if (req.headers['x-gregale-test-cancel-relay'] === '1') return api.app(req, res);
+    // updates and cancellations sent by the CLI when checking for repeats.
+    if (req.headers['x-gregale-test-task-relay'] === '1') return api.app(req, res);
     const method = req.headers['mcp-method'];
     requests.push(method);
     const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
@@ -2342,7 +2345,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
           version: 1, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
         });
       }
-      const headers = dropCancelReply ? { ...req.headers, 'x-gregale-test-cancel-relay': '1' } : req.headers;
+      const headers = dropFormReply || dropCancelReply ? { ...req.headers, 'x-gregale-test-task-relay': '1' } : req.headers;
       const reply = await fetch(endpoint, {
         method: 'POST', headers, body, signal: AbortSignal.timeout(5000),
       });
@@ -2353,10 +2356,8 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
         return;
       }
       if (dropFormReply === 'after') {
-        const persisted = await rows();
-        assert.equal(persisted.length, 1);
-        assert.equal(persisted[0].task_id, committedID);
-        assert.ok(['queued', 'running', 'completed'].includes(persisted[0].status), 'form update did not commit');
+        const task = (await rows()).find(row => row.task_id === committedID);
+        assert.ok(task && ['queued', 'running', 'completed'].includes(task.status), 'form update did not commit');
         return;
       }
       const persisted = await rows();
@@ -2449,7 +2450,8 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
         assert.deepEqual(await rows(), [{ task_id: committedID, status: 'cancelled', attempt_count: 1, has_result: false }]);
         return;
       }
-      if (reviewedInput) {
+      if (reviewedInput || respondOnce) {
+        const verb = respondOnce ? 'respond' : 'wait';
         const beforeRead = requests.length;
         assert.deepEqual(JSON.parse(await cli('status', owner, 0, [...selector, '--read-result'])), snapshot);
         assert.deepEqual(requests.slice(beforeRead), ['server/discover', 'gregale/tasks/lookup']);
@@ -2468,7 +2470,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
         assert.match(template.forms.approval.formSha256, /^[a-f0-9]{64}$/);
         assert.equal(template.forms.approval.response, null);
         const reviewedArgs = ['--reviewed-input-file', file];
-        assert.equal(await cli('wait', owner, 1, [...selector, ...reviewedArgs]), '');
+        assert.equal(await cli(verb, owner, 1, [...selector, ...reviewedArgs]), '');
 
         template.forms.approval.response = { action: 'accept', content: { approved: true } };
         const filled = JSON.stringify(template);
@@ -2483,11 +2485,24 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
         await eventually(async () => (await rows()).some(row => row.task_id === otherID && row.status === 'input_required'),
           'second Task did not persist its form request');
         const beforeWrongTask = requests.length;
-        assert.equal(await cli('wait', owner, 1, ['--task-receipt', otherReceipt, ...reviewedArgs]), '');
+        assert.equal(await cli(verb, owner, 1, ['--task-receipt', otherReceipt, ...reviewedArgs]), '');
         assert.deepEqual(requests.slice(beforeWrongTask), ['server/discover', 'gregale/tasks/lookup']);
         const beforeWrongEndpoint = requests.length;
-        assert.equal(await cli('wait', owner, 1, ['--task-id', committedID, ...reviewedArgs, '--url', `${endpoint}/other`]), '');
+        const endpointSelector = respondOnce ? selector : ['--task-id', committedID];
+        assert.equal(await cli(verb, owner, 1, [...endpointSelector, ...reviewedArgs, '--url', `${endpoint}/other`]), '');
+        if (respondOnce) {
+          assert.equal(await cli(verb, owner, 1, reviewedArgs), '');
+          assert.equal(await cli(verb, owner, 1, selector), '');
+          assert.equal(await cli(verb, owner, 1, [...selector, ...reviewedArgs, '--task-id', committedID]), '');
+        }
         assert.equal(requests.length, beforeWrongEndpoint);
+        if (respondOnce) {
+          for (const credential of [foreign, ownerWithoutTool]) {
+            const beforeDenied = requests.length;
+            assert.equal(await cli(verb, credential, 1, [...selector, ...reviewedArgs]), '');
+            assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
+          }
+        }
 
         const authenticGet = runtime.get;
         runtime.get = async (...args) => {
@@ -2496,16 +2511,44 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
           return task;
         };
         try {
-          assert.equal(await cli('wait', owner, 1, [...selector, ...reviewedArgs]), '');
+          assert.equal(await cli(verb, owner, 1, [...selector, ...reviewedArgs]), '');
         } finally {
           runtime.get = authenticGet;
         }
         assert.equal(requests.filter(method => method === 'tasks/update').length, 0);
         assert.ok((await rows()).every(row => row.status === 'input_required' && !row.has_result));
-        const completed = JSON.parse(await cli('wait', owner, 0, [...selector, ...reviewedArgs]));
+        if (respondOnce) {
+          const respondArgs = [...selector, ...reviewedArgs];
+          const expectedRequests = ['server/discover', 'gregale/tasks/lookup', 'tasks/get', 'tasks/update', 'tasks/get'];
+          if (formReplyFault === 'before') {
+            const beforeLostReply = requests.length;
+            assert.deepEqual(JSON.parse(await cli(verb, owner, 3, respondArgs)), snapshot);
+            assert.deepEqual(requests.slice(beforeLostReply), expectedRequests);
+            assert.ok((await rows()).every(row => row.status === 'input_required' && !row.has_result));
+          }
+          const beforeRespond = requests.length;
+          const observed = JSON.parse(await cli(verb, owner, 0, respondArgs));
+          assert.ifError(proxyError);
+          assert.deepEqual(requests.slice(beforeRespond), expectedRequests);
+          assert.equal(observed.taskId, committedID);
+          assert.ok(Number.isFinite(Date.parse(observed.lastUpdatedAt)));
+          assert.ok(['working', 'completed'].includes(observed.status));
+          const next = observed.status === 'working' ? { nextAction: 'poll_status', pollIntervalMs: 500 } : { nextAction: 'read_result' };
+          assert.deepEqual(observed, { taskId: committedID, status: observed.status, lastUpdatedAt: observed.lastUpdatedAt, ...next });
+          await eventually(async () => (await rows()).some(row => row.task_id === committedID && row.status === 'completed'),
+            'Task did not complete after the reviewed response');
+          const beforeReplay = requests.length;
+          const terminal = JSON.parse(await cli(verb, owner, 0, respondArgs));
+          assert.deepEqual(terminal, { taskId: committedID, status: 'completed', lastUpdatedAt: terminal.lastUpdatedAt, nextAction: 'read_result' });
+          assert.deepEqual(requests.slice(beforeReplay), ['server/discover', 'gregale/tasks/lookup']);
+          assert.equal(await readFile(file, 'utf8'), filled);
+        }
+        const completed = JSON.parse(respondOnce ?
+          await cli('status', owner, 0, [...selector, '--read-result']) :
+          await cli('wait', owner, 0, [...selector, ...reviewedArgs]));
         assert.equal(completed.taskId, committedID);
         assert.equal(completed.result.content[0].text, 'Report original is ready after 1 steps.');
-        assert.equal(requests.filter(method => method === 'tasks/update').length, 1);
+        assert.equal(requests.filter(method => method === 'tasks/update').length, formReplyFault === 'before' ? 2 : 1);
         const byID = new Map((await rows()).map(row => [row.task_id, row]));
         assert.equal(byID.size, 2);
         assert.deepEqual(byID.get(committedID), { task_id: committedID, status: 'completed', attempt_count: 1, has_result: true });
@@ -2537,9 +2580,9 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
       assert.equal(completed.taskId, committedID);
       assert.equal(completed.status, 'completed');
       assert.equal(completed.result.content[0].text, 'Report original is ready after 1 steps.');
-      const expected = formReplyFault === 'after' ? [...waitRequests, 'tasks/update', 'tasks/get'] : waitRequests;
+      const expected = formReplyFault === 'after' ? [...waitRequests, 'tasks/get'] : waitRequests;
       assert.deepEqual(requests.slice(beforeWait, beforeWait + expected.length), expected);
-      assert.equal(requests.filter(method => method === 'tasks/update').length, formReplyFault ? 2 : 1);
+      assert.equal(requests.filter(method => method === 'tasks/update').length, formReplyFault === 'before' ? 2 : 1);
       assert.equal(requests.filter(method => method === 'gregale/tasks/submit').length, 2, 'one submission relayed by the test server');
       assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
       return;

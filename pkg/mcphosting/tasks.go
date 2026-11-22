@@ -47,7 +47,7 @@ type CallOptions struct {
 	// TaskSubmissionKey is a caller-retained UUIDv7 for a handle-only Task call.
 	TaskSubmissionKey string
 	// DeferFormInput lets a keyed, handle-only Task request bounded forms.
-	// The caller supplies responses during a later wait.
+	// The caller supplies responses in a later request.
 	DeferFormInput bool
 	// CancelOnTimeout requests cooperative cancellation when the wait ends
 	// because its context expires or is cancelled. It is opt-in so a resumed
@@ -222,6 +222,37 @@ func (c *Client) WaitTask(ctx context.Context, taskID string, options CallOption
 	return c.waitForTask(ctx, "task", task, options)
 }
 
+// RespondToTask answers the forms in a freshly retrieved Task in one update.
+// It reads the Task once after the update to verify whether the forms are
+// still pending, including when the update reply is lost.
+func (c *Client) RespondToTask(ctx context.Context, task Task, responder InputResponder) (Task, error) {
+	if task.Status != "input_required" {
+		return task, nil
+	}
+	if responder == nil {
+		return Task{}, errors.New("MCP task input update requires a responder")
+	}
+	forms, err := task.InputForms()
+	if err != nil {
+		return Task{}, err
+	}
+	responses := make(map[string]InputResponse, len(forms))
+	for _, form := range forms {
+		response, err := responder(ctx, form)
+		if err != nil {
+			return Task{}, err
+		}
+		if err := validateInputResponse(response); err != nil {
+			return Task{}, err
+		}
+		responses[form.ID] = response
+	}
+	if uncertain, err := c.updateTask(ctx, task.TaskID, responses); err != nil && !uncertain {
+		return Task{}, err
+	}
+	return c.reconcileTaskInputUpdate(ctx, task.TaskID, responses)
+}
+
 // CancelTask requests cooperative cancellation. The acknowledgement does not
 // imply that the task has already reached its cancelled state.
 func (c *Client) CancelTask(ctx context.Context, taskID string) (Exchange, error) {
@@ -280,8 +311,8 @@ func taskResponseUncertain(status int, err error) bool {
 		status >= 200 && status < 300 && !errors.As(err, &rpc)
 }
 
-// A lost update response may follow a commit. Inspect the durable state once
-// and let the caller decide how to handle an answer that is still pending.
+// Inspect the durable state once after an update that may have committed.
+// The caller decides how to handle an answer that is still pending.
 func (c *Client) reconcileTaskInputUpdate(ctx context.Context, taskID string, responses map[string]InputResponse) (Task, error) {
 	if err := ctx.Err(); err != nil {
 		if errors.Is(err, context.Canceled) {
