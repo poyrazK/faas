@@ -2769,6 +2769,11 @@ func createAppIfUnderQuotaTx(ctx context.Context, tx pgx.Tx, app App, limits api
 		return App{}, fmt.Errorf("state: lock account %s: %w", app.AccountID, err)
 	}
 
+	if app.AddToProject {
+		if err := validateProjectAppCreateTx(ctx, tx, app); err != nil {
+			return App{}, err
+		}
+	}
 	limits, personal, err := resolveAppQuotaTx(ctx, tx, &app, limits)
 	if err != nil {
 		return App{}, err

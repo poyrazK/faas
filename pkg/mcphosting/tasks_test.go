@@ -33,6 +33,48 @@ func advertiseTasks(client *Client) {
 	}
 }
 
+func TestDeferredFormInputRequiresKeyedHandleOnlyCall(t *testing.T) {
+	const key = "019ab2ce-217c-7abc-89ab-123456789abc"
+	const handleOnly = "authenticated handle-only Task call"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("invalid call options reached the server")
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+	for _, tc := range []struct {
+		name, token, version string
+		options              CallOptions
+		want                 string
+	}{
+		{"missing key", "test-token", ProtocolVersion,
+			CallOptions{EnableTasks: true}, "requires a keyed Task submission"},
+		{"missing Tasks flag", "test-token", ProtocolVersion,
+			CallOptions{TaskSubmissionKey: key}, handleOnly},
+		{"waiting on submission", "test-token", ProtocolVersion,
+			CallOptions{EnableTasks: true, TaskSubmissionKey: key, WaitForTask: true}, handleOnly},
+		{"immediate responder", "test-token", ProtocolVersion,
+			CallOptions{EnableTasks: true, TaskSubmissionKey: key, Responder: func(context.Context, InputRequest) (InputResponse, error) {
+				t.Error("submission tried to answer a deferred form")
+				return InputResponse{}, nil
+			}}, handleOnly},
+		{"anonymous", "", ProtocolVersion,
+			CallOptions{EnableTasks: true, TaskSubmissionKey: key}, handleOnly},
+		{"legacy", "test-token", LegacyProtocolVersion,
+			CallOptions{EnableTasks: true, TaskSubmissionKey: key}, ProtocolVersion},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := NewClient(server.URL+"/mcp", tc.token, tc.version)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.options.DeferFormInput = true
+			if _, err := client.CallWithOptions(context.Background(), Tool{Name: "report"}, nil, tc.options); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("CallWithOptions returned %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func checkTaskRequest(t *testing.T, r *http.Request, method, id string, params map[string]any) {
 	t.Helper()
 	if r.Header.Get("Mcp-Method") != method {

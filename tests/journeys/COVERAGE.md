@@ -49,6 +49,16 @@ the hold after 10 wrong passwords, and a `users:read` admin key that reads
 users but cannot sign one out. Parking and wake, row-level security through
 the Data API, bans and import stay with `make auth-staging-canary`.
 
+Managed Redis (ADR-20261116192126, row 174) is a preview behind the
+`managed-redis` capability, so it is not a GA row either. `TestManagedRedis`
+runs when the account's capabilities do not report `managed-redis` hidden, and
+skips otherwise. It creates a 64 MB cache, binds it to a probe app
+(`testdata/redis-probe`, which speaks RESP to `REDIS_URL`), writes through the
+app's public URL, and checks the data is kept across the cache parking and
+waking, `redis restart`, and `redis resize` to 96 MB (the replication handoff).
+Many back-to-back handoffs under write load stay with the metal soak
+`TestManagedRedisHandoffSoakMetal` (`FAAS_E2E_REDIS_SOAK=1`).
+
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|
 | 1 | Apps: create, update, rename, delete, restore | `TestAppSettingsAndRename` (update, rename), `TestDeleteAndRestore`, every `deployProbe` | — |

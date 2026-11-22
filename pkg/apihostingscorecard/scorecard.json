@@ -144,7 +144,7 @@
       "name": "Capability acceptance: data",
       "category": "resources",
       "description": "Each released data capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-prompts", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-custom-roles", "postgres-cutovers", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
+      "capabilities": ["ai-access-tokens", "ai-content-policy", "ai-prompts", "ai-request-replay", "ai-routes", "ai-usage-limits", "application-auth", "bucket-access-grants", "bucket-cors", "bucket-encryption", "data-api", "database-rollbacks", "durable-entities", "entity-backups", "entity-quotas", "entity-registry", "entity-sessions", "live-queries", "managed-postgres", "multipart-uploads", "object-lifecycle", "object-protection", "object-storage-compute", "object-versioning", "org-postgres", "outbound-integrations", "postgres-bindings", "postgres-compute-policy", "postgres-custom-roles", "postgres-cutovers", "postgres-overage", "postgres-restore", "preview-databases", "realtime", "realtime-access", "realtime-channels", "realtime-connections", "realtime-occupancy", "realtime-publishers", "realtime-push", "realtime-tickets", "realtime-workers", "s3-credentials", "signed-urls"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI"},
@@ -155,6 +155,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/durable_entities_test.go::TestDurableEntityAPIScopeAndAuthentication"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_test.go::TestRestoreAccount_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_managed_postgres_compute_policy_test.go::TestManagedPostgresComputePolicyRoutesAndReplay"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_bucket_object_lock_test.go::TestBucketObjectLockAuthorityPG"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_compute_triggers_test.go::TestObjectComputeTriggerAPIMem"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_object_storage_multipart_test.go::TestObjectMultipartLayout"},
@@ -562,6 +563,8 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCachePlanGates"},
         {"kind": "test", "locator": "pkg/gateway/redis_session_test.go::TestRedisSessionForwardsCommands"},
         {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisMetal"},
+        {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisHandoffSoakMetal"},
+        {"kind": "test", "locator": "tests/journeys/redis_test.go::TestManagedRedis"},
         {"kind": "runbook", "locator": "docs/redis.md"}
       ]
     },
