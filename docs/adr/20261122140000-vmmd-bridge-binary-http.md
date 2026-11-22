@@ -91,7 +91,9 @@ The change must not weaken what the h2c leg enforces. Each item has a test.
 5. **Limits.** The binary HTTP server takes the h2c server's: 1 MiB header
    size, a 10 s header read timeout as the slowloris defence, a 120 s idle
    timeout, and no read or write timeout, so uploads and streamed responses
-   run as long as on h2c. vmmd keeps at most 64 idle connections per bridge;
+   run as long as on h2c. vmmd keeps at most 64 idle connections per bridge,
+   each for half the bridge's idle timeout (`api.StreamBridgeIdleTimeout`),
+   so it never sends a request on a connection the bridge has closed;
    in-flight requests are bounded by vmmd's admission, as with h2c.
 6. **A small bridge.** The client and server moved from `pkg/gateway` into
    `pkg/binhop`, which depends only on `pkg/api` and `pkg/binhttp`; the

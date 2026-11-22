@@ -36,7 +36,7 @@ func newBinaryHopServer(handler http.Handler) *binhop.Server {
 	return &binhop.Server{
 		Handler:           func() http.Handler { return handler },
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		IdleTimeout:       api.StreamBridgeIdleTimeout,
 		MaxHeaderBytes:    int(api.DefaultMaxHeaderBytes),
 	}
 }

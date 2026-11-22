@@ -7,7 +7,6 @@ import (
 	"context"
 	"net"
 	"net/http"
-	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -25,9 +24,11 @@ type bridgeTransport interface {
 	CloseIdleConnections()
 }
 
-// bridgeBinaryIdleTimeout keeps idle binary HTTP connections as long as the
-// h2c transport keeps its own (IdleConnTimeout).
-const bridgeBinaryIdleTimeout = 5 * time.Minute
+// bridgeBinaryIdleTimeout keeps an idle binary HTTP connection for half the
+// bridge server's idle timeout (api.StreamBridgeIdleTimeout), as the edge does for
+// gatewayd-internal: vmmd never reuses a connection the bridge has closed,
+// which would fail a request that cannot be sent again.
+const bridgeBinaryIdleTimeout = api.StreamBridgeIdleTimeout / 2
 
 // streamBridgeBinaryTransport sends one request at a time over each unix
 // connection to a bridge. Every connection passes the same peer check as
