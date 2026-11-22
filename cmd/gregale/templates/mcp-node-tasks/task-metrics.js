@@ -35,6 +35,13 @@ export function resolveMcpTaskMetricsSettings({ env = process.env, role = 'combi
   return { appSlug, token, apiURL: safeAPIURL(configuredURL) };
 }
 
+function publishError(step, status) {
+  const error = new Error(`Gregale MCP task ${step} publish failed with HTTP ${status}`);
+  error.step = step;
+  error.status = status;
+  return error;
+}
+
 export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = DEFAULT_API_URL, fetchImpl = globalThis.fetch, intervalMs = 15_000, role = 'worker', keepAlive = false, onError = () => {} }) {
   if (!store || typeof store.queueMetrics !== 'function') throw new Error('MCP task metrics require a task store queueMetrics method');
   if (typeof appSlug !== 'string' || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(appSlug)) throw new Error('Invalid MCP task scaling app slug');
@@ -56,7 +63,7 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ value }),
     });
-    if (response.status !== 204) throw new Error(`Gregale custom metric push failed with HTTP ${response.status}`);
+    if (response.status !== 204) throw publishError(`metric:${name}`, response.status);
   }
 
   async function pushCompatibilityReport(metrics) {
@@ -67,7 +74,7 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ handlers: metrics.handlerCompatibility, truncated: metrics.compatibilityTruncated }),
     });
-    if (response.status !== 204) throw new Error(`Gregale MCP task compatibility report failed with HTTP ${response.status}`);
+    if (response.status !== 204) throw publishError('compatibility_report', response.status);
   }
 
   function publish() {
@@ -95,8 +102,13 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
         await pushCompatibilityReport(metrics);
         await push(METRIC_NAMES.observerHeartbeat, 1);
       }
-    })().catch(() => {
-      try { onError(); } catch { /* Metrics reporting must not stop task execution. */ }
+    })().catch(error => {
+      // Name the failed step and HTTP status (never values or identifiers);
+      // a bare event every 15 s could not be diagnosed (MCP Tasks prod
+      // probe 2026-11-22).
+      const detail = { step: typeof error?.step === 'string' ? error.step : 'queue_metrics' };
+      if (Number.isSafeInteger(error?.status)) detail.status = error.status;
+      try { onError(detail); } catch { /* Metrics reporting must not stop task execution. */ }
     }).finally(() => { publishing = undefined; });
     return publishing;
   }

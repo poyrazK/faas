@@ -263,7 +263,11 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	env = StampRuntimeConfigEnv(env)
 	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {
-		argv = []string{"/bin/sh", "-lc", argv[0]}
+		// Not a login shell: Debian's /etc/profile resets PATH for non-root
+		// users, which drops /app/node_modules/.bin and the runtime shims the
+		// deployment's environment put on PATH (a `prisma migrate deploy`
+		// release exited 127). env above is already the app's environment.
+		argv = []string{"/bin/sh", "-c", argv[0]}
 	} else {
 		argv[0] = resolveWorkloadCommandPath("/", argv[0], env)
 	}

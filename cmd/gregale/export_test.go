@@ -1486,6 +1486,7 @@ var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
 var McpTasksObserverConfigEnvNames = mcpTasksObserverConfigEnvNames
 var McpTasksObserverCredential = mcpTasksObserverCredential
+var McpTasksRuntimeApp = mcpTasksRuntimeApp
 var McpTasksObserverEntrypointDetected = mcpTasksObserverEntrypointDetected
 var McpTasksObserverHeartbeatIsFresh = mcpTasksObserverHeartbeatIsFresh
 var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches

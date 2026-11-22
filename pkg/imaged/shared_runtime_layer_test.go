@@ -270,7 +270,9 @@ func sharedRuntimeArtifactFixture(t *testing.T, files map[string]string) string 
 
 // spec: §4.6
 // H10-140: an export built FROM the runner base keeps only /app when the
-// rest is toolchain, and keeps every layer above the base otherwise.
+// rest is toolchain, and keeps every layer above the base otherwise. A
+// release command that calls npm keeps the toolchain too: the runner base
+// ships no npm, so `release: npm run migrate` exited 127.
 func TestSharedRuntimeAppLayers(t *testing.T) {
 	const pkg = `{"scripts":{"start":"node worker.js"}}`
 	base := minimalConfigBytes()
@@ -280,11 +282,13 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 		deployBaseRefOverride: "ghcr.io/test/runner-node24@sha256:" + strings.Repeat("4", 64),
 	}
 	tests := []struct {
-		name       string
-		files      map[string]string
-		wantReason string
+		name         string
+		files        map[string]string
+		releaseKeeps bool
+		wantReason   string
 	}{
 		{name: "app and toolchain", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "mise/installs/node/24.1.0/bin/node": "elf"}},
+		{name: "release calls npm", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "mise/installs/node/24.1.0/bin/node": "elf"}, releaseKeeps: true, wantReason: sharedruntime.ReasonReleasePackageManager},
 		{name: "system library", files: map[string]string{"app/package.json": pkg, "app/worker.js": "tick", "usr/lib/libvips.so": "so"}, wantReason: "content_outside_app"},
 	}
 	for _, tt := range tests {
@@ -296,7 +300,11 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 			}
 			defer cleanup()
 			manifest := api.AppManifest{Entrypoint: []string{"/bin/bash", "-c", "npm run start"}, Env: map[string]string{"PATH": "/mise/shims:/usr/bin", "NODE_ENV": "production"}}
-			got, err := h.sharedRuntimeAppLayers(t.Context(), RuntimeNode24, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp})
+			_, baseDiffIDs, err := h.runtimeBaseDiffIDs(t.Context(), RuntimeNode24, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := h.sharedRuntimeAppLayersAt(t.Context(), RuntimeNode24, baseDiffIDs, archive, config, layers, &manifest, state.App{Type: state.AppTypeApp}, tt.releaseKeeps)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -342,9 +350,9 @@ func TestSharedRuntimeAppLayersPython(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			archive := sharedRuntimeArtifactFixture(t, map[string]string{
-				"app/app.py":                                  "print('hi')",
-				"app/.venv/pyvenv.cfg":                        "home = /mise/installs/python/3.13.15/bin\n",
-				"app/.venv/bin/uvicorn":                       "#!/app/.venv/bin/python\n",
+				"app/app.py":            "print('hi')",
+				"app/.venv/pyvenv.cfg":  "home = /mise/installs/python/3.13.15/bin\n",
+				"app/.venv/bin/uvicorn": "#!/app/.venv/bin/python\n",
 				"mise/installs/python/3.13.15/bin/python3.13": "elf",
 			})
 			config, layers, cleanup, err := loadLocalOCIArchiveContext(t.Context(), archive)
