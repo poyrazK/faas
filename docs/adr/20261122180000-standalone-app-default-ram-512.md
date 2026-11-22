@@ -42,3 +42,5 @@ shrinks one.
 
 - `pkg/api`: `TestStandaloneAppDefaultRAMMB`.
 - `pkg/apid/apidserver`: `TestCreateAppDefaultRAMIsCappedForScale`.
+- Journey: `TestBazaarRegressions` check `standalone_default_ram`
+  (`tests/journeys/bazaar_test.go`).
