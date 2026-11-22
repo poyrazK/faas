@@ -5742,8 +5742,12 @@ groups:
           description: "A faas-* systemd unit has restarted more than 20 times in the rolling 1-hour window for 5m. The daemon is unstable but hasn't tripped the systemd SecStartLimitBurst threshold yet — operationally important because the unit will eventually enter the failed state and stop being restarted, taking customers offline. Fallback (older systemd): increase(<daemon>_daemon_restart_count[1h]) > 20. Triage: `systemctl show faas-<name>.service --property=NRestarts` for the cumulative count, `journalctl -u faas-<name>.service --since '1 hour ago'` for the recurring failure signature. Recover per docs/ops/FaasRepeatedRestart.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRepeatedRestart.md"
 
+      # Oneshot units (timer jobs such as faas-cgroup-metrics, every 30 s)
+      # are 'activating' for each run; a scrape aligned with their runs
+      # held this pending on 2026-11-22. A hung run hits its
+      # TimeoutStartSec and fails the unit, so only daemons can be stuck.
       - alert: FaasStuckActivating
-        expr: node_systemd_unit_state{name=~"faas-.*\\.service", state="activating"} == 1
+        expr: node_systemd_unit_state{name=~"faas-.*\\.service", state="activating", type!="oneshot"} == 1
         for: 5m
         labels:
           severity: warn

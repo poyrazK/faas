@@ -1,0 +1,42 @@
+# FaasStuckActivating pages a daemon that never reaches 'active'. Oneshot
+# timer jobs (faas-cgroup-metrics runs every 30 s) are 'activating' for each
+# run; a scrape aligned with their runs held the alert pending on prod
+# 2026-11-22. A hung oneshot hits TimeoutStartSec and fails instead.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "a oneshot timer job seen activating stays quiet"
+    input_series:
+      - series: 'node_systemd_unit_state{job="node",instance="bhs-2.gregale.dev:9100",name="faas-cgroup-metrics.service",state="activating",type="oneshot"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasStuckActivating
+
+  - interval: 30s
+    name: "a daemon stuck activating pages"
+    input_series:
+      - series: 'node_systemd_unit_state{job="node",instance="bhs-2.gregale.dev:9100",name="faas-schedd.service",state="activating",type="notify"}'
+        values: '1x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasStuckActivating
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: controlplane
+              family: daemon_lifecycle
+              job: node
+              instance: bhs-2.gregale.dev:9100
+              name: faas-schedd.service
+              state: activating
+              type: notify
+            exp_annotations:
+              summary: "Daemon stuck in 'activating' state for 5m"
+              description: "A faas-* systemd unit has been in the 'activating' state for 5m without reaching 'active'. The daemon is not crashlooping (no RestartLoop signature) — it is simply not coming up. Likely causes: dependency deadlock (Postgres / etcd / Vault not ready), bad config syntax, missing sealed secret, port collision. Triage: `systemctl status faas-<name>.service` for the active state, `journalctl -u faas-<name>.service -n 100` for the dependency-exit / config-parse error. Recover per docs/ops/FaasStuckActivating.md."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasStuckActivating.md"
