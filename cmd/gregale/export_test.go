@@ -3012,3 +3012,6 @@ var PrintAffectedText = printAffectedText
 
 // AppGetURL is the url row of `app get`.
 var AppGetURL = appGetURL
+
+// LatestWakeID picks the wake shown by `app wake-timeline APP`.
+var LatestWakeID = latestWakeID
