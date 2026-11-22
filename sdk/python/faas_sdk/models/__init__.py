@@ -1219,6 +1219,8 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_overage import ManagedPostgresOverage
+from .managed_postgres_overage_request import ManagedPostgresOverageRequest
 from .managed_postgres_query_request import ManagedPostgresQueryRequest
 from .managed_postgres_query_response import ManagedPostgresQueryResponse
 from .managed_postgres_query_response_columns_item import ManagedPostgresQueryResponseColumnsItem
@@ -4193,6 +4195,8 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresOverage",
+    "ManagedPostgresOverageRequest",
     "ManagedPostgresQueryRequest",
     "ManagedPostgresQueryResponse",
     "ManagedPostgresQueryResponseColumnsItem",

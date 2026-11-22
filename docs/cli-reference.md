@@ -4716,6 +4716,48 @@ Create, attach and restore managed PostgreSQL databases
 
 `gregale postgres [<subcommand>]`
 
+### postgres overage
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage <get|set> [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage get
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage get [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage get on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
+#### postgres overage set
+
+Show or change compute overage past the monthly allowance
+
+`gregale postgres overage set [on|off]`
+
+Examples:
+
+```sh
+gregale postgres overage set on
+```
+
+With overage on, databases keep running up to twice the allowance.
+
 ### postgres compute-policy
 
 Durably switch between idle suspension and always-on compute

@@ -1149,6 +1149,44 @@ paths:
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
+  /v1/postgres/overage:
+    get:
+      operationId: getManagedPostgresOverage
+      summary: Show whether compute overage is on
+      description: With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database.
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The account's overage setting and compute ceiling
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresOverage'}
+        default:
+          description: Authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
+    put:
+      operationId: setManagedPostgresOverage
+      summary: Turn compute overage on or off
+      description: Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedPostgresOverageRequest'}
+      responses:
+        '200':
+          description: The new overage setting and compute ceiling
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedPostgresOverage'}
+        default:
+          description: Validation, authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: {$ref: '#/components/schemas/Problem'}
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -29710,6 +29748,29 @@ components:
           description: Set while every database of the account is held, with the same reason each database reports. Egress holds one database at a time, so it is reported on that database, not here.
           type: string
           enum: [compute_ceiling, egress, inactive]
+    ManagedPostgresOverage:
+      description: An account's managed PostgreSQL compute overage setting.
+      type: object
+      required: [enabled, compute_allowance_unit_seconds, compute_ceiling_unit_seconds]
+      properties:
+        enabled: {type: boolean}
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Where running databases are suspended before the operator's usage cap; twice the allowance with overage on.
+          type: integer
+          format: int64
+          minimum: 0
+    ManagedPostgresOverageRequest:
+      description: Turn an account's managed PostgreSQL compute overage on or off.
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: {type: boolean}
     CreateManagedPostgresDatabaseRequest:
       description: Customer request to reserve a managed PostgreSQL database.
       type: object
