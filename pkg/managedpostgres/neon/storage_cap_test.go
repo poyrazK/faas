@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
@@ -157,5 +158,15 @@ func TestStorageLimitRefusal(t *testing.T) {
 		if got := storageLimitRefusal(tc.err); got != tc.want {
 			t.Errorf("%s: %v, want %v", name, got, tc.want)
 		}
+	}
+}
+
+// Neon reports a branch's logical size late: on 2026-11-22 a ~20 MB write
+// reached logical_size after 451 s, and the old 5-minute wait failed every
+// storage cap qualification. The probe must wait well past that lag.
+func TestStorageCapProbeWaitsOutNeonsSizeLag(t *testing.T) {
+	const measuredLag = 451 * time.Second
+	if storageCapProbeSizeWait < 2*measuredLag {
+		t.Fatalf("storageCapProbeSizeWait = %v, want at least twice the measured %v", storageCapProbeSizeWait, measuredLag)
 	}
 }

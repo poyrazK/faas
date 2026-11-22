@@ -297,6 +297,12 @@ func loadLiveQualification(getenv func(string) string, errorOutput io.Writer) (l
 // FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
 const computeCapQualifyTimeout = 120 * time.Minute
 
+// storageCapQualifyTimeout covers the storage pool probe (up to 20 minutes
+// for Neon to report the grown size, measured at 7.5 on 2026-11-22, plus the
+// limit and raise waits) on top of provisioning and the usage checks.
+// FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT still overrides it.
+const storageCapQualifyTimeout = 120 * time.Minute
+
 // runComputeCap qualifies compute caps (ADR-20261025094915 decision 10) on a
 // disposable resource and writes the artifact that
 // FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on requires. It is separate from the
@@ -348,11 +354,15 @@ func runStorageCap(getenv func(string) string, output, errorOutput io.Writer) in
 		return 2
 	}
 	defer live.close()
+	timeout := live.timeout
+	if strings.TrimSpace(getenv("FAAS_MANAGED_POSTGRES_QUALIFY_TIMEOUT")) == "" {
+		timeout = storageCapQualifyTimeout
+	}
 	report, qualificationErr := managedpostgres.QualifyProvider(context.Background(), live.backend.Provider, managedpostgres.QualificationOptions{
 		ProviderName: live.backend.Driver,
 		ResourceID:   live.resourceID,
 		Spec:         live.spec,
-		Timeout:      live.timeout,
+		Timeout:      timeout,
 		Mutating:     true,
 		StorageCap:   true,
 		WaitForUsage: true,
