@@ -100799,7 +100799,7 @@ components:
         Expected is null when independent deployment intent cannot be established.
       required: [receiver, integration, expected, state, requests, failures, last_success_observation]
       properties:
-        receiver: { type: string, enum: [faas-heartbeat, faas-page, faas-warn] }
+        receiver: { type: string, enum: [faas-delivery-page, faas-heartbeat, faas-page, faas-warn] }
         integration:
           type: string
           enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]

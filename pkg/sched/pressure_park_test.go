@@ -231,10 +231,61 @@ func TestParkZeroTrafficSiblingKeepsServingAndBusyInstances(t *testing.T) {
 		}
 	}
 	(*e.Now()) = func() time.Time { return time.Now().Add(10 * time.Minute) }
-	if e.ParkZeroTrafficSibling(ctx, app.ID, "") {
+	if e.ParkZeroTrafficSibling(ctx, app.ID, "", true) {
 		t.Fatal("parked an instance of the serving deployment")
 	}
 	if (*vmm.Snapshots()) != 0 {
 		t.Fatalf("snapshots = %d, want none", (*vmm.Snapshots()))
+	}
+}
+
+// prod 2026-11-21 (MCP redeploys): a promotion leaves the previous release
+// live at 0%, and its instance kept answering long-lived sessions, so it was
+// never idle. Every smoke wake of the next release was refused at the cap
+// until verification gave up. A smoke admission now parks the busy
+// zero-traffic instance; an ordinary gateway admission still leaves it.
+// adr: 199 (rollout concurrency grant); spec: §6.2 invariant 1
+func TestSmokeAdmissionParksABusyZeroTrafficSibling(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	_, app, serving := sched.SeedApp(t, store, api.PlanScale, 256, 1)
+	previous, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:prev", Status: state.DeployLive,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := store.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:next", Status: state.DeploySnapshotting,
+		TrafficPercent: 0, TrafficPercentExplicit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	if res, err := e.AdmitInstance(ctx, app.ID, serving.ID, "", sched.TriggerGateway); err != nil || res.InstanceID == "" {
+		t.Fatalf("admit serving: %+v %v", res, err)
+	}
+	busy, err := e.AdmitInstance(ctx, app.ID, previous.ID, "", sched.TriggerGateway)
+	if err != nil || busy.InstanceID == "" {
+		t.Fatalf("admit previous (rollout grant): %+v %v", busy, err)
+	}
+	later := time.Now().Add(10 * time.Minute)
+	(*e.Now()) = func() time.Time { return later }
+	// The previous release's instance answered a request a moment ago.
+	if _, err := store.TouchInstancesLastSeen(ctx, []state.InstanceTouch{{InstanceID: busy.InstanceID, LastRequest: later.Add(-time.Second)}}); err != nil {
+		t.Fatal(err)
+	}
+	if e.ParkZeroTrafficSibling(ctx, app.ID, candidate.ID, false) {
+		t.Fatal("a gateway admission parked a busy zero-traffic instance")
+	}
+	res, err := e.AdmitInstance(ctx, app.ID, candidate.ID, "", sched.TriggerDeploymentSmoke)
+	if err != nil || res.AtCapacity || res.InstanceID == "" {
+		t.Fatalf("smoke admission = %+v, %v; want admitted after parking the busy zero-traffic instance", res, err)
+	}
+	if row, err := store.InstanceByID(ctx, busy.InstanceID); err != nil || row.State != string(state.StateParked) {
+		t.Fatalf("zero-traffic instance state = %q (%v), want parked", row.State, err)
 	}
 }

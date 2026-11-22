@@ -287,6 +287,9 @@ type Querier interface {
 	// count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
 	// under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
 	ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayEdgeUsageEventParams) (int64, error)
+	// $6 is the frame's billed egress: its response bytes when meterd counts
+	// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+	// public responses do not cross the instance veth), otherwise 0.
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
 	// Change only the debugger workflow state for one app-scoped observation.

@@ -23,3 +23,4 @@ faas_cp_state_extra_files:
   - /etc/alertmanager/secrets/slack-webhook-url
   - /etc/alertmanager/secrets/heartbeat-url
   - /etc/alertmanager/secrets/smtp-password
+  - /etc/alertmanager/secrets/delivery-pagerduty-key
