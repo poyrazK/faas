@@ -1402,8 +1402,15 @@ const (
 	// MCP tool limits (ADR-20261122194324): per caller and tool.
 	MCPToolLimitMaxRequests      = 100000
 	MCPToolLimitMaxWindowSeconds = 3600
-	MCPReleaseMaxRoles           = 32
-	MCPReleasePolicyMaxBytes     = 64 << 10
+	// MCPToolLabelsPerApp bounds an app's named tool telemetry labels.
+	MCPToolLabelsPerApp = 16
+	// MCP replay diagnostic bounds: static resources read, runs per probe.
+	MCPReplayMaxResources = 32
+	MCPReplayMaxRuns      = 5
+	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
+	ConsumerKeyMCPScopeMaxBytes = 128
+	MCPReleaseMaxRoles          = 32
+	MCPReleasePolicyMaxBytes    = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).

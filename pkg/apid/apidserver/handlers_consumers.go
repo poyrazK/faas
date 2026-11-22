@@ -191,15 +191,17 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 // self-service routes, so it is not offered until monetization is released
 // (ADR-20261018090210).
 func (s *server) consumerKeyScopesProblem(accountID string, scopes []string) *api.Problem {
-	billing, allowed := s.apiMonetizationFor(accountID), "scopes must contain only read, write, or admin"
-	if billing {
-		allowed = "scopes must contain only read, write, admin, or billing"
-	}
+	billing := s.apiMonetizationFor(accountID)
 	// "mcp:<scope>" scopes grant only hosted MCP access (ADR-20261122194324).
 	mcp := s.platformFlagFor(platformflags.MCPGatewayAuth, platformflags.Subject{AccountID: accountID})
-	if mcp {
-		allowed = strings.TrimSuffix(allowed, ".") + ", or mcp:<scope>"
+	vocabulary := []string{"read", "write", "admin"}
+	if billing {
+		vocabulary = append(vocabulary, "billing")
 	}
+	if mcp {
+		vocabulary = append(vocabulary, "mcp:<scope>")
+	}
+	allowed := "scopes must contain only " + strings.Join(vocabulary[:len(vocabulary)-1], ", ") + ", or " + vocabulary[len(vocabulary)-1]
 	seen := make(map[string]struct{}, len(scopes))
 	for i, scope := range scopes {
 		scopes[i] = strings.TrimSpace(scope)

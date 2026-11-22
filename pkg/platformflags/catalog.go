@@ -546,7 +546,8 @@ var catalog = []Spec{
 		Key:   MCPGatewayAuth,
 		Label: "MCP gateway auth modes",
 		Description: "Let hosted MCP servers authorize callers with consumer keys (api-key) or a Gregale Auth app (oauth-proxy), " +
-			"limit tool calls per caller, and give consumer keys mcp: scopes. Off, apid refuses those policies and scopes; gateways enforce only policies already stored.",
+			"limit tool calls per caller, and give consumer keys mcp: scopes. Turn on only after the consumer-key scope contract migration and the gateway release. " +
+			"Off, apid refuses those policies and scopes; gateways enforce only policies already stored.",
 		ADR:        "ADR-20261122194324",
 		Consumers:  []string{"apid"},
 		Attributes: []Attribute{AttributePlan},

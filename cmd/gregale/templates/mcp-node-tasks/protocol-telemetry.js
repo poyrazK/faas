@@ -12,7 +12,7 @@ export const toolLabel = name => tools.has(name) ? name : 'other';
 // The MCP SDK answers arguments that fail a tool's input schema with a tool
 // error whose text starts "Input validation error"; telemetry reports those
 // calls as invalid_params.
-const argumentsMismatch = (message, result) => message.method === 'tools/call' && typeof result?.content?.[0]?.text === 'string' && result.content[0].text.includes('Input validation error');
+const argumentsMismatch = (message, result) => message.method === 'tools/call' && typeof result?.content?.[0]?.text === 'string' && /^(MCP error -32602: )?Input validation error: Invalid arguments for tool /.test(result.content[0].text);
 
 export function observeProtocolRequest(req, res, log) {
   const message = req.body;

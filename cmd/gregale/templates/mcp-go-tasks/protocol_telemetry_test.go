@@ -147,7 +147,9 @@ func TestProtocolTelemetryArgumentMismatch(t *testing.T) {
 	definition := map[string]any{"name": "lookup_order", "inputSchema": map[string]any{
 		"type": "object", "required": []string{"order"}, "properties": map[string]any{"order": map[string]any{"type": "string"}},
 	}}
-	if err := RegisterMCPTool(definition, func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error) { return map[string]any{"content": []any{}}, nil }); err != nil {
+	if err := RegisterMCPTool(definition, func(context.Context, map[string]any, *MCPRequestContext) (map[string]any, error) {
+		return map[string]any{"content": []any{}}, nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { RemoveMCPTool("lookup_order") })

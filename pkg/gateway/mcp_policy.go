@@ -98,6 +98,7 @@ func (h *Handler) applyMCPResourcePolicy(w http.ResponseWriter, r *http.Request,
 	ctx, cancel := context.WithDeadline(withAuthenticated(r.Context(), authenticated), claims.Exp)
 	context.AfterFunc(r.Context(), cancel)
 	*r = *r.WithContext(ctx)
+	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false
 }

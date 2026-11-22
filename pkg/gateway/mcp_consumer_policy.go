@@ -32,6 +32,7 @@ func (h *Handler) applyMCPConsumerKeyPolicy(w http.ResponseWriter, r *http.Reque
 	if h.mcpToolLimited(w, r, app, rule, tool, "consumer\x00"+identity.ID) {
 		return true
 	}
+	r.Header.Set(api.MCPGatewayAuthorizedHeader, rule.ID)
 	h.jwtEmit(r.Context(), "jwt", "match", rule.ID, r.Host, nil, nil)
 	return false
 }

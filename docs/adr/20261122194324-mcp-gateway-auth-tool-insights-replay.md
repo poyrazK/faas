@@ -84,6 +84,14 @@ drop a JWT rule whose `jwks_url` is not `https://`.)
   authorization server; clients send the key as a bearer header.
 - The app's consumer auth mode must be `optional` or `required`; `gregale mcp
   auth enable` checks this before it writes the rule.
+- **Fail closed without the policy.** In gateway-only modes the server does no
+  token checks of its own, so it must not trust a request the policy did not
+  see. The gateway removes any caller-supplied `Gregale-Mcp-Gateway-Authorized`
+  header on every request and sets it to the rule ID only after an MCP policy
+  admits the request. Starters in `api-key` and `oauth-proxy` mode answer 401
+  on the MCP endpoint without it, so disabling, expiring or deleting the rule
+  closes the server instead of opening it. Deploy also refuses until the stored
+  policy matches the source.
 
 **`oauth-proxy`.** Callers sign in through a Gregale Auth app. `gregale mcp
 server init --auth-app` already points `external-oauth` at an Auth app, where
@@ -175,6 +183,18 @@ Not built in this change; designed in ADR-20261123003000. The direction:
   API. This changes gateway stream ownership and wake rules (§6), so it gets
   its own ADR and metal evidence before any code.
 
+## Rollout order
+
+1. Data: the expand migrations, then the contract migration that drops the
+   closed scope check. Until the contract migration runs, Postgres refuses
+   `mcp:` scopes, so `mcp_gateway_auth` stays off until then.
+2. Edge/node: gatewayd-internal (MCP credential, tool limits, the
+   authorization mark) and vmmd (the `invalid_params` outcome and named tool
+   labels). An older vmmd drops events with an unknown outcome.
+3. CLI: starters scaffolded by the new CLI report `invalid_params` and need
+   the mark in gateway-only modes, so publish the CLI after step 2.
+4. Owner: turn on `mcp_gateway_auth` and `mcp_tool_insights` per account.
+
 ## Consequences
 
 - Owners get key-based and sign-in-based MCP access without running an
@@ -188,7 +208,13 @@ Not built in this change; designed in ADR-20261123003000. The direction:
   policy against an empty key set and answers 401: closed, not open. Release
   gatewayd-internal before turning on `mcp_gateway_auth`, or `api-key` servers
   refuse every caller.
-- Per-tool series grow from 6 to at most 18 tool labels per app.
+- Per-tool series grow from 6 to at most 18 tool labels per app. Worst case
+  per vmmd: 1,024 apps × 18 tools × (10 outcomes + 2 × 16 histogram series),
+  about 770k series; in practice only apps with MCP traffic in the last hour
+  count and few use 16 tools. A name an app stops using keeps its slot until
+  the app is idle for the retention window.
+- Tool limits key JWT callers by `sub`, which the MCP policy already requires.
+  Buckets are per gateway process, not fleet-wide.
 - The CLI keeps `mcp server auth` and `mcp server replay` out of help,
   completions and dispatch unless `FAAS_MCP_GATEWAY_PREVIEW_ENABLED` is set,
   like other dark-launched commands.

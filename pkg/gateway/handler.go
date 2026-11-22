@@ -6347,6 +6347,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Header.Del("x-faas-stream")
 	r.Header.Del("x-faas-protocol")
 	r.Header.Del(trafficdeadline.Header)
+	// Only an MCP resource policy that admitted the request sets this.
+	r.Header.Del(api.MCPGatewayAuthorizedHeader)
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
 	r = takeDispatchNonce(r)

@@ -88,6 +88,9 @@ type resourceScopeRule struct {
 }
 
 type authenticator struct {
+	// gatewayOnly marks api-key and oauth-proxy: the server admits only
+	// requests Gregale's gateway marked with gatewayAuthorizedHeader.
+	gatewayOnly    bool
 	mode           string
 	issuer         string
 	resource       string
@@ -151,7 +154,7 @@ func newAuthenticator(config mcpConfig) (*authenticator, error) {
 	if raw.Mode == "api-key" || raw.Mode == "oauth-proxy" {
 		// Gregale's gateway authorizes every request for these modes before
 		// it reaches this server, so the server itself serves them as open.
-		return &authenticator{mode: "open", endpoint: config.Endpoint}, nil
+		return &authenticator{mode: "open", endpoint: config.Endpoint, gatewayOnly: true}, nil
 	}
 	auth := &authenticator{
 		mode:       raw.Mode,
@@ -869,3 +872,7 @@ func findJWK(keys []jsonWebKey, kid, algorithm string) (crypto.PublicKey, bool) 
 		return nil, false
 	}
 }
+
+// gatewayAuthorizedHeader is set by Gregale's gateway, which removes any
+// caller-supplied value, only on a request its MCP access policy admitted.
+const gatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"

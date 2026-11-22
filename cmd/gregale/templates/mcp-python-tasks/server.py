@@ -23,7 +23,7 @@ from urllib.parse import urlsplit
 import protocol_telemetry
 from protocol_telemetry import ProtocolObservation, start_protocol_heartbeat
 
-from auth import AuthConfigurationError, AuthFailure, Authenticator
+from auth import AuthConfigurationError, AuthFailure, Authenticator, GATEWAY_AUTHORIZED
 from catalog import RuntimeCatalog
 from tasks import DurableTaskRuntime, TASK_ID_PATTERN, TaskNotFound, register_task_handler, resolve_task_role, task_id_from_uri, task_resource_template
 
@@ -940,6 +940,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_json(200 if health["ready"] else 503, {key: value for key, value in health.items() if key != "ready"})
             return
         if path == self.server.app_config["endpoint"]:
+            if self.reject_ungated():
+                return
             try:
                 self.server.authenticator.authenticate(self.headers.get("Authorization", ""))
             except AuthFailure as failure:
@@ -990,6 +992,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.send_header("Connection", "close")
             self.end_headers()
+            return
+        if self.reject_ungated():
             return
         health = runtime_catalog_health(
             getattr(self.server, "expected_catalog_sha256", ""),
@@ -1579,6 +1583,14 @@ class MCPHandler(BaseHTTPRequestHandler):
         payload = f": {comment}\n\n".encode("ascii")
         self.wfile.write(f"{len(payload):X}\r\n".encode("ascii") + payload + b"\r\n")
         self.wfile.flush()
+
+    def reject_ungated(self):
+        # api-key and oauth-proxy servers trust only requests Gregale's
+        # gateway admitted; without its policy they would serve anyone.
+        if getattr(self.server.authenticator, "gateway_only", False) and not self.headers.get(GATEWAY_AUTHORIZED, "").strip():
+            self.send_json(401, {"error": "gateway_policy_required"})
+            return True
+        return False
 
     def reject_origin(self):
         origins=self.headers.get_all("Origin",[])

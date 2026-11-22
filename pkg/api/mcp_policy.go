@@ -45,6 +45,13 @@ const (
 	MCPConsumerKeyJWKSPath   = "/v1/mcp/consumer-key-jwks.json"
 )
 
+// MCPGatewayAuthorizedHeader is set by the gateway, to the policy's rule ID,
+// on a request an MCP resource policy admitted; the gateway removes any
+// client-supplied value first. Servers in gateway-only modes (api-key,
+// oauth-proxy) refuse MCP requests without it, so a disabled, expired or
+// deleted policy fails closed (ADR-20261122194324).
+const MCPGatewayAuthorizedHeader = "Gregale-Mcp-Gateway-Authorized"
+
 // CodeMCPToolRateLimited is the problem code of a tools/call refused by an
 // MCP policy tool limit.
 const CodeMCPToolRateLimited = "mcp_tool_rate_limited"
@@ -227,9 +234,6 @@ func mcpTemplateMatcher(template string) *regexp.Regexp {
 // MCP access (ADR-20261122194324). A key scope "mcp:tools" satisfies the MCP
 // policy scope "tools".
 const ConsumerKeyMCPScopePrefix = "mcp:"
-
-// ConsumerKeyMCPScopeMaxBytes bounds one namespaced consumer-key scope.
-const ConsumerKeyMCPScopeMaxBytes = 128
 
 // ValidConsumerKeyMCPScope reports whether scope is a well-formed "mcp:<scope>".
 func ValidConsumerKeyMCPScope(scope string) bool {

@@ -34,7 +34,9 @@ func mcpConsumerRequest(method, path, body string, scopes ...string) *http.Reque
 
 func TestMCPConsumerKeyPolicy(t *testing.T) {
 	app := App{ID: "app-1", AccountID: "acct-1"}
-	call := func(name string) string { return `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `"}}` }
+	call := func(name string) string {
+		return `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + name + `"}}`
+	}
 	for _, tc := range []struct {
 		name   string
 		scopes []string
@@ -145,5 +147,18 @@ func TestConsumerAuthAdmitsMCPScopesOnlyAtTheMCPEndpoint(t *testing.T) {
 		if identity, found := authmw.ConsumerFromContext(r); want && (!found || identity.ID != "consumer-1") {
 			t.Fatalf("%s: consumer identity not stamped", path)
 		}
+	}
+}
+
+func TestMCPPolicyMarksAdmittedRequests(t *testing.T) {
+	h := &Handler{routeConsumerLimiter: NewLimiterWithLRU(EdgeRuleConsumerCacheCap)}
+	app := App{ID: "app-1", AccountID: "acct-1"}
+	admitted := mcpConsumerRequest("POST", "/mcp", `{"method":"tools/list"}`, "mcp:tools")
+	if h.applyMCPResourcePolicy(httptest.NewRecorder(), admitted, app, consumerKeyMCPRule()) || admitted.Header.Get(api.MCPGatewayAuthorizedHeader) != "rule-1" {
+		t.Fatalf("admitted request mark = %q", admitted.Header.Get(api.MCPGatewayAuthorizedHeader))
+	}
+	refused := mcpConsumerRequest("POST", "/mcp", `{"method":"tools/list"}`)
+	if !h.applyMCPResourcePolicy(httptest.NewRecorder(), refused, app, consumerKeyMCPRule()) || refused.Header.Get(api.MCPGatewayAuthorizedHeader) != "" {
+		t.Fatal("a refused request must not carry the mark")
 	}
 }

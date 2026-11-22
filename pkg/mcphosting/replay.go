@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// Replay bounds (ADR-20261122194324). Diagnostic limits, not product quotas.
+// Replay bounds (ADR-20261122194324), from the limits table.
 const (
-	ReplayMaxResources = 32
-	ReplayMaxRuns      = 5
+	ReplayMaxResources = api.MCPReplayMaxResources
+	ReplayMaxRuns      = api.MCPReplayMaxRuns
 )
 
 // ReplayOptions selects what replay runs beyond the catalog comparison.
@@ -134,6 +136,10 @@ func replayProbes(before, after Catalog, options ReplayOptions, report *ReplayRe
 		switch fixture.Kind {
 		case "prompt":
 			probes = append(probes, &replayProbe{ReplayProbe: ReplayProbe{Kind: "prompt", Target: fixture.Target, Fixture: fixture.Name}, promptArgs: fixture.PromptArguments})
+		default:
+			// Resource and auth fixtures are not compared yet; say so rather
+			// than report a pass that never probed them.
+			report.Skipped = append(report.Skipped, fmt.Sprintf("%s fixture %q: replay compares only prompt and tool fixtures", fixture.Kind, fixture.Name))
 		case "tool":
 			if !slices.Contains(options.AllowTools, fixture.Target) {
 				report.Skipped = append(report.Skipped, fmt.Sprintf("tool fixture %q: %s is not in --allow-tool", fixture.Name, fixture.Target))

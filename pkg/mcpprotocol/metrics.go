@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -24,7 +25,7 @@ var outcomes = []string{"success", "rpc_error", "tool_error", "task_created", "c
 // distinct tool names in a retention window keep their own series and later
 // ones are "other" (ADR-20261122194324). The names are self-reported, so an
 // app can only mislabel its own series.
-const MaxToolsPerApp = 16
+const MaxToolsPerApp = api.MCPToolLabelsPerApp
 
 var toolLabel = regexp.MustCompile(`^[A-Za-z0-9_.:/-]{1,64}$`)
 var methods = strings.Fields("initialize server/discover ping tools/list tools/call resources/list resources/templates/list resources/read prompts/list prompts/get completion/complete tasks/get tasks/cancel tasks/update subscriptions/listen other")

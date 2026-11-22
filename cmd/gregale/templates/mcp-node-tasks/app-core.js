@@ -166,6 +166,7 @@ function guestConfig(config) {
 
 export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
   const config = guestConfig(suppliedConfig);
+  const gatewayOnly = config !== suppliedConfig;
   const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID } = tasks;
   if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
@@ -658,6 +659,10 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
   });
   if (auth.metadata) app.get(`/.well-known/oauth-protected-resource${config.endpoint}`, (_req, res) => res.json(auth.metadata));
   app.use(config.endpoint, (req, res, next) => {
+    // api-key and oauth-proxy servers trust only requests Gregale's gateway
+    // admitted (it removes any caller-supplied value); without its policy
+    // they would serve anyone.
+    if (gatewayOnly && !String(req.headers['gregale-mcp-gateway-authorized'] ?? '').trim()) return res.status(401).json({ error: 'gateway_policy_required' });
     if (!catalogStatus().ready) return res.status(503).set('Retry-After', '5').json({ error: 'catalog_contract_mismatch' });
     next();
   }, auth.middleware, express.json({ limit: '1mb' }), auth.authorizeCall);
