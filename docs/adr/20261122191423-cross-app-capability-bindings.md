@@ -100,33 +100,68 @@ The platform flag `cross_app_bindings` (decided for the resource account)
 gates the token path; off, a binding token is refused as if the route did not
 accept one and API keys are unaffected.
 
-### 3. Cross-app object storage through the metadata endpoint (slice 2)
+### 3. Cross-app object storage through the loopback endpoint (slice 2)
 
-A `buckets` grant gives the caller short-lived S3 credentials, served by vmmd
-at `http://169.254.169.254/v1/credentials/object-storage` in the AWS container
-credential shape (`AccessKeyId`, `SecretAccessKey`, `Token`, `Expiration`).
-guest-init sets `AWS_CONTAINER_CREDENTIALS_FULL_URI` to it when the app holds
-a bucket grant, so stock AWS SDKs pick the credentials up and refresh them
-with no code change. The credentials are derived per instance and expire in
-one hour; s3-gatewayd checks the bucket and prefix of the grant on every
-request. No static key is written into the app's environment.
+A `buckets` grant gives the caller short-lived S3 credentials, without a
+static key in its environment:
+
+- **Issue.** `POST /v1/workload/object-storage/credentials` takes a
+  gregale:bindings token (live production instance, flag on), picks the
+  caller's grant for the named bucket (or its only bucket grant), resolves
+  the owner app (`self`, a service of the caller's project, or an app slug of
+  the same resource account) and its production bucket, and mints a
+  one-hour credential limited to the grant's access and key prefix.
+- **Storage.** The credential lives in its own table,
+  `object_storage_workload_credentials`, with `GRGW` access keys (customer
+  and compute keys are `GRGA`). Environment clones, credential inventories
+  and the per-bucket key cap never see it. The secret is sealed to the
+  Storage domain, as for other S3 credentials. apid deletes expired rows
+  every five minutes; an expired row stops resolving at once.
+- **Gateway.** `ResolveObjectS3Credential` resolves a `GRGW` key from that
+  table and returns it shaped as a compute-binding key (`ManagedAppID` is
+  the caller, `KeyPrefix` the grant's prefix), so s3-gatewayd's existing
+  permission, key-scope and bucket-settings rules apply unchanged.
+- **Guest.** guest-init serves `GET http://127.0.0.1:2773/v1/credentials/object-storage[?bucket=]`
+  on its loopback identity listener: it fetches a gregale:bindings token over
+  vsock, calls apid (the workload's `GREGALE_API_URL`, https only) and caches
+  the answer until five minutes before `Expiration`. The answer is the AWS
+  container credential shape (`AccessKeyId`, `SecretAccessKey`, `Token`,
+  `Expiration`) plus `Bucket`, `KeyPrefix`, `Endpoint` and `Region`.
+- **Env.** `project apply` sets `AWS_CONTAINER_CREDENTIALS_FULL_URI` to that
+  URL for a service with a bucket grant and removes the platform's value when
+  the grant goes; a value the customer set is left alone. AWS SDKs accept a
+  loopback http container-credential URI and refresh before expiry.
+
+A single endpoint serves one credential per bucket; a service with several
+bucket grants selects one with `?bucket=` (one client per bucket).
 
 ### 4. Data resources in `project apply` (slice 3)
 
-The `project:` block gains `resources:` (`postgres`, `buckets`, `redis`,
-`realtime`) that `project plan` diffs and `project apply` creates before the
-services that bind to them, and binds them to the services that list them in
-`uses:`. Existing resources are adopted by name; apply never deletes a data
-resource that disappeared from the file (it reports it as orphaned).
+Already built by ADR-20261106105015: root `databases:` and `buckets:` entries
+with `create: true` are planned and created by `project apply` before the
+services that bind them, adopted by name when they exist, and never deleted
+by a deploy. A bucket created that way is what a `uses.buckets` grant names
+(`app:` is the service it is bound to). Redis, realtime endpoints and edge
+cache are not yet declarative; they stay follow-ups behind their own flags
+(managed Redis is dark).
 
 ### 5. `gregale project destroy` (slice 4)
 
-Removes the project's apps, bindings and non-data resources in reverse
-dependency order. Data resources (Postgres, buckets, Redis) are detached and
-kept unless `--include-data` is passed, and then still need the
-protection-by-default confirmation (ADR-20261116120000). Destroy is not a
-transaction across providers: it records its plan and is resumable; a second
-run continues where the first stopped.
+`gregale project destroy <slug> (--dry-run | --yes) [--include-data]` plans
+from the delete preview, each app's buckets and Postgres bindings, then:
+
+1. with `--include-data`, deletes each app's buckets (the API still refuses
+   a non-empty bucket);
+2. deletes apps that own no remaining bucket (their bindings go with them);
+3. with `--include-data`, deletes managed PostgreSQL databases whose every
+   binding belonged to the project's apps (deletion protection still
+   applies; a database another app uses is kept);
+4. deletes the project once no app is left.
+
+Without `--include-data` an app that owns a bucket, the project, and every
+database are kept and listed. A refusal keeps what depends on it and the
+command exits 1; running it again continues from what is left. It is not a
+transaction across providers.
 
 ## Consequences
 
@@ -134,13 +169,15 @@ run continues where the first stopped.
   sibling app; what it may do is reviewable in one file.
 - Admin keys in app environments become a lint finding the CLI can point at.
 - The token path adds one manifest read per call (the caller app is already
-  loaded to check the instance); no new tables.
+  loaded to check the instance). Slice 2 adds one table of short-lived rows.
 - Stage and branch deployments cannot use binding tokens yet.
 
 ## Slices
 
 1. `uses:` schema, manifest carriage, `gregale:bindings` audience, queue
    send, realtime publish and delayed tasks accept binding tokens (dark).
-2. Object-storage credentials from the metadata endpoint.
-3. `resources:` in `project plan|apply`.
+2. Short-lived workload S3 credentials (table, apid route, gateway resolve,
+   guest-init loopback endpoint, `AWS_CONTAINER_CREDENTIALS_FULL_URI`).
+3. Covered by ADR-20261106105015 (`create: true`); Redis, realtime and edge
+   cache resources are follow-ups.
 4. `gregale project destroy`.

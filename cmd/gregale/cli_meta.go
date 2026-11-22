@@ -7018,6 +7018,14 @@ var cliCommands = []cliCommand{
 				{Name: "yes", Short: "confirm project deletion"},
 				{Name: "detach-services", Short: "delete even though its services call each other by name", Bool: true},
 			}},
+			{Name: "destroy", Short: "Delete a project's apps and then the project, keeping data", Notes: []string{
+				"Apps that still own buckets are kept, and so is the project, unless --include-data deletes their (empty) buckets first.",
+				"--include-data also deletes managed PostgreSQL databases bound only to this project's apps; deletion protection still applies.",
+				"A refusal keeps what depends on it; run it again to finish after fixing what it reports."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "print the destroy plan", Bool: true},
+				{Name: "yes", Short: "destroy the project", Bool: true},
+				{Name: "include-data", Short: "also delete buckets and databases the project owns", Bool: true},
+			}},
 			{Name: "rollback", Short: "Roll the latest project deploy back, callers first", Notes: []string{"Only services the latest deploy changed roll back unless --all; services added since and services already rolled back are left as they are.", "Stops at the first service that fails; run it again to finish."}, Positionals: []string{"<slug>"}, Flags: []cliFlag{
 				{Name: "dry-run", Short: "print the rollback plan", Bool: true},
 				{Name: "yes", Short: "roll the latest deploy back", Bool: true},
