@@ -17,6 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/agentd"
 	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
+	"github.com/onebox-faas/faas/pkg/volbackup"
 )
 
 func queuePersistent(t *testing.T, s *agentstore.Store, runFor time.Duration) string {
@@ -78,6 +79,15 @@ func TestPersistentSandboxPausesOnRequestAndResumes(t *testing.T) {
 	if err := sbx.SweepOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if sb := sandboxState(t, store, id); sb.Durability != "node" {
+		t.Fatalf("durability %q without the volume backup", sb.Durability)
+	}
+	backups, _ := fake.volumeState()
+	pauseBackup := backups[len(backups)-1]
+	blobs.blob[volbackup.ManifestKey(account, id, pauseBackup)] = []byte("{}")
+	if err := sbx.SweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if sb := sandboxState(t, store, id); sb.Durability != "remote" || sb.State != agentstore.SandboxPaused {
 		t.Fatalf("an uploaded capture = %s %q", sb.State, sb.Durability)
 	}
@@ -88,7 +98,8 @@ func TestPersistentSandboxPausesOnRequestAndResumes(t *testing.T) {
 	waitFor(t, "resumed", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
 	resume := fake.starts[1].GetResume()
 	if resume == nil || resume.GetStorageKey() != mem || resume.GetNodeId() != "agents-1" || resume.GetFcVersion() != "1.10.0" ||
-		resume.GetMemBytes() != 2<<30 || fake.starts[1].GetWorkspaceKey() != "" || resume.GetRequireNode() {
+		resume.GetMemBytes() != 2<<30 || fake.starts[1].GetWorkspaceKey() != "" || resume.GetRequireNode() ||
+		fake.starts[1].GetVolumeGb() != 10 || fake.starts[1].GetVolumeBackupId() != pauseBackup {
 		t.Fatalf("resume start = %v", fake.starts[1])
 	}
 	sb = sandboxState(t, store, id)

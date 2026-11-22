@@ -2228,10 +2228,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
 		WithExecutionFileStorage(storageBackend).
-		WithSandboxWorkspaces(storageBackend)
-	// ADR-20261122132055 §2: pause captures a restart left on this node alone
-	// reach the shared store.
+		WithSandboxWorkspaces(storageBackend).
+		// ADR-20261122132055 §4: persistent sessions' workspace volumes.
+		WithSandboxVolumes(fcvm.NewSandboxVolumes(fcvm.DefaultSandboxVolumeRoot))
+	// ADR-20261122132055 §2, §4: pause captures and volume backups a restart
+	// left on this node alone reach the shared store.
 	go impl.PublishPendingSandboxCaptures(ctx)
+	go impl.PublishPendingSandboxVolumeBackups(ctx)
 	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
 	// give-back of their memory to tenants.
 	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)

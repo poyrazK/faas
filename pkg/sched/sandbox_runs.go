@@ -66,6 +66,28 @@ type SandboxAdmission struct {
 	// Resume restores a paused persistent session from its pause capture
 	// (ADR-20261122132055 §2), preferring the node that holds it.
 	Resume *SandboxResume
+	// Volume is a persistent session's workspace volume (ADR-20261122132055
+	// §4); a zero GB has none.
+	Volume SandboxVolume
+}
+
+// SandboxVolume is a session's workspace volume as vmmd prepares it: its
+// size, its newest backup (empty: never backed up) and how often vmmd
+// backs it up while it runs.
+type SandboxVolume struct {
+	GB          int
+	BackupID    string
+	BackupEvery time.Duration
+}
+
+// SandboxVolumeBackup is vmmd's report of a stored volume backup.
+type SandboxVolumeBackup struct {
+	ID            string
+	SizeBytes     int64
+	DataChunks    int
+	UploadedBytes int64
+	BackupMs      int64
+	Incremental   bool
 }
 
 // SandboxResume is a paused session's capture and the node it was taken on.
@@ -86,6 +108,9 @@ type SandboxPaused struct {
 	PauseMs      int64
 	// HasBacking: the capture's backing identity was written (ADR-510).
 	HasBacking bool
+	// VolumeBackupID is the volume backup that matches the capture, or
+	// empty for a session without a volume.
+	VolumeBackupID string
 }
 
 // SandboxTask is a sandbox task as vmmd runs it.
@@ -195,6 +220,8 @@ type SandboxSpec struct {
 	// SessionCapture marks Snapshot as the session's own pause capture
 	// (ADR-20261122132055 §2).
 	SessionCapture bool
+	// Volume is the session's workspace volume.
+	Volume SandboxVolume
 }
 
 // SandboxControl is a request agentd sends a live session's VM: a freeze,
@@ -283,6 +310,9 @@ type SandboxHooks struct {
 	// (ADR-20261122132055 §2); the stream ends cleanly after Paused.
 	Paused       func(ctx context.Context, p SandboxPaused) error
 	PauseRefused func(ctx context.Context, reason string) error
+	// VolumeBackup relays a backup of the session's volume taken while it
+	// runs (ADR-20261122132055 §4).
+	VolumeBackup func(ctx context.Context, b SandboxVolumeBackup) error
 }
 
 type sandboxVMMClient interface {
@@ -363,7 +393,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		CPUMillicores: a.CPUMillicores, QuietPauseAfter: api.QuietPauseAfterMillis * time.Millisecond, Network: a.network(),
 		WorkspaceKey: a.WorkspaceKey, ImageKey: a.ImageKey, StartCmd: a.StartCmd, ReadyCmd: a.ReadyCmd, ReadyTimeout: a.ReadyTimeout,
 		Browser: a.Browser, Task: a.Task,
-		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny, WebDomainLog: a.WebDomainLog}
+		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny, WebDomainLog: a.WebDomainLog, Volume: a.Volume}
 	if a.Resume != nil {
 		snap := a.Resume.Snapshot
 		spec.Snapshot, spec.SessionCapture = &snap, true
@@ -417,6 +447,9 @@ func (a SandboxAdmission) validate() error {
 	case a.Resume != nil && (!a.Persistent || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == "" ||
 		a.Resume.RequireNode && a.Resume.NodeID == ""):
 		return &AgentRunInvalidError{Reason: "only a persistent session resumes, from its capture and without a workspace archive or task"}
+	case a.Volume.GB < 0 || a.Volume.GB > 0 && (!a.Persistent || a.Task != nil || a.WorkspaceKey != "" || a.Volume.GB > api.SandboxVolumeMaxGB[idx]) ||
+		a.Volume.GB == 0 && (a.Volume.BackupID != "" || a.Volume.BackupEvery != 0):
+		return &AgentRunInvalidError{Reason: fmt.Sprintf("a %d GB volume is not a persistent session's within the %s plan", a.Volume.GB, a.Plan)}
 	case a.Persistent && api.SandboxPersistentMax[idx] == 0:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("the %s plan has no persistent sessions", a.Plan)}
 	case a.SandboxID == "" || a.AccountID == "" || !a.Plan.Valid() || api.SandboxMaxLifetimeSec[idx] == 0:
@@ -434,6 +467,51 @@ func (a SandboxAdmission) validate() error {
 }
 
 // RunSandbox routes one session to its node's vmmd.
+// DeleteSandboxVolume removes a session's workspace volume from one node's
+// vmmd (ADR-20261122132055 §4) and reports whether it held one.
+func (r *AgentRunner) DeleteSandboxVolume(ctx context.Context, nodeID, accountID, sandboxID string) (bool, error) {
+	router, ok := r.router.(sandboxVolumeRouter)
+	if !ok {
+		return false, api.NewProblem(501, api.CodeNotImplemented, "Sandbox volumes unavailable", "the vmmd router does not support sandbox volumes")
+	}
+	return router.DeleteSandboxVolume(ctx, nodeID, accountID, sandboxID)
+}
+
+type sandboxVolumeRouter interface {
+	DeleteSandboxVolume(ctx context.Context, nodeID, accountID, sandboxID string) (bool, error)
+}
+
+type sandboxVolumeClient interface {
+	DeleteSandboxVolume(ctx context.Context, accountID, sandboxID string) (bool, error)
+}
+
+// DeleteSandboxVolume asks nodeID's vmmd to remove a session's volume.
+func (r *VMMRouter) DeleteSandboxVolume(ctx context.Context, nodeID, accountID, sandboxID string) (bool, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return false, err
+	}
+	volumes, ok := cli.(sandboxVolumeClient)
+	if !ok {
+		return false, api.NewProblem(501, api.CodeNotImplemented, "Sandbox volumes unavailable", "vmmd client does not support sandbox volumes")
+	}
+	return volumes.DeleteSandboxVolume(ctx, accountID, sandboxID)
+}
+
+// DeleteSandboxVolume removes a session's volume from this vmmd's node.
+func (c *VMMClient) DeleteSandboxVolume(ctx context.Context, accountID, sandboxID string) (bool, error) {
+	if c == nil || c.cli == nil {
+		return false, errors.New("sched: nil vmmd sandbox client")
+	}
+	fields, _ := wire.FromContext(ctx)
+	resp, err := c.cli.DeleteSandboxVolume(wire.WithCorrelationOutgoing(ctx, fields),
+		&vmmdpb.DeleteSandboxVolumeRequest{AccountId: accountID, SandboxId: sandboxID})
+	if err != nil {
+		return false, liftErr(err)
+	}
+	return resp.GetDeleted(), nil
+}
+
 func (r *VMMRouter) RunSandbox(ctx context.Context, nodeID string, spec SandboxSpec, hooks SandboxHooks, control <-chan SandboxControl) error {
 	cli, err := r.resolveFor(ctx, nodeID)
 	if err != nil {
@@ -468,6 +546,8 @@ func (c *VMMClient) RunSandbox(ctx context.Context, spec SandboxSpec, hooks Sand
 		Task:        sandboxTaskToProto(spec.Task),
 		EgressAllow: spec.EgressAllow, EgressDeny: spec.EgressDeny, WebDomainLog: spec.WebDomainLog,
 		SessionCapture: spec.SessionCapture,
+		VolumeGb:       int32(spec.Volume.GB), //nolint:gosec // G115: bounded by the plan's volume cap.
+		VolumeBackupId: spec.Volume.BackupID, VolumeBackupIntervalMs: spec.Volume.BackupEvery.Milliseconds(),
 	}}}); err != nil {
 		return liftErr(err)
 	}
@@ -589,7 +669,15 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 				s := p.GetSnapshot()
 				err = hooks.Paused(ctx, SandboxPaused{Snapshot: AgentRunSnapshot{StorageKey: s.GetStorageKey(),
 					VMStateStorageKey: s.GetVmstateStorageKey(), FCVersion: s.GetFcVersion(), MemBytes: s.GetMemBytes()},
-					VMStateBytes: p.GetVmstateBytes(), PauseMs: p.GetPauseMs(), HasBacking: p.GetHasBacking()})
+					VMStateBytes: p.GetVmstateBytes(), PauseMs: p.GetPauseMs(), HasBacking: p.GetHasBacking(),
+					VolumeBackupID: p.GetVolumeBackupId()})
+			}
+		case event.GetVolumeBackup() != nil:
+			if hooks.VolumeBackup != nil {
+				b := event.GetVolumeBackup()
+				err = hooks.VolumeBackup(ctx, SandboxVolumeBackup{ID: b.GetBackupId(), SizeBytes: b.GetSizeBytes(),
+					DataChunks: int(b.GetDataChunks()), UploadedBytes: b.GetUploadedBytes(), BackupMs: b.GetBackupMs(),
+					Incremental: b.GetIncremental()})
 			}
 		case event.GetPauseRefused() != nil:
 			if hooks.PauseRefused != nil {

@@ -606,6 +606,20 @@ func (q *Queries) DeleteSandboxTemplate(ctx context.Context, db DBTX, arg Delete
 	return app_id, err
 }
 
+const deleteSandboxVolume = `-- name: DeleteSandboxVolume :execrows
+DELETE FROM sandbox_volumes v USING sandbox_sessions sb
+ WHERE v.session_id=$1::text::uuid AND sb.id=v.session_id AND sb.state IN ('closed','expired','failed')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_volume_backups b WHERE b.session_id=v.session_id AND b.state <> 'deleted')
+`
+
+func (q *Queries) DeleteSandboxVolume(ctx context.Context, db DBTX, sessionID string) (int64, error) {
+	result, err := db.Exec(ctx, deleteSandboxVolume, sessionID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const endAgentDeliveryAttempt = `-- name: EndAgentDeliveryAttempt :one
 UPDATE agent_deliveries SET state=$1::text,
   next_attempt_at=now()+make_interval(secs => $2::float8),
@@ -1647,9 +1661,11 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
   coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
-  coalesce(sb.durability, '')::text AS durability
+  coalesce(sb.durability, '')::text AS durability,
+  coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
+ LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
  LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
@@ -1691,6 +1707,8 @@ type GetSandboxSessionClaimRow struct {
 	CaptureMemBytes          int64
 	CaptureNodeID            string
 	Durability               string
+	VolumeGb                 int32
+	VolumeBackupID           string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1730,6 +1748,8 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.CaptureMemBytes,
 		&i.CaptureNodeID,
 		&i.Durability,
+		&i.VolumeGb,
+		&i.VolumeBackupID,
 	)
 	return i, err
 }
@@ -1878,6 +1898,28 @@ func (q *Queries) GetTenantStatus(ctx context.Context, db DBTX, arg GetTenantSta
 	var status string
 	err := row.Scan(&status)
 	return status, err
+}
+
+const growPausedSandboxVolume = `-- name: GrowPausedSandboxVolume :one
+UPDATE sandbox_sessions SET volume_gb=$1::integer, updated_at=now()
+ WHERE id=$2::text::uuid AND account_id=$3::text::uuid
+   AND kind='persistent' AND state='paused' AND coalesce(volume_gb, 0) <= $1::integer
+RETURNING id::text AS id
+`
+
+type GrowPausedSandboxVolumeParams struct {
+	VolumeGb  int32
+	SessionID string
+	AccountID string
+}
+
+// PATCH {volume_gb} on a paused persistent session (ADR-20261122132055 §4):
+// the volume grows when the session resumes, never shrinks.
+func (q *Queries) GrowPausedSandboxVolume(ctx context.Context, db DBTX, arg GrowPausedSandboxVolumeParams) (string, error) {
+	row := db.QueryRow(ctx, growPausedSandboxVolume, arg.VolumeGb, arg.SessionID, arg.AccountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertAgent = `-- name: InsertAgent :one
@@ -2940,6 +2982,41 @@ func (q *Queries) ListConsumedSandboxSessionCaptures(ctx context.Context, db DBT
 	return items, nil
 }
 
+const listEndedSandboxVolumes = `-- name: ListEndedSandboxVolumes :many
+SELECT v.session_id::text AS session_id, v.account_id::text AS account_id, v.node_id
+  FROM sandbox_volumes v JOIN sandbox_sessions sb ON sb.id=v.session_id
+ WHERE sb.state IN ('closed','expired','failed')
+ ORDER BY v.updated_at, v.session_id LIMIT $1::integer
+`
+
+type ListEndedSandboxVolumesRow struct {
+	SessionID string
+	AccountID string
+	NodeID    string
+}
+
+// Volumes of sessions that ended: the sweep deletes the node's copy and
+// every backup, then the row.
+func (q *Queries) ListEndedSandboxVolumes(ctx context.Context, db DBTX, maxRows int32) ([]ListEndedSandboxVolumesRow, error) {
+	rows, err := db.Query(ctx, listEndedSandboxVolumes, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEndedSandboxVolumesRow{}
+	for rows.Next() {
+		var i ListEndedSandboxVolumesRow
+		if err := rows.Scan(&i.SessionID, &i.AccountID, &i.NodeID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listLiveAgentGitHubSubscriptions = `-- name: ListLiveAgentGitHubSubscriptions :many
 SELECT id::text AS id, endpoint_id::text AS endpoint_id, thread_id, tool_call_id, issued_at
  FROM agent_github_subscriptions
@@ -2998,8 +3075,11 @@ func (q *Queries) ListLiveAgentGitHubSubscriptions(ctx context.Context, db DBTX,
 }
 
 const listNodeOnlySandboxCaptures = `-- name: ListNodeOnlySandboxCaptures :many
-SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.account_id::text AS account_id, cap.storage_key,
+  cap.vmstate_storage_key, cap.has_backing, coalesce(cap.volume_backup_id::text, '')::text AS volume_backup_id,
+  (vol.session_id IS NOT NULL)::boolean AS has_volume
   FROM sandbox_session_captures cap JOIN sandbox_sessions sb ON sb.id=cap.session_id
+  LEFT JOIN sandbox_volumes vol ON vol.session_id=cap.session_id
  WHERE cap.state='live' AND sb.state='paused' AND sb.durability='node'
  ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT $1::integer
 `
@@ -3007,9 +3087,12 @@ SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, 
 type ListNodeOnlySandboxCapturesRow struct {
 	ID                string
 	SessionID         string
+	AccountID         string
 	StorageKey        string
 	VmstateStorageKey string
 	HasBacking        bool
+	VolumeBackupID    string
+	HasVolume         bool
 }
 
 // Live captures of paused sessions the shared store may not hold yet
@@ -3027,9 +3110,12 @@ func (q *Queries) ListNodeOnlySandboxCaptures(ctx context.Context, db DBTX, maxR
 		if err := rows.Scan(
 			&i.ID,
 			&i.SessionID,
+			&i.AccountID,
 			&i.StorageKey,
 			&i.VmstateStorageKey,
 			&i.HasBacking,
+			&i.VolumeBackupID,
+			&i.HasVolume,
 		); err != nil {
 			return nil, err
 		}
@@ -3387,6 +3473,31 @@ func (q *Queries) ListSandboxTemplates(ctx context.Context, db DBTX, arg ListSan
 	return items, nil
 }
 
+const listSandboxVolumeBackupIDs = `-- name: ListSandboxVolumeBackupIDs :many
+SELECT id::text AS id FROM sandbox_volume_backups
+ WHERE session_id=$1::text::uuid AND state <> 'deleted' ORDER BY created_at, id
+`
+
+func (q *Queries) ListSandboxVolumeBackupIDs(ctx context.Context, db DBTX, sessionID string) ([]string, error) {
+	rows, err := db.Query(ctx, listSandboxVolumeBackupIDs, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSettleableAgentRuns = `-- name: ListSettleableAgentRuns :many
 SELECT r.id::text AS id FROM agent_runs r WHERE r.state='delivering'
  AND NOT EXISTS (SELECT 1 FROM agent_deliveries d WHERE d.run_id=r.id AND d.state IN ('pending','sending','reconciling'))
@@ -3408,6 +3519,46 @@ func (q *Queries) ListSettleableAgentRuns(ctx context.Context, db DBTX, maxRows 
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSupersededSandboxVolumeBackups = `-- name: ListSupersededSandboxVolumeBackups :many
+SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS account_id
+  FROM sandbox_volume_backups b
+  JOIN sandbox_volumes v ON v.session_id=b.session_id
+  JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
+ WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
+   AND (b.state='stored' OR b.created_at < now() - interval '25 hours')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
+ ORDER BY b.created_at, b.id LIMIT $1::integer
+`
+
+type ListSupersededSandboxVolumeBackupsRow struct {
+	ID        string
+	SessionID string
+	AccountID string
+}
+
+// Backups older than their session's newest that no live capture names: the
+// sweep deletes their manifests. A pause's upload still running is left
+// until vmmd would have given it up.
+func (q *Queries) ListSupersededSandboxVolumeBackups(ctx context.Context, db DBTX, maxRows int32) ([]ListSupersededSandboxVolumeBackupsRow, error) {
+	rows, err := db.Query(ctx, listSupersededSandboxVolumeBackups, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSupersededSandboxVolumeBackupsRow{}
+	for rows.Next() {
+		var i ListSupersededSandboxVolumeBackupsRow
+		if err := rows.Scan(&i.ID, &i.SessionID, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -3849,10 +4000,10 @@ WITH session AS (
    WHERE id=$2::text::uuid AND lease_token=$3::text AND state='pausing'
 ), capture AS (
   INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
-    mem_bytes, vmstate_bytes, has_backing)
+    mem_bytes, vmstate_bytes, has_backing, volume_backup_id)
   SELECT $4::text::uuid, id, account_id, $5::text, $6::text,
     $7::text, $8::text, $9::bigint, $10::bigint,
-    $11::boolean
+    $11::boolean, NULLIF($12::text, '')::uuid
   FROM session
   RETURNING session_id
 )
@@ -3874,6 +4025,7 @@ type MarkSandboxSessionPausedParams struct {
 	MemBytes          int64
 	VmstateBytes      int64
 	HasBacking        bool
+	VolumeBackupID    string
 }
 
 // The VM is captured and gone: the session keeps its capture, holds no lease
@@ -3891,6 +4043,7 @@ func (q *Queries) MarkSandboxSessionPaused(ctx context.Context, db DBTX, arg Mar
 		arg.MemBytes,
 		arg.VmstateBytes,
 		arg.HasBacking,
+		arg.VolumeBackupID,
 	)
 	if err != nil {
 		return 0, err
@@ -3988,6 +4141,39 @@ func (q *Queries) MarkSandboxSessionResumed(ctx context.Context, db DBTX, arg Ma
 	return result.RowsAffected(), nil
 }
 
+const markSandboxSessionVolumeNode = `-- name: MarkSandboxSessionVolumeNode :one
+WITH prev AS (
+  SELECT node_id FROM sandbox_volumes WHERE session_id=$3::text::uuid
+)
+INSERT INTO sandbox_volumes AS v (session_id, account_id, node_id, size_gb)
+SELECT sb.id, sb.account_id, $1::text, $2::integer FROM sandbox_sessions sb
+ WHERE sb.id=$3::text::uuid AND sb.lease_token=$4::text
+ON CONFLICT (session_id) DO UPDATE SET node_id=excluded.node_id, size_gb=excluded.size_gb, updated_at=now()
+RETURNING coalesce((SELECT node_id FROM prev), '')::text AS previous_node_id
+`
+
+type MarkSandboxSessionVolumeNodeParams struct {
+	NodeID     string
+	SizeGb     int32
+	SessionID  string
+	LeaseToken string
+}
+
+// ADR-20261122132055 §4: the session's VM booted on node_id with its volume
+// at size_gb, so that node holds the newest copy; it returns the node that
+// held it before, whose copy is now stale.
+func (q *Queries) MarkSandboxSessionVolumeNode(ctx context.Context, db DBTX, arg MarkSandboxSessionVolumeNodeParams) (string, error) {
+	row := db.QueryRow(ctx, markSandboxSessionVolumeNode,
+		arg.NodeID,
+		arg.SizeGb,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	var previous_node_id string
+	err := row.Scan(&previous_node_id)
+	return previous_node_id, err
+}
+
 const markSandboxTaskCallDelivered = `-- name: MarkSandboxTaskCallDelivered :exec
 UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = $1::text::uuid AND delivered_at IS NULL
 `
@@ -3995,6 +4181,31 @@ UPDATE agent_sandbox_task_calls SET delivered_at = now() WHERE sandbox_id = $1::
 func (q *Queries) MarkSandboxTaskCallDelivered(ctx context.Context, db DBTX, sandboxID string) error {
 	_, err := db.Exec(ctx, markSandboxTaskCallDelivered, sandboxID)
 	return err
+}
+
+const markSandboxVolumeBackupDeleted = `-- name: MarkSandboxVolumeBackupDeleted :execrows
+UPDATE sandbox_volume_backups SET state='deleted', deleted_at=now()
+ WHERE id=$1::text::uuid AND state <> 'deleted'
+`
+
+func (q *Queries) MarkSandboxVolumeBackupDeleted(ctx context.Context, db DBTX, backupID string) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxVolumeBackupDeleted, backupID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markSandboxVolumeBackupStored = `-- name: MarkSandboxVolumeBackupStored :execrows
+UPDATE sandbox_volume_backups SET state='stored' WHERE id=$1::text::uuid AND state='uploading'
+`
+
+func (q *Queries) MarkSandboxVolumeBackupStored(ctx context.Context, db DBTX, backupID string) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxVolumeBackupStored, backupID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const nextSandboxActions = `-- name: NextSandboxActions :many
@@ -4286,6 +4497,52 @@ func (q *Queries) RecordSandboxTaskResult(ctx context.Context, db DBTX, arg Reco
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordSandboxVolumeBackup = `-- name: RecordSandboxVolumeBackup :one
+WITH backup AS (
+  INSERT INTO sandbox_volume_backups (id, session_id, account_id, node_id, reason, state, size_bytes, data_chunks, uploaded_bytes)
+  SELECT $1::text::uuid, sb.id, sb.account_id, $2::text, $3::text,
+    $4::text, $5::bigint, $6::integer, $7::bigint
+  FROM sandbox_sessions sb WHERE sb.id=$8::text::uuid AND sb.lease_token=$9::text
+  ON CONFLICT (id) DO NOTHING
+  RETURNING session_id, id
+), latest AS (
+  UPDATE sandbox_volumes v SET latest_backup_id=b.id, updated_at=now() FROM backup b WHERE v.session_id=b.session_id
+  RETURNING v.session_id
+)
+SELECT count(*)::bigint AS recorded FROM backup
+`
+
+type RecordSandboxVolumeBackupParams struct {
+	BackupID      string
+	NodeID        string
+	Reason        string
+	State         string
+	SizeBytes     int64
+	DataChunks    int32
+	UploadedBytes int64
+	SessionID     string
+	LeaseToken    string
+}
+
+// One backup vmmd reported for a session agentd holds; it becomes the
+// session's newest. A replayed report changes nothing.
+func (q *Queries) RecordSandboxVolumeBackup(ctx context.Context, db DBTX, arg RecordSandboxVolumeBackupParams) (int64, error) {
+	row := db.QueryRow(ctx, recordSandboxVolumeBackup,
+		arg.BackupID,
+		arg.NodeID,
+		arg.Reason,
+		arg.State,
+		arg.SizeBytes,
+		arg.DataChunks,
+		arg.UploadedBytes,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	var recorded int64
+	err := row.Scan(&recorded)
+	return recorded, err
 }
 
 const renewAgentRunLease = `-- name: RenewAgentRunLease :one

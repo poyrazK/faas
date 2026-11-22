@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/volbackup"
@@ -68,7 +69,7 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	writeAt(t, vol, 3*volbackup.ChunkBytes, randomBytes(t, 100))
 	writeAt(t, vol, size-10, []byte("tail-bytes"))
 
-	first, st, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil)
+	first, st, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestBackupAndRestoreRoundTrip(t *testing.T) {
 	// Change one chunk; the hint names it, so only it is read and put.
 	writeAt(t, vol, 4*volbackup.ChunkBytes+7, []byte("changed"))
 	changed := []storage.Range{{Start: 4*volbackup.ChunkBytes + 7, End: 4*volbackup.ChunkBytes + 14}}
-	second, st, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, &first, changed)
+	second, st, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, &first, changed, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,14 +121,14 @@ func TestBackupOfAGrownVolumeRereadsItsOldLastChunk(t *testing.T) {
 	if err := os.WriteFile(vol, randomBytes(t, volbackup.ChunkBytes+10), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	first, _, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil)
+	first, _, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(vol, 3*volbackup.ChunkBytes); err != nil {
 		t.Fatal(err)
 	}
-	second, st, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, &first, []storage.Range{})
+	second, st, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, &first, []storage.Range{}, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +145,7 @@ func TestRestoreRefusesACorruptChunk(t *testing.T) {
 	if err := os.WriteFile(vol, randomBytes(t, 1000), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, _, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil)
+	m, _, err := volbackup.Backup(ctx, store, account, sandbox, "b1", vol, nil, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +153,7 @@ func TestRestoreRefusesACorruptChunk(t *testing.T) {
 	if err := os.WriteFile(vol, other, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m2, _, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, nil, nil)
+	m2, _, err := volbackup.Backup(ctx, store, account, sandbox, "b2", vol, nil, nil, time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestBackupRefusesUnsafeIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, ids := range [][3]string{{"../a", sandbox, "b"}, {account, "a/b", "b"}, {account, sandbox, ""}} {
-		if _, _, err := volbackup.Backup(context.Background(), store, ids[0], ids[1], ids[2], vol, nil, nil); err == nil {
+		if _, _, err := volbackup.Backup(context.Background(), store, ids[0], ids[1], ids[2], vol, nil, nil, time.Now()); err == nil {
 			t.Fatalf("Backup(%v) succeeded", ids)
 		}
 	}

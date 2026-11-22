@@ -60,6 +60,7 @@ const (
 	Vmmd_AttachAppTask_FullMethodName                           = "/onebox.faas.vmmd.v1.Vmmd/AttachAppTask"
 	Vmmd_SandboxCall_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/SandboxCall"
 	Vmmd_RunSandbox_FullMethodName                              = "/onebox.faas.vmmd.v1.Vmmd/RunSandbox"
+	Vmmd_DeleteSandboxVolume_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/DeleteSandboxVolume"
 	Vmmd_PersistSandboxWorkspace_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/PersistSandboxWorkspace"
 	Vmmd_WaitJobExit_FullMethodName                             = "/onebox.faas.vmmd.v1.Vmmd/WaitJobExit"
 	Vmmd_PauseAndSnapshot_FullMethodName                        = "/onebox.faas.vmmd.v1.Vmmd/PauseAndSnapshot"
@@ -264,6 +265,12 @@ type VmmdClient interface {
 	// that finds the VM frozen thaws it in place and reports thawed. The VM is
 	// destroyed on close and whenever the stream ends.
 	RunSandbox(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent], error)
+	// DeleteSandboxVolume removes a persistent session's workspace volume
+	// from this node (ADR-20261122132055 §4): schedd calls it for agentd once
+	// the session ended or its newest copy is on another node. A volume a
+	// running session uses is refused with FailedPrecondition; one that is not
+	// here is not an error.
+	DeleteSandboxVolume(ctx context.Context, in *DeleteSandboxVolumeRequest, opts ...grpc.CallOption) (*DeleteSandboxVolumeResponse, error)
 	// PersistSandboxWorkspace archives a session's workspace to the artifact
 	// store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
 	// RunSandbox stream, for a reservation within the account's snapshot
@@ -1224,6 +1231,16 @@ func (c *vmmdClient) RunSandbox(ctx context.Context, opts ...grpc.CallOption) (g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_RunSandboxClient = grpc.BidiStreamingClient[RunSandboxRequest, RunSandboxEvent]
 
+func (c *vmmdClient) DeleteSandboxVolume(ctx context.Context, in *DeleteSandboxVolumeRequest, opts ...grpc.CallOption) (*DeleteSandboxVolumeResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteSandboxVolumeResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DeleteSandboxVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) PersistSandboxWorkspace(ctx context.Context, in *PersistSandboxWorkspaceRequest, opts ...grpc.CallOption) (*PersistSandboxWorkspaceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PersistSandboxWorkspaceResponse)
@@ -2131,6 +2148,12 @@ type VmmdServer interface {
 	// that finds the VM frozen thaws it in place and reports thawed. The VM is
 	// destroyed on close and whenever the stream ends.
 	RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error
+	// DeleteSandboxVolume removes a persistent session's workspace volume
+	// from this node (ADR-20261122132055 §4): schedd calls it for agentd once
+	// the session ended or its newest copy is on another node. A volume a
+	// running session uses is refused with FailedPrecondition; one that is not
+	// here is not an error.
+	DeleteSandboxVolume(context.Context, *DeleteSandboxVolumeRequest) (*DeleteSandboxVolumeResponse, error)
 	// PersistSandboxWorkspace archives a session's workspace to the artifact
 	// store (ADR-20261027090013 step 7). vmmd asks agentd, on the session's
 	// RunSandbox stream, for a reservation within the account's snapshot
@@ -2793,6 +2816,9 @@ func (UnimplementedVmmdServer) SandboxCall(grpc.BidiStreamingServer[SandboxCallR
 }
 func (UnimplementedVmmdServer) RunSandbox(grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]) error {
 	return status.Error(codes.Unimplemented, "method RunSandbox not implemented")
+}
+func (UnimplementedVmmdServer) DeleteSandboxVolume(context.Context, *DeleteSandboxVolumeRequest) (*DeleteSandboxVolumeResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteSandboxVolume not implemented")
 }
 func (UnimplementedVmmdServer) PersistSandboxWorkspace(context.Context, *PersistSandboxWorkspaceRequest) (*PersistSandboxWorkspaceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method PersistSandboxWorkspace not implemented")
@@ -3597,6 +3623,24 @@ func _Vmmd_RunSandbox_Handler(srv interface{}, stream grpc.ServerStream) error {
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Vmmd_RunSandboxServer = grpc.BidiStreamingServer[RunSandboxRequest, RunSandboxEvent]
+
+func _Vmmd_DeleteSandboxVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteSandboxVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DeleteSandboxVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DeleteSandboxVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DeleteSandboxVolume(ctx, req.(*DeleteSandboxVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
 
 func _Vmmd_PersistSandboxWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(PersistSandboxWorkspaceRequest)
@@ -4953,6 +4997,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExecForkCommand",
 			Handler:    _Vmmd_ExecForkCommand_Handler,
+		},
+		{
+			MethodName: "DeleteSandboxVolume",
+			Handler:    _Vmmd_DeleteSandboxVolume_Handler,
 		},
 		{
 			MethodName: "PersistSandboxWorkspace",

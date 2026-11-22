@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,16 @@ type fakeSandboxRunner struct {
 	// agentd's record of it.
 	persist  bool
 	recorded chan sched.SandboxPersistRecorded
+
+	mu            sync.Mutex
+	volumeDeletes []string
+}
+
+func (f *fakeSandboxRunner) DeleteSandboxVolume(_ context.Context, nodeID, accountID, sandboxID string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.volumeDeletes = append(f.volumeDeletes, nodeID+"/"+accountID+"/"+sandboxID)
+	return true, nil
 }
 
 func (f *fakeSandboxRunner) RunSandbox(ctx context.Context, a sched.SandboxAdmission, placed func(sched.AgentRunPlacement) error, hooks sched.SandboxHooks, control <-chan sched.SandboxControl) error {
