@@ -171,3 +171,19 @@ own interface and was never in the veth counter.
   `net_tx_bytes` holds only connections the guest opens plus edge bytes. The
   gateway's response bytes (`usage_minutes.tx_bytes`) are not billed as
   egress. Which counter bills public responses is an owner decision.
+- R12-1 was decided by the owner on 2026-11-22: billed egress is the gateway's
+  response bytes plus the guest's own outbound bytes (ADR-20261121210517).
+
+## Amendment (2026-11-22): internal egress unbilled on the fleet
+
+The counter is live in production: every running VM on bhs-2 and bhs-3
+(13 on 2026-11-22) has `faas_internal_tx` in its namespace and it counts
+(up to 537 KB on one instance). `TestMetalInternalEgressCounted` passes on
+the EC2 KVM test host, and its namespaces and links are gone afterwards (the
+full `make leakcheck` waits for that host's concurrent soak to end).
+`group_vars/control_plane/internal_egress_unbilled.yml` turns
+`internal_egress_unbilled` on for the fleet through meterd's
+`FAAS_INTERNAL_EGRESS_UNBILLED` drop-in. An instance without a valid
+internal reading stays billed on its whole veth counter, and the first
+reading after the switch is a baseline only (R12-3), so nothing billed
+before is subtracted.
