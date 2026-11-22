@@ -203,6 +203,7 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
+
 // edgeRoutesAllowed refuses a publish that adds or changes edge routes while
 // the edge_flags platform flag is off for the account (ADR-20261122090000).
 // An edit that leaves existing routes as they are publishes, so turning the

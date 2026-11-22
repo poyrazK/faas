@@ -31,7 +31,7 @@ func TestPg_FeatureFlagEdgeForApp(t *testing.T) {
 	}
 	scope := state.FeatureFlagScope{AccountID: acct, ProjectID: project.ID, EnvironmentID: env.ID}
 	variants := []flags.FlagVariant{{Key: "a", Weight: 5000}, {Key: "b", Weight: 5000}}
-	plain := flags.Flag{Key: "plain", Type: "variant", Enabled: true, Default: "a", Seed: "s1", Variants: variants}
+	plain := flags.Flag{Key: "plain", Type: "variant", Enabled: true, Default: "a", Variants: variants}
 	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: 0, Config: flags.Config{Flags: []flags.Flag{plain}}, Actor: acct}); err != nil {
 		t.Fatalf("UpdateFeatureFlags: %v", err)
 	}
@@ -39,9 +39,15 @@ func TestPg_FeatureFlagEdgeForApp(t *testing.T) {
 		t.Fatalf("no edge routes: %+v %v", b, err)
 	}
 
+	stored, err := s.GetFeatureFlags(ctx, scope, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	routed := plain
 	routed.Key, routed.Edge = "pricing", &flags.Edge{Routes: []flags.EdgeRoute{{Path: "/pricing", Variants: map[string]flags.EdgeAction{"b": {Rewrite: "/pricing-b"}}}}}
-	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: 1, Config: flags.Config{Flags: []flags.Flag{plain, routed}}, Actor: acct}); err != nil {
+	next := stored.Config
+	next.Flags = append(next.Flags, routed)
+	if _, err := s.UpdateFeatureFlags(ctx, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: 1, Config: next, Actor: acct}); err != nil {
 		t.Fatalf("UpdateFeatureFlags: %v", err)
 	}
 	for _, environment := range []string{"", "default", "production"} {

@@ -21,7 +21,9 @@ type edgeFlagBackend struct {
 	bundle flags.Bundle
 }
 
-func (b edgeFlagBackend) EdgeFlagBundle(context.Context, string, string) flags.Bundle { return b.bundle }
+func (b edgeFlagBackend) EdgeFlagBundle(context.Context, string, string) flags.Bundle {
+	return b.bundle
+}
 
 // pricingBundle routes /pricing: variant "b" rewrites to /pricing-b, "a"
 // serves the page unchanged.
