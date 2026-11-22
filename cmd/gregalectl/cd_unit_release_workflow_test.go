@@ -651,6 +651,13 @@ func TestUnitReleaseIsTestedAsShippedAndCapped(t *testing.T) {
 		`BLAST_CAP: "5"`,
 		"unset DATABASE_URL SPLIT_DATABASE_URL",
 		"export FAAS_SKIP_PG_TESTS=1",
+		// Bounded compiler memory on the control plane's build runner: the
+		// heavy test packages compile as ci-light compiles them.
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"`,
+		`"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1"`,
+		"GOMEMLIMIT: 4GiB",
+		`go test -p 2 -ldflags=-w -count=1 -timeout=10m "${pkgs[@]}"`,
+		`go test -p 2 -ldflags=-w -count=1 -timeout=8m -run "$run" "$pkg"`,
 	} {
 		if !strings.Contains(build, required) {
 			t.Errorf("release-units build is missing %q", required)
