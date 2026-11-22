@@ -21,6 +21,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
 		cliFlag{Name: "tasks", Short: "accept modern MCP task handles for later inspection"},
 		cliFlag{Name: "task-submission-key", Short: "saved UUIDv7 for retrying a Task submission (requires --tasks)", Value: "UUID"},
+		cliFlag{Name: "task-receipt", Short: "save a private Task receipt before submission (requires --tasks)", Value: "FILE"},
 		cliFlag{Name: "wait", Short: "wait for a task result; request cancellation on timeout"},
 	)
 	completionFlags := append([]cliFlag{}, remote[:4]...)
@@ -38,6 +39,7 @@ func mcpCLICommand() cliCommand {
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
 		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7 (requires --metadata-only)", Value: "UUID"},
+		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt (requires --metadata-only)", Value: "FILE"},
 	)
 	for i := range callFlags {
 		if callFlags[i].Name == "timeout" {
