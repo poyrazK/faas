@@ -147,6 +147,8 @@ func (s *sandboxServer) handle(ctx context.Context, req sandboxproto.Request, ca
 		return s.commands.output(req)
 	case sandboxproto.OpExecKill:
 		return s.commands.kill(req)
+	case sandboxproto.OpExecInput:
+		return s.commands.input(req)
 	case sandboxproto.OpArchiveCreate:
 		return s.archiveCreate(req, call)
 	case sandboxproto.OpArchiveExtract:

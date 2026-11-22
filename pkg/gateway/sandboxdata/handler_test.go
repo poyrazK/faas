@@ -123,6 +123,8 @@ func (f *fakeVmmd) guest(_ context.Context, req sandboxproto.Request, call *sand
 		}
 	case sandboxproto.OpFileRename:
 		return struct{}{}, nil
+	case sandboxproto.OpExecInput:
+		return sandboxproto.Command{Handle: req.Handle, Running: true, TTY: true}, nil
 	case sandboxproto.OpArchiveExtract:
 		n, err := call.ReadUpload(io.Discard, 1<<20)
 		if err != nil {
@@ -275,7 +277,7 @@ func TestExecRefusals(t *testing.T) {
 	}{
 		{"timeout over the plan", `{"cmd":"true","timeout_ms":300001}`, api.CodeAgentLimit, http.StatusForbidden},
 		{"output over the plan", `{"cmd":"true","max_output_bytes":1048577}`, api.CodeAgentLimit, http.StatusForbidden},
-		{"terminal", `{"cmd":"bash","tty":true}`, api.CodeSandboxUnsupported, http.StatusUnprocessableEntity},
+		{"terminal in the foreground", `{"cmd":"bash","tty":true}`, api.CodeSandboxUnsupported, http.StatusUnprocessableEntity},
 		{"no command", `{"cmd":[]}`, api.CodeValidation, http.StatusBadRequest},
 		{"guest validation", `{"cmd":"true","run_as":"nobody"}`, api.CodeValidation, http.StatusBadRequest},
 	} {
@@ -289,6 +291,38 @@ func TestExecRefusals(t *testing.T) {
 				t.Fatalf("a refused call reached the node: %+v", seen)
 			}
 		})
+	}
+}
+
+// adr: 20261027090013 step 12 — a terminal command runs in the background,
+// and its input, end of input and resizes reach the guest as exec_input.
+func TestBackgroundTerminalAndInput(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/exec", f.token(t, placed()),
+		strings.NewReader(`{"cmd":"bash","tty":true,"background":true,"rows":24,"cols":80}`))
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if req := f.vmmd.requests()[0]; !req.TTY || req.Rows != 24 || req.Cols != 80 || !req.Background {
+		t.Fatalf("guest request = %+v", req)
+	}
+	const handle = "c0123456789abcdef"
+	rec = f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/exec/"+handle+"/input", f.token(t, placed()),
+		strings.NewReader(`{"data":"bHMK","eof":true,"rows":30,"cols":100}`))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"tty":true`) {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	req := f.vmmd.requests()[1]
+	if req.Op != sandboxproto.OpExecInput || req.Handle != handle || string(req.Input) != "ls\n" || !req.CloseInput ||
+		req.Rows != 30 || req.Cols != 100 {
+		t.Fatalf("guest request = %+v", req)
+	}
+	rec = f.do(t, http.MethodPost, "/v1/sandboxes/sbx-1/exec/"+handle+"/input", f.token(t, placed()), strings.NewReader(`{}`))
+	if rec.Code != http.StatusBadRequest || problemCode(t, rec) != api.CodeValidation {
+		t.Fatalf("empty input: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if len(f.vmmd.requests()) != 2 {
+		t.Fatal("a refused input reached the node")
 	}
 }
 

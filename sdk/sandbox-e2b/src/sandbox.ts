@@ -3,7 +3,7 @@
 // moves by changing the import and the API key.
 
 import { Api, toSandboxError, type ApiOptions } from './api.js';
-import { Commands } from './commands.js';
+import { Commands, Pty } from './commands.js';
 import { Connection, type SandboxView } from './connection.js';
 import { InvalidArgumentError, NotFoundError, UnsupportedError } from './errors.js';
 import { Filesystem } from './filesystem.js';
@@ -119,20 +119,7 @@ export class Sandbox {
   readonly sandboxId: string;
   readonly files: Filesystem;
   readonly commands: Commands;
-  readonly pty = {
-    create: async (): Promise<never> => {
-      throw new UnsupportedError('pty.create', 'interactive terminals are not available on Gregale yet; run commands with commands.run');
-    },
-    sendInput: async (): Promise<never> => {
-      throw new UnsupportedError('pty.sendInput', 'interactive terminals are not available on Gregale yet');
-    },
-    resize: async (): Promise<never> => {
-      throw new UnsupportedError('pty.resize', 'interactive terminals are not available on Gregale yet');
-    },
-    kill: async (): Promise<never> => {
-      throw new UnsupportedError('pty.kill', 'interactive terminals are not available on Gregale yet');
-    },
-  };
+  readonly pty: Pty;
   readonly #conn: Connection;
   readonly #portVisibility: 'private' | 'public';
   readonly #ports = new Map<number, PortView>();
@@ -143,6 +130,7 @@ export class Sandbox {
     this.sandboxId = conn.sandboxId;
     this.files = new Filesystem(conn);
     this.commands = new Commands(conn);
+    this.pty = new Pty(this.commands);
     this.#portVisibility = portVisibility;
   }
 

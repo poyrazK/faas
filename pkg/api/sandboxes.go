@@ -146,6 +146,9 @@ const (
 	// background commands as it can.
 	CodeSandboxBusy               = "sandbox_busy"
 	CodeSandboxCommandStartFailed = "sandbox_command_start_failed"
+	// CodeSandboxCommandEnded: input for a background command that has
+	// exited, or whose input was already ended.
+	CodeSandboxCommandEnded = "sandbox_command_ended"
 
 	// Persisted workspaces (ADR-20261027090013 step 7).
 	// CodeSandboxSnapshotNotFound: no such snapshot, or one not ready,

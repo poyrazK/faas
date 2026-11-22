@@ -109,7 +109,7 @@ Control-plane routes are served by apid and gated. Data-plane routes are served 
 | `GET /v1/sandboxes`, `GET`/`PATCH`/`DELETE /v1/sandboxes/{id}` | control | List (filter by label); read state (re-mints the token on resume); change the idle timeout or lifetime within plan limits; close |
 | `POST /v1/sandboxes/{id}/exec` | data | `{cmd, workdir?, env?, tty?, background?, timeout_ms?, max_output_bytes?, run_as?}`. `run_as` is `user` (default) or `root` (§10). Returns `{stdout, stderr, exit_code, wall_time_s, pty_session_id?}` with SSE streaming, or `{handle}` when `background` |
 | `GET …/exec`, `GET`/`DELETE …/exec/{handle}` | data | List, read the output of, and kill background commands |
-| `POST /v1/sandboxes/{id}/stdin` or the ADR-1037 WebSocket | data | Write to a pseudo-terminal command and resize it; read output since the last call |
+| `POST /v1/sandboxes/{id}/exec/{handle}/input` | data | Write to a background command's stdin, end its input, or resize its terminal (step 12; replaces `…/stdin` and the WebSocket) |
 | `GET`/`PUT /v1/sandboxes/{id}/files?path=`, `GET …/files:list?path=`, `POST …/files:remove`, `…/files:mkdir`, `…/files:rename` | data | Read, write, list, remove, create directories and rename inside the workspace |
 | `POST /v1/sandboxes/{id}/ports`, `GET …/ports`, `DELETE …/ports/{port}` | control | Expose, list and close preview URLs (§11) |
 | `POST /v1/sandboxes/{id}/workspace:persist` | data | Archive the workspace to object storage. Returns `{snapshot_id, bytes}` |
@@ -186,7 +186,7 @@ RAM per session follows `AgentRunRAMMBMax`.
 |---|---|
 | `create({ manifest })`, `applyManifest`, `materializeEntry` | `POST /v1/sandboxes`, then an archive upload for files and directories, and a server-side checkout for `gitRepo` |
 | `exec`, `execCommand` | `POST …/exec` |
-| `writeStdin`, `supportsPty()` → true | `POST …/stdin` or the ADR-1037 WebSocket |
+| `writeStdin`, `supportsPty()` → true | `POST …/exec/{handle}/input`, then an output poll (step 12) |
 | `readFile`, `listDir`, `pathExists`, `directoryExists` | `GET …/files`, `GET …/files:list` |
 | `persistWorkspace`, `hydrateWorkspace` | `…/workspace:persist`, `…/workspace:hydrate` |
 | `running`, `stop`, `shutdown`, `close`, `delete` | `GET`/`DELETE /v1/sandboxes/{id}` |
@@ -587,6 +587,15 @@ Each step is one PR on a local branch until the owner asks for PRs, all behind t
      - **meterd's `agent` meter kind and the conversion `k`.** These are shared with agent runs (ADR-20261027090011 rollout step 3), and wait on the financial model setting `k` and the floor.
      - **Snapshot storage pricing.** Persisted workspace bytes are counted against `SandboxSnapshotBytesPerAccount` but not billed; that needs a price.
      - Statement and tenant-statement lines.
+12. Input for background commands, and terminals (2026-11-22). **Amends §3:** the `…/stdin` route and the interactive attach become one route, `POST /v1/sandboxes/{id}/exec/{handle}/input`, on a background command, and a terminal command runs in the background.
+   - **Why.** A data-plane call is one HTTP request and response. A foreground terminal needs both directions open at once, which the ADR-1037 WebSocket attach was to carry; it is not built. A background command is already polled for its output (`GET …/exec/{handle}`), so its input can be one request per write.
+   - **Protocol.** A new guest op, `exec_input` (`pkg/sandboxproto`), names a background command's handle and carries `input` (at most `MaxInputBytes`, 1 MiB), `close_input`, and `rows` and `cols`. The guest resizes the terminal first, then writes the input, then ends it: a pipe is closed, a terminal gets ^D, since closing it would close its output too. Each write has a 5 s deadline, so a command that stops reading cannot hold one of the session's operations; the call then answers `sandbox_busy`. Input for a command that has exited, or whose input was ended, answers 409 `sandbox_command_ended`; a resize of a command with no terminal answers 422 `sandbox_unsupported`.
+   - **Terminals.** `exec` with `tty: true` (and `rows`, `cols`) needs `background: true`; a foreground `tty` is still refused with 422 `sandbox_unsupported`. The guest validation that refused a background terminal is gone. A background terminal's stdin is not closed when it exits, since it is also its output: the output is drained first, as for a foreground terminal. `exec_list` and the input route report `tty`.
+   - **Gateway.** `POST …/exec/{handle}/input` with `{data?, eof?, rows?, cols?}`, where `data` is base64. It answers the command (`handle`, `running`, `tty`, …). It is a data-plane path (`exec`), so `api.IsSandboxDataPath` already routes it to gatewayd-internal.
+   - **Clients.** The E2B shims (TypeScript and Python) implement `pty.create`, `sendInput`/`send_stdin`, `resize` and `kill` as a background terminal running `/bin/bash -i -l`. They also implement `commands.sendStdin`, `closeStdin` and `run(stdin: true)` for background commands. Terminal output is polled every 200 ms. The Agents SDK client's `writeStdin` now writes its `chars`, and `execCommand` with `tty: true` runs on a terminal.
+   - **Skew.** vmmd and the guest both validate the op. A node or guest-init of the previous release refuses `exec_input` and background terminals as invalid requests (400 `validation_failed`), so the feature works once the runtime release carrying the guest lands. Sessions are off in production until then.
+   - **Tested.** Guest unit tests on Linux: stdin into a background `cat`, end of input, refusals, and a terminal that is resized, reads a line and ends on ^D. Gateway route tests, and the TypeScript, Python and Agents SDK client tests. **Not tested** on metal or against a deployed Gregale.
+   - **Not built:** a pushed (WebSocket) terminal for lower keystroke latency; stdin for foreground commands.
 
 Long-lived paused sessions (E2B-style memory pause) need their own ADR.
 

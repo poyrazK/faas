@@ -21,6 +21,7 @@ await sbx.kill();
 - `getHost(port)` answers only for exposed ports: pass `ports` to `create`, or `await sandbox.exposePort(port)`.
 - Files inside `/workspace` use Gregale's files API; other paths go through commands and are capped at 256 KB.
 - The default network mode is `registries`; `allowInternetAccess: false` is `none`.
-- Unsupported calls (`pty`, stdin, `files.watchDir`, `pause`, MCP) throw `UnsupportedError` naming the call and the alternative.
+- `pty.create` starts a login shell on a terminal as a background command; `sendInput`, `resize` and `kill` drive it, and `onData` receives its output, polled about every 200 ms. Background commands take input with `commands.sendStdin` and `closeStdin`; a foreground command takes none.
+- Unsupported calls (`files.watchDir`, `pause`, MCP) throw `UnsupportedError` naming the call and the alternative.
 
 Gregale options: `network`, `ramMb`, `lifetimeMs`, `ports`, `portVisibility`, `snapshotId`, `readyTimeoutMs`, `apiBase` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).

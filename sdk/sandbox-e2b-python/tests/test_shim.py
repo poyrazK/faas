@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 from gregale_sandbox_e2b import (
     CommandExitException,
     NotFoundException,
+    PtySize,
     Sandbox,
     SandboxNotFoundException,
     SandboxQuery,
@@ -62,6 +63,7 @@ class FakeGregale:
         self.files: Dict[str, bytes] = {}
         self.ports: List[Dict[str, Any]] = []
         self.background: Dict[str, Dict[str, Any]] = {}
+        self.inputs: List[Dict[str, Any]] = []
 
     def view(self) -> Dict[str, Any]:
         v: Dict[str, Any] = {
@@ -128,7 +130,8 @@ class FakeGregale:
             script = req["cmd"][-1]
             if req.get("background"):
                 handle = f"c{len(self.background) + 1}"
-                self.background[handle] = {"out": "serving\n", "polls": 0, "finish_after": 100 if "server" in script else 1, "exit": 0}
+                out = "$ " if req.get("tty") else "serving\n"
+                self.background[handle] = {"out": out, "polls": 0, "finish_after": 2 if req.get("tty") else 100 if "server" in script else 1, "exit": 0}
                 return js(202, {"handle": handle, "exit_code": 0, "wall_time_ms": 0})
             code = 1 if "false" in script else 0
             if "base64 < " in script:
@@ -139,6 +142,12 @@ class FakeGregale:
             return js(200, {"stdout": f"out:{script}", "stderr": "boom" if code else "", "exit_code": code, "wall_time_s": 0.1})
         if method == "GET" and sub == "/exec":
             return js(200, {"commands": [{"handle": h, "argv": ["/bin/bash", "-l", "-c", "npm run server"], "running": c["polls"] < c["finish_after"] and not c.get("killed")} for h, c in self.background.items()]})
+        if method == "POST" and sub.startswith("/exec/") and sub.endswith("/input"):
+            handle = sub[len("/exec/"):-len("/input")]
+            if handle not in self.background:
+                return js(404, {"code": "sandbox_entry_not_found", "status": 404})
+            self.inputs.append({"handle": handle, **json.loads(text)})
+            return js(200, {"handle": handle, "argv": [], "running": True})
         if sub.startswith("/exec/"):
             handle = sub[len("/exec/"):]
             c = self.background.get(handle)
@@ -300,11 +309,40 @@ class ShimTest(unittest.TestCase):
         sbx = Sandbox.create(**self.opts)
         with self.assertRaisesRegex(UnsupportedException, "freeze on their own"):
             sbx.beta_pause()
-        with self.assertRaises(UnsupportedException) as pty:
-            sbx.pty.create()
-        self.assertEqual(pty.exception.call, "pty.create")
-        with self.assertRaises(UnsupportedException):
-            sbx.commands.send_stdin(1, "x")
+        with self.assertRaisesRegex(UnsupportedException, "background=True"):
+            sbx.commands.run("cat", stdin=True)
+
+    # adr: 20261027090013 step 12 — a terminal is a background command on a
+    # pty, driven through its input; background commands take stdin.
+    def test_a_terminal_is_driven_through_its_input(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        term = sbx.pty.create(PtySize(rows=24, cols=80))
+        req = self.fake.execs[-1]
+        self.assertEqual((req["tty"], req["background"], req["rows"], req["cols"], req["cmd"]), (True, True, 24, 80, ["/bin/bash", "-i", "-l"]))
+        sbx.pty.send_stdin(term.pid, b"ls\n")
+        sbx.pty.resize(term.pid, PtySize(rows=40, cols=120))
+        self.assertEqual(self.fake.inputs, [
+            {"handle": "c1", "data": base64.b64encode(b"ls\n").decode()},
+            {"handle": "c1", "rows": 40, "cols": 120},
+        ])
+        seen: List[bytes] = []
+        term.wait(on_pty=seen.append)
+        self.assertEqual(seen, [b"$ "])
+        self.assertTrue(sbx.pty.kill(term.pid))
+
+    def test_background_commands_take_stdin(self) -> None:
+        sbx = Sandbox.create(**self.opts)
+        cat = sbx.commands.run("cat", background=True, stdin=True)
+        sbx.commands.send_stdin(cat.pid, "hello")
+        cat.send_stdin(" world")
+        sbx.commands.close_stdin(cat.pid)
+        self.assertEqual(self.fake.inputs, [
+            {"handle": "c1", "data": base64.b64encode(b"hello").decode()},
+            {"handle": "c1", "data": base64.b64encode(b" world").decode()},
+            {"handle": "c1", "eof": True},
+        ])
+        with self.assertRaises(NotFoundException):
+            sbx.commands.send_stdin(42, "x")
 
 
 if __name__ == "__main__":

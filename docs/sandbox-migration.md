@@ -55,19 +55,22 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | `getHost(port)` | Gregale exposes a port with an API call: pass `ports: [3000]` to `create`, or `await sandbox.exposePort(3000)` first. A private port needs `sandbox.previewToken(port)` as a bearer token, or once as `?gregale_preview_token=` in a browser |
 | `createSnapshot()` | Persists the workspace on Gregale; create with `snapshotId` to start from it |
 | `pause`, `betaPause` | Not needed: idle sessions freeze on their own and resume on the next call |
-| `pty.*`, `commands.sendStdin`, `files.watchDir`, `getMcpUrl`, Code Interpreter `runCode`, the Desktop SDK | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
+| `pty.create({ cols, rows, onData })`, `pty.sendInput`, `pty.resize`, `pty.kill` | The same. The terminal is a background command; `onData` receives its output, polled about every 200 ms rather than pushed. Its timeout defaults to 60 s within the plan's cap, and `timeoutMs: 0` means that default, not no limit |
+| `commands.run(cmd, { background: true, stdin: true })`, `commands.sendStdin(pid, data)`, `commands.closeStdin(pid)` | The same for background commands, which always take input. A foreground command takes none |
+| `files.watchDir`, `getMcpUrl`, Code Interpreter `runCode`, the Desktop SDK | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
 
 **Other differences:**
 
 - The default network mode is `registries`, not the open internet. `allowInternetAccess: false` means `none`.
 - Mail ports (25, 465, 587) and private, link-local and metadata addresses are always blocked.
 - Plan limits apply: concurrent sessions, memory, lifetime, exposed ports and preview rate.
-- Commands take no stdin yet.
+- Only background commands and terminals take input; terminal output is polled, so keystrokes echo after up to about 200 ms.
 
 **Python client differences:**
 
 - Synchronous only: use `Sandbox`; there is no `AsyncSandbox` yet.
 - A background command's `on_stdout` and `on_stderr` run while you `wait()` on the handle or iterate it (`for stdout, stderr, _ in handle`), not on a thread of their own.
+- A terminal from `pty.create(PtySize(rows, cols))` gives its output the same way: as the third item when you iterate the handle, or to `handle.wait(on_pty=...)`.
 - Pass `api_base` instead of `domain`. Unsupported calls raise `UnsupportedException`; a non-zero exit raises `CommandExitException`.
 
 ## Move an OpenAI Agents SDK harness

@@ -24,6 +24,7 @@ var guestRefusals = map[string]struct {
 	CodeUnsupported:      {http.StatusUnprocessableEntity, api.CodeSandboxUnsupported},
 	CodeStartFailed:      {http.StatusUnprocessableEntity, api.CodeSandboxCommandStartFailed},
 	CodePortClosed:       {http.StatusBadGateway, api.CodeSandboxPortClosed},
+	CodeCommandEnded:     {http.StatusConflict, api.CodeSandboxCommandEnded},
 }
 
 // Problem maps a guest's error frame to the platform's problem. A guest

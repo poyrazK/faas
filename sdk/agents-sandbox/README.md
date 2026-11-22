@@ -24,7 +24,7 @@ const result = await run(agent, 'Triage owner/name#42.', { sandbox: { client, ma
 | `create({ manifest, options })` | `POST /v1/sandboxes`, wait until `ready`, then one `workspace:hydrate` for `file`, `dir`, `local_file` and `local_dir` entries and a `git fetch` in the guest for each `git_repo` |
 | `exec` | `POST …/exec` |
 | `execCommand` (the shell tool) | a background `POST …/exec`, polled for up to `yieldTimeMs`; a command still running keeps a session ID |
-| `writeStdin` | polls that command's output. Writing input is refused: Gregale commands take no stdin yet |
+| `writeStdin` | writes `chars` to that command's stdin (`POST …/exec/{handle}/input`), then polls its output. An `execCommand` with `tty: true` runs on a terminal |
 | `readFile`, `listDir`, `pathExists`, `directoryExists`, `createEditor` | `…/files`, `…/files:list`, `…/files:stat`, `…/files:remove` inside `/workspace`; reads and existence checks outside it go through a command |
 | `persistWorkspace`, `hydrateWorkspace` | a tar built in the guest and downloaded; `…/workspace:hydrate` |
 | `session.persistSnapshot()` (Gregale only) | `…/workspace:persist`; create with `options.snapshotId` to start from it |
@@ -39,4 +39,4 @@ const result = await run(agent, 'Triage owner/name#42.', { sandbox: { client, ma
 
 ## Not supported yet
 
-Mount entries, manifest users, groups and path grants, a manifest `root` other than `/workspace`, `runAs` other than `app` or `root`, terminal (`tty`) commands, stdin, and core SDK snapshots (use `persistSnapshot` and `snapshotId`). Each fails at `create`, or at the call, with an error that names it.
+Mount entries, manifest users, groups and path grants, a manifest `root` other than `/workspace`, `runAs` other than `app` or `root`, `exec` with `tty` (use `execCommand`), and core SDK snapshots (use `persistSnapshot` and `snapshotId`). Each fails at `create`, or at the call, with an error that names it.

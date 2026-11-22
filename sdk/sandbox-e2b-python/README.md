@@ -22,7 +22,8 @@ with Sandbox.create(timeout=300, ports=[3000]) as sbx:  # GREGALE_API_KEY
 - Files inside `/workspace` use Gregale's files API; other paths go through commands and are capped at 256 KB.
 - The default network mode is `registries`; `allow_internet_access=False` is `none`.
 - A background command's `on_stdout`/`on_stderr` run while you `wait()` on it or iterate it.
-- Unsupported calls (`pty`, stdin, `files.watch_dir`, `pause`, MCP) raise `UnsupportedException` naming the call and the alternative.
+- `pty.create(PtySize(rows, cols))` starts a login shell on a terminal as a background command; `send_stdin`, `resize` and `kill` drive it, and its output comes from iterating the handle (the third item) or `handle.wait(on_pty=...)`. Background commands take input with `commands.send_stdin` and `close_stdin`; a foreground command takes none.
+- Unsupported calls (`files.watch_dir`, `pause`, MCP) raise `UnsupportedException` naming the call and the alternative.
 
 Gregale options: `network`, `ram_mb`, `lifetime`, `ports`, `port_visibility`, `snapshot_id`, `ready_timeout`, `api_base` (default `GREGALE_API_BASE`, then `https://api.gregale.dev`).
 
