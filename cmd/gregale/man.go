@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 )
@@ -466,12 +467,22 @@ func suggestCommand(query string) (string, bool) {
 
 // Accept prefiltered manifests so offline discovery never refreshes capabilities.
 func suggestCommandFrom(query string, completion, discoverable []cliCommand) (string, bool) {
-	const maxDist = 2
+	maxDist := 2
 	if query == "" {
 		return "", false
 	}
+	if concept, ok := topLevelConcepts[strings.ToLower(query)]; ok {
+		if slices.ContainsFunc(completion, func(c cliCommand) bool { return c.Name == concept }) {
+			return concept, true
+		}
+	}
 	if nested, ok := nestedVerbSuggestion(query, completion); ok {
 		return nested, true
+	}
+	// Two edits turn a two- or three-letter word into almost any short
+	// command: `pg` suggested app and `sql` dlq (prod hunt r25).
+	if len(query) <= 3 {
+		maxDist = 1
 	}
 	bestName := ""
 	bestDist := maxDist + 1
@@ -512,6 +523,14 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 		return "", false
 	}
 	return bestName, true
+}
+
+// topLevelConcepts maps a word for a product to the command that manages it,
+// where no typo distance finds it: `gregale db` and `database` suggested
+// nothing on prod rc.369.
+var topLevelConcepts = map[string]string{
+	"db": "postgres", "database": "postgres", "databases": "postgres",
+	"pg": "postgres", "postgresql": "postgres", "psql": "postgres", "sql": "postgres",
 }
 
 // nestedVerbSuggestion names the one tree command whose verb the query

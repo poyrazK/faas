@@ -18,6 +18,12 @@ func TestUnknownCommandSuggestsTreeNounForEarlierNounTypo(t *testing.T) {
 		// `bucket` (edit distance 2).
 		{"budget", "did you mean 'gregale billing budgets'?"},
 		{"budgets", "did you mean 'gregale billing budgets'?"},
+		// Prod hunt r25: database words named nothing, and two edits made
+		// `pg` suggest app and `sql` dlq.
+		{"db", "did you mean 'gregale postgres'?"},
+		{"database", "did you mean 'gregale postgres'?"},
+		{"pg", "did you mean 'gregale postgres'?"},
+		{"sql", "did you mean 'gregale postgres'?"},
 	} {
 		code, _, stderr := runCLI(t, tc.typed)
 		if code == 0 {
