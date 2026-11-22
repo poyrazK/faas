@@ -16344,6 +16344,7 @@ type SandboxSessionCapture struct {
 	MemBytes          int64
 	VmstateBytes      int64
 	HasBacking        bool
+	VolumeBackupID    pgtype.UUID
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	ConsumedAt        pgtype.Timestamptz
@@ -16388,6 +16389,30 @@ type SandboxTemplate struct {
 	ReadyTimeoutS int32
 	CreatedAt     pgtype.Timestamptz
 	UpdatedAt     pgtype.Timestamptz
+}
+
+type SandboxVolume struct {
+	SessionID      pgtype.UUID
+	AccountID      pgtype.UUID
+	NodeID         string
+	SizeGb         int32
+	LatestBackupID pgtype.UUID
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type SandboxVolumeBackup struct {
+	ID            pgtype.UUID
+	SessionID     pgtype.UUID
+	AccountID     pgtype.UUID
+	NodeID        string
+	Reason        string
+	State         string
+	SizeBytes     int64
+	DataChunks    int32
+	UploadedBytes int64
+	CreatedAt     pgtype.Timestamptz
+	DeletedAt     pgtype.Timestamptz
 }
 
 // ADR-20261027090013 step 7 persisted sandbox workspaces; agentd inserts, completes and deletes rows; apid reads them and sets delete_requested_at.
