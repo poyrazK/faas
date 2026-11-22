@@ -241,3 +241,21 @@ func TestPostgresRealTaskSealRejectsMigrationPrivilegeDrift(t *testing.T) {
 		})
 	}
 }
+
+func TestPostgresRealTaskCleanupObservation(t *testing.T) {
+	f := newTaskPostgresFixture(t)
+	ctx, r := t.Context(), f.resource
+	if _, _, err := f.service.ObserveDisposedTaskFixture(ctx, r.AccountID, r.RunID, r.AppID); err == nil {
+		t.Fatal("live fixture was accepted as disposed")
+	}
+	if err := f.service.Delete(ctx, r.AccountID, r.RunID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := f.service.ObserveDisposedTaskFixture(ctx, r.AccountID, r.RunID, uuid.NewString()); err == nil {
+		t.Fatal("disposal evidence was returned for a different migration app")
+	}
+	database, logins, err := f.service.ObserveDisposedTaskFixture(ctx, r.AccountID, r.RunID, r.AppID)
+	if err != nil || database || logins != 0 {
+		t.Fatalf("disposed fixture observation: database=%v logins=%d err=%v", database, logins, err)
+	}
+}

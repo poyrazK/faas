@@ -12654,6 +12654,7 @@
       "net_rx_valid",
       "net_tx_bytes",
       "net_tx_valid",
+      "node_id",
       "observed_at",
       "service_reply_pending",
       "updated_at"

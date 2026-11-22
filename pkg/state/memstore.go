@@ -117,6 +117,8 @@ type networkUsageCheckpoint struct {
 	internalTx        int64
 	internalTxValid   bool
 	internalTxPending int64
+	// nodeID is the node whose counters these are (ADR-20261122090000).
+	nodeID string
 }
 
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
@@ -20776,8 +20778,16 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 // counter checkpoint. MemStore's single mutex makes the checkpoint advance and
 // usage delta append one atomic operation.
 func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
-	tx, rx, _, err := m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	tx, rx, _, err := m.appendNetworkUsageObservation(appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
 	return tx, rx, err
+}
+
+// AppendNodeNetworkUsageObservation implements NodeNetworkObserver.
+func (m *MemStore) AppendNodeNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+	if internal != nil && *internal < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return m.appendNetworkUsageObservation(appID, instanceID, minute, reading, netTxCumulative, netTxValid, netRxCumulative, netRxValid, internal)
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
@@ -20786,10 +20796,10 @@ func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Cont
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
-	return m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+	return m.appendNetworkUsageObservation(appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
 }
 
-func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -20811,6 +20821,16 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	skip, fresh, node := networkReadingStep(checkpoint.nodeID, reading)
+	if skip {
+		return 0, 0, 0, nil
+	}
+	if fresh {
+		// Another node's counter: all of it is new usage.
+		checkpoint.netTxValid, checkpoint.netRxValid, checkpoint.internalTxValid = false, false, false
+		checkpoint.internalTxPending = 0
+	}
+	checkpoint.nodeID = node
 	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
