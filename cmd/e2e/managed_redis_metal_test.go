@@ -274,15 +274,38 @@ func TestManagedRedisHandoffSoakMetal(t *testing.T) {
 		for w.acked.Load() <= ackedBefore+3 && time.Now().Before(deadline) {
 			time.Sleep(time.Second)
 		}
-		acked := w.acked.Load()
-		if acked <= ackedBefore+3 {
+		if acked := w.acked.Load(); acked <= ackedBefore+3 {
 			f.h.DumpLogs(t)
 			t.Fatalf("handoff %d: writes did not resume within 3 min (acked %d before, %d now; last error %s)", i, ackedBefore, acked, w.lastError())
 		}
-		got := redisMetalDo(t, f, host, "GET soak", "GET marker", "INFO memory")
-		if got.status != http.StatusOK || len(got.Replies) != 3 {
-			f.h.DumpLogs(t)
-			t.Fatalf("handoff %d: read back: status=%d replies=%q err=%s", i, got.status, got.Replies, got.Error)
+		// The replaced VM is drained by schedd's reaper, up to about a
+		// reaper interval after the new deployment goes live; until then a
+		// new connection can still reach it, and it answers reads from its
+		// pre-handoff state (its writes stay paused). Read until the reply
+		// comes from the new VM (its maxmemory), then hold it to the
+		// acknowledged writes counted just before that read.
+		var got redisMetalReply
+		var acked int64
+		wantMax := "maxmemory:" + strconv.Itoa(memory<<20) + "\r\n"
+		liveAt := time.Now()
+		for {
+			acked = w.acked.Load()
+			got = redisMetalDo(t, f, host, "GET soak", "GET marker", "INFO memory")
+			if got.status != http.StatusOK || len(got.Replies) != 3 {
+				f.h.DumpLogs(t)
+				t.Fatalf("handoff %d: read back: status=%d replies=%q err=%s", i, got.status, got.Replies, got.Error)
+			}
+			if strings.Contains(got.Replies[2], wantMax) {
+				break
+			}
+			if time.Since(liveAt) > 3*time.Minute {
+				f.h.DumpLogs(t)
+				t.Fatalf("handoff %d: reads still reach a VM without maxmemory %d MB 3 min after the handoff went live: %s", i, memory, got.Replies[2])
+			}
+			time.Sleep(2 * time.Second)
+		}
+		if stale := time.Since(liveAt); stale > 5*time.Second {
+			t.Logf("handoff %d: reads reached the replaced VM for %s after the new deployment went live", i, stale.Round(time.Second))
 		}
 		counter, err := strconv.ParseInt(redisBulkString(got.Replies[0]), 10, 64)
 		if err != nil || counter < acked {
@@ -291,9 +314,6 @@ func TestManagedRedisHandoffSoakMetal(t *testing.T) {
 		}
 		if got.Replies[1] != "$4\r\nkept\r\n" {
 			t.Fatalf("handoff %d: marker key lost: %q", i, got.Replies[1])
-		}
-		if !strings.Contains(got.Replies[2], "maxmemory:"+strconv.Itoa(memory<<20)) {
-			t.Fatalf("handoff %d: maxmemory is not %d MB: %s", i, memory, got.Replies[2])
 		}
 		t.Logf("handoff %d/%d (%s %s) PASS: counter=%d acked=%d refused=%d elapsed=%s",
 			i, handoffs, method, path, counter, acked, w.refused.Load(), time.Since(started).Round(time.Second))
