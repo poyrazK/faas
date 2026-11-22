@@ -23018,8 +23018,16 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
-	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
 	return tx, rx, err
+}
+
+// AppendNodeNetworkUsageObservation implements NodeNetworkObserver.
+func (s *PgStore) AppendNodeNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+	if internal != nil && *internal < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, reading, netTxCumulative, netTxValid, netRxCumulative, netRxValid, internal)
 }
 
 // AppendNetworkUsageObservationExcludingInternal implements
@@ -23028,14 +23036,14 @@ func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Con
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
-	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
 }
 
 // appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
 // non-nil internal reading the egress it adds leaves out the internal bytes
 // (billing review R8-2). Financial usage evidence is append-only, so billed
 // egress is reduced before it is written, never after.
-func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -23059,15 +23067,27 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 	var previousTx, previousRx, previousInternal, internalPending int64
 	var previousTxValid, previousRxValid, previousInternalValid bool
+	var checkpointNode string
 	err = tx.QueryRow(ctx,
 		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
-		        internal_tx_bytes, internal_tx_valid, internal_tx_pending
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, node_id
 		   from meter_network_checkpoints
 		  where instance_id = $1
 		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
-		&previousInternal, &previousInternalValid, &internalPending)
+		&previousInternal, &previousInternalValid, &internalPending, &checkpointNode)
 	if err != nil {
 		return 0, 0, 0, err
+	}
+	// ADR-20261122090000: a departed reading from a node the checkpoint
+	// already left was applied before the switch; a live reading from another
+	// node is a new counter, all of it new usage.
+	skip, fresh, node := networkReadingStep(checkpointNode, reading)
+	if skip {
+		return 0, 0, 0, tx.Commit(ctx)
+	}
+	if fresh {
+		previousTxValid, previousRxValid, previousInternalValid = false, false, false
+		internalPending = 0
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -23121,16 +23141,17 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 
 	_, err = tx.Exec(ctx,
-		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at)
-		 values ($1, $2, $3, $4, $5, $6, now())
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at, node_id)
+		 values ($1, $2, $3, $4, $5, $6, now(), $7)
 		 on conflict (instance_id) do update
 		   set net_tx_bytes = excluded.net_tx_bytes,
 		       net_rx_bytes = excluded.net_rx_bytes,
 		       net_tx_valid = excluded.net_tx_valid,
 		       net_rx_valid = excluded.net_rx_valid,
 		       observed_at = excluded.observed_at,
+		       node_id = excluded.node_id,
 		       updated_at = now()`,
-		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
+		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC(), node)
 	if err != nil {
 		return 0, 0, 0, err
 	}
