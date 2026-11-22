@@ -29,8 +29,15 @@ func applicationAuthCLI() bool {
 // environment clones (fullclone.go) or environment branches (envbranch.go),
 // unless they are turned on.
 func visibleCliCommands() []cliCommand {
+	return visibleCliCommandsWith(realtimePreviewCLI())
+}
+
+// visibleCliCommandsWith is visibleCliCommands with the realtime preview's
+// visibility decided by the caller: discovery for a logged-in account shows
+// it when the account's capability view does (realtime_preview.go).
+func visibleCliCommandsWith(realtimePreview bool) []cliCommand {
 	auth, monetization := applicationAuthCLI(), monetizationCLI()
-	realtimePreview, fullClone := realtimePreviewCLI(), fullEnvironmentCloneCLI()
+	fullClone := fullEnvironmentCloneCLI()
 	branches, customRoles := environmentBranchCLI(), postgresCustomRolesCLI()
 	if auth && monetization && realtimePreview && fullClone && branches && customRoles {
 		return cliCommands
