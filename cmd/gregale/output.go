@@ -321,6 +321,8 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 	if tree, noun, ok := treeChoices(path); ok {
 		if typedNoun == noun {
 			// The verbs `<noun> --help` lists, which run under the noun typed.
+			// A noun spelled as today's command (`env`, `registry`) is not
+			// here: its dispatcher's verbs all still run under it.
 			command.Subcommands = tree.Subcommands
 		} else if _, treeVerb := findCliSubcommand(tree.Subcommands, got); treeVerb {
 			// A tree verb after today's noun (`alerts get`) runs only under
@@ -329,7 +331,9 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 			return 1
 		}
 	}
-	if suggestion, ok := suggestSubcommand(got, command); ok {
+	// The word typed is never its own suggestion: a dispatcher that does not
+	// run it lists its verbs instead.
+	if suggestion, ok := suggestSubcommand(got, command); ok && suggestion != got {
 		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
 		return 1
 	}
@@ -342,16 +346,19 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 // treeChoices returns the tree noun whose command is today's command path,
 // with its verbs as `<noun> --help` lists them. On prod rc.369 `cron
 // history` listed next, add, info, rm while `cron --help` lists create, get,
-// delete (ADR-20261026145832).
+// delete (ADR-20261026145832). `app` takes its slug before the verb, so its
+// dispatcher keeps its own choices.
 func treeChoices(path string) (cliCommand, string, bool) {
-	if strings.Contains(path, " ") {
+	if strings.Contains(path, " ") || path == appSlugFallback {
 		return cliCommand{}, "", false
 	}
 	for _, noun := range cliTreeNouns {
-		if cliTreeNounCommand(noun.Name) != path || !cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name) {
+		if noun.Name == appSlugFallback || noun.Name == path || cliTreeNounCommand(noun.Name) != path || !cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name) {
 			continue
 		}
-		tree, ok := newCliTreeDiscovery().treeCommand(noun)
+		// The offline view: an error path never waits on the API (H14-89).
+		discovery := cliTreeDiscoveryOf(offlineCapabilityView().discoverableCommands(visibleCliCommands()))
+		tree, ok := discovery.treeCommand(noun)
 		if !ok {
 			return cliCommand{}, "", false
 		}
