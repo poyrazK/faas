@@ -79,11 +79,23 @@ func TestPostgresGitSourceImagingMetadata(t *testing.T) {
 	}
 	artifacts := map[string]state.EnvironmentWorkloadSourceArtifact{}
 	for _, req := range requests {
-		artifacts[req.Resource] = state.EnvironmentWorkloadSourceArtifact{RevisionID: req.RevisionID, CommitSHA: req.CommitSHA, DefinitionDigest: req.DefinitionDigest, BuildID: req.BuildID, Path: t.TempDir() + "/source.tgz", SHA256: strings.Repeat("b", 64), Bytes: 512, LogPath: t.TempDir() + "/build.log"}
+		artifacts[req.Resource] = state.EnvironmentWorkloadSourceArtifact{RevisionID: req.RevisionID, CommitSHA: req.CommitSHA, DefinitionDigest: req.DefinitionDigest, BuildID: req.BuildID, Path: t.TempDir() + "/source.tgz", SHA256: strings.Repeat("b", 64), Bytes: 512, LogPath: t.TempDir() + "/build.log",
+			BuildRegistryScope: &[]string{"ghcr.io/acme/base"}}
 	}
 	candidates, err := store.PrepareEnvironmentGitOpsCandidates(ctx, lease, plan(), artifacts)
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("prepare: %+v %v", candidates, err)
+	}
+	// ADR-20261110210000 slice 3j-4: the candidate records the archive's
+	// build registry scope at insert, outside its frozen inputs.
+	var scope []string
+	var frozenMentionsScope bool
+	if err := pool.QueryRow(ctx, `SELECT coalesce(build_registry_scope, '{}'), environment_workload_runtime::text LIKE '%ghcr.io/acme/base%' FROM deployments WHERE id=$1`,
+		candidates[0].DeploymentID).Scan(&scope, &frozenMentionsScope); err != nil {
+		t.Fatal(err)
+	}
+	if len(scope) != 1 || scope[0] != "ghcr.io/acme/base" || frozenMentionsScope {
+		t.Fatalf("candidate scope = %v (in frozen inputs: %v), want [ghcr.io/acme/base] outside them", scope, frozenMentionsScope)
 	}
 	dep, err := store.DeploymentByID(ctx, candidates[0].DeploymentID)
 	if err != nil {

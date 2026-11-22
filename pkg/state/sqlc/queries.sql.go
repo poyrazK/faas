@@ -12941,7 +12941,7 @@ INSERT INTO deployments(app_id,scope,kind,image_digest,commit_sha,status,traffic
  source_path,source_root,source_sha256,source_bytes,source_url,log_path,revision,environment_workload_runtime,environment_workload_held,override_entrypoint,override_cmd,override_env,override_env_secrets,override_port,
  override_healthcheck,override_liveness_probe,override_readiness_probe,override_main_depends_on,sidecars,workflows,
  full_rootfs_allow_auto,full_rootfs_override,min_instances,release_command,release_command_shell,disable_startup_cpu_boost,
- rollback_on_5xx)
+ rollback_on_5xx,build_registry_scope)
 VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  nullif($6::text,''),$7::text,nullif($8::text,''),$9::bigint,nullif($10::text,''),$11::jsonb->'source_archive'->>'log_path',
  (SELECT coalesce(max(revision),0)+1 FROM deployments WHERE app_id=$1::uuid),$11::jsonb,
@@ -12960,22 +12960,26 @@ VALUES($1::uuid,$2::text,$3::text,$4::text,$5::text,'pending',0,true,
  (SELECT coalesce(array_agg(value ORDER BY position),ARRAY[]::text[]) FROM jsonb_array_elements_text(coalesce($11::jsonb->'deployment_inputs'->'release_command','[]'::jsonb)) WITH ORDINALITY AS elements(value,position)),
  coalesce(($11::jsonb->'deployment_inputs'->>'release_command_shell')::boolean,false),
  coalesce(($11::jsonb->'deployment_inputs'->>'disable_startup_cpu_boost')::boolean,false),
- coalesce(($11::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false))
+ coalesce(($11::jsonb->'deployment_inputs'->>'rollback_on_5xx')::boolean,false),
+ -- ADR-20261110210000 slice 3j-4: the reviewed archive's build registry
+ -- scope; NULL records none.
+ $12::text[])
 RETURNING id
 `
 
 type CreateEnvironmentGitOpsWorkloadCandidateParams struct {
-	AppID        pgtype.UUID
-	Scope        string
-	Kind         string
-	Image        string
-	CommitSha    string
-	SourcePath   string
-	SourceRoot   string
-	SourceSha256 string
-	SourceBytes  int64
-	SourceUrl    string
-	Runtime      []byte
+	AppID              pgtype.UUID
+	Scope              string
+	Kind               string
+	Image              string
+	CommitSha          string
+	SourcePath         string
+	SourceRoot         string
+	SourceSha256       string
+	SourceBytes        int64
+	SourceUrl          string
+	Runtime            []byte
+	BuildRegistryScope []string
 }
 
 func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, db DBTX, arg CreateEnvironmentGitOpsWorkloadCandidateParams) (pgtype.UUID, error) {
@@ -12991,6 +12995,7 @@ func (q *Queries) CreateEnvironmentGitOpsWorkloadCandidate(ctx context.Context, 
 		arg.SourceBytes,
 		arg.SourceUrl,
 		arg.Runtime,
+		arg.BuildRegistryScope,
 	)
 	var id pgtype.UUID
 	err := row.Scan(&id)
