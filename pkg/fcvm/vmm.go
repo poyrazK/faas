@@ -3926,6 +3926,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		return v.publishNativeSnapshot(l, spec, root, frozenDrivePath, capture)
 	}
 	timer.mark("freeze_drive")
+	if spec.whilePaused != nil {
+		// The guest is still paused: what the hook copies matches the
+		// snapshot's memory exactly (a fork's volume, ADR-20261122132055 §3).
+		if err := spec.whilePaused(); err != nil {
+			return SnapshotInfo{}, fmt.Errorf("vmm: while paused: %w", err)
+		}
+	}
 	if spec.ResumeBeforePublish {
 		// The snapshot files are complete once Firecracker returns from
 		// /snapshot/create. Shared OCI publication may take seconds and

@@ -3581,7 +3581,18 @@ message RunSandboxRequest {
     // pause_refused and keeps the VM. An older vmmd ignores it; agentd sends
     // one only for a persistent session.
     RunSandboxPause pause = 7;
+    // fork captures the running session without ending it
+    // (ADR-20261122132055 §3): vmmd answers forked, or fork_refused, and the
+    // session keeps running either way. An older vmmd ignores it; agentd
+    // sends one only once booted.
+    RunSandboxFork fork = 8;
   }
+}
+
+// RunSandboxFork names a fork's capture, a UUID agentd chose, kept under
+// storagekey.SandboxSessionSnapshotNamespace(account) like a pause's.
+message RunSandboxFork {
+  string capture_id = 1;
 }
 
 // RunSandboxPause names the capture: vmmd keeps it under
@@ -3668,6 +3679,10 @@ message RunSandboxStart {
   // volume_backup_interval_ms backs the volume up while the session runs,
   // reporting each backup as volume_backup. Zero: only pauses back it up.
   int64 volume_backup_interval_ms = 26;
+  // volume_source_sandbox_id is the session whose backup volume_backup_id
+  // is, for a fork (ADR-20261122132055 §3): the fork's volume starts as the
+  // source's at the fork's capture. Empty: the session's own.
+  string volume_source_sandbox_id = 27;
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -3801,7 +3816,24 @@ message RunSandboxEvent {
     // runs (ADR-20261122132055 §4). Sent only to a start with volume_gb, so
     // an older reader never sees one.
     RunSandboxVolumeBackup volume_backup = 14;
+    // forked and fork_refused answer fork; the VM keeps running.
+    RunSandboxForked forked = 15;
+    RunSandboxForkRefused fork_refused = 16;
   }
+}
+
+// RunSandboxForked is a fork's capture, published node-first like a pause's
+// and uploaded in the background with its volume backup.
+message RunSandboxForked {
+  AgentRunSnapshot snapshot = 1;
+  int64 vmstate_bytes = 2;
+  int64 fork_ms = 3;
+  bool has_backing = 4;
+  string volume_backup_id = 5;
+}
+
+message RunSandboxForkRefused {
+  string reason = 1;
 }
 
 // RunSandboxVolumeBackup is one stored backup of a session's volume.

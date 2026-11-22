@@ -1357,7 +1357,14 @@ message SandboxRunRequest {
     // pause captures a persistent session (ADR-20261122132055 §2); see
     // vmmd's RunSandboxPause. An older schedd ignores it.
     SandboxRunPause pause = 8;
+    // fork captures the running session without ending it
+    // (ADR-20261122132055 §3); see vmmd's RunSandboxFork.
+    SandboxRunFork fork = 9;
   }
+}
+
+message SandboxRunFork {
+  string capture_id = 1;
 }
 
 message SandboxRunPause {
@@ -1376,6 +1383,9 @@ message SandboxRunResume {
   // require_node: the capture is on node_id alone (durability node), so the
   // resume runs there or waits; schedd answers no capacity otherwise.
   bool require_node = 6;
+  // fork: the capture is another session's fork capture
+  // (ADR-20261122132055 §3); the session starts from it, whatever its kind.
+  bool fork = 7;
 }
 
 // SandboxRunStart is the session's machine, already checked against the
@@ -1436,6 +1446,9 @@ message SandboxRunStart {
   // backups only it held are gone, so vmmd restores the stored one.
   string volume_node_id = 23;
   string volume_stored_backup_id = 24;
+  // volume_source_sandbox_id is a fork's source, whose backup
+  // volume_backup_id is.
+  string volume_source_sandbox_id = 25;
 }
 
 // SandboxRunTask is a sandbox task, as vmmd's RunSandboxTask.
@@ -1527,7 +1540,25 @@ message SandboxRunEvent {
     // volume_backup relays vmmd's backup of the session's volume; sent
     // only to a start with volume_gb.
     SandboxRunVolumeBackup volume_backup = 15;
+    // forked and fork_refused relay vmmd's answers to fork.
+    SandboxRunForked forked = 16;
+    SandboxRunForkRefused fork_refused = 17;
   }
+}
+
+message SandboxRunForked {
+  string storage_key = 1;
+  string vmstate_storage_key = 2;
+  string fc_version = 3;
+  int64 mem_bytes = 4;
+  int64 vmstate_bytes = 5;
+  int64 fork_ms = 6;
+  bool has_backing = 7;
+  string volume_backup_id = 8;
+}
+
+message SandboxRunForkRefused {
+  string reason = 1;
 }
 
 message SandboxRunVolumeBackup {

@@ -267,6 +267,13 @@ func (v *SandboxVolumes) keepBackupBase(path, clone string, m volbackup.Manifest
 // for a session whose node copy is gone or older (ADR-20261122132055 §4).
 // The next backup compares with the restored volume.
 func (v *SandboxVolumes) RestoreBackup(ctx context.Context, store storage.StorageBackend, accountID, sandboxID, id string) (string, error) {
+	return v.RestoreBackupFrom(ctx, store, accountID, sandboxID, sandboxID, id)
+}
+
+// RestoreBackupFrom makes sandboxID's volume on this node backup id of
+// sourceID's volume: a fork's volume starts as its source's at the fork
+// (ADR-20261122132055 §3). The chunks are the account's, shared by both.
+func (v *SandboxVolumes) RestoreBackupFrom(ctx context.Context, store storage.StorageBackend, accountID, sourceID, sandboxID, id string) (string, error) {
 	if store == nil {
 		return "", errors.New("fcvm: sandbox volume restore needs a store")
 	}
@@ -274,7 +281,7 @@ func (v *SandboxVolumes) RestoreBackup(ctx context.Context, store storage.Storag
 	if err != nil {
 		return "", err
 	}
-	m, err := volbackup.ReadManifest(ctx, store, accountID, sandboxID, id)
+	m, err := volbackup.ReadManifest(ctx, store, accountID, sourceID, id)
 	if err != nil {
 		return "", err
 	}
