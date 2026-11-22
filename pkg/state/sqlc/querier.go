@@ -7283,6 +7283,9 @@ type Querier interface {
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBTX, arg RearmTenantStoredWorkflowSchedulesParams) error
+	// ADR-20261121203000: a displacement remembers the node the app came from
+	// (its home), keeps an older home across a chain of drains, and clears it
+	// when the app lands back on its home.
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
 	RecentAccountSessions(ctx context.Context, db DBTX, arg RecentAccountSessionsParams) ([]RecentAccountSessionsRow, error)
 	// ADR-20261107140000 §6: the key's most recent request with the same binding,

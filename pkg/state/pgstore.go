@@ -3750,7 +3750,7 @@ func (s *PgStore) ReassignAppOwner(ctx context.Context, appID, fromNodeID, toNod
 	}
 	tag, err := s.pool.Exec(ctx,
 		`update apps
-		    set node_id = $3, reassigned_at = now()
+		    set node_id = $3, reassigned_at = now(), owner_home_node_id = null
 		  where id = $1
 		    and node_id = $2
 		    and status in ('active', 'evicted_cold')`,
