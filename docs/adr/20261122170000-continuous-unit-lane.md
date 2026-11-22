@@ -352,4 +352,7 @@ summary and annotations (stopping commit, reason, commits waiting).
    preflight beside the build (done).
 4. Parallel activation (done); smoke check in place of the pre-done SLO
    hold.
-5. Owner turns on automatic deploys.
+5. Owner turns on automatic deploys, in the order of
+   [docs/runbooks/ContinuousUnitLane.md](../runbooks/ContinuousUnitLane.md).
+   An automatic deploy refuses to start until the critical smoke checks are
+   configured (the preflight's "Require the critical smoke checks" step).

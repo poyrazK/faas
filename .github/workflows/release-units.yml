@@ -588,6 +588,21 @@ jobs:
           }
           chmod 600 ~/.ssh/known_hosts
 
+      # An automatic deploy needs the critical smoke checks
+      # (ADR-20261122170000 §3a): without them cd-controlplane only warns, so
+      # a merge would reach production with no business-path check behind
+      # the activation. A dispatch (an owner's decision) may go without.
+      - name: Require the critical smoke checks for an automatic deploy
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          UNIT_SMOKE_API_KEY: ${{ secrets.UNIT_SMOKE_API_KEY }}
+          UNIT_SMOKE_APP: ${{ vars.UNIT_SMOKE_APP }}
+        run: |
+          if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then
+            echo "::error::automatic unit deploys need the critical smoke checks: set UNIT_SMOKE_API_KEY and UNIT_SMOKE_APP (tests/unit-smoke-app/README.md)" >&2
+            exit 1
+          fi
+
       - name: Wait until production can take the deploy
         id: preflight
         env:

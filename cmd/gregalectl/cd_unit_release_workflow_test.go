@@ -530,7 +530,13 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 			t.Errorf("release-units preflight must not have %q", forbidden)
 		}
 	}
-	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS", "deploy_preflight.py")
+	orderedIn(t, "release-units preflight", preflight, "Set up SSH", "COMPUTE_KNOWN_HOSTS",
+		// No automatic deploy without the critical smoke checks (ADR-20261122170000 §3a).
+		"- name: Require the critical smoke checks for an automatic deploy",
+		"if: github.event_name != 'workflow_dispatch'",
+		`if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then`,
+		"exit 1",
+		"deploy_preflight.py")
 	deploy := jobBlock(t, release, "deploy")
 	for _, required := range []string{"needs: [build, preflight]", "needs.preflight.outputs.go == 'true'"} {
 		if !strings.Contains(deploy, required) {
