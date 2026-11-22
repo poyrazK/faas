@@ -21,6 +21,12 @@ import (
 // CapEnforcementEnv selects off, shadow (the default) or on.
 const CapEnforcementEnv = "FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT"
 
+// CapNoticeWaiverEnv lets compute cap enforcement run without the cap notice
+// email when it is exactly 1 (ADR-20261025094915 amendment 2026-11-22). The
+// owner waives the warning while production has no customers and no internal
+// mail. A database reaching its ceiling is then held without an email.
+const CapNoticeWaiverEnv = "FAAS_MANAGED_POSTGRES_CAP_NOTICE_WAIVED"
+
 type CapEnforcementMode string
 
 const (

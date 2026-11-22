@@ -484,3 +484,29 @@ The other plans overage off default."):
   that turned overage off keeps it off; one that never chose now runs to twice
   its allowance and is billed for it. Billing stays behind the managed
   PostgreSQL charge policy, so nothing is charged while delivery is shadow.
+
+## Amendment 2026-11-22: the owner may waive the cap notice email before customers
+
+The owner decided on 2026-11-22 to turn compute caps `on` before the internal
+mail pilot runs in production. Production sends all other mail through Resend,
+and it has no customers yet.
+
+Until now, apid refused `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on` unless the
+cap notice email could be queued (bug hunt H88). That email goes only through
+the internal mail producer outbox.
+
+- `FAAS_MANAGED_POSTGRES_CAP_NOTICE_WAIVED=1` (exact) lets enforcement start
+  without that email. apid logs a warning at every start while it is waived.
+- A waived database reaching its ceiling is held as before
+  (`hold: compute_ceiling`), and the API and dashboard show it. No email
+  announces it.
+- The cap sweep still records its `allowance` and threshold events. Managed
+  PostgreSQL overage charges need those events (ADR-20261031110037).
+- A working notice path wins: with the cap outbox on, the waiver changes
+  nothing.
+- Plan-excess deletion keeps its own email requirement. The waiver does not
+  cover it.
+
+Remove the waiver once internal mail delivers the cap notice, or once cap
+notices have another delivery path. Until then, customers past their allowance
+are stopped without an email.
