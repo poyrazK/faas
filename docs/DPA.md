@@ -1,9 +1,5 @@
 # Data Processing Addendum (DPA)
 
-<!--
-  Maintainer notes (not shown to customers): docs/ops/legal-documents-operator-notes.md.
--->
-
 **Parties:** Gregale ("Processor") and the customer that accepted the
 Gregale Terms of Service ("Controller").
 **Effective:** from the date the Controller accepted the Terms of

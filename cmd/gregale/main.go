@@ -176,6 +176,12 @@ func run(args []string) (status int) {
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
+	previousTypedNoun := typedNoun
+	typedNoun = ""
+	if len(typed) > 0 {
+		typedNoun = typed[0]
+	}
+	defer func() { typedNoun = previousTypedNoun }()
 	args, err := rewriteCliTree(args)
 	if err != nil {
 		if errors.As(err, new(errFoldFlagRequired)) {

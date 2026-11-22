@@ -186,6 +186,9 @@ func TestCliTreeRewrite(t *testing.T) {
 		{"app list", "apps"},
 		{"app delete api --yes", "apps rm api --yes"},
 		{"app get api", "app api"},
+		// Prod hunt r26: `app show APP` reads like other nouns' show.
+		{"app show api --json", "app api --json"},
+		{"app show", "app show"},
 		{"app update api --ram 512", "app api --ram 512"},
 		{"app scale api --ram 512", "app api scale --ram 512"},
 		{"app api scale --ram 512", "app api scale --ram 512"},

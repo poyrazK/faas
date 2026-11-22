@@ -1,7 +1,5 @@
 # Sub-processors
 
-<!-- GENERATED — do not edit by hand; regenerate with `make subprocessor-md`. On-boarding checklist: subprocessor-onboarding.md. -->
-
 Gregale uses the sub-processors below to provide the service. Each one
 processes only the data listed in its row.
 

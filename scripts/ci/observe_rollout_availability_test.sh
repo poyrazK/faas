@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Hermetic tests for observe_rollout_availability.sh: curl is stubbed, so no
 # network is needed. The API answers 503 until STUB_API_READY_AFTER requests,
-# then 200.
+# then 200. The API requests listed in STUB_API_TIMEOUTS (comma-separated
+# request numbers) time out instead, as curl exit 28 with no answer.
 set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 observer="$repo_root/scripts/ci/observe_rollout_availability.sh"
@@ -16,6 +17,11 @@ url="${*: -1}"
 if [[ "$url" == *readyz* ]]; then
   n=$(( $(cat "$STUB_COUNT" 2>/dev/null || echo 0) + 1 ))
   echo "$n" > "$STUB_COUNT"
+  if [[ ",${STUB_API_TIMEOUTS:-}," == *",$n,"* ]]; then
+    printf '000\t3.001\t0.000\t0.000'
+    echo "curl: (28) Connection timed out after 3001 milliseconds" >&2
+    exit 28
+  fi
   if (( n > STUB_API_READY_AFTER )); then code=200; else code=503; fi
 else
   code=200
@@ -60,5 +66,23 @@ grep -q 'API readiness baseline failed; activation was not started' "$test_root/
   || fail "the refused baseline was not explained"
 [[ "$(run healthy 0 ROLLOUT_REQUIRE_API_BASELINE=true)" == 0 ]] \
   || fail "a healthy ordinary activation failed: $(cat "$test_root/healthy.out")"
+
+# 5. One timed-out baseline sample is retaken: the rollout starts, and the
+#    summary says so (rc.372 was refused twice on exactly this).
+[[ "$(run baseline-timeout 0 ROLLOUT_REQUIRE_API_BASELINE=true STUB_API_TIMEOUTS=1)" == 0 ]] \
+  || fail "a baseline with one timed-out sample refused the rollout: $(cat "$test_root/baseline-timeout.out")"
+grep -q 'api baseline retook 1 timed-out sample(s)' "$test_root/baseline-timeout.out" \
+  || fail "the retaken baseline sample was not reported: $(cat "$test_root/baseline-timeout.out")"
+grep -q 'inconclusive' "$test_root/baseline-timeout.out" \
+  && fail "a retaken baseline timeout left the rollout gate without a baseline"
+
+# 6. Timeouts past the retake budget still refuse the rollout.
+[[ "$(run baseline-timeouts 0 ROLLOUT_REQUIRE_API_BASELINE=true STUB_API_TIMEOUTS=1,2,3)" == 1 ]] \
+  || fail "a baseline with three timed-out samples (budget 2) started the rollout"
+grep -q 'API readiness baseline failed; activation was not started' "$test_root/baseline-timeouts.out" \
+  || fail "the refused baseline was not explained"
+[[ "$(run baseline-no-retake 0 ROLLOUT_REQUIRE_API_BASELINE=true ROLLOUT_BASELINE_TIMEOUT_BUDGET=0 STUB_API_TIMEOUTS=1)" == 1 ]] \
+  || fail "a timed-out baseline sample was retaken with a zero budget"
+[[ "$(run bad-budget 0 ROLLOUT_BASELINE_TIMEOUT_BUDGET=-1)" == 2 ]] || fail "ROLLOUT_BASELINE_TIMEOUT_BUDGET=-1 was accepted"
 
 echo "observe_rollout_availability tests passed"

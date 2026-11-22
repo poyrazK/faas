@@ -70,6 +70,9 @@ class Outcome:
     code: int  # PASS or BREACH (an inconclusive watch also fails the run)
     report: str
     rolled_back: bool = False
+    # The control plane's known-good host-configuration commit, when a breach
+    # must converge the roles back to it (ADR-20261122170000).
+    host_config_rollback_to: str = ""
 
 
 @dataclass
@@ -153,6 +156,8 @@ class Watch:
     def follow(self, record: dict) -> tuple[int, str]:
         """Run the remote watch to its end; return (outcome, why)."""
         commits = [c for h in record["hosts"].values() for c in h.get("commits", [])]
+        if record.get("host_config"):
+            commits.append(record["host_config"]["current"])
         proc = self.shell.start(["watch"])
         reader = threading.Thread(target=self._read, args=(proc,), daemon=True)
         reader.start()
@@ -258,13 +263,20 @@ class Watch:
                                            f"{(record or {}).get('owner_run')} took the watch over before the "
                                            f"rollback; its watch judges the same releases.\n\n{why}\n")
         results = self.rollback(record)
+        hc = record.get("host_config") or {}
+        config_to = hc["known_good"] if hc and hc.get("current") != hc.get("known_good") else ""
+        if config_to:
+            # The binaries are back; the converge job that follows this watch
+            # puts the roles back (cd-unit-watch restore-host-config).
+            results.append(("host configuration", f"roles converge back to `{config_to[:12]}` next "
+                            f"(from `{hc['current'][:12]}`)"))
         code, _, err = self.shell.ud(["watch-close"])
         closed = "" if code == 0 else f"\n\nClosing the watch record failed: {err.strip()}"
         report = ("## Post-deploy watch: automatic rollback\n\n"
                   f"**Breach** after {minutes} min: {why}\n\nRolled back, newest change first:\n\n"
                   + "\n".join(f"- {host}: {result}" for host, result in results)
                   + f"\n\nWhat the record held:\n\n{hosts}\nRun: {self.run_url}{closed}\n")
-        return Outcome(BREACH, report, rolled_back=True)
+        return Outcome(BREACH, report, rolled_back=True, host_config_rollback_to=config_to)
 
     @staticmethod
     def describe(record: dict) -> str:
@@ -274,6 +286,9 @@ class Watch:
             lines.append(f"- {host}: known-good `{e['known_good'][:12]}`, active `{e['current'][:12]}`, "
                          f"{len(e['releases'])} unwatched release(s), services {', '.join(e['services'])}, "
                          f"commits {', '.join(c[:12] for c in e.get('commits', [])) or '-'}")
+        hc = record.get("host_config")
+        if hc:
+            lines.append(f"- host configuration: known-good `{hc['known_good'][:12]}`, converged `{hc['current'][:12]}`")
         return "\n".join(lines) + "\n"
 
 
@@ -316,6 +331,10 @@ def main(argv: list[str]) -> int:
         with open(args.summary, "a", encoding="utf-8") as f:
             f.write(outcome.report)
     print(outcome.report)
+    output = os.environ.get("GITHUB_OUTPUT", "")
+    if output:
+        with open(output, "a", encoding="utf-8") as f:
+            f.write(f"host_config_rollback_to={outcome.host_config_rollback_to}\n")
     if outcome.rolled_back:
         pause(gh, "Automatic deploys paused: post-deploy watch rolled back", outcome.report)
     return 0 if outcome.code == PASS and not failed else 1

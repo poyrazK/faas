@@ -16,8 +16,18 @@ func TestHostConfigConvergesBeforeTheUnitsAndOnlyChangedRoles(t *testing.T) {
 	workflow := readWorkflow(t, "cd-controlplane.yml")
 	job := jobBlock(t, workflow, "converge-host-config")
 	units := jobBlock(t, workflow, "deploy-units")
-	if !strings.Contains(job, "if: github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'") {
+	if !strings.Contains(job, "github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'") {
 		t.Error("host configuration runs for the control-plane lane of a unit release only")
+	}
+	// Skipped only on release-units' explicit "no role changed" verdict
+	// (ADR-20261122170000); a rollback always runs.
+	if !strings.Contains(job, "&& (inputs.host_config_changed != 'false' || inputs.host_config_rollback_to != '')") {
+		t.Error("host configuration may skip only on host_config_changed == 'false' and never on a rollback")
+	}
+	release := readWorkflow(t, "release-units.yml")
+	if !strings.Contains(jobBlock(t, release, "deploy"), "host_config_changed: ${{ needs.build.outputs.host_config }}") ||
+		!strings.Contains(release, `echo "host_config=$(jq -r '.host_config | (.group == null) or ((.roles | length) > 0) or .all' "$OUT_DIR/report.json")"`) {
+		t.Error("release-units must pass its host-role verdict, true unless the host view names the group and no role changed")
 	}
 	if !strings.Contains(units, "needs: [converge-host-config]") ||
 		!strings.Contains(units, "needs.converge-host-config.result == 'success' || needs.converge-host-config.result == 'skipped'") {

@@ -27,7 +27,7 @@ func TestAppSettingsReceiptWarnsThatMemoryNeedsARestart(t *testing.T) {
 			out, restore := main.CaptureStdout(t)
 			defer restore()
 			main.PrintAppSettingsReceipt("shop", tc.env, tc.request)
-			got := strings.Contains(out.String(), "app shop restart")
+			got := strings.Contains(out.String(), "app restart shop")
 			if got != tc.want {
 				t.Fatalf("restart advice present = %v, want %v:\n%s", got, tc.want, out.String())
 			}

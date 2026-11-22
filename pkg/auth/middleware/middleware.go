@@ -861,12 +861,12 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 				noteAccount(r, key.AccountID)
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
-					api.WriteProblem(w, api.ErrAPIKeyExpired())
+					api.WriteProblem(w, api.ErrDeployTokenExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
 					setBearerChallenge(w, "invalid_token")
-					api.WriteProblem(w, api.ErrAPIKeyRevoked())
+					api.WriteProblem(w, api.ErrDeployTokenRevoked())
 					return
 				}
 				if !errors.Is(err, state.ErrNotFound) {

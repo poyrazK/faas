@@ -79,11 +79,14 @@ bash -n "$test_root/activate.sh" || fail "activation script does not parse"
 for want in \
   "$stage/bin/deployctl unit-overlay --release-id 0123456789abcdef0123456789abcdef01234567 --expect-current 00000000000000000000000000000000000000b0 --commit 1111111111111111111111111111111111111111" \
   "bin/apid=$stage/bin/apid" \
-  "/opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
+  "DEPLOYCTL_RESTART_PARALLEL=$(jq -r .activation.parallel "$repo_root/scripts/ci/release_units.json") /opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
   "unit-release-verify.sh /opt/faas/releases/0123456789abcdef0123456789abcdef01234567 apid=http://127.0.0.1:9101/readyz \\?apid-clone-worker" \
   "$stage/bin/deployctl rollback --only 'apid,meterd' --expect-current 0123456789abcdef0123456789abcdef01234567 --to 00000000000000000000000000000000000000b0"; do
   grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
 done
+# Parallel activation is for the deploy; the rollback restarts one at a time.
+[[ "$(grep -c DEPLOYCTL_RESTART_PARALLEL "$test_root/activate.sh")" == 1 ]] \
+  || fail "only the deploy may restart in parallel: $(cat "$test_root/activate.sh")"
 
 # 1. (cont.) In a workflow run the script names the run as the actor in the
 #    release history deployctl writes (issue #574); outside one it names none.
