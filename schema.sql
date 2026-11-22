@@ -61679,6 +61679,7 @@ CREATE TABLE public.sandbox_session_captures (
     fc_version text NOT NULL,
     mem_bytes bigint NOT NULL,
     vmstate_bytes bigint DEFAULT 0 NOT NULL,
+    has_backing boolean DEFAULT false NOT NULL,
     state text DEFAULT 'live'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     consumed_at timestamp with time zone,

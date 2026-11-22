@@ -2229,6 +2229,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// sessions start from, this node's artifact store.
 		WithExecutionFileStorage(storageBackend).
 		WithSandboxWorkspaces(storageBackend)
+	// ADR-20261122132055 §2: pause captures a restart left on this node alone
+	// reach the shared store.
+	go impl.PublishPendingSandboxCaptures(ctx)
 	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
 	// give-back of their memory to tenants.
 	borrowedBuilders := vmmdgrpc.NewBorrowedBuilders(builderslots.NewReader(), ops.Registry(), log)

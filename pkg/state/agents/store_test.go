@@ -64,6 +64,17 @@ func open(t *testing.T) *pgxpool.Pool {
 			t.Fatalf("apply %s: %v", name, err)
 		}
 	}
+	// Persistent sessions (ADR-20261122132055): the first is NO TRANSACTION,
+	// so each runs statement by statement as goose runs it.
+	for _, name := range []string{"20261122132055100_sandbox_sessions_persistent.sql", "20261122160000100_sandbox_session_captures.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := pgtest.ExecMigration(ctx, t, pool, string(raw), true); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO accounts VALUES ($1), ($2)`, account, other); err != nil {
 		t.Fatal(err)
 	}

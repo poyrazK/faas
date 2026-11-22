@@ -1635,7 +1635,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   sb.state, sb.kind, coalesce(sb.vcpu, 0)::integer AS vcpu,
   coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
-  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id
+  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
+  coalesce(sb.durability, '')::text AS durability
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
@@ -1678,6 +1679,7 @@ type GetSandboxSessionClaimRow struct {
 	CaptureFcVersion         string
 	CaptureMemBytes          int64
 	CaptureNodeID            string
+	Durability               string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1716,6 +1718,7 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.CaptureFcVersion,
 		&i.CaptureMemBytes,
 		&i.CaptureNodeID,
+		&i.Durability,
 	)
 	return i, err
 }
@@ -2973,6 +2976,50 @@ func (q *Queries) ListLiveAgentGitHubSubscriptions(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listNodeOnlySandboxCaptures = `-- name: ListNodeOnlySandboxCaptures :many
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing
+  FROM sandbox_session_captures cap JOIN sandbox_sessions sb ON sb.id=cap.session_id
+ WHERE cap.state='live' AND sb.state='paused' AND sb.durability='node'
+ ORDER BY cap.created_at, cap.id LIMIT $1::integer
+`
+
+type ListNodeOnlySandboxCapturesRow struct {
+	ID                string
+	SessionID         string
+	StorageKey        string
+	VmstateStorageKey string
+	HasBacking        bool
+}
+
+// Live captures of paused sessions the shared store may not hold yet
+// (durability node): agentd checks each and marks it remote once it does
+// (ADR-20261122132055 §2).
+func (q *Queries) ListNodeOnlySandboxCaptures(ctx context.Context, db DBTX, maxRows int32) ([]ListNodeOnlySandboxCapturesRow, error) {
+	rows, err := db.Query(ctx, listNodeOnlySandboxCaptures, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListNodeOnlySandboxCapturesRow{}
+	for rows.Next() {
+		var i ListNodeOnlySandboxCapturesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.StorageKey,
+			&i.VmstateStorageKey,
+			&i.HasBacking,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSandboxPorts = `-- name: ListSandboxPorts :many
 SELECT p.port, p.visibility, p.created_at FROM sandbox_ports p
  WHERE p.sandbox_id=$1::text::uuid AND p.account_id=$2::text::uuid ORDER BY p.port
@@ -3755,15 +3802,36 @@ func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const markSandboxCaptureRemote = `-- name: MarkSandboxCaptureRemote :execrows
+UPDATE sandbox_sessions sb SET durability='remote', updated_at=now()
+ WHERE sb.id=$1::text::uuid AND sb.state='paused' AND sb.durability='node'
+ AND EXISTS (SELECT 1 FROM sandbox_session_captures cap
+   WHERE cap.id=$2::text::uuid AND cap.session_id=sb.id AND cap.state='live')
+`
+
+type MarkSandboxCaptureRemoteParams struct {
+	SessionID string
+	CaptureID string
+}
+
+func (q *Queries) MarkSandboxCaptureRemote(ctx context.Context, db DBTX, arg MarkSandboxCaptureRemoteParams) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxCaptureRemote, arg.SessionID, arg.CaptureID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markSandboxSessionPaused = `-- name: MarkSandboxSessionPaused :execrows
 WITH session AS (
   SELECT id, account_id FROM sandbox_sessions
    WHERE id=$2::text::uuid AND lease_token=$3::text AND state='pausing'
 ), capture AS (
   INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
-    mem_bytes, vmstate_bytes)
+    mem_bytes, vmstate_bytes, has_backing)
   SELECT $4::text::uuid, id, account_id, $5::text, $6::text,
-    $7::text, $8::text, $9::bigint, $10::bigint
+    $7::text, $8::text, $9::bigint, $10::bigint,
+    $11::boolean
   FROM session
   RETURNING session_id
 )
@@ -3784,6 +3852,7 @@ type MarkSandboxSessionPausedParams struct {
 	FcVersion         string
 	MemBytes          int64
 	VmstateBytes      int64
+	HasBacking        bool
 }
 
 // The VM is captured and gone: the session keeps its capture, holds no lease
@@ -3800,6 +3869,7 @@ func (q *Queries) MarkSandboxSessionPaused(ctx context.Context, db DBTX, arg Mar
 		arg.FcVersion,
 		arg.MemBytes,
 		arg.VmstateBytes,
+		arg.HasBacking,
 	)
 	if err != nil {
 		return 0, err

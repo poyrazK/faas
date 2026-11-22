@@ -4,7 +4,9 @@
 -- resume restored it (a capture is used once), and deletes the objects of a
 -- consumed capture, or of any capture of a session that ended, before it
 -- removes the row. At most one capture of a session is live. The previous
--- release never reads the table.
+-- release never reads the table. A capture is written to its node first and
+-- uploaded after; agentd marks the session's durability remote once the
+-- shared store holds all of it.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS sandbox_session_captures (
@@ -17,6 +19,9 @@ CREATE TABLE IF NOT EXISTS sandbox_session_captures (
  fc_version text NOT NULL CHECK (fc_version <> ''),
  mem_bytes bigint NOT NULL CHECK (mem_bytes > 0),
  vmstate_bytes bigint NOT NULL DEFAULT 0 CHECK (vmstate_bytes >= 0),
+ -- has_backing: vmmd wrote the capture's ADR-510 backing identity, so the
+ -- shared store's copy is complete (durability remote) only with it.
+ has_backing boolean NOT NULL DEFAULT false,
  state text NOT NULL DEFAULT 'live' CHECK (state IN ('live','consumed')),
  created_at timestamptz NOT NULL DEFAULT now(),
  consumed_at timestamptz,

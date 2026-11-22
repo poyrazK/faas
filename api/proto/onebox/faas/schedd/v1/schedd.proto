@@ -1335,6 +1335,9 @@ message SandboxRunResume {
   string fc_version = 3;
   int64 mem_bytes = 4;
   string node_id = 5;
+  // require_node: the capture is on node_id alone (durability node), so the
+  // resume runs there or waits; schedd answers no capacity otherwise.
+  bool require_node = 6;
 }
 
 // SandboxRunStart is the session's machine, already checked against the
@@ -1481,6 +1484,7 @@ message SandboxRunPaused {
   int64 mem_bytes = 4;
   int64 vmstate_bytes = 5;
   int64 pause_ms = 6;
+  bool has_backing = 7;
 }
 
 message SandboxRunPauseRefused {

@@ -3779,6 +3779,11 @@ message RunSandboxPaused {
   AgentRunSnapshot snapshot = 1;
   int64 vmstate_bytes = 2;
   int64 pause_ms = 3;
+  // has_backing: the capture's backing identity (ADR-510) was written, so
+  // the shared store's copy is complete only with it. The capture is on this
+  // node now and reaches the shared store in the background
+  // (ADR-20261122132055 §2).
+  bool has_backing = 4;
 }
 
 message RunSandboxPauseRefused {

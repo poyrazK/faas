@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -29,23 +30,46 @@ const testCaptureID = "0b6f5c6e-3b0a-4f43-9a55-2f6c1b9d7e10"
 // keeping the VM when keep is set.
 type pausingVMM struct {
 	*sandboxRunVMM
-	fail, keep bool
-	pauses     []fcvm.SandboxPause
+	fail, keep   bool
+	pauses       []fcvm.SandboxPause
+	publishFails int
+	published    []string
 }
 
-func (v *pausingVMM) PauseSandbox(_ context.Context, p fcvm.SandboxPause) (*fcvm.Snapshot, fcvm.SnapshotInfo, bool, error) {
+func (v *pausingVMM) PauseSandbox(_ context.Context, p fcvm.SandboxPause) (fcvm.SandboxPaused, bool, error) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.pauses = append(v.pauses, p)
 	if v.frozen {
-		return nil, fcvm.SnapshotInfo{}, true, fcvm.ErrInstanceFrozen
+		return fcvm.SandboxPaused{}, true, fcvm.ErrInstanceFrozen
 	}
 	if v.fail {
-		return nil, fcvm.SnapshotInfo{}, v.keep, errors.New("capture failed")
+		return fcvm.SandboxPaused{}, v.keep, errors.New("capture failed")
 	}
 	mem := state.SnapshotCaptureMemKey(storagekey.SandboxSessionSnapshotNamespace(p.AccountID), "", p.CaptureID)
-	return &fcvm.Snapshot{StorageKey: mem, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: mem}),
-		FCVersion: "1.10.0", MemBytes: 1 << 30}, fcvm.SnapshotInfo{MemBytes: 1 << 30, VMStateBytes: 40_000}, false, nil
+	return fcvm.SandboxPaused{Snapshot: &fcvm.Snapshot{StorageKey: mem, VMStateStorageKey: state.SnapshotVMStateKey(state.Snapshot{StorageKey: mem}),
+		FCVersion: "1.10.0", MemBytes: 1 << 30}, Info: fcvm.SnapshotInfo{MemBytes: 1 << 30, VMStateBytes: 40_000}, HasBacking: true}, false, nil
+}
+
+// PublishSandboxCapture fails v.publishFails times, then records the
+// upload (ADR-20261122132055 §2).
+func (v *pausingVMM) PublishSandboxCapture(_ context.Context, memKey string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.publishFails > 0 {
+		v.publishFails--
+		return errors.New("store unavailable")
+	}
+	v.published = append(v.published, memKey)
+	return nil
+}
+
+func (v *pausingVMM) PublishPendingSandboxCaptures(context.Context) (int, error) { return 0, nil }
+
+func (v *pausingVMM) uploads() []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return append([]string(nil), v.published...)
 }
 
 func pauseFrame(id string) *vmmdpb.RunSandboxRequest {
@@ -66,7 +90,7 @@ func TestRunSandboxPausesAFrozenVMAndEndsTheStream(t *testing.T) {
 	ev := recvUntil(t, stream, func(ev *vmmdpb.RunSandboxEvent) bool { return ev.GetPaused() != nil })
 	snap := ev.GetPaused().GetSnapshot()
 	if !storagekey.IsSandboxSessionSnapshotKey(snap.GetStorageKey(), "acct-1") || snap.GetFcVersion() != "1.10.0" ||
-		snap.GetMemBytes() != 1<<30 || ev.GetPaused().GetVmstateBytes() != 40_000 {
+		snap.GetMemBytes() != 1<<30 || ev.GetPaused().GetVmstateBytes() != 40_000 || !ev.GetPaused().GetHasBacking() {
 		t.Fatalf("paused = %v", ev.GetPaused())
 	}
 	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
@@ -77,6 +101,34 @@ func TestRunSandboxPausesAFrozenVMAndEndsTheStream(t *testing.T) {
 	}
 	if p := vmm.pauses; len(p) != 1 || p[0].Instance != "sbx-vm" || p[0].SandboxID != "sbx-1" || p[0].AccountID != "acct-1" || p[0].CaptureID != testCaptureID {
 		t.Fatalf("pauses = %+v", p)
+	}
+	// The capture reaches the shared store in the background, after the
+	// stream ended.
+	waitUntil(t, func() bool { return len(vmm.uploads()) == 1 })
+	if vmm.uploads()[0] != snap.GetStorageKey() {
+		t.Fatalf("uploaded %v", vmm.uploads())
+	}
+}
+
+func TestRunSandboxRetriesAFailedCaptureUpload(t *testing.T) {
+	vmm := &pausingVMM{sandboxRunVMM: newSandboxRunVMM(), publishFails: 1}
+	cli := newSandboxRunClient(t, vmm, true)
+	stream := bootSandbox(t, cli)
+	if err := stream.Send(pauseFrame(testCaptureID)); err != nil {
+		t.Fatal(err)
+	}
+	recvUntil(t, stream, func(ev *vmmdpb.RunSandboxEvent) bool { return ev.GetPaused() != nil })
+	waitUntil(t, func() bool { return len(vmm.uploads()) == 1 })
+}
+
+func waitUntil(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("timed out")
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

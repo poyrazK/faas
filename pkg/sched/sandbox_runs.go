@@ -68,9 +68,14 @@ type SandboxAdmission struct {
 }
 
 // SandboxResume is a paused session's capture and the node it was taken on.
+// RequireNode: the capture is on that node alone (durability node), so the
+// resume runs there or is refused for capacity and tried again. A node that
+// left the agent pool cannot hold it any more: the resume then goes anywhere
+// and cold-boots when the restore finds no capture.
 type SandboxResume struct {
-	Snapshot AgentRunSnapshot
-	NodeID   string
+	Snapshot    AgentRunSnapshot
+	NodeID      string
+	RequireNode bool
 }
 
 // SandboxPaused is vmmd's answer to a pause: the published capture.
@@ -78,6 +83,8 @@ type SandboxPaused struct {
 	Snapshot     AgentRunSnapshot
 	VMStateBytes int64
 	PauseMs      int64
+	// HasBacking: the capture's backing identity was written (ADR-510).
+	HasBacking bool
 }
 
 // SandboxTask is a sandbox task as vmmd runs it.
@@ -308,6 +315,11 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		// The capture's node has it in its cache; any node restores it from
 		// the shared store (ADR-20261122132055 §2).
 		req.PreferredNodeIDs = []string{a.Resume.NodeID}
+		if a.Resume.RequireNode && !r.poolNodeActive(ctx, a.Resume.NodeID) {
+			resume := *a.Resume
+			resume.RequireNode = false
+			a.Resume = &resume
+		}
 	}
 	placement, release, err := r.admit(ctx, req)
 	if err != nil {
@@ -335,6 +347,12 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		Browser: a.Browser, Task: a.Task,
 		EgressAllow: a.EgressAllow, EgressDeny: a.EgressDeny, WebDomainLog: a.WebDomainLog}
 	if a.Resume != nil {
+		if a.Resume.RequireNode && placement.NodeID != a.Resume.NodeID {
+			// Only that node holds the capture until its upload lands
+			// (ADR-20261122132055 §2).
+			return api.NewProblem(503, api.CodeCapacity, "Capture node busy",
+				"the paused session's capture is only on node "+a.Resume.NodeID+", which has no room now")
+		}
 		snap := a.Resume.Snapshot
 		spec.Snapshot, spec.SessionCapture = &snap, true
 		// A resumed session is never a warm capture's proof, and its capture
@@ -384,7 +402,8 @@ func (a SandboxAdmission) validate() error {
 		ramMax, vcpuMax = api.SandboxPersistentRAMMBMax[idx], api.SandboxPersistentVCPUMax[idx]
 	}
 	switch {
-	case a.Resume != nil && (!a.Persistent || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == ""):
+	case a.Resume != nil && (!a.Persistent || a.WorkspaceKey != "" || a.Task != nil || a.Resume.Snapshot.StorageKey == "" ||
+		a.Resume.RequireNode && a.Resume.NodeID == ""):
 		return &AgentRunInvalidError{Reason: "only a persistent session resumes, from its capture and without a workspace archive or task"}
 	case a.Persistent && api.SandboxPersistentMax[idx] == 0:
 		return &AgentRunInvalidError{Reason: fmt.Sprintf("the %s plan has no persistent sessions", a.Plan)}
@@ -558,7 +577,7 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 				s := p.GetSnapshot()
 				err = hooks.Paused(ctx, SandboxPaused{Snapshot: AgentRunSnapshot{StorageKey: s.GetStorageKey(),
 					VMStateStorageKey: s.GetVmstateStorageKey(), FCVersion: s.GetFcVersion(), MemBytes: s.GetMemBytes()},
-					VMStateBytes: p.GetVmstateBytes(), PauseMs: p.GetPauseMs()})
+					VMStateBytes: p.GetVmstateBytes(), PauseMs: p.GetPauseMs(), HasBacking: p.GetHasBacking()})
 			}
 		case event.GetPauseRefused() != nil:
 			if hooks.PauseRefused != nil {
@@ -635,4 +654,10 @@ func sandboxTaskToProto(t *SandboxTask) *vmmdpb.RunSandboxTask {
 	}
 	return &vmmdpb.RunSandboxTask{Kind: t.Kind, Url: t.URL, MaxChars: int32(t.MaxChars), TimeoutMs: t.Timeout.Milliseconds(),
 		MaxOutputBytes: t.MaxOutputBytes}
+}
+
+// poolNodeActive reports whether nodeID is an active node of the agent pool.
+func (r *AgentRunner) poolNodeActive(ctx context.Context, nodeID string) bool {
+	n, ok := r.engine.breakerNode(ctx, nodeID)
+	return ok && n.Active && (r.pool[n.ID] || r.pool[n.Name])
 }

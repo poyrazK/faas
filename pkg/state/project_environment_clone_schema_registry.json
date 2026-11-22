@@ -18561,6 +18561,7 @@
       "consumed_at",
       "created_at",
       "fc_version",
+      "has_backing",
       "id",
       "mem_bytes",
       "node_id",

@@ -605,6 +605,8 @@ func (c *LocalCacheBackend) Put(ctx context.Context, key string, r io.Reader) er
 	}
 	keep = true
 	_ = os.Remove(path + ".generation")
+	// The parent holds this write, so it is no longer local-only.
+	_ = os.Remove(path + localOnlySuffix)
 	_ = os.Chmod(path, 0o644)
 	if err := os.WriteFile(metaPath, []byte(c.parentKey(key)), 0o644); err != nil {
 		// Sidecar failure is non-fatal but degrades List.
@@ -1239,6 +1241,7 @@ func (c *LocalCacheBackend) evictCache(key string) {
 	if err := os.Remove(path + ".generation"); err != nil && !errors.Is(err, os.ErrNotExist) {
 		_ = err
 	}
+	_ = os.Remove(path + localOnlySuffix)
 }
 
 // enforceBudgetLocked walks the cache directory, sums allocated filesystem
@@ -1436,7 +1439,7 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 			if f.IsDir() {
 				continue
 			}
-			if strings.HasSuffix(f.Name(), ".meta") || strings.HasSuffix(f.Name(), ".generation") {
+			if strings.HasSuffix(f.Name(), ".meta") || strings.HasSuffix(f.Name(), ".generation") || strings.HasSuffix(f.Name(), localOnlySuffix) {
 				continue
 			}
 			info, err := f.Info()
@@ -1452,12 +1455,14 @@ func (c *LocalCacheBackend) snapshotCacheLocked() ([]cacheEntry, error) {
 				continue
 			}
 			_, generationErr := os.Stat(path + ".generation")
+			// A local-only entry (cache_local_only.go) has no other copy.
+			_, localErr := os.Stat(path + localOnlySuffix)
 			out = append(out, cacheEntry{
 				key:     string(metaBytes),
 				path:    path,
 				size:    cacheDiskUsage(info),
 				modTime: info.ModTime(),
-				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)),
+				pinned:  generationErr == nil && !c.parentLocalArtifactExists(string(metaBytes)) || localErr == nil,
 			})
 		}
 	}

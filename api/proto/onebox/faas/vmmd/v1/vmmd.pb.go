@@ -16488,10 +16488,15 @@ func (*RunSandboxEvent_Paused) isRunSandboxEvent_Frame() {}
 func (*RunSandboxEvent_PauseRefused) isRunSandboxEvent_Frame() {}
 
 type RunSandboxPaused struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Snapshot      *AgentRunSnapshot      `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
-	VmstateBytes  int64                  `protobuf:"varint,2,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
-	PauseMs       int64                  `protobuf:"varint,3,opt,name=pause_ms,json=pauseMs,proto3" json:"pause_ms,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Snapshot     *AgentRunSnapshot      `protobuf:"bytes,1,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	VmstateBytes int64                  `protobuf:"varint,2,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
+	PauseMs      int64                  `protobuf:"varint,3,opt,name=pause_ms,json=pauseMs,proto3" json:"pause_ms,omitempty"`
+	// has_backing: the capture's backing identity (ADR-510) was written, so
+	// the shared store's copy is complete only with it. The capture is on this
+	// node now and reaches the shared store in the background
+	// (ADR-20261122132055 §2).
+	HasBacking    bool `protobuf:"varint,4,opt,name=has_backing,json=hasBacking,proto3" json:"has_backing,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -16545,6 +16550,13 @@ func (x *RunSandboxPaused) GetPauseMs() int64 {
 		return x.PauseMs
 	}
 	return 0
+}
+
+func (x *RunSandboxPaused) GetHasBacking() bool {
+	if x != nil {
+		return x.HasBacking
+	}
+	return false
 }
 
 type RunSandboxPauseRefused struct {
@@ -24485,11 +24497,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"webDomains\x12?\n" +
 	"\x06paused\x18\f \x01(\v2%.onebox.faas.vmmd.v1.RunSandboxPausedH\x00R\x06paused\x12R\n" +
 	"\rpause_refused\x18\r \x01(\v2+.onebox.faas.vmmd.v1.RunSandboxPauseRefusedH\x00R\fpauseRefusedB\a\n" +
-	"\x05frame\"\x95\x01\n" +
+	"\x05frame\"\xb6\x01\n" +
 	"\x10RunSandboxPaused\x12A\n" +
 	"\bsnapshot\x18\x01 \x01(\v2%.onebox.faas.vmmd.v1.AgentRunSnapshotR\bsnapshot\x12#\n" +
 	"\rvmstate_bytes\x18\x02 \x01(\x03R\fvmstateBytes\x12\x19\n" +
-	"\bpause_ms\x18\x03 \x01(\x03R\apauseMs\"0\n" +
+	"\bpause_ms\x18\x03 \x01(\x03R\apauseMs\x12\x1f\n" +
+	"\vhas_backing\x18\x04 \x01(\bR\n" +
+	"hasBacking\"0\n" +
 	"\x16RunSandboxPauseRefused\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"Z\n" +
 	"\x14RunSandboxWebDomains\x12B\n" +

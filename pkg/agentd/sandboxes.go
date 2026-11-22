@@ -60,6 +60,8 @@ type SandboxStore interface {
 	MarkSandboxPaused(ctx context.Context, id, token string, c agentstore.SandboxCapture, retention time.Duration) error
 	MarkSandboxResumed(ctx context.Context, id, token, nodeID, instanceID string, cold bool, run time.Duration) error
 	ConsumedSandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
+	NodeOnlySandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
+	MarkSandboxCaptureRemote(ctx context.Context, sessionID, captureID string) error
 	DeleteSandboxCapture(ctx context.Context, id string) error
 }
 
@@ -216,7 +218,7 @@ func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx))
+	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx), s.sweepDurability(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
@@ -336,8 +338,10 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		// capture cold-boots as new (ADR-20261122132055 §2).
 		start.WorkspaceKey = ""
 		if c := claim.Resume; c != nil {
+			// Until the shared store holds the capture, only its node can
+			// restore it (ADR-20261122132055 §2).
 			start.Resume = &scheddpb.SandboxRunResume{StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey,
-				FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID}
+				FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, RequireNode: !c.Remote}
 		}
 	}
 	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Start{Start: start}}); err != nil {
@@ -656,7 +660,7 @@ func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.San
 	plan := api.Plan(ss.claim.Plan)
 	retention := time.Duration(api.SandboxPausedRetentionDays[plan.PlanIndex()]) * 24 * time.Hour
 	capture := agentstore.SandboxCapture{ID: captureID, NodeID: node, StorageKey: p.GetStorageKey(), VMStateStorageKey: p.GetVmstateStorageKey(),
-		FCVersion: p.GetFcVersion(), MemBytes: p.GetMemBytes(), VMStateBytes: p.GetVmstateBytes()}
+		FCVersion: p.GetFcVersion(), MemBytes: p.GetMemBytes(), VMStateBytes: p.GetVmstateBytes(), HasBacking: p.GetHasBacking()}
 	if err := s.store.MarkSandboxPaused(context.WithoutCancel(ctx), ss.claim.ID, ss.claim.LeaseToken, capture, retention); err != nil {
 		return err
 	}
@@ -748,6 +752,65 @@ func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// sweepDurability marks a paused session's durability remote once the
+// shared store holds its whole capture (ADR-20261122132055 §2): vmmd writes a
+// capture to its node first and uploads it after the pause.
+func (s *Sandboxes) sweepDurability(ctx context.Context) error {
+	if s.scfg.Workspaces == nil {
+		return nil
+	}
+	captures, err := s.store.NodeOnlySandboxCaptures(ctx, sandboxCaptureSweepBatch)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, c := range captures {
+		snap := state.Snapshot{StorageKey: c.StorageKey}
+		keys := []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap)}
+		if c.HasBacking {
+			keys = append(keys, state.SnapshotBackingKey(snap))
+		}
+		held, err := s.storeHoldsAll(ctx, keys)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("check capture %s: %w", c.ID, err))
+			continue
+		}
+		if !held {
+			continue
+		}
+		if err := s.store.MarkSandboxCaptureRemote(ctx, c.SessionID, c.ID); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		s.log.Info("agentd: sandbox capture uploaded", "sandbox_id", c.SessionID, "capture_id", c.ID)
+	}
+	return errors.Join(errs...)
+}
+
+// storeHoldsAll reports whether the shared store holds every key.
+func (s *Sandboxes) storeHoldsAll(ctx context.Context, keys []string) (bool, error) {
+	for _, key := range keys {
+		if key == "" {
+			return false, nil
+		}
+		held, supported, err := storage.Exists(ctx, s.scfg.Workspaces, key)
+		if !supported {
+			rc, getErr := s.scfg.Workspaces.Get(ctx, key)
+			if errors.Is(getErr, storage.ErrNotFound) {
+				return false, nil
+			}
+			if getErr != nil {
+				return false, getErr
+			}
+			held, err = true, rc.Close()
+		}
+		if err != nil || !held {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, end *sessionEnd) {

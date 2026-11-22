@@ -378,6 +378,7 @@ type SandboxSessionCapture struct {
 	FcVersion         string
 	MemBytes          int64
 	VmstateBytes      int64
+	HasBacking        bool
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	ConsumedAt        pgtype.Timestamptz

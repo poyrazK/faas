@@ -3495,8 +3495,11 @@ type SandboxRunResume struct {
 	FcVersion         string                 `protobuf:"bytes,3,opt,name=fc_version,json=fcVersion,proto3" json:"fc_version,omitempty"`
 	MemBytes          int64                  `protobuf:"varint,4,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
 	NodeId            string                 `protobuf:"bytes,5,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// require_node: the capture is on node_id alone (durability node), so the
+	// resume runs there or waits; schedd answers no capacity otherwise.
+	RequireNode   bool `protobuf:"varint,6,opt,name=require_node,json=requireNode,proto3" json:"require_node,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SandboxRunResume) Reset() {
@@ -3562,6 +3565,13 @@ func (x *SandboxRunResume) GetNodeId() string {
 		return x.NodeId
 	}
 	return ""
+}
+
+func (x *SandboxRunResume) GetRequireNode() bool {
+	if x != nil {
+		return x.RequireNode
+	}
+	return false
 }
 
 // SandboxRunStart is the session's machine, already checked against the
@@ -4533,6 +4543,7 @@ type SandboxRunPaused struct {
 	MemBytes          int64                  `protobuf:"varint,4,opt,name=mem_bytes,json=memBytes,proto3" json:"mem_bytes,omitempty"`
 	VmstateBytes      int64                  `protobuf:"varint,5,opt,name=vmstate_bytes,json=vmstateBytes,proto3" json:"vmstate_bytes,omitempty"`
 	PauseMs           int64                  `protobuf:"varint,6,opt,name=pause_ms,json=pauseMs,proto3" json:"pause_ms,omitempty"`
+	HasBacking        bool                   `protobuf:"varint,7,opt,name=has_backing,json=hasBacking,proto3" json:"has_backing,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -4607,6 +4618,13 @@ func (x *SandboxRunPaused) GetPauseMs() int64 {
 		return x.PauseMs
 	}
 	return 0
+}
+
+func (x *SandboxRunPaused) GetHasBacking() bool {
+	if x != nil {
+		return x.HasBacking
+	}
+	return false
 }
 
 type SandboxRunPauseRefused struct {
@@ -8555,7 +8573,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x05frame\"0\n" +
 	"\x0fSandboxRunPause\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xb8\x01\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xdb\x01\n" +
 	"\x10SandboxRunResume\x12\x1f\n" +
 	"\vstorage_key\x18\x01 \x01(\tR\n" +
 	"storageKey\x12.\n" +
@@ -8563,7 +8581,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"fc_version\x18\x03 \x01(\tR\tfcVersion\x12\x1b\n" +
 	"\tmem_bytes\x18\x04 \x01(\x03R\bmemBytes\x12\x17\n" +
-	"\anode_id\x18\x05 \x01(\tR\x06nodeId\"\x9e\x05\n" +
+	"\anode_id\x18\x05 \x01(\tR\x06nodeId\x12!\n" +
+	"\frequire_node\x18\x06 \x01(\bR\vrequireNode\"\x9e\x05\n" +
 	"\x0fSandboxRunStart\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -8648,7 +8667,7 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"webDomains\x12A\n" +
 	"\x06paused\x18\r \x01(\v2'.onebox.faas.schedd.v1.SandboxRunPausedH\x00R\x06paused\x12T\n" +
 	"\rpause_refused\x18\x0e \x01(\v2-.onebox.faas.schedd.v1.SandboxRunPauseRefusedH\x00R\fpauseRefusedB\a\n" +
-	"\x05frame\"\xdf\x01\n" +
+	"\x05frame\"\x80\x02\n" +
 	"\x10SandboxRunPaused\x12\x1f\n" +
 	"\vstorage_key\x18\x01 \x01(\tR\n" +
 	"storageKey\x12.\n" +
@@ -8657,7 +8676,9 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"fc_version\x18\x03 \x01(\tR\tfcVersion\x12\x1b\n" +
 	"\tmem_bytes\x18\x04 \x01(\x03R\bmemBytes\x12#\n" +
 	"\rvmstate_bytes\x18\x05 \x01(\x03R\fvmstateBytes\x12\x19\n" +
-	"\bpause_ms\x18\x06 \x01(\x03R\apauseMs\"0\n" +
+	"\bpause_ms\x18\x06 \x01(\x03R\apauseMs\x12\x1f\n" +
+	"\vhas_backing\x18\a \x01(\bR\n" +
+	"hasBacking\"0\n" +
 	"\x16SandboxRunPauseRefused\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"\\\n" +
 	"\x14SandboxRunWebDomains\x12D\n" +

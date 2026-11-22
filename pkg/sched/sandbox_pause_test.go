@@ -97,7 +97,7 @@ func (v *pauseVmmd) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 	v.pause = msg.GetPause()
 	_ = stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_PauseRefused{PauseRefused: &vmmdpb.RunSandboxPauseRefused{Reason: "busy"}}})
 	return stream.Send(&vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Paused{Paused: &vmmdpb.RunSandboxPaused{
-		Snapshot: &vmmdpb.AgentRunSnapshot{StorageKey: sessionCapture, VmstateStorageKey: "v", FcVersion: "1.10.0", MemBytes: 9},
+		Snapshot:     &vmmdpb.AgentRunSnapshot{StorageKey: sessionCapture, VmstateStorageKey: "v", FcVersion: "1.10.0", MemBytes: 9},
 		VmstateBytes: 3, PauseMs: 4}}})
 }
 
@@ -137,5 +137,35 @@ func TestVMMClientRelaysAPauseAndEndsCleanly(t *testing.T) {
 	}
 	if refused != "busy" || paused.Snapshot != snap || paused.VMStateBytes != 3 || paused.PauseMs != 4 {
 		t.Fatalf("refused %q, paused %+v", refused, paused)
+	}
+}
+
+// adr: 20261122132055 §2 — a capture only its node holds resumes there or
+// not at all: schedd answers no capacity, and agentd tries again.
+func TestSandboxRunnerResumeRequiresTheCapturesNode(t *testing.T) {
+	runner, router, ledger, full := sandboxRunnerPoolFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	// The capture's node has no room left.
+	if err := ledger.Admit(sched.Request{Instance: "filler", NodeID: full, NodeCeilingMB: 47600, Plan: api.PlanScale, RAMMB: 47000}); err != nil {
+		t.Fatal(err)
+	}
+	a := sandboxAdmission()
+	a.Persistent = true
+	a.Resume = &sched.SandboxResume{NodeID: full, RequireNode: true,
+		Snapshot: sched.AgentRunSnapshot{StorageKey: sessionCapture, FCVersion: "1.10.0", MemBytes: 1}}
+	err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil)
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeCapacity {
+		t.Fatalf("resume away from its capture's node = %v, want a capacity refusal", err)
+	}
+	if ledger.ResidentFor(sched.SandboxInstanceID(a.SandboxID)) {
+		t.Fatal("a refused resume kept its reservation")
+	}
+	// A node that left the pool holds nothing: the resume goes anywhere.
+	a.Resume.NodeID = "a-node-that-is-gone"
+	ctx, cancel := context.WithCancel(context.Background())
+	booted := func(context.Context, sched.SandboxBooted) error { cancel(); return nil }
+	_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
+	if router.nodeID == "" || router.nodeID == full || router.spec.Snapshot == nil {
+		t.Fatalf("resume of a gone node's capture placed on %q with %+v", router.nodeID, router.spec.Snapshot)
 	}
 }
