@@ -39,7 +39,7 @@ The parts exist. Firecracker captures and restores a VM's memory. Captures are s
 ### 2. Memory-preserving pause
 
 - **Capture.** vmmd pauses the VM and captures memory and device state with the same code path as warm and crash captures. The capture is sealed at the source to the runtime domain, bound to the account (ADR-20261110210000), and immutable (ADR-159). Memory is compressed as on wait (ADR-20261027090015 §2). The workspace volume is flushed and its point-in-time state recorded with the capture (§4).
-- **Storage: the node first, then object storage** (owner's choice). The capture stays on the node's disk, so a resume there needs no download. A background copy uploads it to object storage under `snap/sandbox-session-<account>/<session>/<capture>` (ADR-063's layout).
+- **Storage: the node first, then object storage** (owner's choice). The capture stays on the node's disk, so a resume there needs no download. A background copy uploads it to object storage under `snap/sandbox-session-<account>/captures/<capture>/v2/{mem,vmstate,drive,backing}` (the v2 capture layout, so drive1 is coupled; the row in `sandbox_session_captures` names the session).
   - Until the upload completes, the session is `paused` with `durability: node`. After it, `durability: remote`.
   - A node copy is dropped under the node's snapshot cache pressure (ADR-159's eviction), never before the remote copy exists.
 - **Resume.**
@@ -174,6 +174,14 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 8. Large shapes on agent-pool nodes that declare them.
 9. Storage metering and statements.
 10. Clients: shims (`pause`, `resume`, `connect` resumes, `fork`), the Agents SDK client, the CLI, docs, and the `TestSandboxes` journey extended to pause, resume and fork.
+
+### Step 3 as built
+
+- **Capture.** vmmd pauses with `Manager.Park`, the terminal capture apps park with, under the account's session namespace. A pause with a call in flight is refused, and calls are refused while it runs. A capture that fails before the guest is touched leaves the VM running (`pause_refused`); one that fails after it loses the VM, which agentd records as a lost VM.
+- **Publication.** The node's store writes through to its parent, so a pause waits for the parent copy. The session still reports `durability: node` until step 4 owns the upload and sets `remote`.
+- **Resume.** A paused session asked to resume is claimable; schedd prefers the capture's node and places it anywhere when that node is full, since every node reads the capture from the shared store. A resume that never booted goes back to `paused` (its request kept for transient failures). Without volumes (step 5), a cold resume starts from a fresh workspace.
+- **Timers.** A running persistent session pauses on request, at `SandboxPersistentRunMaxSec` and after `SandboxPersistentIdlePauseSec` without calls. A paused session's `expires_at` is its retention end.
+- **Not yet:** the implicit resume on a data-plane call (calls to a paused session fail until it is resumed); usage across a resume (the pause's usage record is final, so step 9 meters resumed VMs); captures sealed to the account (step 4, with the upload).
 
 ## Open questions
 

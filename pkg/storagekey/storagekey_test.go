@@ -135,3 +135,29 @@ func TestSandboxSnapshotKeys(t *testing.T) {
 		t.Fatal("a template's builds must share one identity, and other images keep their key")
 	}
 }
+
+// adr: 20261122132055 §2, §10 — a pause capture is restorable only by its
+// own account's sessions, and no warm snapshot key passes as one.
+func TestSandboxSessionSnapshotKeys(t *testing.T) {
+	own := "snap/" + storagekey.SandboxSessionSnapshotNamespace("acct") + "/captures/abc/v2/mem"
+	for _, tc := range []struct {
+		key, account string
+		ok           bool
+	}{
+		{own, "acct", true},
+		{own, "other", false},
+		{own, "", false},
+		{"snap/sandbox-session-acct/captures/../v2/mem", "acct", false},
+		{"snap/sandbox-session-acct/captures/abc/v2/vmstate", "acct", false},
+		{"snap/sandbox-preset/captures/abc/v2/mem", "acct", false},
+		{"snap/sandbox-template-acct/captures/abc/v2/mem", "acct", false},
+		{"snap/sandbox-session-a/b/captures/abc/v2/mem", "a/b", false},
+	} {
+		if got := storagekey.IsSandboxSessionSnapshotKey(tc.key, tc.account); got != tc.ok {
+			t.Errorf("IsSandboxSessionSnapshotKey(%q, %q) = %v", tc.key, tc.account, got)
+		}
+	}
+	if storagekey.IsSandboxSnapshotKey(own, "acct", false) || storagekey.IsSandboxSnapshotKey(own, "acct", true) {
+		t.Fatal("a pause capture must never pass as a warm snapshot")
+	}
+}

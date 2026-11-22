@@ -8,10 +8,17 @@ package agentd
 // session after its idle timeout, at its end, or on a close request. vmmd
 // reports calls on the stream; their time reaches the database only with
 // each lease renewal.
+//
+// A persistent session (ADR-20261122132055) pauses instead of ending at its
+// idle and run limits, or when apid asks: the replica sends pause, vmmd
+// captures the VM and ends it, and the session is paused with no lease. A
+// resume request makes it claimable again; the claim restores its capture,
+// preferring the node that holds it.
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -23,6 +30,7 @@ import (
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
@@ -45,6 +53,14 @@ type SandboxStore interface {
 	RecordSandboxUsage(ctx context.Context, id, token string, u agentstore.SandboxUsage) (bool, error)
 	RecordSandboxTaskResult(ctx context.Context, id, token string, exitCode int, output []byte) error
 	RecordSandboxDomains(ctx context.Context, id, token string, plan api.Plan, entries []agentstore.SandboxDomain) (int, error)
+	// Persistent sessions (ADR-20261122132055).
+	BeginSandboxPause(ctx context.Context, id, token string) error
+	CancelSandboxPause(ctx context.Context, id, token string, frozen bool) error
+	ReturnSandboxResume(ctx context.Context, id, token string, retry bool) error
+	MarkSandboxPaused(ctx context.Context, id, token string, c agentstore.SandboxCapture, retention time.Duration) error
+	MarkSandboxResumed(ctx context.Context, id, token, nodeID, instanceID string, cold bool, run time.Duration) error
+	ConsumedSandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
+	DeleteSandboxCapture(ctx context.Context, id string) error
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -107,6 +123,15 @@ const (
 	// sandboxOutcomeEgressPolicy: the session has a domain policy and the
 	// node's vmmd cannot enforce one (ADR-20261117091026 §3).
 	sandboxOutcomeEgressPolicy = "egress_policy_unsupported"
+	// sandboxPauseRetry is how long a refused pause waits before the next
+	// try (ADR-20261122132055 §1).
+	sandboxPauseRetry = 5 * time.Second
+	// sandboxPauseTimeout bounds a pause vmmd never answers: a capture of
+	// the largest shape takes minutes, not this long.
+	sandboxPauseTimeout = 10 * time.Minute
+	// sandboxCaptureSweepBatch bounds the consumed captures one sweep
+	// deletes.
+	sandboxCaptureSweepBatch = 100
 )
 
 // Sandboxes drives one replica's sandbox sessions.
@@ -191,7 +216,7 @@ func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx))
+	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
@@ -231,6 +256,17 @@ type session struct {
 	// usage is the last usage record counted in the metrics; records are
 	// cumulative, so each adds its growth.
 	usage agentstore.SandboxUsage
+	// A persistent session's pause (ADR-20261122132055 §1): pausing while
+	// vmmd captures, the capture's ID and when it was asked, paused once
+	// vmmd captured it and the stream ends without the session ending, and
+	// the earliest next try after a refusal.
+	pausing      bool
+	captureID    string
+	pauseAsked   time.Time
+	paused       bool
+	pauseRetryAt time.Time
+	// placedNode is where schedd placed the VM.
+	placedNode string
 }
 
 type sessionEnd struct{ state, code, message string }
@@ -258,7 +294,9 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeUnplanned, "the account's plan has no sandbox sessions"})
 		return
 	}
-	if claim.WorkspaceMissing {
+	// A resumed session's workspace is in its capture, not the archive it was
+	// created from.
+	if claim.WorkspaceMissing && !claim.Resuming {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeWorkspace, "the snapshot the session starts from was deleted or expired"})
 		return
 	}
@@ -266,7 +304,12 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeImage, "the image the session boots was deleted before it started"})
 		return
 	}
+	persistent := claim.Kind == agentstore.SandboxPersistent
 	vcpu := api.AgentRunVCPUMax[plan.PlanIndex()]
+	if persistent && claim.VCPU > 0 {
+		vcpu = claim.VCPU
+	}
+	claimed := s.now()
 	streamCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	stream, err := s.schedd.RunSandbox(streamCtx)
@@ -280,17 +323,28 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		defer sendMu.Unlock()
 		return stream.Send(req)
 	}
-	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Start{Start: &scheddpb.SandboxRunStart{
+	start := &scheddpb.SandboxRunStart{
 		SandboxId: claim.ID, AccountId: claim.AccountID, Plan: claim.Plan, RamMb: int32(claim.RAMMB), Vcpu: int32(vcpu),
 		CpuMillicores: int32(vcpu * 1000), NetworkMode: claim.Network, WorkspaceKey: claim.WorkspaceKey,
 		ImageKey: claim.ImageKey, StartCmd: claim.StartCmd, ReadyCmd: claim.ReadyCmd, ReadyTimeoutMs: claim.ReadyTimeout.Milliseconds(),
 		Browser: claim.Browser, Task: sandboxTaskToProto(claim),
 		EgressAllow: claim.EgressAllow, EgressDeny: claim.EgressDeny, WebDomainLog: claim.Network == api.SandboxNetworkWeb,
-	}}}); err != nil {
+		Persistent: persistent,
+	}
+	if claim.Resuming {
+		// A resumed session's workspace is in its capture; one without a
+		// capture cold-boots as new (ADR-20261122132055 §2).
+		start.WorkspaceKey = ""
+		if c := claim.Resume; c != nil {
+			start.Resume = &scheddpb.SandboxRunResume{StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey,
+				FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID}
+		}
+	}
+	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Start{Start: start}}); err != nil {
 		s.requeue(ctx, claim, err)
 		return
 	}
-	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}}
+	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}, pauseAsked: claimed}
 	// A running action of an earlier claim ran in a VM that is gone.
 	s.endOpenActions(ctx, claim, agentstore.SandboxActionRunning)
 	defer s.actions.remove(claim.ID)
@@ -318,6 +372,14 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		return
 	default:
 	}
+	ss.mu.Lock()
+	paused := ss.paused
+	ss.mu.Unlock()
+	if paused {
+		// The session lives on, paused; a close asked meanwhile is the
+		// sweeper's to end (ADR-20261122132055 §1).
+		return
+	}
 	if end := ss.decided(); end != nil {
 		s.finish(ctx, claim, end)
 		return
@@ -328,6 +390,10 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	switch code := status.Code(recvErr); {
 	case ctx.Err() != nil:
 		// The replica is stopping; the lease lapses and the sweeper decides.
+	case claim.Resuming && !ready:
+		// A resume that never booted goes back to paused with its capture; a
+		// refused one waits for the next request.
+		s.returnResume(ctx, claim, code != codes.FailedPrecondition && code != codes.InvalidArgument && code != codes.DataLoss, recvErr)
 	case ready:
 		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
 	case code == codes.DataLoss:
@@ -351,6 +417,9 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 		switch {
 		case ev.GetPlaced() != nil:
 			placed = ev.GetPlaced()
+			ss.mu.Lock()
+			ss.placedNode = placed.GetNodeId()
+			ss.mu.Unlock()
 			// ADR-20261117190000: the node reads the session's image and
 			// snapshot through secretd grants before it boots the VM.
 			if err := s.store.MarkSandboxPlaced(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId()); err != nil {
@@ -370,7 +439,11 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 				}
 				continue
 			}
-			if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
+			if ss.claim.Resuming {
+				if err := s.markResumed(ctx, ss, placed, ev.GetBooted().GetMethod()); err != nil {
+					return err
+				}
+			} else if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
 				return err
 			}
 			ss.mu.Lock()
@@ -426,6 +499,12 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			s.actionDone(ctx, ss, ev.GetActionDone())
 		case ev.GetWebDomains() != nil:
 			s.recordDomains(ctx, ss, ev.GetWebDomains())
+		case ev.GetPaused() != nil:
+			if err := s.markPaused(ctx, ss, ev.GetPaused()); err != nil {
+				return err
+			}
+		case ev.GetPauseRefused() != nil:
+			s.pauseRefused(ctx, ss, ev.GetPauseRefused().GetReason())
 		}
 	}
 }
@@ -484,11 +563,32 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 			idle = 0
 		}
 		ready, frozen, freezing, lease := ss.ready, ss.frozen, ss.freezing, ss.lease
-		freeze := ready && !frozen && !freezing && idle >= s.scfg.IdleFreeze
+		pausing := ss.pausing || ss.paused
+		freeze := ready && !frozen && !freezing && !pausing && idle >= s.scfg.IdleFreeze
 		if freeze {
 			ss.freezing = true
 		}
 		ss.mu.Unlock()
+		if ss.claim.Kind == agentstore.SandboxPersistent {
+			if pausing {
+				// A vmmd from before pauses never answers one; the VM runs on.
+				ss.mu.Lock()
+				stuck := ss.pausing && now.Sub(ss.pauseAsked) > sandboxPauseTimeout
+				ss.mu.Unlock()
+				if stuck {
+					s.pauseRefused(ctx, ss, "timeout")
+				}
+				continue
+			}
+			if why := s.pauseDue(ss, now, idle); why != "" {
+				s.pause(ctx, ss, why, send)
+				continue
+			}
+			if freeze {
+				_ = send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Freeze{Freeze: &scheddpb.SandboxRunFreeze{}}})
+			}
+			continue
+		}
 		switch {
 		case !now.Before(lease.ExpiresAt):
 			if ss.decide(agentstore.SandboxExpired, sandboxOutcomeLifetime, "the session reached its lifetime") {
@@ -504,6 +604,152 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 	}
 }
 
+// pauseDue reports why a running persistent session pauses now, or "": apid
+// asked, it reached its run limit, or it had no calls for the plan's idle
+// pause (ADR-20261122132055 §1). A refused pause waits sandboxPauseRetry.
+func (s *Sandboxes) pauseDue(ss *session, now time.Time, idle time.Duration) string {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+	if !ss.ready || ss.end != nil || now.Before(ss.pauseRetryAt) {
+		return ""
+	}
+	plan := api.Plan(ss.claim.Plan)
+	switch {
+	case ss.lease.PauseRequested:
+		return "requested"
+	case !now.Before(ss.lease.ExpiresAt):
+		return "run_limit"
+	case plan.Valid() && idle >= time.Duration(api.SandboxPersistentIdlePauseSec[plan.PlanIndex()])*time.Second:
+		return "idle"
+	}
+	return ""
+}
+
+// pause moves the session to pausing and asks vmmd to capture it.
+func (s *Sandboxes) pause(ctx context.Context, ss *session, why string, send func(*scheddpb.SandboxRunRequest) error) {
+	if err := s.store.BeginSandboxPause(ctx, ss.claim.ID, ss.claim.LeaseToken); err != nil {
+		s.log.Warn("agentd: begin sandbox pause failed", "sandbox_id", ss.claim.ID, "err", err)
+		ss.mu.Lock()
+		ss.pauseRetryAt = s.now().Add(sandboxPauseRetry)
+		ss.mu.Unlock()
+		return
+	}
+	captureID := uuid.NewString()
+	ss.mu.Lock()
+	ss.pausing, ss.captureID, ss.pauseAsked = true, captureID, s.now()
+	ss.mu.Unlock()
+	s.log.Info("agentd: pausing sandbox", "sandbox_id", ss.claim.ID, "why", why, "capture_id", captureID)
+	if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Pause{Pause: &scheddpb.SandboxRunPause{CaptureId: captureID}}}); err != nil {
+		s.pauseRefused(ctx, ss, "send failed")
+	}
+}
+
+// markPaused records vmmd's capture: the session is paused and holds no
+// lease; the stream ends after this.
+func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.SandboxRunPaused) error {
+	ss.mu.Lock()
+	captureID, node, asked := ss.captureID, ss.placedNode, ss.pauseAsked
+	ss.mu.Unlock()
+	if captureID == "" {
+		return status.Error(codes.Internal, "vmmd paused a session agentd did not pause")
+	}
+	plan := api.Plan(ss.claim.Plan)
+	retention := time.Duration(api.SandboxPausedRetentionDays[plan.PlanIndex()]) * 24 * time.Hour
+	capture := agentstore.SandboxCapture{ID: captureID, NodeID: node, StorageKey: p.GetStorageKey(), VMStateStorageKey: p.GetVmstateStorageKey(),
+		FCVersion: p.GetFcVersion(), MemBytes: p.GetMemBytes(), VMStateBytes: p.GetVmstateBytes()}
+	if err := s.store.MarkSandboxPaused(context.WithoutCancel(ctx), ss.claim.ID, ss.claim.LeaseToken, capture, retention); err != nil {
+		return err
+	}
+	s.actions.remove(ss.claim.ID)
+	ss.mu.Lock()
+	ss.paused, ss.pausing = true, false
+	ss.mu.Unlock()
+	s.metrics.sandboxPausedIn(s.now().Sub(asked))
+	s.log.Info("agentd: sandbox paused", "sandbox_id", ss.claim.ID, "node", node, "capture_id", captureID,
+		"mem_bytes", p.GetMemBytes(), "pause_ms", p.GetPauseMs())
+	return nil
+}
+
+// pauseRefused returns a session vmmd did not pause to ready; the next try
+// waits sandboxPauseRetry.
+func (s *Sandboxes) pauseRefused(ctx context.Context, ss *session, reason string) {
+	ss.mu.Lock()
+	frozen := ss.frozen
+	ss.mu.Unlock()
+	if err := s.store.CancelSandboxPause(ctx, ss.claim.ID, ss.claim.LeaseToken, frozen); err != nil {
+		s.log.Warn("agentd: cancel sandbox pause failed", "sandbox_id", ss.claim.ID, "err", err)
+	}
+	ss.mu.Lock()
+	ss.pausing, ss.captureID = false, ""
+	ss.pauseRetryAt = s.now().Add(sandboxPauseRetry)
+	ss.mu.Unlock()
+	s.log.Info("agentd: sandbox pause refused", "sandbox_id", ss.claim.ID, "reason", reason)
+}
+
+// markResumed records a resumed session on its new VM: restored from its
+// capture, or cold-booted when there was none or it could not be restored.
+func (s *Sandboxes) markResumed(ctx context.Context, ss *session, placed *scheddpb.AgentRunPlaced, method string) error {
+	plan := api.Plan(ss.claim.Plan)
+	run := time.Duration(api.SandboxPersistentRunMaxSec[plan.PlanIndex()]) * time.Second
+	restored := ss.claim.Resume != nil && method == vmmdWakeRestore
+	if err := s.store.MarkSandboxResumed(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance(), !restored, run); err != nil {
+		return err
+	}
+	ss.mu.Lock()
+	ss.lease.ExpiresAt = s.now().Add(run)
+	asked := ss.pauseAsked
+	ss.mu.Unlock()
+	source, reason := resumeCold, "no_capture"
+	switch {
+	case restored && placed.GetNodeId() == ss.claim.Resume.NodeID:
+		source, reason = resumeNode, ""
+	case restored:
+		source, reason = resumeRemote, ""
+	case ss.claim.Resume != nil:
+		reason = "restore_failed"
+	}
+	s.metrics.sandboxResumed(source, reason, s.now().Sub(asked))
+	s.log.Info("agentd: sandbox resumed", "sandbox_id", ss.claim.ID, "node", placed.GetNodeId(), "source", source, "method", method)
+	return nil
+}
+
+// vmmdWakeRestore is the booted method of a restored VM, as schedd relays
+// vmmd's WakeMethod name.
+const vmmdWakeRestore = "WAKE_RESTORE"
+
+// sweepCaptures deletes the objects of consumed pause captures, then their
+// rows (ADR-20261122132055 §2: a capture restores once).
+func (s *Sandboxes) sweepCaptures(ctx context.Context) error {
+	if s.scfg.Workspaces == nil {
+		return nil
+	}
+	captures, err := s.store.ConsumedSandboxCaptures(ctx, sandboxCaptureSweepBatch)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, c := range captures {
+		snap := state.Snapshot{StorageKey: c.StorageKey}
+		var failed bool
+		for _, key := range []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)} {
+			if key == "" {
+				continue
+			}
+			if err := s.scfg.Workspaces.Delete(ctx, key); err != nil && !errors.Is(err, storage.ErrNotFound) {
+				errs = append(errs, fmt.Errorf("delete capture %s object %s: %w", c.ID, key, err))
+				failed = true
+			}
+		}
+		if failed {
+			continue
+		}
+		if err := s.store.DeleteSandboxCapture(ctx, c.ID); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, end *sessionEnd) {
 	s.actions.remove(claim.ID)
 	s.endOpenActions(ctx, claim, agentstore.SandboxActionPending, agentstore.SandboxActionRunning)
@@ -517,11 +763,24 @@ func (s *Sandboxes) finish(ctx context.Context, claim agentstore.SandboxClaim, e
 // requeue returns a session that never booted, after a capacity refusal or
 // a transport failure before placement.
 func (s *Sandboxes) requeue(ctx context.Context, claim agentstore.SandboxClaim, cause error) {
+	if claim.Resuming {
+		s.returnResume(ctx, claim, true, cause)
+		return
+	}
 	if err := s.store.RequeueSandbox(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken); err != nil {
 		s.log.Warn("agentd: requeue sandbox failed", "sandbox_id", claim.ID, "err", err)
 		return
 	}
 	s.log.Info("agentd: sandbox requeued", "sandbox_id", claim.ID, "cause", status.Code(cause).String())
+}
+
+// returnResume puts a resume that never booted back to paused.
+func (s *Sandboxes) returnResume(ctx context.Context, claim agentstore.SandboxClaim, retry bool, cause error) {
+	if err := s.store.ReturnSandboxResume(context.WithoutCancel(ctx), claim.ID, claim.LeaseToken, retry); err != nil {
+		s.log.Warn("agentd: return sandbox resume failed", "sandbox_id", claim.ID, "err", err)
+		return
+	}
+	s.log.Info("agentd: sandbox resume returned to paused", "sandbox_id", claim.ID, "retry", retry, "cause", status.Code(cause).String())
 }
 
 // recordUsage keeps vmmd's cumulative usage of the session VM

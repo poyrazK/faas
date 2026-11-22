@@ -565,18 +565,25 @@ UPDATE sandbox_sessions SET resume_requested_at=coalesce(resume_requested_at, no
 -- A session from a seller image waits until the image-run runner job has
 -- its image ready, and one from a template until it has a finished build
 -- (ADR-20261027090013).
+-- A paused persistent session asked to resume is claimable too
+-- (ADR-20261122132055 §1).
 SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
- WHERE sb.state='queued' AND sb.expires_at > now()
+ WHERE (sb.state='queued' AND sb.expires_at > now()
  AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
-   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '')))
+ OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL)
  ORDER BY sb.created_at, sb.id LIMIT sqlc.arg(max_rows)::integer FOR UPDATE OF sb SKIP LOCKED;
 
 -- name: StartSandboxSession :execrows
-UPDATE sandbox_sessions SET state='starting', lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
+-- A queued session starts; a paused one asked to resume resumes.
+UPDATE sandbox_sessions SET state=CASE WHEN state='paused' THEN 'resuming' ELSE 'starting' END,
+  resume_requested_at=CASE WHEN state='paused' THEN NULL ELSE resume_requested_at END,
+  lease_token=sqlc.arg(lease_token)::text, lease_owner=sqlc.arg(lease_owner)::text,
   lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision), updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND state='queued';
+ WHERE id=sqlc.arg(session_id)::text::uuid
+ AND (state='queued' OR (state='paused' AND resume_requested_at IS NOT NULL AND close_requested_at IS NULL));
 
 -- name: GetSandboxSessionClaim :one
 -- A session that starts from a persisted workspace carries its archive's
@@ -592,8 +599,13 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
   coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
-  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny,
+  sb.state, sb.kind, coalesce(sb.vcpu, 0)::integer AS vcpu,
+  coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
+  coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
+  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
  LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
@@ -607,7 +619,7 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
 -- boots the VM, so secretd grants that node the session's image and
 -- snapshot. node_id stays unset until the VM is up.
 UPDATE sandbox_sessions SET placed_node_id=sqlc.arg(node_id)::text, updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='starting';
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','resuming');
 
 -- name: MarkSandboxSessionReady :execrows
 -- The VM is up: record where it runs, so a read mints a token that reaches it.
@@ -620,12 +632,72 @@ UPDATE sandbox_sessions SET state='ready', node_id=sqlc.arg(node_id)::text, inst
 -- costs no write per call. It returns what apid may have changed.
 UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>sqlc.arg(ttl_seconds)::double precision),
   last_activity_at=greatest(last_activity_at, sqlc.arg(last_activity_at)::timestamptz), updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
- RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at;
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+ AND state IN ('starting','ready','frozen','pausing','resuming')
+ RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at,
+  (pause_requested_at IS NOT NULL)::boolean AS pause_requested;
+
+-- name: MarkSandboxSessionResumed :execrows
+-- A resumed session is ready again (ADR-20261122132055 §2): its capture is
+-- used (a capture restores once), the next automatic pause is run_seconds
+-- away, and resumed_cold says whether the capture could not be restored.
+WITH session AS (
+  SELECT id FROM sandbox_sessions
+   WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='resuming'
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM session) AND state='live'
+)
+UPDATE sandbox_sessions sb SET state='ready', node_id=sqlc.arg(node_id)::text, instance_id=sqlc.arg(instance_id)::text,
+  last_activity_at=now(), paused_at=NULL, durability=NULL, resumed_cold=sqlc.arg(resumed_cold)::boolean,
+  expires_at=now()+make_interval(secs=>sqlc.arg(run_seconds)::double precision), updated_at=now()
+ WHERE sb.id IN (SELECT id FROM session);
+
+-- name: BeginSandboxSessionPause :execrows
+-- agentd pauses a running persistent session (ADR-20261122132055 §1).
+UPDATE sandbox_sessions SET state='pausing', updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+ AND kind='persistent' AND state IN ('ready','frozen');
+
+-- name: CancelSandboxSessionPause :execrows
+-- vmmd refused the pause and the VM runs on, frozen if it still is.
+UPDATE sandbox_sessions SET state=CASE WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='pausing';
+
+-- name: ReturnSandboxSessionResume :execrows
+-- A resume that never booted goes back to paused with its capture. retry
+-- keeps the request, so the next claim tries again; a refused resume drops
+-- it until apid asks again.
+UPDATE sandbox_sessions SET state='paused',
+  resume_requested_at=CASE WHEN sqlc.arg(retry)::boolean THEN coalesce(resume_requested_at, now()) ELSE NULL END,
+  lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='resuming';
+
+-- name: MarkSandboxSessionPaused :execrows
+-- The VM is captured and gone: the session keeps its capture, holds no lease
+-- and no VM, and expires retention_seconds from now unless it resumes.
+WITH session AS (
+  SELECT id, account_id FROM sandbox_sessions
+   WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='pausing'
+), capture AS (
+  INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
+    mem_bytes, vmstate_bytes)
+  SELECT sqlc.arg(capture_id)::text::uuid, id, account_id, sqlc.arg(node_id)::text, sqlc.arg(storage_key)::text,
+    sqlc.arg(vmstate_storage_key)::text, sqlc.arg(fc_version)::text, sqlc.arg(mem_bytes)::bigint, sqlc.arg(vmstate_bytes)::bigint
+  FROM session
+  RETURNING session_id
+)
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, durability='node',
+  node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
+ WHERE sb.id IN (SELECT session_id FROM capture);
 
 -- name: SetSandboxSessionFrozen :execrows
-UPDATE sandbox_sessions SET state=CASE WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('ready','frozen');
+-- A pause thaws a frozen VM before it captures it; the session stays
+-- pausing (ADR-20261122132055 §2).
+UPDATE sandbox_sessions SET state=CASE WHEN state='pausing' THEN 'pausing'
+    WHEN sqlc.arg(frozen)::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('ready','frozen','pausing');
 
 -- name: RecordSandboxSessionUsage :execrows
 -- ADR-20261027090013 step 11: vmmd's cumulative usage of the session VM,
@@ -638,7 +710,7 @@ SELECT s.id, s.account_id, sqlc.arg(method)::smallint, sqlc.arg(samples)::intege
        sqlc.arg(unpaused_private_mb_ms)::bigint, sqlc.arg(billable_mb_ms)::bigint, sqlc.arg(peak_private_mb)::bigint,
        sqlc.arg(cold_boot)::boolean, sqlc.arg(final)::boolean
   FROM sandbox_sessions s
- WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen')
+ WHERE s.id=sqlc.arg(session_id)::text::uuid AND s.lease_token=sqlc.arg(lease_token)::text AND s.state IN ('ready','frozen','pausing')
 ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
        measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
        private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
@@ -659,7 +731,8 @@ UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=N
 -- name: FinishSandboxSession :execrows
 UPDATE sandbox_sessions SET state=sqlc.arg(state)::text, outcome_code=sqlc.arg(outcome_code)::text,
   outcome_message=sqlc.narg(outcome_message)::text, lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state IN ('starting','ready','frozen')
+ WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text
+ AND state IN ('starting','ready','frozen','pausing','resuming')
  AND sqlc.arg(state)::text IN ('closed','expired','failed');
 
 -- name: RequeueExpiredStartingSandboxSessions :execrows
@@ -671,7 +744,41 @@ UPDATE sandbox_sessions SET state='queued', lease_token=NULL, lease_expires_at=N
 -- replica's stream; it is never booted again.
 UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
   outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE state IN ('ready','frozen') AND lease_expires_at < now();
+ WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now();
+
+-- name: ReturnExpiredResumingSandboxSessions :execrows
+-- A resume whose replica stopped renewing ended with its stream before the
+-- capture was used: the session is paused again and resumes on the next
+-- claim (ADR-20261122132055 §2).
+UPDATE sandbox_sessions SET state='paused', resume_requested_at=coalesce(resume_requested_at, now()),
+  lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now()
+ WHERE state='resuming' AND lease_expires_at < now();
+
+-- name: EndPausedSandboxSessions :many
+-- A paused session ends without a VM: closed when apid asked, expired past
+-- its retention (ADR-20261122132055 §1). Its live capture is left for the
+-- capture sweep.
+WITH ended AS (
+  UPDATE sandbox_sessions SET state=CASE WHEN close_requested_at IS NOT NULL THEN 'closed' ELSE 'expired' END,
+    outcome_code=CASE WHEN close_requested_at IS NOT NULL THEN 'closed' ELSE 'retention' END,
+    outcome_message=CASE WHEN close_requested_at IS NOT NULL THEN NULL ELSE 'the session stayed paused past its retention' END,
+    closed_at=now(), updated_at=now()
+   WHERE state='paused' AND (close_requested_at IS NOT NULL OR expires_at <= now())
+  RETURNING id
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM ended) AND state='live'
+)
+SELECT id::text AS id FROM ended;
+
+-- name: ListConsumedSandboxSessionCaptures :many
+-- Captures a resume used or a session's end left: the sweep deletes their
+-- objects, then the row.
+SELECT id::text AS id, storage_key, vmstate_storage_key FROM sandbox_session_captures
+ WHERE state='consumed' ORDER BY consumed_at, id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeleteSandboxSessionCapture :execrows
+DELETE FROM sandbox_session_captures WHERE id=sqlc.arg(capture_id)::text::uuid AND state='consumed';
 
 -- name: ExpireQueuedSandboxSessions :execrows
 -- A session still queued at its end never starts.

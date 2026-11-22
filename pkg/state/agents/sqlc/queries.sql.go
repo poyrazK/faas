@@ -156,6 +156,26 @@ func (q *Queries) AgentVersionPrivatePeak(ctx context.Context, db DBTX, arg Agen
 	return i, err
 }
 
+const beginSandboxSessionPause = `-- name: BeginSandboxSessionPause :execrows
+UPDATE sandbox_sessions SET state='pausing', updated_at=now()
+ WHERE id=$1::text::uuid AND lease_token=$2::text
+ AND kind='persistent' AND state IN ('ready','frozen')
+`
+
+type BeginSandboxSessionPauseParams struct {
+	SessionID  string
+	LeaseToken string
+}
+
+// agentd pauses a running persistent session (ADR-20261122132055 §1).
+func (q *Queries) BeginSandboxSessionPause(ctx context.Context, db DBTX, arg BeginSandboxSessionPauseParams) (int64, error) {
+	result, err := db.Exec(ctx, beginSandboxSessionPause, arg.SessionID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bumpAgentVersion = `-- name: BumpAgentVersion :one
 UPDATE agents SET latest_version=latest_version+1, updated_at=now()
  WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND state='active'
@@ -219,6 +239,26 @@ type CancelQueuedAgentRunParams struct {
 
 func (q *Queries) CancelQueuedAgentRun(ctx context.Context, db DBTX, arg CancelQueuedAgentRunParams) (int64, error) {
 	result, err := db.Exec(ctx, cancelQueuedAgentRun, arg.RunID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const cancelSandboxSessionPause = `-- name: CancelSandboxSessionPause :execrows
+UPDATE sandbox_sessions SET state=CASE WHEN $1::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=$2::text::uuid AND lease_token=$3::text AND state='pausing'
+`
+
+type CancelSandboxSessionPauseParams struct {
+	Frozen     bool
+	SessionID  string
+	LeaseToken string
+}
+
+// vmmd refused the pause and the VM runs on, frozen if it still is.
+func (q *Queries) CancelSandboxSessionPause(ctx context.Context, db DBTX, arg CancelSandboxSessionPauseParams) (int64, error) {
+	result, err := db.Exec(ctx, cancelSandboxSessionPause, arg.Frozen, arg.SessionID, arg.LeaseToken)
 	if err != nil {
 		return 0, err
 	}
@@ -522,6 +562,18 @@ func (q *Queries) DeleteSandboxPort(ctx context.Context, db DBTX, arg DeleteSand
 	return result.RowsAffected(), nil
 }
 
+const deleteSandboxSessionCapture = `-- name: DeleteSandboxSessionCapture :execrows
+DELETE FROM sandbox_session_captures WHERE id=$1::text::uuid AND state='consumed'
+`
+
+func (q *Queries) DeleteSandboxSessionCapture(ctx context.Context, db DBTX, captureID string) (int64, error) {
+	result, err := db.Exec(ctx, deleteSandboxSessionCapture, captureID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSandboxSnapshot = `-- name: DeleteSandboxSnapshot :execrows
 DELETE FROM sandbox_workspace_snapshots WHERE id=$1::text::uuid
 `
@@ -611,6 +663,44 @@ func (q *Queries) EndOpenSandboxActions(ctx context.Context, db DBTX, arg EndOpe
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const endPausedSandboxSessions = `-- name: EndPausedSandboxSessions :many
+WITH ended AS (
+  UPDATE sandbox_sessions SET state=CASE WHEN close_requested_at IS NOT NULL THEN 'closed' ELSE 'expired' END,
+    outcome_code=CASE WHEN close_requested_at IS NOT NULL THEN 'closed' ELSE 'retention' END,
+    outcome_message=CASE WHEN close_requested_at IS NOT NULL THEN NULL ELSE 'the session stayed paused past its retention' END,
+    closed_at=now(), updated_at=now()
+   WHERE state='paused' AND (close_requested_at IS NOT NULL OR expires_at <= now())
+  RETURNING id
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM ended) AND state='live'
+)
+SELECT id::text AS id FROM ended
+`
+
+// A paused session ends without a VM: closed when apid asked, expired past
+// its retention (ADR-20261122132055 §1). Its live capture is left for the
+// capture sweep.
+func (q *Queries) EndPausedSandboxSessions(ctx context.Context, db DBTX) ([]string, error) {
+	rows, err := db.Query(ctx, endPausedSandboxSessions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const enterAgentRunDelivering = `-- name: EnterAgentRunDelivering :execrows
@@ -740,7 +830,7 @@ func (q *Queries) ExpiredSandboxScreenshots(ctx context.Context, db DBTX, arg Ex
 const failExpiredLiveSandboxSessions = `-- name: FailExpiredLiveSandboxSessions :execrows
 UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
   outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE state IN ('ready','frozen') AND lease_expires_at < now()
+ WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now()
 `
 
 // A live session whose replica stopped renewing has lost its VM with the
@@ -926,7 +1016,8 @@ func (q *Queries) FinishSandboxAction(ctx context.Context, db DBTX, arg FinishSa
 const finishSandboxSession = `-- name: FinishSandboxSession :execrows
 UPDATE sandbox_sessions SET state=$1::text, outcome_code=$2::text,
   outcome_message=$3::text, lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
- WHERE id=$4::text::uuid AND lease_token=$5::text AND state IN ('starting','ready','frozen')
+ WHERE id=$4::text::uuid AND lease_token=$5::text
+ AND state IN ('starting','ready','frozen','pausing','resuming')
  AND $1::text IN ('closed','expired','failed')
 `
 
@@ -1540,8 +1631,13 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(st.ready_timeout_s, 0)::integer AS ready_timeout_s, sb.browser,
   coalesce(sb.task_kind, '')::text AS task_kind, coalesce(sb.task_url, '')::text AS task_url,
   coalesce(sb.task_max_chars, 0)::integer AS task_max_chars,
-  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny
+  coalesce(sb.egress_allow, '{}')::text[] AS egress_allow, coalesce(sb.egress_deny, '{}')::text[] AS egress_deny,
+  sb.state, sb.kind, coalesce(sb.vcpu, 0)::integer AS vcpu,
+  coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
+  coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
+  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
+ LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
  LEFT JOIN jobs j ON j.id=sb.image_job_id AND j.account_id=sb.account_id
@@ -1552,27 +1648,36 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
 `
 
 type GetSandboxSessionClaimRow struct {
-	ID               string
-	AccountID        string
-	Plan             string
-	RamMb            int32
-	NetworkMode      string
-	IdleTimeoutSec   int32
-	ExpiresAt        pgtype.Timestamptz
-	CloseRequested   bool
-	WorkspaceKey     string
-	WorkspaceMissing bool
-	ImageKey         string
-	FromImage        bool
-	StartCmd         string
-	ReadyCmd         string
-	ReadyTimeoutS    int32
-	Browser          bool
-	TaskKind         string
-	TaskUrl          string
-	TaskMaxChars     int32
-	EgressAllow      []string
-	EgressDeny       []string
+	ID                       string
+	AccountID                string
+	Plan                     string
+	RamMb                    int32
+	NetworkMode              string
+	IdleTimeoutSec           int32
+	ExpiresAt                pgtype.Timestamptz
+	CloseRequested           bool
+	WorkspaceKey             string
+	WorkspaceMissing         bool
+	ImageKey                 string
+	FromImage                bool
+	StartCmd                 string
+	ReadyCmd                 string
+	ReadyTimeoutS            int32
+	Browser                  bool
+	TaskKind                 string
+	TaskUrl                  string
+	TaskMaxChars             int32
+	EgressAllow              []string
+	EgressDeny               []string
+	State                    string
+	Kind                     string
+	Vcpu                     int32
+	CaptureID                string
+	CaptureStorageKey        string
+	CaptureVmstateStorageKey string
+	CaptureFcVersion         string
+	CaptureMemBytes          int64
+	CaptureNodeID            string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1602,6 +1707,15 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.TaskMaxChars,
 		&i.EgressAllow,
 		&i.EgressDeny,
+		&i.State,
+		&i.Kind,
+		&i.Vcpu,
+		&i.CaptureID,
+		&i.CaptureStorageKey,
+		&i.CaptureVmstateStorageKey,
+		&i.CaptureFcVersion,
+		&i.CaptureMemBytes,
+		&i.CaptureNodeID,
 	)
 	return i, err
 }
@@ -2729,11 +2843,12 @@ func (q *Queries) ListClaimableAgentRuns(ctx context.Context, db DBTX, maxRows i
 
 const listClaimableSandboxSessions = `-- name: ListClaimableSandboxSessions :many
 SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_sessions sb
- WHERE sb.state='queued' AND sb.expires_at > now()
+ WHERE (sb.state='queued' AND sb.expires_at > now()
  AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
-   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '')))
+ OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL)
  ORDER BY sb.created_at, sb.id LIMIT $1::integer FOR UPDATE OF sb SKIP LOCKED
 `
 
@@ -2746,6 +2861,8 @@ type ListClaimableSandboxSessionsRow struct {
 // A session from a seller image waits until the image-run runner job has
 // its image ready, and one from a template until it has a finished build
 // (ADR-20261027090013).
+// A paused persistent session asked to resume is claimable too
+// (ADR-20261122132055 §1).
 func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, maxRows int32) ([]ListClaimableSandboxSessionsRow, error) {
 	rows, err := db.Query(ctx, listClaimableSandboxSessions, maxRows)
 	if err != nil {
@@ -2756,6 +2873,39 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 	for rows.Next() {
 		var i ListClaimableSandboxSessionsRow
 		if err := rows.Scan(&i.ID, &i.AccountID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listConsumedSandboxSessionCaptures = `-- name: ListConsumedSandboxSessionCaptures :many
+SELECT id::text AS id, storage_key, vmstate_storage_key FROM sandbox_session_captures
+ WHERE state='consumed' ORDER BY consumed_at, id LIMIT $1::integer
+`
+
+type ListConsumedSandboxSessionCapturesRow struct {
+	ID                string
+	StorageKey        string
+	VmstateStorageKey string
+}
+
+// Captures a resume used or a session's end left: the sweep deletes their
+// objects, then the row.
+func (q *Queries) ListConsumedSandboxSessionCaptures(ctx context.Context, db DBTX, maxRows int32) ([]ListConsumedSandboxSessionCapturesRow, error) {
+	rows, err := db.Query(ctx, listConsumedSandboxSessionCaptures, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListConsumedSandboxSessionCapturesRow{}
+	for rows.Next() {
+		var i ListConsumedSandboxSessionCapturesRow
+		if err := rows.Scan(&i.ID, &i.StorageKey, &i.VmstateStorageKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -3605,9 +3755,61 @@ func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id st
 	return err
 }
 
+const markSandboxSessionPaused = `-- name: MarkSandboxSessionPaused :execrows
+WITH session AS (
+  SELECT id, account_id FROM sandbox_sessions
+   WHERE id=$2::text::uuid AND lease_token=$3::text AND state='pausing'
+), capture AS (
+  INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
+    mem_bytes, vmstate_bytes)
+  SELECT $4::text::uuid, id, account_id, $5::text, $6::text,
+    $7::text, $8::text, $9::bigint, $10::bigint
+  FROM session
+  RETURNING session_id
+)
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, durability='node',
+  node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
+  expires_at=now()+make_interval(secs=>$1::double precision), updated_at=now()
+ WHERE sb.id IN (SELECT session_id FROM capture)
+`
+
+type MarkSandboxSessionPausedParams struct {
+	RetentionSeconds  float64
+	SessionID         string
+	LeaseToken        string
+	CaptureID         string
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+}
+
+// The VM is captured and gone: the session keeps its capture, holds no lease
+// and no VM, and expires retention_seconds from now unless it resumes.
+func (q *Queries) MarkSandboxSessionPaused(ctx context.Context, db DBTX, arg MarkSandboxSessionPausedParams) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxSessionPaused,
+		arg.RetentionSeconds,
+		arg.SessionID,
+		arg.LeaseToken,
+		arg.CaptureID,
+		arg.NodeID,
+		arg.StorageKey,
+		arg.VmstateStorageKey,
+		arg.FcVersion,
+		arg.MemBytes,
+		arg.VmstateBytes,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const markSandboxSessionPlaced = `-- name: MarkSandboxSessionPlaced :execrows
 UPDATE sandbox_sessions SET placed_node_id=$1::text, updated_at=now()
- WHERE id=$2::text::uuid AND lease_token=$3::text AND state='starting'
+ WHERE id=$2::text::uuid AND lease_token=$3::text AND state IN ('starting','resuming')
 `
 
 type MarkSandboxSessionPlacedParams struct {
@@ -3645,6 +3847,47 @@ func (q *Queries) MarkSandboxSessionReady(ctx context.Context, db DBTX, arg Mark
 	result, err := db.Exec(ctx, markSandboxSessionReady,
 		arg.NodeID,
 		arg.InstanceID,
+		arg.SessionID,
+		arg.LeaseToken,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markSandboxSessionResumed = `-- name: MarkSandboxSessionResumed :execrows
+WITH session AS (
+  SELECT id FROM sandbox_sessions
+   WHERE id=$5::text::uuid AND lease_token=$6::text AND state='resuming'
+), used AS (
+  UPDATE sandbox_session_captures SET state='consumed', consumed_at=now()
+   WHERE session_id IN (SELECT id FROM session) AND state='live'
+)
+UPDATE sandbox_sessions sb SET state='ready', node_id=$1::text, instance_id=$2::text,
+  last_activity_at=now(), paused_at=NULL, durability=NULL, resumed_cold=$3::boolean,
+  expires_at=now()+make_interval(secs=>$4::double precision), updated_at=now()
+ WHERE sb.id IN (SELECT id FROM session)
+`
+
+type MarkSandboxSessionResumedParams struct {
+	NodeID      string
+	InstanceID  string
+	ResumedCold bool
+	RunSeconds  float64
+	SessionID   string
+	LeaseToken  string
+}
+
+// A resumed session is ready again (ADR-20261122132055 §2): its capture is
+// used (a capture restores once), the next automatic pause is run_seconds
+// away, and resumed_cold says whether the capture could not be restored.
+func (q *Queries) MarkSandboxSessionResumed(ctx context.Context, db DBTX, arg MarkSandboxSessionResumedParams) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxSessionResumed,
+		arg.NodeID,
+		arg.InstanceID,
+		arg.ResumedCold,
+		arg.RunSeconds,
 		arg.SessionID,
 		arg.LeaseToken,
 	)
@@ -3844,7 +4087,7 @@ SELECT s.id, s.account_id, $1::smallint, $2::integer, $3::integer,
        $8::bigint, $9::bigint, $10::bigint,
        $11::boolean, $12::boolean
   FROM sandbox_sessions s
- WHERE s.id=$13::text::uuid AND s.lease_token=$14::text AND s.state IN ('ready','frozen')
+ WHERE s.id=$13::text::uuid AND s.lease_token=$14::text AND s.state IN ('ready','frozen','pausing')
 ON CONFLICT (sandbox_id) DO UPDATE SET method=excluded.method, samples=excluded.samples, expected_samples=excluded.expected_samples,
        measured_ms=excluded.measured_ms, paused_ms=excluded.paused_ms, frozen_ms=excluded.frozen_ms,
        private_mb_ms=excluded.private_mb_ms, unpaused_private_mb_ms=excluded.unpaused_private_mb_ms,
@@ -3946,8 +4189,10 @@ func (q *Queries) RenewAgentRunLease(ctx context.Context, db DBTX, arg RenewAgen
 const renewSandboxSessionLease = `-- name: RenewSandboxSessionLease :one
 UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>$1::double precision),
   last_activity_at=greatest(last_activity_at, $2::timestamptz), updated_at=now()
- WHERE id=$3::text::uuid AND lease_token=$4::text AND state IN ('starting','ready','frozen')
- RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at
+ WHERE id=$3::text::uuid AND lease_token=$4::text
+ AND state IN ('starting','ready','frozen','pausing','resuming')
+ RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at,
+  (pause_requested_at IS NOT NULL)::boolean AS pause_requested
 `
 
 type RenewSandboxSessionLeaseParams struct {
@@ -3961,6 +4206,7 @@ type RenewSandboxSessionLeaseRow struct {
 	CloseRequested bool
 	IdleTimeoutSec int32
 	ExpiresAt      pgtype.Timestamptz
+	PauseRequested bool
 }
 
 // Renewing also records the last call agentd has seen, so last_activity_at
@@ -3973,7 +4219,12 @@ func (q *Queries) RenewSandboxSessionLease(ctx context.Context, db DBTX, arg Ren
 		arg.LeaseToken,
 	)
 	var i RenewSandboxSessionLeaseRow
-	err := row.Scan(&i.CloseRequested, &i.IdleTimeoutSec, &i.ExpiresAt)
+	err := row.Scan(
+		&i.CloseRequested,
+		&i.IdleTimeoutSec,
+		&i.ExpiresAt,
+		&i.PauseRequested,
+	)
 	return i, err
 }
 
@@ -4181,6 +4432,47 @@ func (q *Queries) ResolveGitHubInstallation(ctx context.Context, db DBTX, arg Re
 	return installation_id, err
 }
 
+const returnExpiredResumingSandboxSessions = `-- name: ReturnExpiredResumingSandboxSessions :execrows
+UPDATE sandbox_sessions SET state='paused', resume_requested_at=coalesce(resume_requested_at, now()),
+  lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now()
+ WHERE state='resuming' AND lease_expires_at < now()
+`
+
+// A resume whose replica stopped renewing ended with its stream before the
+// capture was used: the session is paused again and resumes on the next
+// claim (ADR-20261122132055 §2).
+func (q *Queries) ReturnExpiredResumingSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, returnExpiredResumingSandboxSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const returnSandboxSessionResume = `-- name: ReturnSandboxSessionResume :execrows
+UPDATE sandbox_sessions SET state='paused',
+  resume_requested_at=CASE WHEN $1::boolean THEN coalesce(resume_requested_at, now()) ELSE NULL END,
+  lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL, updated_at=now()
+ WHERE id=$2::text::uuid AND lease_token=$3::text AND state='resuming'
+`
+
+type ReturnSandboxSessionResumeParams struct {
+	Retry      bool
+	SessionID  string
+	LeaseToken string
+}
+
+// A resume that never booted goes back to paused with its capture. retry
+// keeps the request, so the next claim tries again; a refused resume drops
+// it until apid asks again.
+func (q *Queries) ReturnSandboxSessionResume(ctx context.Context, db DBTX, arg ReturnSandboxSessionResumeParams) (int64, error) {
+	result, err := db.Exec(ctx, returnSandboxSessionResume, arg.Retry, arg.SessionID, arg.LeaseToken)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const revokeAgentCallbacks = `-- name: RevokeAgentCallbacks :one
 INSERT INTO agent_callback_revocations (endpoint_id, thread_id, account_id, revoked_at)
 VALUES ($1::text::uuid, $2::text, $3::text::uuid, clock_timestamp())
@@ -4296,8 +4588,9 @@ func (q *Queries) SandboxTaskCallByCall(ctx context.Context, db DBTX, arg Sandbo
 }
 
 const setSandboxSessionFrozen = `-- name: SetSandboxSessionFrozen :execrows
-UPDATE sandbox_sessions SET state=CASE WHEN $1::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
- WHERE id=$2::text::uuid AND lease_token=$3::text AND state IN ('ready','frozen')
+UPDATE sandbox_sessions SET state=CASE WHEN state='pausing' THEN 'pausing'
+    WHEN $1::boolean THEN 'frozen' ELSE 'ready' END, updated_at=now()
+ WHERE id=$2::text::uuid AND lease_token=$3::text AND state IN ('ready','frozen','pausing')
 `
 
 type SetSandboxSessionFrozenParams struct {
@@ -4306,6 +4599,8 @@ type SetSandboxSessionFrozenParams struct {
 	LeaseToken string
 }
 
+// A pause thaws a frozen VM before it captures it; the session stays
+// pausing (ADR-20261122132055 §2).
 func (q *Queries) SetSandboxSessionFrozen(ctx context.Context, db DBTX, arg SetSandboxSessionFrozenParams) (int64, error) {
 	result, err := db.Exec(ctx, setSandboxSessionFrozen, arg.Frozen, arg.SessionID, arg.LeaseToken)
 	if err != nil {
@@ -4401,9 +4696,12 @@ func (q *Queries) StartSandboxAction(ctx context.Context, db DBTX, arg StartSand
 }
 
 const startSandboxSession = `-- name: StartSandboxSession :execrows
-UPDATE sandbox_sessions SET state='starting', lease_token=$1::text, lease_owner=$2::text,
+UPDATE sandbox_sessions SET state=CASE WHEN state='paused' THEN 'resuming' ELSE 'starting' END,
+  resume_requested_at=CASE WHEN state='paused' THEN NULL ELSE resume_requested_at END,
+  lease_token=$1::text, lease_owner=$2::text,
   lease_expires_at=now()+make_interval(secs=>$3::double precision), updated_at=now()
- WHERE id=$4::text::uuid AND state='queued'
+ WHERE id=$4::text::uuid
+ AND (state='queued' OR (state='paused' AND resume_requested_at IS NOT NULL AND close_requested_at IS NULL))
 `
 
 type StartSandboxSessionParams struct {
@@ -4413,6 +4711,7 @@ type StartSandboxSessionParams struct {
 	SessionID  string
 }
 
+// A queued session starts; a paused one asked to resume resumes.
 func (q *Queries) StartSandboxSession(ctx context.Context, db DBTX, arg StartSandboxSessionParams) (int64, error) {
 	result, err := db.Exec(ctx, startSandboxSession,
 		arg.LeaseToken,

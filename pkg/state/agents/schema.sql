@@ -267,6 +267,21 @@ CREATE TABLE sandbox_sessions (
  resumed_cold boolean NOT NULL DEFAULT false,
  forked_from uuid
 );
+
+CREATE TABLE sandbox_session_captures (
+ id uuid PRIMARY KEY,
+ session_id uuid NOT NULL,
+ account_id uuid NOT NULL,
+ node_id text NOT NULL,
+ storage_key text NOT NULL,
+ vmstate_storage_key text NOT NULL,
+ fc_version text NOT NULL,
+ mem_bytes bigint NOT NULL,
+ vmstate_bytes bigint NOT NULL DEFAULT 0,
+ state text NOT NULL DEFAULT 'live',
+ created_at timestamptz NOT NULL DEFAULT now(),
+ consumed_at timestamptz
+);
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,

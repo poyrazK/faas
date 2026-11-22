@@ -368,6 +368,21 @@ type SandboxSession struct {
 	ForkedFrom          pgtype.UUID
 }
 
+type SandboxSessionCapture struct {
+	ID                pgtype.UUID
+	SessionID         pgtype.UUID
+	AccountID         pgtype.UUID
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+	State             string
+	CreatedAt         pgtype.Timestamptz
+	ConsumedAt        pgtype.Timestamptz
+}
+
 type SandboxSessionDomain struct {
 	SandboxID pgtype.UUID
 	Domain    string

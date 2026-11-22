@@ -8,6 +8,7 @@ import (
 	"context"
 	"net"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -35,6 +36,9 @@ type fakeSandboxSchedd struct {
 	persists []persistAnswer
 	// actions are the browser actions the "actions" script was sent.
 	actions []*scheddpb.SandboxRunAction
+	// pauses are the capture IDs pauses named; the "pause-busy" script
+	// refuses the first.
+	pauses []string
 }
 
 func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
@@ -62,7 +66,11 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	if frame, err := stream.Recv(); err != nil || frame.GetProceed() == nil {
 		return status.Error(codes.Aborted, "not told to proceed")
 	}
-	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: "WAKE_COLD_BOOT", BootMs: 700,
+	method := "WAKE_COLD_BOOT"
+	if start.GetResume() != nil && script != "restore-fails" {
+		method = "WAKE_RESTORE"
+	}
+	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: method, BootMs: 700,
 		Actions: script == "actions", EgressPolicy: script == "egress"}}}); err != nil {
 		return err
 	}
@@ -124,6 +132,22 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			f.freezes++
 			f.mu.Unlock()
 			_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Frozen{Frozen: &scheddpb.SandboxRunFrozen{}}})
+		case frame.GetPause() != nil:
+			id := frame.GetPause().GetCaptureId()
+			f.mu.Lock()
+			f.pauses = append(f.pauses, id)
+			refuse := script == "pause-busy" && len(f.pauses) == 1
+			f.mu.Unlock()
+			if refuse {
+				_ = stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: "busy"}}})
+				continue
+			}
+			// vmmd captures the VM, sends its last records and paused, and
+			// ends the stream (ADR-20261122132055 §2).
+			mem := "snap/sandbox-session-" + start.GetAccountId() + "/captures/" + id + "/v2/mem"
+			return stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
+				StorageKey: mem, VmstateStorageKey: strings.TrimSuffix(mem, "/mem") + "/vmstate", FcVersion: "1.10.0",
+				MemBytes: 2 << 30, VmstateBytes: 40_000, PauseMs: 900}}})
 		case frame.GetClose() != nil:
 			f.mu.Lock()
 			f.closes++
