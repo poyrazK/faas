@@ -331,29 +331,41 @@ func (h *Handler) ensureBaseExt4(
 // (ADR-053). The sidecar is the source of truth for the
 // "did this base already stage?" check — re-fetching tens of
 // MB of layers on every daemon restart would be wasteful.
-// writeBaseDigestSidecar publishes the base's digest sidecar. When the store
-// refuses the write because another writer was publishing the same key at that
-// moment (two builds staging one runtime base: prod hunt r26 failed a project
-// deploy with OVH 409 OperationAborted), it writes once more: the refused
-// attempt left nothing behind and the value is the same bytes either way.
 func (h *Handler) writeBaseDigestSidecar(ctx context.Context, be storage.StorageBackend, digestKey, wantDigest, guestInitDigest, sourceRef string) error {
 	value := baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef)
-	err := putStringOnce(ctx, be, digestKey, value)
-	if errors.Is(err, storage.ErrWriteConflict) {
-		err = putStringOnce(ctx, be, digestKey, value)
-	}
-	if err != nil {
+	if err := putSharedBaseSidecar(ctx, be, digestKey, []byte(value)); err != nil {
 		return fmt.Errorf("imaged: write digest sidecar %q: %w", digestKey, err)
 	}
 	return nil
 }
 
-func putStringOnce(ctx context.Context, be storage.StorageBackend, key, value string) error {
-	r, err := openStringReader(value)
-	if err != nil {
-		return fmt.Errorf("imaged: open digest sidecar: %w", err)
+// sharedBaseSidecarConflictBackoff spaces the writes putSharedBaseSidecar
+// makes after a concurrent-write conflict.
+var sharedBaseSidecarConflictBackoff = []time.Duration{250 * time.Millisecond, time.Second}
+
+// putSharedBaseSidecar writes a small sidecar (digest, scan, content) of a
+// shared runtime base. Builds on several nodes stage one base at the same
+// time, and OVH refuses a write while another writer's conditional write of
+// the key is in flight (409 OperationAborted, storage.ErrWriteConflict): prod
+// hunts r26 and r27 each failed one app of a 3-service Compose deploy, on the
+// digest and then the scan sidecar. The refused attempt published nothing,
+// so it writes again after a short wait, at most twice.
+func putSharedBaseSidecar(ctx context.Context, be storage.StorageBackend, key string, body []byte) error {
+	err := be.Put(ctx, key, bytes.NewReader(body))
+	for _, wait := range sharedBaseSidecarConflictBackoff {
+		if !errors.Is(err, storage.ErrWriteConflict) {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		err = be.Put(ctx, key, bytes.NewReader(body))
 	}
-	return be.Put(ctx, key, r)
+	return err
 }
 
 func baseDigestSidecarValue(configDigest string) string {
@@ -933,7 +945,7 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
-	if err := be.Put(ctx, scanKey, bytes.NewReader(scanBlob)); err != nil {
+	if err := putSharedBaseSidecar(ctx, be, scanKey, scanBlob); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
 	if err := markCachedBaseGeneration(be, baseKey, digestKey, ref); err != nil {
