@@ -31,3 +31,7 @@ client receives that ID. An agent needs a way to repeat the submission safely.
   submission window closes. It filters on namespace, owner and expiry, then
   checks current tool access. It reads only metadata columns and uses the
   original Task deadline. The CLI reports the Task ID and next action.
+
+The Python/PostgreSQL Tasks starter implements the same submission and lookup
+contracts. Its schema-owner command installs the shared UUID column and partial
+unique index. Older schemas continue to serve ordinary Tasks during rollout.

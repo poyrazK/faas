@@ -5650,6 +5650,10 @@ The Node/PostgreSQL starter supports retrying a lost submission reply on an
 authenticated endpoint. Run the updated `tasks:migrate` before starting the
 updated starter. Generate and save a lowercase UUIDv7 before the first call.
 
+The `mcp-python-tasks` starter supports the same receipt and lookup flow. Apply
+its updated schema with the Python Task schema command from the starter README,
+then restart the web or combined process to advertise the extensions.
+
 ```sh
 gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
   --tool build_report --arguments '{"report":"weekly","steps":8}' \
