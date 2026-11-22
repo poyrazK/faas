@@ -82,6 +82,7 @@ native_e2e_phase_files() {
       real_image_smoke_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      route_resource_peaks_metal_test.go \
       single_process_oom_metal_test.go \
       profile_capture_metal_test.go \
       profile_capture_pprof_metal_test.go \
@@ -265,7 +266,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers app-task-interactive-only dev-loop-only exclusive-operations-only managed-operation-only managed-redis-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only dev-loop-only exclusive-operations-only managed-operation-only managed-redis-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system route-resource-peaks-only)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -325,6 +326,12 @@ native_e2e_lane_tests() {
       ;;
     financial-system)
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/financial_system_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    route-resource-peaks-only)
+      # ADR-20261121170000: guest cgroup sampler, vmmd minutes, gateway route
+      # minutes and the apid join, without the whole deploy phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/route_resource_peaks_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
     exclusive-operations-only)

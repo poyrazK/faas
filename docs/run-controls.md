@@ -22,8 +22,8 @@ An unrestricted account administrator or deploy/write credential creates
 ```
 
 ```sh
-gregale run controls customer customer-42 --manifest customer-budget.json
-gregale run controls customer customer-42
+gregale sandbox customer budget customer-42 --manifest customer-budget.json
+gregale sandbox customer budget customer-42
 ```
 
 Use opaque customer and agent references, up to 96 ASCII letters, digits,
@@ -49,9 +49,9 @@ Create `binding.json` and use the public API key ID from key management:
 ```
 
 ```sh
-gregale run controls binding api_key KEY_ID --manifest binding.json
-gregale run controls binding api_key KEY_ID
-gregale run controls binding agent_endpoint ENDPOINT_ID --manifest binding.json
+gregale sandbox binding controls api_key KEY_ID --manifest binding.json
+gregale sandbox binding controls api_key KEY_ID
+gregale sandbox binding controls agent_endpoint ENDPOINT_ID --manifest binding.json
 ```
 
 API key bindings follow the existing stable key family through rotation. The
@@ -68,7 +68,7 @@ only its existing task name/version and JSON input arguments. Conflicting key
 and endpoint bindings refuse admission.
 
 ```sh
-gregale run tasks invoke report@v1 --customer-ref customer-42 \
+gregale sandbox task call report@v1 --customer-ref customer-42 \
   --input '{"rows":3}' --idempotency-key report-123 --wait --json
 ```
 
@@ -80,8 +80,8 @@ and retains a revision tombstone. Read that revision before reactivating it.
 ## Enforce a task allowance
 
 ```sh
-gregale run controls task report --manifest task-budget.json
-gregale run controls task report
+gregale sandbox task budget report --manifest task-budget.json
+gregale sandbox task budget report
 ```
 
 The manifest has the same shape as a customer policy. Task limits cover every

@@ -68,7 +68,7 @@ Create `report.json`:
 
 ```sh
 gregale run tasks publish --manifest report.json
-gregale run tasks invoke report@v1 --input '{"rows":[1,2,3]}' --idempotency-key report-123 --wait --json
+gregale sandbox task call report@v1 --input '{"rows":[1,2,3]}' --idempotency-key report-123 --wait --json
 gregale run tasks list
 gregale run tasks get report@v1
 gregale run tasks retire report@v1

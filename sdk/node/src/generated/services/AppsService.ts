@@ -200,6 +200,7 @@ import type { RouteRemovalApproval } from '../models/RouteRemovalApproval.js';
 import type { RouteRemovalCheck } from '../models/RouteRemovalCheck.js';
 import type { RouteRemovalPolicy } from '../models/RouteRemovalPolicy.js';
 import type { RouteRequirementsCheck } from '../models/RouteRequirementsCheck.js';
+import type { RouteResourcesResponse } from '../models/RouteResourcesResponse.js';
 import type { RuntimeConfigRestartStatusResponse } from '../models/RuntimeConfigRestartStatusResponse.js';
 import type { RuntimePolicyStatusResponse } from '../models/RuntimePolicyStatusResponse.js';
 import type { SavedRouteRequirements } from '../models/SavedRouteRequirements.js';
@@ -3848,6 +3849,60 @@ export class AppsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Which routes the app's memory and CPU peaks come from.
+   * Joins each instance's per-minute memory and CPU with the routes that
+   * instance served in the same minutes. A memory peak is a minute whose
+   * memory rose by at least high_memory_rise_mb above where it started; a
+   * CPU peak is a minute whose busiest second reached 80% of the CPU limit.
+   * For each route the response gives the share of peaks it was in flight
+   * for, how often it ran at all, and the p95 peak in minutes with and
+   * without it. This is a correlation over minutes, not a per-request
+   * measurement: a route that runs in every minute shares every peak.
+   * Available only where route resource peaks are enabled for the account.
+   *
+   * @returns RouteResourcesResponse Route attribution of the app's memory and CPU peaks.
+   * @throws ApiError
+   */
+  public static getAppRouteResources({
+    slug,
+    since = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Lookback duration, at least 1m and at most 336h.
+     */
+    since?: string,
+  }): CancelablePromise<RouteResourcesResponse> {
+    return __request(this?.clientConfig ?? OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/analytics/route-resources',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'since': since,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        422: `code: validation_failed | env_var_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });

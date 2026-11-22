@@ -799,6 +799,11 @@ const appScaleUsage = "usage: gregale app scale <slug> [--interactive | --plan [
 // cmdAppScale is the subcommand form of `gregale app <slug> scale ...`.
 // Uses the same fs.Visit pattern so 0 is distinguishable from "unset".
 func cmdAppScale(slug string, args []string) int {
+	for _, arg := range args {
+		if arg == "--suggest" || arg == "-suggest" {
+			return cmdAppScaleSuggest(slug, args)
+		}
+	}
 	if hasHelpFlag(args) {
 		command, _ := lookupCliCommand("app")
 		printManifestHelp(osStdout, command, append([]string{slug, "scale"}, args...))
