@@ -45,6 +45,9 @@ type CallOptions struct {
 	WaitForTask bool
 	// TaskSubmissionKey is a caller-retained UUIDv7 for a handle-only Task call.
 	TaskSubmissionKey string
+	// DeferFormInput lets a keyed, handle-only Task request bounded forms.
+	// The caller supplies responses during a later wait.
+	DeferFormInput bool
 	// CancelOnTimeout requests cooperative cancellation when the wait ends
 	// because its context expires or is cancelled. It is opt-in so a resumed
 	// wait can stop observing without stopping durable work.
