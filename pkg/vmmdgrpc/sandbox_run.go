@@ -408,7 +408,73 @@ func (s *Server) freezeSandbox(ctx context.Context, instance string) *vmmdpb.Run
 // sandboxPauser captures a persistent session's VM and destroys it
 // (ADR-20261122132055 §2); *fcvm.Manager implements it.
 type sandboxPauser interface {
-	PauseSandbox(ctx context.Context, p fcvm.SandboxPause) (*fcvm.Snapshot, fcvm.SnapshotInfo, bool, error)
+	PauseSandbox(ctx context.Context, p fcvm.SandboxPause) (fcvm.SandboxPaused, bool, error)
+}
+
+// sandboxCapturePublisher uploads a pause capture's node-only objects to the
+// shared store (ADR-20261122132055 §2); *fcvm.Manager implements it.
+type sandboxCapturePublisher interface {
+	PublishSandboxCapture(ctx context.Context, memKey string) error
+	PublishPendingSandboxCaptures(ctx context.Context) (int, error)
+}
+
+const (
+	// sandboxPublishFirstRetry and sandboxPublishMaxRetry pace a failed
+	// capture upload's retries; sandboxPublishGiveUp ends them, leaving the
+	// capture on its node (durability node) until vmmd restarts.
+	sandboxPublishFirstRetry = 2 * time.Second
+	sandboxPublishMaxRetry   = 5 * time.Minute
+	sandboxPublishGiveUp     = 24 * time.Hour
+)
+
+// publishSandboxCapture uploads a pause capture in the background, retrying
+// until it succeeds or sandboxPublishGiveUp passes. agentd sees the upload
+// in the shared store and marks the session's durability remote.
+func (s *Server) publishSandboxCapture(ctx context.Context, memKey string) {
+	pub, ok := s.vmm.(sandboxCapturePublisher)
+	if !ok {
+		return
+	}
+	go func() {
+		// The upload outlives the pause's stream.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sandboxPublishGiveUp)
+		defer cancel()
+		started := time.Now()
+		wait := sandboxPublishFirstRetry
+		for {
+			err := pub.PublishSandboxCapture(ctx, memKey)
+			s.ops.Observe("SandboxCaptureUpload", time.Since(started), err)
+			if err == nil {
+				s.log.Info("sandbox: capture uploaded", "storage_key", memKey, "upload_ms", time.Since(started).Milliseconds())
+				return
+			}
+			s.log.Warn("sandbox: capture upload failed; retrying", "storage_key", memKey, "retry_in", wait, "err", err)
+			select {
+			case <-ctx.Done():
+				s.log.Warn("sandbox: capture upload gave up; it stays on this node", "storage_key", memKey)
+				return
+			case <-time.After(wait):
+			}
+			wait = min(2*wait, sandboxPublishMaxRetry)
+		}
+	}()
+}
+
+// PublishPendingSandboxCaptures uploads the pause captures a restart left on
+// this node alone. vmmd runs it once at start, in the background.
+func (s *Server) PublishPendingSandboxCaptures(ctx context.Context) {
+	pub, ok := s.vmm.(sandboxCapturePublisher)
+	if !ok {
+		return
+	}
+	n, err := pub.PublishPendingSandboxCaptures(ctx)
+	if err != nil {
+		s.log.Warn("sandbox: pending capture uploads failed", "uploaded", n, "err", err)
+		return
+	}
+	if n > 0 {
+		s.log.Info("sandbox: uploaded pending capture objects", "objects", n)
+	}
 }
 
 // pauseSandbox captures the session VM. It answers paused, or refused when
@@ -435,7 +501,7 @@ func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandbox
 		return refuse("failed")
 	}
 	started := time.Now()
-	snap, info, kept, err := pauser.PauseSandbox(ctx, fcvm.SandboxPause{Instance: instance, SandboxID: act.sandboxID,
+	captured, kept, err := pauser.PauseSandbox(ctx, fcvm.SandboxPause{Instance: instance, SandboxID: act.sandboxID,
 		AccountID: act.accountID, CaptureID: p.GetCaptureId()})
 	if err != nil {
 		s.log.Warn("sandbox: pause failed", "instance", instance, "vm_kept", kept, "err", err)
@@ -444,10 +510,12 @@ func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandbox
 		}
 		return nil, nil, status.Error(codes.Aborted, "sandbox pause failed: the session's VM ended while it was being captured")
 	}
+	snap := captured.Snapshot
+	s.publishSandboxCapture(ctx, snap.StorageKey)
 	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Paused{Paused: &vmmdpb.RunSandboxPaused{
 		Snapshot: &vmmdpb.AgentRunSnapshot{StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey,
 			FcVersion: snap.FCVersion, MemBytes: snap.MemBytes},
-		VmstateBytes: info.VMStateBytes, PauseMs: time.Since(started).Milliseconds()}}}, nil, nil
+		VmstateBytes: captured.Info.VMStateBytes, PauseMs: time.Since(started).Milliseconds(), HasBacking: captured.HasBacking}}}, nil, nil
 }
 
 // thawSandbox thaws a frozen session VM in place before a call. A freeze in

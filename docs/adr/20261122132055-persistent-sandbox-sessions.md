@@ -178,10 +178,18 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 ### Step 3 as built
 
 - **Capture.** vmmd pauses with `Manager.Park`, the terminal capture apps park with, under the account's session namespace. A pause with a call in flight is refused, and calls are refused while it runs. A capture that fails before the guest is touched leaves the VM running (`pause_refused`); one that fails after it loses the VM, which agentd records as a lost VM.
-- **Publication.** The node's store writes through to its parent, so a pause waits for the parent copy. The session still reports `durability: node` until step 4 owns the upload and sets `remote`.
-- **Resume.** A paused session asked to resume is claimable; schedd prefers the capture's node and places it anywhere when that node is full, since every node reads the capture from the shared store. A resume that never booted goes back to `paused` (its request kept for transient failures). Without volumes (step 5), a cold resume starts from a fresh workspace.
+- **Publication.** Superseded by step 4 below.
+- **Resume.** A paused session asked to resume is claimable; schedd prefers the capture's node. A resume that never booted goes back to `paused` (its request kept for transient failures). Without volumes (step 5), a cold resume starts from a fresh workspace.
 - **Timers.** A running persistent session pauses on request, at `SandboxPersistentRunMaxSec` and after `SandboxPersistentIdlePauseSec` without calls. A paused session's `expires_at` is its retention end.
-- **Not yet:** the implicit resume on a data-plane call (calls to a paused session fail until it is resumed); usage across a resume (the pause's usage record is final, so step 9 meters resumed VMs); captures sealed to the account (step 4, with the upload).
+- **Not yet:** the implicit resume on a data-plane call (calls to a paused session fail until it is resumed); usage across a resume (the pause's usage record is final, so step 9 meters resumed VMs).
+
+### Step 4 as built
+
+- **Node first.** The pause writes every capture object (mem, vmstate, drive, backing) to the node's snapshot cache only, each with a `.local` mark that pins it against cache eviction. A pause no longer waits for object storage.
+- **Upload.** vmmd then copies the capture to the cache's parent store in the background and drops the marks, retrying with backoff (2 s up to 5 min, giving up after 24 h); a vmmd restart publishes whatever is still marked. Its duration is the `vmmd` operation `SandboxCaptureUpload` (standing in for `sandbox_session_capture_upload_seconds`). A capture deleted while it uploads is deleted again from the parent.
+- **Durability.** agentd's sweep turns `durability: node` into `remote` once the shared store holds every object of the capture (the backing only when the pause reported one, `has_backing`). The capture's row is the record of it.
+- **Resume.** A `remote` capture resumes on its node when it has room and anywhere on the pool otherwise. A `node` capture resumes only on its node (`require_node`): schedd answers `capacity` when it is busy and agentd retries; a capture whose node is gone resumes cold.
+- **Not yet:** captures sealed to the account (follows snapshot sealing 3d-3, still behind its flag); the cold resume from the volume (step 5, so it still starts from a fresh workspace).
 
 ## Open questions
 

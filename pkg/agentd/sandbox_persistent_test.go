@@ -60,20 +60,35 @@ func TestPersistentSandboxPausesOnRequestAndResumes(t *testing.T) {
 	if found, err := sbx.ClaimOnce(ctx); err != nil || found {
 		t.Fatalf("claimed a paused session nobody resumed: %v %v", found, err)
 	}
-	if _, err := store.ResumeSandbox(ctx, account, id); err != nil {
-		t.Fatal(err)
-	}
+	// adr: 20261122132055 §2 — the capture is on its node until the shared
+	// store holds all of it; then its durability is remote.
 	capture := fake.pauses[0]
 	mem := "snap/sandbox-session-" + account + "/captures/" + capture + "/v2/mem"
 	snap := state.Snapshot{StorageKey: mem}
-	for _, key := range []string{mem, state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)} {
+	blobs.blob[mem] = []byte("x")
+	if err := sbx.SweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sb := sandboxState(t, store, id); sb.Durability != "node" {
+		t.Fatalf("durability %q with part of the capture uploaded", sb.Durability)
+	}
+	for _, key := range []string{state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap), state.SnapshotBackingKey(snap)} {
 		blobs.blob[key] = []byte("x")
+	}
+	if err := sbx.SweepOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sb := sandboxState(t, store, id); sb.Durability != "remote" || sb.State != agentstore.SandboxPaused {
+		t.Fatalf("an uploaded capture = %s %q", sb.State, sb.Durability)
+	}
+	if _, err := store.ResumeSandbox(ctx, account, id); err != nil {
+		t.Fatal(err)
 	}
 	done = holdSandbox(t, sbx)
 	waitFor(t, "resumed", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
 	resume := fake.starts[1].GetResume()
 	if resume == nil || resume.GetStorageKey() != mem || resume.GetNodeId() != "agents-1" || resume.GetFcVersion() != "1.10.0" ||
-		resume.GetMemBytes() != 2<<30 || fake.starts[1].GetWorkspaceKey() != "" {
+		resume.GetMemBytes() != 2<<30 || fake.starts[1].GetWorkspaceKey() != "" || resume.GetRequireNode() {
 		t.Fatalf("resume start = %v", fake.starts[1])
 	}
 	sb = sandboxState(t, store, id)
@@ -139,6 +154,10 @@ func TestPersistentSandboxResumesColdWhenTheRestoreFails(t *testing.T) {
 	waitFor(t, "resumed", func() bool { return sandboxState(t, store, id).State == agentstore.SandboxReady })
 	if sb := sandboxState(t, store, id); !sb.ResumedCold {
 		t.Fatalf("a cold resume = %+v", sb)
+	}
+	// Nothing was uploaded, so only the capture's node could restore it.
+	if r := fake.starts[1].GetResume(); r == nil || !r.GetRequireNode() || r.GetNodeId() != "agents-1" {
+		t.Fatalf("a node-only resume = %v", r)
 	}
 	if _, err := store.CloseSandbox(ctx, account, id); err != nil {
 		t.Fatal(err)

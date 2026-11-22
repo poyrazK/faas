@@ -56,7 +56,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		EgressAllow: start.GetEgressAllow(), EgressDeny: start.GetEgressDeny(), WebDomainLog: start.GetWebDomainLog(),
 		Persistent: start.GetPersistent()}
 	if r := start.GetResume(); r != nil {
-		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
+		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
 			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
 	}
 	ctx := stream.Context()
@@ -125,7 +125,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		Paused: func(_ context.Context, p sched.SandboxPaused) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Paused{Paused: &scheddpb.SandboxRunPaused{
 				StorageKey: p.Snapshot.StorageKey, VmstateStorageKey: p.Snapshot.VMStateStorageKey, FcVersion: p.Snapshot.FCVersion,
-				MemBytes: p.Snapshot.MemBytes, VmstateBytes: p.VMStateBytes, PauseMs: p.PauseMs}}})
+				MemBytes: p.Snapshot.MemBytes, VmstateBytes: p.VMStateBytes, PauseMs: p.PauseMs, HasBacking: p.HasBacking}}})
 		},
 		PauseRefused: func(_ context.Context, reason string) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_PauseRefused{PauseRefused: &scheddpb.SandboxRunPauseRefused{Reason: reason}}})

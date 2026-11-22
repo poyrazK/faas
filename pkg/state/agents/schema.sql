@@ -278,6 +278,7 @@ CREATE TABLE sandbox_session_captures (
  fc_version text NOT NULL,
  mem_bytes bigint NOT NULL,
  vmstate_bytes bigint NOT NULL DEFAULT 0,
+ has_backing boolean NOT NULL DEFAULT false,
  state text NOT NULL DEFAULT 'live',
  created_at timestamptz NOT NULL DEFAULT now(),
  consumed_at timestamptz

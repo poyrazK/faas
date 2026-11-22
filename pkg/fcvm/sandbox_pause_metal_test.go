@@ -2,12 +2,16 @@
 
 // adr: 20261122132055 §2 — a persistent session pauses with its memory kept:
 // PauseSandbox captures the running VM with its private drive and ends it
-// (no VM, cgroup or jail left while paused); the restore takes whatever
-// identity is free (slot, jail uid, host IP), steps the clock, and the guest
-// keeps its processes, its tmpfs and its /workspace; the network works.
+// (no VM, cgroup or jail left while paused), writing the capture to this
+// node's cache only; PublishSandboxCapture then gives the shared store a
+// copy. The resume here reads through an empty cache, as another node would,
+// so it restores from the shared copy. The restore takes whatever identity is
+// free (slot, jail uid, host IP), steps the clock, and the guest keeps its
+// processes, its tmpfs and its /workspace; the network works.
 package fcvm
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -37,11 +41,26 @@ func TestMetalSandboxPauseAndResume(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(snapRoot, "snap"), 0o2770); err != nil {
 		t.Fatal(err)
 	}
-	store, err := storage.NewLocalStorageBackend(snapRoot)
+	shared, err := storage.NewLocalStorageBackend(snapRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := NewManager(wire.ExecRunner{}, newMetalVMM(t, 120*time.Second).WithStorage(store), Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default(), nil)
+	nodeCache := func() *storage.LocalCacheBackend {
+		c, err := storage.NewLocalCacheBackend(shared, filepath.Join(t.TempDir(), "cache"), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	// The manager reads its store, so it gates the boot on the base's scan.
+	clean := []byte(`{"image":"metal-sandbox-pause","findings":{"CRITICAL":0}}`)
+	if err := shared.Put(context.Background(), wire.ScanKeyForBaseKey(base), bytes.NewReader(clean)); err != nil {
+		t.Fatal(err)
+	}
+	cache := nodeCache()
+	vmm := newMetalVMM(t, 120*time.Second).WithStorage(cache)
+	m := NewManager(wire.ExecRunner{}, vmm, Paths{Kernel: kernel}, os.Getenv("FAAS_TEST_FC_VERSION"), slog.Default(), nil)
+	m.WithStorage(cache)
 	ctx := context.Background()
 	const account, sandboxID, instance = "acct-pause", "sbx-pause-session", "sbx-pause-1"
 	req := SandboxWakeRequest{Instance: instance, SandboxID: sandboxID, AccountID: account, Plan: api.PlanPro,
@@ -62,11 +81,12 @@ echo started`)
 
 	captureID := uuid.NewString()
 	begun := time.Now()
-	snap, info, kept, err := m.PauseSandbox(ctx, SandboxPause{Instance: instance, SandboxID: sandboxID, AccountID: account, CaptureID: captureID})
+	paused, kept, err := m.PauseSandbox(ctx, SandboxPause{Instance: instance, SandboxID: sandboxID, AccountID: account, CaptureID: captureID})
 	if err != nil || kept {
 		t.Fatalf("pause: %v (vm kept %v)", err, kept)
 	}
-	t.Logf("paused in %d ms, %d MB memory", time.Since(begun).Milliseconds(), info.MemBytes>>20)
+	snap, info := paused.Snapshot, paused.Info
+	t.Logf("paused in %d ms, %d MB memory, backing %v", time.Since(begun).Milliseconds(), info.MemBytes>>20, paused.HasBacking)
 	if !storagekey.IsSandboxSessionSnapshotKey(snap.StorageKey, account) || snap.Networkless || info.MemBytes == 0 {
 		t.Fatalf("capture %+v %+v", snap, info)
 	}
@@ -74,9 +94,39 @@ echo started`)
 	if m.LiveCount() != 0 {
 		t.Fatalf("%d VMs live while the session is paused", m.LiveCount())
 	}
-	if _, _, _, err := m.PauseSandbox(ctx, SandboxPause{Instance: instance, SandboxID: sandboxID, AccountID: account, CaptureID: uuid.NewString()}); err == nil {
+	if _, _, err := m.PauseSandbox(ctx, SandboxPause{Instance: instance, SandboxID: sandboxID, AccountID: account, CaptureID: uuid.NewString()}); err == nil {
 		t.Fatal("paused a VM that is gone")
 	}
+	// Node first: the pause wrote the cache only.
+	keys := sandboxCaptureKeys(snap.StorageKey)
+	for _, key := range keys[:3] {
+		if !cache.LocalOnly(key) {
+			t.Fatalf("%s is not local-only after the pause", key)
+		}
+		if rc, err := shared.Get(ctx, key); err == nil {
+			_ = rc.Close()
+			t.Fatalf("the shared store has %s before the upload", key)
+		}
+	}
+	begun = time.Now()
+	if err := m.PublishSandboxCapture(ctx, snap.StorageKey); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	t.Logf("uploaded in %d ms", time.Since(begun).Milliseconds())
+	for _, key := range keys[:3] {
+		if cache.LocalOnly(key) {
+			t.Fatalf("%s is still local-only after the upload", key)
+		}
+		rc, err := shared.Get(ctx, key)
+		if err != nil {
+			t.Fatalf("the shared store lacks %s after the upload: %v", key, err)
+		}
+		_ = rc.Close()
+	}
+	// Another node: an empty cache over the same shared store.
+	other := nodeCache()
+	vmm.WithStorage(other)
+	m.WithStorage(other)
 
 	// Another session takes the freed slot, so the restore cannot inherit it.
 	filler := req

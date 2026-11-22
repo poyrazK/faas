@@ -73,6 +73,13 @@ type SandboxCapture struct {
 	FCVersion         string
 	MemBytes          int64
 	VMStateBytes      int64
+	// HasBacking: the capture's backing identity was written (ADR-510).
+	HasBacking bool
+	// Remote: the shared store holds the whole capture (durability
+	// remote), so any node can restore it; otherwise only NodeID can.
+	Remote bool
+	// SessionID is the capture's session, in a durability check.
+	SessionID string
 }
 
 // SandboxLease is what a renewal reports: the fields apid may change while
@@ -129,7 +136,8 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 	var resume *SandboxCapture
 	if row.State == SandboxResuming && row.CaptureID != "" {
 		resume = &SandboxCapture{ID: row.CaptureID, NodeID: row.CaptureNodeID, StorageKey: row.CaptureStorageKey,
-			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes}
+			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
+			Remote: row.Durability == "remote"}
 	}
 	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
@@ -205,7 +213,7 @@ func (s *Store) ReturnSandboxResume(ctx context.Context, id, token string, retry
 func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration) error {
 	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token,
 		CaptureID: c.ID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey, FcVersion: c.FCVersion,
-		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, RetentionSeconds: retention.Seconds()})
+		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, RetentionSeconds: retention.Seconds()})
 	return fenced(n, err, "mark session paused")
 }
 
@@ -221,6 +229,31 @@ func (s *Store) ConsumedSandboxCaptures(ctx context.Context, limit int) ([]Sandb
 		out = append(out, SandboxCapture{ID: r.ID, StorageKey: r.StorageKey, VMStateStorageKey: r.VmstateStorageKey})
 	}
 	return out, nil
+}
+
+// NodeOnlySandboxCaptures lists at most limit live captures of paused
+// sessions whose durability is still node.
+func (s *Store) NodeOnlySandboxCaptures(ctx context.Context, limit int) ([]SandboxCapture, error) {
+	rows, err := s.q.ListNodeOnlySandboxCaptures(ctx, s.pool, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("list node-only session captures: %w", err)
+	}
+	out := make([]SandboxCapture, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, SandboxCapture{ID: r.ID, SessionID: r.SessionID, StorageKey: r.StorageKey,
+			VMStateStorageKey: r.VmstateStorageKey, HasBacking: r.HasBacking})
+	}
+	return out, nil
+}
+
+// MarkSandboxCaptureRemote records that the shared store holds a paused
+// session's whole capture: its durability is remote, and any node resumes
+// it. A session that resumed or ended meanwhile is left alone.
+func (s *Store) MarkSandboxCaptureRemote(ctx context.Context, sessionID, captureID string) error {
+	if _, err := s.q.MarkSandboxCaptureRemote(ctx, s.pool, sqlc.MarkSandboxCaptureRemoteParams{SessionID: sessionID, CaptureID: captureID}); err != nil {
+		return fmt.Errorf("mark session capture remote: %w", err)
+	}
+	return nil
 }
 
 // DeleteSandboxCapture removes a consumed capture's row once its objects are

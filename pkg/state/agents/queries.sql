@@ -603,7 +603,8 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   sb.state, sb.kind, coalesce(sb.vcpu, 0)::integer AS vcpu,
   coalesce(cap.id::text, '')::text AS capture_id, coalesce(cap.storage_key, '')::text AS capture_storage_key,
   coalesce(cap.vmstate_storage_key, '')::text AS capture_vmstate_storage_key, coalesce(cap.fc_version, '')::text AS capture_fc_version,
-  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id
+  coalesce(cap.mem_bytes, 0)::bigint AS capture_mem_bytes, coalesce(cap.node_id, '')::text AS capture_node_id,
+  coalesce(sb.durability, '')::text AS durability
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
  LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
@@ -681,9 +682,10 @@ WITH session AS (
    WHERE id=sqlc.arg(session_id)::text::uuid AND lease_token=sqlc.arg(lease_token)::text AND state='pausing'
 ), capture AS (
   INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
-    mem_bytes, vmstate_bytes)
+    mem_bytes, vmstate_bytes, has_backing)
   SELECT sqlc.arg(capture_id)::text::uuid, id, account_id, sqlc.arg(node_id)::text, sqlc.arg(storage_key)::text,
-    sqlc.arg(vmstate_storage_key)::text, sqlc.arg(fc_version)::text, sqlc.arg(mem_bytes)::bigint, sqlc.arg(vmstate_bytes)::bigint
+    sqlc.arg(vmstate_storage_key)::text, sqlc.arg(fc_version)::text, sqlc.arg(mem_bytes)::bigint, sqlc.arg(vmstate_bytes)::bigint,
+    sqlc.arg(has_backing)::boolean
   FROM session
   RETURNING session_id
 )
@@ -776,6 +778,21 @@ SELECT id::text AS id FROM ended;
 -- objects, then the row.
 SELECT id::text AS id, storage_key, vmstate_storage_key FROM sandbox_session_captures
  WHERE state='consumed' ORDER BY consumed_at, id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: ListNodeOnlySandboxCaptures :many
+-- Live captures of paused sessions the shared store may not hold yet
+-- (durability node): agentd checks each and marks it remote once it does
+-- (ADR-20261122132055 §2).
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing
+  FROM sandbox_session_captures cap JOIN sandbox_sessions sb ON sb.id=cap.session_id
+ WHERE cap.state='live' AND sb.state='paused' AND sb.durability='node'
+ ORDER BY cap.created_at, cap.id LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: MarkSandboxCaptureRemote :execrows
+UPDATE sandbox_sessions sb SET durability='remote', updated_at=now()
+ WHERE sb.id=sqlc.arg(session_id)::text::uuid AND sb.state='paused' AND sb.durability='node'
+ AND EXISTS (SELECT 1 FROM sandbox_session_captures cap
+   WHERE cap.id=sqlc.arg(capture_id)::text::uuid AND cap.session_id=sb.id AND cap.state='live');
 
 -- name: DeleteSandboxSessionCapture :execrows
 DELETE FROM sandbox_session_captures WHERE id=sqlc.arg(capture_id)::text::uuid AND state='consumed';
