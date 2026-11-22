@@ -195,7 +195,7 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	}
 	var out api.AppResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if want := api.MustLimitsFor(api.PlanPro).RAMMB; out.RAMMB != want {
+	if want := api.StandaloneAppDefaultRAMMB(api.MustLimitsFor(api.PlanPro)); out.RAMMB != want {
 		t.Errorf("RAM default = %d, want %d (pro)", out.RAMMB, want)
 	}
 	if out.VCPU != api.SizeVCPUs(out.RAMMB) {
@@ -212,7 +212,7 @@ func TestCreateApp_AppliesDefaults(t *testing.T) {
 	}
 }
 
-// ADR-20261029234500: a Scale app created without a size starts at 1024 MB,
+// ADR-20261122180000: a Scale app created without a size starts at 512 MB,
 // not the plan's 2048 MB; an explicit vCPU keeps the plan's joint shape.
 func TestCreateAppDefaultRAMIsCappedForScale(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanScale)
