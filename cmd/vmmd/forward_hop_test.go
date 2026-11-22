@@ -39,3 +39,19 @@ func TestWrapForwardHopLeavesListenerUnlessOn(t *testing.T) {
 		t.Fatal("a hop without a service was started")
 	}
 }
+
+type recordingStopper struct{ calls []string }
+
+func (r *recordingStopper) GracefulStop() { r.calls = append(r.calls, "graceful") }
+func (r *recordingStopper) Stop()         { r.calls = append(r.calls, "stop") }
+
+// With the hop off, hopStopper is the gRPC server's stop unchanged.
+func TestHopStopperWithoutHop(t *testing.T) {
+	g := &recordingStopper{}
+	s := hopStopper{grpc: g}
+	s.GracefulStop()
+	s.Stop()
+	if len(g.calls) != 2 || g.calls[0] != "graceful" || g.calls[1] != "stop" {
+		t.Fatalf("calls = %v", g.calls)
+	}
+}

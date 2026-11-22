@@ -51,7 +51,10 @@ type Server struct {
 	cfg    ServerConfig
 	tls    *tls.Config
 	tracer trace.Tracer
-	ctx    context.Context
+	// idleTimeout ends a connection that starts no exchange
+	// (serverIdleTimeout; tests shorten it).
+	idleTimeout time.Duration
+	ctx         context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
@@ -78,7 +81,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		cfg.Log = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	return &Server{cfg: cfg, tls: hopServerTLS(cfg.TLS), tracer: otel.Tracer("github.com/onebox-faas/faas/pkg/vmmdhop"), ctx: ctx, cancel: cancel, idle: map[*tls.Conn]struct{}{}}, nil
+	return &Server{cfg: cfg, tls: hopServerTLS(cfg.TLS), tracer: otel.Tracer("github.com/onebox-faas/faas/pkg/vmmdhop"), idleTimeout: serverIdleTimeout, ctx: ctx, cancel: cancel, idle: map[*tls.Conn]struct{}{}}, nil
 }
 
 // hopServerTLS offers only ALPN, including on the config a reload hook
@@ -155,7 +158,7 @@ func (s *Server) awaitExchange(conn *tls.Conn) bool {
 		return false
 	}
 	s.idle[conn] = struct{}{}
-	_ = conn.SetReadDeadline(time.Now().Add(serverIdleTimeout))
+	_ = conn.SetReadDeadline(time.Now().Add(s.idleTimeout))
 	return true
 }
 
