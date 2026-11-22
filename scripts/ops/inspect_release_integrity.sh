@@ -24,3 +24,16 @@ printf '%s\n' "$out" | grep -oE 'pid [0-9]+' | awk '{print $2}' | sort -un | whi
 done
 echo "== integrity journal (12 h):"
 journalctl -t faas-release-integrity --since -12h -o short-iso --no-pager 2>/dev/null | tail -12 | cut -c1-500
+unit=${INSPECT_UNIT:-none}
+case "$unit" in
+  none) exit 0 ;;
+  faas-imaged-prestage|faas-imaged|faas-vmmd|faas-schedd|faas-gatewayd-internal) ;;
+  *) echo "unit $unit is not on the allowlist" >&2; exit 2 ;;
+esac
+# Platform daemons never log secret values (CLAUDE.md conventions); drop any
+# line naming one anyway so a mistake there does not reach a public log.
+redact() { grep -viE 'password|passwd|secret|token|api[_-]?key|private[_-]?key|authorization|bearer|dsn=|postgres(ql)?://'; }
+echo "== $unit.service status:"
+systemctl status "$unit.service" --no-pager -l -n 0 2>&1 | redact | cut -c1-300
+echo "== $unit.service journal (2 h, last 80):"
+journalctl -u "$unit.service" --since -2h -n 80 -o short-iso --no-pager 2>&1 | redact | cut -c1-600
