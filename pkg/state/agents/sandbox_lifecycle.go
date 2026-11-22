@@ -62,7 +62,11 @@ type SandboxClaim struct {
 	// and VolumeBackupID its newest backup (ADR-20261122132055 §4).
 	VolumeGB       int
 	VolumeBackupID string
-	LeaseToken     string
+	// ForkOf is a fork's source session (ADR-20261122132055 §3): Resume is
+	// the source's capture, which the shared store holds, and the volume
+	// restores from the source's backup VolumeBackupID.
+	ForkOf     string
+	LeaseToken string
 	SandboxLease
 }
 
@@ -99,8 +103,11 @@ type SandboxLease struct {
 	CloseRequested bool
 	// PauseRequested: apid asked to pause a persistent session.
 	PauseRequested bool
-	IdleTimeout    time.Duration
-	ExpiresAt      time.Time
+	// ForkRequested: apid queued forks of the running session and waits for
+	// its fork capture (ADR-20261122132055 §3).
+	ForkRequested bool
+	IdleTimeout   time.Duration
+	ExpiresAt     time.Time
 }
 
 // ClaimSandbox moves the oldest claimable queued session to starting under
@@ -150,8 +157,15 @@ func (s *Store) ClaimSandbox(ctx context.Context, owner, token string, ttl time.
 			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
 			Remote: row.Durability == "remote"}
 	}
-	return SandboxClaim{Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
-		VolumeGB: int(row.VolumeGb), VolumeBackupID: row.VolumeBackupID, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
+	volumeBackup, forkOf := row.VolumeBackupID, ""
+	if row.ForkCaptureID != "" {
+		resume = &SandboxCapture{ID: row.CaptureID, NodeID: row.CaptureNodeID, StorageKey: row.CaptureStorageKey,
+			VMStateStorageKey: row.CaptureVmstateStorageKey, FCVersion: row.CaptureFcVersion, MemBytes: row.CaptureMemBytes,
+			Remote: true}
+		volumeBackup, forkOf = row.CaptureVolumeBackupID, row.CaptureSessionID
+	}
+	return SandboxClaim{ForkOf: forkOf, Kind: row.Kind, VCPU: int(row.Vcpu), Resuming: row.State == SandboxResuming, Resume: resume,
+		VolumeGB: int(row.VolumeGb), VolumeBackupID: volumeBackup, ID: row.ID, AccountID: row.AccountID, Plan: row.Plan, RAMMB: int(row.RamMb), Network: row.NetworkMode,
 		WorkspaceKey: row.WorkspaceKey, WorkspaceMissing: row.WorkspaceMissing, ImageKey: row.ImageKey,
 		ImageMissing: row.FromImage && row.ImageKey == "", StartCmd: row.StartCmd, ReadyCmd: row.ReadyCmd,
 		ReadyTimeout: time.Duration(row.ReadyTimeoutS) * time.Second, Browser: row.Browser, Task: task, EgressAllow: row.EgressAllow, EgressDeny: row.EgressDeny, LeaseToken: token,
@@ -185,7 +199,7 @@ func (s *Store) RenewSandbox(ctx context.Context, id, token string, ttl time.Dur
 	if err != nil {
 		return SandboxLease{}, fmt.Errorf("renew session lease: %w", err)
 	}
-	return SandboxLease{CloseRequested: row.CloseRequested, PauseRequested: row.PauseRequested,
+	return SandboxLease{CloseRequested: row.CloseRequested, PauseRequested: row.PauseRequested, ForkRequested: row.ForkRequested,
 		IdleTimeout: time.Duration(row.IdleTimeoutSec) * time.Second, ExpiresAt: row.ExpiresAt.Time.UTC()}, nil
 }
 

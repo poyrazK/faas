@@ -42,7 +42,7 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sandbox_sessions_volume_gb_check' AND conrelid = 'sandbox_sessions'::regclass) THEN
         ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_volume_gb_check
-            CHECK (volume_gb IS NULL OR (kind = 'persistent' AND volume_gb BETWEEN 1 AND 1024)) NOT VALID;
+            CHECK (volume_gb IS NULL OR ((kind = 'persistent' OR forked_from IS NOT NULL) AND volume_gb BETWEEN 1 AND 1024)) NOT VALID;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sandbox_sessions_durability_check' AND conrelid = 'sandbox_sessions'::regclass) THEN
         ALTER TABLE sandbox_sessions ADD CONSTRAINT sandbox_sessions_durability_check

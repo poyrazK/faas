@@ -16331,6 +16331,8 @@ type SandboxSession struct {
 	Durability        pgtype.Text
 	ResumedCold       bool
 	ForkedFrom        pgtype.UUID
+	ForkCaptureID     pgtype.UUID
+	ForkRequestedAt   pgtype.Timestamptz
 }
 
 type SandboxSessionCapture struct {
@@ -16345,6 +16347,8 @@ type SandboxSessionCapture struct {
 	VmstateBytes      int64
 	HasBacking        bool
 	VolumeBackupID    pgtype.UUID
+	Purpose           string
+	UploadedAt        pgtype.Timestamptz
 	State             string
 	CreatedAt         pgtype.Timestamptz
 	ConsumedAt        pgtype.Timestamptz

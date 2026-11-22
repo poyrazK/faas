@@ -25,12 +25,18 @@ CREATE TABLE IF NOT EXISTS sandbox_session_captures (
  -- volume_backup_id is the session's volume backup as the capture left it
  -- (ADR-20261122132055 §4); NULL for a session without a volume.
  volume_backup_id uuid,
+ -- purpose: a pause's capture, restored once by its session's resume, or a
+ -- fork's (ADR-20261122132055 §3), restored by each of the source's forks.
+ purpose text NOT NULL DEFAULT 'pause' CHECK (purpose IN ('pause','fork')),
+ -- uploaded_at: the shared store holds the whole capture (and its volume
+ -- backup), so any node restores it.
+ uploaded_at timestamptz,
  state text NOT NULL DEFAULT 'live' CHECK (state IN ('live','consumed')),
  created_at timestamptz NOT NULL DEFAULT now(),
  consumed_at timestamptz,
  CHECK ((state = 'consumed') = (consumed_at IS NOT NULL))
 );
-CREATE UNIQUE INDEX IF NOT EXISTS sandbox_session_captures_live ON sandbox_session_captures(session_id) WHERE state = 'live';
+CREATE UNIQUE INDEX IF NOT EXISTS sandbox_session_captures_live ON sandbox_session_captures(session_id) WHERE state = 'live' AND purpose = 'pause';
 CREATE INDEX IF NOT EXISTS sandbox_session_captures_consumed ON sandbox_session_captures(consumed_at) WHERE state = 'consumed';
 
 -- +goose Down

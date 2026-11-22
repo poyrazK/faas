@@ -60692,6 +60692,8 @@ CREATE TABLE public.sandbox_session_captures (
     vmstate_bytes bigint DEFAULT 0 NOT NULL,
     has_backing boolean DEFAULT false NOT NULL,
     volume_backup_id uuid,
+    purpose text DEFAULT 'pause'::text NOT NULL,
+    uploaded_at timestamp with time zone,
     state text DEFAULT 'live'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     consumed_at timestamp with time zone,
@@ -60699,6 +60701,7 @@ CREATE TABLE public.sandbox_session_captures (
     CONSTRAINT sandbox_session_captures_fc_version_check CHECK ((fc_version <> ''::text)),
     CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes > 0)),
     CONSTRAINT sandbox_session_captures_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_session_captures_purpose_check CHECK ((purpose = ANY (ARRAY['pause'::text, 'fork'::text]))),
     CONSTRAINT sandbox_session_captures_state_check CHECK ((state = ANY (ARRAY['live'::text, 'consumed'::text]))),
     CONSTRAINT sandbox_session_captures_storage_key_check CHECK ((storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/mem'::text)),
     CONSTRAINT sandbox_session_captures_vmstate_bytes_check CHECK ((vmstate_bytes >= 0)),
@@ -60817,6 +60820,8 @@ CREATE TABLE public.sandbox_sessions (
     durability text,
     resumed_cold boolean DEFAULT false NOT NULL,
     forked_from uuid,
+    fork_capture_id uuid,
+    fork_requested_at timestamp with time zone,
     CONSTRAINT sandbox_sessions_closed_check CHECK (((state = ANY (ARRAY['closed'::text, 'expired'::text, 'failed'::text])) = (closed_at IS NOT NULL))),
     CONSTRAINT sandbox_sessions_durability_check CHECK (((durability IS NULL) OR (durability = ANY (ARRAY['node'::text, 'remote'::text])))),
     CONSTRAINT sandbox_sessions_idle_timeout_sec_check CHECK (((idle_timeout_sec >= 1) AND (idle_timeout_sec <= 86400))),
@@ -60836,7 +60841,7 @@ CREATE TABLE public.sandbox_sessions (
     CONSTRAINT sandbox_sessions_ram_mb_v2_check CHECK ((((ram_mb >= 512) AND (ram_mb <= 32768)) AND ((ram_mb % 512) = 0))),
     CONSTRAINT sandbox_sessions_state_v2_check CHECK ((state = ANY (ARRAY['queued'::text, 'starting'::text, 'ready'::text, 'frozen'::text, 'pausing'::text, 'paused'::text, 'resuming'::text, 'closed'::text, 'expired'::text, 'failed'::text]))),
     CONSTRAINT sandbox_sessions_vcpu_check CHECK (((vcpu IS NULL) OR ((vcpu >= 1) AND (vcpu <= 16)))),
-    CONSTRAINT sandbox_sessions_volume_gb_check CHECK (((volume_gb IS NULL) OR ((kind = 'persistent'::text) AND ((volume_gb >= 1) AND (volume_gb <= 1024)))))
+    CONSTRAINT sandbox_sessions_volume_gb_check CHECK (((volume_gb IS NULL) OR (((kind = 'persistent'::text) OR (forked_from IS NOT NULL)) AND ((volume_gb >= 1) AND (volume_gb <= 1024)))))
 );
 
 
@@ -60929,7 +60934,7 @@ CREATE TABLE public.sandbox_volume_backups (
     CONSTRAINT sandbox_volume_backups_check CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
     CONSTRAINT sandbox_volume_backups_data_chunks_check CHECK ((data_chunks >= 0)),
     CONSTRAINT sandbox_volume_backups_node_id_check CHECK ((node_id <> ''::text)),
-    CONSTRAINT sandbox_volume_backups_reason_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text]))),
+    CONSTRAINT sandbox_volume_backups_reason_check CHECK ((reason = ANY (ARRAY['periodic'::text, 'pause'::text, 'fork'::text]))),
     CONSTRAINT sandbox_volume_backups_size_bytes_check CHECK ((size_bytes >= 0)),
     CONSTRAINT sandbox_volume_backups_state_check CHECK ((state = ANY (ARRAY['uploading'::text, 'stored'::text, 'deleted'::text]))),
     CONSTRAINT sandbox_volume_backups_uploaded_bytes_check CHECK ((uploaded_bytes >= 0))
@@ -89231,7 +89236,7 @@ CREATE INDEX sandbox_session_captures_consumed ON public.sandbox_session_capture
 -- Name: sandbox_session_captures_live; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX sandbox_session_captures_live ON public.sandbox_session_captures USING btree (session_id) WHERE (state = 'live'::text);
+CREATE UNIQUE INDEX sandbox_session_captures_live ON public.sandbox_session_captures USING btree (session_id) WHERE ((state = 'live'::text) AND (purpose = 'pause'::text));
 
 
 --

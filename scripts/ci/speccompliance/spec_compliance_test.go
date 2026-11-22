@@ -502,6 +502,7 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/sandboxes/{id}":                                 true,
 	"POST /v1/sandboxes/{id}/pause":                             true, // ADR-20261122132055, dark behind FAAS_SANDBOX_PERSISTENT
 	"POST /v1/sandboxes/{id}/resume":                            true,
+	"POST /v1/sandboxes/{id}/fork":                              true,
 	"GET /v1/sandbox-snapshots":                                 true,
 	"GET /v1/sandbox-snapshots/{id}":                            true,
 	"DELETE /v1/sandbox-snapshots/{id}":                         true,

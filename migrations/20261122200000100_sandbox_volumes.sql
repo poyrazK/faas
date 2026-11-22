@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS sandbox_volume_backups (
  node_id text NOT NULL CHECK (node_id <> ''),
  -- periodic backups are stored when reported; a pause's uploads after the
  -- pause, and agentd marks it stored once the shared store holds it.
- reason text NOT NULL CHECK (reason IN ('periodic','pause')),
+ reason text NOT NULL CHECK (reason IN ('periodic','pause','fork')),
  state text NOT NULL CHECK (state IN ('uploading','stored','deleted')),
  size_bytes bigint NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
  data_chunks integer NOT NULL DEFAULT 0 CHECK (data_chunks >= 0),

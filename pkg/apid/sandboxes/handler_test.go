@@ -178,6 +178,52 @@ func (f *fakeStore) GrowPausedSandboxVolume(_ context.Context, accountID, id str
 	return true, nil
 }
 
+// ForkSandbox queues a's forks as the Postgres store does: a running or
+// paused source, and the whole request within the queued and persistent
+// caps.
+func (f *fakeStore) ForkSandbox(_ context.Context, a agentstore.SandboxForkAdmission) ([]agentstore.Sandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, err := f.find(a.AccountID, a.SourceID)
+	if err != nil {
+		return nil, err
+	}
+	src := f.sessions[i]
+	if src.State != agentstore.SandboxReady && src.State != agentstore.SandboxFrozen && src.State != agentstore.SandboxPaused ||
+		src.CloseRequestedAt != nil {
+		return nil, agentstore.ErrSandboxNotForkable
+	}
+	queued, persistent := f.queued, 0
+	for _, s := range f.sessions {
+		if s.AccountID != a.AccountID {
+			continue
+		}
+		if s.State == agentstore.SandboxQueued {
+			queued++
+		}
+		if s.Kind == agentstore.SandboxPersistent && !agentstore.SandboxTerminal(s.State) {
+			persistent++
+		}
+	}
+	if queued+a.Count > a.QueuedMax {
+		return nil, &agentstore.LimitError{Limit: "AgentRunQueuedPerAccount", Max: a.QueuedMax, Observed: queued + a.Count}
+	}
+	if a.Kind == agentstore.SandboxPersistent && persistent+a.Count > a.PersistentMax {
+		return nil, &agentstore.LimitError{Limit: "SandboxPersistentMax", Max: a.PersistentMax, Observed: persistent + a.Count}
+	}
+	now := f.now()
+	out := make([]agentstore.Sandbox, 0, a.Count)
+	for range a.Count {
+		sb := src
+		sb.ID = fmt.Sprintf("00000000-0000-0000-0000-%012d", len(f.sessions)+1)
+		sb.Kind, sb.State, sb.Labels, sb.ExpiresAt, sb.ForkedFrom = a.Kind, agentstore.SandboxQueued, a.Labels, a.ExpiresAt, src.ID
+		sb.CreatedAt, sb.UpdatedAt, sb.PausedAt, sb.NodeID, sb.InstanceID = now, now, nil, "", ""
+		f.sessions = append([]agentstore.Sandbox{sb}, f.sessions...)
+		out = append(out, sb)
+	}
+	return out, nil
+}
+
 func (f *fakeStore) ResumeSandbox(_ context.Context, accountID, id string) (agentstore.Sandbox, error) {
 	return f.pauseOrResume(accountID, id, false)
 }
