@@ -5710,6 +5710,27 @@ gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN 
   --task-receipt ./weekly-task.json
 ```
 
+Use `--defer-form-input` on a keyed submission to let a Task request approval
+after the submitting process exits. Keep this opt-in on matching retries.
+The receipt contains the same submission key and endpoint fingerprint.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8,"request_approval":true}' \
+  --tasks --task-receipt ./approval-task.json --defer-form-input
+```
+
+When the receipt's metadata reports `provide_input`, a process with the
+caller's current credential can resume the Task. Use `--interactive` to review
+the form and answer from a terminal, or supply the authorized answers in a
+JSON file keyed by request ID. For the example report, a file containing
+`{"approval":{"action":"accept","content":{"approved":true}}}` approves generation.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --input-responses-file ./responses.json
+```
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:

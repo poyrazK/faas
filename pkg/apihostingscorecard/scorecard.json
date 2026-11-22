@@ -562,6 +562,8 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_redis_test.go::TestRedisCachePlanGates"},
         {"kind": "test", "locator": "pkg/gateway/redis_session_test.go::TestRedisSessionForwardsCommands"},
         {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisMetal"},
+        {"kind": "test", "locator": "cmd/e2e/managed_redis_metal_test.go::TestManagedRedisHandoffSoakMetal"},
+        {"kind": "test", "locator": "tests/journeys/redis_test.go::TestManagedRedis"},
         {"kind": "runbook", "locator": "docs/redis.md"}
       ]
     },

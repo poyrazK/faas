@@ -397,6 +397,17 @@ closed by a later slice:
   - Clean recapture exists so one request's state cannot reach later
     requests. That concern does not apply here: the cache's memory is the
     customer's own data, and it is restored only into the same cache.
+- **A handoff never goes live without its snapshot.** An ordinary
+  deployment whose prime capture fails goes live without a snapshot, and its
+  first request cold boots (deploy-path review P13). A handoff deployment
+  cannot do that. Its prime VM holds the copied data, and a cold boot runs the
+  copy again from the cache's own address, which after cutover is the new VM
+  itself, so port 6379 never opens. In the soak run redissoak-20261121T120457
+  the cache was down, and its data lost, after one failed capture.
+  - schedd now fails such a prime instead (`isManagedCacheHandoff`). The
+    rollout aborts and the running VM keeps serving with its data.
+  - Its writes stay paused until the handoff's `CLIENT PAUSE` expires, at most
+    300 s. They are delayed, not lost.
 - **Unchanged:** the stateful-image deny-list. `valkey` is not on it today,
   and adding it would break customers who deploy Valkey themselves. That is
   left for an owner decision.
