@@ -1212,6 +1212,9 @@ func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning
 	}
 }
 
+// maxUnaffectedPlanRows is how many untouched apps a text plan lists by name.
+const maxUnaffectedPlanRows = 10
+
 // printAffectedText renders the ADR-124 blast-radius view: WillDeploy
 // + Skipped (operator-excluded) + Unaffected + Removed. Mirrors the
 // dashboard's two-table render so a CLI operator sees the same
@@ -1228,9 +1231,6 @@ func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning
 // on the JSON-parse path below (mirrors printPlanText above).
 //
 //nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
-// maxUnaffectedPlanRows is how many untouched apps a text plan lists by name.
-const maxUnaffectedPlanRows = 10
-
 func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[string]bool) {
 	wds := append([]api.PlanAffectedApp(nil), plan.WillDeploy...)
 	sort.Slice(wds, func(i, j int) bool { return wds[i].Slug < wds[j].Slug })
