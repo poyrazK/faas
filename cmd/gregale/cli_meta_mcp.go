@@ -20,6 +20,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "interactive", Short: "answer modern MCP input forms in the terminal"},
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
 		cliFlag{Name: "tasks", Short: "accept modern MCP task handles for later inspection"},
+		cliFlag{Name: "task-submission-key", Short: "saved UUIDv7 for retrying a Task submission (requires --tasks)", Value: "UUID"},
 		cliFlag{Name: "wait", Short: "wait for a task result; request cancellation on timeout"},
 	)
 	completionFlags := append([]cliFlag{}, remote[:4]...)

@@ -77,7 +77,7 @@ func retryableHTTPIssueError(err error) bool {
 // enqueueHTTPIssue keeps Issue storage latency off the non-idempotent legacy
 // counting path. Its bounded in-memory queue remains best effort on restart.
 func (a *appErrorsReceiver) enqueueHTTPIssue(req *apidpb.IncrementAppErrorRequest) string {
-	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" {
+	if req.GetHttpStatus() < 500 || req.GetDeploymentId() == "" || req.GetRequestId() == "" || !issueEligibleErrorClass(req.GetErrorClass()) {
 		return ""
 	}
 	// Snapshot before returning to the streaming handler, which may reuse req.

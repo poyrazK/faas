@@ -1,4 +1,5 @@
 """Bounded, single-flight JWKS refreshes that never hold the cache lock on I/O."""
+
 import http.client
 import json
 import socket
@@ -8,6 +9,11 @@ import urllib.error
 import urllib.request
 
 import jwt
+
+# Wait after a failed or timed-out key-set fetch before retrying. Kept short:
+# a transient failure (the issuer waking, a network blip) must not reject
+# every token for half a minute.
+FETCH_FAILURE_BACKOFF_SECONDS = 1
 
 MAX_JWKS_BYTES = 1 << 20
 
@@ -90,7 +96,7 @@ class BoundedJWKClient(jwt.PyJWKClient):
                 job["result"] = result
             else:
                 retry_from = job["deadline"] if expired else now
-                self._fetch_retry_at = max(self._fetch_retry_at, retry_from + 30)
+                self._fetch_retry_at = max(self._fetch_retry_at, retry_from + FETCH_FAILURE_BACKOFF_SECONDS)
             self._refresh_job = None
             job["done"].set()
 
@@ -113,7 +119,7 @@ class BoundedJWKClient(jwt.PyJWKClient):
         if not job["done"].wait(max(0, job["deadline"] - time.monotonic())):
             with self._client_lock:
                 job["expired"] = True
-                self._fetch_retry_at = max(self._fetch_retry_at, job["deadline"] + 30)
+                self._fetch_retry_at = max(self._fetch_retry_at, job["deadline"] + FETCH_FAILURE_BACKOFF_SECONDS)
                 sock = job["socket"]
             # shutdown interrupts header/body trickles without waiting on the
             # response reader's lock. DNS can outlive the deadline, but stays

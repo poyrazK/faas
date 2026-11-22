@@ -86,8 +86,10 @@ returns `approval_required`, the bridge keeps the original plan, staged source
 and upload checkpoint through the deadline in `approval.expires_at`. The review
 page shows that same deadline. After approval, retry the same plan ID. The
 bridge rechecks the app and its release state and commits the original upload.
-A changed app or release requires a new plan. The temporary staged files live
-on the current bridge process's host and are cleared on bridge restart.
+A changed app or release requires a new plan. The encrypted journal restores
+approval-bound plans for the same connection after a restart using the same
+bridge upload directory. One-time upload URLs and source for plans that
+have yet to reach commit approval expire with the process.
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
@@ -120,10 +122,11 @@ of those tools are listed.
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. The hosted journal preserves completed receipts and resumable release plans
-for the same key across bridge restarts. Pending upload files are temporary;
-after a restart, inspect deployments and resources before uploading or planning
-again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+its next request. The hosted journal preserves completed receipts and resumable
+release plans for the same key across bridge restarts. A pending resumable
+upload commit approval keeps its staged source through the original review
+deadline. `gregale_get_plan` recovers an unexpired plan or receipt without
+repeating a write.
 
 Hosted agent-key connections use the `core` catalog unless the client sends a
 `Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
@@ -4144,8 +4147,8 @@ and its `plan_id`.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
 
-Object storage and managed PostgreSQL are preview capabilities; when one is
-off for the account, apply returns the API's error. Jobs and `gregale run`
+Object storage and managed PostgreSQL are released per account during their
+rollout; when one is off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
 
 ## Configure, inspect and recover
@@ -4959,6 +4962,21 @@ gregale mcp server export --app my-mcp --name my-mcp
 gregale mcp server watch --app my-mcp --baseline gregale-mcp.lock.json
 ```
 
+The first `gregale mcp server deploy` of an app makes it reachable to MCP
+clients: streaming on, no Gregale API key, open public auth (access is then
+controlled by `gregale-mcp.json`). It also raises an unset request timeout to
+300 seconds or the plan's ceiling, whichever is lower (Free 30, Hobby 60,
+Pro and Scale 300), so tool calls slower than the 30-second HTTP default do not
+fail with `request_budget_exceeded`. Scale apps can go up to 900 seconds with
+`gregale app my-mcp --request-timeout 900`. A timeout you set yourself is kept.
+An app that already serves behind an API key, public auth or with streaming
+off is refused before anything is uploaded; the error names the
+`gregale app` commands that open it (ADR-20261121160000).
+
+The starters negotiate the protocol revision: they speak 2026-07-28 and, in
+legacy mode (the default), 2025-11-25, 2025-06-18 and 2025-03-26, so clients
+built on older MCP SDKs connect too.
+
 `mcp resources` and `mcp prompts` return definitions only. Resource reads and
 prompt rendering require the explicit `resource-read --uri` and `prompt-get --prompt`
 commands. Returned resource contents and rendered prompt messages may
@@ -5626,6 +5644,28 @@ calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
+
+The Node/PostgreSQL starter supports retrying a lost submission reply on an
+authenticated endpoint. Run the updated `tasks:migrate` before starting the
+updated starter. Generate and save a lowercase UUIDv7 before the first call.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-submission-key "$TASK_SUBMISSION_KEY"
+```
+
+If the reply is lost, repeat the command with the same key, tool, arguments and
+caller within one minute of the key's UUIDv7 timestamp. A matching retry returns
+the original Task handle. A different request or caller is rejected. The
+server uses its PostgreSQL clock and rejects expired or future-dated keys.
+After the window closes, reconcile the original request before submitting again
+with a fresh key. Check or wait for the result using the returned Task ID.
+
+The CLI requires the server to advertise the `io.gregale/task-submission`
+extension. Keyed submission deduplicates Task creation within this window.
+Worker execution retains its existing at-least-once contract. See
+[ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
 
 ## MCP catalog snapshots
 

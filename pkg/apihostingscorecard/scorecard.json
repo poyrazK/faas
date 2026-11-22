@@ -81,7 +81,7 @@
       "name": "Capability acceptance: async",
       "category": "reliability",
       "description": "Each released async capability passes its catalogued acceptance test before it is offered to an account (ADR-20261023115741).",
-      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
+      "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "postgres-changes", "queue-bindings", "queue-pull-leases", "queues", "stored-workflows", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
         {"kind": "test", "locator": "cmd/e2e/cron_e2e_test.go::TestE2E_Cron_FiresOnScheduleAndOnDemand"},
@@ -107,6 +107,7 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_bindings_test.go::TestHTTPFunctionPushQueueBinding"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queue_environment_test.go::TestQueueEnvironmentHTTPRejectsSharedKeyedWorkPolicy"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_queues_read_test.go::TestQueuePeek_HappyPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_triggers_caps_test.go::TestTriggerRetryPolicyRoundTripsAndUpdates"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_workflow_recovery_policy_test.go::TestWorkflowRecoveryPolicyHTTP"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
@@ -708,7 +709,10 @@
       "description": "A customer-facing resource binding has qualification evidence before it is promoted beyond internal use.",
       "capabilities": ["object-storage"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"}]
+      "evidence": [
+        {"kind": "test", "locator": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"},
+        {"kind": "test", "locator": "tests/journeys/object_storage_test.go::TestObjectStorage"}
+      ]
     },
     {
       "id": "rollback-recovery",

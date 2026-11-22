@@ -58,9 +58,13 @@ func (m *management) retainUploadApproval(ctx context.Context, p *releasePlan, a
 	if err != nil {
 		return err
 	}
-	m.opts.uploads.keepDirUntil(p.LocalSource.Path, deadline)
-	p.AppID, p.ExpiresAt = appID, deadline
-	p.uploadApproval = &pendingUploadApproval{uploadID: uploadID, info: *info}
+	next := *p
+	next.AppID, next.ExpiresAt = appID, deadline
+	next.uploadApproval = &pendingUploadApproval{uploadID: uploadID, info: *info}
+	if err := m.opts.uploads.retainApproval(&next, m.opts.planNamespace); err != nil {
+		return err
+	}
+	*p = next
 	return applyErr
 }
 

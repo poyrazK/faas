@@ -48,6 +48,18 @@ func Startup(store *state.PgStore, scheduler *scheddgrpc.Client, nodes gateway.N
 	}, nil
 }
 
+// Recovery adds the private local scheduler interruption to the pinned
+// startup fixture. Use a client connected to the enrolled schedd Unix socket.
+func Recovery(store *state.PgStore, scheduler *scheddgrpc.Client, nodes gateway.NodeClientLookup, nodeID string,
+	fixture taskrehearsal.StartupFixture, checkHost func(ctx context.Context, accountID, nodeID string) error,
+	log *slog.Logger) (*taskrehearsal.NativeRecovery, error) {
+	startup, err := Startup(store, scheduler, nodes, nodeID, fixture, checkHost, log)
+	if err != nil {
+		return nil, err
+	}
+	return &taskrehearsal.NativeRecovery{NativeStartup: startup, Interrupt: scheduler.InterruptHostedTaskWorker}, nil
+}
+
 // The acceptance client only needs two small, finite MCP replies. The
 // handler is the private per-instance forwarder, with no HTTP listener.
 type pinnedTransport struct {

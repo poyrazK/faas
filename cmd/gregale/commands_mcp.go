@@ -426,6 +426,16 @@ func cmdMCPRemote(command string, args []string) int {
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
+	var submissionKey string
+	if command == "call" {
+		fs.Func("task-submission-key", "saved UUIDv7 for retrying a Task submission (requires --tasks)", func(value string) error {
+			if value == "" {
+				return errors.New("task submission key must be a lowercase UUIDv7")
+			}
+			submissionKey = value
+			return nil
+		})
+	}
 	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
 	cancelOnTimeout := fs.Bool("cancel-on-timeout", false, "request task cancellation if a resumed wait times out (task-wait only)")
 	tool := fs.String("tool", "", "tool to call")
@@ -465,6 +475,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	if submissionKey != "" && (!*enableTasks || *waitForTask || inputMode) {
+		return printErr("Invalid MCP Tasks flags", errors.New("--task-submission-key requires a handle-only call with --tasks"))
 	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
@@ -549,10 +562,10 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout)
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout, submissionKey)
 }
 
-func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool, submissionKey string) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -667,6 +680,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		var x mcphosting.Exchange
 		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
 			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask, CancelOnTimeout: waitForTask,
+			TaskSubmissionKey: submissionKey,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -795,6 +809,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if !api.Plan(account.Plan).StreamingEnabled() {
 		return printErr("MCP streaming unavailable", errors.New("the stateless MCP hosting profile requires a plan that supports streaming"))
+	}
+	if err := precheckMCPServingIngress(ctx, c, o.slug); err != nil {
+		return printErr("MCP candidate", err)
 	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)

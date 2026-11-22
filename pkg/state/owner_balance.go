@@ -28,25 +28,21 @@ type OwnerBalanceCandidate struct {
 // OwnerBalanceCandidateReader lists balance candidates, coldest first.
 type OwnerBalanceCandidateReader interface {
 	// ListOwnerBalanceCandidates returns up to limit apps nodeID owns that
-	// have no resident instance, were last active and last moved before
-	// idleBefore, and either have no live deployment or a live deployment
+	// have no resident instance, were last active before idleBefore, were
+	// last moved before idleBefore unless that move was a displacement
+	// (ADR-20261121203000), and either have no live deployment or a live deployment
 	// with a stored non-stale snapshot, least recently active first.
 	ListOwnerBalanceCandidates(ctx context.Context, nodeID string, idleBefore time.Time, limit int) ([]OwnerBalanceCandidate, error)
 }
 
-func (s *PgStore) ListOwnerBalanceCandidates(ctx context.Context, nodeID string, idleBefore time.Time, limit int) ([]OwnerBalanceCandidate, error) {
-	if nodeID == "" || limit <= 0 {
-		return nil, nil
-	}
-	if _, err := uuid.Parse(nodeID); err != nil {
-		return nil, ErrInvalidArgument
-	}
-	rows, err := s.pool.Query(ctx, `
-		select a.id::text, a.ram_mb, coalesce(act.last_active, a.created_at),
+// ownerBalanceCandidateColumns and ownerBalanceCandidateJoins select an
+// OwnerBalanceCandidate for apps a; scanTargets reads the columns.
+const ownerBalanceCandidateColumns = `a.id::text, a.ram_mb, coalesce(act.last_active, a.created_at),
 		       ld.id is not null,
 		       coalesce(sn.id::text, ''), coalesce(sn.storage_key, ''),
-		       coalesce(sn.cpu_template, ''), coalesce(sn.cpu_model, '')
-		  from apps a
+		       coalesce(sn.cpu_template, ''), coalesce(sn.cpu_model, '')`
+
+const ownerBalanceCandidateJoins = `
 		  left join lateral (
 		        select max(greatest(i.started_at, coalesce(i.last_request_at, i.started_at),
 		                            coalesce(i.parked_at, i.started_at))) as last_active
@@ -59,11 +55,27 @@ func (s *PgStore) ListOwnerBalanceCandidates(ctx context.Context, nodeID string,
 		  left join lateral (
 		        select s.id, s.storage_key, s.cpu_template, s.cpu_model from snapshots s
 		         where s.deployment_id = ld.id and not s.stale and s.storage_key <> ''
-		         order by s.created_at desc limit 1) sn on true
+		         order by s.created_at desc limit 1) sn on true`
+
+func (c *OwnerBalanceCandidate) scanTargets() []any {
+	return []any{&c.ID, &c.RAMMB, &c.LastActiveAt, &c.HasLiveDeployment,
+		&c.Snapshot.ID, &c.Snapshot.StorageKey, &c.Snapshot.CPUTemplate, &c.Snapshot.CPUModel}
+}
+
+func (s *PgStore) ListOwnerBalanceCandidates(ctx context.Context, nodeID string, idleBefore time.Time, limit int) ([]OwnerBalanceCandidate, error) {
+	if nodeID == "" || limit <= 0 {
+		return nil, nil
+	}
+	if _, err := uuid.Parse(nodeID); err != nil {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := s.pool.Query(ctx, `
+		select `+ownerBalanceCandidateColumns+`
+		  from apps a `+ownerBalanceCandidateJoins+`
 		 where a.node_id = $1::uuid
 		   and a.status in ('active', 'evicted_cold')
 		   and coalesce(act.last_active, a.created_at) < $2
-		   and (a.reassigned_at is null or a.reassigned_at < $2)
+		   and (a.reassigned_at is null or a.reassigned_at < $2 or a.owner_home_node_id is not null)
 		   and (ld.id is null or sn.id is not null)
 		   and not exists (select 1 from instances i where i.app_id = a.id and i.state = any($3::text[]))
 		 order by coalesce(act.last_active, a.created_at), a.id
@@ -75,8 +87,7 @@ func (s *PgStore) ListOwnerBalanceCandidates(ctx context.Context, nodeID string,
 	var out []OwnerBalanceCandidate
 	for rows.Next() {
 		var c OwnerBalanceCandidate
-		if err := rows.Scan(&c.ID, &c.RAMMB, &c.LastActiveAt, &c.HasLiveDeployment,
-			&c.Snapshot.ID, &c.Snapshot.StorageKey, &c.Snapshot.CPUTemplate, &c.Snapshot.CPUModel); err != nil {
+		if err := rows.Scan(c.scanTargets()...); err != nil {
 			return nil, fmt.Errorf("state: scan owner balance candidate: %w", err)
 		}
 		out = append(out, c)
@@ -98,7 +109,9 @@ func (m *MemStore) ListOwnerBalanceCandidates(_ context.Context, nodeID string, 
 		if a.NodeID != nodeID || (a.Status != AppActive && a.Status != AppEvictedCold) {
 			continue
 		}
-		if a.ReassignedAt != nil && !a.ReassignedAt.Before(idleBefore) {
+		// A displacement (drain or dead node) is not a balance move: it does
+		// not hold the app on the node it was pushed to (ADR-20261121203000).
+		if _, displaced := m.appOwnerHome[a.ID]; !displaced && a.ReassignedAt != nil && !a.ReassignedAt.Before(idleBefore) {
 			continue
 		}
 		c, ok := m.ownerBalanceCandidateLocked(a)

@@ -41,6 +41,8 @@ type CallOptions struct {
 	Responder   InputResponder
 	EnableTasks bool
 	WaitForTask bool
+	// TaskSubmissionKey is a caller-retained UUIDv7 for a handle-only Task call.
+	TaskSubmissionKey string
 	// CancelOnTimeout requests cooperative cancellation when the wait ends
 	// because its context expires or is cancelled. It is opt-in so a resumed
 	// wait can stop observing without stopping durable work.

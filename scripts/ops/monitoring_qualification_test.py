@@ -353,6 +353,7 @@ print('private-provider-error', file=sys.stderr)
 """)
             stub.chmod(0o700)
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "CP_HOST": "cp.example.test", "MONITORING_OPERATOR_TOKEN": "fixture-private-token",
+                   "QUALIFICATION_SSH_KEY": str(root / "deploy_key"), "QUALIFICATION_SSH_KNOWN_HOSTS": str(root / "known_hosts"),
                    "GITHUB_TOKEN": "fixture-github-token", "CAPTURE": str(root / "capture"), "RESPONSE": json.dumps(accepted("prepare", datetime.now(timezone.utc)))}
             with mock.patch.dict(os.environ, env):
                 result = qualification.SSHRemote(env)("prepare", qualification.new_report(CONFIG, "prepare", NOW))
@@ -363,6 +364,11 @@ print('private-provider-error', file=sys.stderr)
             self.assertFalse(capture["env_has_github_token"])
             self.assertNotIn("fixture-private-token", " ".join(capture["args"]))
             self.assertIn("-T", capture["args"])
+            self.assertEqual(capture["args"][1:3], ["-F", "/dev/null"])
+            self.assertEqual(capture["args"][capture["args"].index("-i") + 1], str(root / "deploy_key"))
+            self.assertIn(f"UserKnownHostsFile={root / 'known_hosts'}", capture["args"])
+            self.assertIn("GlobalKnownHostsFile=/dev/null", capture["args"])
+            self.assertIn("IdentitiesOnly=yes", capture["args"])
             self.assertIn("StrictHostKeyChecking=yes", capture["args"])
             path = root / "report.json"
             qualification.atomic_report(path, result)
@@ -380,6 +386,10 @@ print('private-provider-error', file=sys.stderr)
         self.assertIn("retention-days: 30", workflow)
         self.assertNotIn("continue-on-error:", workflow)
         self.assertLess(workflow.index("Initialize unknown qualification evidence"), workflow.index("Set up pinned control-plane SSH"))
+        self.assertIn("""inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]'""", workflow)
+        self.assertIn('RUNNER_TEMP="$ssh_temp" bash scripts/ops/canary_ssh.sh setup', workflow)
+        self.assertIn("""trap 'rm -rf -- "$ssh_temp"' EXIT""", workflow)
+        self.assertNotIn("~/.ssh/", workflow)
         for action in ("checkout", "upload-artifact", "download-artifact"):
             self.assertRegex(workflow, "actions/" + action + r"@[0-9a-f]{40}")
 

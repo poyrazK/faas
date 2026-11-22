@@ -19,6 +19,7 @@ type GregaleMcpTask struct {
 	LeaseToken        pgtype.UUID
 	ExpiresAt         pgtype.Timestamptz
 	CancelRequestedAt pgtype.Timestamptz
+	ResultEncrypted   []byte
 }
 
 type GregaleMcpTaskWorker struct {

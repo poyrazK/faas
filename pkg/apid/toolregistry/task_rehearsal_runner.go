@@ -73,3 +73,28 @@ func (e *PrivateExecutor) StartHostedTaskRehearsal(ctx context.Context, account 
 	evidence, err = runner.RunStartup(ctx, provisioner, account, candidate.Run, candidate.WebArchive, candidate.WorkerArchive, candidate.bindings, startup)
 	return candidate.Run, evidence, err
 }
+
+// RecoverHostedTaskRehearsal privately qualifies a fresh owner-approved run
+// through worker interruption, replacement, durable completion and cleanup.
+func (e *PrivateExecutor) RecoverHostedTaskRehearsal(ctx context.Context, account state.Account, intentID, ownerKeyID, planDigest string,
+	recovery *taskrehearsal.NativeRecovery) (state.HostedTaskRehearsalRun, tasktoolrehearsal.SmokeEvidence, error) {
+	var evidence tasktoolrehearsal.SmokeEvidence
+	provisioner, runner := e.opts.TaskRehearsalProvisioner, e.opts.TaskRehearsalRunner
+	if provisioner == nil || !provisioner.AdmissionEnabled || runner == nil || !runner.AdmissionEnabled {
+		return state.HostedTaskRehearsalRun{}, evidence, state.ErrConflict
+	}
+	if err := recovery.Preflight(ctx, account.ID); err != nil {
+		return state.HostedTaskRehearsalRun{}, evidence, fmt.Errorf("check the dedicated rehearsal host: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		return state.HostedTaskRehearsalRun{}, evidence, err
+	}
+	candidate, err := e.claimHostedTaskRehearsalCandidate(ctx, account.ID, intentID, ownerKeyID, planDigest, true, &recovery.SourceSHA256)
+	if err != nil || !candidate.hasSource() {
+		return candidate.Run, evidence, err
+	}
+	defer clear(candidate.WebArchive)
+	defer clear(candidate.WorkerArchive)
+	evidence, err = runner.RunRecovery(ctx, provisioner, account, candidate.Run, candidate.WebArchive, candidate.WorkerArchive, candidate.bindings, recovery)
+	return candidate.Run, evidence, err
+}

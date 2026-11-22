@@ -127,6 +127,7 @@ class SSHRemote:
     def __init__(self, env):
         self.host = env.get("CP_HOST", "")
         self.key = env.get("QUALIFICATION_SSH_KEY", os.path.expanduser("~/.ssh/deploy_key"))
+        self.known_hosts = env.get("QUALIFICATION_SSH_KNOWN_HOSTS", os.path.expanduser("~/.ssh/known_hosts"))
         self.token = env.get("MONITORING_OPERATOR_TOKEN", "")
 
     def __call__(self, operation, report):
@@ -141,7 +142,10 @@ class SSHRemote:
         # Only reviewed code is in the command argument; credentials travel on
         # stdin. Disable PTY echo and discard raw remote/transport error text.
         code = Path(remote.__file__).read_text()
-        command = ["ssh", "-T", "-i", self.key, "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+        command = ["ssh", "-F", "/dev/null", "-T", "-i", self.key, "-o", "BatchMode=yes",
+                   "-o", "IdentitiesOnly=yes", "-o", "StrictHostKeyChecking=yes",
+                   "-o", f"UserKnownHostsFile={self.known_hosts}", "-o", "GlobalKnownHostsFile=/dev/null",
+                   "-o", "UpdateHostKeys=no", "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
                    "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2",
                    "root@" + self.host, "python3 -c " + shlex.quote(code)]
         child_env = os.environ.copy()

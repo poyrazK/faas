@@ -2254,3 +2254,100 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   await quarantineMcpTaskWorkers({ pool, namespace, workerIDs: [bad] });
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
+
+test('keyed Task submission recovers the committed handle after a lost CLI reply', {
+  skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
+  timeout: 30_000,
+}, async t => {
+  const { execFile } = await import('node:child_process');
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { createServer } = await import('node:http');
+  const { tmpdir } = await import('node:os');
+  const { resolve } = await import('node:path');
+  const { promisify } = await import('node:util');
+  const { generateKeyPair, SignJWT } = await import('jose');
+  const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
+  const run = promisify(execFile);
+  const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-submission-'));
+  t.after(() => rm(clientDir, { recursive: true, force: true }));
+  const { store, pool, namespace } = await harness(t);
+  const auth = {
+    mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: [] },
+  };
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const mint = subject => new SignJWT({ scope: 'mcp:tools' }).setProtectedHeader({ alg: 'ES256' })
+    .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
+  const owner = await mint('alice');
+  const foreign = await mint('bob');
+  const makeKey = (time = Date.now()) => {
+    const stamp = time.toString(16).padStart(12, '0');
+    return `${stamp.slice(0, 8)}-${stamp.slice(8)}-7${randomUUID().slice(15)}`;
+  };
+  const key = makeKey();
+  const report = 'Original private report';
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
+    build_report: { version: '1', async execute() { return { content: [{ type: 'text', text: report }] }; } },
+  } });
+  await runtime.start();
+  const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
+  }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
+  const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
+    result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
+  let dropFirstReply = true, committedID, proxyError;
+  const server = createServer((req, res) => {
+    if (!dropFirstReply || req.headers['mcp-method'] !== 'gregale/tasks/submit') return api.app(req, res);
+    dropFirstReply = false;
+    void (async () => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const reply = await fetch(`http://127.0.0.1:${server.address().port}/mcp`, {
+        method: 'POST', headers: req.headers, body: Buffer.concat(chunks), signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(reply.status, 200);
+      await reply.arrayBuffer();
+      const persisted = await rows();
+      assert.equal(persisted.length, 1);
+      committedID = persisted[0].task_id;
+    })().catch(error => { proxyError = error; }).finally(() => res.destroy());
+  });
+  try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    async function cli(verb, credential, expectedCode, args) {
+      const response = await run(binary, ['mcp', 'client', verb, '--url', endpoint,
+        '--token-env', 'GREGALE_JOURNEY_TOKEN', '--timeout', '6s', '--json', ...args], {
+        cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000,
+      }).then(({ stdout, stderr }) => ({ stdout, stderr, code: 0 }), ({ stdout, stderr, code }) => ({ stdout, stderr, code }));
+      assert.equal(response.code, expectedCode, `unexpected exit from mcp client ${verb}`);
+      assert.ok(!response.stdout.includes(credential) && !response.stderr.includes(credential), 'CLI leaked a caller token');
+      return response.stdout;
+    }
+    const submission = (credential, expectedCode, value = 'original', submissionKey = key) => cli('call', credential, expectedCode, [
+      '--tool', 'build_report', '--tasks', '--task-submission-key', submissionKey,
+      '--arguments', JSON.stringify({ report: value, steps: 1 }),
+    ]);
+    assert.equal(await submission(owner, 3), '');
+    assert.ifError(proxyError);
+    assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
+    for (const replay of await Promise.all([submission(owner, 0), submission(owner, 0)])) {
+      const { result } = JSON.parse(replay);
+      assert.equal(result.resultType, 'task');
+      assert.equal(result.taskId, committedID);
+    }
+    assert.equal(await submission(owner, 1, 'changed'), '');
+    assert.equal(await submission(foreign, 1), '');
+    assert.equal(await submission(owner, 1, 'original', makeKey(Date.now() - 61_000)), '');
+    await eventually(async () => (await rows())[0]?.status === 'completed', 'worker did not complete the Task');
+    const full = JSON.parse(await cli('status', owner, 0, ['--task-id', committedID]));
+    assert.equal(full.result.content[0].text, report);
+    assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
+  } finally {
+    api.closeTaskSubscriptions();
+    await new Promise(resolveClose => { server.close(resolveClose); server.closeAllConnections(); });
+    await api.handler.close();
+    await runtime.stop();
+  }
+});

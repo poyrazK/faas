@@ -10605,6 +10605,40 @@ groups:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261115194000: platform alert emails tell an account its app is
+      # down, its check is failing, its SLO is burning or its cron was paused.
+      # A notice that ran out of attempts was failing silently (Observe audit
+      # 2026-11-21, finding 14).
+      - alert: FaasPlatformAlertEmailsFailing
+        expr: |
+          sum by (job, instance, kind) (increase(meterd_platform_alert_notices_total{outcome="failed"}[1h])) > 0
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Platform alert emails ({{ $labels.kind }}) gave up without being delivered"
+          description: "meterd exhausted its attempts on at least one platform alert notice in the last hour. The account was not told its app is failing, its check is failing, its SLO is burning or its cron was paused."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # Guest spans (vmmd -> apid) write into request_telemetry.spans_summary
+      # through apid's spans writer. FaasDebugTelemetryIngestStalled covers
+      # only the public OTLP path on gatewayd-public.
+      - alert: FaasGuestSpansWritesFailing
+        expr: |
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="db_error"}[10m])) > 0
+          unless on (job, instance)
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="inserted"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: debug_telemetry
+          public_status: internal
+        annotations:
+          summary: "apid's spans writer has failed every write for 15 minutes"
+          description: "Guest and OTLP spans reach apid but every UPDATE of request_telemetry.spans_summary fails (db_error) and none succeeded. Traces, span evidence and dependency breakdowns go dark for every traced app."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
       # ADR-20261028101615: accounts are evaluated in parallel with a tick
       # budget each, so a slow tick means many accounts are slow at once, and
       # persistent deferral means one account keeps outrunning its budget.

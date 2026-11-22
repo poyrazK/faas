@@ -119,14 +119,28 @@
         faas_join_managed_host: "{{ faas_join_managed_host_probe.rc == 0 }}"
         faas_join_bootstrap_contract_current: "{{ faas_join_managed_host_probe.rc == 0 and (faas_join_recorded_bootstrap_contract.content | default('') | b64decode | trim) == faas_join_bootstrap_contract_sha256 }}"
 
+    - name: Read the recorded compute role hashes
+      ansible.builtin.slurp:
+        src: /var/lib/faas/bootstrap/compute-roles.json
+      register: faas_join_recorded_role_record
+      failed_when: false
+
     # ADR-20261115120000: CD names the roles whose content hash differs from
     # the node's record (gregalectl deploy join --roles). Only a managed host
     # converges just those; a fresh or rebuilt one converges every role.
+    # The role hashes cover repository content only. When the manifest-
+    # rendered inventory or the operator vars moved since the record
+    # (faas_join_environment_sha256; rc.364 moved the apps domain), every
+    # role converges, as on the control plane (control_plane_converge.yml).
     - name: Select the compute roles this convergence applies
       ansible.builtin.set_fact:
         faas_join_converge_roles: >-
           {{ faas_join_converge_roles_requested
-             if (faas_join_managed_host and (faas_join_converge_roles_requested | default([]) | length > 0))
+             if (faas_join_managed_host
+                 and (faas_join_converge_roles_requested | default([]) | length > 0)
+                 and (faas_join_environment_sha256 is not defined
+                      or ((faas_join_recorded_role_record.content | default('') | b64decode | default('{}', true) | from_json).environment | default(''))
+                         == faas_join_environment_sha256))
              else none }}
 
     - name: Report the managed-host rollout decision
@@ -1441,7 +1455,7 @@
           [Service]
           Environment=FAAS_IMAGED_LAYER_REUSE={{ '1' if (imaged_app_layer_reuse | default(false) | bool) else '0' }}
 
-    - name: Install builderd's shared platform blobs, BuildKit seed and deferred cache export switches
+    - name: Install builderd's shared platform blobs, BuildKit seed, deferred cache export and zstd layer switches
       ansible.builtin.copy:
         dest: /etc/systemd/system/faas-builderd.service.d/zz-faas-perf-switches.conf
         owner: root
@@ -1452,6 +1466,7 @@
           Environment=FAAS_BUILD_SHARED_PLATFORM_BLOBS={{ '1' if (builderd_shared_platform_blobs | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_BUILDKIT_SEED={{ '1' if (builderd_buildkit_seed | default(false) | bool) else '0' }}
           Environment=FAAS_BUILD_DEFER_CACHE_EXPORT={{ '1' if (builderd_defer_cache_export | default(false) | bool) else '0' }}
+          Environment=FAAS_BUILD_LAYER_ZSTD={{ '1' if (builderd_layer_zstd | default(false) | bool) else '0' }}
 
     # ADR-20261118154632 amendment 1: the guaranteed builds builderd runs,
     # the count the build slice and tenant fence above are sized for.

@@ -36,11 +36,14 @@ func TestLegacySettingControlsNegotiationDiscoveryAndNotifications(t *testing.T)
 			headers.Set("MCP-Protocol-Version", version)
 			headers.Set("MCP-Method", "initialize")
 			body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + version + `"}}`
-			want := 200
+			// Spec negotiation: an unserved revision gets the server's own
+			// revision back, never a refused handshake.
+			want := version
 			if !legacy && version == legacyProtocol {
-				want = 400
+				want = currentProtocol
 			}
-			if result := protocolTestRequest(t, legacy, body, headers); result.Code != want {
+			result := protocolTestRequest(t, legacy, body, headers)
+			if result.Code != 200 || negotiatedVersion(t, result) != want {
 				t.Fatalf("legacy=%v version=%s: %d %s", legacy, version, result.Code, result.Body)
 			}
 		}
@@ -49,7 +52,7 @@ func TestLegacySettingControlsNegotiationDiscoveryAndNotifications(t *testing.T)
 		headers.Set("MCP-Protocol-Version", currentProtocol)
 		headers.Set("MCP-Method", "initialize")
 		result := protocolTestRequest(t, legacy, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`, headers)
-		if (result.Code == 200) != legacy {
+		if result.Code != 200 || (negotiatedVersion(t, result) == legacyProtocol) != legacy {
 			t.Fatalf("initialize bypass: %d %s", result.Code, result.Body)
 		}
 		headers.Set("MCP-Method", "server/discover")
@@ -141,5 +144,62 @@ func TestModernResourceRoutingAcceptsEncodedURI(t *testing.T) {
 	response := protocolTestRequest(t, true, `{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"greeting://welcome"}}`, headers)
 	if response.Code != 200 {
 		t.Fatalf("encoded resource URI rejected: %d %s", response.Code, response.Body)
+	}
+}
+
+func negotiatedVersion(t *testing.T, result *httptest.ResponseRecorder) string {
+	t.Helper()
+	var response struct {
+		Result struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(result.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode initialize: %v %s", err, result.Body)
+	}
+	if header := result.Header().Get("MCP-Protocol-Version"); header != response.Result.ProtocolVersion {
+		t.Fatalf("header %q disagrees with negotiated %q", header, response.Result.ProtocolVersion)
+	}
+	return response.Result.ProtocolVersion
+}
+
+// Clients pinned to 2025-06-18 or 2025-03-26 (SDKs before late 2025) connect
+// in legacy mode; unknown revisions are offered the newest legacy revision.
+func TestOlderClientRevisionsNegotiate(t *testing.T) {
+	for _, tc := range []struct {
+		requested, header, want string
+	}{
+		{"2025-06-18", "", "2025-06-18"},
+		{"2025-06-18", "2025-06-18", "2025-06-18"},
+		{"2025-03-26", "", "2025-03-26"},
+		{"2024-11-05", "", legacyProtocol},
+		{"1999-01-01", "1999-01-01", legacyProtocol},
+	} {
+		headers := http.Header{}
+		if tc.header != "" {
+			headers.Set("MCP-Protocol-Version", tc.header)
+		}
+		body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + tc.requested + `"}}`
+		result := protocolTestRequest(t, true, body, headers)
+		if result.Code != 200 || negotiatedVersion(t, result) != tc.want {
+			t.Fatalf("requested %s: %d %s", tc.requested, result.Code, result.Body)
+		}
+	}
+	for _, header := range []string{"2025-06-18", ""} {
+		headers := http.Header{}
+		if header != "" {
+			headers.Set("MCP-Protocol-Version", header)
+		}
+		result := protocolTestRequest(t, true, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, headers)
+		if result.Code != 200 || !strings.Contains(result.Body.String(), `"add"`) {
+			t.Fatalf("tools/list header %q: %d %s", header, result.Code, result.Body)
+		}
+		want := header
+		if want == "" {
+			want = "2025-03-26"
+		}
+		if got := result.Header().Get("MCP-Protocol-Version"); got != want {
+			t.Fatalf("tools/list header %q answered as %q", header, got)
+		}
 	}
 }
