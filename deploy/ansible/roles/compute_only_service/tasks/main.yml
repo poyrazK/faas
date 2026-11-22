@@ -1030,6 +1030,11 @@
 # actually run on (rather than the control-plane where the units
 # never activate). The role loops over the per-unit lookup so
 # adding a fourth unit is a one-line list append.
+#
+# systemd's "-" prefix (ignore a missing path) and "+" prefix (relative to
+# the host root) are not part of the path. Stat the path itself: the role
+# still creates every listed directory, optional or not (#7747 added
+# -/srv/fc/run-environments; the literal "-/srv/..." stat failed rc.366).
 - name: compute_only_service — assert ReadWritePaths= targets exist per unit (spec §11)
   ansible.builtin.stat:
     path: "{{ item }}"
@@ -1045,6 +1050,7 @@
          | map('first')
          | map('split')
          | flatten
+         | map('regex_replace', '^[-+]', '')
          | unique
          | list }}
   register: faas_rwp_stat
