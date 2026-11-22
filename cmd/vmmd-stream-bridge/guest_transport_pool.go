@@ -42,9 +42,14 @@ const (
 	guestHeadroomDialTimeout = 5 * time.Second
 
 	// h1IdleConnTimeout bounds an idle keep-alive connection to an H1 guest.
-	// It is shorter than the bridge's process lifetime so parked instances do
-	// not retain guest-side sockets until the outer bridge reaper runs.
-	h1IdleConnTimeout = 30 * time.Second
+	// It must stay below the shortest common server keep-alive default
+	// (gunicorn 2 s; Node and uvicorn 5 s): a guest that closes an idle
+	// connection first races the bridge's next request onto a dead socket, and
+	// a POST that loses the race cannot be replayed, so the client saw 502
+	// "guest h1 roundtrip: connection reset by peer" whenever 5-30 s passed
+	// between requests to a Node app. Busy instances keep their connections
+	// warm; an idle one pays a microsecond tap dial.
+	h1IdleConnTimeout = 1500 * time.Millisecond
 
 	// The bridge is started as soon as vmmd creates the instance network,
 	// before Firecracker has finished restoring the guest. Retry the H2C

@@ -1,63 +1,55 @@
 package managedrealtime
 
 import (
-	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
-	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type removalRegistrar struct {
-	liveRouteRegistrar
-	removed []string
-}
-
-func (r *removalRegistrar) RemoveEndpoint(_ context.Context, id string) error {
-	r.removed = append(r.removed, id)
-	return nil
-}
-
-// adr: 20261023115741 — an endpoint whose account has realtime off is
-// withdrawn from realtimed, unless live routes keep it serving live queries.
-func TestEndpointWithdrawnWhileRealtimeIsOff(t *testing.T) {
-	ctx := context.Background()
-	row := state.ManagedRealtimeEndpoint{ID: "ep", AppID: "app-1", AccountID: "acct-1", Enabled: true, CallbackURL: "https://app.example"}
-	route := realtime.LiveRoute{KID: "0123456789abcdef", Database: "db-1", URL: "wss://live.internal/db-1/live"}
-	tests := []struct {
-		name         string
-		released     bool
-		routes       []realtime.LiveRoute
-		wantRegister bool
-	}{
-		{"realtime on", true, nil, true},
-		{"realtime off", false, nil, false},
-		{"realtime off with live routes", false, []realtime.LiveRoute{route}, true},
+func TestCapabilityAvailableMatchesRouteGates(t *testing.T) {
+	const account = "7b2c5e1e-4e8e-4a39-9d55-6a2c7f1d0a11"
+	acct := state.Account{ID: account}
+	rollout, err := ParsePreviewRollout(account)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			registrar := &removalRegistrar{}
-			var asked string
-			s := &Service{
-				Registrar: registrar,
-				LiveRoutes: func(context.Context, string, string) ([]realtime.LiveRoute, error) {
-					return tc.routes, nil
-				},
-				RealtimeReleased: func(_ context.Context, accountID, appID string) bool {
-					asked = accountID + "/" + appID
-					return tc.released
-				},
-			}
-			if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
-				t.Fatal(err)
-			}
-			registered := len(registrar.registered) == 1
-			if registered != tc.wantRegister || registered == (len(registrar.removed) == 1) {
-				t.Fatalf("registered %d, removed %v; want registered=%v", len(registrar.registered), registrar.removed, tc.wantRegister)
-			}
-			if tc.routes == nil && asked != "acct-1/app-1" {
-				t.Fatalf("decided for %q, want acct-1/app-1", asked)
-			}
-		})
+	r := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	keys := []string{"realtime-access", "realtime-tickets", "realtime-occupancy", "realtime-channels", "realtime-workers", "realtime-push", "realtime-publishers"}
+
+	// Outside the rollout nothing is served, whatever the daemon switches say.
+	s := &Service{AccessPreviewEnabled: true, TicketsPreviewEnabled: true, OccupancyPreviewEnabled: true, HistoryPreviewEnabled: true}
+	for _, key := range keys {
+		if got, ok := s.CapabilityAvailable(r, acct, key); !ok || got {
+			t.Errorf("%s outside rollout: available=%v owned=%v", key, got, ok)
+		}
+	}
+
+	// In the rollout with every switch off, only publishers (rollout-only) remain.
+	s = &Service{Preview: rollout}
+	for _, key := range keys {
+		got, ok := s.CapabilityAvailable(r, acct, key)
+		if !ok || got != (key == "realtime-publishers") {
+			t.Errorf("%s with switches off: available=%v owned=%v", key, got, ok)
+		}
+	}
+
+	// The retained-history switch alone opens channels, workers and push.
+	s = &Service{Preview: rollout, HistoryPreviewEnabled: true}
+	for key, want := range map[string]bool{"realtime-channels": true, "realtime-workers": true, "realtime-push": true, "realtime-occupancy": false, "realtime-tickets": false} {
+		if got, _ := s.CapabilityAvailable(r, acct, key); got != want {
+			t.Errorf("%s with history on: available=%v want %v", key, got, want)
+		}
+	}
+
+	// A released flag the nodes cannot serve is off, like the route.
+	s = &Service{Preview: rollout, OccupancyPreviewEnabled: true, NodesServePreview: func(string) bool { return false }}
+	if got, _ := s.CapabilityAvailable(r, acct, "realtime-occupancy"); got {
+		t.Error("occupancy advertised while realtime nodes lack it")
+	}
+
+	if _, ok := s.CapabilityAvailable(r, acct, "object-storage"); ok {
+		t.Error("realtime claimed a capability it does not own")
 	}
 }

@@ -8,7 +8,9 @@ package main
 // variable that also lists the rollout in apid, shows them.
 
 import (
+	"context"
 	"errors"
+	"io"
 	"os"
 	"slices"
 	"strings"
@@ -78,4 +80,52 @@ func withoutRealtimePreview(command cliCommand) cliCommand {
 	}
 	command.Subcommands = subs
 	return command
+}
+
+// realtimePreviewVerbCapability names the capability whose routes a preview
+// verb calls, as GET /v1/capabilities reports it.
+var realtimePreviewVerbCapability = map[string]string{
+	"usage": "realtime", "occupancy": "realtime-occupancy",
+	"edit-message": "realtime-channels", "delete-message": "realtime-channels",
+	"inbox": "realtime-push", "push": "realtime-push", "read-progress": "realtime-push", "mark-read": "realtime-push",
+}
+
+// realtimePreviewServed asks the API whether the account is served a realtime
+// preview capability. Help keeps the preview hidden without the shell
+// variable, but a command typed by an account the server serves runs: the CLI
+// answered "unknown realtime subcommand" while gregale_context advertised it.
+func realtimePreviewServed(capability string) bool {
+	if capability == "" {
+		return false
+	}
+	token := loadTokenWithDiagnostics(io.Discard)
+	if token == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), capabilityViewTimeout)
+	defer cancel()
+	response, err := NewClient(apiBase(), token).GetCapabilities(ctx)
+	if err != nil {
+		return false
+	}
+	for _, status := range response.Capabilities {
+		if status.Key == capability {
+			return status.Enabled
+		}
+	}
+	return false
+}
+
+// refuseRealtimePreviewVerb reports whether a preview verb must not run, and
+// explains why: unlike an unknown verb, its feature exists but is not served.
+func refuseRealtimePreviewVerb(w io.Writer, verb string) bool {
+	if !hiddenRealtimeVerb(verb) {
+		return false
+	}
+	capability := realtimePreviewVerbCapability[verb]
+	if realtimePreviewServed(capability) {
+		return false
+	}
+	printCommandValidation(w, "realtime %s is a realtime preview feature that is not enabled for this account (capability %q); see `gregale capabilities`\n", verb, capability)
+	return true
 }

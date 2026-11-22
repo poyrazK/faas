@@ -88,6 +88,10 @@ func (s *server) getCapabilities(w http.ResponseWriter, r *http.Request, acct st
 			if flagKey, ok := platformflags.FlagForCapability(capabilities.Capabilities[i].Key); ok {
 				available = s.platformFlagFor(flagKey, flagSubject(r, acct))
 			}
+			// Realtime previews also need the rollout and apid's switch.
+			if served, owned := s.realtime.CapabilityAvailable(r, acct, capabilities.Capabilities[i].Key); owned {
+				available = available && served
+			}
 		}
 		// ADR-20261023115741: with the capability gate installed, every
 		// capability's flag also decides availability for this account.
