@@ -289,6 +289,12 @@ NATIVE_E2E_MANAGED_REDIS_TESTS=(
   TestManagedRedisMetal
 )
 
+# With FAAS_E2E_REDIS_SOAK=1 the managed-redis-only lane runs only the
+# handoff soak (100 handoffs under write load; hours, so never by default).
+NATIVE_E2E_MANAGED_REDIS_SOAK_TESTS=(
+  TestManagedRedisHandoffSoakMetal
+)
+
 # native_e2e_lane_tests echoes a lane's tests, one per line. smoke is the
 # explicit list plus every fixtures-phase test (no microVM, seconds).
 native_e2e_lane_tests() {
@@ -328,7 +334,11 @@ native_e2e_lane_tests() {
       printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
       ;;
     managed-redis-only)
-      printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_TESTS[@]}"
+      if [[ "${FAAS_E2E_REDIS_SOAK:-}" == 1 ]]; then
+        printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_SOAK_TESTS[@]}"
+      else
+        printf '%s\n' "${NATIVE_E2E_MANAGED_REDIS_TESTS[@]}"
+      fi
       ;;
     customer-job-operations-only)
       # Every customer_job_operations*_metal_test.go file, as the HTTP and

@@ -18,8 +18,29 @@ import (
 	"context"
 	"errors"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// isManagedCacheHandoff reports whether deploymentID is a managed cache's
+// resize/upgrade handoff deployment. Its prime VM holds the data it copied
+// from the running cache, and its prime capture is the only way that data
+// reaches a later wake: a cold boot of a handoff deployment runs the copy
+// again, from the cache's own address, which after cutover is itself, so it
+// never opens 6379 (native soak redissoak-20261121T120457). Such a prime
+// must not go live without its snapshot; failing it aborts the rollout and
+// the running VM keeps serving with its data (ADR-20261116192126: a failed
+// handoff keeps the old VM). A lookup error keeps the ordinary rule.
+func (e *Engine) isManagedCacheHandoff(ctx context.Context, deploymentID string) bool {
+	if deploymentID == "" {
+		return false
+	}
+	dep, err := e.store.DeploymentByID(ctx, deploymentID)
+	if err != nil {
+		return false
+	}
+	return runsManagedValkey(dep) && api.IsManagedValkeyHandoffCommand(dep.OverrideEntrypoint)
+}
 
 // keepsMemoryAtPark reports whether app is a managed cache, whose park must
 // capture its memory instead of reusing or discarding it. A lookup error

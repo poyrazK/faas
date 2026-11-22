@@ -9182,10 +9182,16 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"err", err)
 	}
 	// A transient capture error keeps the prime's retry (dispatchPrime);
-	// any other platform capture failure activates without a snapshot.
+	// any other platform capture failure activates without a snapshot,
+	// except a managed cache's handoff, which fails so the running cache
+	// keeps serving (isManagedCacheHandoff).
 	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
 		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
-		return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		if !e.isManagedCacheHandoff(ctx, ins.DeploymentID) {
+			return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		}
+		e.log.Warn("sched: managed cache handoff prime capture failed; failing the handoff so the running cache keeps serving",
+			"instance", ins.ID, "app", ins.AppID, "deployment", ins.DeploymentID, "err", err)
 	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake
