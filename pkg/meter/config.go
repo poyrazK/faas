@@ -101,6 +101,12 @@ type Config struct {
 	// node runs a vmmd that reports the counter and test-metal plus
 	// leakcheck pass on the native hosts.
 	InternalEgressUnbilled bool `toml:"internal_egress_unbilled"`
+	// PublicResponseEgressOff (ADR-20261122090000) stops adding the
+	// gateway's response bytes to billed egress. Public responses are billed
+	// egress by default; set this only for a fleet whose nodes run public
+	// forwarding (native process recovery), where responses already cross
+	// the veth and would count twice.
+	PublicResponseEgressOff bool `toml:"public_response_egress_off"`
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration

@@ -308,6 +308,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		sampler.WithInternalEgressUnbilled(true)
 		l.log.Info("meter: internal egress unbilled (ADR-20261114100000)")
 	}
+	sampler.WithPublicResponseEgress(!l.cfg.PublicResponseEgressOff)
+	if l.cfg.PublicResponseEgressOff {
+		l.log.Info("meter: public response egress unbilled (ADR-20261122090000)")
+	}
 	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
 		l.log.Warn("meter: quiet pause billing stays off", "err", err)
 	} else if mode != QuietPauseOff {
