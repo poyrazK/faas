@@ -32,6 +32,36 @@ func newUploadStore(root, resourceURL string) (*uploadStore, error) {
 	return openUploadStore(root, resourceURL, nil)
 }
 
+func TestUploadStoreSecuresPrecreatedDirectory(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openUploadStore(root, "https://api.gregale.test/mcp", nil); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Stat(root); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("pre-created upload directory was not made private: %v, %v", info, err)
+	}
+}
+
+func TestPrepareUploadDirectoryRefusesSymlink(t *testing.T) {
+	target := t.TempDir()
+	if err := os.Chmod(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "uploads")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareUploadDirectory(path); err == nil {
+		t.Fatal("accepted a symlink as the upload directory")
+	}
+	if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
+		t.Fatalf("symlink target was changed: %v, %v", info, err)
+	}
+}
+
 func tarball(t *testing.T, entries ...tarEntry) []byte {
 	t.Helper()
 	var buf bytes.Buffer
