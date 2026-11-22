@@ -283,9 +283,23 @@ const s3 = new S3Client({
   endpoint: "https://s3.gregale.dev",
   region: "us-east-1",
   forcePathStyle: true,
+  // Required for presigned URLs that browsers upload to (see below).
+  requestChecksumCalculation: "WHEN_REQUIRED",
+  responseChecksumValidation: "WHEN_REQUIRED",
 });
 await s3.send(new PutObjectCommand({ Bucket: "assets", Key: "hello.txt", Body: "hello" }));
 ```
+
+Two settings matter with AWS SDK v3 (and boto3 1.36 or later):
+
+- `forcePathStyle: true`. Without it the SDK sends requests to
+  `assets.s3.gregale.dev`, which does not exist.
+- `requestChecksumCalculation: "WHEN_REQUIRED"` (boto3:
+  `Config(request_checksum_calculation="when_required")`). Newer SDKs sign a
+  CRC32 checksum into every presigned PUT and upload-part URL. When you
+  presign before you have the file, that is the checksum of an empty body.
+  Gregale validates signed checksums, so the browser's upload of the real
+  file is then refused. Direct SDK uploads work either way.
 
 What the endpoint does not support:
 
