@@ -6021,6 +6021,24 @@ func ErrAPIKeyRevoked() *Problem {
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 
+// ErrDeployTokenExpired and ErrDeployTokenRevoked keep the API key codes
+// clients match on but name the deploy-token commands: a revoked deploy token
+// in CI was told to "create a new one with `gregale key create`", an
+// account-wide key (prod hunt r26).
+func ErrDeployTokenExpired() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
+		"Deploy token expired",
+		"this deploy token has expired; mint a new one with `gregale app deploy-token create --app APP`, or rotate tokens before they expire with `gregale app deploy-token rotate`").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
+func ErrDeployTokenRevoked() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
+		"Deploy token revoked",
+		"this deploy token has been revoked; mint a new one with `gregale app deploy-token create --app APP` and update the CI secret").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
 // ErrAPIKeyLimitExceeded is returned when a POST /v1/keys would
 // push the account over Plan.KeysMax (issue #189 / IAM-5). Rotated
 // keys (status='revoked') are excluded from the count so the
