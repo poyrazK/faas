@@ -621,3 +621,60 @@ func TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace(t *testin
 		t.Error("the preflight's deploy condition changed; key the build group the same way")
 	}
 }
+
+// TestUnitReleaseIsTestedAsShippedAndCapped (ADR-20261122170000 §3a): the
+// build tests the exact tree it releases before it builds, with no
+// database URL, and a release carries at most BLAST_CAP commits beyond what
+// production last took.
+func TestUnitReleaseIsTestedAsShippedAndCapped(t *testing.T) {
+	build := jobBlock(t, readWorkflow(t, "release-units.yml"), "build")
+	orderedIn(t, "release-units build", build,
+		`python3 "$tools/last_deployed.py"`,
+		"Test the shipped tree",
+		`python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA"`,
+		"Build unit binaries",
+		"Sign unit release with GitHub OIDC",
+		"name: unit-release-sha-${{ steps.detect.outputs.release_sha }}")
+	for _, required := range []string{
+		`BLAST_CAP: "5"`,
+		"unset DATABASE_URL SPLIT_DATABASE_URL",
+		"export FAAS_SKIP_PG_TESTS=1",
+	} {
+		if !strings.Contains(build, required) {
+			t.Errorf("release-units build is missing %q", required)
+		}
+	}
+}
+
+// TestWatchBreachConvergesHostConfigBack (ADR-20261122170000, "Config
+// rollback"): a breach that rolled back a release which converged host roles
+// converges them back through cd-controlplane, which then deploys nothing
+// else and never converges back over its own rollback.
+func TestWatchBreachConvergesHostConfigBack(t *testing.T) {
+	watch := readWorkflow(t, "cd-unit-watch.yml")
+	restore := jobBlock(t, watch, "restore-host-config")
+	for _, required := range []string{
+		"needs: [watch]",
+		"needs.watch.outputs.host_config_rollback_to != ''",
+		"uses: ./.github/workflows/cd-controlplane.yml",
+		"units_lane: control-plane",
+		"host_config_rollback_to: ${{ needs.watch.outputs.host_config_rollback_to }}",
+	} {
+		if !strings.Contains(restore, required) {
+			t.Errorf("cd-unit-watch restore-host-config is missing %q", required)
+		}
+	}
+	if !strings.Contains(jobBlock(t, watch, "watch"), "host_config_rollback_to: ${{ steps.watch.outputs.host_config_rollback_to }}") {
+		t.Error("cd-unit-watch watch must expose host_config_rollback_to")
+	}
+	cp := readWorkflow(t, "cd-controlplane.yml")
+	converge := jobBlock(t, cp, "converge-host-config")
+	orderedIn(t, "cd-controlplane converge-host-config", converge,
+		`--rollback-to "$HOST_CONFIG_ROLLBACK_TO"`,
+		`scripts/ci/unit_deploy.sh watch-host-config "$PREVIOUS" "$UNITS_SHA"`,
+		`git worktree add --detach "$work/known-good" "$HOST_CONFIG_ROLLBACK_TO"`,
+		"if: failure() && env.HOST_CONFIG_STARTED == 'true' && env.HOST_CONFIG_ROLLBACK_TO == ''")
+	if !strings.Contains(jobBlock(t, cp, "deploy-units"), "&& inputs.host_config_rollback_to == ''") {
+		t.Error("cd-controlplane deploy-units must not run when converging host roles back")
+	}
+}

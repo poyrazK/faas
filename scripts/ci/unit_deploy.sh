@@ -33,6 +33,7 @@
 #                                                (0 pass, 1 breach, 3 inconclusive, 4 superseded)
 #   unit_deploy.sh watch-close                   remove the record if this run owns it (exit 4 if not)
 #   unit_deploy.sh watch-adopt                   take over a record no watch runs for, a window from now
+#   unit_deploy.sh watch-host-config PREV COMMIT note a host-config step in the record (breach converges back)
 #   unit_deploy.sh watch-stage DEPLOYCTL         stage deployctl and the unit verifier on the deploy host
 #   unit_deploy.sh watch-rollback ENTRY STAGE    put the deploy host back on its record entry's
 #                                                known-good release (exit 5: the host changed since)
@@ -477,6 +478,15 @@ cmd_watch_close() { watch_record_run close -- --owner "$(watch_owner)"; }
 # then watches a full window from now.
 cmd_watch_adopt() { watch_record_run adopt -- --owner "$(watch_owner)" --now "$(cmd_now)"; }
 
+# watch-host-config PREVIOUS COMMIT: before a host-config step converges
+# COMMIT over PREVIOUS (the control plane's role record), note it in the
+# watch record, so a breach converges the roles back
+# (docs/adr/20261122170000-continuous-unit-lane.md, "Config rollback").
+cmd_watch_host_config() {
+  [[ "${1:-}" =~ ^[0-9a-f]{40}$ && "${2:-}" =~ ^[0-9a-f]{40}$ ]] || die "watch-host-config needs two 40-hex commits"
+  watch_record_run host-config -- --owner "$(watch_owner)" --previous "$1" --commit "$2" --now "$(cmd_now)"
+}
+
 # watch: run the SLO gate in watch mode on the control plane for every unit
 # the record holds, from the first unwatched activation until `window` after
 # the last. Exits 0 (pass), 1 (breach), 3 (inconclusive) or 4 (another run
@@ -504,12 +514,14 @@ if ! jq -e --arg o "$owner" '.owner_run == $o' "$record" >/dev/null 2>&1; then
 fi
 # Gate arguments are flags and unit/component names only: the record is
 # written from plans, and this runner evaluates them.
-jq -e '[.hosts[].gate[][] | test("^(--)?[a-z0-9-]+$")] | all' "$record" >/dev/null || { echo "unit-watch: unexpected gate argument in the record"; exit 2; }
-deployed_at="$(jq '[.hosts[].first_activation] | min' "$record")"
-end=$(( $(jq '[([.hosts[].last_activation] | max), (.watch_from // 0)] | max' "$record") + window ))
+# The control plane's host configuration (.host_config) is watched beside
+# the hosts' units, with the platform SLOs (ADR-20261122170000).
+jq -e '[(.hosts[].gate[][]), ((.host_config.gate // [])[][]) | test("^(--)?[a-z0-9-]+$")] | all' "$record" >/dev/null || { echo "unit-watch: unexpected gate argument in the record"; exit 2; }
+deployed_at="$(jq '[(.hosts[].first_activation), (.host_config.first_activation // empty)] | min' "$record")"
+end=$(( $(jq '[([(.hosts[].last_activation), (.host_config.last_activation // empty)] | max), (.watch_from // 0)] | max' "$record") + window ))
 duration=$(( end - $(date +%s) ))
 (( duration >= interval )) || duration="$interval"
-echo "unit-watch: watching $(jq -r '[.hosts | keys[]] | join(", ")' "$record") for ${duration}s (since the first unwatched activation at $deployed_at)"
+echo "unit-watch: watching $(jq -r '[(.hosts | keys[]), (if .host_config then "host configuration" else empty end)] | join(", ")' "$record") for ${duration}s (since the first unwatched activation at $deployed_at)"
 pids=()
 while read -r unit_args; do
   eval "set -- $unit_args"
@@ -517,7 +529,7 @@ while read -r unit_args; do
     --interval "${interval}s" --max-blind-rounds "$blind" --prometheus-url "$prometheus" \
     --watch-record "$record" --owner "$owner" &
   pids+=("$!")
-done < <(jq -r '[.hosts[].gate[]] | unique[] | map(@sh) | join(" ")' "$record")
+done < <(jq -r '[(.hosts[].gate[]), ((.host_config.gate // [])[])] | unique[] | map(@sh) | join(" ")' "$record")
 worst=0
 for pid in "${pids[@]}"; do
   wait "$pid"
@@ -741,8 +753,9 @@ case "$command" in
   watch) cmd_watch "$@" ;;
   watch-close) cmd_watch_close "$@" ;;
   watch-adopt) cmd_watch_adopt "$@" ;;
+  watch-host-config) cmd_watch_host_config "$@" ;;
   watch-stage) cmd_watch_stage "$@" ;;
   watch-rollback) cmd_watch_rollback "$@" ;;
   pin-node) cmd_pin_node "$@" ;;
-  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
+  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-host-config|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
 esac

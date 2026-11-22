@@ -205,9 +205,19 @@ hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
   release when there is none). The rest goes in the next run: a merge, or
   a 10-minute schedule that runs only with automatic deploys on. A commit
   production already took is not built again.
-- **Config rollback** (owner chose it; next change). The watch's rollback
-  puts binaries back but not host configuration a lane converged. It will
-  re-converge the roles of the known-good release's commit.
+- **Config rollback** (owner chose it). The watch's rollback put binaries
+  back but not host configuration a lane converged. Now, before the
+  host-config step converges, the watch record notes the configuration
+  commit the control plane had (`host_config.known_good`, kept across
+  runs) and the one converged (`current`); the watch judges the platform
+  SLOs for it beside the units. On a breach, `unit_watch.py` names
+  `known_good`, and cd-unit-watch's `restore-host-config` job runs
+  cd-controlplane with `host_config_rollback_to`: `plan_host_config.py
+  --rollback-to` converges only roles whose content differs (never a
+  stateful one; other globals refuse), with the same secrets, gregalectl
+  converge, daemon restarts and SLO gate, records the known-good commit,
+  and deploys nothing else. A failed converge-back is not converged
+  "back" again; deploys stay frozen by the watch's issue.
 - **Critical smoke checks** (owner chose them; next change). Before a
   deploy counts as done, synthetic journeys run against the new version
   (sign in, deploy, wake and invoke, metering, billing preview), and a
