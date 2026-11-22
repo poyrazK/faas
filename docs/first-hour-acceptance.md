@@ -153,6 +153,22 @@ python3 scripts/first-hour/onboarding.py --api https://api.gregale.dev \
   --expected-email user@example.com --out /tmp/gregale-free-onboarding
 ```
 
+On clean Linux with a browser on another machine, run the private starter lane:
+
+```sh
+python3 scripts/first-hour/onboarding.py --api https://api.gregale.dev \
+  --template hello-node-private --device-login --file-credentials \
+  --expected-email user@example.com --out /tmp/gregale-free-private-onboarding
+```
+
+In a container that doesn't export `SHELL`, set it to the path of the
+container's shell before the run. The public installer uses it when printing
+PATH setup instructions for the isolated destination.
+Use `--file-credentials` when the Linux environment has no usable keyring.
+It stores the isolated login under the run's private home and revokes it during
+cleanup. Open the URL and enter the code from `private/browser-handoff.json`
+in the browser to approve device login.
+
 Select an existing Free account with no deployed apps. Its normal browser
 sign-in must be available to the observer. A Scale account or an occupied Free
 account blocks before Start creates anything. The runner does not change plans,
@@ -191,6 +207,13 @@ uses a real PTY for login and Start and scripts these product prompts:
 | Edit | Enter a new greeting in Start's walkthrough, review its local change, and verify the new greeting from a distinct release of the same app. Exactly one app and two releases may exist. |
 | App cleanup | Delete only the registered test name, require absence, and verify the initially empty Free account is empty again. |
 | Login cleanup | Log out of the isolated connection, verify it is signed out, and remove that connection. Browser-managed CLI-key revocation must succeed. |
+
+For `hello-node-private`, the installed CLI must list the starter before any
+login. Start must show **Internal only** on both reviews. The runner edits
+`app/server.js` between releases and verifies the same app and project, owner
+HTTP 200 and anonymous HTTP 404 on each release. It waits for 100% traffic on
+the edited release in a separate phase and verifies that both the temporary app
+and its project are gone during cleanup.
 
 Browser sign-in/authorization remains a real product interaction. Do not use
 `login --token`, a copied keychain entry, or a stub callback to qualify it.
