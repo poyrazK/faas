@@ -69,6 +69,47 @@ func TestLegacySettingControlsNegotiationDiscoveryAndNotifications(t *testing.T)
 	}
 }
 
+func TestKeyedTaskHeadersFailClosed(t *testing.T) {
+	const key = "019ab230-1234-7234-9234-123456789abc"
+	request := rpcRequest{
+		ID: json.RawMessage("1"), Method: "tools/call",
+		Params: json.RawMessage(`{"name":"greet","_meta":{"io.gregale/task-submission-key":"` + key + `"}}`),
+	}
+	for _, tc := range []struct {
+		name, version, headerVersion string
+		methods                      []string
+		valid                        bool
+	}{
+		{"matched", currentProtocol, currentProtocol, []string{taskSubmissionMethod}, true},
+		{"unversioned", currentProtocol, "", []string{taskSubmissionMethod}, false},
+		{"legacy", legacyProtocol, legacyProtocol, []string{taskSubmissionMethod}, false},
+		{"ordinary marker", currentProtocol, currentProtocol, []string{"tools/call"}, false},
+		{"duplicate marker", currentProtocol, currentProtocol, []string{"tools/call", taskSubmissionMethod}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := http.Header{}
+			headers.Set("MCP-Protocol-Version", tc.headerVersion)
+			headers.Set("MCP-Name", "greet")
+			for _, method := range tc.methods {
+				headers.Add("MCP-Method", method)
+			}
+			if err := validateMCPHeaders(headers, request, tc.version); (err == nil) != tc.valid {
+				t.Fatalf("validateMCPHeaders() = %v, valid = %t", err, tc.valid)
+			}
+		})
+	}
+
+	// A keyed request for a synchronous tool must not fall back to running it.
+	headers := http.Header{}
+	headers.Set("MCP-Protocol-Version", currentProtocol)
+	headers.Set("MCP-Method", taskSubmissionMethod)
+	headers.Set("MCP-Name", "greet")
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"greet","arguments":{"name":"Gregale"},"_meta":{"io.gregale/task-submission-key":"` + key + `"}}}`
+	if reply := protocolTestRequest(t, true, body, headers); reply.Code != http.StatusBadRequest {
+		t.Fatalf("keyed request fell through to ordinary tool call: %d %s", reply.Code, reply.Body)
+	}
+}
+
 func TestModernRequestHeadersMustMatchBeforeToolExecution(t *testing.T) {
 	calls := 0
 	definition := map[string]any{"name": "header_probe", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"region": map[string]any{"type": "string", "x-mcp-header": "region"}}}}

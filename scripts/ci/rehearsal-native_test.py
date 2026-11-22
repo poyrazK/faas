@@ -200,10 +200,70 @@ class HostedTaskRehearsalTests(unittest.TestCase):
             out = Path(root) / "evidence"
             with patch.object(sys, "argv", ["runner", "--out", str(out), "--journey", "hosted-task"]), \
                     patch.object(native, "native_run") as run:
-                with self.assertRaisesRegex(ValueError, "offline preparation"):
+                with self.assertRaisesRegex(ValueError, "approved source intent and plan digest"):
                     native.main()
             run.assert_not_called()
             self.assertFalse(out.exists())
+
+    def test_native_receipt_publication_requires_a_clean_host_after_execution(self):
+        identity = {"platform_commit": "a" * 40, "api_origin": "https://acceptance.example.test",
+                    "account_id": "account", "node_id": "node", "native_runner": True}
+        approval = ("b" * 64, "c" * 64)
+        for leak in (False, True):
+            with self.subTest(leak=leak), tempfile.TemporaryDirectory() as root:
+                out = Path(root)
+                pending = out / "hosted-task-receipt.pending"
+                checks = []
+
+                def run(_repo, directory, intent, plan):
+                    self.assertEqual((directory, intent, plan), (out, *approval))
+                    pending.write_text("{}")
+                    return pending
+
+                def execute(_args, _repo, log, _timeout):
+                    checks.append(log.name)
+                    if leak and log.name == "leak-after.log":
+                        raise ValueError("native leak")
+
+                with patch.object(native, "runner_configuration", return_value=identity), \
+                        patch.object(native, "NATIVE_LOCK", out / "lock"), \
+                        patch.object(native, "run_hosted_task", side_effect=run), \
+                        patch.object(native, "execute", side_effect=execute), patch.object(sys, "stdout"):
+                    if leak:
+                        with self.assertRaisesRegex(ValueError, "native leak"):
+                            native.native_run(REPO, out, "hosted-task", approval)
+                    else:
+                        native.native_run(REPO, out, "hosted-task", approval)
+                self.assertEqual(checks, ["leak-before.log", "leak-after.log"])
+                self.assertEqual((out / "hosted-task-receipt.json").exists(), not leak)
+                journal = json.loads((out / "qualification.json").read_text())
+                self.assertEqual(journal["status"], "failed" if leak else "passed")
+
+    def test_hosted_task_child_receives_prepared_pins_and_private_output(self):
+        with tempfile.TemporaryDirectory() as root:
+            out = Path(root)
+            build, child = [], []
+
+            def execute(args, _repo, log, _timeout, *, receipt=None):
+                if receipt is None:
+                    build.extend(args)
+                    args[args.index("-o") + 1].touch()
+                else:
+                    child.extend(args)
+                    receipt.write_text("{}")
+
+            with patch.object(native, "execute", side_effect=execute), \
+                    patch.object(native, "HOSTED_TASK_BUILD_ROOT", out), \
+                    patch.object(native.rehearsal_hosted_task, "verify") as verify:
+                pending = native.run_hosted_task(REPO, out, "a" * 64, "b" * 64)
+            verify.assert_called_once_with(out, pending)
+            self.assertIn("hosted_task_acceptance", build)
+            self.assertEqual(pending, out / "hosted-task-receipt.pending")
+            self.assertFalse((out / "hosted-task-receipt.json").exists())
+            prepared = json.loads((out / "preparation.json").read_text())
+            for role in ("web", "worker"):
+                self.assertEqual(child[child.index("--" + role + "-source") + 1], prepared["source_sha256"][role])
+                self.assertEqual(child[child.index("--" + role + "-archive") + 1], prepared["archive_sha256"][role])
 
     def test_verifier_binds_the_same_task_and_rejects_incomplete_evidence(self):
         with tempfile.TemporaryDirectory() as root:

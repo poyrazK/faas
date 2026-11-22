@@ -373,6 +373,14 @@ gregale mcp task-wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 gregale mcp task-cancel --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 ```
 
+On an external OAuth endpoint, pass `--task-receipt FILE` to the Task call to save
+a private receipt before submitting. For status lookup, use the same receipt and
+`--metadata-only` with the original endpoint and caller's credentials. A matching
+submission key can be retried for one minute, and lookup remains available until
+the Task expires.
+Run `go run . tasks-migrate apply` before starting the updated web runtime to
+enable this capability.
+
 The starter's `tasks/update` endpoint follows the protocol response contract; its
 sample handler does not request client input. The Go SDK does not expose a public
 Task result setter, so Task wire requests are handled at the stateless HTTP edge.

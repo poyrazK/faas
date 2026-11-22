@@ -233,6 +233,33 @@ class MCPProtocolHeaderTests(unittest.TestCase):
             extra=[("MCP-Method", "resources/read"), ("MCP-Name", "=?base64?Z3JlZXRpbmc6Ly93ZWxjb21l?=")])
         self.assertEqual(status, 200, body)
 
+    def test_keyed_calls_never_fall_back_to_ordinary_tool_execution(self):
+        message = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                   "params": {"name": "greet", "arguments": {"name": "Ada"}}}
+        marker = [("MCP-Method", "gregale/tasks/submit"), ("MCP-Name", "greet")]
+        status, body = self.post(message, extra=marker)
+        self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32020))
+        metadata = message["params"]["_meta"] = {
+            "io.gregale/task-submission-key": "019ab2ce-217c-7abc-89ab-123456789abc",
+        }
+        for version, headers in (
+            ("", marker),
+            ("2025-11-25", marker),
+            ("2026-07-28", [("MCP-Method", "tools/call"), ("MCP-Name", "greet")]),
+            ("2026-07-28", [*marker, marker[0]]),
+            ("2026-07-28", [*marker, ("MCP-Protocol-Version", "2026-07-28")]),
+        ):
+            with self.subTest(version=version, headers=headers):
+                status, body = self.post(message, version, headers)
+                self.assertEqual(status, 400)
+                self.assertIn(json.loads(body)["error"]["code"], (-32020, -32600))
+        status, body = self.post(message, extra=marker)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(body)["result"]["isError"])
+        metadata["io.gregale/task-submission-key"] = None
+        status, body = self.post(message, extra=marker)
+        self.assertEqual((status, json.loads(body)["error"]["code"]), (400, -32020))
+
     def test_invalid_headers_never_execute_tool(self):
         from server import MCP_CATALOG
         calls = []

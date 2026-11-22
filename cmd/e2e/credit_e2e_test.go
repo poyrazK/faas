@@ -73,6 +73,10 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 				return
 			}
 			_, _ = fmt.Fprintf(w, `{"items":[{"id":"refund-e2e","amount":250,"currency":"eur","status":"succeeded","metadata":{"faas_idempotency_key":%q}}],"pagination":{"max_page":1}}`, key)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/orders/"):
+			// Refund reads the order's net/tax split; an untaxed order
+			// posts the requested amount unchanged.
+			_, _ = fmt.Fprintf(w, `{"id":%q}`, strings.TrimPrefix(r.URL.Path, "/v1/orders/"))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/refunds":
 			var body struct {
 				OrderID  string            `json:"order_id"`

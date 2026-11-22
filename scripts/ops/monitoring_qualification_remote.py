@@ -156,8 +156,16 @@ def test_alerts(plan, now, resolving=False):
                   "component": "alertmanager", "severity": severity,
                   "family": "monitoring_qualification_" + identity + "_" + suffix,
                   "qualification_id": identity}
-        alerts.append({"labels": labels, "annotations": {"summary": "Gregale delivery qualification " + identity + " " + suffix,
-                                                        "qualification_id": identity},
+        annotations = {"summary": "Gregale delivery qualification " + identity + " " + suffix,
+                       "qualification_id": identity}
+        if role == "faas-page":
+            annotations.update(
+                first_action="Open Notification Receiver Failures and confirm the dashboard loads.",
+                customer_impact="None. This is a monitoring qualification test.",
+                failure_stage="Notification delivery qualification",
+                dashboard_path="/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now",
+            )
+        alerts.append({"labels": labels, "annotations": annotations,
                        "startsAt": stamp(started), "endsAt": stamp(max(now, started) if resolving else expires)})
     if not alerts:
         raise QualificationError("required_receiver_missing")

@@ -6,10 +6,28 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
+
+const (
+	taskSubmissionExtension       = "io.gregale/task-submission"
+	taskSubmissionLookupExtension = "io.gregale/task-submission-lookup"
+	taskSubmissionKeyMeta         = "io.gregale/task-submission-key"
+	taskSubmissionMethod          = "gregale/tasks/submit"
+	taskSubmissionLookupMethod    = "gregale/tasks/lookup"
+)
+
+func taskSubmissionIssuedAt(key string) (time.Time, bool) {
+	if !taskIDPattern.MatchString(key) || key[14] != '7' || key != strings.ToLower(key) {
+		return time.Time{}, false
+	}
+	millis, err := strconv.ParseInt(key[:8]+key[9:13], 16, 64)
+	return time.UnixMilli(millis), err == nil
+}
 
 // olderLegacyProtocols share the 2025-11-25 wire format for the tools,
 // resources and prompts this starter serves. Clients pinned to them (SDKs
@@ -95,12 +113,24 @@ func validateMCPHeaders(headers http.Header, request rpcRequest, version string)
 	if hasVersion && declared != version {
 		return mismatch
 	}
-	// Notifications do not carry the standard request headers. Keep unversioned
-	// compatibility requests working; explicit modern requests must mirror body.
-	if len(request.ID) == 0 || version != currentProtocol || (headers.Get("MCP-Protocol-Version") == "" && !hasVersion) {
+	methodHeaders := headers.Values("MCP-Method")
+	expectedMethod := request.Method
+	submissionKey, hasKey := meta[taskSubmissionKeyMeta]
+	if hasKey || slices.Contains(methodHeaders, taskSubmissionMethod) {
+		// Require an explicitly versioned call so older replicas reject the
+		// extension marker instead of dispatching an ordinary tools/call.
+		value, _ := submissionKey.(string)
+		if _, valid := taskSubmissionIssuedAt(value); !valid || request.Method != "tools/call" ||
+			headers.Get("MCP-Protocol-Version") != currentProtocol || version != currentProtocol || len(request.ID) == 0 {
+			return mismatch
+		}
+		expectedMethod = taskSubmissionMethod
+	} else if len(request.ID) == 0 || version != currentProtocol || (headers.Get("MCP-Protocol-Version") == "" && !hasVersion) {
+		// Notifications and unversioned compatibility requests keep their
+		// existing behavior. Explicit modern requests must mirror the body.
 		return nil
 	}
-	if values := headers.Values("MCP-Method"); len(values) != 1 || values[0] != request.Method {
+	if len(methodHeaders) != 1 || methodHeaders[0] != expectedMethod {
 		return mismatch
 	}
 	key := ""

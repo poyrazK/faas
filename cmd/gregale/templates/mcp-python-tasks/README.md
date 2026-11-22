@@ -430,6 +430,14 @@ configured `tasks.database_url_env` binding and validate installed schema versio
 required columns and the enabled notification trigger. Startup fails with migration
 guidance if that schema is missing or incompatible.
 
+After applying the updated schema and restarting the web or combined process,
+external OAuth clients can use the Gregale CLI's `--task-receipt` to recover a
+Task ID after a lost HTTP reply. Retrying with the same key, caller, tool,
+arguments and input capabilities returns the original handle for one minute
+from the key's UUIDv7 timestamp. Receipt lookup returns metadata while the Task
+is retained and the caller still has access to its tool. Use the Task ID for the
+result. Older schemas continue to support ordinary Tasks during rollout.
+
 Web and worker startup also authenticate every unexpired payload in their Task
 namespace before starting writers. The scan streams rows to bound memory and
 must finish within the 10-second startup budget. It checks arguments, results,

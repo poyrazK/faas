@@ -56,11 +56,13 @@ func (j *hostedMCPJourney) probeFloor(t *testing.T) int {
 	if !present {
 		return 0
 	}
-	n, ok := raw.(float64)
-	if !ok {
+	// jsonBody decodes numbers as json.Number.
+	n, ok := raw.(json.Number)
+	floor, err := n.Int64()
+	if !ok || err != nil {
 		t.Fatalf("GET /v1/apps/%s has a non-numeric min_instances: %s", j.probe, compact(got))
 	}
-	return int(n)
+	return int(floor)
 }
 
 // raiseFloor sends the agent's PATCH adding one warm instance to the probe,

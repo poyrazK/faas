@@ -68,6 +68,8 @@ Custom deployed timing can differ. Accepted alert submissions or increasing
 transport counters do not establish either receipt. Record each actual
 firing and recovery observation with its matching test ID. Silences and normal
 inhibition remain in effect; missing delivery stays unverified or failed.
+When qualifying the diagnostic layout, confirm the firing page includes
+`First check` and that its dashboard link opens Notification Receiver Failures.
 
 The delivery escalation test normally fires after 10 seconds and recovers
 at the next one-minute group interval. Use the separate

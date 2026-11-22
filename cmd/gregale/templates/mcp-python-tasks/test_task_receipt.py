@@ -1,0 +1,204 @@
+"""Exercise lost HTTP replies across fresh Gregale CLI processes and PostgreSQL."""
+
+from concurrent.futures import ThreadPoolExecutor
+import hashlib
+import json
+import os
+from pathlib import Path
+import queue
+import socket
+import stat
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+from unittest.mock import Mock, patch
+import uuid
+
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+from psycopg.conninfo import make_conninfo
+
+from auth import AuthContext, Authenticator
+from server import DrainingHTTPServer, MCPHandler
+from tasks import DurableTaskRuntime, check_task_schema, check_task_submission_index, migrate_task_schema
+import test_task_execution
+
+
+@unittest.skipUnless(os.environ.get("MCP_TASKS_TEST_DATABASE_URL"), "requires PostgreSQL")
+class TaskSubmissionPostgresTests(unittest.TestCase):
+    setUp = test_task_execution.TaskExecutionPostgresTests.setUp
+
+    def test_parallel_submit_and_read_only_lookup(self):
+        runtime = self.runtime
+        runtime.task_submission_ready = check_task_submission_index(runtime.pool)
+        self.assertTrue(runtime.task_submission_ready)
+        # UUIDv7's timestamp and version/variant bits, with fixture-local randomness.
+        key = f"{time.time_ns() // 1_000_000:012x}" + "7" + uuid.uuid4().hex[13:]
+        key = str(uuid.UUID(hex=key))
+        identity = AuthContext(subject="alice")
+        args = {"report": "parallel", "steps": 1}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            handles = list(pool.map(lambda _: runtime.create("build_report", dict(args), identity, submission_key=key),
+                                    range(8)))
+        self.assertEqual(handles, [handles[0]] * 8)
+        with self.assertRaisesRegex(ValueError, "key is unavailable"):
+            runtime.create("build_report", dict(args), identity, {"elicitation": {}}, submission_key=key)
+        with runtime.pool.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) AS count FROM gregale_mcp_tasks").fetchone()["count"], 1)
+            connection.execute("DELETE FROM gregale_mcp_task_owners")
+        auth = Mock(spec=Authenticator)
+        auth.can_access_tool.return_value = True
+        with patch.object(runtime, "_decrypt", side_effect=AssertionError("metadata lookup opened a payload")):
+            task = runtime.lookup_submission(key, identity, auth)
+        auth.can_access_tool.assert_called_once_with("build_report", identity)
+        self.assertEqual(task["taskId"], handles[0]["taskId"])
+        self.assertEqual(set(task), {"resultType", "taskId", "status", "createdAt", "lastUpdatedAt", "ttlMs", "pollIntervalMs"})
+        with runtime.pool.connection() as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) AS count FROM gregale_mcp_task_owners").fetchone()["count"], 0)
+
+    def test_ordinary_tasks_work_without_the_submission_migration(self):
+        runtime = self.runtime
+        with runtime.pool.connection() as connection:
+            connection.execute("ALTER TABLE gregale_mcp_tasks DROP COLUMN submission_key")
+        check_task_schema(runtime.pool)
+        self.assertFalse(check_task_submission_index(runtime.pool))
+        handle = runtime.create("build_report", {"report": "ordinary", "steps": 1}, AuthContext(subject="alice"))
+        migrate_task_schema(runtime.pool)
+        migrate_task_schema(runtime.pool)
+        self.assertTrue(check_task_submission_index(runtime.pool))
+        with runtime.pool.connection() as connection:
+            row = connection.execute("SELECT task_id::text AS task_id, submission_key FROM gregale_mcp_tasks").fetchone()
+        self.assertEqual(row, {"task_id": handle["taskId"], "submission_key": None})
+        with runtime.pool.connection() as connection:
+            connection.execute("DROP INDEX gregale_mcp_tasks_submission_key_idx")
+            connection.execute("CREATE UNIQUE INDEX gregale_mcp_tasks_submission_key_idx ON gregale_mcp_tasks(namespace,submission_key)")
+        self.assertFalse(check_task_submission_index(runtime.pool))
+
+
+@unittest.skipUnless(os.environ.get("MCP_TASKS_TEST_GREGALE") and os.environ.get("MCP_TASKS_TEST_DATABASE_URL"),
+                     "requires the Gregale CLI and PostgreSQL")
+class TaskReceiptJourneyTests(unittest.TestCase):
+    setUp = test_task_execution.TaskExecutionPostgresTests.setUp
+
+    def test_lost_reply_recovers_one_task_and_one_result(self):
+        config = {"endpoint": "/mcp", "tasks": {"enabled": True, "poll_interval_ms": 500},
+                  "auth": {"mode": "external-oauth", "issuer": "https://issuer.example",
+                           "jwks_url": "https://issuer.example/jwks", "resource": "https://mcp.example/mcp",
+                           "scopes": ["mcp:tools"], "tool_scopes": {"build_report": ["reports:read"]}}}
+        fixture = self.runtime
+        environment = {"DATABASE_URL": make_conninfo(fixture.pool.conninfo),
+                       "MCP_TASK_OWNER_KEY": test_task_execution.OWNER_KEY.decode(),
+                       "MCP_TASK_NAMESPACE": fixture.namespace}
+        with patch.dict(os.environ, environment):
+            runtime = DurableTaskRuntime(config, role="combined")
+        self.addCleanup(runtime.close)
+
+        private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        key = {**jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key(), as_dict=True), "kid": "journey"}
+        auth = Authenticator(config)
+        jwks = patch.object(auth.jwks_client, "fetch_data", return_value={"keys": [key]})
+        jwks.start()
+        self.addCleanup(jwks.stop)
+
+        def mint(subject, scope):
+            return jwt.encode({"iss": config["auth"]["issuer"], "aud": config["auth"]["resource"],
+                               "sub": subject, "scope": scope, "exp": time.time() + 300},
+                              private, algorithm="RS256", headers={"kid": "journey"})
+
+        owner = mint("alice", "mcp:tools reports:read")
+        foreign = mint("bob", "mcp:tools reports:read")
+        reduced = mint("alice", "mcp:tools")
+        client_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        receipt_path = client_dir / "receipt.json"
+        intercepted = threading.Event()
+        dropped = queue.Queue(maxsize=1)
+
+        class DropFirstSubmitReply(MCPHandler):
+            def send_json(self, status, value, extra_headers=None):
+                task = value.get("result", {})
+                if (self.headers.get("Mcp-Method") != "gregale/tasks/submit" or intercepted.is_set()
+                        or task.get("resultType") != "task"):
+                    return super().send_json(status, value, extra_headers)
+                intercepted.set()
+                try:
+                    # Dispatch already returned. Confirm the Task is committed on an independent connection.
+                    info = receipt_path.lstat()
+                    if not stat.S_ISREG(info.st_mode) or stat.S_IMODE(info.st_mode) != 0o600:
+                        raise AssertionError("receipt was not saved privately before submission")
+                    with fixture.pool.connection() as connection:
+                        row = connection.execute("SELECT expires_at FROM gregale_mcp_tasks WHERE namespace=%s AND task_id=%s",
+                                                 (fixture.namespace, task["taskId"])).fetchone()
+                    dropped.put((task["taskId"], row["expires_at"]))
+                except Exception as exc:
+                    dropped.put(exc)
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
+
+        http = DrainingHTTPServer(("127.0.0.1", 0), DropFirstSubmitReply)
+        self.addCleanup(http.server_close)
+        http.app_config, http.authenticator, http.task_runtime = config, auth, runtime
+        thread = threading.Thread(target=http.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, 2)
+        self.addCleanup(http.shutdown)
+        endpoint = f"http://127.0.0.1:{http.server_port}/mcp"
+
+        def cli(verb, token, code, *args):
+            result = subprocess.run([os.environ["MCP_TASKS_TEST_GREGALE"], "mcp", "client", verb, "--url", endpoint,
+                                     "--token-env", "GREGALE_JOURNEY_TOKEN", "--timeout", "6s", "--json", *args],
+                                    cwd=client_dir, env={"XDG_CONFIG_HOME": str(client_dir), "GREGALE_JOURNEY_TOKEN": token},
+                                    capture_output=True, text=True, timeout=10)
+            self.assertTrue(token not in result.stdout and token not in result.stderr, "CLI leaked its bearer token")
+            self.assertEqual(result.returncode, code, result.stderr)
+            if code == 0:
+                return json.loads(result.stdout)
+            self.assertEqual(result.stdout, "")
+
+        original_args = '{"report":"receipt journey","steps":1}'
+        cli("call", owner, 3, "--tool", "build_report", "--tasks", "--task-receipt", str(receipt_path),
+            "--arguments", original_args)
+        committed = dropped.get(timeout=2)
+        if isinstance(committed, Exception):
+            raise committed
+        task_id, expires_at = committed
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt, {"version": 1, "endpointSha256": hashlib.sha256(endpoint.encode()).hexdigest(),
+                                   "submissionKey": receipt["submissionKey"]})
+        key = receipt["submissionKey"]
+        self.assertEqual(key[14], "7")
+
+        def submit(token, code, arguments):
+            return cli("call", token, code, "--tool", "build_report", "--tasks", "--task-submission-key", key,
+                       "--arguments", arguments)
+
+        def lookup(token, code):
+            return cli("status", token, code, "--task-receipt", str(receipt_path), "--metadata-only")
+
+        recovered = lookup(owner, 0)
+        self.assertEqual(recovered["taskId"], task_id)
+        replay = submit(owner, 0, original_args)["result"]
+        self.assertEqual((replay["resultType"], replay["taskId"]), ("task", task_id))
+        submit(owner, 1, '{"report":"changed","steps":1}')
+        submit(foreign, 1, original_args)
+        lookup(foreign, 1)
+        lookup(reduced, 1)
+        issued_at = int(key[:13].replace("-", ""), 16) / 1000
+        time.sleep(max(0, issued_at + 60.1 - time.time()))
+        submit(owner, 1, original_args)
+        recovered = lookup(owner, 0)
+        self.assertEqual(set(recovered), {"taskId", "status", "lastUpdatedAt", "nextAction"})
+        self.assertEqual((recovered["taskId"], recovered["status"], recovered["nextAction"]),
+                         (task_id, "completed", "read_result"))
+        result = cli("status", owner, 0, "--task-id", task_id)
+        self.assertIn("Report receipt journey is ready after 1 steps.", json.dumps(result))
+        with fixture.pool.connection() as connection:
+            rows = connection.execute("""SELECT task_id::text AS task_id, submission_key::text AS submission_key,
+                expires_at, status, attempt_count, result_encrypted IS NOT NULL AS has_result
+                FROM gregale_mcp_tasks WHERE namespace=%s""", (fixture.namespace,)).fetchall()
+            self.assertEqual(rows, [{"task_id": task_id, "submission_key": key, "expires_at": expires_at,
+                                     "status": "completed", "attempt_count": 1, "has_result": True}])
+            connection.execute("UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=%s AND task_id=%s",
+                               (fixture.namespace, task_id))
+        lookup(owner, 1)
