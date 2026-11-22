@@ -94,6 +94,11 @@ class InventoryAndAlertTest(unittest.TestCase):
         self.assertEqual([row["labels"] for row in fired], [row["labels"] for row in resolved])
         self.assertEqual([row["startsAt"] for row in fired], [row["startsAt"] for row in resolved])
         self.assertNotEqual(fired[0]["labels"]["family"], fired[1]["labels"]["family"])
+        page, warn = [row["annotations"] for row in fired]
+        self.assertIn("confirm the dashboard loads", page["first_action"])
+        self.assertIn("qualification test", page["customer_impact"])
+        self.assertIn("viewPanel=452", page["dashboard_path"])
+        self.assertNotIn("first_action", warn)
         for row in fired:
             self.assertIn(plan["qualification_id"].replace("-", "_"), row["labels"]["alertname"])
             self.assertNotEqual(row["labels"]["alertname"], "FaasWatchdog")
