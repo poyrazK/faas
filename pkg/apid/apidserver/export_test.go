@@ -2694,3 +2694,6 @@ func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmissi
 
 // OwnDomainHolderHint explains a domain conflict held by the caller's app.
 var OwnDomainHolderHint = ownDomainHolderHint
+
+// AppHasBucketsProblem refuses an app delete that would strand buckets.
+var AppHasBucketsProblem = appHasBucketsProblem
