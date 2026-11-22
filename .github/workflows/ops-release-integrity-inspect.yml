@@ -2,6 +2,10 @@ name: ops-release-integrity-inspect
 # Read-only: prints why `gregalectl release verify` fails on one production
 # compute node (FaasReleaseIntegrityFailed). Compute SSH is open only from the
 # fleet runner on the control plane, so this is the operator's way in.
+# Optionally reads one allowlisted platform unit's status and journal (a
+# failed rollout step names the unit; its reason is only on the node). This
+# repository is public and so are its run logs: that output is encrypted to
+# the dispatcher's age recipient and uploaded as an artifact, never printed.
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +16,23 @@ on:
         options:
           - bhs-2
           - bhs-3
+      unit:
+        description: "Also print this platform unit's status and recent journal"
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - faas-imaged-prestage
+          - faas-imaged
+          - faas-vmmd
+          - faas-schedd
+          - faas-gatewayd-internal
+      recipient:
+        description: "age public key (age1…) the unit output is encrypted to; required with unit"
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -35,6 +56,8 @@ jobs:
         env:
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           NODE: ${{ inputs.node }}
+          UNIT: ${{ inputs.unit }}
+          RECIPIENT: ${{ inputs.recipient }}
         shell: bash
         run: |
           set -euo pipefail
@@ -44,6 +67,14 @@ jobs:
             bhs-3) pinned='SHA256:/I39vLRzzLGSQohnatPFNzLJV1l2oxYuaYFi5ETnjG4' ;;
             *) echo "unknown node $NODE" >&2; exit 2 ;;
           esac
+          case "$UNIT" in
+            none|faas-imaged-prestage|faas-imaged|faas-vmmd|faas-schedd|faas-gatewayd-internal) ;;
+            *) echo "unit $UNIT is not on the allowlist" >&2; exit 2 ;;
+          esac
+          if [[ "$UNIT" != none ]]; then
+            [[ "$RECIPIENT" =~ ^age1[02-9ac-hj-np-z]{58}$ ]] || { echo "unit output needs an age1 recipient" >&2; exit 2; }
+            command -v age >/dev/null || { echo "age is not installed on the fleet runner" >&2; exit 2; }
+          fi
           host="$NODE.gregale.dev"
           umask 077
           scratch="$(mktemp -d "$RUNNER_TEMP/integrity-inspect.XXXXXXXX")"
@@ -55,4 +86,20 @@ jobs:
           ssh -i "$scratch/key" -o BatchMode=yes -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$scratch/known-hosts" \
             -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
-            "root@$host" bash -s < integrity-inspect-src/scripts/ops/inspect_release_integrity.sh
+            "root@$host" "INSPECT_UNIT=$UNIT bash -s" < integrity-inspect-src/scripts/ops/inspect_release_integrity.sh \
+            > "$scratch/out.txt"
+          if [[ "$UNIT" == none ]]; then
+            cat "$scratch/out.txt"
+          else
+            mkdir -p inspect-out
+            age -r "$RECIPIENT" -o inspect-out/inspect.txt.age "$scratch/out.txt"
+            echo "unit output encrypted to the dispatcher's recipient: $(wc -c < inspect-out/inspect.txt.age) bytes"
+          fi
+      - name: Save encrypted unit output
+        if: always() && inputs.unit != 'none'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: node-inspect-${{ inputs.node }}-${{ github.run_id }}
+          path: inspect-out/inspect.txt.age
+          if-no-files-found: ignore
+          retention-days: 3
