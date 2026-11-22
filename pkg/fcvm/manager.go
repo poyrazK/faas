@@ -4117,6 +4117,9 @@ type WakeRequest struct {
 	agentRunOnly     bool
 	agentRunRelay    *AgentRunRelay
 	agentRunInputKey string
+	// sandboxVolume is a persistent sandbox session's workspace volume
+	// (ADR-20261122132055 §4), a host path WakeSandbox sets.
+	sandboxVolume string
 	// agentRunWaitPauseAfter is the run's model-wait pause delay, accepted
 	// only with agentRunOnly (ADR-20261027090012).
 	agentRunWaitPauseAfter time.Duration
@@ -6282,6 +6285,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			KeepPaused:         req.KeepPaused,
 			AgentInput:         req.agentRunOnly,
 			InputKey:           req.agentRunInputKey,
+			SandboxVolume:      req.sandboxVolume,
 		}
 		if timings != nil {
 			// ADR-192: hand the pre-restore Manager phases to the VMM so
