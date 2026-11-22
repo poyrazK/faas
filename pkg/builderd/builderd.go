@@ -990,7 +990,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 	// The runner base reaches imaged through the signed export claim, or, on
 	// a node without a build publisher, through this build's provenance.
-	sharedRuntime := sharedSourceAppRuntime(app, fw, sourceVersionSpecs(fw, dep.SourcePath, dep.SourceRoot), dockerfilePath, dep.ReleaseCommand, dep.ReleaseCommandShell, os.Getenv)
+	sharedRuntime := sharedSourceAppRuntime(app, fw, sourceVersionSpecs(fw, dep.SourcePath, dep.SourceRoot), dockerfilePath, os.Getenv)
 	if sharedRuntime != "" {
 		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
 		if refErr != nil {

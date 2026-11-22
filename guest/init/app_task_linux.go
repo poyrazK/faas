@@ -263,12 +263,7 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	env = StampRuntimeConfigEnv(env)
 	env = stampAppTaskOutputManifestPath(env)
 	if req.CommandShell {
-		// Not a login shell: Debian's /etc/profile resets PATH, dropping
-		// the image's own PATH (/app/node_modules/.bin, /app/.venv/bin,
-		// /mise/shims), so `prisma migrate deploy` or `alembic upgrade
-		// head` exited 127 although the app process resolved them (prod
-		// 2026-11-22). Docker's shell form is /bin/sh -c as well.
-		argv = []string{"/bin/sh", "-c", argv[0]}
+		argv = []string{"/bin/sh", "-lc", argv[0]}
 	} else {
 		argv[0] = resolveWorkloadCommandPath("/", argv[0], env)
 	}

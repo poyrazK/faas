@@ -21,7 +21,7 @@ import (
 )
 
 func TestProbeCommandAdapterRejectsShellSource(t *testing.T) {
-	for _, argv := range [][]string{nil, {"sh"}, {"sh", "-x", "/postgres-probe migrate"}, {"/bin/sh", "-lc", "/postgres-probe migrate; echo leaked"}, {"/postgres-probe", "check-runtime", "extra"}, {"/postgres-probe", "unknown"}} {
+	for _, argv := range [][]string{nil, {"sh"}, {"sh", "-c", "/postgres-probe migrate"}, {"/bin/sh", "-lc", "/postgres-probe migrate; echo leaked"}, {"/postgres-probe", "check-runtime", "extra"}, {"/postgres-probe", "unknown"}} {
 		if _, err := Mode(argv); err == nil {
 			t.Fatal("accepted unsupported probe command")
 		}
@@ -33,7 +33,6 @@ func TestProbeCommandAdapterRejectsShellSource(t *testing.T) {
 		{[]string{"/postgres-probe"}, "serve"},
 		{[]string{"/postgres-probe", "check-runtime"}, "check-runtime"},
 		{[]string{"/bin/sh", "-lc", "/postgres-probe migrate"}, "migrate"},
-		{[]string{"/bin/sh", "-c", "/postgres-probe migrate"}, "migrate"},
 	} {
 		if mode, err := Mode(item.argv); err != nil || mode != item.mode {
 			t.Fatal("valid fixture command rejected")

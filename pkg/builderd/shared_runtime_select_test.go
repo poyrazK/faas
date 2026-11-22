@@ -49,32 +49,8 @@ func TestSharedSourceAppRuntime(t *testing.T) {
 		{"job mode", job, FrameworkNode, nil, "", on, ""},
 	}
 	for _, tt := range tests {
-		if got := sharedSourceAppRuntime(tt.app, tt.fw, tt.specs, tt.dockerfile, nil, false, tt.env); got != tt.want {
+		if got := sharedSourceAppRuntime(tt.app, tt.fw, tt.specs, tt.dockerfile, tt.env); got != tt.want {
 			t.Errorf("%s: %q, want %q", tt.name, got, tt.want)
-		}
-	}
-}
-
-// Prod 2026-11-22: `release: npm run tasks:migrate -- apply` exited 127 on
-// the runner base, which ships no package manager; such a release keeps the
-// app's own base, while a release without one still shares the runner base.
-func TestSharedSourceAppRuntimeKeepsOwnBaseForPackageManagerRelease(t *testing.T) {
-	on := func(string) string { return "" }
-	app := state.App{Type: state.AppTypeApp}
-	for _, tc := range []struct {
-		fw      Framework
-		release []string
-		shell   bool
-		want    string
-	}{
-		{FrameworkNode, []string{"npm run tasks:migrate -- apply"}, true, ""},
-		{FrameworkNode, []string{"npx", "prisma", "migrate", "deploy"}, false, ""},
-		{FrameworkNode, []string{"node tasks-migrate.js apply"}, true, "node24"},
-		{FrameworkPython, []string{"uv run alembic upgrade head"}, true, ""},
-		{FrameworkPython, []string{"python manage.py migrate"}, true, "python313"},
-	} {
-		if got := sharedSourceAppRuntime(app, tc.fw, nil, "", tc.release, tc.shell, on); got != tc.want {
-			t.Errorf("release %q: %q, want %q", tc.release, got, tc.want)
 		}
 	}
 }
