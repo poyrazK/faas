@@ -216,6 +216,15 @@ Budget, merge to new code serving on the control plane:
   deployctl as `DEPLOYCTL_RESTART_PARALLEL` on the deploy line only: a
   deployctl from before this change ignores it, rollbacks and full
   releases stay one at a time, and `activation.parallel: 1` turns it off.
+- **No host-config job without a role change** (done). cd-controlplane's
+  converge-host-config ran for every control-plane unit deploy and, with
+  no role changed, downloaded and verified the release only to plan
+  "none" (120 s ahead of deploy-units on 2026-10-21). release-units now
+  passes `host_config_changed: false` when its report names the
+  control-plane host group and no role of it changed since the base full
+  release (releases are cumulative from that base, so the host then runs
+  the roles that release converged), and the job is skipped. No host
+  view, any changed role, a direct dispatch or a rollback still runs it.
 - **Rollback stays the same speed.** deployctl keeps the previous
   generation; a failed smoke check or a watch breach puts it back.
 

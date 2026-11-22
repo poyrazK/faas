@@ -102,6 +102,7 @@ jobs:
       deployable: ${{ steps.detect.outputs.deployable }}
       control_plane: ${{ steps.detect.outputs.control_plane }}
       edge: ${{ steps.detect.outputs.edge }}
+      host_config: ${{ steps.detect.outputs.host_config }}
       base_sha: ${{ steps.base.outputs.sha }}
       release_sha: ${{ steps.detect.outputs.release_sha }}
       build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
@@ -286,6 +287,10 @@ jobs:
             echo "deployable=$deployable"
             echo "control_plane=$(jq -r '.lanes["control-plane"].eligible' "$OUT_DIR/report.json")"
             echo "edge=$(jq -r '.lanes.edge.eligible' "$OUT_DIR/report.json")"
+            # false only when the host view names the control-plane group
+            # and no role of it changed since the base full release; an
+            # unknown group (no host view) keeps the host-config job.
+            echo "host_config=$(jq -r '.host_config | (.group == null) or ((.roles | length) > 0) or .all' "$OUT_DIR/report.json")"
             echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
@@ -622,6 +627,7 @@ jobs:
       deploy_environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
       units_run_id: ${{ github.run_id }}
       units_lane: control-plane
+      host_config_changed: ${{ needs.build.outputs.host_config }}
     secrets: inherit
     permissions:
       contents: read

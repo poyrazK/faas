@@ -77,6 +77,11 @@ on:
         required: false
         default: ""
         type: string
+      host_config_changed:
+        description: "release-units' verdict: 'false' when the unit release changed no control-plane host role since its base full release, which skips the host-config job (ADR-20261122170000); empty runs it"
+        required: false
+        default: ""
+        type: string
       slo_gate:
         description: "SLO gate for this host: canary (full) or follower (short); durations in scripts/ci/release_units.json"
         required: false
@@ -133,6 +138,11 @@ on:
         type: string
       host_config_rollback_to:
         description: "Converge the control plane's host roles back to this known-good commit and deploy nothing else (post-deploy watch breach, ADR-20261122170000); with units_run_id and the control-plane lane"
+        required: false
+        default: ""
+        type: string
+      host_config_changed:
+        description: "release-units' verdict: 'false' when the unit release changed no control-plane host role since its base full release, which skips the host-config job (ADR-20261122170000); empty runs it"
         required: false
         default: ""
         type: string
@@ -1827,7 +1837,14 @@ jobs:
     name: Converge changed control-plane host roles
     environment: ${{ inputs.deploy_environment }}
     runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
-    if: github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'
+    # Skipped when release-units found no control-plane host role changed
+    # since the base full release (host_config_changed: 'false'): the host
+    # then runs the roles that release converged, and the job could only
+    # plan "none" after downloading and verifying the release (about two
+    # minutes on the critical path, 2026-10-21). A rollback always runs.
+    if: >-
+      github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'
+      && (inputs.host_config_changed != 'false' || inputs.host_config_rollback_to != '')
     permissions:
       contents: read
       actions: read
