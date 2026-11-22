@@ -63,10 +63,15 @@ func (s *PgStore) AppendGatewayEdgeUsageEvent(ctx context.Context, nodeID, event
 // SyncRealtimeEgressUsage appends the realtime bytes delivered this UTC month
 // and not yet metered as each app's egress (ADR-20261104132753), at now's
 // minute. It returns the number of apps it appended bytes for.
+//
+// A node reports an hour for up to api.RealtimeUsageReportMaxAge after it
+// ends, so the previous month's last hours can still grow after the month
+// turns. While such a report can still arrive, the previous month is
+// reconciled too, at its last minute, so those bytes stay in the month they
+// were delivered in and are metered once (ADR-20261121231500).
 func (s *PgStore) SyncRealtimeEgressUsage(ctx context.Context, now time.Time) (int64, error) {
 	now = now.UTC()
 	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	end := start.AddDate(0, 1, 0)
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return 0, err
@@ -76,15 +81,37 @@ func (s *PgStore) SyncRealtimeEgressUsage(ctx context.Context, now time.Time) (i
 	if err := q.LockRealtimeEgressSync(ctx, tx); err != nil {
 		return 0, err
 	}
+	var total int64
+	if RealtimeEgressPreviousMonthOpen(now) {
+		previous := start.AddDate(0, -1, 0)
+		rows, err := q.SyncRealtimeEgressUsage(ctx, tx, sqlc.SyncRealtimeEgressUsageParams{
+			Minute:     pgtype.Timestamptz{Time: start.Add(-time.Minute), Valid: true},
+			MonthStart: pgtype.Timestamptz{Time: previous, Valid: true},
+			MonthEnd:   pgtype.Timestamptz{Time: start, Valid: true},
+		})
+		if err != nil {
+			return 0, err
+		}
+		total += rows
+	}
 	rows, err := q.SyncRealtimeEgressUsage(ctx, tx, sqlc.SyncRealtimeEgressUsageParams{
 		Minute:     pgtype.Timestamptz{Time: now.Truncate(time.Minute), Valid: true},
 		MonthStart: pgtype.Timestamptz{Time: start, Valid: true},
-		MonthEnd:   pgtype.Timestamptz{Time: end, Valid: true},
+		MonthEnd:   pgtype.Timestamptz{Time: start.AddDate(0, 1, 0), Valid: true},
 	})
 	if err != nil {
 		return 0, err
 	}
-	return rows, tx.Commit(ctx)
+	return total + rows, tx.Commit(ctx)
+}
+
+// RealtimeEgressPreviousMonthOpen reports whether a realtime usage report for
+// the previous UTC month can still arrive at now: its last hour is accepted
+// for api.RealtimeUsageReportMaxAge after it ends.
+func RealtimeEgressPreviousMonthOpen(now time.Time) bool {
+	now = now.UTC()
+	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	return now.Before(start.Add(api.RealtimeUsageReportMaxAge + time.Hour))
 }
 
 // BuildSecondsThisMonth returns the plan of the account that pays for appID

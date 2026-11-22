@@ -23171,7 +23171,8 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		              ceil(sum(greatest(0, extract(epoch from
 		                least(coalesce(b.ended_at, $2::timestamptz), $2::timestamptz,
 		                      coalesce(dead.last_heartbeat_at, 'infinity'::timestamptz))
-		                - greatest(b.started_at, $1::timestamptz)))))::bigint) as resident_seconds
+		                - greatest(b.started_at, $1::timestamptz,
+		                           coalesce(handoff.until, '-infinity'::timestamptz))))))::bigint) as resident_seconds
 		   from instance_billing_intervals b
 		   left join lateral (
 		        select n.last_heartbeat_at
@@ -23180,11 +23181,31 @@ func (s *PgStore) InstanceBillingSeconds(ctx context.Context, start, end time.Ti
 		         where i.id = b.instance_id
 		           and n.last_heartbeat_at < clock_timestamp() - make_interval(secs => $3)
 		   ) dead on true
+		   -- A managed Redis resize or upgrade starts the new VM beside the
+		   -- serving one and copies the data over; only the serving VM is
+		   -- billed (ADR-20261116192126 step 1, ADR-20261121231500). The new
+		   -- VM's interval starts billing when the older deployment's VM
+		   -- stops, at most api.ManagedValkeyHandoffWindowS after it started.
+		   left join lateral (
+		        -- least() ignores NULL, so no older VM must stay NULL here.
+		        select case when count(*) = 0 then null
+		                    else least(max(coalesce(o.ended_at, $2::timestamptz)),
+		                               b.started_at + make_interval(secs => $4)) end as until
+		          from instances bi
+		          join managed_valkey_caches c on c.app_id = bi.app_id
+		          join instances oi on oi.app_id = bi.app_id and oi.id <> bi.id
+		                           and oi.deployment_id is distinct from bi.deployment_id
+		          join instance_billing_intervals o on o.instance_id = oi.id
+		         where bi.id = b.instance_id
+		           and o.started_at < b.started_at
+		           and (o.ended_at is null or o.ended_at > b.started_at)
+		   ) handoff on true
 		  where b.started_at < $2
 		    -- coalesce(ended_at, $2) > $1 (start < end is checked above),
 		    -- spelled so instance_billing_intervals_ended_idx serves it.
 		    and (b.ended_at > $1 or b.ended_at is null)
-		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds))
+		  group by b.instance_id`, start.UTC(), end.UTC(), float64(api.DeadNodeReconcilerStalenessSeconds),
+		float64(api.ManagedValkeyHandoffWindowS))
 	if err != nil {
 		return nil, err
 	}
@@ -24237,17 +24258,23 @@ func (s *PgStore) UsageWindows(ctx context.Context, start, end time.Time) ([]Usa
 
 // pendingBillingSubjectsSQL lists provider's billing identities whose subject,
 // an account or a company organization, is on a paid plan. A cancelled
-// subject keeps its identity but is Free, and the pusher never delivers a Free
-// subject's hours, so scanning them only grew every pass and let their
-// month-old hours fill the row limit ahead of paying subjects' current ones
-// (ADR-20261031100000).
+// subject keeps its identity but is Free; scanning all its hours only grew
+// every pass and let their month-old hours fill the row limit ahead of paying
+// subjects' current ones (ADR-20261031100000). Only its hours before the
+// plan change that made it Free are listed (paid_until), so a paid hour still
+// undelivered when the subscription ended reaches the pusher, which holds it
+// by the hour's recorded plan (ADR-20261121231500); every other Free subject
+// lists nothing.
 const pendingBillingSubjectsSQL = `paid as (
-		   select bi.account_id, bi.billing_from
+		   select bi.account_id, bi.billing_from,
+		          case when coalesce(a.plan, o.plan, 'free') <> 'free' then null::timestamptz
+		               else coalesce(a.plan_changed_at, o.plan_changed_at) end as paid_until
 		     from billing_identities bi
 		     left join accounts a on a.id = bi.account_id
 		     left join orgs o on o.id = bi.account_id and not o.personal_org
 		    where bi.provider = $1
-		      and coalesce(a.plan, o.plan, 'free') <> 'free'
+		      and (coalesce(a.plan, o.plan, 'free') <> 'free'
+		           or coalesce(a.plan_changed_at, o.plan_changed_at) > bi.billing_from)
 		 )`
 
 // PendingBillingUsageWindows returns bounded positive hourly usage without a
@@ -24265,6 +24292,7 @@ func (s *PgStore) PendingBillingUsageWindows(ctx context.Context, provider strin
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.mb_seconds) > 0
 			 ), pending as (
@@ -24330,6 +24358,7 @@ func (s *PgStore) PendingBillingMeterUsageWindows(ctx context.Context, provider 
 		       on bi.account_id = u.account_id
 		    where u.minute >= $2 and u.minute < $3
 		      and u.minute >= bi.billing_from
+		      and (bi.paid_until is null or u.minute < bi.paid_until)
 		    group by u.account_id, window_start
 		   having sum(u.net_tx_bytes) > 0
 			 ), pending as (
@@ -24568,7 +24597,12 @@ func (s *PgStore) AppendSnapshotStorage(ctx context.Context, accountID, appID st
 func (s *PgStore) LatestSnapshotBytes(ctx context.Context, appID string) (int64, int64, error) {
 	var memBytes, diskBytes int64
 	err := s.pool.QueryRow(ctx,
-		`select coalesce(s.mem_bytes, 0), coalesce(s.disk_bytes, 0)
+		// The view counts what the memory image holds on disk: stored_bytes
+		// is the published mem + vmstate artifacts' allocation, mem_bytes the
+		// guest's nominal RAM (ADR-20261121231500). A legacy row without it
+		// keeps the logical bytes.
+		`select case when s.stored_bytes > 0 then s.stored_bytes else coalesce(s.mem_bytes, 0) end,
+		        coalesce(s.disk_bytes, 0)
 		   from snapshots s
 		   join deployments d on s.deployment_id = d.id
 		  where d.app_id = $1

@@ -21797,9 +21797,14 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
-		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000),
+		// and a now-Free subject's hours before the change that made it Free
+		// (ADR-20261121231500).
 		if !m.billingSubjectPaidLocked(row.AccountID) {
-			continue
+			changed, ok := m.planChangedAt[row.AccountID]
+			if !ok || !changed.After(identity.BillingFrom) || !row.Minute.Before(changed) {
+				continue
+			}
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
 		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {
