@@ -591,6 +591,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
@@ -6957,6 +6958,7 @@ func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
+	delete(m.appOwnerHome, appID)
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -8748,6 +8750,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -9143,6 +9149,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return Deployment{}, 0, err
 		}
 		d.StagedReview = &review
+	}
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = d.ID
+		schedule.result.Created, schedule.result.Replaced = m.scheduleReleaseLocked(schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
 	}
 	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
@@ -21789,9 +21799,14 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
-		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000),
+		// and a now-Free subject's hours before the change that made it Free
+		// (ADR-20261121231500).
 		if !m.billingSubjectPaidLocked(row.AccountID) {
-			continue
+			changed, ok := m.planChangedAt[row.AccountID]
+			if !ok || !changed.After(identity.BillingFrom) || !row.Minute.Before(changed) {
+				continue
+			}
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
 		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {

@@ -17,11 +17,11 @@ func TestRemoteRolloutPreservesActivationAndProbeEvidence(t *testing.T) {
 		wantExit                                                  int
 		appURL, wantAppURL                                        string
 	}{
-		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "", "https://e2e-probe.gregale.dev/"},
-		{"preactivation failure", "exit 17", "", "", "false", 17, "", "https://e2e-probe.gregale.dev/"},
-		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19, "", "https://e2e-probe.gregale.dev/"},
-		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1, "", "https://e2e-probe.gregale.dev/"},
-		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1, "", "https://e2e-probe.gregale.dev/"},
+		{"healthy", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "", "https://serving-probe.gregale.app/"},
+		{"preactivation failure", "exit 17", "", "", "false", 17, "", "https://serving-probe.gregale.app/"},
+		{"postactivation failure", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; exit 19", "", "", "true", 19, "", "https://serving-probe.gregale.app/"},
+		{"customer regression", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "app", "", "true", 1, "", "https://serving-probe.gregale.app/"},
+		{"unhealthy API never activates", "touch \"$ROLLOUT_ACTIVATION_MARKER\"", "", "api", "false", 1, "", "https://serving-probe.gregale.app/"},
 		{"variable retargets the canary app", "touch \"$ROLLOUT_ACTIVATION_MARKER\"; sleep 0.4", "", "", "true", 0, "https://canary.example/healthz", "https://canary.example/healthz"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

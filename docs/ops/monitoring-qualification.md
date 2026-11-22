@@ -17,6 +17,10 @@ The control plane needs Python 3, current receiver-health support, and converged
 receiver inventory/collector roles. Token values and provider secret files
 never enter artifacts or command arguments.
 
+`production-us` runs on the `faas-fleet-us` runners to reach the control plane
+over the fleet network. The job verifies SSH against `COMPUTE_KNOWN_HOSTS`
+and removes its temporary SSH files when the operation step exits.
+
 Review [notification delivery](notification-delivery.md),
 [post-deployment monitoring](post-deployment-monitoring.md), and
 [scheduled-canary heartbeat activation](synthetic-canary-heartbeat.md).

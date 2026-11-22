@@ -246,7 +246,7 @@ func executeRunTaskTest(ctx context.Context, client *api.Client, request api.Cre
 	defer closeExecutionLocalInputs(inputs)
 	receipt, err := submitExecutionWithLocalFiles(api.ContextWithIdempotencyKey(ctx, key), client, request, inputs)
 	if err != nil {
-		return printRunSubmissionError("Task test submission failed", err, recoveryCLI()+" runs list", true)
+		return printRunSubmissionError("Task test submission failed", err, recoveryCLI()+" sandbox list", true)
 	}
 	if receipt.ID == "" {
 		return printErr("Task test returned no Run ID", errors.New("replay the same test with its original --idempotency-key"))

@@ -55,6 +55,12 @@ func (m *Manager) PromoteAdmitted(ctx context.Context, p runtimeadmission.Promot
 		m.markAdoptionDirty(p.Binding.InstanceID)
 	}
 	if err == nil {
+		// The promoted guest was restored from a snapshot and held paused, so
+		// it still holds the capture's off-guest sockets, and the restored
+		// netns has none of their state: an app reusing a pooled keep-alive
+		// connection hung until its client timeout (ADR-20261110160000 covered
+		// the wake and warm-spare resume paths, not admission promotion).
+		m.releaseInheritedConnections(flightCtx, inst.Lease, inst.Lease.IsBuilder || inst.QualificationOnly)
 		m.startLivenessLoop(context.WithoutCancel(ctx), p.Binding.InstanceID, inst.Lease.Slot, inst.LivenessProbe)
 		m.startReadinessLoop(context.WithoutCancel(ctx), p.Binding.InstanceID, inst.Lease.Slot, inst.ReadinessProbe)
 		m.startFrameworkReadyLoop(context.WithoutCancel(ctx), p.Binding.InstanceID)

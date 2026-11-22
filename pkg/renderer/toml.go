@@ -215,7 +215,8 @@ func privateKeyValue(daemon string, dc *manifest.DaemonConfig, dbURL, appsDomain
 	case "streaming_enabled":
 		return boolConfigValue(dc.StreamingEnabled, true), nil
 	case "frozen_tier_early_freeze_after_s":
-		// Omitted renders nothing so schedd keeps its default (off).
+		// Omitted renders nothing so schedd keeps its default
+		// (api.FrozenEarlyFreezeDefaultSeconds while the frozen tier is on).
 		if dc.FrozenTierEarlyFreezeAfterS == nil {
 			return "", nil
 		}

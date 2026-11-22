@@ -62,7 +62,10 @@ func loadDevConfiguration(source, envFile, overrides string, postgres bool, buck
 		copy(input.files[index].fingerprint[:], hash.Sum(nil))
 	}
 	if postgres {
+		// --postgres binds both: DATABASE_URL for the app, and a release-only
+		// migration credential the release command creates the schema with.
 		input.planned["DATABASE_URL"] = true
+		input.planned["MIGRATION_DATABASE_URL"] = true
 	}
 	for _, bucket := range buckets {
 		prefix := bucket.Prefix
@@ -160,6 +163,11 @@ func verifyDevConfiguration(ctx context.Context, client *Client, session api.Dev
 	input.planned = map[string]bool{}
 	if session.Postgres != nil && session.Postgres.BindingID != "" {
 		input.planned[session.Postgres.EnvironmentKey] = true
+		// A control plane that binds the release-only migration credential
+		// says so; an older one does not, and the key stays required.
+		if key := session.Postgres.MigrationEnvironmentKey; key != "" {
+			input.planned[key] = true
+		}
 	}
 	for _, bucket := range session.Buckets {
 		if bucket.Binding.ID == "" {

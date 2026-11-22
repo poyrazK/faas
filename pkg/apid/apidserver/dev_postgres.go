@@ -139,6 +139,9 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		BindingID:      primary.ID,
 		BindingState:   string(primary.State),
 		EnvironmentKey: primary.EnvironmentKey,
+		// The CLI counts this key as provided, so a release command that reads
+		// it passes the developer configuration check.
+		MigrationEnvironmentKey: devPostgresMigrationKey,
 	}, nil
 }
 

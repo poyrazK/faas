@@ -12,5 +12,9 @@ export type DevPostgresResponse = {
   binding_id: string;
   binding_state: 'provisioning' | 'ready' | 'deleting' | 'failed' | 'deleted';
   environment_key: string;
+  /**
+   * The release-only migration credential the database is also bound to. Absent from a control plane that binds none.
+   */
+  migration_environment_key?: string;
 };
 

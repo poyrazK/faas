@@ -118,14 +118,15 @@ func TestMCPReadinessOAuthProbes(t *testing.T) {
 				switch msg.Method {
 				case "server/discover":
 					result = fmt.Sprintf(`{"supportedVersions":[%q],"capabilities":{"tools":{}}}`, api.MCPProtocolVersion)
-				case "ping":
+				case "tools/list":
+					// Rotate the monitor while the probe is mid-flight
+					// (2026-07-28 has no ping to hook instead).
 					if mode == "changed" {
 						cfg.Revision = uuid.NewString()
 						if _, e := store.ConfigureMCPCatalogMonitor(ctx, account.ID, app.ID, cfg); e != nil {
 							t.Fatal(e)
 						}
 					}
-				case "tools/list":
 					result = `{"tools":[{"name":"add","inputSchema":{"type":"object"}}]}`
 				default:
 					t.Errorf("unexpected method %s", msg.Method)

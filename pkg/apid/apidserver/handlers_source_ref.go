@@ -344,7 +344,11 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 	if branchRef != "" {
 		sourceInstallationID = installID
 	}
-	res, err := apidsource.Enqueue(r.Context(), s.store, s.notif, apidsource.EnqueueParams{
+	deployCtx, scheduleResult, ok := s.withDeploymentSchedule(r.Context(), w, r, acct, app, sched)
+	if !ok {
+		return
+	}
+	res, err := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
 		ExpectedReview:            rolloutReq.ExpectedReview,
 		ReviewedRolloutMode:       req.NativeRollout,
 		ReviewedSettings:          reviewedSettings,
@@ -426,10 +430,7 @@ func (s *server) handleSourceRefDeploy(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	d.StagedReview = res.StagedReview
-	if p := s.recordReleaseSchedule(r, acct, app, d, sched); p != nil {
-		api.WriteProblem(w, p)
-		return
-	}
+	s.auditDeploymentSchedule(r, acct, app, d, scheduleResult)
 	writeJSON(w, http.StatusAccepted, s.deploymentResponse(r.Context(), d, app))
 }
 

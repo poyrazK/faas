@@ -3545,7 +3545,7 @@
       "name": "Multipart uploads",
       "category": "data",
       "description": "Upload large objects in parts.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3666,7 +3666,7 @@
       "name": "Private object storage",
       "category": "data",
       "description": "Use private managed object buckets and signed URLs from an API.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3675,7 +3675,7 @@
       ],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
-      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification",
+      "acceptance_test": "tests/journeys/object_storage_test.go::TestObjectStorage",
       "settings": [
         "manifest.buckets"
       ],
@@ -3701,7 +3701,7 @@
       "name": "Object storage compute bindings and triggers",
       "category": "data",
       "description": "Bind buckets to apps and run app code on bucket notifications.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
@@ -3724,7 +3724,7 @@
       "name": "Key-scoped bucket bindings",
       "category": "data",
       "description": "Limit an app's bucket binding to object keys under one prefix.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -4103,7 +4103,7 @@
       "name": "Outbound integrations",
       "category": "data",
       "description": "Call third-party APIs through managed integrations with key pools and limits.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
@@ -5467,7 +5467,7 @@
       "name": "S3 credentials",
       "category": "data",
       "description": "Mint S3-compatible credentials for a bucket.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5780,7 +5780,7 @@
       "name": "Signed URLs and upload routes",
       "category": "data",
       "description": "Share objects with signed URLs and accept browser uploads.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5946,8 +5946,12 @@
       "name": "Stored workflows",
       "category": "async",
       "description": "Run steps against an app manually, on a schedule or on an event.",
-      "maturity": "internal",
-      "plans": [],
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/stored-workflows",
       "acceptance_test": "pkg/apid/apidserver/handlers_stored_workflows_test.go::TestStoredWorkflowAPI",
       "routes": [

@@ -17,7 +17,8 @@ func addCheck(t *testing.T, store *state.MemStore, acct state.Account, app state
 	if err != nil {
 		t.Fatalf("CreateSyntheticCheck: %v", err)
 	}
-	start := time.Now().Add(-time.Hour)
+	// Runs end about five minutes ago: fresh against the 300 s interval.
+	start := time.Now().Add(-time.Duration(len(runs)) * 5 * time.Minute)
 	for i, ok := range runs {
 		run := state.SyntheticCheckRun{CheckID: c.ID, StartedAt: start.Add(time.Duration(i) * 5 * time.Minute), OK: ok, StatusCode: 200}
 		if !ok {
@@ -129,5 +130,57 @@ func TestWorker_BurningSLOEmailsAndSkipsCovered(t *testing.T) {
 	if !strings.Contains(got.subject, "SLO availability on frontend is burning") ||
 		!strings.Contains(got.body, "--slo "+burningSLO.ID) || !strings.Contains(got.body, "objective 99.90%") {
 		t.Fatalf("email = %+v", got)
+	}
+}
+
+func TestWorker_FailingCheckSkipsUnreleasedAndStale(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app := seedApp(t, store, "frontend")
+	unreleased := addCheck(t, store, acct, app, "unreleased", false, false, false)
+	stale, err := store.CreateSyntheticCheck(t.Context(), state.SyntheticCheck{AccountID: acct.ID, AppID: app.ID, Name: "stale",
+		Method: "GET", Path: "/old", ExpectedStatus: 200, TimeoutMS: 5000, IntervalSeconds: 300, Enabled: true}, 10)
+	if err != nil {
+		t.Fatalf("CreateSyntheticCheck: %v", err)
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	for i := range 3 {
+		if err := store.RecordSyntheticCheckRun(t.Context(), state.SyntheticCheckRun{CheckID: stale.ID,
+			StartedAt: old.Add(time.Duration(i) * 5 * time.Minute), StatusCode: 500, ErrorClass: "status"}); err != nil {
+			t.Fatalf("RecordSyntheticCheckRun: %v", err)
+		}
+	}
+	mail := &fakeMailer{}
+	w := &platformalerts.Worker{Store: store, Mail: mail,
+		CheckReleased: func(_ context.Context, c state.RunnableSyntheticCheck) bool { return c.ID != unreleased.ID }}
+	if err := w.DetectFailingChecks(t.Context()); err != nil {
+		t.Fatalf("DetectFailingChecks: %v", err)
+	}
+	if err := w.SendDue(t.Context()); err != nil {
+		t.Fatalf("SendDue: %v", err)
+	}
+	if len(mail.sent) != 0 {
+		t.Fatalf("sent %d emails for an unreleased and a stale check, want 0: %+v", len(mail.sent), mail.sent)
+	}
+}
+
+func TestWorker_BurningSLOSkipsUnreleased(t *testing.T) {
+	store := state.NewMemStore()
+	acct, app := seedApp(t, store, "frontend")
+	if _, err := store.CreateSLO(t.Context(), state.SLO{AccountID: acct.ID, AppID: app.ID, Name: "availability",
+		SLI: state.SLIAvailability, ObjectiveBP: 9990, WindowDays: 30}, 10); err != nil {
+		t.Fatalf("CreateSLO: %v", err)
+	}
+	metrics := fakeSLOMetrics{good: map[string]float64{app.ID: 100}, total: map[string]float64{app.ID: 400}}
+	mail := &fakeMailer{}
+	w := &platformalerts.Worker{Store: store, Metrics: metrics, Mail: mail,
+		SLOReleased: func(context.Context, state.SLO) bool { return false }}
+	if err := w.DetectBurningSLOs(t.Context()); err != nil {
+		t.Fatalf("DetectBurningSLOs: %v", err)
+	}
+	if err := w.SendDue(t.Context()); err != nil {
+		t.Fatalf("SendDue: %v", err)
+	}
+	if len(mail.sent) != 0 {
+		t.Fatalf("sent %d emails for an SLO the plan no longer covers, want 0", len(mail.sent))
 	}
 }

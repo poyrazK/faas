@@ -61,7 +61,7 @@ func (r *Runner) Run(ctx context.Context, p *Provisioner, account state.Account,
 }
 
 func (r *Runner) run(ctx context.Context, p *Provisioner, account state.Account, run state.HostedTaskRehearsalRun,
-	web, worker []byte, policy tasktoolbinding.Policy, observer *pgruntime.TaskClaimObserver) (Execution, error) {
+	web, worker []byte, policy tasktoolbinding.Policy, observer *pgruntime.TaskObservation) (Execution, error) {
 	if !r.AdmissionEnabled || p == nil || r.Store == nil || r.Submit == nil || r.RemoveSource == nil || len(web) == 0 || len(worker) == 0 {
 		return Execution{}, state.ErrInvalidArgument
 	}
@@ -87,7 +87,7 @@ func (r *Runner) run(ctx context.Context, p *Provisioner, account state.Account,
 	return result, err
 }
 
-func (r *Runner) execute(ctx context.Context, p *Prepared, env *runnerEnvironment, web, worker []byte, observer *pgruntime.TaskClaimObserver) (Execution, error) {
+func (r *Runner) execute(ctx context.Context, p *Prepared, env *runnerEnvironment, web, worker []byte, observer *pgruntime.TaskObservation) (Execution, error) {
 	var result Execution
 	migration, err := r.submit(ctx, p, Migration, worker)
 	if err != nil {

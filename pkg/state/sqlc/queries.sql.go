@@ -3706,6 +3706,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= $3::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds
@@ -26555,7 +26558,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template, a.owner_home_node_id,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -51901,6 +51904,60 @@ func (q *Queries) ListEvents(ctx context.Context, db DBTX, arg ListEventsParams)
 	items := []ListEventsRow{}
 	for rows.Next() {
 		var i ListEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.At,
+			&i.Actor,
+			&i.Kind,
+			&i.Subject,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEventsByKindSince = `-- name: ListEventsByKindSince :many
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = $1::text AND at >= $2::timestamptz
+ORDER BY at DESC
+LIMIT $3::int
+`
+
+type ListEventsByKindSinceParams struct {
+	Kind     string
+	Since    pgtype.Timestamptz
+	RowLimit int32
+}
+
+type ListEventsByKindSinceRow struct {
+	ID      int64
+	At      pgtype.Timestamptz
+	Actor   string
+	Kind    string
+	Subject pgtype.UUID
+	Data    []byte
+}
+
+// The operator wake-latency report (ADR-20261121200409): one kind's rows at
+// or after since, newest first, as a backward scan of events_kind_at_idx
+// (kind, at DESC). The caller asks for one row more than it keeps to learn
+// whether the window was cut.
+func (q *Queries) ListEventsByKindSince(ctx context.Context, db DBTX, arg ListEventsByKindSinceParams) ([]ListEventsByKindSinceRow, error) {
+	rows, err := db.Query(ctx, listEventsByKindSince, arg.Kind, arg.Since, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListEventsByKindSinceRow{}
+	for rows.Next() {
+		var i ListEventsByKindSinceRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.At,
@@ -96890,8 +96947,10 @@ func (q *Queries) RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBT
 }
 
 const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
-WHERE id=$2::uuid AND node_id=$3::uuid
+UPDATE apps SET node_id=$1::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=$1::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, $2::uuid) END
+WHERE id=$3::uuid AND node_id=$2::uuid
   AND status IN ('active', 'evicted_cold')
   AND ($4::integer < 0 OR reassigned_at IS NULL
        OR reassigned_at < now() - make_interval(secs => $4::integer))
@@ -96899,16 +96958,19 @@ WHERE id=$2::uuid AND node_id=$3::uuid
 
 type ReassignOrphanedAppOwnerParams struct {
 	ToNodeID        pgtype.UUID
-	AppID           pgtype.UUID
 	FromNodeID      pgtype.UUID
+	AppID           pgtype.UUID
 	CooldownSeconds int32
 }
 
+// ADR-20261121203000: a displacement remembers the node the app came from
+// (its home), keeps an older home across a chain of drains, and clears it
+// when the app lands back on its home.
 func (q *Queries) ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error) {
 	result, err := db.Exec(ctx, reassignOrphanedAppOwner,
 		arg.ToNodeID,
-		arg.AppID,
 		arg.FromNodeID,
+		arg.AppID,
 		arg.CooldownSeconds,
 	)
 	if err != nil {

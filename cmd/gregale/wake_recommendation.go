@@ -17,11 +17,7 @@ type wakeRecommendationStats struct {
 }
 
 func renderWakeRecommendation(ctx context.Context, client *api.Client, slug string, app api.AppResponse) {
-	now := time.Now().UTC()
-	timeline, err := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{
-		Since: now.Add(-wakeRecommendationWindow).Format(time.RFC3339Nano),
-		Until: now.Format(time.RFC3339Nano),
-	})
+	timeline, complete, err := wakeRecommendationHistory(ctx, client, slug, time.Now().UTC())
 	if err != nil || len(timeline.Rows) < 10 {
 		if err == nil && len(timeline.Rows) > 0 {
 			renderTriggerClassSummary(timeline, app)
@@ -45,7 +41,13 @@ func renderWakeRecommendation(ctx context.Context, client *api.Client, slug stri
 		stats[tier].ready = append(stats[tier].ready, int(row.ReadyInMS))
 	}
 
-	_, _ = fmt.Fprintf(osStdout, "wake recommendation (last 7d, %d wakes):\n", len(timeline.Rows))
+	if complete {
+		_, _ = fmt.Fprintf(osStdout, "wake recommendation (last 7d, %d wakes):\n", len(timeline.Rows))
+	} else {
+		// The history holds more wakes than one read covers: say which
+		// ones the figures describe instead of calling them the last 7 days.
+		_, _ = fmt.Fprintf(osStdout, "wake recommendation (newest %d wakes of the last 7d):\n", len(timeline.Rows))
+	}
 	for _, tier := range []string{"warm", "init", "cold_boot_fallback"} {
 		stat := stats[tier]
 		if stat == nil || len(stat.ready) == 0 {
@@ -141,4 +143,46 @@ func percentileMS(values []int, quantile float64) int {
 		idx = len(ordered)
 	}
 	return ordered[idx-1]
+}
+
+// wakeRecommendationMaxPages bounds the 7-day history read to
+// wakeRecommendationMaxPages * api.WakeHistoryPageMax wakes.
+const wakeRecommendationMaxPages = 10
+
+// wakeRecommendationHistory reads the last seven days of wakes through the
+// keyset pages and reports whether it covered the whole window. The windowed
+// wake-timeline read returns only the 100 newest instances, so the
+// recommendation printed "last 7d" over a fraction of a busy app's wakes
+// (Observe audit 2026-11-21, finding 5). A server without paged history falls
+// back to that read, reported as incomplete when it hit its bound.
+func wakeRecommendationHistory(ctx context.Context, client *api.Client, slug string, now time.Time) (api.AppWakeTimelineResponse, bool, error) {
+	since, until := now.Add(-wakeRecommendationWindow).Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)
+	merged := api.AppWakeTimelineResponse{TriggerHistogram: map[string]int{}, TriggerClassHistogram: map[string]int{}}
+	cursor := ""
+	for page := 0; page < wakeRecommendationMaxPages; page++ {
+		resp, err := client.GetAppWakeHistoryPage(ctx, slug, api.AppWakeHistoryPageOptions{Since: since, Until: until, Cursor: cursor, Limit: api.WakeHistoryPageMax})
+		if err != nil || resp.Page == nil {
+			if page > 0 {
+				return merged, false, nil
+			}
+			legacy, lerr := client.GetAppWakeTimeline(ctx, slug, api.AppWakeTimelineOptions{Since: since, Until: until})
+			return legacy, lerr == nil && len(legacy.Rows) < api.WakeHistoryPageMax, lerr
+		}
+		merged.App, merged.AsOf = resp.App, resp.AsOf
+		merged.Rows = append(merged.Rows, resp.Rows...)
+		for k, v := range resp.TriggerHistogram {
+			merged.TriggerHistogram[k] += v
+		}
+		for k, v := range resp.TriggerClassHistogram {
+			merged.TriggerClassHistogram[k] += v
+		}
+		merged.WakeCount24h += resp.WakeCount24h
+		merged.WakeCountWithMeta += resp.WakeCountWithMeta
+		merged.AtCapacityCount += resp.AtCapacityCount
+		if resp.Page.Complete || resp.Page.NextCursor == "" {
+			return merged, true, nil
+		}
+		cursor = resp.Page.NextCursor
+	}
+	return merged, false, nil
 }

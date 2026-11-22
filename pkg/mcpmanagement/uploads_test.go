@@ -28,6 +28,10 @@ type tarEntry struct {
 	link     string
 }
 
+func newUploadStore(root, resourceURL string) (*uploadStore, error) {
+	return openUploadStore(root, resourceURL, nil)
+}
+
 func tarball(t *testing.T, entries ...tarEntry) []byte {
 	t.Helper()
 	var buf bytes.Buffer

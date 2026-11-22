@@ -11,12 +11,79 @@ import (
 	"unicode/utf8"
 )
 
+// olderLegacyProtocols share the 2025-11-25 wire format for the tools,
+// resources and prompts this starter serves. Clients pinned to them (SDKs
+// released before late 2025) connect only when the server negotiates them.
+var olderLegacyProtocols = []string{"2025-06-18", "2025-03-26"}
+
+// unversionedLegacyProtocol is the revision a request without any version
+// header or _meta declaration speaks (MCP 2025-06-18, "Protocol Version Header").
+const unversionedLegacyProtocol = "2025-03-26"
+
 func supportedMCPVersions(legacy bool) []string {
 	versions := []string{currentProtocol}
 	if legacy {
 		versions = append(versions, legacyProtocol)
+		versions = append(versions, olderLegacyProtocols...)
 	}
 	return versions
+}
+
+// isLegacyProtocol reports a pre-2026 revision this starter serves.
+func isLegacyProtocol(version string) bool {
+	if version == legacyProtocol {
+		return true
+	}
+	for _, older := range olderLegacyProtocols {
+		if version == older {
+			return true
+		}
+	}
+	return false
+}
+
+// protocolSupported reports whether version is served under this config.
+func protocolSupported(version string, legacy bool) bool {
+	return version == currentProtocol || (legacy && isLegacyProtocol(version))
+}
+
+// negotiateProtocol answers initialize: the requested revision when served,
+// otherwise the newest revision a client of that era can speak. Refusing the
+// handshake outright left older clients nothing to retry with.
+func negotiateProtocol(requested string, legacy bool) string {
+	if protocolSupported(requested, legacy) {
+		return requested
+	}
+	if legacy {
+		return legacyProtocol
+	}
+	return currentProtocol
+}
+
+// requestProtocol picks the revision a request speaks: the version header,
+// else its _meta declaration, else (legacy) the unversioned 2025-03-26 default.
+// initialize always negotiates from its body: the handshake is where an older
+// client learns which revision to send, so a header naming an unserved
+// revision must not refuse it.
+func requestProtocol(headers http.Header, request rpcRequest, legacy bool) string {
+	var params struct {
+		Meta            map[string]any `json:"_meta"`
+		ProtocolVersion string         `json:"protocolVersion"`
+	}
+	_ = json.Unmarshal(request.Params, &params)
+	if request.Method == "initialize" {
+		return negotiateProtocol(params.ProtocolVersion, legacy)
+	}
+	if version := headers.Get("MCP-Protocol-Version"); version != "" {
+		return version
+	}
+	if declared, ok := params.Meta["io.modelcontextprotocol/protocolVersion"].(string); ok && declared != "" {
+		return declared
+	}
+	if legacy {
+		return unversionedLegacyProtocol
+	}
+	return currentProtocol
 }
 
 func validateMCPHeaders(headers http.Header, request rpcRequest, version string) error {

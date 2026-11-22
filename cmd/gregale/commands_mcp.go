@@ -813,6 +813,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if !api.Plan(account.Plan).StreamingEnabled() {
 		return printErr("MCP streaming unavailable", errors.New("the stateless MCP hosting profile requires a plan that supports streaming"))
 	}
+	if err := precheckMCPServingIngress(ctx, c, o.slug); err != nil {
+		return printErr("MCP candidate", err)
+	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
 	}

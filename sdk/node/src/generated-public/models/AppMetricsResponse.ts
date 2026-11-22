@@ -63,6 +63,14 @@ export type AppMetricsResponse = {
    */
   wake_samples?: number;
   /**
+   * This app's own p95 wake latency over the window. Below 20 wakes (app_wake_samples) it is not meaningful and clients show it as unavailable. Omitted when it is not available.
+   */
+  app_wake_p95_ms?: number;
+  /**
+   * Number of this app's wakes app_wake_p95_ms was computed from. Omitted when it is not available.
+   */
+  app_wake_samples?: number;
+  /**
    * Current wake-queue depth
    * (`gateway_queue_depth{app, account_id}` — `account_id`
    * admitted via accountLabelSet, overflow=`__other__`,

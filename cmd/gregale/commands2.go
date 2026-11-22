@@ -4681,6 +4681,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if code := recordQueued(dep); code != 0 {
 			return code
 		}
+		if ann.ReleaseAt != "" && dep.ScheduledRelease == nil {
+			// Recover the schedule independently because a replay can return a
+			// release that already started. Older servers could also return
+			// an accepted deployment whose schedule was never written.
+			scheduled, err := client.GetDeploymentSchedule(ctx, dep.ID)
+			if err != nil {
+				return submissionFailed("Could not confirm the release schedule", dep, err, deployKey)
+			}
+			dep.ScheduledRelease = &scheduled
+		}
 		issueMaps, sourceMapErr := publishDeployIssueSourceMaps(ctx, client, slug, dep, sourceSHA256, sourceRoot, preparedIssueSourceMaps)
 		if sourceMapErr != nil {
 			return printDeployIssueSourceMapsError(sourceMapErr, slug, dep.ID, preparedIssueSourceMaps)

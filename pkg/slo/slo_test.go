@@ -31,7 +31,7 @@ func TestQueries(t *testing.T) {
 	}{
 		{state.SLO{AppID: "app-1", SLI: state.SLIAvailability},
 			`sum(increase(gateway_request_duration_seconds_count{app="app-1",class="2xx"}[1h] @ 1760000000)) or vector(0)`,
-			`sum(increase(gateway_request_duration_seconds_count{app="app-1",class=~"2xx|5xx"}[1h] @ 1760000000)) or vector(0)`},
+			`sum(increase(gateway_request_duration_seconds_count{app="app-1",class=~"2xx|5xx"}[1h] @ 1760000000) or increase(gateway_capacity_refusals_total{app="app-1"}[1h] @ 1760000000)) or vector(0)`},
 		{state.SLO{AppID: "app-1", SLI: state.SLILatency, LatencyThresholdMS: 250},
 			`sum(increase(gateway_request_duration_seconds_bucket{app="app-1",le="0.25"}[1h] @ 1760000000)) or vector(0)`,
 			`sum(increase(gateway_request_duration_seconds_count{app="app-1"}[1h] @ 1760000000)) or vector(0)`},

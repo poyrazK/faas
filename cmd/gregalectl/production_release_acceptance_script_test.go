@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"os/exec"
@@ -478,10 +479,12 @@ fi
 	// The per-node canary (ACCEPTANCE_NODE) deploys until verify-node proves
 	// the node, skips the fleet gate, stays bounded, and fails on any failed
 	// deployment, revoking its token every time. Each round deploys both
-	// shapes at once, so another node's single build slot cannot take every
-	// build: one round, one verify-node, proves a healthy node.
+	// shapes at once and the next round doubles, so other nodes' builder
+	// slots (two each since ADR-20261118154632) cannot take every build: one
+	// round, one verify-node, proves a healthy node.
 	for _, tt := range []struct {
 		name, extraEnv, wantOutput, wantDeployed, notDeployed string
+		maxDeployments                                        string
 		wantErr                                               bool
 		wantVerifies                                          int
 	}{
@@ -492,6 +495,10 @@ fi
 			wantVerifies: 2},
 		{name: "deployment failed", extraEnv: "TEST_FAIL_SLUG_SUFFIX=-fsn-2-1", wantErr: true,
 			wantOutput: "node canary deployment for fsn-2 failed", wantDeployed: "-fsn-2-2\n", notDeployed: "-fsn-2-3\n"},
+		// rc.368: bhs-3's two builder slots took both builds of every pair.
+		// Rounds of 2, 4 and 8 outgrow any peer's slots.
+		{name: "rounds double", extraEnv: "TEST_NODE_NEVER_READY=1", maxDeployments: "14", wantErr: true,
+			wantOutput: "within 14 deployments", wantDeployed: "-fsn-2-14\n", notDeployed: "-fsn-2-15\n", wantVerifies: 3},
 	} {
 		t.Run("node canary "+tt.name, func(t *testing.T) {
 			log := filepath.Join(t.TempDir(), "deploys")
@@ -503,7 +510,7 @@ fi
 				"RELEASE_SHA="+strings.Repeat("a", 40), "RUN_ID=12345678", "ACTIVE_NODE_COUNT=1",
 				"GREGALE_BIN="+gregale, "GREGALECTL_BIN="+gregalectl,
 				"TEST_DEPLOY_LOG="+log, "TEST_CURL_LOG="+filepath.Join(t.TempDir(), "curls"),
-				"TEST_REVOKE_LOG="+revokes, "ACCEPTANCE_NODE=fsn-2", "NODE_CANARY_MAX_DEPLOYMENTS=3",
+				"TEST_REVOKE_LOG="+revokes, "ACCEPTANCE_NODE=fsn-2", "NODE_CANARY_MAX_DEPLOYMENTS="+cmp.Or(tt.maxDeployments, "3"),
 				"TEST_VERIFY_NODE_LOG="+verifies,
 				tt.extraEnv,
 			)

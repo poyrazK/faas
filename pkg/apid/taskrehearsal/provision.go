@@ -25,7 +25,7 @@ const (
 	Worker    = "worker"
 	Observer  = "observer"
 
-	leaseDuration  = 15 * time.Minute
+	leaseDuration  = tasktoolrehearsal.WorkloadLease
 	cleanupTimeout = 30 * time.Second
 	databaseKey    = "DATABASE_URL"
 	// This platform-owned marker provides an initial capture on an otherwise

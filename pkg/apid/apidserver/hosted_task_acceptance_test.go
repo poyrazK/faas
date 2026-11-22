@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -256,7 +257,7 @@ func (f *hostedTaskAcceptance) connect(t *testing.T, protocol string) (*mcp.Clie
 		APIBase: f.apidURL, ResourceURL: resource,
 		RedirectURIs: []string{"http://127.0.0.1/callback"}, Hosted: true, AgentKeys: true,
 		AgentKeyToolsetSelection: true, Toolsets: []string{mcpmanagement.ToolsetBuildTools},
-		AllowWrites: true, AllowToolPublishing: true, UploadDir: t.TempDir(),
+		AllowWrites: true, AllowToolPublishing: true, UploadDir: privateUploadDir(t),
 		CLIRunner: func(string) mcpmanagement.LocalCLI {
 			return func(context.Context, []string, []byte) (mcpmanagement.LocalCLIResult, error) {
 				f.cliCalls.Add(1)
@@ -476,4 +477,12 @@ func assertHostedTaskEqual(t *testing.T, want, got any) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("hosted Task mismatch (-want +got):\n%s", diff)
 	}
+}
+
+// privateUploadDir is a directory the bridge creates itself (0700), since the
+// hosted bridge refuses an upload root other users can read and t.TempDir()
+// is created world-readable (umask 022).
+func privateUploadDir(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(t.TempDir(), "uploads")
 }
