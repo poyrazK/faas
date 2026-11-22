@@ -428,7 +428,7 @@ jobs:
         run: |
           node "$RUNNER_TEMP/mcp-starter/test/tasks-restart-qualification.mjs" \
             --target "MCP contract workflow / $GITHUB_SHA" \
-            --confirm-disposable-database
+            --confirm-disposable-database --gregale "$RUNNER_TEMP/gregale"
       - name: Gate reader and writer catalogs without executing tools
         shell: bash
         run: |

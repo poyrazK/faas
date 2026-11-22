@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { createPostgresMcpTaskStore } from '../task-store.js';
-import { createMcpTaskRuntime } from '../tasks.js';
+import { createMcpTaskRuntime, mcpTaskHandlers } from '../tasks.js';
 
 const {
   MCP_TASKS_TEST_DATABASE_URL: databaseURL,
@@ -8,6 +8,7 @@ const {
   MCP_TASKS_TEST_OWNER_KEY: ownerKey,
   MCP_TASKS_TEST_SCHEMA: schema,
   MCP_TASKS_TEST_WORKER_ID: workerID,
+  MCP_TASKS_TEST_REVIEWED_INPUT: reviewedInput,
 } = process.env;
 
 if (!databaseURL || !namespace || !ownerKey || !schema || !workerID || !/^[a-z0-9_]+$/.test(schema)) {
@@ -30,7 +31,16 @@ if (!databaseURL || !namespace || !ownerKey || !schema || !workerID || !/^[a-z0-
     store,
     pollIntervalMs: 500,
     keepAlive: true,
-    handlers: {
+    handlers: reviewedInput === '1' ? {
+      build_report: {
+        ...mcpTaskHandlers.build_report,
+        async execute(args, context) {
+          const result = await mcpTaskHandlers.build_report.execute(args, context);
+          process.send?.({ type: 'reviewed_result', taskId: context.taskId, workerID });
+          return result;
+        },
+      },
+    } : {
       build_report: {
         version: '1',
         async execute({ qualificationRunID }, { taskId }) {

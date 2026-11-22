@@ -190,6 +190,33 @@ class QualificationGateTest(unittest.TestCase):
                 with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                     qualification.check(manifest, commit)
 
+    def test_reviewed_input_restart_requires_exactly_one_update_and_result(self):
+        target = "reviewed build and disposable database fixture"
+        receipt = {
+            "version": 2,
+            "runner": qualification.TASKS_RESTART_REVIEWED_RUNNER,
+            "check": "tasks_restart_replicas",
+            "status": "passed",
+            "target": target,
+            "observed_at": "2026-11-22T12:00:00+00:00",
+            "checks": dict.fromkeys(
+                qualification.TASKS_RESTART_CHECKS | {qualification.TASKS_RESTART_REVIEWED_CHECK}, "passed"
+            ),
+            "observations": {
+                "replacement_replicas": 2, "recovery_attempt": 2, "recovered_handler_executions": 1,
+                "final_attempt": 3, "resumed_attempt": 3, "denied_input_updates": 0,
+                "accepted_input_updates": 1, "reviewed_task_results": 1,
+            },
+            "failures": [],
+        }
+        self.assertIsNone(qualification.validate_tasks_restart_receipt(receipt, receipt["check"], target))
+        for key, value in {
+            "accepted_input_updates": 2, "denied_input_updates": 1, "reviewed_task_results": 0,
+        }.items():
+            changed = {**receipt, "observations": {**receipt["observations"], key: value}}
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                qualification.validate_tasks_restart_receipt(changed, receipt["check"], target)
+
     def test_task_scale_zero_receipt_requires_every_transition(self):
         receipt = scale_zero_receipt("reviewed staging target")
         self.assertIsNone(qualification.validate_tasks_scale_zero_receipt(

@@ -1,14 +1,24 @@
-import { fork } from 'node:child_process';
+import assert from 'node:assert/strict';
+import { execFile, fork } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { generateKeyPair, SignJWT } from 'jose';
 import { Pool } from 'pg';
+import { createApp } from '../app.js';
 import { createPostgresMcpTaskStore } from '../task-store.js';
+import { createMcpTaskRuntime, mcpTaskHandlers } from '../tasks.js';
 
 const RUNNER = 'gregale-mcp-tasks-restart-v1';
+const REVIEWED_RUNNER = 'gregale-mcp-tasks-restart-v2';
 const CHECK = 'tasks_restart_replicas';
+const REVIEWED_CHECK = 'reviewed_input_worker_replacement';
 const CHECK_NAMES = [
   'initial_worker_crash',
   'two_replica_recovery',
@@ -24,15 +34,16 @@ class QualificationFailure extends Error {
   }
 }
 
-function targetFromArgs(argv) {
-  if (argv.length !== 3 || argv[0] !== '--target' || argv[2] !== '--confirm-disposable-database') {
+function optionsFromArgs(argv) {
+  if (argv[0] !== '--target' || argv[2] !== '--confirm-disposable-database'
+      || (argv.length !== 3 && (argv.length !== 5 || argv[3] !== '--gregale' || !argv[4]))) {
     throw new QualificationFailure('arguments');
   }
   const target = argv[1];
   if (!target?.trim() || target.length > 512 || [...target].some(char => char.charCodeAt(0) < 32)) {
     throw new QualificationFailure('arguments');
   }
-  return target.trim();
+  return { target: target.trim(), gregale: argv[4] && resolve(argv[4]) };
 }
 
 function principal(subject) {
@@ -43,21 +54,22 @@ function principal(subject) {
   };
 }
 
-function createReceipt(target) {
+function createReceipt(target, gregale) {
   return {
-    version: 1,
-    runner: RUNNER,
+    version: gregale ? 2 : 1,
+    runner: gregale ? REVIEWED_RUNNER : RUNNER,
     check: CHECK,
     status: 'failed',
     target,
     observed_at: new Date().toISOString(),
-    checks: Object.fromEntries(CHECK_NAMES.map(name => [name, 'failed'])),
+    checks: Object.fromEntries((gregale ? [...CHECK_NAMES, REVIEWED_CHECK] : CHECK_NAMES).map(name => [name, 'failed'])),
     observations: {
       replacement_replicas: 0,
       recovery_attempt: 0,
       recovered_handler_executions: 0,
       final_attempt: 0,
       resumed_attempt: 0,
+      ...(gregale ? { denied_input_updates: 0, accepted_input_updates: 0, reviewed_task_results: 0 } : {}),
     },
     failures: [],
   };
@@ -74,6 +86,7 @@ function workerProcess(workerID, config) {
       MCP_TASKS_TEST_OWNER_KEY: config.ownerKey,
       MCP_TASKS_TEST_SCHEMA: config.schema,
       MCP_TASKS_TEST_WORKER_ID: workerID,
+      MCP_TASKS_TEST_REVIEWED_INPUT: config.reviewedInput ? '1' : '0',
     },
   });
   const messages = [];
@@ -160,7 +173,115 @@ async function eventually(fn, stage, timeoutMs = 30_000) {
   throw new QualificationFailure(stage);
 }
 
-async function runQualification(receipt) {
+async function qualifyReviewedInput({ gregale, store, pool, namespace, replaceWorker }) {
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const auth = {
+    mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
+  };
+  const mint = scope => new SignJWT({ scope }).setProtectedHeader({ alg: 'ES256' })
+    .setAudience(auth.resource).setIssuer(auth.issuer).setSubject('reviewed-input-owner')
+    .setExpirationTime('5m').sign(privateKey);
+  const owner = await mint('mcp:tools reports:read');
+  const reduced = await mint('mcp:tools');
+  let requests = 0, accepted = 0;
+  const webStore = {
+    ...store,
+    async updateInputs(args) {
+      const updated = await store.updateInputs(args);
+      if (updated) accepted++;
+      return updated;
+    },
+  };
+  const web = createMcpTaskRuntime({ store: webStore, handlers: mcpTaskHandlers, workerEnabled: false, pollIntervalMs: 500 });
+  const api = createApp({
+    version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
+  }, { taskRuntime: web, keyResolver: publicKey, log() {} });
+  const server = createServer((req, res) => {
+    if (req.headers['mcp-method'] === 'tasks/update') requests++;
+    return api.app(req, res);
+  });
+  const dir = await mkdtemp(join(tmpdir(), 'gregale-reviewed-input-'));
+  try {
+    await web.start();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    const exec = promisify(execFile);
+    const cli = async (verb, token, code, ...args) => {
+      const result = await exec(gregale, ['mcp', 'client', verb, '--url', endpoint,
+        '--token-env', 'GREGALE_QUALIFICATION_TOKEN', '--timeout', '10s', '--json', ...args], {
+        cwd: dir, env: { XDG_CONFIG_HOME: dir, GREGALE_QUALIFICATION_TOKEN: token }, timeout: 12_000,
+      }).then(value => ({ ...value, code: 0 }), error => error);
+      assert.equal(result.code, code);
+      assert.ok(!result.stdout.includes(token) && !result.stderr.includes(token));
+      if (code === 0) return JSON.parse(result.stdout);
+      assert.equal(result.stdout, '');
+    };
+    const selector = ['--task-receipt', join(dir, 'task.json')];
+    const file = join(dir, 'review.json');
+    const submitted = await cli('call', owner, 0, ...selector, '--defer-form-input', '--tasks',
+      '--tool', 'build_report', '--arguments', '{"report":"qualification","steps":1,"request_approval":true}');
+    const id = submitted.result.taskId;
+    const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count, updated_at,
+      input_state_encrypted, result_encrypted IS NOT NULL AS has_result
+      FROM gregale_mcp_tasks WHERE namespace=$1 AND submission_key IS NOT NULL`, [namespace])).rows;
+    const pending = await eventually(async () => {
+      const value = await rows();
+      return value.length === 1 && value[0].task_id === id && value[0].status === 'input_required' ? value : null;
+    }, 'reviewed_input_pending');
+    assert.equal(pending[0].attempt_count, 1);
+    assert.equal(pending[0].has_result, false);
+    const snapshot = await cli('status', owner, 0, ...selector, '--write-input-template', file);
+    assert.equal(snapshot.taskId, id);
+    assert.equal(snapshot.nextAction, 'provide_input');
+    assert.equal((await stat(file)).mode & 0o777, 0o600);
+    const review = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(review.taskId, id);
+    assert.deepEqual(Object.keys(review.forms), ['approval']);
+    assert.equal(review.forms.approval.response, null);
+    review.forms.approval.response = { action: 'accept', content: { approved: true } };
+    await writeFile(file, JSON.stringify(review));
+
+    const replacement = await replaceWorker();
+    assert.deepEqual(await rows(), pending);
+    await cli('wait', reduced, 1, ...selector, '--reviewed-input-file', file);
+    const deniedUpdates = requests;
+    assert.equal(deniedUpdates, 0);
+    assert.equal(accepted, 0);
+    assert.deepEqual(await rows(), pending);
+
+    const completed = await cli('wait', owner, 0, ...selector, '--reviewed-input-file', file);
+    assert.equal(completed.taskId, id);
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.result.content[0].text, 'Report qualification is ready after 1 steps.');
+    assert.deepEqual(await replacement.next('reviewed_result'), {
+      type: 'reviewed_result', taskId: id, workerID: 'reviewed-replacement',
+    });
+    const durable = await rows();
+    assert.equal(durable.length, 1);
+    assert.deepEqual([durable[0].task_id, durable[0].status, durable[0].attempt_count, durable[0].has_result],
+      [id, 'completed', 1, true]);
+    assert.equal(requests, 1);
+    assert.equal(accepted, 1);
+    return { denied_input_updates: deniedUpdates, accepted_input_updates: accepted, reviewed_task_results: durable.length };
+  } finally {
+    api.closeTaskSubscriptions();
+    try {
+      await new Promise(done => { server.close(done); server.closeAllConnections(); });
+      await api.handler.close();
+    } finally {
+      try {
+        await web.stop();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    }
+  }
+}
+
+async function runQualification(receipt, gregale) {
   const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
   if (!databaseURL) throw new QualificationFailure('database_configuration');
 
@@ -187,7 +308,9 @@ async function runQualification(receipt) {
     });
     pool.on('error', () => {});
     store = createPostgresMcpTaskStore({ pool, namespace, ownerKey, ttlMs: 60_000 });
-    await store.migrate({ admissionHandlers: [{ name: 'build_report', version: '1' }, { name: 'qualification_input', version: '1' }] });
+    const admissionHandlers = [{ name: 'build_report', version: '1' }, { name: 'qualification_input', version: '1' }];
+    if (gregale) admissionHandlers.push({ name: 'build_report', version: mcpTaskHandlers.build_report.version });
+    await store.migrate({ admissionHandlers });
     await store.initialize();
     await pool.query(`
       CREATE TABLE gregale_mcp_qualification_runs (
@@ -345,6 +468,25 @@ async function runQualification(receipt) {
     }
     receipt.checks.final_attempt_input_resume = 'passed';
 
+    if (gregale) {
+      stage = REVIEWED_CHECK;
+      await Promise.all([replicaA, replicaB].map(replica => waitForExit(replica.child, 'SIGTERM')));
+      const reviewedConfig = { databaseURL, namespace, ownerKey, schema, reviewedInput: true };
+      const original = workerProcess('reviewed-original', reviewedConfig);
+      workers.push(original);
+      await original.next('ready');
+      const observations = await qualifyReviewedInput({ gregale, store, pool, namespace, replaceWorker: async () => {
+        if (await waitForExit(original.child, 'SIGKILL') !== 'SIGKILL') {
+          throw new QualificationFailure('reviewed_input_worker_exit');
+        }
+        const replacement = workerProcess('reviewed-replacement', reviewedConfig);
+        workers.push(replacement);
+        await replacement.next('ready');
+        return replacement;
+      } });
+      Object.assign(receipt.observations, observations);
+      receipt.checks[REVIEWED_CHECK] = 'passed';
+    }
     receipt.status = 'passed';
   } catch (error) {
     const failureStage = error instanceof QualificationFailure ? error.stage : stage;
@@ -372,7 +514,7 @@ async function runQualification(receipt) {
     await adminPool.end().catch(() => {
       receipt.failures.push({ stage: 'database_cleanup', reason: 'qualification_failed' });
     });
-    if (receipt.failures.length > 0 || CHECK_NAMES.some(name => receipt.checks[name] !== 'passed')) {
+    if (receipt.failures.length > 0 || Object.values(receipt.checks).some(status => status !== 'passed')) {
       receipt.status = 'failed';
       if (receipt.failures.length === 0) receipt.failures.push({ stage, reason: 'qualification_failed' });
     }
@@ -383,9 +525,10 @@ async function main() {
   let target = 'unknown';
   let receipt = createReceipt(target);
   try {
-    target = targetFromArgs(process.argv.slice(2));
-    receipt = createReceipt(target);
-    await runQualification(receipt);
+    const options = optionsFromArgs(process.argv.slice(2));
+    target = options.target;
+    receipt = createReceipt(target, options.gregale);
+    await runQualification(receipt, options.gregale);
   } catch (error) {
     const stage = error instanceof QualificationFailure ? error.stage : 'qualification_runner';
     receipt.failures.push({ stage, reason: 'qualification_failed' });
