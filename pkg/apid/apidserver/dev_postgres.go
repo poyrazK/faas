@@ -112,6 +112,7 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 
 	var created []string
 	var primary managedpostgres.Binding
+	states := make([]managedpostgres.BindingState, 0, len(devPostgresBindings))
 	for i, want := range devPostgresBindings {
 		binding, bindingCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
 			AccountID:      acct.ID,
@@ -131,13 +132,14 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		if i == 0 {
 			primary = binding
 		}
+		states = append(states, binding.State)
 	}
 	return &api.DevPostgresResponse{
 		DatabaseID:     database.ID,
 		Name:           database.Name,
 		State:          string(database.State),
 		BindingID:      primary.ID,
-		BindingState:   string(primary.State),
+		BindingState:   devPostgresBindingsState(states),
 		EnvironmentKey: primary.EnvironmentKey,
 		// The CLI counts this key as provided, so a release command that reads
 		// it passes the developer configuration check.
@@ -213,20 +215,28 @@ func (s *server) describeDevPostgres(ctx context.Context, app state.App) (*api.D
 		if listErr != nil {
 			return nil, listErr
 		}
+		var out *api.DevPostgresResponse
+		var states []managedpostgres.BindingState
 		for _, binding := range bindings {
-			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || binding.EnvironmentKey != devPostgresEnvironmentKey {
+			if binding.AppID != app.ID || binding.Scope != api.DefaultEnvScope || !isDevPostgresBindingKey(binding.EnvironmentKey) {
 				continue
 			}
-			return &api.DevPostgresResponse{
+			states = append(states, binding.State)
+			if binding.EnvironmentKey != devPostgresEnvironmentKey {
+				continue
+			}
+			out = &api.DevPostgresResponse{
 				DatabaseID:     database.ID,
 				Name:           database.Name,
 				State:          string(database.State),
 				BindingID:      binding.ID,
-				BindingState:   string(binding.State),
 				EnvironmentKey: binding.EnvironmentKey,
-			}, nil
+			}
 		}
-		return nil, nil
+		if out != nil {
+			out.BindingState = devPostgresBindingsState(states)
+		}
+		return out, nil
 	}
 	return nil, nil
 }
@@ -283,6 +293,27 @@ func (s *server) cleanupDevPostgres(ctx context.Context, app state.App) error {
 		return nil
 	}
 	return nil
+}
+
+// devPostgresBindingsState is the developer database's binding state as one
+// value: ready only when every one of its bindings is, because the first
+// release command needs MIGRATION_DATABASE_URL and the first boot needs
+// DATABASE_URL (a binding writes its secret before it turns ready). A failed
+// binding wins, then any other non-ready state.
+func devPostgresBindingsState(states []managedpostgres.BindingState) string {
+	if len(states) == 0 {
+		return string(managedpostgres.BindingStateProvisioning)
+	}
+	out := managedpostgres.BindingStateReady
+	for _, state := range states {
+		switch {
+		case state == managedpostgres.BindingStateFailed:
+			return string(state)
+		case state != managedpostgres.BindingStateReady && out == managedpostgres.BindingStateReady:
+			out = state
+		}
+	}
+	return string(out)
 }
 
 // isDevPostgresBindingKey reports whether key is one of the developer
