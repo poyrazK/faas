@@ -175,6 +175,33 @@ another client; take the password from the app's binding.
   `--proxy`). The app's image needs `printenv`, which Debian, Ubuntu and
   Alpine images include.
 
+### Run one query
+
+`gregale postgres query` (alias `postgres sql`) runs a query through the same
+tunnel and prints the rows. It needs no `psql`, so scripts and coding agents
+can use it:
+
+```sh
+gregale postgres sql orders "select status, count(*) from orders group by 1"
+gregale postgres sql orders --file audit.sql --json
+gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
+```
+
+- It is read-only unless you pass `--write`. A read runs as the only statement
+  of a `READ ONLY` transaction that is always rolled back, on a `read_only`
+  binding when the database has one. A second statement, or one that writes,
+  fails with a hint.
+- `--write` runs the text as a script on a `read_write`, `migration` or
+  `session` binding and commits it. To try a destructive change first, run it
+  on a [branch](#branches): `gregale postgres branch orders pr-42 --ttl 2h`,
+  attach the branch to an app, then `gregale postgres sql pr-42 --write …`.
+- `--max-rows` (default 500) caps the rows kept per result, and `--timeout`
+  (default 30 s) sets the statement timeout.
+- With `--json`, numbers, booleans and `json`/`jsonb` stay typed, `NULL` is
+  `null`, and every other value is its PostgreSQL text form. Each result also
+  lists its column names and types and the command tag (`SELECT 1204`, which
+  counts every row, kept or not).
+
 Choose the credential with `--access`:
 
 | Access | Use it for |

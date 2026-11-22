@@ -111,6 +111,19 @@ To keep your logs out of Gregale, set `OTEL_LOGS_EXPORTER=none`, or point
 your apps, with the logs, queued invocations and spans linked to it. The trace
 id is on each request in `gregale debug requests get`.
 
+You can also start from a request id, the `x-faas-request-id` on a response
+or in the access log. It belongs to one app, so name it with `--app` or run
+in a linked directory:
+
+```sh
+gregale debug trace 0193a1f2-7c4e-7b1a-9f3e-2d5c8b6a4e10 --app public-api --json
+```
+
+The request is resolved to its trace, and the `--json` output gains a
+`resolved_from` object (`app`, `request_id`, `trace_id`). A request with no
+trace id, or whose trace is no longer indexed, shows its own evidence
+instead.
+
 ```text
 MATCHES
   public-api · GET /checkout · HTTP 200 · 920 ms · telemetry row …
