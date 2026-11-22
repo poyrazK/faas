@@ -5731,6 +5731,13 @@ gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN 
   --task-receipt ./approval-task.json --input-responses-file ./responses.json
 ```
 
+If the form update loses its reply, the CLI reads the same Task to reconcile
+the outcome. It continues waiting when the submitted requests are no longer
+pending. If the Task is still waiting for an answer, exit code 3 accompanies
+a metadata snapshot with `provide_input`. Review the current request before
+supplying an answer again. If status is unavailable, exit code 3 accompanies
+`retry_status`. Check the same receipt or Task ID before submitting input.
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:

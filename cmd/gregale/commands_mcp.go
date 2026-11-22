@@ -693,6 +693,10 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
 		})
+		var update *mcphosting.TaskInputUpdateUnconfirmedError
+		if errors.As(err, &update) {
+			return mcpTaskInputUpdateStatus(update)
+		}
 		if task.TaskID != "" {
 			if code := jsonOut(writeJSON(task)); code != 0 {
 				return code
@@ -737,6 +741,10 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 			_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 		}
 		x, err := c.CallWithOptions(ctx, candidate, args, options)
+		var update *mcphosting.TaskInputUpdateUnconfirmedError
+		if errors.As(err, &update) {
+			return mcpTaskInputUpdateStatus(update)
+		}
 		if x.Result != nil {
 			if code := jsonOut(writeJSON(x)); code != 0 {
 				return code
