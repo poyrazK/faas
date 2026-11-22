@@ -547,7 +547,7 @@ type MemStore struct {
 	objectAccessGrants            map[string]ObjectBucketAccessGrant
 	objectS3Credentials           map[string]ObjectS3Credential
 	objectWorkloadCredentials     map[string]ObjectWorkloadCredential
-	objectS3CopySources          map[string]ObjectS3CopySource
+	objectS3CopySources           map[string]ObjectS3CopySource
 	objectMultipartUploads        map[string]ObjectMultipartUpload
 	objectMultipartInitiations    map[string]ObjectMultipartInitiation
 	objectMultipartPartWriters    map[multipartPartWriterKey]multipartPartWriter
