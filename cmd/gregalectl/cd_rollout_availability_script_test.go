@@ -27,8 +27,10 @@ func TestRolloutAvailabilitySeparatesStatusAndCustomerPaths(t *testing.T) {
 		{name: "status timeout is diagnostic", failTarget: "status", wantExit: 0, wantText: "status: HTTP status counts: 000"},
 		{name: "canary app failure gates", failTarget: "app", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
 		{name: "API readiness failure gates", failTarget: "api", wantExit: 1, wantText: "public readiness or canary app failed after a healthy pre-rollout baseline"},
+		// The timed-out baseline sample is retaken twice (the default
+		// ROLLOUT_BASELINE_TIMEOUT_BUDGET) before the baseline counts as unhealthy.
 		{name: "unhealthy app baseline is inconclusive", baselineFailTarget: "app", wantExit: 0, wantText: "app: rollout attribution is **inconclusive**",
-			wantWarning: "app gate gave this activation no signal: its baseline was 0/1 healthy (HTTP 000: 1). Check that https://app.example/ still serves. ROLLOUT_APP_PROBE_URL names the canary app."},
+			wantWarning: "app gate gave this activation no signal: its baseline was 0/3 healthy (HTTP 000: 3). Check that https://app.example/ still serves. ROLLOUT_APP_PROBE_URL names the canary app."},
 		{name: "API-only observer supports empty optional targets", withoutOptional: true, wantExit: 0, wantText: "api: HTTP status counts: 200"},
 		{name: "wrapped command failure wins", failTarget: "app", commandExit: 17, wantExit: 17, wantText: "app: HTTP status counts: 000"},
 		// rc.304, rc.305 and rc.307 failed activation on one or two 3 s API

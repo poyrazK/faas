@@ -719,6 +719,9 @@ var cliTreeShorts = map[string]string{
 	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
 	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
 	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
+	// Both verbs printed the parent's "Show or change …" (prod hunt r28).
+	"postgres overage get": "Show whether databases keep running past the monthly compute allowance",
+	"postgres overage set": "Turn compute overage on or off (on: databases run up to twice the allowance)",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
@@ -974,6 +977,13 @@ func rewriteAppPath(args []string) ([]string, error) {
 	// named "show".
 	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
 		verb = "get"
+	}
+	// Apps are created by deploying. `app create NAME` answered "unexpected
+	// positional argument" (prod hunt r28); a bare `app create` still reads
+	// an app named "create".
+	if verb == "create" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		name := recoveryArgument(args[2])
+		return nil, fmt.Errorf("apps are created by deploying: run %s deploy --name %s from its source directory, or %s deploy --create-only --name %s to reserve the name without a build", recoveryCLI(), name, recoveryCLI(), name)
 	}
 	if verb == "listener" {
 		return rewriteAppListener(args)

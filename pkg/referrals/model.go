@@ -126,6 +126,11 @@ type Summary struct {
 	Eligible    int64  `json:"eligible"`
 	RewardCents int64  `json:"reward_cents"`
 	PaidCents   int64  `json:"paid_cents"`
+	// Sales counts paid first invoices that were not reversed; the month
+	// fields cover first payments since the start of the UTC calendar month.
+	Sales              int64 `json:"sales"`
+	SalesThisMonth     int64 `json:"sales_this_month"`
+	PaidThisMonthCents int64 `json:"paid_this_month_cents"`
 }
 
 type Store interface {

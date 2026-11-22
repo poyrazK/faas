@@ -33,12 +33,14 @@ type mcpTasksObserverSourceConfig struct {
 }
 
 type mcpTasksObserverCredentialCheck struct {
-	Env            string `json:"env"`
-	Configured     bool   `json:"configured"`
-	SecretBacked   bool   `json:"secret_backed"`
-	SecretExists   bool   `json:"secret_exists"`
-	MetadataLoaded bool   `json:"secret_metadata_loaded"`
-	Ready          bool   `json:"ready"`
+	Env          string `json:"env"`
+	Configured   bool   `json:"configured"`
+	SecretBacked bool   `json:"secret_backed"`
+	// ManagedPostgres is set when a managed PostgreSQL binding injects Env.
+	ManagedPostgres bool `json:"managed_postgres,omitempty"`
+	SecretExists    bool `json:"secret_exists"`
+	MetadataLoaded  bool `json:"secret_metadata_loaded"`
+	Ready           bool `json:"ready"`
 }
 
 type mcpTasksObserverSetupResult struct {
@@ -291,6 +293,7 @@ func mcpTasksObserverConfigEnvNames(config mcpTasksObserverSourceConfig) (string
 }
 
 func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, observer api.AppResponse, databaseEnv, ownerKeyEnv string) (mcpTasksObserverSetupResult, error) {
+	worker, observer = mcpTasksRuntimeApp(ctx, client, worker), mcpTasksRuntimeApp(ctx, client, observer)
 	result := mcpTasksObserverSetupResult{
 		ObserverSlug:                  observer.Slug,
 		WorkerSlug:                    worker.Slug,
@@ -299,7 +302,7 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 		ReadOnlyDatabaseGrantVerified: false,
 		MetricsTokenScopeVerified:     false,
 		ManualChecks: []string{
-			"Verify the observer database role has SELECT-only access to the task tables; Gregale cannot inspect PostgreSQL grants.",
+			"Verify the observer database role has SELECT-only access to the task tables (a managed PostgreSQL binding: attach it with --access read_only); Gregale cannot inspect PostgreSQL grants.",
 			"Verify the MCP_TASKS_SCALING_TOKEN API key is restricted to metrics:write; secret values and key scopes are not exposed to this command.",
 		},
 		Violations: []string{},
@@ -313,11 +316,13 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 
 	observerSecrets, observerSecretsErr := client.ListSecretsWithScope(ctx, observer.Slug, "__all__")
 	workerSecrets, workerSecretsErr := client.ListSecretsWithScope(ctx, worker.Slug, "__all__")
-	result.ObserverDatabaseCredential = mcpTasksObserverCredential(observer, databaseEnv, observerSecrets, observerSecretsErr == nil)
-	result.WorkerDatabaseCredential = mcpTasksObserverCredential(worker, databaseEnv, workerSecrets, workerSecretsErr == nil)
-	result.WorkerOwnerKeyCredential = mcpTasksObserverCredential(worker, ownerKeyEnv, workerSecrets, workerSecretsErr == nil)
-	result.ObserverMetricsToken = mcpTasksObserverCredential(observer, mcpTasksObserverMetricsTokenEnv, observerSecrets, observerSecretsErr == nil)
-	result.WorkerMetricsToken = mcpTasksObserverCredential(worker, mcpTasksObserverMetricsTokenEnv, workerSecrets, workerSecretsErr == nil)
+	observerPostgres := mcpTasksPostgresBindingKeys(ctx, client, observer.Slug)
+	workerPostgres := mcpTasksPostgresBindingKeys(ctx, client, worker.Slug)
+	result.ObserverDatabaseCredential = mcpTasksObserverCredential(observer, databaseEnv, observerSecrets, observerSecretsErr == nil, observerPostgres)
+	result.WorkerDatabaseCredential = mcpTasksObserverCredential(worker, databaseEnv, workerSecrets, workerSecretsErr == nil, workerPostgres)
+	result.WorkerOwnerKeyCredential = mcpTasksObserverCredential(worker, ownerKeyEnv, workerSecrets, workerSecretsErr == nil, nil)
+	result.ObserverMetricsToken = mcpTasksObserverCredential(observer, mcpTasksObserverMetricsTokenEnv, observerSecrets, observerSecretsErr == nil, nil)
+	result.WorkerMetricsToken = mcpTasksObserverCredential(worker, mcpTasksObserverMetricsTokenEnv, workerSecrets, workerSecretsErr == nil, nil)
 
 	result.ObserverApp = loadMCPTasksObserverReadiness(ctx, client, worker, observer.Slug)
 	metrics, err := client.GetAppCustomMetrics(ctx, worker.Slug)
@@ -376,6 +381,9 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 	if !result.ObserverHeartbeatFresh {
 		result.Violations = append(result.Violations, "observer_heartbeat_is_not_fresh_on_the_worker_app")
 	}
+	if access, bound := observerPostgres[databaseEnv]; bound && access != "read_only" {
+		result.ManualChecks = append(result.ManualChecks, fmt.Sprintf("The observer's %s binding has %s access; the observer needs only read_only. Reattach it with `gregale postgres attach <db> %s --env %s --access read_only`.", databaseEnv, access, observer.Slug, databaseEnv))
+	}
 	if observer.Manifest.EnvSecrets[ownerKeyEnv] != "" || observer.Manifest.Env[ownerKeyEnv] != "" {
 		result.ManualChecks = append(result.ManualChecks, "The observer has a task owner key binding; remove it if no other process in that app needs it.")
 	}
@@ -408,7 +416,11 @@ func mcpTasksObserverRoleConfigured(env map[string]string, entrypoint []string) 
 	return false
 }
 
-func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.AppSecretListResponse, metadataLoaded bool) mcpTasksObserverCredentialCheck {
+// mcpTasksObserverCredential reports how env reaches the app: a secret
+// reference, an app secret of that name (`gregale secrets set`), or a managed
+// PostgreSQL binding (postgres holds the binding keys). A plain variable is
+// configured but never ready.
+func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.AppSecretListResponse, metadataLoaded bool, postgres map[string]string) mcpTasksObserverCredentialCheck {
 	check := mcpTasksObserverCredentialCheck{Env: env, MetadataLoaded: metadataLoaded}
 	ref := strings.TrimSpace(app.Manifest.EnvSecrets[env])
 	if strings.HasPrefix(ref, api.SecretRefPrefix) {
@@ -417,6 +429,14 @@ func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.App
 		key := strings.TrimPrefix(ref, api.SecretRefPrefix)
 		check.SecretExists = metadataLoaded && mcpTasksObserverSecretListHasKey(secrets, key)
 		check.Ready = check.SecretExists
+		return check
+	}
+	if _, bound := postgres[env]; bound {
+		check.Configured, check.SecretBacked, check.SecretExists, check.ManagedPostgres, check.Ready = true, true, true, true, true
+		return check
+	}
+	if metadataLoaded && mcpTasksSecretInDefaultScope(secrets, env) {
+		check.Configured, check.SecretBacked, check.SecretExists, check.Ready = true, true, true, true
 		return check
 	}
 	check.Configured = strings.TrimSpace(app.Manifest.Env[env]) != ""
@@ -541,6 +561,8 @@ func printMCPTasksObserverSetup(w io.Writer, result mcpTasksObserverSetupResult,
 func printMCPTasksObserverCredential(w io.Writer, label string, check mcpTasksObserverCredentialCheck) {
 	state := "missing"
 	switch {
+	case check.Ready && check.ManagedPostgres:
+		state = "managed PostgreSQL binding"
 	case check.Ready:
 		state = "secret configured"
 	case check.Configured && !check.SecretBacked:

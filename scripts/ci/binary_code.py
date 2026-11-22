@@ -39,13 +39,23 @@ import hashlib
 import os
 import struct
 import subprocess
+import tempfile
 
 # The stamp code builds give pkg/wire.Version. Digests recorded on hosts
 # (unit-versions.json) were taken with it: changing it changes every
 # binary's code digest once, so the next unit release restarts every unit
 # it carries.
-NEUTRAL_VERSION = "code"
+#
+# It is as long as a unit release's stamp (unit-<40 hex>), and code builds
+# stamp pkg/wire.GitSHA with as many zeros as a commit has digits, so a
+# release binary built with the same flags (-buildid= included) becomes the
+# code build byte for byte once its stamps are replaced by these
+# (normalised_digests): one build gives both the shipped binary and its code
+# digest (docs/adr/20261122170000-continuous-unit-lane.md, "One build").
+NEUTRAL_VERSION = "unit-" + "0" * 40
 VERSION_VAR = "pkg/wire.Version"
+GIT_SHA_VAR = "pkg/wire.GitSHA"
+NEUTRAL_GIT_SHA = "0" * 40
 # The ELF section holding Go's line, file and function-name tables.
 LINE_TABLE = ".gopclntab"
 # Go 1.26's section for runtime.firstmoduledata: pointers to the other
@@ -137,7 +147,8 @@ def build(side, names, out):
     .path, .sha, .flags (GO_BUILD_FLAGS), .module and .tags(name)."""
     hashes = {}
     env = dict(os.environ, GOOS="linux", GOARCH="amd64", CGO_ENABLED="0")
-    ldflags = f"-X {side.module}/{VERSION_VAR}={NEUTRAL_VERSION} -s -w -buildid="
+    ldflags = (f"-X {side.module}/{VERSION_VAR}={NEUTRAL_VERSION} "
+               f"-X {side.module}/{GIT_SHA_VAR}={NEUTRAL_GIT_SHA} -s -w -buildid=")
     for tags in sorted({tuple(side.tags(n)) for n in names}):
         group = sorted(n for n in names if tuple(side.tags(n)) == tags)
         cmd = [os.environ.get("GO", "go"), "build", *side.flags]
@@ -151,6 +162,37 @@ def build(side, names, out):
             hashes[n] = elf_digests(os.path.join(out, n))
             os.remove(os.path.join(out, n))
     return hashes
+
+
+def release_stamps(version, git_sha):
+    """The (stamped, neutral) byte pairs of a unit release binary: its unit
+    version (unit-<commit>) and the release commit in pkg/wire.GitSHA."""
+    pairs = [(version.encode(), NEUTRAL_VERSION.encode()), (git_sha.encode(), NEUTRAL_GIT_SHA.encode())]
+    for stamped, neutral in pairs:
+        if len(stamped) != len(neutral):
+            raise ValueError(f"stamp {stamped[:60]!r} is not as long as its neutral form")
+    return pairs
+
+
+def normalised_digests(path, stamps, workdir=None):
+    """elf_digests of the release binary at path with every stamp replaced
+    by its neutral form, in order: a release binary built with the code
+    build's other flags (-buildid= included) is then the code build."""
+    with open(path, "rb") as fh:
+        data = fh.read()
+    for stamped, neutral in stamps:
+        if len(stamped) != len(neutral):
+            raise ValueError(f"stamp {stamped[:60]!r} is not as long as its neutral form")
+        if stamped not in data:
+            raise ValueError(f"{os.path.basename(path)} does not carry the stamp {stamped[:60]!r}")
+        data = data.replace(stamped, neutral)
+    fd, tmp = tempfile.mkstemp(prefix="normalised-", dir=workdir)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        return elf_digests(tmp)
+    finally:
+        os.remove(tmp)
 
 
 def compare(base_hashes, head_hashes, names):
