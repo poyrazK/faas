@@ -6084,6 +6084,9 @@ from .route_requirements_config_version import RouteRequirementsConfigVersion
 from .route_requirements_finding import RouteRequirementsFinding
 from .route_requirements_report import RouteRequirementsReport
 from .route_requirements_result import RouteRequirementsResult
+from .route_resource_attribution import RouteResourceAttribution
+from .route_resource_split import RouteResourceSplit
+from .route_resources_response import RouteResourcesResponse
 from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
@@ -12986,6 +12989,9 @@ __all__ = (
     "RouteRequirementsFinding",
     "RouteRequirementsReport",
     "RouteRequirementsResult",
+    "RouteResourceAttribution",
+    "RouteResourceSplit",
+    "RouteResourcesResponse",
     "RouteRow",
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",

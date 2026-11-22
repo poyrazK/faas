@@ -3007,6 +3007,13 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
 
+// SplitTargetSlug and RenderRouteSplit expose the route split suggestion
+// (ADR-20261121170000 amendment 1).
+var (
+	SplitTargetSlug  = splitTargetSlug
+	RenderRouteSplit = renderRouteSplit
+)
+
 // WaitForDevPostgres exposes waitForDevPostgres.
 func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, timeout, poll time.Duration, get func(context.Context) (api.DevSessionResponse, error), waiting func(string)) (api.DevSessionResponse, error) {
 	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)

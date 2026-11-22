@@ -162,6 +162,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding", "bindings"},
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
+	// Gregale Run preview commands (#7747) under tree names.
+	{"sandbox customer budget", "run controls customer"},
+	{"sandbox task budget", "run controls task"},
+	{"sandbox binding controls", "run controls binding"},
+	{"sandbox delivery sign", "run deliveries download-url"},
+	{"sandbox environment publish", "run environments build"},
+	{"sandbox task call", "run tasks invoke"},
+	{"sandbox workflow retry", "runs workflow rerun"},
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
@@ -335,6 +343,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Observe.
 	{"metric requests", "analytics"},
+	{"metric resources", "route-resources"},
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},
