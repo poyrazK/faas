@@ -199,7 +199,10 @@ func cmdDeployments(args []string) int {
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*app)
 	if resolveErr == nil {
 		*app = resolvedApp
-	} else if !errors.Is(resolveErr, errProjectContextNotFound) {
+	} else if !errors.Is(resolveErr, errProjectContextNotFound) && !linkedProjectOnlyHere() {
+		// A checkout linked to a whole project names no one app, like an
+		// unlinked one: list the account's releases. It failed "project has
+		// multiple or no workloads" in every Compose checkout (prod hunt r27).
 		return printErr("Could not read local project context", resolveErr)
 	}
 	client, err := authedClient()

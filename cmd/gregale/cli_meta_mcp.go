@@ -39,8 +39,9 @@ func mcpCLICommand() cliCommand {
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
-		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7 (requires --metadata-only)", Value: "UUID"},
-		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt (requires --metadata-only)", Value: "FILE"},
+		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7", Value: "UUID"},
+		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt", Value: "FILE"},
+		cliFlag{Name: "write-input-template", Short: "write pending forms to a new private file", Value: "FILE"},
 	)
 	for i := range callFlags {
 		if callFlags[i].Name == "timeout" {
@@ -51,6 +52,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "task-receipt", Short: "resume a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
+		cliFlag{Name: "reviewed-input-file", Short: "answer forms from a reviewed private Task input template", Value: "FILE"},
 		cliFlag{Name: "cancel-on-timeout", Short: "request cancellation when the resumed wait times out"},
 	)
 	for i := range taskWaitFlags {

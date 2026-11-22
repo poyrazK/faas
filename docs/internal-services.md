@@ -30,8 +30,12 @@ http://recommendation.svc.gregale:10081
 ```
 
 The name is the project workload name (or the app slug for a standalone app).
-Declare the edges with `depends_on` and Gregale injects the URLs for you, so
-nothing hard-codes a hostname:
+Declare the edges with `depends_on` in your Compose file (`compose.yaml` or
+`docker-compose.yml`; `gregale.yaml` has no `services:` key, see the `project:`
+block below) and Gregale injects the URLs for you, so nothing hard-codes a
+hostname. A service that only other services call declares its port with
+`expose:`; one without `ports:` or `expose:` deploys as a worker that serves no
+HTTP:
 
 ```yaml
 services:

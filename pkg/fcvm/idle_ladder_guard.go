@@ -64,6 +64,10 @@ type idleGuardSample struct {
 	at              time.Time
 	cpu             float64
 	egress, ingress uint64
+	// addressed is the namespace's IPv4 packets addressed to the instance
+	// (idle_ladder_addressed.go); addressedOK is false without a reading.
+	addressed   uint64
+	addressedOK bool
 }
 
 // idleGuardState is one guarded instance's counters and verdict.
@@ -79,6 +83,10 @@ type idleGuardState struct {
 	// pause to pause the app (idle_ladder_apps.go); wakeBaseSet marks it.
 	wakeBase    uint64
 	wakeBaseSet bool
+	// wakeAddressed is the addressed packet count at that pause;
+	// wakeAddressedSet is false when there was no reading then.
+	wakeAddressed    uint64
+	wakeAddressedSet bool
 }
 
 func (m *Manager) idleGuardOn() bool { return m.idleCPU != nil && m.idleNet != nil }
@@ -97,7 +105,11 @@ func (m *Manager) idleGuardRecord(st *idleLadderState, c idleLadderCandidate, no
 		g.samples = g.samples[:0]
 		return
 	}
-	g.samples = append(g.samples, idleGuardSample{at: now, cpu: cpu, egress: egress, ingress: ingress})
+	sample := idleGuardSample{at: now, cpu: cpu, egress: egress, ingress: ingress}
+	if addressed, ok := m.idleNet.(IdleLadderAddressedIngress); ok {
+		sample.addressed, sample.addressedOK = addressed.AddressedIngress(c.id)
+	}
+	g.samples = append(g.samples, sample)
 	cut := 0
 	for i, s := range g.samples {
 		if now.Sub(s.at) >= idleGuardWindow {

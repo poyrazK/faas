@@ -87,6 +87,7 @@ test('only the observer role publishes the dedicated observer heartbeat', async 
 test('observer health failures withhold queue gauges and the heartbeat', async () => {
   const requests = [];
   let errors = 0;
+  const details = [];
   const publisher = startMcpTaskMetricsPublisher({
     store: { async queueMetrics() { throw new Error('postgres://private-user:secret@db.example/production'); } },
     appSlug: 'mcp-worker',
@@ -98,28 +99,34 @@ test('observer health failures withhold queue gauges and the heartbeat', async (
       requests.push(url);
       return { status: 204 };
     },
-    onError() { errors++; },
+    onError(detail) { errors++; details.push(detail); },
   });
 
   await publisher.close();
   assert.deepEqual(requests, []);
   assert.equal(errors, 1);
+  // The store's message can hold a connection string; only the step leaves.
+  assert.deepEqual(details, [{ step: 'queue_metrics' }]);
 });
 
 test('publisher reports API failures without stopping its caller', async () => {
   let errors = 0;
+  let failure;
   let completed = 0;
   const publisher = startMcpTaskMetricsPublisher({
     store: { async queueMetrics() { return { outstandingTasks: 1, oldestAgeSeconds: 1, runningTasks: 1, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0, activeWorkers: 1, drainingWorkers: 0, unsupportedHandlerTasks: 0, handlerCompatibility: [], compatibilityTruncated: false }; } },
     appSlug: 'mcp-worker', token: 'secret', intervalMs: 300_000,
     async fetchImpl() { return { status: 503 }; },
-    onError() { errors++; },
+    onError(detail) { errors++; failure = detail; },
   });
   await new Promise(resolve => setTimeout(resolve, 20));
   await publisher.close();
   completed++;
   assert.equal(completed, 1);
   assert.equal(errors, 1);
+  // The log names the failed step and status (MCP Tasks prod probe 2026-11-22).
+  assert.equal(failure.status, 503);
+  assert.match(failure.step, /^metric:mcp_tasks_/);
 });
 
 
@@ -132,4 +139,19 @@ test('only a successful observer reporting cycle publishes the observer heartbea
     assert.equal(urls.some(url => url.endsWith('mcp_tasks_observer_heartbeat')), success);
     if (success) assert.ok(urls.at(-1).endsWith('mcp_tasks_observer_heartbeat'));
   }
+});
+
+test('a network failure names the API step, not the queue', async () => {
+  const failures = [];
+  const publisher = startMcpTaskMetricsPublisher({
+    store: { async queueMetrics() { return { outstandingTasks: 0, oldestAgeSeconds: 0, runningTasks: 0, capacityWaitingTasks: 0, failedTasks: 0, retryWaitingTasks: 0, activeWorkers: 0, drainingWorkers: 0, unsupportedHandlerTasks: 0, handlerCompatibility: [], compatibilityTruncated: false }; } },
+    appSlug: 'mcp-worker', token: 'secret', intervalMs: 300_000,
+    async fetchImpl() { throw new TypeError('fetch failed'); },
+    onError(detail) { failures.push(detail); },
+  });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  await publisher.close();
+  assert.equal(failures.length, 1);
+  assert.match(failures[0].step, /^metric:mcp_tasks_/);
+  assert.equal(failures[0].status, undefined);
 });

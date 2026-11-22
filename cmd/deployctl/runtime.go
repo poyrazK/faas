@@ -44,6 +44,10 @@ type hostRuntime struct {
 	// (docs/adr/1650-per-unit-control-plane-releases.md) replaces only
 	// their binaries, and every other daemon keeps running untouched.
 	only map[string]struct{}
+	// restartParallel > 1 restarts daemons of equal dependency depth
+	// together, at most this many at once (restart_waves.go); 0 or 1
+	// restarts them one at a time in serviceOrder.
+	restartParallel int
 	// historySpool is where a compute host spools its activations for CD to
 	// import on the control plane (history.go); empty spools nothing.
 	historySpool string
@@ -825,6 +829,9 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 	serviceOrder, err := r.restartServices(manifest)
 	if err != nil {
 		return err
+	}
+	if r.restartParallel > 1 {
+		return r.restartInWaves(ctx, serviceOrder)
 	}
 	for _, service := range serviceOrder {
 		if err := r.restartOne(ctx, service, true); err != nil {

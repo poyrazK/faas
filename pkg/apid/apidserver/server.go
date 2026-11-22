@@ -4910,6 +4910,9 @@ func (s *server) handler() http.Handler {
 	// Fleet wake-latency report (ADR-20261121200409).
 	mux.HandleFunc("GET /v1/admin/obs/wake-latency",
 		s.authLimited(s.requireOperatorSessionRead(s.obsWakeLatency)))
+	// Fleet snapshot health report (ADR-20261122135018).
+	mux.HandleFunc("GET /v1/admin/obs/snapshot-health",
+		s.authLimited(s.requireOperatorSessionRead(s.obsSnapshotHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
