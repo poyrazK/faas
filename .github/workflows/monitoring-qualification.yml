@@ -1,12 +1,12 @@
 name: monitoring-qualification
 
-# Manual only. Exercise emits REAL page/warn notifications; prepare is read-only.
+# Manual only. Exercise emits real notifications; prepare is read-only.
 # See docs/ops/monitoring-qualification.md for receipt scope and watchdog testing.
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "prepare reads intent; exercise sends real page/warn tests; record imports operator-attested receipts"
+        description: "prepare reads intent; exercise sends real test notifications; record imports operator-attested receipts"
         type: choice
         default: prepare
         options: [prepare, exercise, record]

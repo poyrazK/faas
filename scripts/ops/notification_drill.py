@@ -3,13 +3,13 @@
 
 Runs isolated binaries on random loopback ports. Reuses the production route
 tree, with local webhook receivers and compressed timers. Never reads receiver
-credentials or contacts deployed services. Provider adapters and human receipt
-remain outside this local qualification.
+credentials or contacts deployed services. The PagerDuty adapter posts to a
+mock endpoint. Provider escalation and human receipt require a live drill.
 """
 
 import argparse
 import copy
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import http.server
 import importlib.machinery
 import importlib.util
@@ -28,8 +28,12 @@ import urllib.parse
 import urllib.request
 import uuid
 
+from monitoring_qualification_remote import ALERT_LIFETIME_SECONDS, DELIVERY_RECEIVER, stamp, test_alerts
+
 ROOT = Path(__file__).resolve().parents[2]
 RECEIVERS = ("faas-page", "faas-warn", "faas-heartbeat")
+PAGERDUTY_KEY = "local-drill-key"
+DELIVERY_ALERTS = ("FaasPrometheusNotificationsDropped", "FaasAlertmanagerNotificationsFailed")
 RUNTIME_REPLICAS = ("127.0.0.1:9101", "127.0.0.2:9101")
 RUNTIME_ALERT = "FaasRuntimeCollectorDeadlines"
 RUNTIME_METRIC = 'apid_operator_runtime_reports_total{outcome="deadline_exceeded"}'
@@ -74,12 +78,17 @@ class Receiver:
         self.runtime_failing = set()
         self.runtime_counts = dict.fromkeys(RUNTIME_REPLICAS, 0)
         self.chat_receipts = []
+        self.pagerduty_receipts = []
         self.lock = threading.Lock()
 
     def seen(self, receiver, phase, stage=None, accepted=True):
         with self.lock:
             return any(r["receiver"] == receiver and r["phase"] == phase and r["accepted"] == accepted
                        and (stage is None or r["stage"] == stage) for r in self.receipts)
+
+    def pagerduty_events(self):
+        with self.lock:
+            return self.pagerduty_receipts.copy()
 
     def latest_heartbeat_age(self):
         with self.lock:
@@ -157,6 +166,15 @@ class Receiver:
                         self.end_headers()
                         self.wfile.write(b"ok")
                         return
+                    if self.path == "/pagerduty":
+                        action, key = payload["event_action"], payload["dedup_key"]
+                        if payload["routing_key"] != PAGERDUTY_KEY or action not in ("trigger", "resolve") or not key:
+                            raise ValueError("invalid PagerDuty event")
+                        with owner.lock:
+                            owner.pagerduty_receipts.append((action, key, payload.get("payload", {})))
+                        self.send_response(202)
+                        self.end_headers()
+                        return
                     receiver = self.path.removeprefix("/receive/")
                     if (receiver not in RECEIVERS or not isinstance(payload, dict) or payload.get("receiver") != receiver
                             or not isinstance(payload.get("alerts"), list) or not payload["alerts"]):
@@ -206,7 +224,10 @@ def render_config(directory, receiver_url, run_id):
     page_url, warn_url = directory / "page-url", directory / "warn-url"
     page_url.write_text(receiver_url + "/chat/faas-page\n")
     warn_url.write_text(receiver_url + "/chat/faas-warn\n")
-    values.update(am_slack_webhook_url_file=str(page_url), am_slack_warn_webhook_url_file=str(warn_url),
+    pagerduty_key = directory / "pagerduty-key"
+    pagerduty_key.write_text(PAGERDUTY_KEY + "\n")
+    values.update(am_delivery_pagerduty_key_file=str(pagerduty_key), am_fleet_name="local-drill",
+                  am_slack_webhook_url_file=str(page_url), am_slack_warn_webhook_url_file=str(warn_url),
                   am_heartbeat_url_file="local-heartbeat-placeholder", am_heartbeat_interval="2s", am_grafana_base_url=GRAFANA_BASE + "/")
     env = jinja2.Environment(undefined=jinja2.StrictUndefined)
     env.filters.update(to_json=lambda value: json.dumps(value), bool=bool)
@@ -214,13 +235,13 @@ def render_config(directory, receiver_url, run_id):
 
     def compress(route):
         # Give the two independently scraped replicas time to join one warning group.
-        route.update(group_wait="3s" if route["receiver"] == "faas-warn" else "0s", group_interval="1s", repeat_interval="2s")
+        group_wait = {"faas-warn": "3s", DELIVERY_RECEIVER: "1s"}.get(route["receiver"], "0s")
+        route.update(group_wait=group_wait, group_interval="1s", repeat_interval="2s")
         for child in route.get("routes", []):
             compress(child)
 
     compress(config["route"])
-    # Keep the shipped chat message templates with the fixture URL files.
-    # All other integrations are replaced by the local generic receivers.
+    # Run the shipped chat and PagerDuty adapters against fixture endpoints.
     config["global"].pop("http_config", None)
     local_receivers = []
     for rendered in config["receivers"]:
@@ -234,6 +255,13 @@ def render_config(directory, receiver_url, run_id):
                     raise RuntimeError("chat receiver lacks a fixture URL file")
                 delivery.pop("http_config", None)
             receiver["slack_configs"] = rendered["slack_configs"]
+        if name == DELIVERY_RECEIVER:
+            delivery, = rendered["pagerduty_configs"]
+            if delivery.get("routing_key_file") != str(pagerduty_key) or "routing_key" in delivery:
+                raise RuntimeError("PagerDuty receiver lacks a fixture key file")
+            delivery.update(url=receiver_url + "/pagerduty")
+            delivery.pop("http_config", None)
+            receiver["pagerduty_configs"] = [delivery]
         local_receivers.append(receiver)
     config["receivers"] = local_receivers
     (directory / "alertmanager.yml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -280,6 +308,48 @@ def check_runtime_deadlines(receiver, prom_url, wait):
         raise RuntimeError("runtime_deadline_resolutions_lack_distinct_timestamps")
     if receiver.seen("faas-page", "firing", "runtime") or receiver.seen("faas-page", "resolved", "runtime"):
         raise RuntimeError("runtime_deadlines_reached_page_receiver")
+
+
+def check_delivery_paging(receiver, am_url, run_id, wait):
+    def submit(alerts):
+        request = urllib.request.Request(am_url + "/api/v2/alerts", data=json.dumps(alerts).encode(),
+                                         headers={"Content-Type": "application/json"})
+        with OPENER.open(request, timeout=2):
+            pass
+
+    def triggers(count, summary_prefix):
+        return [key for action, key, payload in receiver.pagerduty_events()
+                if action == "trigger" and payload["summary"].startswith(summary_prefix)
+                and payload["custom_details"]["num_firing"] == str(count)]
+
+    now = datetime.now(timezone.utc)
+    ends = now + timedelta(seconds=ALERT_LIFETIME_SECONDS)
+    plan = {"qualification_id": "mq-123-1", "expected_groups": [{"receiver": DELIVERY_RECEIVER, "integration": "pagerduty"}],
+            "alert_starts_at": stamp(now), "alert_expires_at": stamp(ends)}
+    alerts = [{"labels": {"alertname": name, "severity": "page", "component": name, "stage": "delivery"},
+               "annotations": {"drill_id": run_id, "summary": name, "first_action": "Check notification transport."},
+               "startsAt": stamp(now), "endsAt": stamp(ends)} for name in DELIVERY_ALERTS]
+    submit(alerts + test_alerts(plan, now))
+    live_title = "Gregale alert delivery degraded"
+    test_title = "[TEST] Gregale delivery qualification mq-123-1"
+    wait("pagerduty_groups_delivery_faults", lambda: triggers(2, live_title))
+    wait("pagerduty_isolates_qualification", lambda: triggers(1, test_title))
+    wait("delivery_faults_also_reach_page_route", lambda: receiver.seen("faas-page", "firing", "delivery"))
+    live_key, test_key = triggers(2, live_title)[0], triggers(1, test_title)[0]
+    if live_key == test_key:
+        raise RuntimeError("qualification_shared_live_dedup_key")
+
+    resolved_at = datetime.now(timezone.utc)
+    submit([dict(alerts[0], endsAt=stamp(resolved_at))] + test_alerts(plan, resolved_at, resolving=True))
+    wait("pagerduty_keeps_incident_open_for_second_fault", lambda: live_key in triggers(1, live_title))
+    wait("pagerduty_resolves_qualification", lambda: any(action == "resolve" and key == test_key
+                                                         for action, key, _ in receiver.pagerduty_events()))
+    if any(action == "resolve" and key == live_key for action, key, _ in receiver.pagerduty_events()):
+        raise RuntimeError("pagerduty_resolved_while_one_fault_remained")
+
+    submit([dict(alerts[1], endsAt=stamp(datetime.now(timezone.utc)))])
+    wait("pagerduty_resolves_combined_incident", lambda: any(action == "resolve" and key == live_key
+                                                           for action, key, _ in receiver.pagerduty_events()))
 
 
 def run(prometheus, alertmanager, timeout=90):
@@ -373,7 +443,10 @@ def run(prometheus, alertmanager, timeout=90):
                     receiver.firing = False
                 wait("final_resolves", lambda: all(receiver.seen(name, "resolved", "recovery") for name in RECEIVERS[:2]))
                 check_runtime_deadlines(receiver, prom_url, wait)
+                check_delivery_paging(receiver, am_url, run_id, wait)
                 final = snapshot()
+                if final["pairs"][DELIVERY_RECEIVER + "/pagerduty"]["requests"] < 1:
+                    raise RuntimeError("pagerduty_requests_not_observed")
                 observations = collector.observe(final, confirmed, time.time())
                 observations = collector.observe(final, observations, time.time())
                 stop(prom)

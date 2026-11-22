@@ -34,6 +34,7 @@
 {% set am_discord_path = am_discord_webhook_url_file | default('') | trim %}
 {% set am_slack_path = am_slack_webhook_url_file | default('') | trim %}
 {% set am_heartbeat_path = am_heartbeat_url_file | default('') | trim %}
+{% set am_delivery_pagerduty_path = am_delivery_pagerduty_key_file | default('') | trim %}
 {% set am_email_enabled = am_smtp_host | length > 0 and am_smtp_password_path | length > 0 %}
 {% set am_pushover_enabled = am_pushover_token_path | length > 0 and am_pushover_user_key_path | length > 0 %}
 {% set am_discord_enabled = am_discord_path | length > 0 %}
@@ -153,6 +154,32 @@ route:
         - family =~ "alert_preset_(signals|correlation)"
       receiver: faas-silent
       continue: false
+{% endif %}
+    # Qualification pages have a unique group per run and are confined to
+    # the pilot receiver. Consume them even when the pilot is disabled.
+    - matchers:
+        - severity = "page"
+        - alertname =~ "FaasDeliveryQualification_mq_[1-9][0-9]{0,19}_[1-9][0-9]{0,5}_delivery_page"
+        - qualification_id =~ "mq-[1-9][0-9]{0,19}-[1-9][0-9]{0,5}"
+{% if am_delivery_pagerduty_path %}
+      receiver: faas-delivery-page
+{% else %}
+      receiver: faas-silent
+{% endif %}
+      group_by: [qualification_id]
+      group_wait: 10s
+      group_interval: 1m
+{% if am_delivery_pagerduty_path %}
+    # Both delivery faults share one group on this fleet's PagerDuty service.
+    # Also deliver them through the regular page route below.
+    - matchers:
+        - severity = "page"
+        - alertname =~ "FaasPrometheusNotificationsDropped|FaasAlertmanagerNotificationsFailed"
+      receiver: faas-delivery-page
+      group_by: [severity]
+      group_wait: 10s
+      group_interval: 1m
+      continue: true
 {% endif %}
     # page-severity: full notify (email + Pushover + chat).
     - matchers:
@@ -293,6 +320,21 @@ receivers:
           {{ end }}
 {% endraw %}
 {% endfor %}
+{% endif %}
+
+{% if am_delivery_pagerduty_path %}
+  - name: faas-delivery-page
+    pagerduty_configs:
+      - routing_key_file: {{ am_delivery_pagerduty_path | to_json }}
+        send_resolved: true
+        severity: critical
+        source: {{ am_page_fleet | to_json }}
+        description: >-
+          {% raw %}{{ if .GroupLabels.qualification_id }}[TEST] Gregale delivery qualification {{ .GroupLabels.qualification_id }} —
+          {{ else }}Gregale alert delivery degraded — {{ end }}{% endraw %} {{ am_page_fleet }}
+        details:
+          first_checks: |-
+            {{ page_details('plain', 'pagerduty.default.description') | indent(12) }}
 {% endif %}
 
   - name: faas-heartbeat
