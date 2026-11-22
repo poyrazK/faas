@@ -3242,6 +3242,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return 1
 		}
 	}
+	if deployFunction && deployRuntime == "" && *tarball == "" && *image == "" && *repo == "" && contextDir != "" {
+		// `deploy --function` of a directory holding handler.py refused to
+		// infer the runtime the plain `deploy` of the same directory infers
+		// (prod hunt r27).
+		if rt, _, ok := inferFunctionRuntime(contextDir); ok {
+			deployRuntime = rt
+		}
+	}
 	if deployFunction && deployRuntime == "" {
 		return printErr("Invalid --runtime", fmt.Errorf("--function requires one of: %s", strings.Join(api.FunctionRuntimes, ", ")))
 	}
