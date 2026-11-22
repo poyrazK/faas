@@ -14,9 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -246,6 +248,11 @@ func TestManagedRedisHandoffSoakMetal(t *testing.T) {
 	w := startRedisSoakWriter(t, f, host)
 	memory := 64
 	started := time.Now()
+	first, err := store.LatestDeployment(ctx, cacheApp.ID)
+	if err != nil {
+		t.Fatalf("cache deployment: %v", err)
+	}
+	deployments := []string{first.ID}
 	for i := 1; i <= handoffs; i++ {
 		var path, method string
 		var body any
@@ -290,6 +297,15 @@ func TestManagedRedisHandoffSoakMetal(t *testing.T) {
 		}
 		t.Logf("handoff %d/%d (%s %s) PASS: counter=%d acked=%d refused=%d elapsed=%s",
 			i, handoffs, method, path, counter, acked, w.refused.Load(), time.Since(started).Round(time.Second))
+		deployments = append(deployments, dep)
+		// Each handoff leaves its layer and snapshots behind until the
+		// platform's GC reclaims retired deployments, about 1.4 GB here, so
+		// 100 handoffs outgrow a test host's disk (native soak
+		// redissoak-20261121T203233 stopped at 31 on ENOSPC). Reclaim a
+		// deployment two handoffs after it was replaced, as GC would.
+		if len(deployments) > 2 {
+			pruneRetiredRedisDeployment(t, f, deployments[len(deployments)-3])
+		}
 	}
 	w.stop()
 	t.Logf("soak PASS: %d handoffs, %d acknowledged writes, none lost, %d refused while switching, %s",
@@ -372,6 +388,32 @@ func startRedisSoakHandoff(t *testing.T, f *privateTCPImageFixture, method, path
 		}
 		t.Logf("%s %s refused (%d %s); retrying", method, path, status, raw)
 		time.Sleep(10 * time.Second)
+	}
+}
+
+// pruneRetiredRedisDeployment deletes a retired deployment's artifacts: every
+// path named after its ID under the harness's storage root, and vmmd's local
+// snapshot directory for it. The ID is a UUID, so nothing else matches.
+func pruneRetiredRedisDeployment(t *testing.T, f *privateTCPImageFixture, deploymentID string) {
+	t.Helper()
+	var doomed []string
+	_ = filepath.WalkDir(f.h.TmpDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(d.Name(), deploymentID) {
+			doomed = append(doomed, path)
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		return nil
+	})
+	doomed = append(doomed, filepath.Join("/srv/fc/snap", deploymentID))
+	for _, path := range doomed {
+		if err := os.RemoveAll(path); err != nil {
+			t.Logf("prune retired deployment %s: %v", deploymentID, err)
+		}
 	}
 }
 
