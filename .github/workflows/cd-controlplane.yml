@@ -2466,6 +2466,33 @@ jobs:
             scripts/ci/observe_remote_rollout.sh \
             "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
 
+      # Critical smoke checks (ADR-20261122170000): the business paths through
+      # the public API with the smoke account (account and plan, the smoke
+      # app, a configuration change served by a fresh boot, usage). The SLO
+      # gate sees errors and latency, not a wrong answer served with a 200. A
+      # failure rolls the units back at once, as the gate does.
+      - name: Run the critical smoke checks
+        if: steps.plan.outputs.action == 'deploy'
+        env:
+          UNIT_SMOKE_API_KEY: ${{ secrets.UNIT_SMOKE_API_KEY }}
+          UNIT_SMOKE_APP: ${{ vars.UNIT_SMOKE_APP }}
+          UNIT_SMOKE_API: ${{ vars.UNIT_SMOKE_API }}
+          UNIT_SMOKE_APPS_DOMAIN: ${{ vars.UNIT_SMOKE_APPS_DOMAIN }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$UNIT_SMOKE_API_KEY" || -z "$UNIT_SMOKE_APP" ]]; then
+            echo "::warning::critical smoke checks are not configured (UNIT_SMOKE_API_KEY, UNIT_SMOKE_APP; tests/unit-smoke-app/README.md)" >&2
+            echo "**Critical smoke checks not configured**: turn on automatic deploys only after setting them up." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          status=0
+          python3 scripts/ci/unit_smoke.py --token "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" || status=$?
+          if (( status != 0 )); then
+            scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+            echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the critical smoke checks failed" >&2
+            exit 1
+          fi
+
       - name: Hold the units on the SLO gate
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
         run: |

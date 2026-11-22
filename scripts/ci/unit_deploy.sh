@@ -662,6 +662,52 @@ jq -n --arg current "$(basename "$current")" \
 REMOTE
 }
 
+# rollback-readiness: read-only facts a rollback depends on, as JSON, for
+# scripts/ci/rollback_drill.py (docs/adr/20261122170000-continuous-unit-
+# lane.md, "Rollback drill"): the active release, the activation history's
+# last two entries (deployctl rollback restores the one before the active),
+# whether that predecessor and the watch record's known-good control-plane
+# release are still installed with a manifest and binaries, and whether the
+# host-config record exists. Changes nothing.
+cmd_rollback_readiness() {
+  local target dir link record
+  target="$(deploy_target)"
+  dir="$(host_config_dir)"
+  link="$(host_current_release)"
+  record="$(watch_record_path)"
+  remote UNIT "$target" "$(as_root "$target") -s -- '$dir' '$link' '$record'" <<'REMOTE'
+set -uo pipefail
+dir="$1" link="$2" record="$3"
+releases="$(dirname "$(readlink -f "$link" 2>/dev/null || echo /opt/faas/releases/none)")"
+installed() { # installed RELEASE_ID -> true when it has a manifest and binaries
+  [[ -n "$1" && -s "$releases/$1/release-manifest.json" && -d "$releases/$1/bin" ]] \
+    && jq -e 'type == "object"' "$releases/$1/release-manifest.json" >/dev/null 2>&1
+}
+current=""
+[[ -e "$link" || -L "$link" ]] && current="$(basename "$(readlink -f "$link")")"
+history="$releases/.activation-history.json"
+last="" prev=""
+if jq -e '.releases | type == "array"' "$history" >/dev/null 2>&1; then
+  last="$(jq -r '.releases[-1] // ""' "$history")"
+  prev="$(jq -r '.releases[-2] // ""' "$history")"
+fi
+known=""
+if jq -e '.kind == "gregale-unit-watch"' "$record" >/dev/null 2>&1; then
+  known="$(jq -r '.hosts["control-plane"].known_good // ""' "$record")"
+fi
+hc=false
+jq -e '.kind == "gregale-host-config" and (.commit | test("^[0-9a-f]{40}$"))' "$dir/control-plane-roles.json" >/dev/null 2>&1 && hc=true
+retained="$(find "$releases" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | wc -l | tr -d ' ')"
+jq -n --arg current "$current" --arg last "$last" --arg prev "$prev" --arg known "$known" \
+  --argjson prev_ok "$(installed "$prev" && echo true || echo false)" \
+  --argjson known_ok "$( [[ -z "$known" ]] && echo null || { installed "$known" && echo true || echo false; })" \
+  --argjson host_config "$hc" --argjson retained "${retained:-0}" \
+  '{current: $current, history_last: $last, predecessor: $prev, predecessor_installed: $prev_ok,
+    watch_known_good: (if $known == "" then null else $known end), watch_known_good_installed: $known_ok,
+    host_config_record: $host_config, retained: $retained}'
+REMOTE
+}
+
 cmd_host_manifest() {
   local state="$1" out="$2" target want got
   target="$(deploy_target)"
@@ -746,6 +792,7 @@ case "$command" in
   host-restart-script) cmd_host_restart_script "$@" ;;
   host-restarted) cmd_host_restarted "$@" ;;
   host-record) cmd_host_record "$@" ;;
+  rollback-readiness) cmd_rollback_readiness "$@" ;;
   preflight-state) cmd_preflight_state "$@" ;;
   watch-open) cmd_watch_open "$@" ;;
   watch-revert) cmd_watch_revert "$@" ;;
@@ -757,5 +804,5 @@ case "$command" in
   watch-stage) cmd_watch_stage "$@" ;;
   watch-rollback) cmd_watch_rollback "$@" ;;
   pin-node) cmd_pin_node "$@" ;;
-  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-host-config|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
+  *) echo "usage: $0 state|stage|script|run|now|gate|rollback|cleanup|host-state|host-manifest|host-stage|host-restart-script|host-restarted|host-record|rollback-readiness|preflight-state|watch-open|watch-revert|watch-record|watch|watch-close|watch-adopt|watch-host-config|watch-stage|watch-rollback|pin-node ..." >&2; exit 2 ;;
 esac

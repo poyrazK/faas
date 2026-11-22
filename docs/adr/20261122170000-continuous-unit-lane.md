@@ -218,13 +218,27 @@ hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
   converge, daemon restarts and SLO gate, records the known-good commit,
   and deploys nothing else. A failed converge-back is not converged
   "back" again; deploys stay frozen by the watch's issue.
-- **Critical smoke checks** (owner chose them; next change). Before a
-  deploy counts as done, synthetic journeys run against the new version
-  (sign in, deploy, wake and invoke, metering, billing preview), and a
-  failure rolls back at once: the SLO gate sees errors and latency, not a
-  wrong answer served with a 200.
-- **Rollback drill** (owner chose it; next change). A weekly scheduled run
-  proves an automatic rollback and freeze still happen.
+- **Critical smoke checks** (owner chose them). Right after the control
+  plane activates a unit release, `scripts/ci/unit_smoke.py` drives the
+  business paths through the public API with a dedicated smoke account:
+  the account with an active plan, the smoke app, a configuration change
+  (`SMOKE_TOKEN`, unique per run) applied by a fresh restart and served by
+  the app's public URL (apid's write path, schedd, vmmd's cold boot, wake
+  and the gateways, with no build), and a usage projection with no
+  negative figure. A failure rolls the units back at once, as the gate
+  does: the SLO gate sees errors and latency, not a wrong answer served
+  with a 200. Full journeys build apps and take minutes, so they stay in
+  the journey suite. Setup is the owner's (`tests/unit-smoke-app`);
+  unconfigured, the step warns, and automatic deploys should not be turned
+  on until it is configured.
+- **Rollback drill** (owner chose it). Every Monday,
+  `unit-rollback-drill.yml` checks, read-only, every fact an automatic
+  rollback depends on: the active release and deployctl's activation
+  history agree, the release a rollback restores is installed, so is the
+  watch record's known-good release, the host-config record exists,
+  Prometheus answers, the freeze label exists. A failure opens an issue.
+  Breaking production to prove it recovers was rejected: that is the
+  outage the lane exists to prevent.
 - Not chosen: forcing risky paths (billing, metering, auth, limits, the
   scheduler state machine) behind flags.
 
