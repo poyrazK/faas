@@ -815,11 +815,41 @@
     group: root
     mode: "0644"
 
+# Release commands were hand drop-ins on GCP and were lost in the move to OVH
+# (2026-11), which made managed PostgreSQL migrations impossible; these keep
+# them on through rebuilds (same file names as the 2026-11-22 hand drop-ins).
+- name: control_plane_service — set whether apid admits release commands
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-release-phase-apid.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-release-phase.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether schedd dispatches release tasks
+  notify: restart faas-schedd
+  ansible.builtin.template:
+    src: zz-faas-release-phase-schedd.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-release-phase.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: control_plane_service — set whether meterd bills gateway response bytes as egress
   notify: restart faas-meterd
   ansible.builtin.template:
     src: zz-faas-gateway-response-egress.conf.j2
     dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-gateway-response-egress.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether meterd leaves internal egress unbilled
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-internal-egress-unbilled.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-internal-egress-unbilled.conf
     owner: root
     group: root
     mode: "0644"

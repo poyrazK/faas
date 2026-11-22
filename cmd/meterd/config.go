@@ -223,5 +223,15 @@ func (c *Config) overlayQuietPauseUnbilled() error {
 		}
 		c.Meter.GatewayResponseEgress = on
 	}
+	// FAAS_INTERNAL_EGRESS_UNBILLED overrides [meter] internal_egress_unbilled
+	// (ADR-20261114100000, billing review R8-2). A value that is not a
+	// boolean refuses to start rather than guessing whether to bill.
+	if v := os.Getenv("FAAS_INTERNAL_EGRESS_UNBILLED"); v != "" {
+		on, err := strconv.ParseBool(v)
+		if err != nil {
+			return fmt.Errorf("meterd: FAAS_INTERNAL_EGRESS_UNBILLED=%q is not a boolean", v)
+		}
+		c.Meter.InternalEgressUnbilled = on
+	}
 	return nil
 }

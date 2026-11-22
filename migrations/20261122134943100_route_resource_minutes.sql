@@ -1,4 +1,4 @@
--- filename: 20261122075144100_route_resource_minutes.sql
+-- filename: 20261122134943100_route_resource_minutes.sql
 -- migration-compat: expand
 -- ADR-20261121170000: route resource peaks. instance_resource_minutes holds
 -- what each app instance's cgroup did per minute (vmmd folds guest-init's

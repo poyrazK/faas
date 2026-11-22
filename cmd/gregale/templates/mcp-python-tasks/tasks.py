@@ -19,6 +19,7 @@ from task_rewrap import rewrap_candidates, rewrap_payload
 from task_owners import OWNER_SCHEMA, associate_owners, cleanup_expired_tasks
 from task_execution import RetryableTaskError, TaskExecutionPolicy, TaskLeaseDeadline, TASK_LEASE_SECONDS
 from catalog import compile_tool_schema
+from protocol_headers import valid_task_submission_key
 
 TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks"
 TASK_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
@@ -26,6 +27,7 @@ TASK_KEY_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 TASK_TOOL_NAME_PATTERN = re.compile(r"^[\x21-\x7e]{1,128}$")
 TASK_HANDLER_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 MAX_INPUT_STATE_BYTES = 256 * 1024
+TASK_SUBMISSION_WINDOW_SECONDS = 60
 SUPPORTED_INPUT_METHODS = {"elicitation/create:form", "elicitation/create:url", "sampling/createMessage", "roots/list"}
 _TASK_HANDLER_LOCK = threading.RLock()
 _TASK_HANDLERS = {}
@@ -198,9 +200,23 @@ def _task_string_length(value):
     return len(value.encode("utf-16-le", errors="surrogatepass")) // 2
 
 
+def _same_task_arguments(original, submitted):
+    # Preserve JSON number equality without treating true and 1 as the same value.
+    if type(original) is not type(submitted):
+        return type(original) in (int, float) and type(submitted) in (int, float) and original == submitted
+    if isinstance(original, dict):
+        return original.keys() == submitted.keys() and all(
+            _same_task_arguments(value, submitted[key]) for key, value in original.items())
+    if isinstance(original, list):
+        return len(original) == len(submitted) and all(
+            _same_task_arguments(left, right) for left, right in zip(original, submitted))
+    return original == submitted
+
+
 class DurableTaskRuntime:
     def __init__(self, config, role=None):
         self.role = resolve_task_role(role)
+        self.task_submission_ready = False
         raw_timeout = os.environ.get("MCP_DRAIN_TIMEOUT_SECONDS", "10")
         if not raw_timeout.isdecimal() or not 1 <= int(raw_timeout) <= 300:
             raise ValueError("MCP_DRAIN_TIMEOUT_SECONDS must be an integer between 1 and 300")
@@ -364,6 +380,8 @@ class DurableTaskRuntime:
         try:
             self.pool.open(wait=True, timeout=10)
             check_task_schema(self.pool)
+            if self.role in {"combined", "web"}:
+                self.task_submission_ready = check_task_submission_index(self.pool)
             if self.role == "observer":
                 self.queue_metrics()
             else:
@@ -774,7 +792,7 @@ class DurableTaskRuntime:
     def _decrypt(self, value, task_id, field):
         return json.loads(self._decrypt_payload(value, task_id, field))
 
-    def create(self, tool_name, args, identity, client_capabilities=None, output_schema=None):
+    def create(self, tool_name, args, identity, client_capabilities=None, output_schema=None, submission_key=None):
         if self._stopping.is_set():
             raise ValueError("MCP task runtime is draining")
         handler = self._task_handlers.get(tool_name)
@@ -782,6 +800,9 @@ class DurableTaskRuntime:
             raise ValueError("MCP task tool is not registered")
         if not isinstance(args, dict):
             raise ValueError("MCP task arguments must be an object")
+        if submission_key is not None and (not self.task_submission_ready or not getattr(identity, "subject", "")
+                                           or not valid_task_submission_key(submission_key)):
+            raise ValueError("Task submission key is unavailable")
         handler["validate"](args)
         contract = None
         if output_schema is not None:
@@ -790,13 +811,22 @@ class DurableTaskRuntime:
         task_id = str(uuid.uuid4())
         encrypted = self._encrypt(args, task_id, "arguments", 256 * 1024)
         owners = self._owner_hashes(identity)
-        with self.pool.connection() as connection:
-            associate_owners(connection, self.namespace, owners)
+        if submission_key is None:
+            with self.pool.connection() as connection:
+                associate_owners(connection, self.namespace, owners)
         owner = owners[0]
         input_methods = _input_methods_for(client_capabilities)
         with self.pool.connection() as connection:
             with connection.transaction():
                 connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s,0))", (f"gregale_mcp_tasks:admission:{self.namespace}",))
+                if submission_key is not None:
+                    issued = int(submission_key[:8] + submission_key[9:13], 16) / 1000
+                    deadline = issued + TASK_SUBMISSION_WINDOW_SECONDS
+                    replay = self._replay_submission(connection, submission_key, issued, deadline,
+                                                     tool_name, args, input_methods, owners)
+                    if replay is not None:
+                        return replay
+                    associate_owners(connection, self.namespace, owners)
                 counts = connection.execute(
                     "SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE owner_hash=ANY(%s::bytea[]))::int AS owned FROM gregale_mcp_tasks WHERE namespace=%s AND expires_at>clock_timestamp() AND status IN ('queued','running','input_required')",
                     (owners, self.namespace),
@@ -807,6 +837,18 @@ class DurableTaskRuntime:
                     "INSERT INTO gregale_mcp_tasks(namespace,task_id,owner_hash,tool_name,handler_version,arguments_encrypted,input_methods,status,expires_at,output_schema) VALUES(%s,%s,%s,%s,%s,%s,%s,'queued',clock_timestamp()+(%s * interval '1 millisecond'),%s::jsonb) RETURNING created_at,updated_at,expires_at",
                     (self.namespace, task_id, owner, tool_name, handler["version"], encrypted, input_methods, self.ttl_ms, json.dumps(contract) if contract is not None else None),
                 ).fetchone()
+                if submission_key is not None:
+                    # Recheck the clock after admission and owner lock waits. A failed
+                    # update rolls back the Task insert and leaves no ordinary Task.
+                    changed = connection.execute("""UPDATE gregale_mcp_tasks SET submission_key=%s::uuid
+                        WHERE namespace=%s AND task_id=%s AND clock_timestamp()>=to_timestamp(%s)
+                        AND clock_timestamp()<to_timestamp(%s)""",
+                        (submission_key, self.namespace, task_id, issued, deadline))
+                    if changed.rowcount != 1:
+                        raise ValueError("Task submission key is unavailable")
+        return self._accepted_handle(task_id, row)
+
+    def _accepted_handle(self, task_id, row):
         return {
             "resultType": "task", "taskId": task_id, "status": "working",
             "statusMessage": "Task accepted for processing.",
@@ -814,6 +856,43 @@ class DurableTaskRuntime:
             "ttlMs": int((row["expires_at"] - row["created_at"]).total_seconds() * 1000),
             "pollIntervalMs": self.poll_interval_ms,
         }
+
+    def _replay_submission(self, connection, key, issued, deadline, tool_name, args, input_methods, owners):
+        within_window = connection.execute(
+            "SELECT clock_timestamp()>=to_timestamp(%s) AND clock_timestamp()<to_timestamp(%s) AS valid",
+            (issued, deadline)).fetchone()["valid"]
+        if not within_window:
+            raise ValueError("Task submission key is unavailable")
+        task = connection.execute("""SELECT task_id::text AS task_id, tool_name, input_methods, arguments_encrypted,
+            created_at, updated_at, expires_at, owner_hash=ANY(%s::bytea[]) AND expires_at>clock_timestamp() AS accessible
+            FROM gregale_mcp_tasks WHERE namespace=%s AND submission_key=%s::uuid""",
+            (owners, self.namespace, key)).fetchone()
+        if task is None:
+            return None
+        if not task["accessible"] or task["tool_name"] != tool_name or task["input_methods"] != input_methods:
+            raise ValueError("Task submission key is unavailable")
+        original = self._decrypt(task["arguments_encrypted"], task["task_id"], "arguments")
+        if not _same_task_arguments(original, args):
+            raise ValueError("Task submission key is unavailable")
+        within_window = connection.execute(
+            "SELECT clock_timestamp()<LEAST(to_timestamp(%s),%s::timestamptz) AS valid",
+            (deadline, task["expires_at"])).fetchone()["valid"]
+        if not within_window:
+            raise ValueError("Task submission key is unavailable")
+        return self._accepted_handle(task["task_id"], task)
+
+    def lookup_submission(self, key, identity, authenticator):
+        if not self.task_submission_ready or not getattr(identity, "subject", "") or not valid_task_submission_key(key):
+            raise TaskNotFound()
+        # Deliberately avoid owner-alias writes and reads of encrypted payload columns.
+        with self.pool.connection() as connection:
+            task = connection.execute("""SELECT task_id::text AS task_id, tool_name, status, created_at, updated_at, expires_at
+                FROM gregale_mcp_tasks WHERE namespace=%s AND submission_key=%s::uuid
+                AND owner_hash=ANY(%s::bytea[]) AND expires_at>clock_timestamp()""",
+                (self.namespace, key, self._owner_hashes(identity))).fetchone()
+        if task is None or not authenticator.can_access_tool(task["tool_name"], identity):
+            raise TaskNotFound()
+        return self._wire_metadata(task)
 
     def _read_task(self, task_id, identity):
         if not isinstance(task_id, str) or not TASK_ID_PATTERN.fullmatch(task_id):
@@ -842,14 +921,18 @@ class DurableTaskRuntime:
                 row[field] = self._decrypt(encrypted, task_id, field)
         return row
 
-    def _wire(self, task):
+    def _wire_metadata(self, task):
         status = "working" if task["status"] in {"queued", "running"} else task["status"]
-        value = {
+        return {
             "resultType": "complete", "taskId": task["task_id"], "status": status,
             "createdAt": _timestamp(task["created_at"]), "lastUpdatedAt": _timestamp(task["updated_at"]),
             "ttlMs": int((task["expires_at"] - task["created_at"]).total_seconds() * 1000),
             "pollIntervalMs": self.poll_interval_ms,
         }
+
+    def _wire(self, task):
+        value = self._wire_metadata(task)
+        status = value["status"]
         if status == "completed":
             value["result"] = task.get("result")
         if status == "failed":
@@ -1419,6 +1502,8 @@ def migrate_task_schema(pool):
         "CREATE INDEX IF NOT EXISTS gregale_mcp_task_worker_handlers_stale_idx ON gregale_mcp_task_worker_handlers(namespace,heartbeat_at)",
         "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS input_state_encrypted bytea, ADD COLUMN IF NOT EXISTS input_methods text[] NOT NULL DEFAULT '{}', ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false, ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz",
         "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK(output_schema IS NULL OR jsonb_typeof(output_schema)='object')",
+        "ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS submission_key uuid",
+        "CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx ON gregale_mcp_tasks(namespace,submission_key) WHERE submission_key IS NOT NULL",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check",
         "ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))",
         "ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_input_state_check",
@@ -1453,6 +1538,22 @@ def check_migration_schema(connection):
     if not row["trusted"]:
         raise ValueError("MCP Task migrations require a schema without PUBLIC CREATE")
     connection.execute("SELECT set_config('search_path',quote_ident(current_schema()) || ',pg_catalog',true)")
+
+
+def check_task_submission_index(pool):
+    """Keep ordinary Tasks available on the previous schema during rollout."""
+    with pool.connection() as connection:
+        row = connection.execute("""SELECT EXISTS (
+            SELECT 1 FROM pg_catalog.pg_index i
+            JOIN pg_catalog.pg_attribute ns ON ns.attrelid=i.indrelid AND ns.attname='namespace' AND NOT ns.attisdropped
+            JOIN pg_catalog.pg_attribute key ON key.attrelid=i.indrelid AND key.attname='submission_key' AND NOT key.attisdropped
+            WHERE i.indexrelid=to_regclass('gregale_mcp_tasks_submission_key_idx')
+                AND i.indrelid='gregale_mcp_tasks'::regclass
+                AND key.atttypid='pg_catalog.uuid'::regtype AND NOT key.attnotnull
+                AND i.indisvalid AND i.indisready AND i.indisunique AND i.indimmediate
+                AND i.indnkeyatts=2 AND i.indkey[0]=ns.attnum AND i.indkey[1]=key.attnum
+                AND pg_catalog.pg_get_expr(i.indpred,i.indrelid)='(submission_key IS NOT NULL)') AS ready""").fetchone()
+        return row["ready"]
 
 
 def check_task_schema(pool):

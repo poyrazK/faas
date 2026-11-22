@@ -52,6 +52,10 @@ type ObjectBucketUsage struct {
 	// transition fences the bucket's capacity. The inventory sweep skips
 	// such a bucket, and no admitted write can grow it, so its last
 	// inventory remains the bound for admission until the transition ends.
+	// It is also set while a bucket that needs an all-version refresh has a
+	// live multipart session: the refresh cannot start until the session
+	// completes or expires (ADR-533/540), and in that mode every admitted
+	// write and the session's parts hold tracked, conservative reservations.
 	InventoryHeld bool
 	// MutatedAt is the last time an admitted mutation may have changed what
 	// the bucket holds, stamped by Postgres at most once per

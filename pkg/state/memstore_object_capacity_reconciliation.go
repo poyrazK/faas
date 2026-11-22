@@ -38,6 +38,25 @@ func (m *MemStore) objectBucketTransitionLocked(bucket string) bool {
 	return false
 }
 
+// objectInventoryHeldLocked is ObjectUsageBuckets' inventory_held: a
+// transition, or an all-version refresh that cannot start while a multipart
+// session is live (ADR-533/540). That session's tracked reservations keep
+// capacity conservative, and the session ends by completion or expiry.
+func (m *MemStore) objectInventoryHeldLocked(bucket string) bool {
+	if m.objectBucketTransitionLocked(bucket) {
+		return true
+	}
+	if s := m.versionAccountingStatusLocked(bucket); s.Scope != ObjectInventoryAllVersions && !s.VersionsObserved {
+		return false
+	}
+	for _, u := range m.objectMultipartUploads {
+		if u.BucketID == bucket && objectMultipartLive(u.State) {
+			return true
+		}
+	}
+	return false
+}
+
 // A pending receipt owns its key until its result and accounting settle.
 // Different keys remain independent. A fixed multipart reservation may reuse
 // its own admission when preparing completion.

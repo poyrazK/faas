@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -208,6 +210,29 @@ func TestAnalyzeUnknownAndLoopbackWarning(t *testing.T) {
 	}
 	if !seen["framework_not_detected"] || !seen["loopback_bind_possible"] {
 		t.Fatalf("warnings = %+v, want framework_not_detected and loopback_bind_possible", got.Warnings)
+	}
+}
+
+// A deploy of the plain MCP starter printed four loopback warnings: its tests
+// and a server.js that binds 0.0.0.0 on Gregale and 127.0.0.1 elsewhere.
+func TestLoopbackWarningSkipsTestsAndChosenBinds(t *testing.T) {
+	got := loopbackWarnings(fstest.MapFS{
+		"server.js":                  &fstest.MapFile{Data: []byte("const host = onGregale ? '0.0.0.0' : '127.0.0.1'\n")},
+		"test/http.test.js":          &fstest.MapFile{Data: []byte("fetch('http://127.0.0.1:1')\n")},
+		"src/__tests__/a.js":         &fstest.MapFile{Data: []byte("localhost\n")},
+		"main_test.go":               &fstest.MapFile{Data: []byte("localhost\n")},
+		"test_server.py":             &fstest.MapFile{Data: []byte("localhost\n")},
+		"web/app.spec.ts":            &fstest.MapFile{Data: []byte("localhost\n")},
+		"api/listen.js":              &fstest.MapFile{Data: []byte("app.listen(3000, 'localhost')\n")},
+		"contest/localhost_check.py": &fstest.MapFile{Data: []byte("bind('127.0.0.1')\n")},
+	})
+	var sources []string
+	for _, warning := range got {
+		sources = append(sources, warning.Sources...)
+	}
+	sort.Strings(sources)
+	if want := []string{"api/listen.js", "contest/localhost_check.py"}; !slices.Equal(sources, want) {
+		t.Fatalf("loopback warnings on %v, want %v", sources, want)
 	}
 }
 

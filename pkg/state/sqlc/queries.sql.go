@@ -71819,6 +71819,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) AS active_observed,
@@ -71826,6 +71832,12 @@ o AS (
       WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
@@ -71834,6 +71846,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.active_since LIMIT 1) END AS activated,
@@ -71866,8 +71884,9 @@ type ObjectInventoryBacklogRow struct {
 // ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 // counts what ObjectInventoriesDue would hand out now (same rule).
 // oldest_age_seconds is the oldest observation admission still holds to the
-// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-// (with an observation), or whose listing advanced within progress_window on
+// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+// or whose all-version refresh waits for a live multipart session (with an
+// observation), or whose listing advanced within progress_window on
 // an observation under scan_max_age, stays fresh on an older one and does not
 // count (objectBucketInventoryStale). A bucket never observed counts from its
 // creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -77200,7 +77219,13 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+ OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=b.id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+   AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=b.id AND vu.inventory_scope='all_versions')
+   OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed)
+   OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required))))::boolean AS inventory_held,
 a.mutated_at, a.active_since, object_inventory_quiet_mode()::text AS inventory_quiet_mode
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
@@ -77272,6 +77297,9 @@ type ObjectUsageBucketsRow struct {
 // narrows by their indexes without changing the result. The subject function
 // alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 // every bucket on the platform, under the account lock of every object write.
+// inventory_held also covers an all-version-path bucket with a live multipart
+// session: its refresh cannot start until the session ends (ADR-533/540), and
+// its tracked reservations keep capacity conservative meanwhile.
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
 	rows, err := db.Query(ctx, objectUsageBuckets, arg.PeriodStart, arg.AccountID)
 	if err != nil {

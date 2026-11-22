@@ -5646,9 +5646,14 @@ the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
 
-The Node/PostgreSQL starter supports retrying a lost submission reply on an
-authenticated endpoint. Run the updated `tasks:migrate` before starting the
-updated starter. Generate and save a lowercase UUIDv7 before the first call.
+The `mcp-node-tasks` and `mcp-go-tasks` PostgreSQL starters support retrying a
+lost submission reply on an authenticated endpoint. Before starting the updated starter, run
+`npm run tasks:migrate` for Node or `go run . tasks-migrate apply` for Go with
+the migration binding. Generate and save a lowercase UUIDv7 before the first call.
+
+The `mcp-python-tasks` starter supports the same receipt and lookup flow. Apply
+its updated schema with the Python Task schema command from the starter README,
+then restart the web or combined process to advertise the extensions.
 
 ```sh
 gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
@@ -5676,6 +5681,33 @@ or an explicit result read.
 ```sh
 gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
   --task-submission-key "$TASK_SUBMISSION_KEY" --metadata-only
+```
+
+For a process that may restart, use a new private receipt file in place of a
+manually saved key. The CLI saves it before sending the Task submission.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --metadata-only
+```
+
+The receipt contains the submission key and a fingerprint of the resolved
+endpoint. Use the same endpoint and provide the original caller's credential
+when reading it. Use a new receipt path for each new submission. An existing
+receipt remains available for status lookup after a lost reply or CLI exit.
+
+To wait for the result directly from a receipt, use the same endpoint and
+provide the caller's current credential. This resolves the original Task even
+after the one-minute submission window, for as long as the Task is retained
+and the caller has tool access. Use `--cancel-on-timeout` to request cancellation
+if the wait times out after resolving the Task.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
 ```
 
 ## MCP catalog snapshots

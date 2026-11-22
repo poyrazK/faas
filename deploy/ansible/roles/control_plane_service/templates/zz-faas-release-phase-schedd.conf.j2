@@ -1,0 +1,4 @@
+[Service]
+# Release commands (faas_release_commands): this schedd dispatches the
+# deployment-attached release tasks that run them.
+Environment=FAAS_APP_TASK_DISPATCH={{ '1' if (faas_release_commands | bool) else '0' }}

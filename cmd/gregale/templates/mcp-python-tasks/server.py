@@ -1,6 +1,10 @@
 """Minimal stateless MCP Streamable HTTP server for Gregale."""
 
-from protocol_headers import validate_mcp_headers
+from protocol_headers import (
+    TASK_SUBMISSION_EXTENSION, TASK_SUBMISSION_KEY_META, TASK_SUBMISSION_LOOKUP_EXTENSION,
+    TASK_SUBMISSION_LOOKUP_METHOD, TASK_SUBMISSION_METHOD, valid_task_submission_key,
+    validate_mcp_headers,
+)
 from http_body import RequestBodyError, read_request_body
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -429,13 +433,13 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
             return 404, rpc_error(request_id, -32601, "method not found")
         return 200, rpc_response(request_id, {
             "supportedVersions": supported_protocols(legacy),
-            "capabilities": server_capabilities(task_runtime, modern=True),
+            "capabilities": server_capabilities(task_runtime, modern=True, authenticator=authenticator),
         })
     if method == "initialize":
         negotiated = negotiate_protocol(params.get("protocolVersion"), legacy)
         return 200, rpc_response(request_id, {
             "protocolVersion": negotiated,
-            "capabilities": server_capabilities(task_runtime, modern=negotiated == CURRENT_PROTOCOL),
+            "capabilities": server_capabilities(task_runtime, modern=negotiated == CURRENT_PROTOCOL, authenticator=authenticator),
             "serverInfo": {"name": "gregale-mcp-python", "version": "1.0.0"},
         })
     if method == "ping":
@@ -444,6 +448,8 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
         return 200, rpc_response(request_id, {"tools": visible_tools(authenticator, granted_scopes)})
     if method == "tools/call":
         return 200, call_tool(request_id, params, authenticator, granted_scopes, protocol, task_runtime)
+    if method == TASK_SUBMISSION_LOOKUP_METHOD:
+        return lookup_task_submission(request_id, params, authenticator, granted_scopes, protocol, task_runtime)
     if method == "resources/list":
         return 200, rpc_response(request_id, {"resources": visible_resources(authenticator, granted_scopes)})
     if method == "resources/templates/list":
@@ -490,7 +496,25 @@ def dispatch(message, protocol, authenticator, granted_scopes, task_runtime=None
     return 404, rpc_error(request_id, -32601, "method not found")
 
 
-def server_capabilities(task_runtime, modern):
+def supports_task_submission(task_runtime, authenticator):
+    return getattr(task_runtime, "task_submission_ready", False) and authenticator.mode == "external-oauth"
+
+
+def lookup_task_submission(request_id, params, authenticator, identity, protocol, task_runtime):
+    if protocol != CURRENT_PROTOCOL or not supports_task_submission(task_runtime, authenticator):
+        return 404, rpc_error(request_id, -32601, "method not found")
+    key = params.get("submissionKey")
+    if not valid_task_submission_key(key):
+        return 400, rpc_error(request_id, -32602, "submissionKey must be a lowercase UUIDv7")
+    try:
+        return 200, rpc_response(request_id, task_runtime.lookup_submission(key, identity, authenticator))
+    except TaskNotFound:
+        return 404, rpc_error(request_id, -32002, "task not found")
+    except Exception:
+        return 500, rpc_error(request_id, -32603, "could not read Task status")
+
+
+def server_capabilities(task_runtime, modern, authenticator):
     resources = {"listChanged": True}
     if modern:
         resources["subscribe"] = True
@@ -501,7 +525,9 @@ def server_capabilities(task_runtime, modern):
         "completions": {},
     }
     if task_runtime and modern:
-        capabilities["extensions"] = {"io.modelcontextprotocol/tasks": {}}
+        extensions = capabilities["extensions"] = {TASKS_EXTENSION_ID: {}}
+        if supports_task_submission(task_runtime, authenticator):
+            extensions.update({TASK_SUBMISSION_EXTENSION: {}, TASK_SUBMISSION_LOOKUP_EXTENSION: {}})
     return capabilities
 
 
@@ -601,19 +627,28 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
         except Exception:
             return tool_error(request_id, "tool arguments do not match inputSchema")
     metadata = params.get("_meta", {})
+    keyed = isinstance(metadata, dict) and TASK_SUBMISSION_KEY_META in metadata
     client_capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY, {}) if isinstance(metadata, dict) else {}
     extensions = client_capabilities.get("extensions", {}) if isinstance(client_capabilities, dict) else {}
     task_capability = extensions.get(TASKS_EXTENSION_ID) if isinstance(extensions, dict) else None
-    if (task_runtime and protocol == CURRENT_PROTOCOL and task_capability is not None and task_capability is not False
-            and task_runtime.can_create(name)):
+    has_tasks = (task_runtime and protocol == CURRENT_PROTOCOL and task_capability is not None
+                 and task_capability is not False and task_runtime.can_create(name))
+    if keyed and (not has_tasks or not supports_task_submission(task_runtime, authenticator)
+                  or not valid_task_submission_key(metadata[TASK_SUBMISSION_KEY_META])):
+        return tool_error(request_id, "Task submission key is unavailable")
+    if has_tasks:
         if name == "build_report" and arguments.get("request_approval") is True:
             elicitation = client_capabilities.get("elicitation") if isinstance(client_capabilities, dict) else None
             form_capable = isinstance(elicitation, dict) and (isinstance(elicitation.get("form"), dict) or not elicitation)
             if not form_capable:
                 return tool_error(request_id, "request_approval requires client support for elicitation form requests")
         try:
-            return rpc_response(request_id, task_runtime.create(name, arguments, granted_scopes, client_capabilities, output_schema=entry["definition"].get("outputSchema")))
+            options = {"submission_key": metadata[TASK_SUBMISSION_KEY_META]} if keyed else {}
+            return rpc_response(request_id, task_runtime.create(name, arguments, granted_scopes, client_capabilities,
+                                                                output_schema=entry["definition"].get("outputSchema"), **options))
         except ValueError:
+            if keyed:
+                return tool_error(request_id, "Task submission key is unavailable")
             return tool_error(request_id, "invalid task arguments or task queue capacity reached")
         except Exception:
             return rpc_error(request_id, -32603, "could not create MCP task")
@@ -1026,7 +1061,8 @@ class MCPHandler(BaseHTTPRequestHandler):
             self.serve_task_subscription(message["id"], params, protocol, granted_scopes)
             return
         stream_tool = MCP_CATALOG.get("tool", "stream_demo") if isinstance(params, dict) and params.get("name") == "stream_demo" else None
-        if message["method"] == "tools/call" and stream_tool is not None and stream_tool["handler"] is None:
+        if (message["method"] == "tools/call" and stream_tool is not None and stream_tool["handler"] is None
+                and self.headers.get("MCP-Method") != TASK_SUBMISSION_METHOD):
             if not self.server.authenticator.can_access_tool("stream_demo", granted_scopes):
                 self.send_rpc(200, tool_error(message["id"], "tool access denied"), protocol)
                 return

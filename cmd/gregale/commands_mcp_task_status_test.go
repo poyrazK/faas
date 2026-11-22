@@ -1,10 +1,13 @@
 package main_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -14,6 +17,66 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 )
+
+func TestMCPTaskWaitReceiptLookupUnavailable(t *testing.T) {
+	const tokenEnv = "GREGALE_TEST_MCP_TASK_TOKEN"
+	const token = "receipt-client-token"
+	const key = "019ab2ce-217c-7abc-89ab-123456789abc"
+	t.Setenv(tokenEnv, token)
+	var lookups atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			t.Error("request did not use the current caller credential")
+		}
+		var request struct {
+			ID     int    `json:"id"`
+			Method string `json:"method"`
+			Params struct {
+				SubmissionKey string `json:"submissionKey"`
+			} `json:"params"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		switch request.Method {
+		case "server/discover":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":{"supportedVersions":[%q],"capabilities":{"tools":{},"extensions":{"%s":{},"io.gregale/task-submission-lookup":{}}}}}`, request.ID, mcphosting.ProtocolVersion, mcphosting.TasksExtensionID)
+		case "gregale/tasks/lookup":
+			lookups.Add(1)
+			if request.Params.SubmissionKey != key {
+				t.Error("lookup used a different submission key")
+			}
+			w.Header().Set("Retry-After", "7")
+			w.WriteHeader(http.StatusServiceUnavailable)
+		default:
+			t.Errorf("unexpected operation after an unresolved lookup: %s", request.Method)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	endpoint := server.URL + "/mcp"
+	receipt := filepath.Join(t.TempDir(), "task.json")
+	body := fmt.Appendf(nil, `{"version":1,"endpointSha256":"%x","submissionKey":%q}`, sha256.Sum256([]byte(endpoint)), key)
+	if err := os.WriteFile(receipt, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, restoreOut := main.CaptureStdout(t)
+	stderr, restoreErr := main.CaptureStderr(t)
+	code := main.Run([]string{"mcp", "client", "wait", "--url", endpoint, "--task-receipt", receipt,
+		"--token-env", tokenEnv, "--cancel-on-timeout", "--json"})
+	restoreErr()
+	restoreOut()
+	if code != 3 || lookups.Load() != 1 {
+		t.Fatalf("receipt wait exit=%d lookups=%d stderr=%s", code, lookups.Load(), stderr.String())
+	}
+	want := map[string]any{"status": "unknown", "pollIntervalMs": float64(7000), "nextAction": "retry_status"}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &got); err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("receipt wait returned %s, want %v", out.String(), want)
+	}
+}
 
 func TestMCPTaskMetadataStatus(t *testing.T) {
 	const taskID = "saved-task"
