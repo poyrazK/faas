@@ -32,8 +32,13 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt ch
     cd /opt/gregale/profiling && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev && \
     cd /opt/gregale/tracing && NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt npm ci --omit=dev --ignore-scripts && \
     apt-get purge -y --auto-remove python3 make g++ && rm -rf /root/.npm /var/lib/apt/lists/*
+# libatomic1: guest-init skips Railpack's default apt step on shared runtime
+# bases because the base ships what it installs. Without it every app whose
+# start command runs pnpm (mise's pnpm 11 binary) crashed at startup with
+# "libatomic.so.1: cannot open shared object file" (prod hunt r28).
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get upgrade -y --no-install-recommends && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libatomic1 && \
     rm -rf /var/lib/apt/lists/* /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack && \
     rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack && \
     if id app >/dev/null 2>&1; then :; \
