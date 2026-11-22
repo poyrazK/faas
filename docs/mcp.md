@@ -5738,6 +5738,26 @@ a metadata snapshot with `provide_input`. Review the current request before
 supplying an answer again. If status is unavailable, exit code 3 accompanies
 `retry_status`. Check the same receipt or Task ID before submitting input.
 
+To review answers outside the submitting process, export the pending forms
+to a new private file. The template records the endpoint fingerprint, Task ID
+and each form's request ID and digest. It includes the form text and schema
+for review, and starts with a null response for each request.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --write-input-template ./reviewed-input.json
+```
+
+After reviewing a form, fill in its `response` field. For the example report,
+`{"action":"accept","content":{"approved":true}}` is an approval. Resume using
+the same endpoint and Task receipt. The CLI checks the Task and live form
+before sending any answer.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
+```
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:
