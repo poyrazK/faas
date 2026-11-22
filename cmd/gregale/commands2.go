@@ -7568,7 +7568,7 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		*archiveDate = resolvedDate
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
-	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+	if logSource == logsSourceHTTP && (*grep != "" || *level != "" || *explain || archiveRequested) {
 		if inferred := logsHTTPOnlyFlagsSet(fs); !logsFlagWasSet(fs, "source") && len(inferred) > 0 {
 			// `logs h14-py --grep healthz --limit 3` never asked for HTTP logs;
 			// --limit chose them silently (Hunt 14 H14-64).
@@ -7576,11 +7576,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 			if len(inferred) > 1 {
 				verb = "apply"
 			}
-			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --follow, --grep, --level, --explain, or --archive; drop %s to read runtime logs",
+			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --grep, --level, --explain, or --archive; drop %s to read runtime logs",
 				flags, verb, flags), "logs")
 			return 2
 		}
-		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
+		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --grep, --level, --explain, or --archive", "logs")
+		return 2
+	}
+	if logSource == logsSourceHTTP && *follow && (strings.TrimSpace(*requestID) != "" || strings.TrimSpace(*traceID) != "" || *all || logsFlagWasSet(fs, "limit")) {
+		// --follow polls new request rows; a single-request lookup or a
+		// full-window read has nothing to follow.
+		PrintUsage(os.Stderr, "--follow prints new HTTP requests as they are recorded; drop --request, --trace, --limit, or --all (filter with --route, --status, or --release)", "logs")
 		return 2
 	}
 	// Validate --level early so a typo costs the customer a network
@@ -7641,6 +7647,15 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 				return code
 			}
 		}
+	}
+	if logSource == logsSourceHTTP && *follow {
+		return followHTTPLogs(context.Background(), slug, api.DebugTelemetryListOptions{
+			Since:        normalizedSince,
+			Route:        *route,
+			DeploymentID: deploymentRef,
+			Status:       *status,
+			Limit:        *limit,
+		})
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
@@ -7776,6 +7791,14 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 		collector = newExplainCollector(slug, deployment)
 	}
 	printedLines := retainedLines
+	markRuntimeLine := func() {}
+	// Only an unfiltered follow: with --grep, --level or --deployment a quiet
+	// stream says nothing about whether the app writes output.
+	if follow && archive == nil && !jsonOutput && printedLines == 0 && deployment == "" && filter.Grep == "" && filter.Level == "" {
+		var stopIdleHint func()
+		markRuntimeLine, stopIdleHint = startRuntimeFollowIdleHint(slug)
+		defer stopIdleHint()
+	}
 	parkedFallback := false
 	// reconnectAt is set when a follow stream ended on its idle timeout:
 	// `gregale logs -f` reconnects instead of exiting 0 after ten quiet
@@ -7849,6 +7872,7 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 				return false, 0
 			}
 			printedLines++
+			markRuntimeLine()
 			line := e.Data
 			if !jsonOutput {
 				line = formatRuntimeLogLine(e.Data)

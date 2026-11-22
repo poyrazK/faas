@@ -515,6 +515,86 @@ type ObsWakeAppStat struct {
 	P95MS         int64  `json:"p95_ms"`
 }
 
+// ObsSnapshotHealthReport is GET /v1/admin/obs/snapshot-health
+// (ADR-20261122135018). A snapshot's footprint is its allocated mem + vmstate
+// (logical bytes from a legacy writer) plus its deployment's above-base layer,
+// as fcvm_snapshot_fleet_avg_bytes counts it; the fleet figures cover snapshots
+// that are not stale, as that gauge does. Truncated means more snapshot rows
+// existed than the report reads, so the smallest are missing from the figures.
+type ObsSnapshotHealthReport struct {
+	AsOf                   time.Time                    `json:"as_of"`
+	TargetMB               int64                        `json:"target_mb"`
+	WarnMB                 int64                        `json:"warn_mb"`
+	PageMB                 int64                        `json:"page_mb"`
+	Truncated              bool                         `json:"truncated"`
+	Totals                 ObsSnapshotTotals            `json:"totals"`
+	Tiers                  []ObsSnapshotGroup           `json:"tiers"`
+	FCVersions             []ObsSnapshotGroup           `json:"fc_versions"`
+	CPUTemplates           []ObsSnapshotGroup           `json:"cpu_templates"`
+	Largest                []ObsSnapshotRow             `json:"largest"`
+	RecentlyStale          []ObsSnapshotRow             `json:"recently_stale"`
+	Unsnapshotted          []ObsUnsnapshottedDeployment `json:"unsnapshotted"`
+	UnsnapshottedTruncated bool                         `json:"unsnapshotted_truncated"`
+}
+
+// ObsSnapshotTotals counts the fleet's snapshots. Live are not stale (some may
+// be pending deletion); NotColdBootable counts live deployments with neither a
+// usable snapshot nor a rootfs, which breaks spec invariant 6.2-3.
+type ObsSnapshotTotals struct {
+	Live            int   `json:"live"`
+	Stale           int   `json:"stale"`
+	DeletePending   int   `json:"delete_pending"`
+	LiveBytes       int64 `json:"live_bytes"`
+	AvgBytes        int64 `json:"avg_bytes"`
+	P95Bytes        int64 `json:"p95_bytes"`
+	OverWarn        int   `json:"over_warn"`
+	Unsnapshotted   int   `json:"unsnapshotted"`
+	NotColdBootable int   `json:"not_cold_bootable"`
+}
+
+// ObsSnapshotGroup is the live and stale snapshots sharing one key: a tier, a
+// Firecracker version, or a CPU template and model ("template/model").
+type ObsSnapshotGroup struct {
+	Key      string `json:"key"`
+	Live     int    `json:"live"`
+	Stale    int    `json:"stale"`
+	AvgBytes int64  `json:"avg_bytes"`
+}
+
+// ObsSnapshotRow is one snapshot with its app.
+type ObsSnapshotRow struct {
+	ID               string     `json:"id"`
+	DeploymentID     string     `json:"deployment_id"`
+	DeploymentStatus string     `json:"deployment_status"`
+	AppID            string     `json:"app_id"`
+	AppSlug          string     `json:"app_slug,omitempty"`
+	AccountID        string     `json:"account_id,omitempty"`
+	Tier             string     `json:"tier"`
+	FCVersion        string     `json:"fc_version"`
+	CPUTemplate      string     `json:"cpu_template,omitempty"`
+	CPUModel         string     `json:"cpu_model,omitempty"`
+	Stale            bool       `json:"stale"`
+	DeletePending    bool       `json:"delete_pending"`
+	SnapshotBytes    int64      `json:"snapshot_bytes"`
+	LayerBytes       int64      `json:"layer_bytes"`
+	FootprintBytes   int64      `json:"footprint_bytes"`
+	CreatedAt        time.Time  `json:"created_at"`
+	StaleAt          *time.Time `json:"stale_at,omitempty"`
+}
+
+// ObsUnsnapshottedDeployment is a live deployment of an active app with no
+// usable snapshot: every wake cold boots until one is taken. ColdBootable is
+// false when it has no rootfs either.
+type ObsUnsnapshottedDeployment struct {
+	DeploymentID string     `json:"deployment_id"`
+	AppID        string     `json:"app_id"`
+	AppSlug      string     `json:"app_slug,omitempty"`
+	AccountID    string     `json:"account_id,omitempty"`
+	ColdBootable bool       `json:"cold_bootable"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastStaleAt  *time.Time `json:"last_stale_at,omitempty"`
+}
+
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.
 // Data is deliberately omitted; the global audit page remains the explicit
 // high-detail path for an operator who is authorized to inspect it.
