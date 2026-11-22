@@ -45,6 +45,10 @@ am_smtp_smarthost: ""                          # e.g. "smtp.resend.com:587"; emp
 am_pushover_token_file: ""
 am_pushover_user_key_file: ""
 
+# Optional Events API v2 key file. Use a dedicated PagerDuty service per fleet
+# and set am_fleet_name to the fleet identifier shown to responders.
+am_delivery_pagerduty_key_file: ""
+
 # Chat webhooks. Each points at an operator-provisioned file holding the
 # webhook URL (the URL is the credential, so it never appears in vars or
 # the rendered config). Either one is a complete notification channel:

@@ -1230,6 +1230,7 @@ type App struct {
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
 	SandboxTemplate                   bool
+	OwnerHomeNodeID                   pgtype.UUID
 }
 
 type AppApiRoute struct {
@@ -10477,6 +10478,7 @@ type MeterNetworkCheckpoint struct {
 	InternalTxValid     bool
 	InternalTxPending   int64
 	ServiceReplyPending int64
+	NodeID              string
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {

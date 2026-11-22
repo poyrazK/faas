@@ -15,10 +15,12 @@ const FAIRNESS_TABLE = 'gregale_mcp_task_fairness';
 const FAIRNESS_SEQUENCE = 'gregale_mcp_task_claim_order_seq';
 const FAIRNESS_CLAIM_RETRIES = 16;
 const MAX_ARGUMENT_BYTES = 256 * 1024;
+const MIN_TASK_TTL_MS = 60_000;
 const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
 const SUPPORTED_INPUT_METHODS = new Set(['elicitation/create:form', 'elicitation/create:url', 'sampling/createMessage', 'roots/list']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isSubmissionKey = key => typeof key === 'string' && UUID_PATTERN.test(key) && key[14] === '7' && key === key.toLowerCase();
 
 const CREATE_WORKER_HANDLERS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS ${WORKER_HANDLERS_TABLE} (
@@ -283,7 +285,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
   if (!pool || typeof pool.query !== 'function') throw new Error('MCP Tasks require a PostgreSQL connection pool');
   if (typeof namespace !== 'string' || !namespace || namespace.length > 255) throw new Error('MCP Tasks require a stable app namespace');
   if (typeof ownerKey !== 'string' || Buffer.byteLength(ownerKey) < 32) throw new Error('MCP task owner key must contain at least 32 bytes');
-  if (!Number.isSafeInteger(ttlMs) || ttlMs < 60_000 || ttlMs > 30 * 24 * 60 * 60 * 1000) throw new Error('MCP task TTL must be between one minute and 30 days');
+  if (!Number.isSafeInteger(ttlMs) || ttlMs < MIN_TASK_TTL_MS || ttlMs > 30 * 24 * 60 * 60 * 1000) throw new Error('MCP task TTL must be between one minute and 30 days');
   for (const limit of [maxOutstanding, maxOutstandingPerOwner]) {
     if (!Number.isSafeInteger(limit) || limit < 1) throw new Error('MCP task admission limits must be positive integers');
   }
@@ -400,10 +402,12 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
     client.release();
   }
 
+  let supportsTaskSubmission = false;
   return {
+    get supportsTaskSubmission() { return supportsTaskSubmission; },
     async initialize({ admissionHandlers = [] } = {}) {
       validateMcpTaskAdmissionHandlers(admissionHandlers);
-      return withTransaction(pool, async client => {
+      supportsTaskSubmission = await withTransaction(pool, async client => {
         await checkMcpTaskSchema({ pool: client, namespace, inTransaction: true });
         const registered = await client.query('SELECT key_id, key_fingerprint FROM gregale_mcp_task_crypto_keys WHERE namespace = $1', [namespace]);
         const known = new Map(registered.rows.map(row => [row.key_id, row.key_fingerprint]));
@@ -417,6 +421,10 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           const configured = await client.query('SELECT enabled FROM gregale_mcp_task_admission WHERE namespace = $1 AND tool_name = $2 AND handler_version = $3', [namespace, handler.name, handler.version]);
           if (!configured.rows.length) throw new Error('MCP Task handler version is not registered; run tasks:migrate before startup');
         }
+        const submissionIndex = await client.query(`SELECT EXISTS (SELECT 1 FROM pg_index
+          WHERE indexrelid = to_regclass('gregale_mcp_tasks_submission_key_idx')
+            AND indrelid = '${TABLE}'::regclass AND indisvalid AND indisunique) AS ready`);
+        return submissionIndex.rows[0]?.ready === true;
       }, { readOnly: true });
     },
     async migrate({ admissionHandlers = [] } = {}) {
@@ -472,6 +480,9 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           ON CONFLICT (namespace, owner_hash) DO NOTHING
         `, [namespace]);
         await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK (output_schema IS NULL OR jsonb_typeof(output_schema) = 'object')`);
+        await client.query(`ALTER TABLE ${TABLE} ADD COLUMN IF NOT EXISTS submission_key uuid`);
+        await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx
+          ON ${TABLE} (namespace, submission_key) WHERE submission_key IS NOT NULL`);
         await initializeMcpTaskAdmission(client, namespace, admissionHandlers, { schema: version < 1 });
         // Verify every retained field before registering or retiring keys.
         await authenticateRetainedMcpTaskPayloads(client, namespace, payloadKey);
@@ -532,10 +543,21 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       await pool.query(`DELETE FROM ${WORKER_TABLE} WHERE namespace = $1 AND worker_id = $2::uuid`, [namespace, workerID]);
     },
     queueMetrics: createMcpTaskQueueObserver({ pool, namespace, maxRunning, maxRunningPerOwner, maxAttempts }).queueMetrics,
-    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [], outputSchema }) {
+    async create({ toolName, handlerVersion, args, authInfo, authMode, inputMethods = [], outputSchema, submissionKey }) {
       if (!isMcpTaskToolName(toolName)) throw new Error('Invalid MCP task tool name');
       if (typeof handlerVersion !== 'string' || !/^[A-Za-z0-9._-]{1,64}$/.test(handlerVersion)) throw new Error('Invalid MCP task handler version');
       if (!Array.isArray(inputMethods) || inputMethods.some(method => !SUPPORTED_INPUT_METHODS.has(method))) throw new Error('Invalid MCP task input capabilities');
+      let keyIssuedAt, keyExpiresAt;
+      const unavailable = 'Task submission key is unavailable';
+      if (submissionKey !== undefined) {
+        if (!supportsTaskSubmission || authMode !== 'external-oauth' || !isSubmissionKey(submissionKey)) {
+          throw new Error(unavailable);
+        }
+        const issuedMs = Number.parseInt(submissionKey.slice(0, 8) + submissionKey.slice(9, 13), 16);
+        keyIssuedAt = new Date(issuedMs);
+        // A Task cannot expire before an accepted key's replay window closes.
+        keyExpiresAt = new Date(issuedMs + MIN_TASK_TTL_MS);
+      }
       const taskID = randomUUID();
       const encryptedArgs = encryptJSON(args, payloadKey, taskAAD(namespace, taskID, 'arguments'), MAX_ARGUMENT_BYTES, 'MCP task arguments');
       const owners = ownerHashes(authInfo, authMode);
@@ -544,6 +566,24 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
         // Serialize admission across web replicas, using the same database clock
         // and transaction as the insert. Waiting for input still consumes capacity.
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`${TABLE}:admission:${namespace}`]);
+        if (submissionKey !== undefined) {
+          const valid = await client.query(`SELECT clock_timestamp() >= $1 AND clock_timestamp() < $2 AS valid`, [keyIssuedAt, keyExpiresAt]);
+          if (!valid.rows[0]?.valid) throw new Error(unavailable);
+          const prior = await client.query(`SELECT task_id::text, tool_name, handler_version, status,
+            created_at, updated_at, expires_at, attempt_count, input_methods, arguments_encrypted,
+            owner_hash = ANY($3::bytea[]) AND expires_at > clock_timestamp() AS accessible
+            FROM ${TABLE} WHERE namespace = $1 AND submission_key = $2::uuid`, [namespace, submissionKey, owners]);
+          const row = prior.rows[0];
+          if (row) {
+            if (!row.accessible) throw new Error(unavailable);
+            const original = decryptJSON(row.arguments_encrypted, payloadKey, taskAAD(namespace, row.task_id, 'arguments'));
+            if (row.tool_name !== toolName || !isDeepStrictEqual(row.input_methods, inputMethods) ||
+              !isDeepStrictEqual(original, JSON.parse(JSON.stringify(args)))) {
+              throw new Error('Task submission key was used with different inputs');
+            }
+            return prior;
+          }
+        }
         await associateMcpTaskOwners(client, namespace, owners);
         const counts = await client.query(`
           SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE owner_hash = ANY($2::bytea[]))::int AS owned
@@ -555,7 +595,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
           error.code = 'MCP_TASK_CAPACITY';
           throw error;
         }
-        return client.query(`
+        const created = await client.query(`
         INSERT INTO ${TABLE} (
           namespace, task_id, owner_hash, tool_name, handler_version,
           arguments_encrypted, input_methods, status, expires_at, output_schema
@@ -564,6 +604,13 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
                   created_at, updated_at, expires_at, attempt_count,
                   lease_token, cancel_requested_at, input_methods
         `, [namespace, taskID, owner, toolName, handlerVersion, encryptedArgs, inputMethods, ttlMs, outputSchema === undefined ? null : JSON.stringify(outputSchema)]);
+        if (submissionKey !== undefined) {
+          const recorded = await client.query(`UPDATE ${TABLE} SET submission_key = $3::uuid
+            WHERE namespace = $1 AND task_id = $2::uuid AND clock_timestamp() >= $4 AND clock_timestamp() < $5`,
+          [namespace, taskID, submissionKey, keyIssuedAt, keyExpiresAt]);
+          if (recorded.rowCount !== 1) throw new Error(unavailable);
+        }
+        return created;
       }).catch(error => {
         if (error.code === '23514' && error.constraint === 'gregale_mcp_task_admission') {
           const denied = new Error('MCP Task handler version is not accepting new Tasks');
@@ -588,6 +635,14 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            AND expires_at > clock_timestamp()
       `, [namespace, taskID, ownerHashes(authInfo, authMode)]);
       return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace) : null;
+    },
+    async getBySubmissionKey({ submissionKey, authInfo, authMode }) {
+      if (!supportsTaskSubmission || authMode !== 'external-oauth' || !isSubmissionKey(submissionKey)) return null;
+      const result = await pool.query(`SELECT task_id::text, tool_name, status, created_at, updated_at, expires_at
+        FROM ${TABLE}
+        WHERE namespace = $1 AND submission_key = $2::uuid AND owner_hash = ANY($3::bytea[])
+          AND expires_at > clock_timestamp()`, [namespace, submissionKey, ownerHashes(authInfo, authMode)]);
+      return result.rows?.[0] ?? null;
     },
     async getMany({ taskIDs, authInfo, authMode }) {
       const ids = [...new Set((Array.isArray(taskIDs) ? taskIDs : []).filter(taskID => typeof taskID === 'string' && UUID_PATTERN.test(taskID)))];

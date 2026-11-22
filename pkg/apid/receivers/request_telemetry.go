@@ -22,7 +22,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -107,6 +109,8 @@ type requestTelemetryReceiver struct {
 	// rollups, when set, counts every row a plan keeps into the analytics
 	// rollups before the ingest cap (ADR-20261103113952).
 	rollups *RequestAnalyticsRollups
+	// dbErrorLoggedAt throttles the db_error warning to one a minute.
+	dbErrorLoggedAt atomic.Int64
 }
 
 // RequestTelemetryOption configures RegisterRequestTelemetryReceiver.
@@ -676,6 +680,15 @@ func (r *requestTelemetryReceiver) finishInsert(out *apidpb.IncrementRequestTele
 		// 100..599, ...) or any other failure is a db_error.
 		r.observe(rtOutcomeDBError)
 		out.Outcome = rtOutcomeDBError
+		// The error was dropped silently: a CHECK rejecting every platform
+		// cron row ('gregale-cron' ua_family) reset telemetry coverage every
+		// 15 minutes and held every canary on the fleet, and only the
+		// Postgres log said why (deploy-path probe 2026-11-21, R2-1).
+		// One line a minute names the cause without flooding the log.
+		now := time.Now().UnixNano()
+		if last := r.dbErrorLoggedAt.Load(); now-last >= int64(time.Minute) && r.dbErrorLoggedAt.CompareAndSwap(last, now) {
+			slog.Warn("request telemetry: insert rejected; the row is dropped and coverage may reset", "err", insertErr)
+		}
 		return
 	}
 	r.observe(RtOutcomeInserted)

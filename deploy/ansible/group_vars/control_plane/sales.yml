@@ -1,0 +1,11 @@
+# group_vars/control_plane/sales.yml — production's sales workspace
+# (docs/ops/sales-referrals.md, ADR-20261120181500).
+#
+# Turns on the sales workspace at https://sales.gregale.dev and the referral
+# surfaces. Owner admins come only from this list; they add managers and
+# salespeople and set each salesperson's commission agreement in the portal.
+# Without an agreement the program default faas_sales_commission_bps applies
+# (role default 0). Gregale moves no money; payouts are a ledger only.
+faas_sales_enabled: true
+faas_sales_admin_emails:
+  - poyrazk@gregale.dev

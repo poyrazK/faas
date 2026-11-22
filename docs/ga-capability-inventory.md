@@ -44,7 +44,7 @@ Columns:
 
 | Tier | Rows | Meaning |
 |---|---|---|
-| `GA` | 48 | Ships in v1.0, billed, held to the "ready to charge" bar. |
+| `GA` | 49 | Ships in v1.0, billed, held to the "ready to charge" bar. |
 | `beta` | 31 | On for every account, labelled beta, may change, no service credits. |
 | `preview` | 46 | Off by default; released per account with a platform flag (design partners). |
 | `internal` | 42 | Hidden from customers; development frozen until after v1.0. |
@@ -61,12 +61,16 @@ Columns:
   Managed Postgres joined GA on 2026-10-31 (ADR-20261031091607) with a
   customer journey against the deployed product; resize and organization
   databases are beta, cutovers stay preview.
+  Object storage joined GA on OVH (ADR-20261121230052, row 108); its
+  acceptance evidence is a customer journey run against production.
+  Versioning, Object Lock, lifecycle rules, encryption keys, CORS and bucket
+  access grants stay preview (row 175).
 - **beta** is what customers expect around that core and what already runs on
   production, but should not hold up the charge bar: canaries,
   jobs and workflows, edge rules, caching, alerts, orgs.
-- **preview** is every large standalone product (object storage,
-  Data API, realtime, live queries, application Auth, AI gateway, durable
-  entities, events and queues, Operations, MCP hosting) and every feature that
+- **preview** is every large standalone product (Data API, realtime, live
+  queries, application Auth, AI gateway, durable entities, events and queues,
+  Operations, MCP hosting) and every feature that
   is off or flagged today. Resource-holding products need proven backups and
   plan limits before anyone depends on them.
 - **internal** is operator tooling, frozen experiments, and features that
@@ -231,7 +235,8 @@ internal hosting service and Gregale Agents are already unreachable.
 
 | # | Capability | Where it lives | Catalog | Gate today | Tier |
 |---|---|---|---|---|---|
-| 108 | Object storage: buckets, signed URLs, upload routes, S3 gateway, versioning, lifecycle rules, object lock, write protection, encryption keys, change notifications, multipart uploads | `buckets`, `upload-routes`, object-storaged, s3-gatewayd | `object-storage` preview | `s3_enabled` | preview |
+| 108 | Object storage: buckets, public buckets, signed URLs, upload routes, S3 gateway and S3 credentials, multipart uploads, app bindings (incl. key-scoped), change notifications and compute triggers | `buckets`, `upload-routes`, object-storaged, s3-gatewayd | `object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`, `object-storage-compute`, `object-storage-key-scopes` ga | `s3_enabled`; `pf: object_storage` and its sub-feature flags (stored default closed until the production journey passes, ADR-20261121230052) | GA |
+| 175 | Bucket versioning, Object Lock and write protection, lifecycle rules, encryption keys, bucket CORS and bucket access grants (not served by the OVH backend) | `buckets/{id}/versioning`, `object-lock`, `protection`, `lifecycle`, `encryption`, `cors`, `access-grants` | `object-versioning`, `object-protection`, `object-lifecycle`, `bucket-encryption`, `bucket-cors`, `bucket-access-grants` preview (children of `object-storage`) | platform flags; the parent must be released too | preview |
 | 109 | Managed Postgres (account and org databases): point-in-time restore, scale-to-zero, availability classes, resize, connection pool | `/v1/postgres`, org `postgres` | `managed-postgres`, `postgres-bindings`, `postgres-restore` ga; `postgres-compute-policy`, `org-postgres` beta; `postgres-cutovers` preview | `pf: managed_postgres`; production approval (ADR-20261028103115) | GA |
 | 174 | Managed Redis: Valkey caches on compute nodes with scale to zero, data kept across park, restart and resize (ADR-20261116192126) | `/v1/redis`, `redis`, Compose `redis`/`valkey` services, gateway RESP session | `managed-redis` preview | `pf: managed_redis` (capability flag, default off) | preview |
 | 110 | Data API | `data-api`, `/v1/apps/{slug}/data-api` | `data-api` preview (child of `managed-postgres`) | platform flag; the parent must be released too | preview |

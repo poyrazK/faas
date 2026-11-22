@@ -7,7 +7,8 @@ to the configured path. Failed deliveries use the existing async retry and
 dead-letter lifecycle. An explicitly bound workflow callback is completed
 directly instead of creating an app invocation.
 
-The providers are `stripe` and `generic`. Inbound webhooks are available on
+Use an inbound webhook endpoint to receive Stripe webhooks or any other signed
+webhook. The providers are `stripe` and `generic`. Inbound webhooks are available on
 the Hobby, Pro, and Scale plans.
 
 ## Generic provider

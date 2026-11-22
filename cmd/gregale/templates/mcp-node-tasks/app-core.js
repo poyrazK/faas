@@ -18,6 +18,8 @@ const taskCallContext = new AsyncLocalStorage();
 // server without Tasks carries none of its code.
 const NO_TASKS = Object.freeze({ clientSupportsMcpTasks: () => false, installMcpTaskHandlers: () => {}, MCP_TASKS_EXTENSION_ID: '', mcpTaskHandlers: undefined });
 const MCP_CLIENT_CAPABILITIES_META_KEY = 'io.modelcontextprotocol/clientCapabilities';
+const TASK_SUBMISSION_KEY_META = 'io.gregale/task-submission-key';
+const TASK_SUBMISSION_METHOD_HEADER = 'gregale/tasks/submit';
 const MCP_SUBSCRIPTION_ID_META_KEY = 'io.modelcontextprotocol/subscriptionId';
 const MCP_SERVER_INFO_META_KEY = 'io.modelcontextprotocol/serverInfo';
 const MCP_SERVER_INFO = { name: 'gregale-mcp-server', version: '1.0.0' };
@@ -165,6 +167,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   const tasksEnabled = config.tasks?.enabled === true;
   if (config.tasks !== undefined && (typeof config.tasks !== 'object' || config.tasks === null || typeof config.tasks.enabled !== 'boolean')) throw new Error('tasks.enabled must be explicitly true or false when task settings are present');
   if (tasksEnabled !== !!taskRuntime) throw new Error('MCP Tasks require an enabled durable task runtime');
+  const supportsTaskSubmission = () => config.auth?.mode === 'external-oauth' && taskRuntime?.supportsTaskSubmission?.();
   const resourceUpdateAdapter = suppliedResourceUpdateAdapter || createResourceUpdateHub();
   if (typeof resourceUpdateAdapter.publish !== 'function' || typeof resourceUpdateAdapter.subscribe !== 'function') {
     throw new Error('resourceUpdateAdapter must implement publish(uri) and subscribe(uri, listener)');
@@ -228,21 +231,25 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
 
   function createServer({ authInfo, era }) {
     const caller = verifiedCallerIdentity(authInfo);
+    const keyedTasks = era === 'modern' && supportsTaskSubmission();
     const canReadSampleRecord = recordID => Object.hasOwn(SAMPLE_RECORD_OWNERS, recordID)
       && (config.auth.mode === 'open' || SAMPLE_RECORD_OWNERS[recordID] === caller?.subject);
     const server = createCatalogServer({ name: 'gregale-mcp-server', version: '1.0.0' }, {
       capabilities: {
         tools: { listChanged: true }, resources: { listChanged: true, ...(era === 'modern' ? { subscribe: true } : {}) }, prompts: { listChanged: true }, completions: {},
-        ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {} } } : {}),
+        ...(taskRuntime ? { extensions: { [MCP_TASKS_EXTENSION_ID]: {},
+          ...(keyedTasks ? { 'io.gregale/task-submission': {}, 'io.gregale/task-submission-lookup': {} } : {}),
+        } } : {}),
       },
     });
     observeServerTransport(server, protocolContext.getStore());
-    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo));
+    if (taskRuntime) installMcpTaskHandlers(server, taskRuntime, authInfo, config.auth.mode, name => auth.toolPolicy.canAccess(name, authInfo), keyedTasks);
     for (const entry of catalog.tools()) {
       // Each SDK server serves one HTTP request. A Tasks call returns a handle,
       // so final-output validation belongs to its worker. Discovery and ordinary
       // calls retain the original advertised schema and SDK validation.
-      const taskCall = era === 'modern' && taskCallContext.getStore() === entry.name && taskRuntime?.canCreate?.(entry.name);
+      const request = taskCallContext.getStore();
+      const taskCall = era === 'modern' && request?.toolName === entry.name && taskRuntime?.canCreate?.(entry.name);
       const callback = async (args, ctx) => {
         if (typeof taskRuntime?.canCreate === 'function' && taskRuntime.canCreate(entry.name) && clientSupportsMcpTasks(ctx)) {
           const clientCapabilities = ctx.mcpReq.envelope?.[MCP_CLIENT_CAPABILITIES_META_KEY] || {};
@@ -252,7 +259,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
               return { isError: true, content: [{ type: 'text', text: 'request_approval requires client support for elicitation form requests.' }] };
             }
           }
-          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities, entry.definition.outputSchema);
+          return taskRuntime.create(entry.name, args, authInfo, config.auth.mode, clientCapabilities, entry.definition.outputSchema, request?.submissionKey);
         }
         return entry.handler(args, ctx, { authInfo, config, taskRuntime });
       };
@@ -659,13 +666,25 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
     const observation = observeProtocolRequest(req, res, log);
     res.protocolObservation = observation;
     protocolContext.run(observation, () => {
+      const meta = req.body?.params?._meta;
+      const taskName = req.body?.method === 'tools/call'
+        && clientSupportsMcpTasks({ mcpReq: { envelope: meta } }) ? req.body?.params?.name : undefined;
+      const submissionKey = meta?.[TASK_SUBMISSION_KEY_META];
+      const keyed = req.headers['mcp-method'] === TASK_SUBMISSION_METHOD_HEADER;
+      if (keyed || submissionKey !== undefined) {
+        if (!keyed || protocolVersion !== CURRENT_PROTOCOL_VERSION || !supportsTaskSubmission() || !taskName ||
+          !taskRuntime?.canCreate?.(taskName) || typeof submissionKey !== 'string') {
+          return jsonRpcError(res, req.body?.id ?? null, -32602, 'Keyed Task submission is unavailable for this request', 400);
+        }
+        // The gateway and guest OAuth policy already authorized the body.
+        // Dispatch through normal SDK validation after accepting the extension marker.
+        req.headers['mcp-method'] = 'tools/call';
+      }
       if (isManagedSubscriptionRequest(req)) {
         void serveTaskSubscription(req, res).catch(next);
         return;
       }
-      const taskName = req.body?.method === 'tools/call'
-        && clientSupportsMcpTasks({ mcpReq: { envelope: req.body?.params?._meta } }) ? req.body?.params?.name : undefined;
-      taskCallContext.run(taskName, () => { void nodeHandler(req, res, req.body).catch(next); });
+      taskCallContext.run({ toolName: taskName, submissionKey }, () => { void nodeHandler(req, res, req.body).catch(next); });
     });
   });
   app.use((error, _req, res, _next) => {

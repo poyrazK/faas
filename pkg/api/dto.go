@@ -7552,8 +7552,8 @@ type WakeTimelineApp struct {
 //     this app in the window. GBHours is the rounded float
 //     (6-decimal precision — mirrors MonthlyUsageGB's rounding).
 //   - Requests / TxBytes: cumulative HTTP activity (informational).
-//   - BuilderSeconds: cumulative builder-microVM CPU-time
-//     (informational — surfaced as a sidebar line on the dashboard).
+//   - BuilderSeconds: wall-clock seconds of the app's builds that
+//     finished in the window (informational — a dashboard sidebar line).
 //   - ColdBootCount: WAKE_RESTORE→WAKE_COLD_BOOT transitions.
 //   - PlanIncludedGBHours: echoed from acct.Plan.PlanIncludedGBHours()
 //     so the dashboard can render the included-band badge without
@@ -7562,7 +7562,7 @@ type WakeTimelineApp struct {
 //     app shares the plan allowance, so one app's usage has no overage
 //     of its own. Kept for older clients; GET /v1/usage/summary reports
 //     the account's billed overage (ADR-20261101113742).
-//   - Source: "usage_minutes" today (after the 30d retention cap).
+//   - Source: "usage_minutes" today (13-month retention).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
 //   - AsOf: RFC3339Nano UTC stamping the envelope's authoritative

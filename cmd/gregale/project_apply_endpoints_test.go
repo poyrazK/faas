@@ -51,6 +51,21 @@ func TestRenderProjectEndpointsListsURLsAndAuth(t *testing.T) {
 	}
 }
 
+// R6-3 (deploy-path probe 2026-11-21): a project whose apps are all internal
+// printed "Endpoints:" with no URL and no way to make one public.
+func TestRenderProjectEndpointsSaysHowToPublishWhenAllInternal(t *testing.T) {
+	apps := fakeProjectAppReader{
+		"r6-web": {Slug: "r6-web", Visibility: string(api.AppVisibilityInternal)},
+		"r6-api": {Slug: "r6-api", Visibility: string(api.AppVisibilityInternal)},
+	}
+	apply := api.ApplyResponse{Apps: []api.ApplyResponseApp{{Slug: "r6-web"}, {Slug: "r6-api"}}}
+	var out bytes.Buffer
+	renderProjectEndpoints(context.Background(), &out, apps, apply)
+	if got := out.String(); !strings.Contains(got, "no app has a public URL; to give one a public URL: gregale app r6-web --visibility public") {
+		t.Fatalf("output:\n%s", got)
+	}
+}
+
 type fakePlainVariables struct{ resp api.AppEnvListResponse }
 
 func (f fakePlainVariables) GetAppsSlugEnvValues(context.Context, string, string) (api.AppEnvListResponse, error) {

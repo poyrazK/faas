@@ -463,8 +463,8 @@ func cmdDeployment(args []string) int {
 }
 
 // cmdDeploymentWait polls a deployment until it is live or terminal. With
-// --rollout, a canary deployment must also reach rollout_state=complete before
-// the command reports success. --progress prints only lifecycle/rollout
+// --rollout, a deployment must complete its rollout and take all traffic in
+// the weighted default scope. --progress prints only lifecycle/rollout
 // transitions in human mode; JSON remains a single terminal deployment row.
 // It is intentionally a separate verb so CI callers do not have to reconstruct
 // the platform's status vocabulary (or mistake an HTTP 200 for a successful
@@ -487,7 +487,7 @@ func cmdDeploymentWait(args []string) int {
 	}
 	if *forFlag != "" {
 		if *rollout || *progress {
-			return printErr("Invalid wait options", fmt.Errorf("--for replaces --rollout and --progress; --rollout is --for RolledOut"))
+			return printErr("Invalid wait options", fmt.Errorf("--for cannot be combined with --rollout or --progress"))
 		}
 		return waitDeploymentCondition(*appFlag, pos[0], *forFlag, time.Duration(*timeoutSeconds)*time.Second)
 	}
@@ -560,7 +560,10 @@ func cmdDeploymentWait(args []string) int {
 				}
 				return printErr("Safe rollout did not complete", fmt.Errorf("deployment %s stopped before 100%% traffic: %s", d.ID, reason))
 			}
-			if !*rollout || deploymentRolloutComplete(d) {
+			// Named project environments route by release membership, so
+			// their deployments can serve with a weight of zero.
+			if !*rollout || (deploymentRolloutComplete(d) &&
+				(trafficScope(d) != api.DefaultEnvScope || d.TrafficPercent == 100)) {
 				if jsonOutput {
 					return jsonOut(writeJSON(d))
 				}

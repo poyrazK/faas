@@ -20,7 +20,7 @@ SOURCE = "http://127.0.0.1:9094/metrics"
 # Match the existing operator notification response and integration budgets.
 MAX_BYTES = 1 << 20
 MAX_PAIRS = 32
-RECEIVERS = {"faas-page", "faas-warn", "faas-heartbeat"}
+RECEIVERS = {"faas-delivery-page", "faas-heartbeat", "faas-page", "faas-warn"}
 INTEGRATIONS = {"email", "pushover", "slack", "webhook", "pagerduty", "opsgenie", "victorops", "wechat", "telegram", "discord", "webex", "sns", "msteams", "msteamsv2", "rocketchat", "jira"}
 INPUTS = {
     "alertmanager_notification_requests_total": "requests",
