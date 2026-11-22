@@ -5614,7 +5614,7 @@ is limited to those fields.
 
 - `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
 - `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
-- `read_result` means the Task completed. Use the default `client status` output to read its result.
+- `read_result` means the Task completed. Use `client status` with the Task ID or use `--read-result` with a receipt.
 - `none` means the Task failed or was cancelled.
 - `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
 
@@ -5698,6 +5698,17 @@ The receipt contains the submission key and a fingerprint of the resolved
 endpoint. Use the same endpoint and provide the original caller's credential
 when reading it. Use a new receipt path for each new submission. An existing
 receipt remains available for status lookup after a lost reply or CLI exit.
+
+To read the result from a receipt in one status check, use `--read-result`.
+The CLI resolves the original Task using the caller's current credential and
+fetches its result once if it completed. The completed Task has the same JSON
+format as a status read by Task ID. In other states the CLI returns metadata
+and a `nextAction` immediately.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --read-result
+```
 
 To wait for the result directly from a receipt, use the same endpoint and
 provide the caller's current credential. This resolves the original Task even

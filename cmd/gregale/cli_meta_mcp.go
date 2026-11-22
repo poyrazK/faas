@@ -39,6 +39,7 @@ func mcpCLICommand() cliCommand {
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
+		cliFlag{Name: "read-result", Short: "read a completed Task result from a private receipt"},
 		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7", Value: "UUID"},
 		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt", Value: "FILE"},
 		cliFlag{Name: "write-input-template", Short: "write pending forms to a new private file", Value: "FILE"},

@@ -459,10 +459,11 @@ func cmdMCPRemote(command string, args []string) int {
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
-	var metadataOnly bool
+	var metadataOnly, readResult bool
 	var inputTemplatePath, reviewedInputPath string
 	if command == "task-get" {
 		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
+		fs.BoolVar(&readResult, "read-result", false, "read a completed Task result from a private receipt")
 		fs.Func("write-input-template", "write pending forms to a new private file", func(value string) error {
 			if value == "" {
 				return errors.New("task input template path is required")
@@ -523,8 +524,14 @@ func cmdMCPRemote(command string, args []string) int {
 	if metadataOnly && inputTemplatePath != "" {
 		return printErr("Invalid MCP task flags", errors.New("choose --metadata-only or --write-input-template"))
 	}
-	if command == "task-get" && keyed && ((!metadataOnly && inputTemplatePath == "") || *taskID != "") {
-		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only or --write-input-template and accepts one Task selector"))
+	if readResult && taskReceiptPath == "" {
+		return printErr("Invalid MCP task flags", errors.New("--read-result requires --task-receipt"))
+	}
+	if readResult && (metadataOnly || inputTemplatePath != "") {
+		return printErr("Invalid MCP task flags", errors.New("choose --read-result, --metadata-only or --write-input-template"))
+	}
+	if command == "task-get" && keyed && ((!metadataOnly && !readResult && inputTemplatePath == "") || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only, --read-result or --write-input-template and accepts one Task selector"))
 	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
@@ -595,6 +602,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if metadataOnly {
 		return runMCPTaskMetadataStatus(ctx, c, *taskID, submissionKey)
+	}
+	if readResult {
+		return runMCPTaskReceiptResult(ctx, c, submissionKey)
 	}
 	if inputTemplatePath != "" {
 		return runMCPTaskInputTemplate(ctx, c, *taskID, submissionKey, inputTemplatePath)

@@ -2450,6 +2450,9 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
         return;
       }
       if (reviewedInput) {
+        const beforeRead = requests.length;
+        assert.deepEqual(JSON.parse(await cli('status', owner, 0, [...selector, '--read-result'])), snapshot);
+        assert.deepEqual(requests.slice(beforeRead), ['server/discover', 'gregale/tasks/lookup']);
         const file = join(clientDir, 'reviewed-input.json');
         const exportArgs = [...selector, '--write-input-template', file];
         assert.equal(await cli('status', foreign, 1, exportArgs), '');
@@ -2562,8 +2565,14 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
     assert.equal(await lookup(foreign, 1), '');
     assert.equal(await lookup(ownerWithoutTool, 1), '');
     if (useReceipt) {
+      const readArgs = [...selector, '--read-result'];
       const beforeMismatch = requests.length;
       assert.equal(await cli('status', owner, 1, [...selector, '--metadata-only', '--url', `${endpoint}/other`]), '');
+      assert.equal(await cli('status', owner, 1, [...readArgs, '--url', `${endpoint}/other`]), '');
+      assert.equal(await cli('status', owner, 1, [...readArgs, '--metadata-only']), '');
+      assert.equal(await cli('status', owner, 1, [...readArgs, '--write-input-template', join(clientDir, 'unused.json')]), '');
+      assert.equal(await cli('status', owner, 1, ['--task-id', committedID, '--read-result']), '');
+      assert.equal(await cli('status', owner, 1, [...readArgs, '--task-id', committedID]), '');
       assert.equal(await cli('wait', owner, 1, [...selector, '--url', `${endpoint}/other`]), '');
       assert.equal(requests.length, beforeMismatch);
       const receipt = await readFile(receiptPath, 'utf8');
@@ -2572,6 +2581,12 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
       const receiptIssuedAt = Number.parseInt(submissionKey.slice(0, 13).replace('-', ''), 16);
       await delay(Math.max(0, receiptIssuedAt + 60_100 - Date.now()));
       assert.equal(await submission(owner, 1, 'original', submissionKey), '');
+      const beforeRead = requests.length;
+      const completed = JSON.parse(await cli('status', owner, 0, readArgs));
+      assert.equal(completed.taskId, committedID);
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.result.content[0].text, report);
+      assert.deepEqual(requests.slice(beforeRead), ['server/discover', 'gregale/tasks/lookup', 'tasks/get']);
       const beforeWait = requests.length;
       const waited = JSON.parse(await cli('wait', owner, 0, selector));
       assert.equal(waited.taskId, committedID);
@@ -2579,6 +2594,9 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
       assert.equal(waited.result.content[0].text, report);
       assert.deepEqual(requests.slice(beforeWait), ['server/discover', 'gregale/tasks/lookup', 'tasks/get']);
       for (const credential of [foreign, ownerWithoutTool]) {
+        const beforeReadDenied = requests.length;
+        assert.equal(await cli('status', credential, 1, readArgs), '');
+        assert.deepEqual(requests.slice(beforeReadDenied), ['server/discover', 'gregale/tasks/lookup']);
         const beforeDenied = requests.length;
         assert.equal(await cli('wait', credential, 1, selector), '');
         assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
@@ -2592,7 +2610,10 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, can
     assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
     await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2', [namespace, committedID]);
     assert.equal(await lookup(owner, 1), '');
-    if (useReceipt) assert.equal(await cli('wait', owner, 1, selector), '');
+    if (useReceipt) {
+      assert.equal(await cli('status', owner, 1, [...selector, '--read-result']), '');
+      assert.equal(await cli('wait', owner, 1, selector), '');
+    }
   } finally {
     api.closeTaskSubscriptions();
     await new Promise(resolveClose => { server.close(resolveClose); server.closeAllConnections(); });

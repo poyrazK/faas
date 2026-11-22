@@ -34,6 +34,24 @@ func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, ta
 	return jsonOut(writeJSON(mcpTaskSnapshot(task)))
 }
 
+func runMCPTaskReceiptResult(ctx context.Context, client *mcphosting.Client, submissionKey string) int {
+	task, exchange, err := client.GetTaskBySubmissionKey(ctx, submissionKey)
+	if err != nil {
+		return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
+	}
+	if task.Status != "completed" {
+		return jsonOut(writeJSON(mcpTaskSnapshot(task)))
+	}
+	result, exchange, err := client.GetTask(ctx, task.TaskID)
+	if err != nil {
+		return mcpTaskMetadataReadFailure(task.TaskID, exchange.HTTPStatus, err)
+	}
+	if result.Status != "completed" {
+		return jsonOut(writeJSON(mcpTaskSnapshot(result)))
+	}
+	return jsonOut(writeJSON(result))
+}
+
 func mcpTaskSnapshot(task mcphosting.Task) mcpTaskStatusMetadata {
 	status := mcpTaskStatusMetadata{
 		TaskID: task.TaskID, Status: task.Status, LastUpdatedAt: task.LastUpdatedAt, NextAction: "none",
