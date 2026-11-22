@@ -90,7 +90,7 @@ For repeated use, publish once and invoke with JSON rows:
 ```sh
 npm run prepare -- --prefix gr-demo
 gregale run tasks publish --manifest generated/sales.task.json
-gregale run tasks invoke gr-demo-sales@v1 --input @sales-report/rows.json \
+gregale sandbox task call gr-demo-sales@v1 --input @sales-report/rows.json \
   --idempotency-key gr-demo-sales-task-001 \
   --output-dir .output/task-sales --json
 ```
@@ -104,7 +104,7 @@ structured JSON, not PDFs, and does not perform OCR or tax validation.
 
 ```sh
 gregale run tasks publish --manifest generated/audit.task.json
-gregale run tasks invoke gr-demo-audit@v1 --input @invoice-audit/input.json \
+gregale sandbox task call gr-demo-audit@v1 --input @invoice-audit/input.json \
   --idempotency-key gr-demo-invoices-001 \
   --output-dir .output/cloud-invoices --json
 ```
@@ -174,7 +174,7 @@ overwrite an existing one. Task policies cover every version of a name.
 npm run prepare -- --prefix gr-recovery --out generated/recovery
 gregale run tasks publish --manifest generated/recovery/sales.task.json
 gregale run tasks publish --manifest generated/recovery/merge.task.json
-gregale run controls task gr-recovery-merge \
+gregale sandbox task budget gr-recovery-merge \
   --manifest generated/recovery/budget-hold.json
 mkdir -p .output/recovery
 gregale sandbox workflow run --managed --manifest generated/recovery/pipeline.json --json \
@@ -190,10 +190,10 @@ uncertain policy write, read it again instead of blindly advancing its revision.
 Stop on a revision conflict and inspect the policy.
 
 ```sh
-gregale run controls task gr-recovery-merge --json
-gregale run controls task gr-recovery-merge \
+gregale sandbox task budget gr-recovery-merge --json
+gregale sandbox task budget gr-recovery-merge \
   --manifest generated/recovery/budget-release.json
-gregale sandbox workflow rerun PARENT_PIPELINE_UUID gr-recovery-fixed \
+gregale sandbox workflow retry PARENT_PIPELINE_UUID gr-recovery-fixed \
   generated/recovery/pipeline.json --json > .output/recovery/child-accepted.json
 gregale sandbox workflow watch CHILD_PIPELINE_UUID --json
 gregale sandbox workflow gr-recovery-fixed --json > .output/recovery/child.json

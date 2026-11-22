@@ -1077,6 +1077,9 @@ type Handler struct {
 	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
 	// penalty box per account (ADR-20261023113721); nil enforces them all.
 	edgeFeatureFlags *platformflags.Set
+	// instanceRoutes counts route activity per instance-minute for
+	// route resource peaks (ADR-20261121170000); nil when not wired.
+	instanceRoutes *instanceRouteMinutes
 	// trafficFenceFlags is the revocation fence kill switch; nil enforces it.
 	trafficFenceFlags *platformflags.Set
 	gate              *WakeGate
@@ -9002,6 +9005,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			if h.requestTelemetry != nil {
 				h.requestTelemetry.RecordFromObserve(row)
+			}
+			if !row.PlatformRefusal && !row.DeploymentPinned {
+				h.countInstanceRoute(acctUUID, appUUID, plan, row.InstanceID, row.Route, row.Method, row.ReceivedAt, elapsed)
 			}
 		}
 	}

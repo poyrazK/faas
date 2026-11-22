@@ -5558,6 +5558,21 @@ func (m *MemStore) enrollNewAppsLocked(apps []App) error {
 // prepareAppIfUnderQuotaLocked constructs an app against a proposed map. The
 // caller holds m.mu and must validate the final topology before publishing it.
 func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps map[string]App) (App, error) {
+	if app.AddToProject {
+		project, ok := m.projects[app.ProjectID]
+		if !ok || project.AccountID != app.AccountID || project.OrgID != app.OrgID {
+			return App{}, ErrNotFound
+		}
+		if project.RepoFullName != "" {
+			return App{}, ErrProjectAppManaged
+		}
+		for _, release := range m.projectReleaseSets {
+			if release.ProjectID == app.ProjectID && release.Active {
+				return App{}, ErrProjectAppManaged
+			}
+		}
+		app.AddToProject = false
+	}
 	limits, _, err := m.resolveAppQuotaLocked(&app, limits)
 	if err != nil {
 		return App{}, err

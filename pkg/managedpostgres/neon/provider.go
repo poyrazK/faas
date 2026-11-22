@@ -367,7 +367,14 @@ func (p *Provider) inspect(ctx context.Context, providerResourceID string, resto
 		}
 		dataID = (resourceRef{projectID: ref.projectID, branchID: selectedBranch.ID}).String()
 	}
-	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady {
+	// A held database's endpoint is disabled (the delete grace period, or the
+	// compute cap sweep holding it at its ceiling) and refuses every
+	// connection, so the inherited-login restriction cannot run and nothing
+	// can log in to need it. Report the endpoint's own state instead of
+	// failing: the cap qualification of 2026-11-22 saw Inspect answer
+	// unavailable for a held database until its hold was released, and the
+	// next Inspect after a release restricts again before anyone connects.
+	if ref.branchID != "" && status == managedpostgres.ProviderStatusReady && !endpointDisabled(primaryEndpoint) {
 		owner, err := p.ownerCredentials(ctx, ref.projectID, ref.branchID)
 		if err != nil {
 			return managedpostgres.ObservedDatabase{}, err

@@ -83,6 +83,12 @@ class TaskReceiptJourneyTests(unittest.TestCase):
     setUp = test_task_execution.TaskExecutionPostgresTests.setUp
 
     def test_lost_reply_recovers_one_task_and_one_result(self):
+        self.run_receipt_journey()
+
+    def test_reviewed_input_resumes_only_the_original_task(self):
+        self.run_receipt_journey(reviewed_input=True)
+
+    def run_receipt_journey(self, reviewed_input=False):
         config = {"endpoint": "/mcp", "tasks": {"enabled": True, "poll_interval_ms": 500},
                   "auth": {"mode": "external-oauth", "issuer": "https://issuer.example",
                            "jwks_url": "https://issuer.example/jwks", "resource": "https://mcp.example/mcp",
@@ -114,11 +120,24 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         receipt_path = client_dir / "receipt.json"
         intercepted = threading.Event()
         dropped = queue.Queue(maxsize=1)
+        change_prompt = threading.Event()
+        changed_reads = []
+        updates = []
 
-        class DropFirstSubmitReply(MCPHandler):
+        class ReceiptJourneyHandler(MCPHandler):
+            def do_POST(self):
+                if self.headers.get("Mcp-Method") == "tasks/update":
+                    updates.append(True)
+                super().do_POST()
+
             def send_json(self, status, value, extra_headers=None):
                 task = value.get("result", {})
-                if (self.headers.get("Mcp-Method") != "gregale/tasks/submit" or intercepted.is_set()
+                method = self.headers.get("Mcp-Method")
+                if method == "tasks/get" and change_prompt.is_set() and task.get("status") == "input_required":
+                    # Change only the served prompt, leaving the durable form pending.
+                    task["inputRequests"]["approval"]["params"]["message"] = "Approve a different report?"
+                    changed_reads.append(True)
+                if (method != "gregale/tasks/submit" or intercepted.is_set()
                         or task.get("resultType") != "task"):
                     return super().send_json(status, value, extra_headers)
                 intercepted.set()
@@ -136,7 +155,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                 self.close_connection = True
                 self.connection.shutdown(socket.SHUT_RDWR)
 
-        http = DrainingHTTPServer(("127.0.0.1", 0), DropFirstSubmitReply)
+        http = DrainingHTTPServer(("127.0.0.1", 0), ReceiptJourneyHandler)
         self.addCleanup(http.server_close)
         http.app_config, http.authenticator, http.task_runtime = config, auth, runtime
         thread = threading.Thread(target=http.serve_forever, daemon=True)
@@ -157,8 +176,15 @@ class TaskReceiptJourneyTests(unittest.TestCase):
             self.assertEqual(result.stdout, "")
 
         original_args = '{"report":"receipt journey","steps":1}'
-        cli("call", owner, 3, "--tool", "build_report", "--tasks", "--task-receipt", str(receipt_path),
-            "--arguments", original_args)
+        form_args = '{"report":"receipt journey","steps":1,"request_approval":true}'
+
+        def submit_args(path):
+            args = ("--tool", "build_report", "--tasks", "--task-receipt", str(path), "--arguments")
+            if reviewed_input:
+                return (*args, form_args, "--defer-form-input")
+            return (*args, original_args)
+
+        cli("call", owner, 3, *submit_args(receipt_path))
         committed = dropped.get(timeout=2)
         if isinstance(committed, Exception):
             raise committed
@@ -168,6 +194,80 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                                    "submissionKey": receipt["submissionKey"]})
         key = receipt["submissionKey"]
         self.assertEqual(key[14], "7")
+
+        if reviewed_input:
+            def rows():
+                with fixture.pool.connection() as connection:
+                    return connection.execute("""SELECT task_id::text AS task_id,
+                        submission_key::text AS submission_key, expires_at, status, attempt_count,
+                        result_encrypted IS NOT NULL AS has_result
+                        FROM gregale_mcp_tasks WHERE namespace=%s""", (fixture.namespace,)).fetchall()
+
+            def wait_for_form(target):
+                deadline = time.monotonic() + 8
+                while time.monotonic() < deadline:
+                    if any(row["task_id"] == target and row["status"] == "input_required" for row in rows()):
+                        return
+                    time.sleep(0.05)
+                self.fail("Task did not reach input_required")
+
+            wait_for_form(task_id)
+            template_path = client_dir / "reviewed-input.json"
+            snapshot = cli("status", owner, 0, "--task-receipt", str(receipt_path),
+                           "--write-input-template", str(template_path))
+            self.assertEqual((snapshot["taskId"], snapshot["status"], snapshot["nextAction"]),
+                             (task_id, "input_required", "provide_input"))
+            info = template_path.lstat()
+            self.assertTrue(stat.S_ISREG(info.st_mode))
+            self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
+            template = json.loads(template_path.read_text())
+            self.assertEqual((template["version"], template["endpointSha256"], template["taskId"]),
+                             (1, receipt["endpointSha256"], task_id))
+            self.assertEqual(set(template["forms"]), {"approval"})
+            approval = template["forms"]["approval"]
+            self.assertEqual(approval["message"], "Approve generating this report?")
+            self.assertIsNone(approval["response"])
+
+            def wait(token, code, path=receipt_path):
+                return cli("wait", token, code, "--task-receipt", str(path),
+                           "--reviewed-input-file", str(template_path))
+
+            wait(owner, 1)
+            approval["response"] = {"action": "accept", "content": {"approved": True}}
+            template_path.write_text(json.dumps(template))
+
+            other_receipt = client_dir / "other-receipt.json"
+            other_id = cli("call", owner, 0, *submit_args(other_receipt))["result"]["taskId"]
+            self.assertNotEqual(other_id, task_id)
+            wait_for_form(other_id)
+            other_path = client_dir / "other-input.json"
+            cli("status", owner, 0, "--task-receipt", str(other_receipt), "--write-input-template", str(other_path))
+            other_template = json.loads(other_path.read_text())
+            self.assertEqual(other_template["taskId"], other_id)
+            self.assertRegex(approval["formSha256"], r"^[0-9a-f]{64}$")
+            self.assertEqual(other_template["forms"]["approval"]["formSha256"], approval["formSha256"])
+
+            wait(owner, 1, other_receipt)
+            wait(reduced, 1)
+            change_prompt.set()
+            wait(owner, 1)
+            change_prompt.clear()
+            self.assertEqual(len(changed_reads), 1)
+            self.assertEqual(updates, [])
+
+            completed = wait(owner, 0)
+            self.assertEqual((completed["taskId"], completed["status"]), (task_id, "completed"))
+            self.assertEqual(completed["result"]["content"],
+                             [{"type": "text", "text": "Report receipt journey is ready after 1 steps."}])
+            self.assertEqual(len(updates), 1)
+            by_id = {row["task_id"]: row for row in rows()}
+            self.assertEqual(set(by_id), {task_id, other_id})
+            self.assertEqual(by_id[task_id], {"task_id": task_id, "submission_key": key, "expires_at": expires_at,
+                                             "status": "completed", "attempt_count": 1, "has_result": True})
+            other = by_id[other_id]
+            self.assertEqual((other["status"], other["attempt_count"], other["has_result"]),
+                             ("input_required", 1, False))
+            return
 
         def submit(token, code, arguments):
             return cli("call", token, code, "--tool", "build_report", "--tasks", "--task-submission-key", key,

@@ -109,9 +109,15 @@ const endpointHoldBusyAttempts = 60
 // patchWhileProjectBusy sends an idempotent endpoint PATCH, waiting out
 // Neon's 423 refusals. Any other outcome returns at once.
 func (p *Provider) patchWhileProjectBusy(ctx context.Context, path string, patch any) error {
+	return p.sendWhileProjectBusy(ctx, http.MethodPatch, path, patch)
+}
+
+// sendWhileProjectBusy sends an idempotent request, waiting out Neon's 423
+// refusals. Any other outcome returns at once.
+func (p *Provider) sendWhileProjectBusy(ctx context.Context, method, path string, input any) error {
 	wait := 8 * p.credentialPollInterval
 	for attempt := 1; ; attempt++ {
-		err := p.doJSON(ctx, http.MethodPatch, path, nil, patch, nil, http.StatusOK)
+		err := p.doJSON(ctx, method, path, nil, input, nil, http.StatusOK)
 		if err == nil || !projectBusy(err) || attempt >= endpointHoldBusyAttempts {
 			return err
 		}

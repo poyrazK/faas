@@ -26,6 +26,16 @@ import (
 
 // Run with the receipt-capable Gregale CLI and a disposable PostgreSQL database.
 func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
+	testTaskReceiptJourney(t, false)
+}
+
+func TestTaskReceiptResumesReviewedInput(t *testing.T) {
+	testTaskReceiptJourney(t, true)
+}
+
+// Each journey loses its first submission reply after committing the Task.
+func testTaskReceiptJourney(t *testing.T, reviewedInput bool) {
+	t.Helper()
 	binary := os.Getenv("MCP_TASKS_TEST_GREGALE")
 	if binary == "" {
 		t.Skip("set MCP_TASKS_TEST_GREGALE to run the Gregale CLI receipt journey")
@@ -66,9 +76,32 @@ func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
 		err     error
 	}
 	dropped := make(chan droppedReply, 1)
-	var intercepted atomic.Bool
+	var intercepted, changePrompt atomic.Bool
+	var updates, changedReads atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("MCP-Method") != "gregale/tasks/submit" || !intercepted.CompareAndSwap(false, true) {
+		method := r.Header.Get("MCP-Method")
+		if method == "tasks/update" {
+			updates.Add(1)
+		}
+		if method == "tasks/get" && changePrompt.Load() {
+			reply := httptest.NewRecorder()
+			handleHTTP(config, auth, runtime, reply, r)
+			// Change only the served prompt, leaving the durable form pending.
+			original := []byte(`"message":"Approve generating this report?"`)
+			modified := []byte(`"message":"Approve a different report?"`)
+			body := reply.Body.Bytes()
+			if bytes.Contains(body, original) {
+				changedReads.Add(1)
+				body = bytes.Replace(body, original, modified, 1)
+			}
+			for name, values := range reply.Header() {
+				w.Header()[name] = values
+			}
+			w.WriteHeader(reply.Code)
+			_, _ = w.Write(body)
+			return
+		}
+		if method != "gregale/tasks/submit" || !intercepted.CompareAndSwap(false, true) {
 			handleHTTP(config, auth, runtime, w, r)
 			return
 		}
@@ -137,8 +170,16 @@ func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
 		}
 		return stdout
 	}
-	cli("call", owner, 3, "--tool", "build_report", "--tasks", "--task-receipt", receiptPath,
-		"--arguments", `{"report":"receipt journey","steps":1}`)
+	const originalArgs = `{"report":"receipt journey","steps":1}`
+	const formArgs = `{"report":"receipt journey","steps":1,"request_approval":true}`
+	submitArgs := func(path string) []string {
+		args := []string{"--tool", "build_report", "--tasks", "--task-receipt", path, "--arguments"}
+		if reviewedInput {
+			return append(args, formArgs, "--defer-form-input")
+		}
+		return append(args, originalArgs)
+	}
+	cli("call", owner, 3, submitArgs(receiptPath)...)
 	var committed droppedReply
 	select {
 	case committed = <-dropped:
@@ -166,11 +207,154 @@ func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
 	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 1 || receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) {
 		t.Fatal("invalid private Task receipt")
 	}
+	if reviewedInput {
+		waitForForm := func(id string) {
+			t.Helper()
+			formCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			defer cancel()
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				var status string
+				err := fixture.pool.QueryRow(formCtx, `SELECT status FROM gregale_mcp_tasks WHERE namespace=$1 AND task_id=$2`,
+					fixture.namespace, id).Scan(&status)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if status == "input_required" {
+					return
+				}
+				select {
+				case <-formCtx.Done():
+					t.Fatalf("Task did not reach input_required, last status %q", status)
+				case <-ticker.C:
+				}
+			}
+		}
+		waitForForm(committed.id)
+		templatePath := filepath.Join(clientDir, "reviewed-input.json")
+		var snapshot struct {
+			TaskID     string `json:"taskId"`
+			Status     string `json:"status"`
+			NextAction string `json:"nextAction"`
+		}
+		if err := json.Unmarshal(cli("status", owner, 0, "--task-receipt", receiptPath,
+			"--write-input-template", templatePath), &snapshot); err != nil ||
+			snapshot.TaskID != committed.id || snapshot.Status != "input_required" || snapshot.NextAction != "provide_input" {
+			t.Fatalf("receipt did not recover the original pending form: %+v, %v", snapshot, err)
+		}
+		info, err := os.Lstat(templatePath)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+			t.Fatal("review template was not saved as a private regular file")
+		}
+		type form struct {
+			Message    string          `json:"message"`
+			Schema     json.RawMessage `json:"schema"`
+			FormSHA256 string          `json:"formSha256"`
+			Response   json.RawMessage `json:"response"`
+		}
+		type review struct {
+			Version        int             `json:"version"`
+			EndpointSHA256 string          `json:"endpointSha256"`
+			TaskID         string          `json:"taskId"`
+			Forms          map[string]form `json:"forms"`
+		}
+		readReview := func(path string) review {
+			t.Helper()
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var template review
+			if err := json.Unmarshal(body, &template); err != nil {
+				t.Fatal(err)
+			}
+			return template
+		}
+		template := readReview(templatePath)
+		approval := template.Forms["approval"]
+		if template.Version != 1 || template.EndpointSHA256 != receipt.EndpointSHA256 || template.TaskID != committed.id ||
+			len(template.Forms) != 1 || approval.Message != "Approve generating this report?" || string(approval.Response) != "null" {
+			t.Fatalf("unexpected review template: %+v", template)
+		}
+		wait := func(token string, code int, path string) []byte {
+			return cli("wait", token, code, "--task-receipt", path, "--reviewed-input-file", templatePath)
+		}
+		wait(owner, 1, receiptPath)
+		approval.Response = json.RawMessage(`{"action":"accept","content":{"approved":true}}`)
+		template.Forms["approval"] = approval
+		filled, err := json.Marshal(template)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(templatePath, filled, 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		var other struct {
+			Result struct {
+				TaskID string `json:"taskId"`
+			} `json:"result"`
+		}
+		otherReceipt := filepath.Join(clientDir, "other-receipt.json")
+		if err := json.Unmarshal(cli("call", owner, 0, submitArgs(otherReceipt)...), &other); err != nil ||
+			other.Result.TaskID == "" || other.Result.TaskID == committed.id {
+			t.Fatalf("second submission did not return a distinct Task: %+v, %v", other, err)
+		}
+		waitForForm(other.Result.TaskID)
+		otherPath := filepath.Join(clientDir, "other-input.json")
+		cli("status", owner, 0, "--task-receipt", otherReceipt, "--write-input-template", otherPath)
+		otherTemplate := readReview(otherPath)
+		if otherTemplate.TaskID != other.Result.TaskID || approval.FormSHA256 == "" ||
+			otherTemplate.Forms["approval"].FormSHA256 != approval.FormSHA256 {
+			t.Fatal("second Task must request the same form under the same ID")
+		}
+
+		wait(owner, 1, otherReceipt)
+		wait(reduced, 1, receiptPath)
+		changePrompt.Store(true)
+		wait(owner, 1, receiptPath)
+		changePrompt.Store(false)
+		if changedReads.Load() != 1 || updates.Load() != 0 {
+			t.Fatalf("expected one changed form read and zero updates before approval, got %d reads, %d updates",
+				changedReads.Load(), updates.Load())
+		}
+
+		var completed struct {
+			TaskID string `json:"taskId"`
+			Status string `json:"status"`
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(wait(owner, 0, receiptPath), &completed); err != nil ||
+			completed.TaskID != committed.id || completed.Status != "completed" || len(completed.Result.Content) != 1 ||
+			completed.Result.Content[0].Text != "Report receipt journey is ready after 1 steps." {
+			t.Fatalf("review did not complete the original Task: %+v, %v", completed, err)
+		}
+		if updates.Load() != 1 {
+			t.Fatalf("expected exactly one update for the approved form, got %d", updates.Load())
+		}
+		var rows, original, pending int
+		if err := fixture.pool.QueryRow(ctx, `SELECT count(*),
+		    count(*) FILTER (WHERE task_id=$2 AND submission_key=$3 AND expires_at=$4
+		        AND status='completed' AND attempt_count=1 AND result_encrypted IS NOT NULL),
+		    count(*) FILTER (WHERE task_id=$5 AND status='input_required' AND attempt_count=1 AND result_encrypted IS NULL)
+		    FROM gregale_mcp_tasks WHERE namespace=$1`, fixture.namespace, committed.id, receipt.SubmissionKey,
+			committed.expires, other.Result.TaskID).Scan(&rows, &original, &pending); err != nil ||
+			rows != 2 || original != 1 || pending != 1 {
+			t.Fatalf("expected the original durable result and an untouched pending Task, got rows=%d completed=%d pending=%d err=%v",
+				rows, original, pending, err)
+		}
+		return
+	}
+
 	issuedAt, valid := taskSubmissionIssuedAt(receipt.SubmissionKey)
 	if !valid {
 		t.Fatal("receipt has no UUIDv7 submission key")
 	}
-	const originalArgs = `{"report":"receipt journey","steps":1}`
 	submit := func(token string, code int, args string) []byte {
 		return cli("call", token, code, "--tool", "build_report", "--tasks", "--task-submission-key", receipt.SubmissionKey,
 			"--arguments", args)

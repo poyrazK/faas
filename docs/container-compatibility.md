@@ -504,7 +504,7 @@ are warned.
 
 A new service whose file declares no memory starts with 128 MB
 (`ProjectWorkloadDefaultRAMMB`), not the default a standalone app gets (the
-plan's RAM, at most 1024 MB). The
+plan's RAM, at most 512 MB). The
 project plan marks such services `memory=128MB (default)` and lists them under
 "Starts with the default 128 MB". Node and Python services often need more, so
 declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.

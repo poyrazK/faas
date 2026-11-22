@@ -1566,6 +1566,9 @@ type App struct {
 	// project's hard delete (Phase 5) orphans the app rather than
 	// cascading it.
 	ProjectID string
+	// AddToProject asks the create path to validate a direct project addition
+	// under the same lock as the insert. It is never persisted on an App.
+	AddToProject bool `json:"-"`
 	// RootDir is the build context relative to the repo root
 	// ("" = repo root). Defaults to '' so standalone apps keep the
 	// pre-projects deploy contract bit-for-bit.

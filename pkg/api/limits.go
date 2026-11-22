@@ -4260,10 +4260,12 @@ const (
 const ProjectWorkloadDefaultRAMMB = 128
 
 // StandaloneAppDefaultMaxRAMMB caps the RAM a standalone app gets when it is
-// created without ram_mb, a resource profile or vcpu (ADR-20261029234500).
-// Below the cap the default stays the plan's RAM; a Scale app starts at
-// 1024 MB instead of 2048 MB and can still be raised to the plan's RAM.
-const StandaloneAppDefaultMaxRAMMB = 1024
+// created without ram_mb, a resource profile or vcpu (ADR-20261029234500,
+// lowered to 512 MB by ADR-20261122180000). Below the cap the default stays
+// the plan's RAM: Free starts at 256 MB, every other plan at 512 MB, and an
+// app can still be raised to the plan's RAM. Apps are billed at their RAM, so
+// an agent that deploys without a size must not get a large instance.
+const StandaloneAppDefaultMaxRAMMB = 512
 
 // StandaloneAppDefaultRAMMB is the RAM of a standalone app created without a
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
