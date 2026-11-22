@@ -465,7 +465,7 @@ func cmdMCPRemote(command string, args []string) int {
 		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
 		fs.Func("write-input-template", "write pending forms to a new private file", func(value string) error {
 			if value == "" {
-				return errors.New("Task input template path is required")
+				return errors.New("task input template path is required")
 			}
 			inputTemplatePath = value
 			return nil
@@ -585,7 +585,7 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
 	}
 	if (inputTemplatePath != "" || reviewedInputPath != "") && token == "" {
-		return printErr("MCP Task input review", errors.New("Task input review requires a client credential from --token-env"))
+		return printErr("MCP Task input review", errors.New("task input review requires a client credential from --token-env"))
 	}
 	if taskReceiptPath != "" && command != "call" {
 		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)
