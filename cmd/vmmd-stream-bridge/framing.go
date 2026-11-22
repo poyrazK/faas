@@ -195,8 +195,9 @@ func bridgeRequestHeaders(r *http.Request) []headerEntry {
 		return parseHeaders(os.Getenv("FAAS_BRIDGE_HEADERS"))
 	}
 	var headers []headerEntry
+	listed := connectionListed(r.Header)
 	for name, values := range r.Header {
-		if isBridgeRequestHeader(name) || isHopByHopHeader(name) || strings.EqualFold(name, "Host") {
+		if isBridgeRequestHeader(name) || isHopByHopHeader(name) || strings.EqualFold(name, "Host") || listed[http.CanonicalHeaderKey(name)] {
 			continue
 		}
 		for _, value := range values {
@@ -208,4 +209,23 @@ func bridgeRequestHeaders(r *http.Request) []headerEntry {
 
 func isBridgeRequestHeader(name string) bool {
 	return strings.HasPrefix(strings.ToLower(name), "x-faas-bridge-")
+}
+
+// connectionListed names the fields a request's Connection field lists:
+// like Connection itself they are for one hop only (RFC 9110 §7.6.1), so they
+// never reach the guest. vmmd's gateway already strips them; the bridge
+// strips them again whatever framing carried the request.
+func connectionListed(h http.Header) map[string]bool {
+	var listed map[string]bool
+	for _, v := range h.Values("Connection") {
+		for _, name := range strings.Split(v, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				if listed == nil {
+					listed = map[string]bool{}
+				}
+				listed[http.CanonicalHeaderKey(name)] = true
+			}
+		}
+	}
+	return listed
 }

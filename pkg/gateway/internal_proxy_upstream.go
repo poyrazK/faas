@@ -157,7 +157,7 @@ func (u *upstreamTransport) roundTripUpstream(req *http.Request, upstream Upstre
 			return resp, err
 		}
 		if u.hopFallback != nil {
-			u.hopFallback(dialErr.reason())
+			u.hopFallback(hopFallbackReason(dialErr))
 		}
 	}
 	return u.transport.RoundTrip(u.attempt(req, upstream, body))

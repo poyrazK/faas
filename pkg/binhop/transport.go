@@ -1,10 +1,12 @@
-package gateway
+package binhop
 
-// adr: 20261110081523 — the compute edge sends the requests it routes to
-// its own node's gatewayd-internal in binary HTTP.
+// adr: 20261110081523 — the binary HTTP client a daemon uses to send
+// requests to a peer process on its host over a unix socket: the compute
+// edge to its gatewayd-internal, and vmmd to an instance's stream bridge.
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -24,23 +26,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/binhttp"
 )
 
-// Reasons a request that should have taken the binary hop went over
-// HTTP/1.1 instead, the label values of the edge's fallback counter.
-const (
-	// HopFallbackNoSocket: the hop socket is missing or nothing listens on
-	// it, as beside a gatewayd-internal from before the hop.
-	HopFallbackNoSocket = "no_socket"
-	// HopFallbackDialError: the dial failed some other way.
-	HopFallbackDialError = "dial_error"
-)
-
-// HopFallbackReasons lists the fallback reasons, so a counter can start
-// each at zero.
-var HopFallbackReasons = []string{HopFallbackNoSocket, HopFallbackDialError}
-
-// binaryHopMaxIdle bounds the idle connections the edge keeps to its own
-// gatewayd-internal.
-const binaryHopMaxIdle = 64
+// DefaultMaxIdle bounds the idle connections a Transport keeps.
+const DefaultMaxIdle = 64
 
 // hopWriteSettle is how long a response that ended before its request's body
 // writer waits for that writer, to keep the connection for the next request.
@@ -51,23 +38,79 @@ const hopWriteSettle = 5 * time.Millisecond
 // sees what the HTTP/1.1 hop would show it.
 const defaultUserAgent = "Go-http-client/1.1"
 
-// binaryHopTransport sends one request at a time over each connection to
-// this node's gatewayd-internal and keeps idle connections for reuse.
-type binaryHopTransport struct {
-	dialTimeout    time.Duration
+// Transport sends one request at a time over each connection to its peer
+// and keeps idle connections for reuse.
+type Transport struct {
+	// userAgent is sent when a request has none; gzip asks for gzip and
+	// decodes it as net/http's clients do (WithHTTP2ClientDefaults).
+	userAgent string
+	gzip      bool
+
 	idleTimeout    time.Duration
 	maxHeaderBytes int
+	maxIdle        int
 
 	mu   sync.Mutex
 	idle []*hopClientConn
 }
 
-func newBinaryHopTransport(dialTimeout time.Duration) *binaryHopTransport {
-	return &binaryHopTransport{
-		dialTimeout:    dialTimeout,
-		idleTimeout:    upstreamIdleConnTimeout,
-		maxHeaderBytes: int(api.DefaultMaxHeaderBytes),
+// NewTransport keeps idle connections for idleTimeout, at most maxIdle of
+// them (DefaultMaxIdle when 0), and reads response heads and trailers of at
+// most maxHeaderBytes (api.DefaultMaxHeaderBytes when 0).
+func NewTransport(idleTimeout time.Duration, maxHeaderBytes, maxIdle int) *Transport {
+	if maxHeaderBytes <= 0 {
+		maxHeaderBytes = int(api.DefaultMaxHeaderBytes)
 	}
+	if maxIdle <= 0 {
+		maxIdle = DefaultMaxIdle
+	}
+	return &Transport{userAgent: defaultUserAgent, idleTimeout: idleTimeout, maxHeaderBytes: maxHeaderBytes, maxIdle: maxIdle}
+}
+
+// requestsGzip reports whether t asks for gzip on req's behalf: as net/http,
+// only when req names no encoding or range of its own and is not HEAD.
+func (t *Transport) requestsGzip(req *http.Request) bool {
+	return t.gzip && req.Method != http.MethodHead && req.Header.Get("Accept-Encoding") == "" && req.Header.Get("Range") == ""
+}
+
+// gzipBody decodes a gzip response body on its first read.
+type gzipBody struct {
+	src io.ReadCloser
+	zr  *gzip.Reader
+	err error
+}
+
+func (g *gzipBody) Read(p []byte) (int, error) {
+	if g.err != nil {
+		return 0, g.err
+	}
+	if g.zr == nil {
+		zr, err := gzip.NewReader(g.src)
+		if err != nil {
+			g.err = err
+			return 0, err
+		}
+		g.zr = zr
+	}
+	return g.zr.Read(p)
+}
+
+func (g *gzipBody) Close() error { return g.src.Close() }
+
+// http2UserAgent is what golang.org/x/net/http2's client sends when a
+// request has no User-Agent.
+const http2UserAgent = "Go-http-client/2.0"
+
+// WithHTTP2ClientDefaults makes t add to a request what an x/net/http2
+// client would, so a peer that used to be reached over h2c sees the same
+// request: a User-Agent of Go-http-client/2.0 when there is none, and
+// Accept-Encoding: gzip when the request has no Accept-Encoding or Range and
+// is not HEAD, in which case a gzip response is decoded before the caller
+// sees it, with Content-Encoding and Content-Length removed. It returns t.
+func (t *Transport) WithHTTP2ClientDefaults() *Transport {
+	t.userAgent = http2UserAgent
+	t.gzip = true
+	return t
 }
 
 type hopClientConn struct {
@@ -78,23 +121,16 @@ type hopClientConn struct {
 	reused bool
 }
 
-// hopDialError marks a failure to open a connection to the hop socket:
-// nothing of the request was sent, so it can go over HTTP/1.1 instead.
-type hopDialError struct {
-	err      error
-	noSocket bool
+// DialError marks a failure to open a connection to the peer: nothing of
+// the request was sent, so the caller may send it another way.
+type DialError struct {
+	Err error
+	// NoSocket: the socket is missing or nothing listens on it.
+	NoSocket bool
 }
 
-func (e *hopDialError) Error() string { return "binary hop: dial: " + e.err.Error() }
-func (e *hopDialError) Unwrap() error { return e.err }
-
-// reason is the fallback counter's label for e.
-func (e *hopDialError) reason() string {
-	if e.noSocket {
-		return HopFallbackNoSocket
-	}
-	return HopFallbackDialError
-}
+func (e *DialError) Error() string { return "binary hop: dial: " + e.Err.Error() }
+func (e *DialError) Unwrap() error { return e.Err }
 
 // roundTrip sends req over a connection from dial or the idle pool. A
 // request with no body that fails on a reused connection before any of its
@@ -104,7 +140,9 @@ func (e *hopDialError) reason() string {
 // it stopped reading a request head.
 const hopEarlyResponseWait = time.Second
 
-func (t *binaryHopTransport) roundTrip(req *http.Request, dial func(context.Context) (net.Conn, error)) (*http.Response, error) {
+// RoundTrip sends req over a connection from the idle pool or dial. dial
+// applies the caller's dial timeout.
+func (t *Transport) RoundTrip(req *http.Request, dial func(context.Context) (net.Conn, error)) (*http.Response, error) {
 	noContent := req.Body == nil || req.Body == http.NoBody
 	for attempt := 0; ; attempt++ {
 		cc, err := t.conn(req.Context(), dial, attempt > 0)
@@ -141,20 +179,20 @@ func (e *hopRetryableError) Error() string { return e.err.Error() }
 func (e *hopRetryableError) Unwrap() error { return e.err }
 
 // conn returns an idle connection or a new one. fresh skips the pool.
-func (t *binaryHopTransport) conn(ctx context.Context, dial func(context.Context) (net.Conn, error), fresh bool) (*hopClientConn, error) {
+func (t *Transport) conn(ctx context.Context, dial func(context.Context) (net.Conn, error), fresh bool) (*hopClientConn, error) {
 	if !fresh {
 		if cc := t.takeIdle(); cc != nil {
 			return cc, nil
 		}
 	}
-	c, err := dialWithTimeout(ctx, upstreamDialer(dial), t.dialTimeout)
+	c, err := dial(ctx)
 	if err != nil {
-		return nil, &hopDialError{err: err, noSocket: errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)}
+		return nil, &DialError{Err: err, NoSocket: errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)}
 	}
 	return &hopClientConn{conn: c, br: bufio.NewReaderSize(c, hopBufferSize), bw: bufio.NewWriterSize(c, hopBufferSize)}, nil
 }
 
-func (t *binaryHopTransport) takeIdle() *hopClientConn {
+func (t *Transport) takeIdle() *hopClientConn {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for len(t.idle) > 0 {
@@ -169,19 +207,19 @@ func (t *binaryHopTransport) takeIdle() *hopClientConn {
 	return nil
 }
 
-func (t *binaryHopTransport) putIdle(cc *hopClientConn) {
+func (t *Transport) putIdle(cc *hopClientConn) {
 	cc.idleAt = time.Now()
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if len(t.idle) >= binaryHopMaxIdle {
+	if len(t.idle) >= t.maxIdle {
 		_ = t.idle[0].conn.Close()
 		t.idle = t.idle[1:]
 	}
 	t.idle = append(t.idle, cc)
 }
 
-// closeIdle closes every idle connection.
-func (t *binaryHopTransport) closeIdle() {
+// CloseIdle closes every idle connection.
+func (t *Transport) CloseIdle() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, cc := range t.idle {
@@ -192,7 +230,7 @@ func (t *binaryHopTransport) closeIdle() {
 
 // send writes req and reads its response head on cc. The body streams on
 // another goroutine, so a response may begin before the request ends.
-func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noContent bool) (*http.Response, error) {
+func (t *Transport) send(cc *hopClientConn, req *http.Request, noContent bool) (*http.Response, error) {
 	ctx := req.Context()
 	stop := context.AfterFunc(ctx, func() { _ = cc.conn.Close() })
 	fail := func(err error) (*http.Response, error) {
@@ -208,7 +246,7 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 		Scheme:    "http",
 		Authority: req.Host,
 		Path:      req.URL.RequestURI(),
-		Header:    hopRequestHeader(req, noContent),
+		Header:    t.requestHeader(req, noContent),
 		NoContent: noContent,
 	}
 	if head.Authority == "" {
@@ -240,18 +278,25 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 	if headErr != nil {
 		_ = cc.conn.SetReadDeadline(time.Time{})
 	}
-	for {
+	for informational := 0; ; informational++ {
 		status, header, err := binhttp.ReadResponseHead(cc.br, t.maxHeaderBytes)
 		if err != nil {
 			return fail(err)
 		}
 		if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+			if informational >= max1xxResponses {
+				return fail(errors.New("binary hop: too many 1xx informational responses"))
+			}
 			if trace := httptrace.ContextClientTrace(ctx); trace != nil && trace.Got1xxResponse != nil && status != http.StatusContinue {
 				if err := trace.Got1xxResponse(status, textproto.MIMEHeader(header)); err != nil {
 					return fail(err)
 				}
 			}
 			continue
+		}
+		declared, err := parseContentLength(header)
+		if err != nil {
+			return fail(err)
 		}
 		resp := &http.Response{
 			Status:        strconv.Itoa(status) + " " + http.StatusText(status),
@@ -265,9 +310,21 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 			Close:         headErr != nil || strings.EqualFold(strings.TrimSpace(header.Get("Connection")), "close"),
 			Trailer:       declaredTrailers(header),
 		}
-		body := &hopResponseBody{t: t, cc: cc, resp: resp, writeDone: writeDone, stop: stop}
+		body := &hopResponseBody{t: t, cc: cc, resp: resp, writeDone: writeDone, stop: stop, guard: lengthGuard{want: -1}}
+		if req.Method != http.MethodHead && bodyAllowedForStatus(status) {
+			body.guard.want = declared
+		}
 		body.cr.Reset(cc.br)
 		resp.Body = body
+		if t.requestsGzip(req) && strings.EqualFold(header.Get("Content-Encoding"), "gzip") && bodyAllowedForStatus(status) {
+			// As net/http's clients do for the gzip they asked for: the
+			// caller reads the decoded content, of unknown length.
+			resp.Body = &gzipBody{src: body}
+			header.Del("Content-Encoding")
+			header.Del("Content-Length")
+			resp.ContentLength = -1
+			resp.Uncompressed = true
+		}
 		// A failed head write still returns the server's early answer
 		// (resp.Close is set), as net/http does.
 		return resp, nil //nolint:nilerr // headErr is answered by the early response above.
@@ -276,10 +333,11 @@ func (t *binaryHopTransport) send(cc *hopClientConn, req *http.Request, noConten
 
 // hopRequestHeader is the header to send: the request's own, with the
 // fields net/http's client would add.
-func hopRequestHeader(req *http.Request, noContent bool) http.Header {
+func (t *Transport) requestHeader(req *http.Request, noContent bool) http.Header {
 	_, hasUA := req.Header["User-Agent"]
+	askGzip := t.requestsGzip(req)
 	needLength := !noContent && req.ContentLength > 0 && req.Header.Get("Content-Length") == ""
-	if hasUA && !needLength && len(req.Trailer) == 0 {
+	if hasUA && !needLength && !askGzip && len(req.Trailer) == 0 {
 		return req.Header
 	}
 	h := req.Header.Clone()
@@ -287,7 +345,10 @@ func hopRequestHeader(req *http.Request, noContent bool) http.Header {
 		h = http.Header{}
 	}
 	if !hasUA {
-		h.Set("User-Agent", defaultUserAgent)
+		h.Set("User-Agent", t.userAgent)
+	}
+	if askGzip {
+		h.Set("Accept-Encoding", "gzip")
 	}
 	if needLength {
 		h.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
@@ -369,12 +430,13 @@ func declaredTrailers(header http.Header) http.Header {
 // connection back when the request was written in full and the server
 // keeps the connection.
 type hopResponseBody struct {
-	t         *binaryHopTransport
+	t         *Transport
 	cc        *hopClientConn
 	resp      *http.Response
 	cr        binhttp.ChunkReader
 	writeDone chan error
 	stop      func() bool
+	guard     lengthGuard
 
 	mu     sync.Mutex
 	closed bool
@@ -395,6 +457,11 @@ func (b *hopResponseBody) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	n, err := b.cr.Read(p)
+	if gerr := b.guard.check(n, errors.Is(err, io.EOF)); gerr != nil {
+		b.err = gerr
+		b.abort()
+		return 0, gerr
+	}
 	if errors.Is(err, io.EOF) {
 		trailer, terr := binhttp.ReadTrailers(b.cc.br, b.t.maxHeaderBytes)
 		if terr != nil {

@@ -47,11 +47,25 @@ const (
 	// ibridgeMetalBridgeEnv names a built vmmd-stream-bridge; without it the
 	// test builds one.
 	ibridgeMetalBridgeEnv = "FAAS_TEST_STREAM_BRIDGE_BINARY"
+	// ibridgeMetalBinaryEnv runs the vmmd side with bridge_binary_http on
+	// (ADR-20261122140000).
+	ibridgeMetalBinaryEnv = "FAAS_TEST_IBRIDGE_METAL_BINARY_HTTP"
 )
 
 func TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal(t *testing.T) {
+	runInstanceBridgeUnitMetal(t, "TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal", false)
+}
+
+// TestInstanceBridgeUnitServesBinaryHTTPMetal is the same production shape
+// with bridge_binary_http on: the bridge unit serves binary HTTP and vmmd's
+// request reaches the guest through it, past the same peer-uid check.
+func TestInstanceBridgeUnitServesBinaryHTTPMetal(t *testing.T) {
+	runInstanceBridgeUnitMetal(t, "TestInstanceBridgeUnitServesBinaryHTTPMetal", true)
+}
+
+func runInstanceBridgeUnitMetal(t *testing.T, name string, binary bool) {
 	if os.Getenv(ibridgeMetalDirEnv) != "" {
-		instanceBridgeUnitMetalVmmd(t)
+		instanceBridgeUnitMetalVmmd(t, os.Getenv(ibridgeMetalBinaryEnv) == "1")
 		return
 	}
 	if os.Geteuid() != 0 {
@@ -90,8 +104,11 @@ func TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal(t *testing.T) {
 	args := []string{"--quiet", "--wait", "--pipe", "--collect", "--unit=" + unit,
 		"--setenv=" + ibridgeMetalDirEnv + "=" + dir, "--setenv=" + ibridgeMetalNetnsEnv + "=" + ns,
 		"--setenv=" + streamBridgePathEnv + "=" + bridge}
+	if binary {
+		args = append(args, "--setenv="+ibridgeMetalBinaryEnv+"=1")
+	}
 	args = append(args, vmmdSandboxProperties(t, dir)...)
-	args = append(args, test, "-test.run=^TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal$", "-test.v", "-test.count=1")
+	args = append(args, test, "-test.run=^"+name+"$", "-test.v", "-test.count=1")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "systemd-run", args...).CombinedOutput()
@@ -100,7 +117,7 @@ func TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal(t *testing.T) {
 		_ = exec.Command("systemctl", "stop", unit).Run()
 		t.Fatalf("vmmd side failed: %v", err)
 	}
-	if !strings.Contains(string(out), "--- PASS: TestInstanceBridgeUnitServesFromVmmdMountNamespaceMetal") {
+	if !strings.Contains(string(out), "--- PASS: "+name) {
 		t.Fatal("vmmd side did not pass")
 	}
 }
@@ -139,7 +156,7 @@ func vmmdSandboxProperties(t *testing.T, rw string) []string {
 }
 
 // instanceBridgeUnitMetalVmmd is the vmmd side, inside the sandbox.
-func instanceBridgeUnitMetalVmmd(t *testing.T) {
+func instanceBridgeUnitMetalVmmd(t *testing.T, binary bool) {
 	dir, ns := os.Getenv(ibridgeMetalDirEnv), os.Getenv(ibridgeMetalNetnsEnv)
 	path := filepath.Join("/run/netns", ns)
 	runMetal(t, "ip", "netns", "add", ns)
@@ -180,6 +197,7 @@ func instanceBridgeUnitMetalVmmd(t *testing.T) {
 		t.Fatal(err)
 	}
 	guest := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Guest-User-Agent", r.UserAgent())
 		_, _ = fmt.Fprintf(w, "guest saw %s", r.URL.Path)
 	})}
 	go func() { _ = guest.Serve(ln) }()
@@ -190,6 +208,7 @@ func instanceBridgeUnitMetalVmmd(t *testing.T) {
 	defer func() { bridgeRunRoot = saved }()
 	m := newStreamBridgeManager(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 	m.unitsOn = func() bool { return true }
+	m.binaryHTTP.Store(binary)
 	defer func() { _ = m.close(context.WithoutCancel(ctx)) }()
 	id, err := newBridgeIdentity(fcvm.BridgeUIDMax-os.Getpid()%1000, fcvm.BridgeUIDMax-os.Getpid()%1000)
 	if err != nil {
@@ -205,6 +224,10 @@ func instanceBridgeUnitMetalVmmd(t *testing.T) {
 		t.Fatal("the bridge runs as vmmd's child: its unit did not start (see the log above and the journal)")
 	}
 	name := lease.entry.unit.name
+	if _, isBinary := lease.entry.transport.(*streamBridgeBinaryTransport); isBinary != binary || lease.entry.binary != binary {
+		lease.release()
+		t.Fatalf("bridge unit %s transport %T, want binary HTTP %v", name, lease.entry.transport, binary)
+	}
 	if !strings.HasSuffix(lease.entry.unit.unit.ControlGroup, "/"+instanceBridgeSlice+"/"+name) {
 		t.Fatalf("bridge unit %s runs in cgroup %s", name, lease.entry.unit.unit.ControlGroup)
 	}
@@ -225,6 +248,10 @@ func instanceBridgeUnitMetalVmmd(t *testing.T) {
 	lease.release()
 	if resp.StatusCode != http.StatusOK || string(body) != "guest saw /hello" {
 		t.Fatalf("through bridge unit %s: %d %q", name, resp.StatusCode, body)
+	}
+	// Either framing, the guest sees the User-Agent vmmd's h2c client sent.
+	if ua := resp.Header.Get("X-Guest-User-Agent"); ua != "Go-http-client/2.0" {
+		t.Fatalf("through bridge unit %s (binary %v): guest saw User-Agent %q", name, binary, ua)
 	}
 
 	// Park: the unit is stopped and unloaded (invariant 4).

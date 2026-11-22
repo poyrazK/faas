@@ -2,11 +2,14 @@ package testhist
 
 import (
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // makeHistogram constructs a classic Prometheus histogram with the given
@@ -245,5 +248,52 @@ func TestSnapshotFromText_InfBucket(t *testing.T) {
 	// package docstring. This pins the documented behavior.
 	if got := QuantileScrape(t, sc, 0.95); got != 350*time.Millisecond {
 		t.Errorf("p95 with +Inf bucket = %v, want 350ms (cap at last finite upper bound)", got)
+	}
+}
+
+// TestSeriesFromText reads one series of a labelled histogram from the text
+// client_golang serves, so the label/le order the parser expects is the one
+// a daemon's /metrics actually prints.
+func TestSeriesFromText(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	vec := prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "gateway_wake_phase_duration_seconds",
+		Help:    "synthetic labelled histogram",
+		Buckets: []float64{0.1, 0.5},
+	}, []string{"phase"})
+	reg.MustRegister(vec)
+	vec.WithLabelValues("queue_wait").Observe(0.05)
+	vec.WithLabelValues("queue_wait").Observe(0.3)
+	vec.WithLabelValues("vmmd_wake").Observe(0.2)
+
+	rec := httptest.NewRecorder()
+	promhttp.HandlerFor(reg, promhttp.HandlerOpts{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	text := rec.Body.String()
+
+	sc, err := SeriesFromText(text, "gateway_wake_phase_duration_seconds", `phase="queue_wait"`)
+	if err != nil {
+		t.Fatalf("SeriesFromText: %v\n%s", err, text)
+	}
+	if sc.SampleCount != 2 {
+		t.Errorf("SampleCount = %d, want 2", sc.SampleCount)
+	}
+	if math.Abs(sc.SampleSum-0.35) > 1e-9 {
+		t.Errorf("SampleSum = %v, want 0.35", sc.SampleSum)
+	}
+	want := []uint64{1, 2, 2} // le=0.1, le=0.5, le=+Inf
+	if len(sc.Cumulative) != len(want) {
+		t.Fatalf("Cumulative = %v, want %v", sc.Cumulative, want)
+	}
+	for i := range want {
+		if sc.Cumulative[i] != want[i] {
+			t.Errorf("Cumulative = %v, want %v", sc.Cumulative, want)
+			break
+		}
+	}
+	if _, err := SnapshotFromText(text, "gateway_wake_phase_duration_seconds"); err == nil {
+		t.Error("SnapshotFromText found a labelled histogram, want not-found")
+	}
+	if _, err := SeriesFromText(text, "gateway_wake_phase_duration_seconds", `phase="guest_ready"`); err == nil {
+		t.Error("SeriesFromText found an absent series, want not-found")
 	}
 }

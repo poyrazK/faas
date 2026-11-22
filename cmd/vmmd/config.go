@@ -205,6 +205,11 @@ type Config struct {
 	// shortens its guest dial timeout (ADR-20261026120000). On by default
 	// (amendment 2026-10-27); FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
+	// BridgeBinaryHTTP sends HTTP/1.1 apps' requests to their stream bridges
+	// in binary HTTP instead of h2c, for bridges started from now on
+	// (ADR-20261122140000). Off by default; FAAS_VMMD_BRIDGE_BINARY_HTTP
+	// overrides TOML.
+	BridgeBinaryHTTP bool `toml:"bridge_binary_http"`
 	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
 	// for the stream bridges vmmd starts from now on, one per instance.
 	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
@@ -1159,6 +1164,13 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
 		}
 		c.BridgeStreamHeadroom = enabled
+	}
+	if v := os.Getenv("FAAS_VMMD_BRIDGE_BINARY_HTTP"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_BRIDGE_BINARY_HTTP must be a boolean (got %q)", v)
+		}
+		c.BridgeBinaryHTTP = enabled
 	}
 	for _, knob := range []struct {
 		env, key string

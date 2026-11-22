@@ -91,17 +91,32 @@ type ScrapeHistogram struct {
 	SampleSum   float64
 }
 
-// SnapshotFromText scrapes a single histogram from a /metrics body. The
-// histogram is identified by exact metric name; unlabelled histograms
-// (the only kind this package currently supports) match lines with no
-// label block.
+// SnapshotFromText scrapes a single unlabelled histogram from a /metrics
+// body, identified by exact metric name. Use SeriesFromText for one series
+// of a labelled histogram.
 func SnapshotFromText(text, metricName string) (*ScrapeHistogram, error) {
+	return SeriesFromText(text, metricName, "")
+}
+
+// SeriesFromText scrapes one series of a histogram from a /metrics body.
+// labels is the series' label block without braces or le, exactly as the
+// exposition prints it (e.g. `phase="queue_wait"`); "" selects the
+// unlabelled histogram.
+func SeriesFromText(text, metricName, labels string) (*ScrapeHistogram, error) {
 	sc := &ScrapeHistogram{Name: metricName}
-	// Bucket lines: "<name>_bucket{le="<bound>"} <cumulative>"
+	name := regexp.QuoteMeta(metricName)
+	bucketLabels, seriesLabels := "", ""
+	if labels != "" {
+		sc.Name = metricName + "{" + labels + "}"
+		bucketLabels = regexp.QuoteMeta(labels) + ","
+		seriesLabels = `\{` + regexp.QuoteMeta(labels) + `\}`
+	}
+	metricName = sc.Name // error messages name the series
+	// Bucket lines: "<name>_bucket{[<labels>,]le="<bound>"} <cumulative>"
 	// Float (or +Inf) for the bound; integer cumulative count.
-	bucketRe := regexp.MustCompile(`^` + regexp.QuoteMeta(metricName) + `_bucket\{le="([^"]+)"\}\s+(\d+)$`)
-	countRe := regexp.MustCompile(`^` + regexp.QuoteMeta(metricName) + `_count\s+(\d+)$`)
-	sumRe := regexp.MustCompile(`^` + regexp.QuoteMeta(metricName) + `_sum\s+([\d.eE+-]+)$`)
+	bucketRe := regexp.MustCompile(`^` + name + `_bucket\{` + bucketLabels + `le="([^"]+)"\}\s+(\d+)$`)
+	countRe := regexp.MustCompile(`^` + name + `_count` + seriesLabels + `\s+(\d+)$`)
+	sumRe := regexp.MustCompile(`^` + name + `_sum` + seriesLabels + `\s+([\d.eE+-]+)$`)
 
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)

@@ -1,9 +1,9 @@
-package gateway
+package binhop
 
 // adr: 20261110081523 — gatewayd-internal serves its own node's compute edge
 // over binary HTTP on a second unix socket.
 //
-// BinaryHopServer reads one binary HTTP request (pkg/binhttp) at a time from
+// Server reads one binary HTTP request (pkg/binhttp) at a time from
 // each connection, turns it into an *http.Request and serves it through the
 // same handler the HTTP/1.1 listener runs, with the same limits: header
 // size, read and write timeouts, idle timeout. What a handler sees matches
@@ -56,9 +56,9 @@ const (
 // aLongTimeAgo is a deadline in the past, which interrupts a blocked read.
 var aLongTimeAgo = time.Unix(1, 0)
 
-// BinaryHopServer serves Handler to binary HTTP connections. The zero
+// Server serves Handler to binary HTTP connections. The zero
 // timeouts mean none, as in http.Server.
-type BinaryHopServer struct {
+type Server struct {
 	// Handler returns the handler for each request, so a caller may set it
 	// after the server is built.
 	Handler           func() http.Handler
@@ -77,7 +77,7 @@ type BinaryHopServer struct {
 }
 
 // Serve accepts connections on ln until it fails or the server shuts down.
-func (s *BinaryHopServer) Serve(ln net.Listener) error {
+func (s *Server) Serve(ln net.Listener) error {
 	s.mu.Lock()
 	if s.listeners == nil {
 		s.listeners = map[net.Listener]struct{}{}
@@ -118,7 +118,7 @@ func (s *BinaryHopServer) Serve(ln net.Listener) error {
 // Shutdown stops accepting connections, closes idle ones as they become
 // idle, and waits for the requests in progress until ctx ends, when it
 // closes the rest.
-func (s *BinaryHopServer) Shutdown(ctx context.Context) error {
+func (s *Server) Shutdown(ctx context.Context) error {
 	s.shutdown.Store(true)
 	s.mu.Lock()
 	for ln := range s.listeners {
@@ -149,7 +149,7 @@ func (s *BinaryHopServer) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (s *BinaryHopServer) closeIdle() {
+func (s *Server) closeIdle() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for c := range s.conns {
@@ -159,21 +159,21 @@ func (s *BinaryHopServer) closeIdle() {
 	}
 }
 
-func (s *BinaryHopServer) forget(c *hopServerConn) {
+func (s *Server) forget(c *hopServerConn) {
 	s.mu.Lock()
 	delete(s.conns, c)
 	s.mu.Unlock()
 	s.active.Done()
 }
 
-func (s *BinaryHopServer) log() *slog.Logger {
+func (s *Server) log() *slog.Logger {
 	if s.Log != nil {
 		return s.Log
 	}
 	return slog.Default()
 }
 
-func (s *BinaryHopServer) maxHeaderBytes() int {
+func (s *Server) maxHeaderBytes() int {
 	if s.MaxHeaderBytes > 0 {
 		return s.MaxHeaderBytes
 	}
@@ -182,7 +182,7 @@ func (s *BinaryHopServer) maxHeaderBytes() int {
 
 // hopServerConn is one connection from the edge.
 type hopServerConn struct {
-	srv  *BinaryHopServer
+	srv  *Server
 	conn net.Conn
 	br   *bufio.Reader
 	bw   *bufio.Writer
@@ -276,7 +276,7 @@ func (c *hopServerConn) serveOne() bool {
 	if head.NoContent {
 		c.armBackgroundRead(cancel)
 	} else {
-		body = &hopRequestBody{c: c, req: req, onEnd: func() { c.armBackgroundRead(cancel) }}
+		body = &hopRequestBody{c: c, req: req, guard: lengthGuard{want: req.ContentLength}, onEnd: func() { c.armBackgroundRead(cancel) }}
 		body.cr.Reset(c.br)
 		req.Body = body
 	}
@@ -343,14 +343,11 @@ func (c *hopServerConn) newRequest(ctx context.Context, head binhttp.RequestHead
 	if head.NoContent {
 		return req, nil
 	}
-	req.ContentLength = -1
-	if v := header.Get("Content-Length"); v != "" {
-		n, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || n < 0 {
-			return nil, fmt.Errorf("gateway binary hop: Content-Length %q", v)
-		}
-		req.ContentLength = n
+	n, err := parseContentLength(header)
+	if err != nil {
+		return nil, err
 	}
+	req.ContentLength = n
 	for _, v := range header.Values("Trailer") {
 		for _, name := range strings.Split(v, ",") {
 			if name = strings.TrimSpace(name); name != "" {
@@ -451,6 +448,7 @@ type hopRequestBody struct {
 	c     *hopServerConn
 	req   *http.Request
 	cr    binhttp.ChunkReader
+	guard lengthGuard
 	onEnd func()
 	ended bool
 	err   error
@@ -470,6 +468,10 @@ func (b *hopRequestBody) read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	n, err := b.cr.Read(p)
+	if gerr := b.guard.check(n, errors.Is(err, io.EOF)); gerr != nil {
+		b.err = gerr
+		return 0, gerr
+	}
 	if errors.Is(err, io.EOF) {
 		trailer, terr := binhttp.ReadTrailers(b.c.br, b.c.srv.maxHeaderBytes())
 		if terr != nil {

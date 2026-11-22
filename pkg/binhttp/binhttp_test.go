@@ -215,3 +215,60 @@ func FuzzReadRequestHead(f *testing.F) {
 		}
 	})
 }
+
+// FuzzReadResponse decodes what a peer process sends back (vmmd reads an
+// instance's stream bridge, which carries the guest's response; the edge
+// reads gatewayd-internal): the framing indicator, informational and final
+// heads, chunked content and trailers. None of it may panic, accept a field
+// net/http would refuse, or produce more content than its input holds.
+func FuzzReadResponse(f *testing.F) {
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+	_ = WriteResponseStart(w)
+	_ = WriteResponseHead(w, 103, http.Header{"Link": {"</a>"}}, nil)
+	_ = WriteResponseHead(w, 200, http.Header{"Content-Type": {"text/plain"}, "Trailer": {"X-T"}}, nil, Field{Name: "Content-Length", Value: "5"})
+	cw := NewChunkWriter(w)
+	_, _ = cw.Write([]byte("hello"))
+	_ = cw.Close()
+	_ = WriteTrailers(w, http.Header{"X-T": {"v"}})
+	_ = w.Flush()
+	f.Add(buf.Bytes())
+	f.Add([]byte{3, 0x40, 0xc8, 0, 0, 0})
+	f.Fuzz(func(t *testing.T, b []byte) {
+		r := bufio.NewReader(bytes.NewReader(b))
+		if ReadResponseStart(r) != nil {
+			return
+		}
+		for range 8 {
+			status, header, err := ReadResponseHead(r, 4096)
+			if err != nil {
+				return
+			}
+			checkFields(t, header)
+			if status >= 200 {
+				break
+			}
+		}
+		n, _ := io.Copy(io.Discard, io.LimitReader(NewChunkReader(r), 1<<20))
+		if n > int64(len(b)) {
+			t.Fatalf("read %d content bytes from %d input bytes", n, len(b))
+		}
+		if trailer, err := ReadTrailers(r, 4096); err == nil {
+			checkFields(t, trailer)
+		}
+	})
+}
+
+func checkFields(t *testing.T, h http.Header) {
+	t.Helper()
+	for name, values := range h {
+		if !validFieldName(name) {
+			t.Fatalf("invalid field name %q accepted", name)
+		}
+		for _, v := range values {
+			if strings.ContainsAny(v, "\r\n\x00") {
+				t.Fatalf("field %q value %q has a control character", name, v)
+			}
+		}
+	}
+}

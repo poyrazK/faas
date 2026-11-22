@@ -91,7 +91,7 @@ func (m *streamBridgeManager) needsRecordLocked(entry *streamBridgeEntry) bool {
 // releaseForHandoff lets go of a unit bridge at shutdown without stopping it.
 func (m *streamBridgeManager) releaseForHandoff(entry *streamBridgeEntry) {
 	if entry.transport != nil {
-		entry.transport.CloseIdleConnections() //nolint:staticcheck // http2.Transport, as closeEntry
+		entry.transport.CloseIdleConnections()
 	}
 	entry.unit.proc.close()
 }
@@ -191,7 +191,7 @@ func (m *streamBridgeManager) install(entry *streamBridgeEntry) bool {
 	if m.closed || m.entries[entry.mapKey()] != nil {
 		entry.unit.proc.close()
 		if entry.transport != nil {
-			entry.transport.CloseIdleConnections() //nolint:staticcheck // http2.Transport, as closeEntry
+			entry.transport.CloseIdleConnections()
 		}
 		return false
 	}

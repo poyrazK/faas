@@ -50,10 +50,13 @@ type streamBridgeEntry struct {
 	// (bridge_unit.go).
 	unit      *bridgeUnit
 	client    *http.Client
-	transport *http2.Transport
-	waitDone  chan struct{}
-	waitMu    sync.Mutex
-	waitErr   error
+	transport bridgeTransport
+	// binary: the bridge was started to serve binary HTTP and entry.client
+	// sends it that (stream_bridge_binary.go).
+	binary   bool
+	waitDone chan struct{}
+	waitMu   sync.Mutex
+	waitErr  error
 
 	// guestErrors counts consecutive responses the bridge answered itself
 	// because its guest connection failed (bridgecompletion.GuestErrorHeader).
@@ -157,6 +160,9 @@ type streamBridgeManager struct {
 	// stream_bridge_gogc, passed to each bridge it starts; 0 keeps Go's
 	// default.
 	gomaxprocs, gogc atomic.Int64
+	// binaryHTTP is vmmd's bridge_binary_http switch: HTTP/1.1 bridges
+	// started from now on are sent binary HTTP (ADR-20261122140000).
+	binaryHTTP atomic.Bool
 }
 
 func (m *streamBridgeManager) setGoRuntime(gomaxprocs, gogc int) {
@@ -494,7 +500,7 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	}
 	deadline := m.now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
-	env := m.bridgeEnv(req, entry.target)
+	env := m.startEnv(req, entry)
 	if m.useUnit(entry) {
 		err := m.startUnitBridge(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env, req.GetAppProtocol())
 		if err == nil || !m.fallBackFromUnit(ctx, entry, err) {
@@ -542,13 +548,20 @@ func (m *streamBridgeManager) bridgeEnv(req *vmmdpb.ForwardHTTPRequestInit, targ
 	return env
 }
 
-// connectEntry gives a started bridge its H2C transport.
+// connectEntry gives a started bridge its transport: binary HTTP when it
+// was started for it, H2C otherwise.
 func (m *streamBridgeManager) connectEntry(entry *streamBridgeEntry) error {
-	transport := m.newTransport(entry.socket, entry.identity)
-	if m.headroom.Load() {
-		// The bridge still caps each connection at 100 streams; vmmd opens
-		// another connection instead of queueing requests behind a full one.
-		transport.StrictMaxConcurrentStreams = false
+	var transport bridgeTransport
+	if entry.binary {
+		transport = newStreamBridgeBinaryTransport(entry.socket, entry.identity)
+	} else {
+		h2 := m.newTransport(entry.socket, entry.identity)
+		if m.headroom.Load() {
+			// The bridge still caps each connection at 100 streams; vmmd opens
+			// another connection instead of queueing requests behind a full one.
+			h2.StrictMaxConcurrentStreams = false
+		}
+		transport = h2
 	}
 	m.mu.Lock()
 	if entry.closed {

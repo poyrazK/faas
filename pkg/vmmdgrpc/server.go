@@ -354,6 +354,9 @@ type Server struct {
 	// bridgeStreamHeadroom is vmmd's bridge_stream_headroom switch
 	// (ADR-20261026120000); every stream bridge manager takes it.
 	bridgeStreamHeadroom bool
+	// bridgeBinaryHTTP is vmmd's bridge_binary_http switch
+	// (ADR-20261122140000).
+	bridgeBinaryHTTP bool
 	// streamBridgeGOMAXPROCS and streamBridgeGOGC are vmmd's
 	// stream_bridge_gomaxprocs and stream_bridge_gogc; 0 keeps Go's default.
 	streamBridgeGOMAXPROCS, streamBridgeGOGC int
@@ -561,6 +564,18 @@ func (s *Server) WithBridgeStreamHeadroom(on bool) *Server {
 	return s
 }
 
+// WithBridgeBinaryHTTP sends the HTTP/1.1 bridges this server starts from
+// now on binary HTTP instead of h2c (ADR-20261122140000).
+func (s *Server) WithBridgeBinaryHTTP(on bool) *Server {
+	if s != nil {
+		s.bridgeBinaryHTTP = on
+		if s.streamBridges != nil {
+			s.streamBridges.binaryHTTP.Store(on)
+		}
+	}
+	return s
+}
+
 // WithStreamBridgeGoRuntime sets GOMAXPROCS and GOGC for the stream bridges
 // this server starts from now on; 0 keeps Go's default for that setting.
 func (s *Server) WithStreamBridgeGoRuntime(gomaxprocs, gogc int) *Server {
@@ -578,6 +593,7 @@ func (s *Server) WithStreamBridgeGoRuntime(gomaxprocs, gogc int) *Server {
 func (s *Server) newBridgeManager() *streamBridgeManager {
 	m := newStreamBridgeManager(s.log)
 	m.headroom.Store(s.bridgeStreamHeadroom)
+	m.binaryHTTP.Store(s.bridgeBinaryHTTP)
 	m.setGoRuntime(s.streamBridgeGOMAXPROCS, s.streamBridgeGOGC)
 	return m
 }

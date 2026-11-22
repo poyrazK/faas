@@ -159,6 +159,14 @@ func WriteRequestHead(w *bufio.Writer, h RequestHead) error {
 	return err
 }
 
+// IsRequestStart reports whether first, a connection's first byte, starts a
+// binary HTTP request as WriteRequestHead writes it. No HTTP/1.1 method, the
+// HTTP/2 preface or an instancebridge hello starts with it, so a listener
+// can tell them apart by one byte.
+func IsRequestStart(first byte) bool {
+	return first == knownLengthRequest || first == indeterminateRequest
+}
+
 // ReadRequestHead reads a request's head. maxHeaderBytes bounds the control
 // data and header fields together. With NoContent set, the whole message has
 // been read; otherwise its content follows (ChunkReader). It returns io.EOF

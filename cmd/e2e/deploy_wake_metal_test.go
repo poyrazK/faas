@@ -493,7 +493,7 @@ func assertWakePhaseQueueWaitObserved(t *testing.T, controlURL string, minObserv
 		t.Skip("gatewayd control URL not exposed by harness")
 	}
 	text := scrapeMetricsBody(t, controlURL)
-	sc, err := testhist.SnapshotFromText(text, "gateway_wake_phase_duration_seconds")
+	sc, err := testhist.SeriesFromText(text, "gateway_wake_phase_duration_seconds", `phase="queue_wait"`)
 	if err != nil {
 		t.Fatalf("assertWakePhaseQueueWaitObserved: %v\n/metrics excerpt:\n%s", err, excerpt(text))
 	}

@@ -20654,3 +20654,9 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// StreamBridgeIdleTimeout ends a stream bridge connection that carries no
+// request (ADR-127; the binary HTTP server of ADR-20261122140000). vmmd keeps
+// an idle binary HTTP connection for half of it, so it never reuses one the
+// bridge has closed.
+const StreamBridgeIdleTimeout = 120 * time.Second
