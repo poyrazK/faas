@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -462,9 +461,8 @@ func (c *Client) CallInteractive(ctx context.Context, tool Tool, args map[string
 // additionally polls until completion. Neither option retries tools/call.
 func (c *Client) CallWithOptions(ctx context.Context, tool Tool, args map[string]any, options CallOptions) (Exchange, error) {
 	if options.TaskSubmissionKey != "" {
-		key, err := uuid.Parse(options.TaskSubmissionKey)
-		if err != nil || key.Version() != 7 || key.Variant() != uuid.RFC4122 || key.String() != options.TaskSubmissionKey {
-			return Exchange{}, fmt.Errorf("MCP Task submission key must be a lowercase UUIDv7")
+		if err := validateTaskSubmissionKey(options.TaskSubmissionKey); err != nil {
+			return Exchange{}, err
 		}
 		if !options.EnableTasks || options.WaitForTask || options.Responder != nil || c.Token == "" {
 			return Exchange{}, fmt.Errorf("MCP Task submission keys require an authenticated handle-only Task call")

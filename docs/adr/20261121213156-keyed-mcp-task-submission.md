@@ -26,3 +26,8 @@ client receives that ID. An agent needs a way to repeat the submission safely.
   minimum Task lifetime covers that whole window, so normal Task cleanup can
   remove the key with the Task. A replay preserves the original task ID and
   deadline. Worker retries retain their at-least-once execution contract.
+- The `io.gregale/task-submission-lookup` extension allows a read-only
+  `gregale/tasks/lookup` request for a retained Task even after the key's
+  submission window closes. It filters on namespace, owner and expiry, then
+  checks current tool access. It reads only metadata columns and uses the
+  original Task deadline. The CLI reports the Task ID and next action.

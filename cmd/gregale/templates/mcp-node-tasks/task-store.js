@@ -20,6 +20,7 @@ const MAX_RESULT_BYTES = 1024 * 1024;
 const MAX_INPUT_STATE_BYTES = 256 * 1024;
 const SUPPORTED_INPUT_METHODS = new Set(['elicitation/create:form', 'elicitation/create:url', 'sampling/createMessage', 'roots/list']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const isSubmissionKey = key => typeof key === 'string' && UUID_PATTERN.test(key) && key[14] === '7' && key === key.toLowerCase();
 
 const CREATE_WORKER_HANDLERS_SCHEMA = `
   CREATE TABLE IF NOT EXISTS ${WORKER_HANDLERS_TABLE} (
@@ -549,8 +550,7 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
       let keyIssuedAt, keyExpiresAt;
       const unavailable = 'Task submission key is unavailable';
       if (submissionKey !== undefined) {
-        if (!supportsTaskSubmission || authMode !== 'external-oauth' || typeof submissionKey !== 'string' ||
-          !UUID_PATTERN.test(submissionKey) || submissionKey[14] !== '7' || submissionKey !== submissionKey.toLowerCase()) {
+        if (!supportsTaskSubmission || authMode !== 'external-oauth' || !isSubmissionKey(submissionKey)) {
           throw new Error(unavailable);
         }
         const issuedMs = Number.parseInt(submissionKey.slice(0, 8) + submissionKey.slice(9, 13), 16);
@@ -635,6 +635,14 @@ export function createPostgresMcpTaskStore({ pool, namespace, ownerKey, encrypti
            AND expires_at > clock_timestamp()
       `, [namespace, taskID, ownerHashes(authInfo, authMode)]);
       return result.rows?.[0] ? rowTask(result.rows[0], payloadKey, namespace) : null;
+    },
+    async getBySubmissionKey({ submissionKey, authInfo, authMode }) {
+      if (!supportsTaskSubmission || authMode !== 'external-oauth' || !isSubmissionKey(submissionKey)) return null;
+      const result = await pool.query(`SELECT task_id::text, tool_name, status, created_at, updated_at, expires_at
+        FROM ${TABLE}
+        WHERE namespace = $1 AND submission_key = $2::uuid AND owner_hash = ANY($3::bytea[])
+          AND expires_at > clock_timestamp()`, [namespace, submissionKey, ownerHashes(authInfo, authMode)]);
+      return result.rows?.[0] ?? null;
     },
     async getMany({ taskIDs, authInfo, authMode }) {
       const ids = [...new Set((Array.isArray(taskIDs) ? taskIDs : []).filter(taskID => typeof taskID === 'string' && UUID_PATTERN.test(taskID)))];
