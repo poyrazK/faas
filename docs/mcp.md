@@ -5699,6 +5699,25 @@ endpoint. Use the same endpoint and provide the original caller's credential
 when reading it. Use a new receipt path for each new submission. An existing
 receipt remains available for status lookup after a lost reply or CLI exit.
 
+To check several receipts for the same endpoint, repeat `--task-receipt` with
+`client status --metadata-only`.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+With multiple receipts, the command returns a JSON array in argument order.
+Each entry has an `outcome` and, when available, a `task` containing the
+metadata described above. An `available` entry contains the observed status.
+An `invalid_receipt` entry means the file could not be read as a private receipt
+for the selected endpoint. An `unavailable` entry covers expired or inaccessible
+Tasks. A `retry` entry gives `nextAction: retry_status` after a temporary failure
+or when the batch timeout expires. Exit code 0 means every entry is available.
+Exit code 3 means at least one entry needs a retry. Exit code 1 covers other
+unavailable or invalid entries. The array is returned in all three cases once
+the batch starts. A single receipt still returns the Task metadata object.
+
 To watch Task status from a receipt, use `client watch` with the same endpoint
 and the caller's current credential.
 

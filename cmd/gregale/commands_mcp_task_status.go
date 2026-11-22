@@ -20,6 +20,48 @@ type mcpTaskStatusMetadata struct {
 	NextAction     string `json:"nextAction"`
 }
 
+type mcpTaskReceiptStatusResult struct {
+	Outcome string                 `json:"outcome"`
+	Task    *mcpTaskStatusMetadata `json:"task,omitempty"`
+}
+
+func runMCPTaskReceiptBatchStatus(ctx context.Context, client *mcphosting.Client, receipts []string) int {
+	results := make([]mcpTaskReceiptStatusResult, len(receipts))
+	exit := 0
+	for i, receipt := range receipts {
+		result, code := readMCPTaskReceiptStatus(ctx, client, receipt)
+		results[i] = result
+		exit = max(exit, code)
+	}
+	if code := jsonOut(writeJSON(results)); code != 0 {
+		return code
+	}
+	return exit
+}
+
+func readMCPTaskReceiptStatus(ctx context.Context, client *mcphosting.Client, receipt string) (mcpTaskReceiptStatusResult, int) {
+	retry := func(err error) (mcpTaskReceiptStatusResult, int) {
+		status := mcpTaskRetrySnapshot("", err)
+		return mcpTaskReceiptStatusResult{Outcome: "retry", Task: &status}, exitCodeForStatus(http.StatusServiceUnavailable)
+	}
+	if err := ctx.Err(); err != nil {
+		return retry(err)
+	}
+	key, err := readMCPTaskReceipt(receipt, client.Endpoint)
+	if err != nil {
+		return mcpTaskReceiptStatusResult{Outcome: "invalid_receipt"}, 1
+	}
+	task, exchange, err := client.GetTaskBySubmissionKey(ctx, key)
+	if err != nil {
+		if mcpTaskMetadataReadRetryable(exchange.HTTPStatus, err) {
+			return retry(err)
+		}
+		return mcpTaskReceiptStatusResult{Outcome: "unavailable"}, 1
+	}
+	status := mcpTaskSnapshot(task)
+	return mcpTaskReceiptStatusResult{Outcome: "available", Task: &status}, 0
+}
+
 func runMCPTaskReceiptWatch(ctx context.Context, client *mcphosting.Client, receipt string, interval time.Duration) int {
 	if client.Token == "" {
 		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
@@ -151,17 +193,11 @@ func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
 	if errors.Is(err, context.Canceled) {
 		return printErr("MCP task status", context.Canceled)
 	}
-	// The discovery exchange is inside GetTask and can fail before a task
-	// request. Its sanitized API error still carries the HTTP status.
-	var upstream *api.APIError
-	if errors.As(err, &upstream) {
-		httpStatus = upstream.Problem.Status
-	}
-	if httpStatus == http.StatusRequestTimeout || httpStatus == http.StatusTooManyRequests ||
-		httpStatus >= http.StatusInternalServerError || httpStatus == 0 && isTransportError(err) {
+	if mcpTaskMetadataReadRetryable(httpStatus, err) {
 		return mcpTaskRetryStatus(taskID, err)
 	}
-	if upstream != nil {
+	var upstream *api.APIError
+	if errors.As(err, &upstream) {
 		// The MCP transport constructs this from the HTTP status and keeps
 		// response bodies and authentication challenges out of the error.
 		return printErr("MCP task status", upstream)
@@ -169,7 +205,18 @@ func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
 	return printErr("MCP task status", errors.New("the server did not confirm the requested Task status"))
 }
 
-func mcpTaskRetryStatus(taskID string, err error) int {
+func mcpTaskMetadataReadRetryable(httpStatus int, err error) bool {
+	// Discovery can fail before a Task request and return its HTTP status
+	// through the API error.
+	var upstream *api.APIError
+	if errors.As(err, &upstream) {
+		httpStatus = upstream.Problem.Status
+	}
+	return httpStatus == http.StatusRequestTimeout || httpStatus == http.StatusTooManyRequests ||
+		httpStatus >= http.StatusInternalServerError || httpStatus == 0 && isTransportError(err)
+}
+
+func mcpTaskRetrySnapshot(taskID string, err error) mcpTaskStatusMetadata {
 	status := mcpTaskStatusMetadata{TaskID: taskID, Status: "unknown", NextAction: "retry_status"}
 	var upstream *api.APIError
 	if errors.As(err, &upstream) && upstream.Problem.RetryAfterSeconds != nil {
@@ -178,7 +225,11 @@ func mcpTaskRetryStatus(taskID string, err error) int {
 			status.PollIntervalMS = seconds * int64(time.Second/time.Millisecond)
 		}
 	}
-	if code := jsonOut(writeJSON(status)); code != 0 {
+	return status
+}
+
+func mcpTaskRetryStatus(taskID string, err error) int {
+	if code := jsonOut(writeJSON(mcpTaskRetrySnapshot(taskID, err))); code != 0 {
 		return code
 	}
 	return exitCodeForStatus(http.StatusServiceUnavailable)

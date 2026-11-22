@@ -430,7 +430,8 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "call" {
 		fs.BoolVar(&deferFormInput, "defer-form-input", false, "allow a keyed Task to request forms for a later wait")
 	}
-	var submissionKey, taskReceiptPath string
+	var submissionKey string
+	var taskReceiptPaths []string
 	if command == "call" || command == "task-get" {
 		fs.Func("task-submission-key", "saved UUIDv7 for a keyed Task submission or status lookup", func(value string) error {
 			if value == "" {
@@ -441,11 +442,11 @@ func cmdMCPRemote(command string, args []string) int {
 		})
 	}
 	if command == "call" || command == "task-get" || command == "task-wait" || command == "task-respond" || command == "task-cancel" {
-		fs.Func("task-receipt", "private Task submission receipt file", func(value string) error {
+		fs.Func("task-receipt", "private Task submission receipt file (repeatable for status --metadata-only)", func(value string) error {
 			if value == "" {
 				return errors.New("task receipt path is required")
 			}
-			taskReceiptPath = value
+			taskReceiptPaths = append(taskReceiptPaths, value)
 			return nil
 		})
 	}
@@ -510,6 +511,13 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
+	}
+	var taskReceiptPath string
+	if len(taskReceiptPaths) > 0 {
+		taskReceiptPath = taskReceiptPaths[0]
+	}
+	if len(taskReceiptPaths) > 1 && (command != "task-get" || !metadataOnly) {
+		return printErr("Invalid MCP task flags", errors.New("repeat --task-receipt only with mcp client status --metadata-only"))
 	}
 	if submissionKey != "" && taskReceiptPath != "" {
 		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
@@ -596,6 +604,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if (inputTemplatePath != "" || reviewedInputPath != "") && token == "" {
 		return printErr("MCP Task input review", errors.New("task input review requires a client credential from --token-env"))
+	}
+	if len(taskReceiptPaths) > 1 {
+		return runMCPTaskReceiptBatchStatus(ctx, c, taskReceiptPaths)
 	}
 	if taskReceiptPath != "" && command != "call" {
 		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)

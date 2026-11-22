@@ -21,9 +21,10 @@ import { createMcpTaskRuntime, mcpTaskHandlers, RetryableMcpTaskError } from '..
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
 const postgresOnly = { skip: databaseURL ? false : 'set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests' };
 
-for (const [title, watchReceipt] of [
-  ['a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', false],
-  ['receipt watch reconciles a stream disconnect and resumes from a fresh CLI', true],
+for (const [title, mode] of [
+  ['a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', 'handle'],
+  ['receipt watch reconciles a stream disconnect and resumes from a fresh CLI', 'watch'],
+  ['batch receipt status preserves mixed outcomes in input order', 'batch'],
 ]) test(title, {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
   timeout: 30_000,
@@ -33,9 +34,12 @@ for (const [title, watchReceipt] of [
   t.after(() => rm(clientDir, { recursive: true, force: true }));
   const finishReport = Promise.withResolvers();
   const resultText = 'Private reconnect report is ready.';
-  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
-    build_report: { version: '1', async execute() {
-      await finishReport.promise;
+  const batchReceipt = mode === 'batch';
+  const buildReport = batchReceipt ? mcpTaskHandlers.build_report : { version: '1' };
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, workerConcurrency: batchReceipt ? 2 : 1, handlers: {
+    build_report: { ...buildReport, async execute(args, context) {
+      if (!batchReceipt || args.report === 'reconnect') await finishReport.promise;
+      if (batchReceipt) return buildReport.execute(args, context);
       return { content: [{ type: 'text', text: resultText }] };
     } },
   } });
@@ -56,6 +60,7 @@ for (const [title, watchReceipt] of [
   const requests = [];
   const subscriptions = [];
   let dropNextStatus = false;
+  let throttleNextLookup = false;
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
     requests.push(method);
@@ -63,6 +68,12 @@ for (const [title, watchReceipt] of [
     if (method === 'tasks/get' && dropNextStatus) {
       dropNextStatus = false;
       req.destroy();
+      return;
+    }
+    if (method === 'gregale/tasks/lookup' && throttleNextLookup) {
+      throttleNextLookup = false;
+      res.writeHead(429, { 'Retry-After': '7' });
+      res.end('private endpoint error text');
       return;
     }
     api.app(req, res);
@@ -91,7 +102,7 @@ for (const [title, watchReceipt] of [
     }
     const receipt = ['--task-receipt', join(clientDir, 'task.json')];
     const submitted = JSON.parse(await cli('call', owner, ['--tool', 'build_report', '--tasks',
-      ...(watchReceipt ? receipt : []), '--arguments', '{"report":"reconnect","steps":1}']));
+      ...(mode === 'handle' ? [] : receipt), '--arguments', '{"report":"reconnect","steps":1}']));
     assert.equal(submitted.result.resultType, 'task');
     assert.equal(submitted.result.status, 'working');
     const taskId = submitted.result.taskId;
@@ -99,6 +110,67 @@ for (const [title, watchReceipt] of [
     const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
       result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
     await eventually(async () => (await rows())[0]?.status === 'running', 'worker did not claim the Task');
+
+    if (batchReceipt) {
+      async function submitReceipt(report, credential, needsInput = false) {
+        const path = join(clientDir, `${report}.json`);
+        const argumentsJSON = JSON.stringify({ report, steps: 1, ...(needsInput ? { request_approval: true } : {}) });
+        const { result } = JSON.parse(await cli('call', credential, ['--tool', 'build_report', '--tasks',
+          '--task-receipt', path, '--arguments', argumentsJSON, ...(needsInput ? ['--defer-form-input'] : [])]));
+        return { path, id: result.taskId };
+      }
+      const paused = await submitReceipt('paused', owner, true);
+      const completed = await submitReceipt('done', owner);
+      const foreign = await submitReceipt('foreign', otherCaller);
+      const expired = await submitReceipt('expired', owner);
+      await eventually(async () => {
+        const statuses = new Map((await rows()).map(row => [row.task_id, row.status]));
+        return statuses.get(paused.id) === 'input_required' &&
+          [completed.id, foreign.id, expired.id].every(id => statuses.get(id) === 'completed');
+      }, 'PostgreSQL did not retain all expected Task states');
+      await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2',
+        [namespace, expired.id]);
+
+      const receiptFlags = paths => paths.flatMap(path => ['--task-receipt', path]);
+      const statusFlags = paths => ['--metadata-only', ...receiptFlags(paths)];
+      const goodPaths = [paused.path, completed.path, receipt[1]];
+      const beforeInvalid = requests.length;
+      assert.equal(await cli('status', owner, [...receiptFlags(goodPaths), '--read-result'], 1), '');
+      assert.equal(await cli('status', owner, [...statusFlags(goodPaths), '--task-id', taskId], 1), '');
+      assert.equal(await cli('cancel', owner, receiptFlags(goodPaths), 1), '');
+      assert.equal(requests.length, beforeInvalid);
+
+      const beforeMixed = requests.length;
+      const mixed = JSON.parse(await cli('status', owner, statusFlags([
+        paused.path, foreign.path, expired.path, join(clientDir, 'missing.json'), completed.path, receipt[1],
+      ]), 1));
+      assert.deepEqual(requests.slice(beforeMixed), ['server/discover', ...Array(5).fill('gregale/tasks/lookup')]);
+      const available = (outcome, id, status, nextAction, extra = {}) => {
+        assert.ok(Number.isFinite(Date.parse(outcome.task.lastUpdatedAt)));
+        return { outcome: 'available', task: { taskId: id, status, lastUpdatedAt: outcome.task.lastUpdatedAt, nextAction, ...extra } };
+      };
+      assert.deepEqual(mixed, [
+        available(mixed[0], paused.id, 'input_required', 'provide_input'),
+        { outcome: 'unavailable' },
+        { outcome: 'unavailable' },
+        { outcome: 'invalid_receipt' },
+        available(mixed[4], completed.id, 'completed', 'read_result'),
+        available(mixed[5], taskId, 'working', 'poll_status', { pollIntervalMs: 500 }),
+      ]);
+      const goodOutcomes = [mixed[0], mixed[4], mixed[5]];
+      assert.deepEqual(JSON.parse(await cli('status', owner, statusFlags(goodPaths))), goodOutcomes);
+      assert.deepEqual(JSON.parse(await cli('status', owner, statusFlags([completed.path]))), mixed[4].task);
+      assert.deepEqual(JSON.parse(await cli('status', reduced, statusFlags(goodPaths), 1)), Array(3).fill({ outcome: 'unavailable' }));
+
+      const beforeThrottle = requests.length;
+      throttleNextLookup = true;
+      assert.deepEqual(JSON.parse(await cli('status', owner, statusFlags([paused.path, completed.path]), 3)), [
+        { outcome: 'retry', task: { status: 'unknown', nextAction: 'retry_status', pollIntervalMs: 7000 } },
+        mixed[4],
+      ]);
+      assert.deepEqual(requests.slice(beforeThrottle), ['server/discover', 'gregale/tasks/lookup', 'gregale/tasks/lookup']);
+      return;
+    }
 
     const handle = ['--task-id', taskId];
     async function metadata(credential, expectedExit = 0) {
@@ -114,7 +186,7 @@ for (const [title, watchReceipt] of [
     assert.deepEqual(working, { taskId, status: 'working', lastUpdatedAt: working.lastUpdatedAt,
       pollIntervalMs: 500, nextAction: 'poll_status' });
 
-    if (watchReceipt) {
+    if (mode === 'watch') {
       const beforeInvalid = requests.length;
       assert.equal(await cli('watch', owner, [...receipt, '--uri', 'task://tasks/' + taskId], 1), '');
       assert.equal(await cli('watch', owner, [...receipt, '--url', `${endpoint}/other`], 1), '');
