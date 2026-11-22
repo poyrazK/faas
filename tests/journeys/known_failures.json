@@ -35,11 +35,6 @@
     "since": "2026-10-28"
   },
   {
-    "step": "TestObjectStorage/object_storage_enabled",
-    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
-    "since": "2026-10-29"
-  },
-  {
     "step": "TestQueuePullLeases/queues_enabled",
     "bug": "queues and pull leases are still preview (GA row 99): gregale feature list reports them disabled until they are released to the e2e account, and the journey's other steps report blocked; remove once the owner releases them",
     "since": "2026-11-05"
