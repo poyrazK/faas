@@ -5081,8 +5081,37 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason = $2`, id, CronSuspendedAppDeleted); err != nil {
 		return App{}, fmt.Errorf("state: restore app crons: %w", err)
 	}
+	// safedeploy closes a canary whose app was deleted by stamping it
+	// aborted; the deleted app had no traffic to hand back, so the row kept
+	// its share. After a restore that split served the aborted candidate
+	// forever (prod 2026-11-21: 50/50, 10% and 1% splits since 11-15). Its
+	// share goes to the release with the most traffic in its scope, in one
+	// statement so the scope still sums to 100.
+	if _, err := tx.Exec(ctx, `
+		with stuck as (
+			select d.id, d.scope, d.traffic_percent from deployments d
+			 where d.app_id = $1 and d.status = 'live' and d.rollout_state = 'aborted'
+			   and d.rollout_aborted_reason = $2 and d.traffic_percent > 0
+		), heir as (
+			select distinct on (s.id) s.id as stuck_id, o.id as heir_id, s.traffic_percent as moved
+			  from stuck s
+			  join deployments o on o.app_id = $1 and o.scope = s.scope and o.status = 'live'
+			   and o.id not in (select id from stuck)
+			 order by s.id, o.traffic_percent desc, o.created_at desc, o.id
+		)
+		update deployments d
+		   set traffic_percent = case when d.id in (select stuck_id from heir) then 0
+		       else d.traffic_percent + (select coalesce(sum(moved), 0) from heir where heir_id = d.id)::int end
+		 where d.id in (select stuck_id from heir) or d.id in (select heir_id from heir)`,
+		id, RolloutAbortedAppDeleted); err != nil {
+		return App{}, fmt.Errorf("state: restore app return aborted canary traffic: %w", err)
+	}
 	return a, nil
 }
+
+// RolloutAbortedAppDeleted is the rollout_aborted_reason safedeploy stamps on
+// a canary whose app was deleted mid-rollout.
+const RolloutAbortedAppDeleted = "app deleted during rollout"
 
 // ListDeletedApps returns app tombstones for the app grace sweeper.
 func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
