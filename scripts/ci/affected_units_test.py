@@ -182,7 +182,7 @@ class AnalyzeTest(unittest.TestCase):
         self.assertIsNone(rep["binaries"]["vmmd"]["version"])
 
     def test_pending_lists_units_left_at_base(self):
-        rep = au.analyze([("c1", ["pkg/state/store.go", "pkg/fcvm/vm_linux.go"])], CLOSURES, CONFIG, EXISTS)
+        rep = au.analyze([("c2", ["pkg/fcvm/vm_linux.go"]), ("c1", ["pkg/state/store.go"])], CLOSURES, CONFIG, EXISTS)
         self.assertEqual(rep["pending"], {"shared": ["schedd"], "compute": ["vmmd"], "tool": ["gregalectl"],
                                           "control-plane": [], "edge": []})
 
@@ -232,6 +232,110 @@ class AnalyzeTest(unittest.TestCase):
         extra = dict(CLOSURES, newd=(set(), set()))
         with self.assertRaisesRegex(ValueError, "newd has no lane"):
             au.analyze([], extra, CONFIG, EXISTS)
+
+
+class CrossLaneTest(unittest.TestCase):
+    """A commit that changes a lane daemon and an input only daemons outside
+    the lanes read is one change the lane would split: it blocks."""
+
+    def test_cases(self):
+        cases = [
+            ("control-plane and compute-only inputs", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"], True),
+            ("control-plane and shared-only inputs", ["pkg/apid/server.go", "pkg/sched/sched.go"], True),
+            ("edge and compute-only inputs", ["pkg/gateway/proxy.go", "cmd/vmmd/main.go"], True),
+            ("shared package every lane reads", ["pkg/state/store.go"], False),
+            ("shared package and a compute-only input", ["pkg/state/store.go", "pkg/fcvm/vm_linux.go"], True),
+            ("global input", ["go.mod", "pkg/fcvm/vm_linux.go"], False),
+            ("compute-only alone is pending", ["pkg/fcvm/vm_linux.go"], False),
+            ("tool alone is not a host daemon", ["pkg/apid/server.go", "cmd/gregalectl/main.go"], False),
+            ("test file is not an input", ["pkg/apid/server.go", "pkg/fcvm/vm_linux_test.go"], False),
+        ]
+        for name, paths, blocks in cases:
+            with self.subTest(name):
+                rep = au.analyze([("c1", paths)], CLOSURES, CONFIG, EXISTS, host=HOST)
+                self.assertEqual("cross_lane" in rep["blocked_by"], blocks)
+                if blocks:
+                    self.assertFalse(rep["eligible"])
+                    self.assertEqual(rep["flags"]["cross_lane"]["commits"], ["c1"])
+
+    def test_separate_commits_do_not_cross(self):
+        rep = au.analyze([("c2", ["pkg/fcvm/vm_linux.go"]), ("c1", ["pkg/apid/server.go"])],
+                         CLOSURES, CONFIG, EXISTS, host=HOST)
+        self.assertNotIn("cross_lane", rep["flags"])
+        self.assertTrue(rep["eligible"])
+        self.assertEqual(rep["pending"]["compute"], ["vmmd"])
+
+
+class LanePrefixTest(unittest.TestCase):
+    def prefix(self, commits, **kw):
+        return au.lane_prefix(commits, CLOSURES, CONFIG, EXISTS, host=HOST, **kw)
+
+    def test_clean_range_releases_head(self):
+        got = self.prefix([("c2", ["pkg/apid/server.go"]), ("c1", ["pkg/gateway/proxy.go"])])
+        self.assertEqual(got, {"head": "c2", "behind": 0, "stalled_by": None})
+
+    def test_stops_before_the_first_blocked_commit(self):
+        got = self.prefix([
+            ("c4", ["pkg/apid/server.go"]),
+            ("c3", ["pkg/apid/server.go", "deploy/manifest/production/ovh-live.template.yaml"]),
+            ("c2", ["pkg/apid/server.go"]),
+            ("c1", ["docs/quickstart.md"]),
+        ])
+        self.assertEqual(got["head"], "c2")
+        self.assertEqual(got["behind"], 2)
+        self.assertEqual(got["stalled_by"]["commit"], "c3")
+        self.assertEqual(got["stalled_by"]["blocked_by"], ["deploy"])
+        self.assertIn("deploy/manifest/production/ovh-live.template.yaml", got["stalled_by"]["reasons"][0])
+
+    def test_first_commit_blocked_leaves_nothing(self):
+        got = self.prefix([("c2", ["pkg/apid/server.go"]),
+                           ("c1", ["pkg/apid/server.go", "pkg/fcvm/vm_linux.go"])])
+        self.assertIsNone(got["head"])
+        self.assertEqual(got["behind"], 2)
+        self.assertEqual(got["stalled_by"]["blocked_by"], ["cross_lane"])
+
+    def test_the_prefix_is_eligible_as_a_range(self):
+        # The workflow re-runs the full analysis at the prefix head; for path
+        # rules the two verdicts agree.
+        commits = [("c3", ["deploy/ansible/site.yml"]), ("c2", ["pkg/apid/server.go"]),
+                   ("c1", ["deploy/ansible/roles/grafana/files/fleet.json"])]
+        got = self.prefix(commits)
+        self.assertEqual(got["head"], "c2")
+        self.assertFalse(au.analyze(commits, CLOSURES, CONFIG, EXISTS, host=HOST)["eligible"])
+        self.assertTrue(au.analyze(commits[1:], CLOSURES, CONFIG, EXISTS, host=HOST)["eligible"])
+
+    def test_stateful_role_judged_from_the_commit_own_paths(self):
+        host = {g: dict(v, changed={"all": False, "roles": ["postgres_capacity"]}) for g, v in HOST.items()}
+        got = au.lane_prefix([("c2", ["deploy/ansible/roles/postgres_capacity/defaults/main.yml"]),
+                              ("c1", ["pkg/apid/server.go"])], CLOSURES, CONFIG, EXISTS, host=host)
+        self.assertEqual(got["head"], "c1")
+        self.assertEqual(got["stalled_by"]["blocked_by"], ["stateful_restart"])
+
+    def test_comment_only_judged_per_commit(self):
+        # site.yml looks comment-only over the range (c3 reverted c2's real
+        # change), but c2 really changed it.
+        commits = [("c3", ["deploy/ansible/site.yml"]), ("c2", ["deploy/ansible/site.yml"]),
+                   ("c1", ["pkg/apid/server.go"])]
+        per_commit = {"c3": {"deploy/ansible/site.yml"}, "c2": set()}
+        got = self.prefix(commits, comment_only={"deploy/ansible/site.yml"},
+                          comments_for=lambda sha, paths: per_commit.get(sha, set()))
+        self.assertEqual(got["head"], "c1")
+        self.assertEqual(got["stalled_by"]["commit"], "c2")
+        # Without per-commit comments the range's set would have let c2 pass.
+        self.assertIsNone(self.prefix(commits, comment_only={"deploy/ansible/site.yml"})["stalled_by"])
+
+    def test_migrations_judged_per_commit(self):
+        config = dict(CONFIG, migrations_dir="migrations/")
+        data = {"eligible": False, "blockers": ["migrations/00003_drop.sql: contract"], "migrations": [
+            {"path": "migrations/00002_add.sql", "eligible": True, "blockers": []},
+            {"path": "migrations/00003_drop.sql", "eligible": False, "blockers": ["contract"]},
+        ]}
+        commits = [("c3", ["migrations/00003_drop.sql"]), ("c2", ["migrations/00002_add.sql"]),
+                   ("c1", ["pkg/apid/server.go"])]
+        got = au.lane_prefix(commits, CLOSURES, config, EXISTS, data=data, host=HOST)
+        self.assertEqual(got["head"], "c2")
+        self.assertEqual(got["stalled_by"]["commit"], "c3")
+        self.assertIn("contract", " ".join(got["stalled_by"]["reasons"]))
 
 
 def measured(status, code="h", base="b"):
@@ -286,6 +390,21 @@ class CodeSelectionTest(unittest.TestCase):
         self.assertEqual(au.code_candidates(rep), ["apid", "meterd"])
         rep = au.analyze([("c1", ["pkg/state/store.go", "migrations/00002_add.sql"])], CLOSURES, CONFIG, EXISTS)
         self.assertEqual(au.code_candidates(rep), [])
+
+    def test_prebuilt_release_binaries_are_measured_and_only_missing_ones_build(self):
+        with tempfile.TemporaryDirectory() as d:
+            pathlib.Path(d, "apid").write_bytes(b"x")
+            calls = []
+            orig = au.binary_code.normalised_digests
+            au.binary_code.normalised_digests = lambda path, stamps, workdir=None: (
+                calls.append((os.path.basename(path), stamps)) or ("f", "c"))
+            try:
+                found, missing = au.prebuilt_digests(["apid", "meterd"], d, lambda n: [(n.encode(), b"x")])
+            finally:
+                au.binary_code.normalised_digests = orig
+        self.assertEqual(found, {"apid": ("f", "c")})
+        self.assertEqual(missing, ["meterd"])
+        self.assertEqual(calls, [("apid", [(b"apid", b"x")])])
 
     def test_code_cache_round_trip_and_mismatch(self):
         path = os.path.join(tempfile.mkdtemp(), "cache.json")
