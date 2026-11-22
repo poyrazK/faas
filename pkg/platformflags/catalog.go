@@ -99,6 +99,11 @@ const (
 	// from (ADR-20261121170000).
 	RouteResourcePeaks = "route_resource_peaks"
 
+	// CrossAppBindings lets producer routes accept gregale:bindings workload
+	// tokens, authorized by the caller app's gregale.yaml `uses:` grants
+	// (ADR-20261122191423).
+	CrossAppBindings = "cross_app_bindings"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -533,6 +538,17 @@ var catalog = []Spec{
 		ADR:        "ADR-20261121170000",
 		Consumers:  []string{"apid", "gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
+	},
+	{
+		Key:   CrossAppBindings,
+		Label: "Cross-app bindings",
+		Description: "Let queue send, realtime publish and delayed-task routes accept gregale:bindings workload-identity tokens, authorized by " +
+			"the calling app's gregale.yaml `uses:` grants, so apps need no API key to call Gregale on themselves or sibling apps. Decided " +
+			"for the target app's resource account. Off, a binding token is refused and API keys are unaffected.",
+		ADR:        "ADR-20261122191423",
+		Consumers:  []string{"apid"},
+		Attributes: []Attribute{AttributePlan, AttributeOrg},
 		RetireBy:   "2027-06-30",
 	},
 	{

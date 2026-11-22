@@ -4456,7 +4456,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish-batch", s.realtimePreviewRoute(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeChannelBatch)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/activity-scopes/{activity_scope}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeSignal))))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.PublishManagedRealtimeSignal))))
-	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IdempotentManagedRealtimePublish(s.realtime.PublishManagedRealtimeChannel)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish", s.bindingRoute(capgrant.KindRealtime, realtimeChannelResource, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.IdempotentManagedRealtimePublish(s.realtime.PublishManagedRealtimeChannel)))), s.realtime.IdempotentManagedRealtimePublish(s.realtime.PublishManagedRealtimeChannel)))
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.realtimePreviewRoute(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.realtime.AppendManagedRealtimeRetainedMessage)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/retained-messages", s.realtimePreviewRoute(s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.realtime.ReadManagedRealtimeRetainedMessages)))))
 
@@ -4586,8 +4586,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/restore", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.App(s.durable.Restore))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/entities/retry", s.durable.Route(s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.durable.App(s.durable.Retry))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/invoke/async", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.invokeAppAsync)))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))))
-	mux.HandleFunc("POST /v1/apps/{slug}/queues/send-batch", s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/send", s.bindingRoute(capgrant.KindQueues, nil, s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))), productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.queueSend))))
+	mux.HandleFunc("POST /v1/apps/{slug}/queues/send-batch", s.bindingRoute(capgrant.KindQueues, nil, s.authLimited(s.requireMFA(s.requireScope(api.ScopesQueuesSendSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))), productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBatchBodyLimit, s.queueSendBatch))))
 	mux.HandleFunc("POST /v1/apps/{slug}/inbox", s.authLimited(s.requireMFA(s.requireScope(api.ScopesEventsPublishSurface...)(productionQueueBindingHandler(s.idempotentInRequestedEnvironment(queueSendBodyLimit, s.sendAppMessage))))))
 	// Postgres change workers (ADR-20261112140000).
 	mux.HandleFunc("PUT /v1/apps/{slug}/postgres-changes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putPostgresChanges))))
@@ -4629,7 +4629,7 @@ func (s *server) handler() http.Handler {
 	// network blip must not double-enqueue; the SDK mints
 	// Idempotency-Key automatically on POST.
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/dead_letter/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueDeadLetterReplay))))))
-	mux.HandleFunc("POST /v1/apps/{slug}/delayed-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksWriteSurface...)(s.idempotent(s.delayedTaskCreate)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/delayed-tasks", s.bindingRoute(capgrant.KindDelayedTasks, targetOnlyResource, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksWriteSurface...)(s.idempotent(s.delayedTaskCreate)))), s.idempotent(s.delayedTaskCreate)))
 	mux.HandleFunc("GET /v1/apps/{slug}/delayed-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksReadSurface...)(s.delayedTaskList))))
 	mux.HandleFunc("GET /v1/invocations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInvocations))))
 	mux.HandleFunc("GET /v1/invocations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getInvocation))))
