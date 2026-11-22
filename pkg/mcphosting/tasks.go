@@ -109,7 +109,9 @@ func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
 	type plain TaskInputRequest
 	var decoded plain
 	decoded.Params.Mode = "form"
-	if err := json.Unmarshal(data, &decoded); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&decoded); err != nil {
 		return err
 	}
 	var fields struct {
@@ -123,6 +125,14 @@ func (request *TaskInputRequest) UnmarshalJSON(data []byte) error {
 	}
 	*request = TaskInputRequest(decoded)
 	return nil
+}
+
+// InputForms returns the supported forms in the current Task snapshot.
+func (t Task) InputForms() ([]InputRequest, error) {
+	if t.Status != "input_required" {
+		return nil, errors.New("MCP Task input review requires a Task waiting for form input")
+	}
+	return parseTaskInputRequests("task", t.InputRequests)
 }
 
 // GetTask reads one task. Streamable HTTP requests carry taskId in Mcp-Name
