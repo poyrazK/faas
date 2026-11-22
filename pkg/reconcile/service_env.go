@@ -38,7 +38,27 @@ func serviceEnvForWorkloadWithAvailable(base map[string]string, w reposcan.Workl
 }
 
 func serviceEnvForWorkloadWithTransport(base map[string]string, w reposcan.Workload, available map[string]struct{}, transport api.ServiceBindingTransport) map[string]string {
-	return api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
+	env := api.ServiceBindingEnvForTransport(base, serviceBindingsForWorkloadWithAvailable(w, available), transport)
+	return workloadCredentialEnv(env, w)
+}
+
+// workloadCredentialEnv points AWS SDKs at the guest's workload S3
+// credential endpoint when the service holds a bucket grant
+// (ADR-20261122191423 slice 2), and removes the platform's value when it no
+// longer does. A value the customer set themselves is left alone.
+func workloadCredentialEnv(env map[string]string, w reposcan.Workload) map[string]string {
+	granted := w.Uses != nil && len(w.Uses.Buckets) > 0
+	current, set := env[api.WorkloadCredentialsEnv]
+	switch {
+	case granted && !set:
+		if env == nil {
+			env = map[string]string{}
+		}
+		env[api.WorkloadCredentialsEnv] = api.WorkloadObjectCredentialsEndpoint
+	case !granted && set && current == api.WorkloadObjectCredentialsEndpoint:
+		delete(env, api.WorkloadCredentialsEnv)
+	}
+	return env
 }
 
 func serviceBindingsForWorkloadWithAvailable(w reposcan.Workload, available map[string]struct{}) []api.AppServiceBinding {
@@ -205,6 +225,9 @@ func serviceEnvEqual(actual, expected map[string]string) bool {
 				return false
 			}
 		}
+	}
+	if actual[api.WorkloadCredentialsEnv] == api.WorkloadObjectCredentialsEndpoint && expected[api.WorkloadCredentialsEnv] == "" {
+		return false
 	}
 	for key, value := range expected {
 		if actual[key] != value {

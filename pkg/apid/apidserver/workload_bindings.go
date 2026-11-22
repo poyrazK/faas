@@ -92,36 +92,11 @@ func bindingUnauthorized(detail string) *api.Problem {
 // authorizeBindingCall returns the authorized call and the account the
 // handler acts as, or the refusal.
 func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resource bindingResource) (bindingCall, state.Account, *api.Problem) {
-	verifier := s.workloadTrust()
-	if verifier == nil {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("workload trust is not configured")
-	}
-	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	claims, err := verifier.Verify(token, workloadidentity.BindingsAudience, time.Now())
-	if err != nil {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("the token is invalid or expired")
+	caller, instanceID, callerAcct, problem := s.verifyBindingCaller(r)
+	if problem != nil {
+		return bindingCall{}, state.Account{}, problem
 	}
 	ctx := r.Context()
-	caller, err := s.store.AppByID(ctx, claims.AppID)
-	if err != nil || caller.AccountID != claims.AccountID || caller.Status == state.AppDeleted {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("the token's app does not exist")
-	}
-	instance, err := s.store.InstanceByID(ctx, claims.InstanceID)
-	if err != nil || instance.AppID != caller.ID || !state.State(instance.State).CountsForConcurrency() {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("the token's instance is not live")
-	}
-	if !state.ProductionDeploymentScope(claims.Environment) {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("stage and branch deployments cannot use binding tokens yet")
-	}
-	deployment, err := s.store.DeploymentByID(ctx, instance.DeploymentID)
-	if err != nil || deployment.AppID != caller.ID || !state.ProductionDeploymentScope(deployment.Scope) {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("the token's instance does not run a production deployment")
-	}
-	callerAcct, err := state.AppResourceAccount(ctx, s.store, caller)
-	if err != nil || !callerAcct.Active() {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("the caller's account is not active")
-	}
-
 	missing := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	target, err := s.store.AppBySlug(ctx, r.PathValue("slug"))
 	if errors.Is(err, state.ErrNotFound) || err == nil && target.Status == state.AppDeleted {
@@ -147,7 +122,7 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 
 	call := bindingCall{
 		Caller:     caller,
-		InstanceID: instance.ID,
+		InstanceID: instanceID,
 		Target:     target,
 		View: capgrant.Target{
 			Self:         target.ID == caller.ID,
@@ -167,6 +142,42 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 		return bindingCall{}, state.Account{}, problem
 	}
 	return call, targetAcct, nil
+}
+
+// verifyBindingCaller verifies a gregale:bindings token: it must come from a
+// live instance of an existing app that runs a production deployment of an
+// active resource account.
+func (s *server) verifyBindingCaller(r *http.Request) (state.App, string, state.Account, *api.Problem) {
+	verifier := s.workloadTrust()
+	if verifier == nil {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("workload trust is not configured")
+	}
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	claims, err := verifier.Verify(token, workloadidentity.BindingsAudience, time.Now())
+	if err != nil {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("the token is invalid or expired")
+	}
+	ctx := r.Context()
+	caller, err := s.store.AppByID(ctx, claims.AppID)
+	if err != nil || caller.AccountID != claims.AccountID || caller.Status == state.AppDeleted {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's app does not exist")
+	}
+	instance, err := s.store.InstanceByID(ctx, claims.InstanceID)
+	if err != nil || instance.AppID != caller.ID || !state.State(instance.State).CountsForConcurrency() {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's instance is not live")
+	}
+	if !state.ProductionDeploymentScope(claims.Environment) {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("stage and branch deployments cannot use binding tokens yet")
+	}
+	deployment, err := s.store.DeploymentByID(ctx, instance.DeploymentID)
+	if err != nil || deployment.AppID != caller.ID || !state.ProductionDeploymentScope(deployment.Scope) {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("the token's instance does not run a production deployment")
+	}
+	callerAcct, err := state.AppResourceAccount(ctx, s.store, caller)
+	if err != nil || !callerAcct.Active() {
+		return state.App{}, "", state.Account{}, bindingUnauthorized("the caller's account is not active")
+	}
+	return caller, instance.ID, callerAcct, nil
 }
 
 // permits checks kind on the call's target. checkResource is false when the

@@ -2326,7 +2326,9 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	if len(existing.Env) > 0 || len(desired.Env) > 0 {
 		merged := make(map[string]string, len(existing.Env)+len(desired.Env))
 		for key, value := range existing.Env {
-			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) {
+			if strings.HasPrefix(key, api.ServiceBindingEnvPrefix) && strings.HasSuffix(key, api.ServiceBindingEnvSuffix) ||
+				key == api.WorkloadCredentialsEnv && value == api.WorkloadObjectCredentialsEndpoint {
+				// Platform-managed values come back from desired only.
 				continue
 			}
 			merged[key] = value

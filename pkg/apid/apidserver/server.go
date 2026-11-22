@@ -4631,7 +4631,8 @@ func (s *server) handler() http.Handler {
 	// Idempotency-Key automatically on POST.
 	mux.HandleFunc("POST /v1/apps/{slug}/queues/dead_letter/{id}/replay", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(productionQueueBindingHandler(s.idempotent(s.queueDeadLetterReplay))))))
 	mux.HandleFunc("POST /v1/apps/{slug}/delayed-tasks", s.bindingRoute(capgrant.KindDelayedTasks, targetOnlyResource, s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksWriteSurface...)(s.idempotent(s.delayedTaskCreate)))), s.idempotent(s.delayedTaskCreate)))
-	mux.HandleFunc("GET /v1/apps/{slug}/delayed-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksReadSurface...)(s.delayedTaskList))))
+	mux.Handle("POST /v1/workload/object-storage/credentials", s.workloadObjectCredentials())
+	mux.HandleFunc("GET /v1/apps/{slug}/delayed-tasks",s.authLimited(s.requireMFA(s.requireScope(api.ScopesDelayedTasksReadSurface...)(s.delayedTaskList))))
 	mux.HandleFunc("GET /v1/invocations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listInvocations))))
 	mux.HandleFunc("GET /v1/invocations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getInvocation))))
 	// ADR-612: parent identity deduplicates replay; ownership is checked on

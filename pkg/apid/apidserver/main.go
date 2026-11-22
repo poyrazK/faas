@@ -880,6 +880,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go background.Staggered(ctx, background.StartSpread, func() { srv.operation.RunChildSettlementSignals(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageRecovery(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageAccounting(ctx) })
+		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunWorkloadCredentialSweep(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.object.RunObjectStorageUsageExports(ctx, os.Getenv) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresReconciler(ctx) })
 		go background.Staggered(ctx, background.StartSpread, func() { srv.runManagedPostgresBindingReconciler(ctx) })

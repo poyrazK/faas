@@ -546,7 +546,8 @@ type MemStore struct {
 	objectGatewayStorage          map[string]*memGatewayStorage
 	objectAccessGrants            map[string]ObjectBucketAccessGrant
 	objectS3Credentials           map[string]ObjectS3Credential
-	objectS3CopySources           map[string]ObjectS3CopySource
+	objectWorkloadCredentials     map[string]ObjectWorkloadCredential
+	objectS3CopySources          map[string]ObjectS3CopySource
 	objectMultipartUploads        map[string]ObjectMultipartUpload
 	objectMultipartInitiations    map[string]ObjectMultipartInitiation
 	objectMultipartPartWriters    map[multipartPartWriterKey]multipartPartWriter
