@@ -5842,6 +5842,9 @@ type Querier interface {
 	// narrows by their indexes without changing the result. The subject function
 	// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 	// every bucket on the platform, under the account lock of every object write.
+	// inventory_held also covers an all-version-path bucket with a live multipart
+	// session: its refresh cannot start until the session ends (ADR-533/540), and
+	// its tracked reservations keep capacity conservative meanwhile.
 	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
