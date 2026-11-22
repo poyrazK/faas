@@ -15,6 +15,9 @@ func TestPackagedRedirectPolicyAdmitsNativeClients(t *testing.T) {
 		"http://127.0.0.1:33418",
 		"http://localhost:7777/callback",
 		"http://127.0.0.1:51234/oauth/callback",
+		"http://localhost:51234/oauth/callback",
+		"http://localhost:33418/",
+		"http://localhost:8787/callback",
 		"https://claude.ai/api/mcp/auth_callback",
 	} {
 		if !policy.redirectAllowed(redirect) {
@@ -30,6 +33,8 @@ func TestPackagedRedirectPolicyAdmitsNativeClients(t *testing.T) {
 		"http://127.0.0.1:33418/other",
 		"http://127.0.0.1:51234/oauth/callback/extra",
 		"http://evil.example:51234/oauth/callback",
+		"http://localhost:51234/oauth/callback/extra",
+		"http://localhost.evil.example:51234/oauth/callback",
 		"https://vscode.dev/redirect/extra",
 	} {
 		if policy.redirectAllowed(redirect) {
