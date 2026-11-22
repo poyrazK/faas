@@ -176,7 +176,7 @@ func renderRouteSplit(w io.Writer, slug, host string, s *routeresources.Split) {
 }
 
 // splitTargetSlug names the route's app after the route's last static
-// segment: shop + /v1/exports/* → shop-exports.
+// segment: shop + /exports/* → shop-exports.
 func splitTargetSlug(slug, glob string) string {
 	name := "heavy"
 	segments := strings.Split(strings.Trim(glob, "/"), "/")

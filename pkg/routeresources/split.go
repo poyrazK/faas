@@ -123,8 +123,8 @@ func isFoldedRoute(route string) bool {
 
 var pathParam = regexp.MustCompile(`\{[^/{}]*\}|:[A-Za-z_][A-Za-z0-9_]*`)
 
-// PathGlob turns a route template ("GET /v1/exports/{id}") into an
-// edge-rule path glob ("/v1/exports/*"). A route without a path, or one
+// PathGlob turns a route template (GET /exports/{id}) into an
+// edge-rule path glob (/exports/*). A route without a path, or one
 // already ending in a wildcard, is returned as is.
 func PathGlob(route string) string {
 	path := route
