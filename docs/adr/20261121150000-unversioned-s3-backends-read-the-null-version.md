@@ -107,3 +107,36 @@ marker). A marker past the last returned part still claims parts the page did
 not return and is still refused, so the provider-evidence rule of #6670 keeps
 its intent. The other S3 listings Gregale reads end without next markers on
 OVH (captured the same day) and are unchanged.
+
+## Amendment 2026-11-22: copies without copy-source conditions
+
+`TestObjectStorage` against production after the rc.367 rollout found that
+every gateway `CopyObject` on OVH answered 409 `OperationAborted` and left its
+completion `provider_write_uncertain`. The provider copy sends
+`x-amz-copy-source-if-match` with the snapshot ETag as the fence that the copy
+reads the bytes the gateway snapshotted. OVH answers that header with
+501 NotImplemented ("Copy object not implemented with
+X-Amz-Copy-Source-If-Match"), which Gregale correctly reads as an uncertain
+write. The same copy without the header succeeds. `UploadPartCopy` sends the
+same conditions.
+
+On a `versioning: unsupported` backend, copies and part copies no longer send
+copy-source conditions. The coupling is deliberate: OVH is the only such
+backend today, an unversioned bucket has no version fence to fall back on,
+and a separate registry field would make running binaries reject the strictly
+parsed registry until the new release is out. A backend that needs the
+behaviour without being unversioned gets its own field then.
+
+- Client copy conditions (`x-amz-copy-source-if-*`) are still evaluated
+  against the gateway's own HEAD snapshot before dispatch, as before.
+- The fence moves after the copy. A single-part, unencrypted source's ETag is
+  its content MD5, and OVH returns it unchanged on a copy of the same bytes
+  (verified on production). A copy that returns any other ETag wrote bytes
+  other than the snapshot, so it is treated as uncertain and recovery settles
+  the destination from its receipt.
+- A multipart source gets a whole-content ETag on copy (verified on
+  production) and cannot be fenced that way. A ranged part copy cannot be
+  either. If the source is overwritten in the window between the snapshot
+  HEAD and the copy, the copy holds the newer bytes, which is S3's own
+  behaviour for a copy without conditions. Capacity reconciliation corrects
+  the recorded size.
