@@ -59,7 +59,11 @@ func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 	for _, required := range []string{
 		"cosign sign-blob --yes",
 		`--certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release-units.yml@refs/heads/main"`,
-		"scripts/ci/affected_units.py --base",
+		// Head's selection rules, copied before a prefix release moves the
+		// checkout (docs/adr/20261122170000-continuous-unit-lane.md).
+		`cp -R scripts/ci "$tools"`,
+		`python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output`,
+		`python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code`,
 		"scripts/build-unit-release.sh",
 		"if: steps.detect.outputs.eligible == 'true'",
 	} {
@@ -508,6 +512,8 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 		"issues: read",
 		"go: ${{ steps.preflight.outputs.go }}",
 		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
+		// The released commit, which a stalled lane keeps behind main's head.
+		`--sha "${{ needs.build.outputs.release_sha }}"`,
 	} {
 		if !strings.Contains(preflight, required) {
 			t.Errorf("release-units preflight is missing %q", required)

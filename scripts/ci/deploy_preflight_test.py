@@ -118,6 +118,19 @@ class PreflightTest(PreflightCase):
         self.assertIn("Held, not deployed", summary)
         self.assertIn("#7 Autodeploy paused", summary)
 
+    def test_release_the_control_plane_already_runs_stands_down(self):
+        # A stalled lane releases the same commit on every merge.
+        self.host = dict(healthy_host(), running=SHA)
+        code, go, summary = self.run_preflight()
+        self.assertEqual((code, go), (0, False))
+        self.assertIn("already runs the unit release", summary)
+
+    def test_other_running_release_or_a_full_release_goes(self):
+        for running in ("f" * 40, ""):
+            with self.subTest(running=running):
+                self.host = dict(healthy_host(), running=running)
+                self.assertEqual(self.run_preflight()[:2], (0, True))
+
     def test_pull_requests_with_the_label_do_not_freeze(self):
         self.gh.issues = [{"number": 8, "title": "pr", "html_url": "x", "pull_request": {}}]
         self.assertEqual(self.run_preflight()[:2], (0, True))

@@ -84,7 +84,52 @@ IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # A top-level key of a vars file.
 TOP_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:(?:\s|$)")
 # Variable reads by computed name: such a role depends on every variable.
-DYNAMIC_VARS = re.compile(r"\bvars\s*\[|\bhostvars\b|\bvarnames\b|(?:lookup|query)\(\s*[\"']vars[\"']")
+DYNAMIC_VARS = re.compile(r"\bvars\s*\[|\bvarnames\b|(?:lookup|query)\(\s*[\"']vars[\"']")
+# hostvars indexes hosts; the variables it reads are then named by literal
+# attribute, and those names are identifiers of the text like any other
+# reference. These are the shapes that read only literal names
+# (docs/adr/20261122170000-continuous-unit-lane.md, "Literal hostvars").
+# Every other use of hostvars (a computed attribute, the whole host dict
+# passed on, dumped or iterated) still reads every variable.
+_LIT = r"[A-Za-z_][\w.]*"
+_SUB = r"\[(?:[^\[\]]|\[[^\[\]]*\])*\]"  # one subscript, one level of nesting
+_FILTER = (r"(?:(?:selectattr|rejectattr)\(\s*'" + _LIT + r"'[^()]*\)"
+           r"|map\(\s*attribute\s*=\s*'(?!value')" + _LIT + r"'\s*\)|map\(\s*'bool'\s*\)"
+           r"|(?:select|reject|list|length|sort|unique|first|last)\b)")
+_CHAIN = r"(?:\s*\|\s*" + _FILTER + r")*"
+_END = r"(?!\s*\||\s*\[|\s*\.)"  # the chain is the whole expression's use of the host dicts
+LITERAL_HOSTVARS = (
+    # hostvars[h].name, hostvars[h]['name']
+    re.compile(r"\bhostvars\s*" + _SUB + r"\s*(?:\.[A-Za-z_]\w*|\[\s*['\"][A-Za-z_]\w*['\"]\s*\])"),
+    # map('extract', hostvars, 'name')
+    re.compile(r"map\(\s*'extract'\s*,\s*hostvars\s*,\s*'[A-Za-z_]\w*'\s*\)"),
+    # map('extract', hostvars) | selectattr('name', ...) | map(attribute='name') | list ...
+    re.compile(r"map\(\s*'extract'\s*,\s*hostvars\s*\)" + _CHAIN + _END),
+    # hostvars | dict2items | selectattr('value.name', ...) | map(attribute='key') | list ...
+    re.compile(r"\bhostvars\s*\|\s*dict2items" + _CHAIN + _END),
+    # tests for a host, not reads of a variable
+    re.compile(r"\bhostvars\s+is\s+defined\b"),
+    re.compile(r"\bin\s+hostvars\b"),
+)
+# {%- set hv = hostvars[h] ... -%}: literal when every later use of hv is hv.name.
+SET_HOSTVARS = re.compile(r"\bset\s+([A-Za-z_]\w*)\s*=\s*hostvars\s*" + _SUB)
+
+
+def literal_hostvars(text):
+    """Whether every use of hostvars in text reads variables by literal
+    name only (LITERAL_HOSTVARS, SET_HOSTVARS)."""
+    if "hostvars" not in text:
+        return True
+    rest = text
+    for alias in SET_HOSTVARS.findall(rest):
+        uses = re.findall(r"\b" + re.escape(alias) + r"\b(\s*\S)?", rest)
+        # The set itself, then only attribute reads (hv.name).
+        if any(not tail or tail.strip() not in (".", "=") for tail in uses):
+            return False
+        rest = SET_HOSTVARS.sub("set _ = _", rest)
+    for pattern in LITERAL_HOSTVARS:
+        rest = pattern.sub("_", rest)
+    return not re.search(r"\bhostvars\b", rest)
 ROLE_INCLUDE = re.compile(r"(?:include_role|import_role):\s*\n?\s*name:\s*[\"']?([\w.-]+)")
 
 
@@ -408,7 +453,7 @@ class Variables:
     def closure(self, text):
         """Every variable text names, directly or through definitions; all
         of them when text reads variables by computed name."""
-        if DYNAMIC_VARS.search(text):
+        if DYNAMIC_VARS.search(text) or not literal_hostvars(text):
             return set(self.defs)
         seen = identifiers(text) & set(self.defs)
         stack = list(seen)

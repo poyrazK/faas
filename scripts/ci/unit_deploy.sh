@@ -386,15 +386,18 @@ watch=null
 if [[ -s "$record" ]] && jq -e '.kind == "gregale-unit-watch"' "$record" >/dev/null 2>&1; then
   watch="$(jq -c '{owner_run, hosts: (.hosts | map_values({releases, known_good, current}))}' "$record")"
 fi
+# The commit of the unit release the control plane runs (empty on a full
+# release): a stalled lane releases the same commit on every merge.
+running="$(jq -r '.git_sha // empty' /opt/faas/current/unit-versions.json 2>/dev/null || true)"
 err="$(mktemp)" body="$(mktemp)"
 # The alert list can outgrow one command-line argument: jq reads it from a file.
 if curl -fsS --max-time 10 -o "$body" "$prometheus/api/v1/alerts" 2>"$err" \
-    && jq -ce --arg lock "$lock_state" --argjson watch "$watch" 'select(.status == "success" and (.data.alerts | type) == "array")
-        | {lock: $lock, watch: $watch, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
+    && jq -ce --arg lock "$lock_state" --arg running "$running" --argjson watch "$watch" 'select(.status == "success" and (.data.alerts | type) == "array")
+        | {lock: $lock, running: $running, watch: $watch, prometheus: {ok: true, alerts: .data.alerts}}' "$body" 2>>"$err"; then
   :
 else
-  jq -cn --arg lock "$lock_state" --argjson watch "$watch" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
-    '{lock: $lock, watch: $watch, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
+  jq -cn --arg lock "$lock_state" --arg running "$running" --argjson watch "$watch" --arg error "$(tr '\n' ' ' < "$err" | cut -c1-300)" \
+    '{lock: $lock, running: $running, watch: $watch, prometheus: {ok: false, error: (if $error == "" then "no alert list in the answer" else $error end)}}'
 fi
 rm -f -- "$err" "$body"
 REMOTE

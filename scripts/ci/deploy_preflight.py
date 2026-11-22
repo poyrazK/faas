@@ -8,6 +8,7 @@ checks:
 
   freeze   no open issue labelled deploy-freeze             else hold
   newest   no newer run of release-units will deploy        else stand down
+  current  the control plane does not run this commit already else stand down
   main     the commit's post-merge ci-light run did not fail else fail
   idle     no other deploy runs, the control plane's deploy lock is free
                                                             else wait
@@ -139,8 +140,18 @@ class Preflight:
             host = self.host_state()
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             host = {"error": str(err)}
-        verdicts += [self.idle(host), self.healthy(host), self.watch(host)]
+        verdicts += [self.current(host), self.idle(host), self.healthy(host), self.watch(host)]
         return verdicts
+
+    # --- current ----------------------------------------------------------
+    def current(self, host: dict) -> Verdict:
+        """A stalled lane (docs/adr/20261122170000-continuous-unit-lane.md)
+        releases the same commit on every merge until the next full
+        release; one deploy and one watch of it are enough."""
+        running = host.get("running") or ""
+        if not host.get("error") and running == self.sha:
+            return Verdict("current", STAND_DOWN, f"the control plane already runs the unit release of {self.sha[:12]}")
+        return Verdict("current", OK, f"the control plane runs {running[:12] or 'its full release'}, not {self.sha[:12]}")
 
     # --- freeze -----------------------------------------------------------
     def freeze(self) -> Verdict:

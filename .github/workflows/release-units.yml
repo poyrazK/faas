@@ -89,6 +89,7 @@ jobs:
       control_plane: ${{ steps.detect.outputs.control_plane }}
       edge: ${{ steps.detect.outputs.edge }}
       base_sha: ${{ steps.base.outputs.sha }}
+      release_sha: ${{ steps.detect.outputs.release_sha }}
       build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -176,8 +177,34 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
-          python3 scripts/ci/affected_units.py --base "$BASE" --head HEAD --code --code-cache "$CODE_CACHE" \
-            --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+          # Whole commits, oldest first (docs/adr/20261122170000-continuous-
+          # unit-lane.md): when the range to main's head is not eligible, the
+          # lane releases the newest commit up to which every commit is
+          # (affected_units.py lane_prefix), and never skips or splits one.
+          # The selection rules are head's (copied before the checkout
+          # moves); the release, its build and the verdict that gates it are
+          # the full analysis of that commit, checked out.
+          tools="$RUNNER_TEMP/unit-tools"
+          rm -rf "$tools" && cp -R scripts/ci "$tools"
+          python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output "$OUT_DIR/report-main.json"
+          target="$(git rev-parse HEAD)"
+          if [[ "$(jq -r .eligible "$OUT_DIR/report-main.json")" != true ]]; then
+            target="$(jq -r '.lane_prefix.head // empty' "$OUT_DIR/report-main.json")"
+          fi
+          stall="$(jq -r '.lane_prefix.stalled_by | select(.) | "\(.commit[0:12]): \(.reasons | join("; "))"' "$OUT_DIR/report-main.json")"
+          if [[ -n "$stall" ]]; then
+            echo "::warning::unit lane stalled behind ${stall}; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for a full release" >&2
+          fi
+          if [[ -z "$target" ]]; then
+            cp "$OUT_DIR/report-main.json" "$OUT_DIR/report.json"
+          else
+            if [[ "$target" != "$(git rev-parse HEAD)" ]]; then
+              git checkout --quiet --detach "$target"
+            fi
+            python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code --code-cache "$CODE_CACHE" \
+              --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
+          fi
+          echo "release_sha=${target:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
           {
@@ -188,8 +215,12 @@ jobs:
             echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Unit release for \`${GITHUB_SHA:0:12}\` over \`$BASE\`"
+            echo "## Unit release for \`${target:0:12}\` over \`$BASE\`"
             echo
+            if [[ -n "$stall" ]]; then
+              echo "**Lane stalled** at \`${stall}\`. Main is at \`${GITHUB_SHA:0:12}\`; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for the next full release. The lane never skips or splits a commit."
+              echo
+            fi
             echo "| binary | lane | unit version | code since base |"
             echo "| --- | --- | --- | --- |"
             jq -r '.binaries | to_entries[] | select(.value.closure) | "| \(.key) | \(.value.lane) | `\(.value.commit[0:12])` | \(.value.code // "not built") |"' "$OUT_DIR/report.json"
@@ -402,7 +433,11 @@ jobs:
           # lock and Prometheus's active alerts over this SSH connection.
           export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
             UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
-          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s
+          # The commit this run releases, which may be behind main's head
+          # (the lane's whole-commit prefix): its light run is the one that
+          # must not have failed.
+          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s \
+            --sha "${{ needs.build.outputs.release_sha }}"
 
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys
