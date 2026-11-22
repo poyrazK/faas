@@ -43,6 +43,7 @@ from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
 from .activity_resource_response import ActivityResourceResponse
 from .advance_canary_request import AdvanceCanaryRequest
+from .advance_stored_workflow_live_suite_request import AdvanceStoredWorkflowLiveSuiteRequest
 from .after_restore_hook import AfterRestoreHook
 from .after_restore_hook_identity import AfterRestoreHookIdentity
 from .agent_activity_entry import AgentActivityEntry
@@ -379,6 +380,8 @@ from .change_member_role_request_role import ChangeMemberRoleRequestRole
 from .change_plan_request import ChangePlanRequest
 from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
+from .check_stored_workflow_publication_request import CheckStoredWorkflowPublicationRequest
+from .check_stored_workflow_publication_response import CheckStoredWorkflowPublicationResponse
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
@@ -514,6 +517,10 @@ from .create_org_api_key_request_approval_categories_item import CreateOrgAPIKey
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
 from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
+from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
+from .create_outbound_integration_request import CreateOutboundIntegrationRequest
+from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
+from .create_outbound_integration_request_allowed_methods_item import CreateOutboundIntegrationRequestAllowedMethodsItem
 from .create_preview_request import CreatePreviewRequest
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
 from .cron_response import CronResponse
@@ -1161,6 +1168,11 @@ from .list_org_bucket_objects_response_200 import ListOrgBucketObjectsResponse20
 from .list_org_bucket_objects_response_200_items_item import ListOrgBucketObjectsResponse200ItemsItem
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
+from .list_stored_workflow_live_baselines_response import ListStoredWorkflowLiveBaselinesResponse
+from .list_stored_workflow_live_suites_response import ListStoredWorkflowLiveSuitesResponse
+from .list_stored_workflow_live_verifications_response import ListStoredWorkflowLiveVerificationsResponse
+from .list_stored_workflow_revisions_response import ListStoredWorkflowRevisionsResponse
+from .list_stored_workflows_response import ListStoredWorkflowsResponse
 from .list_wake_timeline_pagination import ListWakeTimelinePagination
 from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_resumes_response import ListWorkflowResumesResponse
@@ -1911,12 +1923,43 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_content_policy import OutboundAIContentPolicy
+from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
+from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
+from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
+from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
+from .outbound_ai_moderation import OutboundAIModeration
+from .outbound_ai_moderation_action import OutboundAIModerationAction
+from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
+from .outbound_ai_moderation_kind import OutboundAIModerationKind
+from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
+from .outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
 from .outbound_ai_quality_drift_webhook_payload import OutboundAIQualityDriftWebhookPayload
 from .outbound_ai_quality_drift_webhook_payload_metric import OutboundAIQualityDriftWebhookPayloadMetric
+from .outbound_ai_response_policy import OutboundAIResponsePolicy
+from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
+from .outbound_ai_response_policy_email import OutboundAIResponsePolicyEmail
+from .outbound_ai_response_policy_iban import OutboundAIResponsePolicyIban
+from .outbound_ai_response_policy_moderation import OutboundAIResponsePolicyModeration
+from .outbound_ai_response_policy_payment_card import OutboundAIResponsePolicyPaymentCard
+from .outbound_ai_response_policy_secret import OutboundAIResponsePolicySecret
+from .outbound_ai_semantic_cache import OutboundAISemanticCache
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
 from .outbound_ai_user_usage_item import OutboundAIUserUsageItem
+from .outbound_app_binding import OutboundAppBinding
+from .outbound_app_binding_list import OutboundAppBindingList
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
 from .outbound_binding_probe_policy_method import OutboundBindingProbePolicyMethod
+from .outbound_binding_usage_response import OutboundBindingUsageResponse
+from .outbound_credential_key import OutboundCredentialKey
+from .outbound_credential_key_list import OutboundCredentialKeyList
+from .outbound_integration_offer import OutboundIntegrationOffer
+from .outbound_integration_offer_ai_provider import OutboundIntegrationOfferAiProvider
+from .outbound_integration_offer_credential_source import OutboundIntegrationOfferCredentialSource
+from .outbound_integration_offer_list import OutboundIntegrationOfferList
+from .outbound_integration_offer_owner_kind import OutboundIntegrationOfferOwnerKind
+from .outbound_integration_usage_response import OutboundIntegrationUsageResponse
+from .outbound_request_policy import OutboundRequestPolicy
 from .park_app_body import ParkAppBody
 from .park_app_if_deployment_body import ParkAppIfDeploymentBody
 from .parked_deployment_ref import ParkedDeploymentRef
@@ -2133,6 +2176,7 @@ from .project_worker_health import ProjectWorkerHealth
 from .project_worker_health_status import ProjectWorkerHealthStatus
 from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -2158,6 +2202,7 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
+from .publish_stored_workflow_request import PublishStoredWorkflowRequest
 from .purge_deleted_app_body import PurgeDeletedAppBody
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
@@ -2165,6 +2210,14 @@ from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
+from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
+from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
+from .put_outbound_credential_request import PutOutboundCredentialRequest
+from .put_outbound_daily_request_budget_request import PutOutboundDailyRequestBudgetRequest
+from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
+from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
+from .put_webhook_workflow_binding_request import PutWebhookWorkflowBindingRequest
+from .put_webhook_workflow_binding_request_filter import PutWebhookWorkflowBindingRequestFilter
 from .queue_binding_canary import QueueBindingCanary
 from .queue_binding_canary_status import QueueBindingCanaryStatus
 from .queue_release_requirements import QueueReleaseRequirements
@@ -2247,7 +2300,10 @@ from .resource_profile import ResourceProfile
 from .restore_app_body import RestoreAppBody
 from .restore_deleted_app_body import RestoreDeletedAppBody
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
+from .restore_stored_workflow_revision_request import RestoreStoredWorkflowRevisionRequest
+from .resume_stored_workflow_failure_pause_request import ResumeStoredWorkflowFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
+from .retire_stored_workflow_live_baseline_request import RetireStoredWorkflowLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_policy_dto import RetryPolicyDTO
@@ -2313,6 +2369,7 @@ from .route_row import RouteRow
 from .run_budget_kind import RunBudgetKind
 from .run_budget_refusal import RunBudgetRefusal
 from .run_budget_refusal_metric import RunBudgetRefusalMetric
+from .run_stored_workflow_tests_request import RunStoredWorkflowTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -2340,6 +2397,9 @@ from .safe_apply_project_project_progressive import SafeApplyProjectProjectProgr
 from .safe_apply_project_project_release_mode import SafeApplyProjectProjectReleaseMode
 from .safe_apply_project_project_stabilization import SafeApplyProjectProjectStabilization
 from .safe_apply_project_project_worker_health import SafeApplyProjectProjectWorkerHealth
+from .save_stored_workflow_draft_request import SaveStoredWorkflowDraftRequest
+from .save_stored_workflow_live_suite_request import SaveStoredWorkflowLiveSuiteRequest
+from .save_stored_workflow_test_suite_request import SaveStoredWorkflowTestSuiteRequest
 from .scaling_policy import ScalingPolicy
 from .scaling_policy_concurrency_overflow import ScalingPolicyConcurrencyOverflow
 from .scaling_schedule import ScalingSchedule
@@ -2447,6 +2507,10 @@ from .set_object_storage_binding_release_policy_request import SetObjectStorageB
 from .set_password_request import SetPasswordRequest
 from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
+from .set_stored_workflow_enabled_request import SetStoredWorkflowEnabledRequest
+from .set_stored_workflow_failure_policy_request import SetStoredWorkflowFailurePolicyRequest
+from .set_stored_workflow_publish_policy_request import SetStoredWorkflowPublishPolicyRequest
+from .set_stored_workflow_publish_policy_request_mode import SetStoredWorkflowPublishPolicyRequestMode
 from .set_workflow_recovery_policy_request import SetWorkflowRecoveryPolicyRequest
 from .severity_counts import SeverityCounts
 from .sidecar import Sidecar
@@ -2462,6 +2526,15 @@ from .sidecar_probe import SidecarProbe
 from .sidecar_tcp_socket_probe import SidecarTCPSocketProbe
 from .sidecar_type import SidecarType
 from .sign_in_methods_response import SignInMethodsResponse
+from .simulate_stored_workflow_request import SimulateStoredWorkflowRequest
+from .simulate_stored_workflow_request_mock_attempts import SimulateStoredWorkflowRequestMockAttempts
+from .simulate_stored_workflow_request_mock_item_attempts import SimulateStoredWorkflowRequestMockItemAttempts
+from .simulate_stored_workflow_request_mock_item_attempts_additional_property import (
+    SimulateStoredWorkflowRequestMockItemAttemptsAdditionalProperty,
+)
+from .simulate_stored_workflow_request_mock_item_outputs import SimulateStoredWorkflowRequestMockItemOutputs
+from .simulate_stored_workflow_request_mock_outputs import SimulateStoredWorkflowRequestMockOutputs
+from .simulate_stored_workflow_response import SimulateStoredWorkflowResponse
 from .source_ref_deploy_request import SourceRefDeployRequest
 from .source_ref_deploy_request_format import SourceRefDeployRequestFormat
 from .source_ref_deploy_request_native_rollout import SourceRefDeployRequestNativeRollout
@@ -2470,12 +2543,91 @@ from .source_review_request import SourceReviewRequest
 from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .start_stored_workflow_live_suite_request import StartStoredWorkflowLiveSuiteRequest
+from .start_stored_workflow_live_verification_request import StartStoredWorkflowLiveVerificationRequest
 from .status_incident import StatusIncident
 from .status_incident_severity import StatusIncidentSeverity
 from .status_page import StatusPage
 from .status_uptime_bucket import StatusUptimeBucket
 from .storage_usage_list_response import StorageUsageListResponse
 from .storage_usage_response import StorageUsageResponse
+from .stored_workflow_check_attempt import StoredWorkflowCheckAttempt
+from .stored_workflow_check_attempt_outcome import StoredWorkflowCheckAttemptOutcome
+from .stored_workflow_check_evidence import StoredWorkflowCheckEvidence
+from .stored_workflow_check_exclusion import StoredWorkflowCheckExclusion
+from .stored_workflow_check_exclusion_code import StoredWorkflowCheckExclusionCode
+from .stored_workflow_check_expectation import StoredWorkflowCheckExpectation
+from .stored_workflow_check_expectation_state import StoredWorkflowCheckExpectationState
+from .stored_workflow_check_scenario import StoredWorkflowCheckScenario
+from .stored_workflow_failure_policy import StoredWorkflowFailurePolicy
+from .stored_workflow_failure_policy_response import StoredWorkflowFailurePolicyResponse
+from .stored_workflow_failure_transition import StoredWorkflowFailureTransition
+from .stored_workflow_failure_transition_reason import StoredWorkflowFailureTransitionReason
+from .stored_workflow_failure_transition_state import StoredWorkflowFailureTransitionState
+from .stored_workflow_health_response import StoredWorkflowHealthResponse
+from .stored_workflow_health_response_status_counts import StoredWorkflowHealthResponseStatusCounts
+from .stored_workflow_health_run import StoredWorkflowHealthRun
+from .stored_workflow_health_run_status import StoredWorkflowHealthRunStatus
+from .stored_workflow_health_step_failure import StoredWorkflowHealthStepFailure
+from .stored_workflow_live_baseline import StoredWorkflowLiveBaseline
+from .stored_workflow_live_baseline_case_health import StoredWorkflowLiveBaselineCaseHealth
+from .stored_workflow_live_baseline_case_health_status import StoredWorkflowLiveBaselineCaseHealthStatus
+from .stored_workflow_live_baseline_health import StoredWorkflowLiveBaselineHealth
+from .stored_workflow_live_baseline_health_evidence_status import StoredWorkflowLiveBaselineHealthEvidenceStatus
+from .stored_workflow_live_baseline_health_renewal_status import StoredWorkflowLiveBaselineHealthRenewalStatus
+from .stored_workflow_live_baseline_history import StoredWorkflowLiveBaselineHistory
+from .stored_workflow_live_baseline_policy import StoredWorkflowLiveBaselinePolicy
+from .stored_workflow_live_baseline_policy_version import StoredWorkflowLiveBaselinePolicyVersion
+from .stored_workflow_live_baseline_retirement import StoredWorkflowLiveBaselineRetirement
+from .stored_workflow_live_expectation import StoredWorkflowLiveExpectation
+from .stored_workflow_live_expectation_state import StoredWorkflowLiveExpectationState
+from .stored_workflow_live_report import StoredWorkflowLiveReport
+from .stored_workflow_live_suite import StoredWorkflowLiveSuite
+from .stored_workflow_live_suite_case import StoredWorkflowLiveSuiteCase
+from .stored_workflow_live_suite_case_comparison import StoredWorkflowLiveSuiteCaseComparison
+from .stored_workflow_live_suite_case_comparison_change import StoredWorkflowLiveSuiteCaseComparisonChange
+from .stored_workflow_live_suite_case_outcome import StoredWorkflowLiveSuiteCaseOutcome
+from .stored_workflow_live_suite_comparison import StoredWorkflowLiveSuiteComparison
+from .stored_workflow_live_suite_comparison_counts import StoredWorkflowLiveSuiteComparisonCounts
+from .stored_workflow_live_suite_counts import StoredWorkflowLiveSuiteCounts
+from .stored_workflow_live_suite_member import StoredWorkflowLiveSuiteMember
+from .stored_workflow_live_suite_observation import StoredWorkflowLiveSuiteObservation
+from .stored_workflow_live_suite_observation_result import StoredWorkflowLiveSuiteObservationResult
+from .stored_workflow_live_suite_outcome import StoredWorkflowLiveSuiteOutcome
+from .stored_workflow_live_suite_summary import StoredWorkflowLiveSuiteSummary
+from .stored_workflow_live_test import StoredWorkflowLiveTest
+from .stored_workflow_live_test_expected_run_status import StoredWorkflowLiveTestExpectedRunStatus
+from .stored_workflow_live_verification import StoredWorkflowLiveVerification
+from .stored_workflow_publish_check_scenario import StoredWorkflowPublishCheckScenario
+from .stored_workflow_publish_policy import StoredWorkflowPublishPolicy
+from .stored_workflow_publish_policy_mode import StoredWorkflowPublishPolicyMode
+from .stored_workflow_queue_health import StoredWorkflowQueueHealth
+from .stored_workflow_queue_health_reason_counts import StoredWorkflowQueueHealthReasonCounts
+from .stored_workflow_response import StoredWorkflowResponse
+from .stored_workflow_response_source import StoredWorkflowResponseSource
+from .stored_workflow_revision_response import StoredWorkflowRevisionResponse
+from .stored_workflow_simulation_attempt import StoredWorkflowSimulationAttempt
+from .stored_workflow_simulation_attempt_outcome import StoredWorkflowSimulationAttemptOutcome
+from .stored_workflow_simulation_mock_attempt import StoredWorkflowSimulationMockAttempt
+from .stored_workflow_simulation_mock_attempt_outcome import StoredWorkflowSimulationMockAttemptOutcome
+from .stored_workflow_simulation_step import StoredWorkflowSimulationStep
+from .stored_workflow_simulation_step_kind import StoredWorkflowSimulationStepKind
+from .stored_workflow_simulation_step_state import StoredWorkflowSimulationStepState
+from .stored_workflow_test_case import StoredWorkflowTestCase
+from .stored_workflow_test_case_result import StoredWorkflowTestCaseResult
+from .stored_workflow_test_case_result_issue import StoredWorkflowTestCaseResultIssue
+from .stored_workflow_test_inputs import StoredWorkflowTestInputs
+from .stored_workflow_test_inputs_mock_attempts import StoredWorkflowTestInputsMockAttempts
+from .stored_workflow_test_inputs_mock_item_attempts import StoredWorkflowTestInputsMockItemAttempts
+from .stored_workflow_test_inputs_mock_item_attempts_additional_property import (
+    StoredWorkflowTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .stored_workflow_test_inputs_mock_item_outputs import StoredWorkflowTestInputsMockItemOutputs
+from .stored_workflow_test_inputs_mock_outputs import StoredWorkflowTestInputsMockOutputs
+from .stored_workflow_test_report import StoredWorkflowTestReport
+from .stored_workflow_test_step_result import StoredWorkflowTestStepResult
+from .stored_workflow_test_step_result_mismatches_item import StoredWorkflowTestStepResultMismatchesItem
+from .stored_workflow_test_suite import StoredWorkflowTestSuite
 from .stream_app_logs_archive import StreamAppLogsArchive
 from .stream_app_logs_follow import StreamAppLogsFollow
 from .stream_app_logs_level import StreamAppLogsLevel
@@ -2580,6 +2732,7 @@ from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
 from .update_notification_channel_request import UpdateNotificationChannelRequest
 from .update_notification_channel_request_pagerduty_region import UpdateNotificationChannelRequestPagerdutyRegion
+from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_project_environment_config_request import UpdateProjectEnvironmentConfigRequest
 from .update_project_environment_config_request_values import UpdateProjectEnvironmentConfigRequestValues
 from .update_project_request import UpdateProjectRequest
@@ -2592,6 +2745,8 @@ from .usage_export_response import UsageExportResponse
 from .usage_response import UsageResponse
 from .usage_summary_response import UsageSummaryResponse
 from .usage_summary_response_egress_billing_mode import UsageSummaryResponseEgressBillingMode
+from .validate_stored_workflow_request import ValidateStoredWorkflowRequest
+from .validate_stored_workflow_response import ValidateStoredWorkflowResponse
 from .vulnerability import Vulnerability
 from .vulnerability_severity import VulnerabilitySeverity
 from .wake_timeline_app import WakeTimelineApp
@@ -2606,6 +2761,8 @@ from .wake_timeline_page import WakeTimelinePage
 from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
 from .warmup_hook import WarmupHook
+from .webhook_workflow_binding_response import WebhookWorkflowBindingResponse
+from .webhook_workflow_binding_response_filter import WebhookWorkflowBindingResponseFilter
 from .webhook_workflow_receipt_response import WebhookWorkflowReceiptResponse
 from .webhook_workflow_receipt_response_ignored_reason import WebhookWorkflowReceiptResponseIgnoredReason
 from .webhook_workflow_receipt_response_routing_status import WebhookWorkflowReceiptResponseRoutingStatus
@@ -2884,6 +3041,7 @@ __all__ = (
     "ActivityActorResponseType",
     "ActivityResourceResponse",
     "AdvanceCanaryRequest",
+    "AdvanceStoredWorkflowLiveSuiteRequest",
     "AfterRestoreHook",
     "AfterRestoreHookIdentity",
     "AgentActivityEntry",
@@ -3218,6 +3376,8 @@ __all__ = (
     "ChangePlanRequest",
     "ChangePlanRequestPlan",
     "CheckAccountWorkflowReadinessBody",
+    "CheckStoredWorkflowPublicationRequest",
+    "CheckStoredWorkflowPublicationResponse",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
     "CompleteObjectMultipartUploadRequest",
@@ -3351,6 +3511,10 @@ __all__ = (
     "CreateOrgAPIKeyRequestScopesItem",
     "CreateOrgObjectBucketBody",
     "CreateOrgRequest",
+    "CreateOutboundCredentialKeyRequest",
+    "CreateOutboundIntegrationRequest",
+    "CreateOutboundIntegrationRequestAiProvider",
+    "CreateOutboundIntegrationRequestAllowedMethodsItem",
     "CreatePreviewRequest",
     "CreateWorkflowCallbackWebhookBindingRequest",
     "CronResponse",
@@ -3978,6 +4142,11 @@ __all__ = (
     "ListOrgBucketObjectsResponse200ItemsItem",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
+    "ListStoredWorkflowLiveBaselinesResponse",
+    "ListStoredWorkflowLiveSuitesResponse",
+    "ListStoredWorkflowLiveVerificationsResponse",
+    "ListStoredWorkflowRevisionsResponse",
+    "ListStoredWorkflowsResponse",
     "ListWakeTimelinePagination",
     "ListWorkflowCallbacksResponse",
     "ListWorkflowResumesResponse",
@@ -4618,12 +4787,43 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIContentPolicy",
+    "OutboundAIContentPolicyEmail",
+    "OutboundAIContentPolicyIban",
+    "OutboundAIContentPolicyPaymentCard",
+    "OutboundAIContentPolicySecret",
+    "OutboundAIModeration",
+    "OutboundAIModerationAction",
+    "OutboundAIModerationCategoriesItem",
+    "OutboundAIModerationKind",
+    "OutboundAIModerationOnError",
+    "OutboundAIOnlineEvaluation",
     "OutboundAIQualityDriftWebhookPayload",
     "OutboundAIQualityDriftWebhookPayloadMetric",
+    "OutboundAIResponsePolicy",
+    "OutboundAIResponsePolicyBlockedTerms",
+    "OutboundAIResponsePolicyEmail",
+    "OutboundAIResponsePolicyIban",
+    "OutboundAIResponsePolicyModeration",
+    "OutboundAIResponsePolicyPaymentCard",
+    "OutboundAIResponsePolicySecret",
+    "OutboundAISemanticCache",
     "OutboundAIUserUsageExportRow",
     "OutboundAIUserUsageItem",
+    "OutboundAppBinding",
+    "OutboundAppBindingList",
     "OutboundBindingProbePolicy",
     "OutboundBindingProbePolicyMethod",
+    "OutboundBindingUsageResponse",
+    "OutboundCredentialKey",
+    "OutboundCredentialKeyList",
+    "OutboundIntegrationOffer",
+    "OutboundIntegrationOfferAiProvider",
+    "OutboundIntegrationOfferCredentialSource",
+    "OutboundIntegrationOfferList",
+    "OutboundIntegrationOfferOwnerKind",
+    "OutboundIntegrationUsageResponse",
+    "OutboundRequestPolicy",
     "ParkAppBody",
     "ParkAppIfDeploymentBody",
     "ParkedDeploymentRef",
@@ -4826,6 +5026,7 @@ __all__ = (
     "ProjectWorkerHealthStatus",
     "ProjectWorkerJobSample",
     "ProjectWorkloadResponse",
+    "PromoteStoredWorkflowLiveBaselineRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",
@@ -4851,6 +5052,7 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
+    "PublishStoredWorkflowRequest",
     "PurgeDeletedAppBody",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
@@ -4858,6 +5060,14 @@ __all__ = (
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
     "PutJobRegistryCredentialRequest",
+    "PutOutboundBindingAIBudgetRequest",
+    "PutOutboundBindingDailyRequestBudgetRequest",
+    "PutOutboundCredentialRequest",
+    "PutOutboundDailyRequestBudgetRequest",
+    "PutOutboundRequestPolicyRequest",
+    "PutOutboundRunsBindingRequest",
+    "PutWebhookWorkflowBindingRequest",
+    "PutWebhookWorkflowBindingRequestFilter",
     "QueueBindingCanary",
     "QueueBindingCanaryStatus",
     "QueueReleaseRequirements",
@@ -4940,7 +5150,10 @@ __all__ = (
     "RestoreAppBody",
     "RestoreDeletedAppBody",
     "RestoreManagedPostgresDatabaseRequest",
+    "RestoreStoredWorkflowRevisionRequest",
+    "ResumeStoredWorkflowFailurePauseRequest",
     "ResumeWorkflowRunRequest",
+    "RetireStoredWorkflowLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryPolicyDTO",
@@ -5004,6 +5217,7 @@ __all__ = (
     "RunBudgetKind",
     "RunBudgetRefusal",
     "RunBudgetRefusalMetric",
+    "RunStoredWorkflowTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -5031,6 +5245,9 @@ __all__ = (
     "SafeApplyProjectProjectReleaseMode",
     "SafeApplyProjectProjectStabilization",
     "SafeApplyProjectProjectWorkerHealth",
+    "SaveStoredWorkflowDraftRequest",
+    "SaveStoredWorkflowLiveSuiteRequest",
+    "SaveStoredWorkflowTestSuiteRequest",
     "ScalingPolicy",
     "ScalingPolicyConcurrencyOverflow",
     "ScalingSchedule",
@@ -5134,6 +5351,10 @@ __all__ = (
     "SetPasswordRequest",
     "SetProjectEnvironmentSharedSecretRequest",
     "SetServiceWakeAheadRequest",
+    "SetStoredWorkflowEnabledRequest",
+    "SetStoredWorkflowFailurePolicyRequest",
+    "SetStoredWorkflowPublishPolicyRequest",
+    "SetStoredWorkflowPublishPolicyRequestMode",
     "SetWorkflowRecoveryPolicyRequest",
     "SeverityCounts",
     "Sidecar",
@@ -5149,6 +5370,13 @@ __all__ = (
     "SidecarTCPSocketProbe",
     "SidecarType",
     "SignInMethodsResponse",
+    "SimulateStoredWorkflowRequest",
+    "SimulateStoredWorkflowRequestMockAttempts",
+    "SimulateStoredWorkflowRequestMockItemAttempts",
+    "SimulateStoredWorkflowRequestMockItemAttemptsAdditionalProperty",
+    "SimulateStoredWorkflowRequestMockItemOutputs",
+    "SimulateStoredWorkflowRequestMockOutputs",
+    "SimulateStoredWorkflowResponse",
     "SourceRefDeployRequest",
     "SourceRefDeployRequestFormat",
     "SourceRefDeployRequestNativeRollout",
@@ -5157,12 +5385,89 @@ __all__ = (
     "SourceReviewResponse",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StartStoredWorkflowLiveSuiteRequest",
+    "StartStoredWorkflowLiveVerificationRequest",
     "StatusIncident",
     "StatusIncidentSeverity",
     "StatusPage",
     "StatusUptimeBucket",
     "StorageUsageListResponse",
     "StorageUsageResponse",
+    "StoredWorkflowCheckAttempt",
+    "StoredWorkflowCheckAttemptOutcome",
+    "StoredWorkflowCheckEvidence",
+    "StoredWorkflowCheckExclusion",
+    "StoredWorkflowCheckExclusionCode",
+    "StoredWorkflowCheckExpectation",
+    "StoredWorkflowCheckExpectationState",
+    "StoredWorkflowCheckScenario",
+    "StoredWorkflowFailurePolicy",
+    "StoredWorkflowFailurePolicyResponse",
+    "StoredWorkflowFailureTransition",
+    "StoredWorkflowFailureTransitionReason",
+    "StoredWorkflowFailureTransitionState",
+    "StoredWorkflowHealthResponse",
+    "StoredWorkflowHealthResponseStatusCounts",
+    "StoredWorkflowHealthRun",
+    "StoredWorkflowHealthRunStatus",
+    "StoredWorkflowHealthStepFailure",
+    "StoredWorkflowLiveBaseline",
+    "StoredWorkflowLiveBaselineCaseHealth",
+    "StoredWorkflowLiveBaselineCaseHealthStatus",
+    "StoredWorkflowLiveBaselineHealth",
+    "StoredWorkflowLiveBaselineHealthEvidenceStatus",
+    "StoredWorkflowLiveBaselineHealthRenewalStatus",
+    "StoredWorkflowLiveBaselineHistory",
+    "StoredWorkflowLiveBaselinePolicy",
+    "StoredWorkflowLiveBaselinePolicyVersion",
+    "StoredWorkflowLiveBaselineRetirement",
+    "StoredWorkflowLiveExpectation",
+    "StoredWorkflowLiveExpectationState",
+    "StoredWorkflowLiveReport",
+    "StoredWorkflowLiveSuite",
+    "StoredWorkflowLiveSuiteCase",
+    "StoredWorkflowLiveSuiteCaseComparison",
+    "StoredWorkflowLiveSuiteCaseComparisonChange",
+    "StoredWorkflowLiveSuiteCaseOutcome",
+    "StoredWorkflowLiveSuiteComparison",
+    "StoredWorkflowLiveSuiteComparisonCounts",
+    "StoredWorkflowLiveSuiteCounts",
+    "StoredWorkflowLiveSuiteMember",
+    "StoredWorkflowLiveSuiteObservation",
+    "StoredWorkflowLiveSuiteObservationResult",
+    "StoredWorkflowLiveSuiteOutcome",
+    "StoredWorkflowLiveSuiteSummary",
+    "StoredWorkflowLiveTest",
+    "StoredWorkflowLiveTestExpectedRunStatus",
+    "StoredWorkflowLiveVerification",
+    "StoredWorkflowPublishCheckScenario",
+    "StoredWorkflowPublishPolicy",
+    "StoredWorkflowPublishPolicyMode",
+    "StoredWorkflowQueueHealth",
+    "StoredWorkflowQueueHealthReasonCounts",
+    "StoredWorkflowResponse",
+    "StoredWorkflowResponseSource",
+    "StoredWorkflowRevisionResponse",
+    "StoredWorkflowSimulationAttempt",
+    "StoredWorkflowSimulationAttemptOutcome",
+    "StoredWorkflowSimulationMockAttempt",
+    "StoredWorkflowSimulationMockAttemptOutcome",
+    "StoredWorkflowSimulationStep",
+    "StoredWorkflowSimulationStepKind",
+    "StoredWorkflowSimulationStepState",
+    "StoredWorkflowTestCase",
+    "StoredWorkflowTestCaseResult",
+    "StoredWorkflowTestCaseResultIssue",
+    "StoredWorkflowTestInputs",
+    "StoredWorkflowTestInputsMockAttempts",
+    "StoredWorkflowTestInputsMockItemAttempts",
+    "StoredWorkflowTestInputsMockItemAttemptsAdditionalProperty",
+    "StoredWorkflowTestInputsMockItemOutputs",
+    "StoredWorkflowTestInputsMockOutputs",
+    "StoredWorkflowTestReport",
+    "StoredWorkflowTestStepResult",
+    "StoredWorkflowTestStepResultMismatchesItem",
+    "StoredWorkflowTestSuite",
     "StreamAppLogsArchive",
     "StreamAppLogsFollow",
     "StreamAppLogsLevel",
@@ -5261,6 +5566,7 @@ __all__ = (
     "UpdateJobRequestStatus",
     "UpdateNotificationChannelRequest",
     "UpdateNotificationChannelRequestPagerdutyRegion",
+    "UpdateOutboundBindingPolicyRequest",
     "UpdateProjectEnvironmentConfigRequest",
     "UpdateProjectEnvironmentConfigRequestValues",
     "UpdateProjectRequest",
@@ -5273,6 +5579,8 @@ __all__ = (
     "UsageResponse",
     "UsageSummaryResponse",
     "UsageSummaryResponseEgressBillingMode",
+    "ValidateStoredWorkflowRequest",
+    "ValidateStoredWorkflowResponse",
     "Vulnerability",
     "VulnerabilitySeverity",
     "WakeTimelineApp",
@@ -5287,6 +5595,8 @@ __all__ = (
     "WakeTimelinePageMode",
     "WakeTimelineResponse",
     "WarmupHook",
+    "WebhookWorkflowBindingResponse",
+    "WebhookWorkflowBindingResponseFilter",
     "WebhookWorkflowReceiptResponse",
     "WebhookWorkflowReceiptResponseIgnoredReason",
     "WebhookWorkflowReceiptResponseRoutingStatus",
