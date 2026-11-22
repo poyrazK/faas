@@ -5,6 +5,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/queueaccess"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 )
 
 func (s *server) registerOrgQueueRoutes(mux *http.ServeMux) {

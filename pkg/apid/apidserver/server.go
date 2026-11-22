@@ -52,6 +52,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/sales"
 	"github.com/onebox-faas/faas/pkg/apid/support"
 	"github.com/onebox-faas/faas/pkg/apid/supportaccess"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 
 	"github.com/onebox-faas/faas/pkg/apid/storedworkflowconsole"
 

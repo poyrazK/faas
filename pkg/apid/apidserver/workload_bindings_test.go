@@ -67,7 +67,6 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 		return in
 	}
 	live := instance(web.ID, "")
-	staging := instance(web.ID, "staging")
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -122,7 +121,9 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 	if code, _ := send("assetforge-web", "", token); code != http.StatusForbidden {
 		t.Fatalf("self queue without a grant: %d", code)
 	}
-	if code, _ := send("assetforge-worker", "transforms", bearer(staging, "staging", workloadidentity.BindingsAudience)); code != http.StatusUnauthorized {
+	// A token naming a stage environment is refused before the instance's
+	// deployment is read.
+	if code, _ := send("assetforge-worker", "transforms", bearer(live, "staging", workloadidentity.BindingsAudience)); code != http.StatusUnauthorized {
 		t.Fatalf("staging token: %d", code)
 	}
 	if code, _ := send("assetforge-worker", "transforms", bearer(live, "", workloadidentity.QueuesAudience)); code != http.StatusUnauthorized {
