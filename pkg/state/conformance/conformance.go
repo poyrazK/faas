@@ -214,6 +214,7 @@ func Run(t *testing.T, open Open) {
 		{"deployment_revisions_are_monotonic_and_addressable", testDeploymentRevisions},
 		{"operator_deployment_listing_is_scoped_and_bounded", testOperatorDeploymentListing},
 		{"deployment_outcomes_exclude_customer_caused_failures", testDeploymentOutcomesExcludeCustomerCausedFailures},
+		{"deployment_outcomes_attribute_app_answers_and_retries", testDeploymentOutcomesAttributeAppAnswersAndRetries},
 		{"deployment_served_before_tracks_traffic", testDeploymentServedBefore},
 		{"outpaced_release_is_superseded_before_its_command", testSupersedeOutpacedRelease},
 		{"release_commands_run_one_at_a_time_per_scope", testReleaseCommandOrder},
