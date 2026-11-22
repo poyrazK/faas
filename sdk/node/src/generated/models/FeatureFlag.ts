@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { FlagEdge } from './FlagEdge.js';
 import type { FlagRule } from './FlagRule.js';
 import type { FlagVariant } from './FlagVariant.js';
 /**
@@ -37,5 +38,6 @@ export type FeatureFlag = {
    * Required for variant flags; weights must total 10000 basis points.
    */
   variants?: Array<FlagVariant>;
+  edge?: FlagEdge;
 };
 
