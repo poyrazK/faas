@@ -409,6 +409,21 @@ func (q *Queries) CountLiveAgentRuns(ctx context.Context, db DBTX, arg CountLive
 	return column_1, err
 }
 
+const countPersistentSandboxSessions = `-- name: CountPersistentSandboxSessions :one
+SELECT count(*)::bigint FROM sandbox_sessions
+ WHERE account_id=$1::text::uuid AND kind='persistent'
+ AND state IN ('queued','starting','ready','frozen','pausing','paused','resuming')
+`
+
+// An account's persistent sessions that have not ended, paused or not
+// (SandboxPersistentMax, ADR-20261122132055 §6).
+func (q *Queries) CountPersistentSandboxSessions(ctx context.Context, db DBTX, accountID string) (int64, error) {
+	row := db.QueryRow(ctx, countPersistentSandboxSessions, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countQueuedAgentRuns = `-- name: CountQueuedAgentRuns :one
 SELECT count(*)::integer FROM agent_runs WHERE account_id=$1::text::uuid AND state='queued'
 `
@@ -1425,7 +1440,9 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
-  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
+  coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
  FROM sandbox_sessions WHERE id=$1::text::uuid AND account_id=$2::text::uuid
 `
 
@@ -1460,6 +1477,14 @@ type GetSandboxSessionRow struct {
 	Browser             bool
 	EgressAllow         []string
 	EgressDeny          []string
+	Vcpu                int32
+	VolumeGb            int32
+	PauseRequestedAt    pgtype.Timestamptz
+	ResumeRequestedAt   pgtype.Timestamptz
+	PausedAt            pgtype.Timestamptz
+	Durability          string
+	ResumedCold         bool
+	ForkedFrom          string
 }
 
 func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandboxSessionParams) (GetSandboxSessionRow, error) {
@@ -1491,6 +1516,14 @@ func (q *Queries) GetSandboxSession(ctx context.Context, db DBTX, arg GetSandbox
 		&i.Browser,
 		&i.EgressAllow,
 		&i.EgressDeny,
+		&i.Vcpu,
+		&i.VolumeGb,
+		&i.PauseRequestedAt,
+		&i.ResumeRequestedAt,
+		&i.PausedAt,
+		&i.Durability,
+		&i.ResumedCold,
+		&i.ForkedFrom,
 	)
 	return i, err
 }
@@ -2155,12 +2188,13 @@ func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSa
 
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb)
 VALUES ($1::text::uuid,$2::text::uuid,$3::text,$4::text,
   $5::integer,$6::text,$7::integer,$8::timestamptz,
   $9::jsonb,$10::text::uuid,$11::text,$12::text::uuid,
   $13::text::uuid,$14::boolean,$15::text,$16::text,
-  $17::integer,$18::text[],$19::text[])
+  $17::integer,$18::text[],$19::text[],
+  $20::smallint,$21::integer)
 RETURNING id::text AS id
 `
 
@@ -2184,6 +2218,8 @@ type InsertSandboxSessionParams struct {
 	TaskMaxChars        pgtype.Int4
 	EgressAllow         []string
 	EgressDeny          []string
+	Vcpu                pgtype.Int2
+	VolumeGb            pgtype.Int4
 }
 
 func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertSandboxSessionParams) (string, error) {
@@ -2207,6 +2243,8 @@ func (q *Queries) InsertSandboxSession(ctx context.Context, db DBTX, arg InsertS
 		arg.TaskMaxChars,
 		arg.EgressAllow,
 		arg.EgressDeny,
+		arg.Vcpu,
+		arg.VolumeGb,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -2865,7 +2903,9 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
-  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
+  coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
  FROM sandbox_sessions
  WHERE account_id=$1::text::uuid
  AND ($2::text IS NULL OR state=$2::text)
@@ -2907,6 +2947,14 @@ type ListSandboxSessionsRow struct {
 	Browser             bool
 	EgressAllow         []string
 	EgressDeny          []string
+	Vcpu                int32
+	VolumeGb            int32
+	PauseRequestedAt    pgtype.Timestamptz
+	ResumeRequestedAt   pgtype.Timestamptz
+	PausedAt            pgtype.Timestamptz
+	Durability          string
+	ResumedCold         bool
+	ForkedFrom          string
 }
 
 // Newest first; a page continues before the (created_at, id) of the last row.
@@ -2951,6 +2999,14 @@ func (q *Queries) ListSandboxSessions(ctx context.Context, db DBTX, arg ListSand
 			&i.Browser,
 			&i.EgressAllow,
 			&i.EgressDeny,
+			&i.Vcpu,
+			&i.VolumeGb,
+			&i.PauseRequestedAt,
+			&i.ResumeRequestedAt,
+			&i.PausedAt,
+			&i.Durability,
+			&i.ResumedCold,
+			&i.ForkedFrom,
 		); err != nil {
 			return nil, err
 		}
@@ -3944,7 +4000,7 @@ func (q *Queries) RequestAgentRunCancel(ctx context.Context, db DBTX, arg Reques
 const requestSandboxSessionClose = `-- name: RequestSandboxSessionClose :execrows
 UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
  WHERE id=$1::text::uuid AND account_id=$2::text::uuid
- AND state IN ('starting','ready','frozen')
+ AND state IN ('starting','ready','frozen','pausing','paused','resuming')
 `
 
 type RequestSandboxSessionCloseParams struct {
@@ -3956,6 +4012,47 @@ type RequestSandboxSessionCloseParams struct {
 // the VM down and closes it.
 func (q *Queries) RequestSandboxSessionClose(ctx context.Context, db DBTX, arg RequestSandboxSessionCloseParams) (int64, error) {
 	result, err := db.Exec(ctx, requestSandboxSessionClose, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requestSandboxSessionPause = `-- name: RequestSandboxSessionPause :execrows
+UPDATE sandbox_sessions SET pause_requested_at=coalesce(pause_requested_at, now()), resume_requested_at=NULL, updated_at=now()
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND kind='persistent' AND state IN ('ready','frozen') AND close_requested_at IS NULL
+`
+
+type RequestSandboxSessionPauseParams struct {
+	SessionID string
+	AccountID string
+}
+
+// A running persistent session's pause is agentd's: apid records the
+// request (ADR-20261122132055 §1). A pause cancels a pending resume.
+func (q *Queries) RequestSandboxSessionPause(ctx context.Context, db DBTX, arg RequestSandboxSessionPauseParams) (int64, error) {
+	result, err := db.Exec(ctx, requestSandboxSessionPause, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requestSandboxSessionResume = `-- name: RequestSandboxSessionResume :execrows
+UPDATE sandbox_sessions SET resume_requested_at=coalesce(resume_requested_at, now()), updated_at=now()
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND kind='persistent' AND state IN ('pausing','paused') AND close_requested_at IS NULL
+`
+
+type RequestSandboxSessionResumeParams struct {
+	SessionID string
+	AccountID string
+}
+
+// A paused (or pausing) persistent session's resume is agentd's too.
+func (q *Queries) RequestSandboxSessionResume(ctx context.Context, db DBTX, arg RequestSandboxSessionResumeParams) (int64, error) {
+	result, err := db.Exec(ctx, requestSandboxSessionResume, arg.SessionID, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}

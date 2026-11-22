@@ -28,11 +28,11 @@ The parts exist. Firecracker captures and restores a VM's memory. Captures are s
 - **New state `paused`.** `ready ⇄ frozen` as today, plus `ready | frozen → pausing → paused → resuming → ready`. `closed`, `expired` and `failed` stay terminal. agentd owns every transition (ADR-20261027090014 §1); schedd places and owns the instance; vmmd captures and restores.
 - **A paused session has no VM.** Its cgroup, jail and netns are gone, as for a parked app (invariant 4). It holds a **memory snapshot** (§2) and a **workspace volume** (§4).
 - **Pausing:**
-  - explicitly, with `POST /v1/sandboxes/{id}:pause`;
+  - explicitly, with `POST /v1/sandboxes/{id}/pause`;
   - after `SandboxPersistentIdlePauseSec` with no calls, where an ephemeral session would expire;
   - when the session's running time reaches `SandboxPersistentRunMaxSec`;
   - for a node drain (§7).
-- **Resuming:** explicitly with `POST /v1/sandboxes/{id}:resume`, or implicitly on the first data-plane call to a paused session. That call waits up to `SandboxResumeWaitSec` and otherwise answers 503 with `Retry-After`. `GET` re-mints the token, as today.
+- **Resuming:** explicitly with `POST /v1/sandboxes/{id}/resume`, or implicitly on the first data-plane call to a paused session. That call waits up to `SandboxResumeWaitSec` and otherwise answers 503 with `Retry-After`. `GET` re-mints the token, as today.
 - **Ending.** A persistent session ends at `DELETE` (closed) or when it has been paused for `SandboxPausedRetentionDays` (expired, outcome `retention`). Its snapshot and volume are deleted then. There is no total lifetime cap.
 - **Ephemeral sessions are unchanged.**
 
@@ -52,7 +52,7 @@ The parts exist. Firecracker captures and restores a VM's memory. Captures are s
 
 ### 3. Fork
 
-- `POST /v1/sandboxes/{id}:fork` with `{count, labels?, kind?}` (count 1 to `SandboxForkMax`) answers `{forks: [{id, state, token}]}`. The source must be `ready`, `frozen` or `paused`.
+- `POST /v1/sandboxes/{id}/fork` with `{count, labels?, kind?}` (count 1 to `SandboxForkMax`) answers `{forks: [{id, state, token}]}`. The source must be `ready`, `frozen` or `paused`.
 - **One capture, N restores.** A running or frozen source is captured once without being stopped: the ADR-733 live capture, so the source pauses only for the capture itself. A paused source's capture is used as it is. Each fork restores that capture into a **new session** with:
   - its own session ID and token;
   - a new instance identity (IP, netns, jail uid, reseeded entropy, a stepped clock);
@@ -113,15 +113,15 @@ Proposed values; the owner confirms them with the prices (§8).
 ### 9. API and clients
 
 - **Routes** (apid; control plane):
-  - `POST /v1/sandboxes/{id}:pause`
-  - `POST /v1/sandboxes/{id}:resume`
-  - `POST /v1/sandboxes/{id}:fork`
+  - `POST /v1/sandboxes/{id}/pause`
+  - `POST /v1/sandboxes/{id}/resume`
+  - `POST /v1/sandboxes/{id}/fork`
   - create takes `kind`, `volume_gb` and `vcpu`
   - `PATCH` takes `volume_gb`
 - **The view** adds `paused_at`, `durability` (`node` / `remote`), `resumed_cold`, `forked_from` and `stored_bytes`. `GET /v1/sandboxes?state=paused` lists paused sessions.
 - **E2B shims:**
   - `Sandbox.create({ kind: 'persistent' })` (Gregale option);
-  - `sandbox.betaPause()` and `pause()` map to `:pause`;
+  - `sandbox.betaPause()` and `pause()` map to `/pause`;
   - `Sandbox.connect(id)` resumes a paused session, as E2B's `connect` does;
   - `sandbox.fork(n)` is a Gregale extension.
 
