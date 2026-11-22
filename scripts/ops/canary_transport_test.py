@@ -321,6 +321,7 @@ class WorkflowContractTest(unittest.TestCase):
         self.assertIn("runs-on: [self-hosted, linux, faas-fleet-us]", workflow)
         self.assertIn("environment: production-us", workflow)
         self.assertIn('RUNNER_TEMP="$CANARY_WORK_DIR" bash scripts/ops/canary_ssh.sh setup', workflow)
+        self.assertIn("RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}'", workflow)
         self.assertIn('rm -rf -- "$CANARY_WORK_DIR"', workflow)
         self.assertIn("if: github.event_name == 'workflow_dispatch' && inputs.test_fallback", workflow)
         self.assertIn("run: bash scripts/ops/canary_failure.sh --test-fallback", workflow)

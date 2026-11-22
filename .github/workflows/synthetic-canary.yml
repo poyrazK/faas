@@ -140,7 +140,7 @@ jobs:
           # Originates from the control plane for the same reason cd-platform
           # does: a full acceptance run needs the active fleet's network.
           bash scripts/ops/canary_ssh.sh run \
-            "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
+            "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh \
             2>&1 | tee "$RUNNER_TEMP/canary.log"
 
