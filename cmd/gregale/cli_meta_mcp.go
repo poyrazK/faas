@@ -254,14 +254,15 @@ func mcpCLICommand() cliCommand {
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client tools --app my-mcp"}},
 		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client resources --app my-mcp"}},
 		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client read --app my-mcp --uri 'file:///reports/current'"}},
-		{Name: "resource-watch", Short: "Watch one resource URI for content updates", Flags: []cliFlag{
+		{Name: "resource-watch", Short: "Watch a resource for content updates or a Task receipt for status", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},
 			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
 			{Name: "token-env", Short: "environment variable containing an MCP client token", Value: "ENV"},
-			{Name: "uri", Short: "resource URI to read and watch", Value: "URI", Req: true},
+			{Name: "uri", Short: "resource URI to read and watch", Value: "URI"},
+			{Name: "task-receipt", Short: "private Task receipt for a metadata-only watch", Value: "FILE"},
 			{Name: "interval", Short: "poll and stream reconciliation interval (default 30s)", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'"}},
+		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'", "gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json"}},
 		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp client prompts --app my-mcp"}},
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},

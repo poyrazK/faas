@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
@@ -17,6 +18,26 @@ type mcpTaskStatusMetadata struct {
 	LastUpdatedAt  string `json:"lastUpdatedAt,omitempty"`
 	PollIntervalMS int64  `json:"pollIntervalMs,omitempty"`
 	NextAction     string `json:"nextAction"`
+}
+
+func runMCPTaskReceiptWatch(ctx context.Context, client *mcphosting.Client, receipt string, interval time.Duration) int {
+	if client.Token == "" {
+		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
+	}
+	key, err := readMCPTaskReceipt(receipt, client.Endpoint)
+	if err != nil {
+		return printErr("MCP Task receipt", err)
+	}
+	output := json.NewEncoder(osStdout)
+	if err := client.WatchTaskBySubmissionKey(ctx, key, interval, func(task mcphosting.Task) error {
+		return output.Encode(mcpTaskSnapshot(task))
+	}); err != nil {
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return 0
+		}
+		return printErr("MCP task watch", err)
+	}
+	return 0
 }
 
 func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, taskID, submissionKey string) int {

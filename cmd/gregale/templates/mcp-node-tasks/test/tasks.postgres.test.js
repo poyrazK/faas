@@ -21,7 +21,10 @@ import { createMcpTaskRuntime, mcpTaskHandlers, RetryableMcpTaskError } from '..
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
 const postgresOnly = { skip: databaseURL ? false : 'set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests' };
 
-test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', {
+for (const [title, watchReceipt] of [
+  ['a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', false],
+  ['receipt watch reconciles a stream disconnect and resumes from a fresh CLI', true],
+]) test(title, {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
   timeout: 30_000,
 }, async t => {
@@ -38,22 +41,25 @@ test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped conne
   } });
   const auth = {
     mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
-    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: [] },
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: ['reports:read'] },
   };
   const { publicKey, privateKey } = await generateKeyPair('ES256');
-  const token = subject => new SignJWT({ scope: 'mcp:tools' }).setProtectedHeader({ alg: 'ES256' })
+  const token = (subject, scope = 'mcp:tools reports:read') => new SignJWT({ scope }).setProtectedHeader({ alg: 'ES256' })
     .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
   const owner = await token('alice');
   const otherCaller = await token('bob');
+  const reduced = await token('alice', 'mcp:tools');
   const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
     legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
   }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
 
   const requests = [];
+  const subscriptions = [];
   let dropNextStatus = false;
   const server = createServer((req, res) => {
     const method = req.headers['mcp-method'];
     requests.push(method);
+    if (method === 'subscriptions/listen') subscriptions.push(res);
     if (method === 'tasks/get' && dropNextStatus) {
       dropNextStatus = false;
       req.destroy();
@@ -68,10 +74,13 @@ test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped conne
     const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
     const run = promisify(execFile);
     const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
-    async function cli(verb, credential, args, expectedExit = 0) {
-      const response = await run(binary, [
-        'mcp', 'client', verb, '--url', endpoint, '--token-env', 'GREGALE_JOURNEY_TOKEN', '--timeout', '5s', '--json', ...args,
-      ], { cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000 }).then(
+    async function cli(verb, credential, args, expectedExit = 0, onStart) {
+      const pending = run(binary, [
+        'mcp', 'client', verb, '--url', endpoint, '--token-env', 'GREGALE_JOURNEY_TOKEN',
+        ...(verb === 'watch' ? [] : ['--timeout', '5s', '--json']), ...args,
+      ], { cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000 });
+      onStart?.(pending.child);
+      const response = await pending.then(
         ({ stdout, stderr }) => ({ stdout, stderr, code: 0 }),
         ({ stdout, stderr, code }) => ({ stdout, stderr, code }),
       );
@@ -80,7 +89,9 @@ test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped conne
       assert.ok(!response.stderr.includes(resultText), 'CLI leaked a Task result to stderr');
       return response.stdout;
     }
-    const submitted = JSON.parse(await cli('call', owner, ['--tool', 'build_report', '--tasks', '--arguments', '{"report":"reconnect","steps":1}']));
+    const receipt = ['--task-receipt', join(clientDir, 'task.json')];
+    const submitted = JSON.parse(await cli('call', owner, ['--tool', 'build_report', '--tasks',
+      ...(watchReceipt ? receipt : []), '--arguments', '{"report":"reconnect","steps":1}']));
     assert.equal(submitted.result.resultType, 'task');
     assert.equal(submitted.result.status, 'working');
     const taskId = submitted.result.taskId;
@@ -102,6 +113,48 @@ test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped conne
     assert.ok(Number.isFinite(Date.parse(working.lastUpdatedAt)));
     assert.deepEqual(working, { taskId, status: 'working', lastUpdatedAt: working.lastUpdatedAt,
       pollIntervalMs: 500, nextAction: 'poll_status' });
+
+    if (watchReceipt) {
+      const beforeInvalid = requests.length;
+      assert.equal(await cli('watch', owner, [...receipt, '--uri', 'task://tasks/' + taskId], 1), '');
+      assert.equal(await cli('watch', owner, [...receipt, '--url', `${endpoint}/other`], 1), '');
+      assert.equal(requests.length, beforeInvalid);
+      for (const credential of [otherCaller, reduced]) {
+        const beforeDenied = requests.length;
+        assert.equal(await cli('watch', credential, receipt, 1), '');
+        assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
+      }
+      let watcher;
+      const beforeWatch = requests.length;
+      const interrupted = cli('watch', owner, receipt, 0, child => { watcher = child; });
+      void interrupted.catch(() => {});
+      await eventually(() => subscriptions[0]?.headersSent, 'first watch did not open its Task subscription');
+      api.closeTaskSubscriptions();
+      await eventually(() => subscriptions[1]?.headersSent, 'watch did not reconnect to its Task subscription');
+      assert.ok(watcher.kill('SIGINT'));
+      assert.deepEqual(JSON.parse((await interrupted).trim()), working);
+      assert.deepEqual(requests.slice(beforeWatch), [
+        'server/discover', 'gregale/tasks/lookup', 'subscriptions/listen', 'gregale/tasks/lookup', 'subscriptions/listen',
+      ]);
+
+      const beforeResume = requests.length;
+      const resumed = cli('watch', owner, receipt);
+      void resumed.catch(() => {});
+      await eventually(() => subscriptions[2]?.headersSent, 'fresh CLI did not open a Task subscription');
+      finishReport.resolve();
+      const [first, last, ...extra] = (await resumed).trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(first, working);
+      assert.ok(Number.isFinite(Date.parse(last.lastUpdatedAt)));
+      assert.deepEqual(last, { taskId, status: 'completed', lastUpdatedAt: last.lastUpdatedAt, nextAction: 'read_result' });
+      assert.deepEqual(extra, []);
+      assert.deepEqual(requests.slice(beforeResume), ['server/discover', 'gregale/tasks/lookup', 'subscriptions/listen', 'gregale/tasks/lookup']);
+      const beforeTerminal = requests.length;
+      assert.deepEqual(JSON.parse(await cli('watch', owner, receipt)), last);
+      assert.deepEqual(requests.slice(beforeTerminal), ['server/discover', 'gregale/tasks/lookup']);
+      assert.equal(JSON.parse(await cli('status', owner, [...receipt, '--read-result'])).result.content[0].text, resultText);
+      assert.deepEqual(await rows(), [{ task_id: taskId, status: 'completed', attempt_count: 1, has_result: true }]);
+      return;
+    }
 
     finishReport.resolve();
     await eventually(async () => (await rows())[0]?.status === 'completed', 'worker did not complete the Task');
@@ -2377,7 +2430,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
     const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
     function startCLI(verb, credential, args) {
       return run(binary, ['mcp', 'client', verb, '--url', endpoint,
-        '--token-env', 'GREGALE_JOURNEY_TOKEN', '--timeout', '6s', '--json', ...args], {
+        '--token-env', 'GREGALE_JOURNEY_TOKEN', ...(verb === 'watch' ? [] : ['--timeout', '6s']), '--json', ...args], {
         cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000,
       });
     }
@@ -2452,6 +2505,11 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
       }
       if (reviewedInput || respondOnce) {
         const verb = respondOnce ? 'respond' : 'wait';
+        if (reviewedInput) {
+          const beforeWatch = requests.length;
+          assert.deepEqual(JSON.parse(await cli('watch', owner, 0, selector)), snapshot);
+          assert.deepEqual(requests.slice(beforeWatch), ['server/discover', 'gregale/tasks/lookup']);
+        }
         const beforeRead = requests.length;
         assert.deepEqual(JSON.parse(await cli('status', owner, 0, [...selector, '--read-result'])), snapshot);
         assert.deepEqual(requests.slice(beforeRead), ['server/discover', 'gregale/tasks/lookup']);

@@ -5699,6 +5699,22 @@ endpoint. Use the same endpoint and provide the original caller's credential
 when reading it. Use a new receipt path for each new submission. An existing
 receipt remains available for status lookup after a lost reply or CLI exit.
 
+To watch Task status from a receipt, use `client watch` with the same endpoint
+and the caller's current credential.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+The watch writes newline-delimited JSON metadata, starting with the current
+snapshot. It exits when the Task needs input or reaches a terminal state.
+Each update is checked against the receipt, including after a stream
+disconnect. If subscriptions are unavailable, the watch polls the receipt.
+`--interval` controls the reconciliation interval (default 30 seconds).
+Use `nextAction` to decide how to respond or retrieve the result. Press Ctrl+C
+to stop watching and reuse the receipt from another process.
+
 To read the result from a receipt in one status check, use `--read-result`.
 The CLI resolves the original Task using the caller's current credential and
 fetches its result once if it completed. The completed Task has the same JSON
