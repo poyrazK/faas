@@ -112,8 +112,10 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			access = accessWrite
 		}
 		key := storageSubject{subject: storagegrant.Resolve(r.Key), access: access}
-		// Platform objects and build outputs are created by nodes, never
-		// replaced (ADR-20261117190000 amendment 1).
+		// Build outputs are created by nodes, never replaced. Platform
+		// objects may be replaced, but only conditioned on the current
+		// object (Validate requires it), so no update is lost
+		// (ADR-20261117190000 amendment 1).
 		if access == accessWrite && createOnlyClass(key.subject.Class) && replaces(r) {
 			s.log.Warn("secretd: refused storage grant", "node", logsanitize.Field(name), "class", string(key.subject.Class),
 				"key", logsanitize.Field(r.Key), "why", "replace of a create-only object")
@@ -122,7 +124,7 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 		}
 		if access == accessWrite && key.subject.Class == storagegrant.ClassPlatform {
 			// Shared objects every node reads: name each one a node writes.
-			s.log.Info("secretd: platform object create requested", "node", logsanitize.Field(name), "key", logsanitize.Field(r.Key))
+			s.log.Info("secretd: platform object write requested", "node", logsanitize.Field(name), "op", string(r.Op), "key", logsanitize.Field(r.Key))
 		}
 		if counts[key] == 0 {
 			order = append(order, key)
@@ -197,7 +199,8 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 	var appID, budgetKey string
 	switch sub.subject.Class {
 	case storagegrant.ClassPlatform:
-		// Writes reach here create-only (GrantStorageObjects).
+		// Any node may write a platform object: create, or replace the
+		// object it read. Readers verify bases and kernels against signd.
 		return "", nil
 	case storagegrant.ClassBuildOutput:
 		run, err := s.store.BuildRunner(ctx, sub.subject.ID)
@@ -312,9 +315,10 @@ func (s *Server) jobPlaced(ctx context.Context, name, nodeID, jobID string) (boo
 	return s.storage.store.NodeRunsJob(ctx, jobID, nodeID)
 }
 
-// createOnlyClass: nodes may create these objects but never replace them.
+// createOnlyClass: nodes may create these objects but never replace them
+// (build outputs; platform objects allow conditioned replaces).
 func createOnlyClass(c storagegrant.Class) bool {
-	return c == storagegrant.ClassPlatform || c == storagegrant.ClassBuildOutput
+	return c == storagegrant.ClassBuildOutput
 }
 
 // replaces reports whether r overwrites an existing object: a replace, or

@@ -19,9 +19,10 @@ type Class string
 const (
 	// ClassPlatform keys (base images, kernels, agent and sandbox layers,
 	// the shared sandbox preset snapshot, base scan sidecars) are readable
-	// by every node; a node may create a missing one but never replace one
-	// (ADR amendment 1: compute imaged stages bases, and their integrity
-	// rests on the control plane's signature, not on who wrote them).
+	// by every node; a node may create one or replace the one it read,
+	// conditioned on its ETag or generation (ADR amendment 1: compute
+	// imaged stages and patches bases, and their integrity rests on the
+	// control plane's signature, not on who wrote them).
 	ClassPlatform Class = "platform"
 	// ClassDeployment keys belong to one deployment of one app.
 	ClassDeployment Class = "deployment"

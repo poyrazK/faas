@@ -123,8 +123,9 @@ func TestGrantStorageObjects_PlacementDecides(t *testing.T) {
 		"unknown deployment":              {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("layers/22222222-2222-4222-8222-222222222222.ext4")}, want: codes.PermissionDenied},
 		"platform read anywhere":          {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{get("base/base-amd64.ext4"), get("kernel/1.12.0")}, want: codes.OK},
 		"platform create anywhere":        {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{create("base/base-amd64.ext4"), create("sigs/base/base-amd64.ext4.sig"), create("scans/base-amd64.ext4.scan.json")}, want: codes.OK},
-		"platform replace refused":        {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "replace", Generation: 3}}, want: codes.PermissionDenied},
-		"platform conditioned complete":   {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "complete_multipart", UploadId: "u", Etag: `"e"`}}, want: codes.PermissionDenied},
+		"platform conditioned replace":    {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "replace", Generation: 3}, {Key: "scans/base-amd64.ext4.scan.json", Op: "replace", Etag: `"e"`}}, want: codes.OK},
+		"platform conditioned complete":   {caller: "other-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "complete_multipart", UploadId: "u", Etag: `"e"`}}, want: codes.OK},
+		"platform unconditioned replace":  {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{{Key: "base/base-amd64.ext4", Op: "replace"}}, want: codes.InvalidArgument},
 		"layer signature follows its app": {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{create("sigs/layers/" + depA + ".ext4.sig")}, want: codes.OK},
 		"another app's signature":         {caller: "owner-node", objs: []*secretdpb.StorageObjectRequest{get("sigs/layers/" + depB + ".ext4.sig")}, want: codes.PermissionDenied},
 		"builder creates its sbom": {caller: "peer-node", setup: func(_ *fakeStorageStore, f *fixture) {
@@ -222,14 +223,16 @@ func TestGrantStorageObjects_AuditAndOrder(t *testing.T) {
 	}
 }
 
-// Platform reads stay out of the audit; platform creates are recorded under
-// the nil subject (ADR-20261117190000 amendment 1).
-func TestGrantStorageObjects_PlatformCreatesAudited(t *testing.T) {
+// Platform reads stay out of the audit; platform creates and conditioned
+// replaces are recorded under the nil subject (ADR-20261117190000
+// amendment 1).
+func TestGrantStorageObjects_PlatformWritesAudited(t *testing.T) {
 	f, st, _ := storageFixture(t)
-	if _, code := grant(f, get("base/base-amd64.ext4"), create("base/new-amd64.ext4"), create("scans/new-amd64.ext4.scan.json")); code != codes.OK {
+	if _, code := grant(f, get("base/base-amd64.ext4"), create("base/new-amd64.ext4"), create("scans/new-amd64.ext4.scan.json"),
+		&secretdpb.StorageObjectRequest{Key: "base/base-amd64.ext4", Op: "replace", Etag: `"e"`}); code != codes.OK {
 		t.Fatalf("code = %v", code)
 	}
-	want := secretd.StorageGrantRecord{NodeID: "n-owner", Class: "platform", SubjectID: "00000000-0000-0000-0000-000000000000", Access: "write", Objects: 2}
+	want := secretd.StorageGrantRecord{NodeID: "n-owner", Class: "platform", SubjectID: "00000000-0000-0000-0000-000000000000", Access: "write", Objects: 3}
 	if len(st.records) != 1 || st.records[0] != want {
 		t.Fatalf("records = %+v, want [%+v]", st.records, want)
 	}

@@ -50,7 +50,7 @@ Owner decisions (2026-11-17):
 
    | key | subject |
    |---|---|
-   | `base/…`, `kernel/…`, `scans/<base name>.scan.json` | platform: any node may read; a node may create a missing one, never replace one (amendment 1) |
+   | `base/…`, `kernel/…`, `scans/<base name>.scan.json` | platform: any node may read, create, or replace the object it read (ETag/generation-conditioned) (amendment 1) |
    | `sigs/<key>.sig` | the subject of `<key>` |
    | `sboms/<build>.cdx.json` | build output: the node that ran the build creates it |
    | `snap/<deployment>/…`, `apps/<slug>/<deployment>[-<sidecar>].ext4`, `layers/<deployment>.ext4` | deployment |
@@ -72,7 +72,8 @@ Owner decisions (2026-11-17):
      its tasks.
    - Build: the node claimed the running build (`builds.builder_node_name`),
      within the build's run window. Sources are read-only for nodes.
-   - Platform keys and build outputs are create-only (amendment 1).
+   - Platform writes are creates or conditioned replaces from any node;
+     build outputs are create-only. Both are audited (amendment 1).
    - Every grant counts against the per-node distinct-app budget, is
      audited (`secret_open_audit`, via `storage_get`/`storage_put`) and is
      counted in `faas_secretd_storage_grants_total{op,class,outcome}`.
@@ -136,21 +137,33 @@ secretd signing for a loopback MinIO) found what the unit tests could not:
   by compute daemons. A signature now resolves to the subject of the key it
   signs, base scan sidecars to platform, and an SBOM to a new
   `build_output` class: the node that ran the build may create and read it.
-- **Compute imaged stages platform bases.** It writes `base/…` and its
-  `sigs/` and `scans/` sidecars when a base is missing. Owner decision:
-  nodes may *create* platform objects and SBOMs but never replace them
-  (`replace`, or a multipart completion conditioned on the current
-  object, is refused). Integrity rests on the control plane's signature
-  (signd), which readers verify; create-only stops a node from overwriting
-  a base everyone already uses. A node could still publish a missing key
-  first; the signature check is what refuses its content.
+- **Compute imaged stages and refreshes platform bases.** It writes
+  `base/…` and its `sigs/` and `scans/` sidecars when a base is missing,
+  patches a base in place when guest-init changes, and renews scan
+  sidecars. Owner decision (revised after review, 2026-11-22): any granted
+  node may create a platform object or replace one conditioned on the
+  ETag or generation it read, so concurrent writers lose no update and a
+  key planted early can be overwritten by a legitimate node. A first
+  draft made platform keys create-only; that refused every base patch and
+  scan renewal. Build outputs (SBOMs) stay create-only.
+  - Every platform write is recorded in `storage_grant_audit` (class
+    `platform`, nil subject) and logged with its key; reads are only
+    counted.
+  - Integrity of bases and kernels rests on the control plane's signature
+    (signd), which readers verify, not on who wrote them.
+  - Scan sidecars are not signed. A node can write a misleading scan, as
+    any node holding the bucket key can today; the audit row names it.
+    Signing scan sidecars is a follow-up.
 - **An S3 node could not start without a key.** The S3 backend required
   `FAAS_S3_ACCESS_KEY_ID`/`SECRET` even under `FAAS_STORAGE_ACCESS=secretd`,
   so deleting compute's key (slice 5) would have stopped the daemons. Under
   grants the key is optional and the client is anonymous.
 
-With these, 100 image deploy → park → wake cycles ran through grants on
-the nested-KVM test host with no refusal.
+A first run of 100 image deploy → park → wake cycles on grants passed on
+the nested-KVM test host, but it kept `snap/`, `base/`, `kernel/`,
+`layers/` and `scans/` on node disk. The lane now sets
+`FAAS_STORAGE_LOCAL_PREFIXES=none` and `FAAS_REQUIRE_SHARED_ARTIFACTS=1`,
+as production compute does, and fails on any secretd refusal.
 
 ## Slices
 
