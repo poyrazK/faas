@@ -47,6 +47,7 @@ func mcpCLICommand() cliCommand {
 		}
 	}
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
+		cliFlag{Name: "task-receipt", Short: "resume a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
 		cliFlag{Name: "input-responses-file", Short: "JSON file with elicitation responses keyed by request ID", Value: "PATH"},
 		cliFlag{Name: "cancel-on-timeout", Short: "request cancellation when the resumed wait times out"},
