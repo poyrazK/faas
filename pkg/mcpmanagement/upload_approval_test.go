@@ -4,6 +4,7 @@ package mcpmanagement
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,9 +21,14 @@ import (
 func TestHostedUploadApprovalWindow(t *testing.T) {
 	for _, tc := range []struct {
 		name, code string
+		restart    bool
 	}{
 		{name: "approved after original plan and directory expiry"},
 		{name: "new app created before approval"},
+		{name: "restart while awaiting approval", restart: true},
+		{name: "restart after commit before receipt", restart: true},
+		{name: "restart at the approval deadline", restart: true, code: "invalid_plan"},
+		{name: "restart with changed source", restart: true, code: "source_changed"},
 		{name: "approval for an earlier deploy write"},
 		{name: "accepted upload recovered after a lost reply"},
 		{name: "app replaced", code: "plan_stale"},
@@ -35,13 +41,13 @@ func TestHostedUploadApprovalWindow(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				testHostedUploadApprovalWindow(t, tc.name, tc.code)
+				testHostedUploadApprovalWindow(t, tc.name, tc.code, tc.restart)
 			})
 		})
 	}
 }
 
-func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
+func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string, restart bool) {
 	t.Helper()
 	const uploadID = "original-upload"
 	const verifyPath = "/items/5?q=gregale"
@@ -49,10 +55,22 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 	f.app.ID = applicationResponseAppID
 	response := newApplicationResponseFixture(t)
 	response.path, response.result.Body = verifyPath, `{"item_id":5,"q":"gregale"}`
-	store, err := newUploadStore(filepath.Join(t.TempDir(), "uploads"), "https://api.gregale.test/mcp")
-	if err != nil {
-		t.Fatal(err)
+	const namespace = "account-one/credential-one"
+	root := filepath.Join(t.TempDir(), "uploads")
+	var journal *StateStore
+	var statePath, stateKey string
+	if restart {
+		journal, statePath, stateKey = testStateStore(t)
 	}
+	openUploads := func() *uploadStore {
+		t.Helper()
+		store, err := openUploadStore(root, "https://api.gregale.test/mcp", journal)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return store
+	}
+	store := openUploads()
 	approval := api.AgentApprovalResponse{
 		ID: "approval-1", Category: api.AgentApprovalProduction, Method: http.MethodPost, Path: "/v1/uploads/" + uploadID + "/commit",
 		BodyBound: true, Status: api.AgentApprovalPending, ReviewURL: "https://gregale.test/approve",
@@ -91,7 +109,20 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 			return f.cli(ctx, args, stdin)
 		}
 		attempts++
+		checkpointDir, _ := ctx.Value(hostedCLIStateKey{}).(string)
+		checkpoint := filepath.Join(checkpointDir, "checkpoint")
+		if restart && checkpointDir == "" {
+			t.Fatal("approval attempt did not use a staged CLI checkpoint")
+		}
 		if attempts == 1 {
+			if restart {
+				if err := os.Mkdir(checkpointDir, 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(checkpoint, []byte(uploadID), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
 			argsOnFirstApply = slices.Clone(args)
 			f.exists = true
 			approval.ExpiresAt = time.Now().Add(api.AgentApprovalTTL).UTC().Format(time.RFC3339Nano)
@@ -103,28 +134,23 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 		if approval.Status != api.AgentApprovalApproved || !slices.Equal(args, append(slices.Clone(argsOnFirstApply), "--resume-upload-id", uploadID)) {
 			t.Errorf("retry did not use its original approved upload and deploy flags: %v", args)
 		}
+		if restart {
+			data, err := os.ReadFile(checkpoint)
+			if err != nil || string(data) != uploadID {
+				t.Fatalf("restart lost the original CLI checkpoint: %v", err)
+			}
+		}
 		commitUpload()
 		return LocalCLIResult{Stdout: []byte(`{"id":"` + applicationResponseDeploymentID + `"}`)}, nil
 	}
-	server, manager, err := newManagementServer(client, Options{
+	opts := Options{
 		APIBase: client.BaseURL(), Token: testToken, AllowWrites: true, Toolsets: []string{ToolsetCore},
 		LocalCLI: cli, uploads: store, grantID: "grant-one", Environments: &EnvironmentConsent{DefaultWrite: true},
-	})
-	if err != nil {
-		t.Fatal(err)
+		planStore: journal, planNamespace: namespace, accountID: "account-one",
 	}
 	ctx := t.Context()
-	ct, st := mcp.NewInMemoryTransports()
-	ss, err := server.Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = ss.Close() }()
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "upload-approval", Version: "1"}, nil).Connect(ctx, ct, &mcp.ClientSessionOptions{ProtocolVersion: "2026-07-28"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = cs.Close() }()
+	manager, cs, closeConnection := connectUploadApprovalTest(t, client, opts)
+	defer func() { closeConnection() }()
 
 	plan := callTool(t, ctx, cs, "gregale_plan_upload_deploy", map[string]any{
 		"app": "alpha", "reason": "verify an approved upload",
@@ -149,6 +175,70 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 		t.Fatalf("plan and approval deadlines differ: %s vs %s", got["expires_at"], approval.ExpiresAt)
 	}
 
+	if restart {
+		path := manager.plans[id].LocalSource.Path
+		orphans, err := store.newDir("account-one", 32)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if scenario == "restart after commit before receipt" {
+			approval.Status = api.AgentApprovalApproved
+			commitUpload()
+		}
+		if scenario == "restart at the approval deadline" {
+			time.Sleep(api.AgentApprovalTTL)
+		}
+
+		closeConnection()
+		if err := journal.Close(); err != nil {
+			t.Fatal(err)
+		}
+		journal, err = OpenStateStore(statePath, stateKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = journal.Close() }()
+		store = openUploads()
+		opts.uploads, opts.planStore = store, journal
+		manager, cs, closeConnection = connectUploadApprovalTest(t, client, opts)
+		if _, err := os.Stat(orphans); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("restart kept unstaged inputs: %v", err)
+		}
+		if scenario == "restart at the approval deadline" {
+			for _, file := range []string{path, uploadPlanCLIStateDir(path)} {
+				if _, err := os.Stat(file); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("restart kept expired staging: %v", err)
+				}
+			}
+			if records, err := journal.uploadApprovalRecords(); err != nil || len(records) != 0 {
+				t.Fatalf("restart kept an expired approval record: %v", err)
+			}
+			refused := callTool(t, ctx, cs, "gregale_apply_upload_deploy", args, true)
+			if toolCode(t, refused) != wantCode || attempts != 1 || commits != 0 {
+				t.Fatalf("restored an expired approval: %v", refused)
+			}
+			return
+		}
+
+		if items, reserved, _ := store.stagedLocked("account-one"); items != 1 || reserved != maxInlineBytes {
+			t.Fatalf("restart changed staging reservations: %d items, %d bytes", items, reserved)
+		}
+		foreign := opts
+		foreign.planNamespace = "account-one/credential-two"
+		_, other, err := newManagementServer(client, foreign)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if other.plans[id] != nil {
+			t.Fatal("a different credential restored the upload plan")
+		}
+		if scenario == "restart with changed source" {
+			if err := os.WriteFile(filepath.Join(path, "main.py"), []byte("changed"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
 	// Seventeen minutes after the approval request, both original expiry
 	// windows have passed. Exercise the actual pruning and idle checks.
 	time.Sleep(17 * time.Minute)
@@ -157,24 +247,34 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 	p := manager.plans[id]
 	manager.mu.Unlock()
 	store.mu.Lock()
-	store.pruneLocked()
+	err := store.pruneLocked()
 	store.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if p == nil || manager.idle(time.Now()) {
 		t.Fatal("the waiting plan did not keep its hosted connection")
 	}
 	if _, err := os.Stat(p.LocalSource.Path); err != nil {
 		t.Fatalf("the staged source was pruned while approval was pending: %v", err)
 	}
-	pending := callTool(t, ctx, cs, "gregale_apply_upload_deploy", args, true)
-	if toolCode(t, pending) != api.CodeApprovalRequired || attempts != 1 || string(pending["approval"]) == "" {
-		t.Fatalf("pending retry ran the CLI or lost its approval: %v", pending)
-	}
-	decision := callTool(t, ctx, cs, waitForApprovalTool, waitForApprovalArgs{ApprovalID: approval.ID, WaitSeconds: 1}, false)
-	if string(decision["status"]) != `"pending"` || string(decision["expires_at"]) != string(got["expires_at"]) {
-		t.Fatalf("wait returned a different approval deadline: %v", decision)
-	}
-	approval.Status = api.AgentApprovalApproved
 	wantAttempts := 2
+	if scenario == "restart after commit before receipt" {
+		wantAttempts = 1
+	} else {
+		pending := callTool(t, ctx, cs, "gregale_apply_upload_deploy", args, true)
+		var original, returned api.AgentApprovalPendingInfo
+		if json.Unmarshal(first["approval"], &original) != nil || json.Unmarshal(pending["approval"], &returned) != nil ||
+			toolCode(t, pending) != api.CodeApprovalRequired || attempts != 1 || returned.ID != original.ID ||
+			returned.ExpiresAt != original.ExpiresAt || returned.ReviewURL != original.ReviewURL {
+			t.Fatalf("pending retry ran the CLI or lost its original approval: %v", pending)
+		}
+		decision := callTool(t, ctx, cs, waitForApprovalTool, waitForApprovalArgs{ApprovalID: approval.ID, WaitSeconds: 1}, false)
+		if string(decision["status"]) != `"pending"` || string(decision["expires_at"]) != string(got["expires_at"]) {
+			t.Fatalf("wait returned a different approval deadline: %v", decision)
+		}
+		approval.Status = api.AgentApprovalApproved
+	}
 	switch scenario {
 	case "accepted upload recovered after a lost reply":
 		commitUpload()
@@ -214,5 +314,28 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string) {
 	if attempts != wantAttempts || commits != 1 || string(verified["verified"]) != "true" || string(verified["http_status"]) != "200" ||
 		string(verified["deployment_id"]) != `"`+applicationResponseDeploymentID+`"` {
 		t.Fatalf("approval did not lead to one verified release: %v, %d attempts, %d commits", verified, attempts, commits)
+	}
+}
+
+func connectUploadApprovalTest(t *testing.T, client *api.Client, opts Options) (*management, *mcp.ClientSession, func()) {
+	t.Helper()
+	server, manager, err := newManagementServer(client, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, st := mcp.NewInMemoryTransports()
+	ctx := t.Context()
+	ss, err := server.Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "upload-approval", Version: "1"}, nil).Connect(ctx, ct, &mcp.ClientSessionOptions{ProtocolVersion: "2026-07-28"})
+	if err != nil {
+		_ = ss.Close()
+		t.Fatal(err)
+	}
+	return manager, cs, func() {
+		_ = cs.Close()
+		_ = ss.Close()
 	}
 }

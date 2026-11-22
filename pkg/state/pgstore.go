@@ -7977,6 +7977,10 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		return Deployment{}, 0, err
 	}
 	d.Scope = normalizedDeploymentScope(d.Scope)
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	tx, err := s.beginAppTrafficMutation(ctx, d.AppID)
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: begin tx: %w", err)
@@ -8470,8 +8474,19 @@ func (s *PgStore) createDeploymentOnce(ctx context.Context, d Deployment, activi
 		}
 		created.StagedReview = &review
 	}
+	var schedules DeploymentScheduleResult
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = created.ID
+		schedules.Created, schedules.Replaced, err = scheduleReleaseTx(ctx, tx, schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: commit create deployment: %w", err)
+	}
+	if schedule.result != nil {
+		*schedule.result = schedules
 	}
 	return created, outboxID, nil
 }
@@ -27331,7 +27346,7 @@ const deploymentSelectColumnsWithRootfs = `
 	coalesce(release_command, ARRAY[]::text[]), release_command_shell,
 		disable_startup_cpu_boost, override_readiness_probe, override_main_depends_on,
 	coalesce(environment_workload_runtime::text,''),
-	environment_workload_held, secret_reload_signal, runtime_base, before_checkpoint_hook`
+	environment_workload_held, secret_reload_signal, runtime_base, before_checkpoint_hook, serving_ended_at`
 
 // Compile-time anchors for the deployment column constants. See the
 // appsSelectColumns comment above for rationale.
@@ -27392,7 +27407,7 @@ const deploymentSelectColumnsQualified = `
 	coalesce(d.release_command, ARRAY[]::text[]), d.release_command_shell,
 		d.disable_startup_cpu_boost, d.override_readiness_probe, d.override_main_depends_on,
 	coalesce(d.environment_workload_runtime::text,''),
-	d.environment_workload_held, d.secret_reload_signal, d.runtime_base, d.before_checkpoint_hook`
+	d.environment_workload_held, d.secret_reload_signal, d.runtime_base, d.before_checkpoint_hook, d.serving_ended_at`
 
 var _ = deploymentSelectColumnsQualified
 
@@ -27517,6 +27532,7 @@ func scanDeploymentInto(d *Deployment, row pgx.Row, rootfsPath, rootfsKey *strin
 		&d.InferredProfile, &d.ReleaseCommand, &d.ReleaseCommandShell, &d.DisableStartupCPUBoost,
 		&d.OverrideReadinessProbe, &d.OverrideMainDependsOn,
 		&d.EnvironmentWorkloadRuntime, &environmentWorkloadHeld, &secretReloadSignal, &d.RuntimeBase, &beforeCheckpointHook,
+		&d.ServingEndedAt,
 	); err != nil {
 		return mapErr(err)
 	}
