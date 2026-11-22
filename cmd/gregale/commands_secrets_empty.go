@@ -34,10 +34,10 @@ func printEmptySecretList(app, scope, class, olderThan, deliveryStatus string, k
 	if len(keys) > 0 {
 		filters = append(filters, "keys="+strings.Join(keys, ", "))
 	}
-	listCommand := fmt.Sprintf("%s secrets list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scope))
+	listCommand := fmt.Sprintf("%s env list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scope))
 	filtered := class != "" || olderThan != "" || deliveryStatus != "" || len(keys) > 0
 	if !filtered && scope != "__all__" {
-		listCommand = fmt.Sprintf("%s secrets list --app %s --scope __all__", recoveryCLI(), recoveryArgument(app))
+		listCommand = fmt.Sprintf("%s env list --app %s --scope __all__", recoveryCLI(), recoveryArgument(app))
 	}
 	if filtered || scope != "__all__" {
 		printEmptyResult("secret metadata for app "+app, strings.Join(filters, "; "), listCommand)

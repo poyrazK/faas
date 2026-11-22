@@ -16,9 +16,15 @@ const (
 	UsageHeldDeleting           = "deleting"
 	UsageHeldIdentityIncomplete = "identity_incomplete"
 	UsageHeldUnknownSubject     = "unknown_subject"
+	// UsageHeldSubscriptionEnded is a paid hour not yet delivered when the
+	// subject's subscription ended and it returned to Free
+	// (ADR-20261121231500). The provider subscription that would bill it is
+	// gone, so an operator bills, settles or waives it; it is delivered if
+	// the subject subscribes again within the lookback.
+	UsageHeldSubscriptionEnded = "subscription_ended"
 )
 
-var usageHeldReasons = []string{UsageHeldSuspended, UsageHeldDeleting, UsageHeldIdentityIncomplete, UsageHeldUnknownSubject}
+var usageHeldReasons = []string{UsageHeldSuspended, UsageHeldDeleting, UsageHeldIdentityIncomplete, UsageHeldUnknownSubject, UsageHeldSubscriptionEnded}
 
 // UsageHeldExpiryWarning is how long before a held window leaves the billing
 // lookback meterd reports it as expiring, so an operator can bill, settle or

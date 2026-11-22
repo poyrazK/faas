@@ -42,6 +42,7 @@ var memDispatched = map[string]bool{
 	"DeploymentWorkerDrainStatuses":          true,
 	"MCPTaskPromotionHold":                   true,
 	"MCPTaskPromotionHolds":                  true,
+	"MatchHostedTaskRehearsalReservation":    true,
 	"DeleteAppPermanently":                   true,
 	"EndAppDeleteGrace":                      true,
 	"DeleteProjectIfNoStages":                true,
@@ -4748,6 +4749,17 @@ func (s *Mem) RecordDeploymentRegistryVerification(p0 context.Context, p1 state.
 		return o.RecordDeploymentRegistryVerification(p0, p1)
 	}
 	return s.MemStore.RecordDeploymentRegistryVerification(p0, p1)
+}
+
+// MatchHostedTaskRehearsalReservation is an optional scheduler capability
+// implemented by PgStore. A memory fixture without a matcher owns no reservation.
+func (s *Mem) MatchHostedTaskRehearsalReservation(ctx context.Context, account, run, plan string, reservedAt time.Time) (bool, error) {
+	if override, ok := s.over.(interface {
+		MatchHostedTaskRehearsalReservation(context.Context, string, string, string, time.Time) (bool, error)
+	}); ok {
+		return override.MatchHostedTaskRehearsalReservation(ctx, account, run, plan, reservedAt)
+	}
+	return false, nil
 }
 
 func (s *Mem) RuntimeReleaseQualification(p0 context.Context, p1 string) (state.RuntimeReleaseQualification, error) {

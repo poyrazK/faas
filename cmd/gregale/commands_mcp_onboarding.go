@@ -22,11 +22,11 @@ type mcpInitOptions struct {
 // Validate the complete access contract before creating customer files. This
 // uses the same configuration validator as deploy; no network or credentials
 // are needed to scaffold a private resource server.
-// mcpInitTemplate is the starter a runtime uses. The Node Tasks stack starts
-// from mcp-node-tasks; plain Node starts from the smaller mcp-node.
+// mcpInitTemplate is the starter a runtime uses. A Tasks stack starts from
+// the runtime's -tasks starter; a plain server from the smaller one.
 func mcpInitTemplate(options mcpInitOptions) string {
-	if options.Tasks && options.Runtime == "node" {
-		return "mcp-node-tasks"
+	if options.Tasks {
+		return "mcp-" + options.Runtime + "-tasks"
 	}
 	return "mcp-" + options.Runtime
 }

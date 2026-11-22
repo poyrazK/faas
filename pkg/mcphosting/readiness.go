@@ -50,7 +50,8 @@ func (t readinessTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return res, nil
 }
 
-// CheckReadiness performs only initialize, initialized notification, ping and
+// CheckReadiness performs only initialize (server/discover on 2026-07-28), the
+// initialized notification, ping (pre-2026 revisions only) and
 // catalog metadata reads. It never calls tools, reads resources or renders prompts.
 // baseline optionally pins the exact role-visible contract, including additions.
 func CheckReadiness(ctx context.Context, source *Client, baseline *Contract) ReadinessReport {
@@ -112,16 +113,14 @@ func checkReadiness(ctx context.Context, source *Client, baseline *Contract, for
 	if !add("initialize", "Initialize negotiation, authorization or stateless transport failed", client.OpenStateless(bounded)) {
 		return report
 	}
-	ping, err := client.request(bounded, "ping", nil, nil, false)
-	if err == nil {
-		var value map[string]json.RawMessage
-		err = json.Unmarshal(ping.Result, &value)
-		if err == nil && value == nil {
-			err = errors.New("ping result must be an object")
+	// Protocol 2026-07-28 removed ping (and initialize) from the method set;
+	// server/discover in OpenStateless is that revision's liveness exchange.
+	// A spec-conformant server answers ping with -32601, so requiring it
+	// refused every official-SDK server, including the Node starter.
+	if client.Version != ProtocolVersion {
+		if !add("ping", "Ping did not return a valid response", readinessPing(bounded, client)) {
+			return report
 		}
-	}
-	if !add("ping", "Ping did not return a valid response", err) {
-		return report
 	}
 	var contract Contract
 	if (baseline != nil && baseline.Version == 2) || format == 2 || (format == 0 && baseline == nil && client.Capabilities.Tools == nil) {
@@ -166,6 +165,21 @@ func checkReadiness(ctx context.Context, source *Client, baseline *Contract, for
 	report.OK = true
 	return report
 }
+func readinessPing(ctx context.Context, client *Client) error {
+	ping, err := client.request(ctx, "ping", nil, nil, false)
+	if err != nil {
+		return err
+	}
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(ping.Result, &value); err != nil {
+		return err
+	}
+	if value == nil {
+		return errors.New("ping result must be an object")
+	}
+	return nil
+}
+
 func readinessRequire(ok bool) error {
 	if !ok {
 		return errors.New("requirement not met")

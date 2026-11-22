@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fork } from 'node:child_process';
+import { execFile, fork } from 'node:child_process';
 import { createHash, createHmac, createCipheriv, randomBytes, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import { generateKeyPair, SignJWT } from 'jose';
 import { Pool } from 'pg';
 import * as z from 'zod/v4';
 import { createApp } from '../app.js';
@@ -15,6 +20,111 @@ import { createMcpTaskRuntime, RetryableMcpTaskError } from '../tasks.js';
 
 const databaseURL = process.env.MCP_TASKS_TEST_DATABASE_URL;
 const postgresOnly = { skip: databaseURL ? false : 'set MCP_TASKS_TEST_DATABASE_URL to run PostgreSQL integration tests' };
+
+test('a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', {
+  skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
+  timeout: 30_000,
+}, async t => {
+  const { store, pool, namespace } = await harness(t);
+  const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-cli-'));
+  t.after(() => rm(clientDir, { recursive: true, force: true }));
+  const finishReport = Promise.withResolvers();
+  const resultText = 'Private reconnect report is ready.';
+  const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers: {
+    build_report: { version: '1', async execute() {
+      await finishReport.promise;
+      return { content: [{ type: 'text', text: resultText }] };
+    } },
+  } });
+  const auth = {
+    mode: 'external-oauth', issuer: 'https://issuer.example', jwks_url: 'https://issuer.example/jwks',
+    resource: 'https://mcp.example/mcp', scopes: ['mcp:tools'], tool_scopes: { build_report: [] },
+  };
+  const { publicKey, privateKey } = await generateKeyPair('ES256');
+  const token = subject => new SignJWT({ scope: 'mcp:tools' }).setProtectedHeader({ alg: 'ES256' })
+    .setAudience(auth.resource).setIssuer(auth.issuer).setSubject(subject).setExpirationTime('5m').sign(privateKey);
+  const owner = await token('alice');
+  const otherCaller = await token('bob');
+  const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
+    legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
+  }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
+
+  const requests = [];
+  let dropNextStatus = false;
+  const server = createServer((req, res) => {
+    const method = req.headers['mcp-method'];
+    requests.push(method);
+    if (method === 'tasks/get' && dropNextStatus) {
+      dropNextStatus = false;
+      req.destroy();
+      return;
+    }
+    api.app(req, res);
+  });
+  try {
+    await runtime.start();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
+    const run = promisify(execFile);
+    const binary = resolve(process.env.MCP_TASKS_TEST_GREGALE);
+    async function cli(verb, credential, args, expectedExit = 0) {
+      const response = await run(binary, [
+        'mcp', 'client', verb, '--url', endpoint, '--token-env', 'GREGALE_JOURNEY_TOKEN', '--timeout', '5s', '--json', ...args,
+      ], { cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000 }).then(
+        ({ stdout, stderr }) => ({ stdout, stderr, code: 0 }),
+        ({ stdout, stderr, code }) => ({ stdout, stderr, code }),
+      );
+      assert.equal(response.code, expectedExit, `unexpected exit from mcp client ${verb}`);
+      assert.ok(!response.stdout.includes(credential) && !response.stderr.includes(credential), 'CLI leaked a caller token');
+      assert.ok(!response.stderr.includes(resultText), 'CLI leaked a Task result to stderr');
+      return response.stdout;
+    }
+    const submitted = JSON.parse(await cli('call', owner, ['--tool', 'build_report', '--tasks', '--arguments', '{"report":"reconnect","steps":1}']));
+    assert.equal(submitted.result.resultType, 'task');
+    assert.equal(submitted.result.status, 'working');
+    const taskId = submitted.result.taskId;
+    assert.ok(taskId);
+    const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
+      result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
+    await eventually(async () => (await rows())[0]?.status === 'running', 'worker did not claim the Task');
+
+    const handle = ['--task-id', taskId];
+    async function metadata(credential, expectedExit = 0) {
+      const from = requests.length;
+      const stdout = await cli('status', credential, [...handle, '--metadata-only'], expectedExit);
+      assert.deepEqual(requests.slice(from), ['server/discover', 'tasks/get']);
+      return stdout;
+    }
+    dropNextStatus = true;
+    assert.deepEqual(JSON.parse(await metadata(owner, 3)), { taskId, status: 'unknown', nextAction: 'retry_status' });
+    const working = JSON.parse(await metadata(owner));
+    assert.ok(Number.isFinite(Date.parse(working.lastUpdatedAt)));
+    assert.deepEqual(working, { taskId, status: 'working', lastUpdatedAt: working.lastUpdatedAt,
+      pollIntervalMs: 500, nextAction: 'poll_status' });
+
+    finishReport.resolve();
+    await eventually(async () => (await rows())[0]?.status === 'completed', 'worker did not complete the Task');
+    assert.equal(await metadata(otherCaller, 1), '');
+    const completed = JSON.parse(await metadata(owner));
+    assert.ok(Number.isFinite(Date.parse(completed.lastUpdatedAt)));
+    assert.deepEqual(completed, { taskId, status: 'completed', lastUpdatedAt: completed.lastUpdatedAt, nextAction: 'read_result' });
+    const full = JSON.parse(await cli('status', owner, handle));
+    assert.equal(full.taskId, taskId);
+    assert.equal(full.result.content[0].text, resultText);
+    assert.equal(requests.filter(method => method === 'tools/call').length, 1);
+    assert.deepEqual(await rows(), [{ task_id: taskId, status: 'completed', attempt_count: 1, has_result: true }]);
+  } finally {
+    finishReport.resolve();
+    api.closeTaskSubscriptions();
+    await new Promise(resolve => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
+    await api.handler.close();
+    await runtime.stop();
+  }
+});
 
 const taskOutputContract = { type: 'object', required: ['amount'], additionalProperties: false,
   $defs: { amount: { type: 'integer', minimum: 1 } }, properties: { amount: { $ref: '#/$defs/amount' } } };

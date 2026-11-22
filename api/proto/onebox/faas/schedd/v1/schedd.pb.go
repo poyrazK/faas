@@ -7770,6 +7770,176 @@ func (*DeleteDatabaseResponse) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{92}
 }
 
+// Identity fence for a freshly observed first-attempt rehearsal lease.
+// Carries no guest credential or lease token.
+type InterruptHostedTaskWorkerRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	RunId         string                 `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	PlanSha256    string                 `protobuf:"bytes,3,opt,name=plan_sha256,json=planSha256,proto3" json:"plan_sha256,omitempty"`
+	TaskId        string                 `protobuf:"bytes,4,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	AppId         string                 `protobuf:"bytes,5,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,6,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	InstanceId    string                 `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	NodeId        string                 `protobuf:"bytes,8,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	WakeId        string                 `protobuf:"bytes,9,opt,name=wake_id,json=wakeId,proto3" json:"wake_id,omitempty"`
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InterruptHostedTaskWorkerRequest) Reset() {
+	*x = InterruptHostedTaskWorkerRequest{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[93]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InterruptHostedTaskWorkerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InterruptHostedTaskWorkerRequest) ProtoMessage() {}
+
+func (x *InterruptHostedTaskWorkerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[93]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InterruptHostedTaskWorkerRequest.ProtoReflect.Descriptor instead.
+func (*InterruptHostedTaskWorkerRequest) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{93}
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetPlanSha256() string {
+	if x != nil {
+		return x.PlanSha256
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetAppId() string {
+	if x != nil {
+		return x.AppId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetWakeId() string {
+	if x != nil {
+		return x.WakeId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerRequest) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+type InterruptHostedTaskWorkerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`
+	DeploymentId  string                 `protobuf:"bytes,2,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *InterruptHostedTaskWorkerResponse) Reset() {
+	*x = InterruptHostedTaskWorkerResponse{}
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[94]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *InterruptHostedTaskWorkerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*InterruptHostedTaskWorkerResponse) ProtoMessage() {}
+
+func (x *InterruptHostedTaskWorkerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_onebox_faas_schedd_v1_schedd_proto_msgTypes[94]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use InterruptHostedTaskWorkerResponse.ProtoReflect.Descriptor instead.
+func (*InterruptHostedTaskWorkerResponse) Descriptor() ([]byte, []int) {
+	return file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP(), []int{94}
+}
+
+func (x *InterruptHostedTaskWorkerResponse) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *InterruptHostedTaskWorkerResponse) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
 var File_onebox_faas_schedd_v1_schedd_proto protoreflect.FileDescriptor
 
 const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
@@ -8383,11 +8553,31 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\n" +
 	"error_code\x18\x01 \x01(\tR\terrorCode\x12\x1a\n" +
 	"\bsqlstate\x18\x02 \x01(\tR\bsqlstate\"\x18\n" +
-	"\x16DeleteDatabaseResponse*2\n" +
+	"\x16DeleteDatabaseResponse\"\xde\x02\n" +
+	" InterruptHostedTaskWorkerRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x15\n" +
+	"\x06run_id\x18\x02 \x01(\tR\x05runId\x12\x1f\n" +
+	"\vplan_sha256\x18\x03 \x01(\tR\n" +
+	"planSha256\x12\x17\n" +
+	"\atask_id\x18\x04 \x01(\tR\x06taskId\x12\x15\n" +
+	"\x06app_id\x18\x05 \x01(\tR\x05appId\x12#\n" +
+	"\rdeployment_id\x18\x06 \x01(\tR\fdeploymentId\x12\x1f\n" +
+	"\vinstance_id\x18\a \x01(\tR\n" +
+	"instanceId\x12\x17\n" +
+	"\anode_id\x18\b \x01(\tR\x06nodeId\x12\x17\n" +
+	"\awake_id\x18\t \x01(\tR\x06wakeId\x12;\n" +
+	"\vobserved_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\"i\n" +
+	"!InterruptHostedTaskWorkerResponse\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\x12#\n" +
+	"\rdeployment_id\x18\x02 \x01(\tR\fdeploymentId*2\n" +
 	"\n" +
 	"WakeMethod\x12\x12\n" +
 	"\x0eWAKE_COLD_BOOT\x10\x00\x12\x10\n" +
-	"\fWAKE_RESTORE\x10\x012\xbb\x1f\n" +
+	"\fWAKE_RESTORE\x10\x012\xcc \n" +
 	"\x06Schedd\x12O\n" +
 	"\x04Wake\x12\".onebox.faas.schedd.v1.WakeRequest\x1a#.onebox.faas.schedd.v1.WakeResponse\x12j\n" +
 	"\rAdmitInstance\x12+.onebox.faas.schedd.v1.AdmitInstanceRequest\x1a,.onebox.faas.schedd.v1.AdmitInstanceResponse\x12m\n" +
@@ -8427,7 +8617,8 @@ const file_onebox_faas_schedd_v1_schedd_proto_rawDesc = "" +
 	"\x13GetDatabaseSnapshot\x12*.onebox.faas.schedd.v1.DatabaseSnapshotRef\x1a'.onebox.faas.schedd.v1.DatabaseSnapshot\x12{\n" +
 	"\x16DeleteDatabaseSnapshot\x12*.onebox.faas.schedd.v1.DatabaseSnapshotRef\x1a5.onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse\x12b\n" +
 	"\fHoldDatabase\x12*.onebox.faas.schedd.v1.HoldDatabaseRequest\x1a&.onebox.faas.schedd.v1.DatabaseRuntime\x12x\n" +
-	"\x17SetDatabaseComputeQuota\x125.onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest\x1a&.onebox.faas.schedd.v1.DatabaseRuntimeBFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpbb\x06proto3"
+	"\x17SetDatabaseComputeQuota\x125.onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest\x1a&.onebox.faas.schedd.v1.DatabaseRuntime\x12\x8e\x01\n" +
+	"\x19InterruptHostedTaskWorker\x127.onebox.faas.schedd.v1.InterruptHostedTaskWorkerRequest\x1a8.onebox.faas.schedd.v1.InterruptHostedTaskWorkerResponseBFZDgithub.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1;scheddpbb\x06proto3"
 
 var (
 	file_onebox_faas_schedd_v1_schedd_proto_rawDescOnce sync.Once
@@ -8442,148 +8633,150 @@ func file_onebox_faas_schedd_v1_schedd_proto_rawDescGZIP() []byte {
 }
 
 var file_onebox_faas_schedd_v1_schedd_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 93)
+var file_onebox_faas_schedd_v1_schedd_proto_msgTypes = make([]protoimpl.MessageInfo, 95)
 var file_onebox_faas_schedd_v1_schedd_proto_goTypes = []any{
-	(WakeMethod)(0),                        // 0: onebox.faas.schedd.v1.WakeMethod
-	(*LivenessFailedReport)(nil),           // 1: onebox.faas.schedd.v1.LivenessFailedReport
-	(*LivenessFailedAck)(nil),              // 2: onebox.faas.schedd.v1.LivenessFailedAck
-	(*ReportWorkloadOOMRequest)(nil),       // 3: onebox.faas.schedd.v1.ReportWorkloadOOMRequest
-	(*ReportWorkloadOOMAck)(nil),           // 4: onebox.faas.schedd.v1.ReportWorkloadOOMAck
-	(*WakeRequest)(nil),                    // 5: onebox.faas.schedd.v1.WakeRequest
-	(*PlatformIdentity)(nil),               // 6: onebox.faas.schedd.v1.PlatformIdentity
-	(*WakeResponse)(nil),                   // 7: onebox.faas.schedd.v1.WakeResponse
-	(*AdmitInstanceRequest)(nil),           // 8: onebox.faas.schedd.v1.AdmitInstanceRequest
-	(*AdmitInstanceResponse)(nil),          // 9: onebox.faas.schedd.v1.AdmitInstanceResponse
-	(*Touch)(nil),                          // 10: onebox.faas.schedd.v1.Touch
-	(*ReportActivityRequest)(nil),          // 11: onebox.faas.schedd.v1.ReportActivityRequest
-	(*ReportActivityResponse)(nil),         // 12: onebox.faas.schedd.v1.ReportActivityResponse
-	(*ParkInstanceRequest)(nil),            // 13: onebox.faas.schedd.v1.ParkInstanceRequest
-	(*ParkInstanceResponse)(nil),           // 14: onebox.faas.schedd.v1.ParkInstanceResponse
-	(*ForceColdBootNextWakeRequest)(nil),   // 15: onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
-	(*ForceColdBootNextWakeResponse)(nil),  // 16: onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
-	(*ForceRestartInstanceRequest)(nil),    // 17: onebox.faas.schedd.v1.ForceRestartInstanceRequest
-	(*ForceRestartInstanceResponse)(nil),   // 18: onebox.faas.schedd.v1.ForceRestartInstanceResponse
-	(*InstanceStatsRow)(nil),               // 19: onebox.faas.schedd.v1.InstanceStatsRow
-	(*ListInstanceStatsRequest)(nil),       // 20: onebox.faas.schedd.v1.ListInstanceStatsRequest
-	(*ListInstanceStatsResponse)(nil),      // 21: onebox.faas.schedd.v1.ListInstanceStatsResponse
-	(*StreamAppLogsRequest)(nil),           // 22: onebox.faas.schedd.v1.StreamAppLogsRequest
-	(*StreamAppLogsResponse)(nil),          // 23: onebox.faas.schedd.v1.StreamAppLogsResponse
-	(*StreamWarmHintsRequest)(nil),         // 24: onebox.faas.schedd.v1.StreamWarmHintsRequest
-	(*StreamWarmHintsResponse)(nil),        // 25: onebox.faas.schedd.v1.StreamWarmHintsResponse
-	(*CapacityReport)(nil),                 // 26: onebox.faas.schedd.v1.CapacityReport
-	(*NodeInstanceInventory)(nil),          // 27: onebox.faas.schedd.v1.NodeInstanceInventory
-	(*InstanceTelemetry)(nil),              // 28: onebox.faas.schedd.v1.InstanceTelemetry
-	(*ReportCapacityAck)(nil),              // 29: onebox.faas.schedd.v1.ReportCapacityAck
-	(*EnsureWakeRequest)(nil),              // 30: onebox.faas.schedd.v1.EnsureWakeRequest
-	(*EnsureWakeResponse)(nil),             // 31: onebox.faas.schedd.v1.EnsureWakeResponse
-	(*FrameworkReadyReport)(nil),           // 32: onebox.faas.schedd.v1.FrameworkReadyReport
-	(*FrameworkReadyAck)(nil),              // 33: onebox.faas.schedd.v1.FrameworkReadyAck
-	(*FlowSummary)(nil),                    // 34: onebox.faas.schedd.v1.FlowSummary
-	(*SandboxRunRequest)(nil),              // 35: onebox.faas.schedd.v1.SandboxRunRequest
-	(*SandboxRunStart)(nil),                // 36: onebox.faas.schedd.v1.SandboxRunStart
-	(*SandboxRunTask)(nil),                 // 37: onebox.faas.schedd.v1.SandboxRunTask
-	(*SandboxRunAction)(nil),               // 38: onebox.faas.schedd.v1.SandboxRunAction
-	(*SandboxRunActionDone)(nil),           // 39: onebox.faas.schedd.v1.SandboxRunActionDone
-	(*SandboxRunTaskDone)(nil),             // 40: onebox.faas.schedd.v1.SandboxRunTaskDone
-	(*SandboxRunFreeze)(nil),               // 41: onebox.faas.schedd.v1.SandboxRunFreeze
-	(*SandboxRunClose)(nil),                // 42: onebox.faas.schedd.v1.SandboxRunClose
-	(*SandboxRunEvent)(nil),                // 43: onebox.faas.schedd.v1.SandboxRunEvent
-	(*SandboxRunWebDomains)(nil),           // 44: onebox.faas.schedd.v1.SandboxRunWebDomains
-	(*SandboxRunWebDomain)(nil),            // 45: onebox.faas.schedd.v1.SandboxRunWebDomain
-	(*SandboxRunActivity)(nil),             // 46: onebox.faas.schedd.v1.SandboxRunActivity
-	(*SandboxRunFrozen)(nil),               // 47: onebox.faas.schedd.v1.SandboxRunFrozen
-	(*SandboxRunFreezeRefused)(nil),        // 48: onebox.faas.schedd.v1.SandboxRunFreezeRefused
-	(*SandboxRunThawed)(nil),               // 49: onebox.faas.schedd.v1.SandboxRunThawed
-	(*SandboxRunPersistRequested)(nil),     // 50: onebox.faas.schedd.v1.SandboxRunPersistRequested
-	(*SandboxRunPersistGrant)(nil),         // 51: onebox.faas.schedd.v1.SandboxRunPersistGrant
-	(*SandboxRunPersistDone)(nil),          // 52: onebox.faas.schedd.v1.SandboxRunPersistDone
-	(*SandboxRunPersistRecorded)(nil),      // 53: onebox.faas.schedd.v1.SandboxRunPersistRecorded
-	(*AgentRunRequest)(nil),                // 54: onebox.faas.schedd.v1.AgentRunRequest
-	(*AgentRunExtend)(nil),                 // 55: onebox.faas.schedd.v1.AgentRunExtend
-	(*AgentRunProceed)(nil),                // 56: onebox.faas.schedd.v1.AgentRunProceed
-	(*AgentRunStart)(nil),                  // 57: onebox.faas.schedd.v1.AgentRunStart
-	(*AgentRunRelay)(nil),                  // 58: onebox.faas.schedd.v1.AgentRunRelay
-	(*AgentRunCancel)(nil),                 // 59: onebox.faas.schedd.v1.AgentRunCancel
-	(*AgentRunEvent)(nil),                  // 60: onebox.faas.schedd.v1.AgentRunEvent
-	(*AgentRunPlaced)(nil),                 // 61: onebox.faas.schedd.v1.AgentRunPlaced
-	(*AgentRunBooted)(nil),                 // 62: onebox.faas.schedd.v1.AgentRunBooted
-	(*AgentRunOutput)(nil),                 // 63: onebox.faas.schedd.v1.AgentRunOutput
-	(*AgentRunResult)(nil),                 // 64: onebox.faas.schedd.v1.AgentRunResult
-	(*AgentRunUsage)(nil),                  // 65: onebox.faas.schedd.v1.AgentRunUsage
-	(*ReportMemoryPressureRequest)(nil),    // 66: onebox.faas.schedd.v1.ReportMemoryPressureRequest
-	(*ReportMemoryPressureAck)(nil),        // 67: onebox.faas.schedd.v1.ReportMemoryPressureAck
-	(*ReportSlowRequestRequest)(nil),       // 68: onebox.faas.schedd.v1.ReportSlowRequestRequest
-	(*ReportSlowRequestAck)(nil),           // 69: onebox.faas.schedd.v1.ReportSlowRequestAck
-	(*DatabaseRef)(nil),                    // 70: onebox.faas.schedd.v1.DatabaseRef
-	(*ProvisionDatabaseRequest)(nil),       // 71: onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	(*RestoreDatabaseRequest)(nil),         // 72: onebox.faas.schedd.v1.RestoreDatabaseRequest
-	(*CaptureDatabaseSnapshotRequest)(nil), // 73: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
-	(*DatabaseSnapshotRef)(nil),            // 74: onebox.faas.schedd.v1.DatabaseSnapshotRef
-	(*DatabaseSnapshot)(nil),               // 75: onebox.faas.schedd.v1.DatabaseSnapshot
-	(*DeleteDatabaseSnapshotResponse)(nil), // 76: onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
-	(*SetDatabaseAlwaysOnRequest)(nil),     // 77: onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
-	(*HoldDatabaseRequest)(nil),            // 78: onebox.faas.schedd.v1.HoldDatabaseRequest
-	(*SetDatabaseComputeQuotaRequest)(nil), // 79: onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest
-	(*DatabaseRuntime)(nil),                // 80: onebox.faas.schedd.v1.DatabaseRuntime
-	(*DatabaseMajorSpan)(nil),              // 81: onebox.faas.schedd.v1.DatabaseMajorSpan
-	(*UpgradeDatabaseRequest)(nil),         // 82: onebox.faas.schedd.v1.UpgradeDatabaseRequest
-	(*DatabaseUpgrade)(nil),                // 83: onebox.faas.schedd.v1.DatabaseUpgrade
-	(*ImportDatabaseRequest)(nil),          // 84: onebox.faas.schedd.v1.ImportDatabaseRequest
-	(*DatabaseImportProgress)(nil),         // 85: onebox.faas.schedd.v1.DatabaseImportProgress
-	(*ResizeDatabaseRequest)(nil),          // 86: onebox.faas.schedd.v1.ResizeDatabaseRequest
-	(*TouchDatabaseRequest)(nil),           // 87: onebox.faas.schedd.v1.TouchDatabaseRequest
-	(*TouchDatabaseResponse)(nil),          // 88: onebox.faas.schedd.v1.TouchDatabaseResponse
-	(*DatabaseUsageRequest)(nil),           // 89: onebox.faas.schedd.v1.DatabaseUsageRequest
-	(*DatabaseUsageResponse)(nil),          // 90: onebox.faas.schedd.v1.DatabaseUsageResponse
-	(*DatabaseAdminRequest)(nil),           // 91: onebox.faas.schedd.v1.DatabaseAdminRequest
-	(*DatabaseAdminResponse)(nil),          // 92: onebox.faas.schedd.v1.DatabaseAdminResponse
-	(*DeleteDatabaseResponse)(nil),         // 93: onebox.faas.schedd.v1.DeleteDatabaseResponse
-	(*structpb.Struct)(nil),                // 94: google.protobuf.Struct
-	(*wrapperspb.Int64Value)(nil),          // 95: google.protobuf.Int64Value
-	(*timestamppb.Timestamp)(nil),          // 96: google.protobuf.Timestamp
-	(*wrapperspb.DoubleValue)(nil),         // 97: google.protobuf.DoubleValue
+	(WakeMethod)(0),                           // 0: onebox.faas.schedd.v1.WakeMethod
+	(*LivenessFailedReport)(nil),              // 1: onebox.faas.schedd.v1.LivenessFailedReport
+	(*LivenessFailedAck)(nil),                 // 2: onebox.faas.schedd.v1.LivenessFailedAck
+	(*ReportWorkloadOOMRequest)(nil),          // 3: onebox.faas.schedd.v1.ReportWorkloadOOMRequest
+	(*ReportWorkloadOOMAck)(nil),              // 4: onebox.faas.schedd.v1.ReportWorkloadOOMAck
+	(*WakeRequest)(nil),                       // 5: onebox.faas.schedd.v1.WakeRequest
+	(*PlatformIdentity)(nil),                  // 6: onebox.faas.schedd.v1.PlatformIdentity
+	(*WakeResponse)(nil),                      // 7: onebox.faas.schedd.v1.WakeResponse
+	(*AdmitInstanceRequest)(nil),              // 8: onebox.faas.schedd.v1.AdmitInstanceRequest
+	(*AdmitInstanceResponse)(nil),             // 9: onebox.faas.schedd.v1.AdmitInstanceResponse
+	(*Touch)(nil),                             // 10: onebox.faas.schedd.v1.Touch
+	(*ReportActivityRequest)(nil),             // 11: onebox.faas.schedd.v1.ReportActivityRequest
+	(*ReportActivityResponse)(nil),            // 12: onebox.faas.schedd.v1.ReportActivityResponse
+	(*ParkInstanceRequest)(nil),               // 13: onebox.faas.schedd.v1.ParkInstanceRequest
+	(*ParkInstanceResponse)(nil),              // 14: onebox.faas.schedd.v1.ParkInstanceResponse
+	(*ForceColdBootNextWakeRequest)(nil),      // 15: onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
+	(*ForceColdBootNextWakeResponse)(nil),     // 16: onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
+	(*ForceRestartInstanceRequest)(nil),       // 17: onebox.faas.schedd.v1.ForceRestartInstanceRequest
+	(*ForceRestartInstanceResponse)(nil),      // 18: onebox.faas.schedd.v1.ForceRestartInstanceResponse
+	(*InstanceStatsRow)(nil),                  // 19: onebox.faas.schedd.v1.InstanceStatsRow
+	(*ListInstanceStatsRequest)(nil),          // 20: onebox.faas.schedd.v1.ListInstanceStatsRequest
+	(*ListInstanceStatsResponse)(nil),         // 21: onebox.faas.schedd.v1.ListInstanceStatsResponse
+	(*StreamAppLogsRequest)(nil),              // 22: onebox.faas.schedd.v1.StreamAppLogsRequest
+	(*StreamAppLogsResponse)(nil),             // 23: onebox.faas.schedd.v1.StreamAppLogsResponse
+	(*StreamWarmHintsRequest)(nil),            // 24: onebox.faas.schedd.v1.StreamWarmHintsRequest
+	(*StreamWarmHintsResponse)(nil),           // 25: onebox.faas.schedd.v1.StreamWarmHintsResponse
+	(*CapacityReport)(nil),                    // 26: onebox.faas.schedd.v1.CapacityReport
+	(*NodeInstanceInventory)(nil),             // 27: onebox.faas.schedd.v1.NodeInstanceInventory
+	(*InstanceTelemetry)(nil),                 // 28: onebox.faas.schedd.v1.InstanceTelemetry
+	(*ReportCapacityAck)(nil),                 // 29: onebox.faas.schedd.v1.ReportCapacityAck
+	(*EnsureWakeRequest)(nil),                 // 30: onebox.faas.schedd.v1.EnsureWakeRequest
+	(*EnsureWakeResponse)(nil),                // 31: onebox.faas.schedd.v1.EnsureWakeResponse
+	(*FrameworkReadyReport)(nil),              // 32: onebox.faas.schedd.v1.FrameworkReadyReport
+	(*FrameworkReadyAck)(nil),                 // 33: onebox.faas.schedd.v1.FrameworkReadyAck
+	(*FlowSummary)(nil),                       // 34: onebox.faas.schedd.v1.FlowSummary
+	(*SandboxRunRequest)(nil),                 // 35: onebox.faas.schedd.v1.SandboxRunRequest
+	(*SandboxRunStart)(nil),                   // 36: onebox.faas.schedd.v1.SandboxRunStart
+	(*SandboxRunTask)(nil),                    // 37: onebox.faas.schedd.v1.SandboxRunTask
+	(*SandboxRunAction)(nil),                  // 38: onebox.faas.schedd.v1.SandboxRunAction
+	(*SandboxRunActionDone)(nil),              // 39: onebox.faas.schedd.v1.SandboxRunActionDone
+	(*SandboxRunTaskDone)(nil),                // 40: onebox.faas.schedd.v1.SandboxRunTaskDone
+	(*SandboxRunFreeze)(nil),                  // 41: onebox.faas.schedd.v1.SandboxRunFreeze
+	(*SandboxRunClose)(nil),                   // 42: onebox.faas.schedd.v1.SandboxRunClose
+	(*SandboxRunEvent)(nil),                   // 43: onebox.faas.schedd.v1.SandboxRunEvent
+	(*SandboxRunWebDomains)(nil),              // 44: onebox.faas.schedd.v1.SandboxRunWebDomains
+	(*SandboxRunWebDomain)(nil),               // 45: onebox.faas.schedd.v1.SandboxRunWebDomain
+	(*SandboxRunActivity)(nil),                // 46: onebox.faas.schedd.v1.SandboxRunActivity
+	(*SandboxRunFrozen)(nil),                  // 47: onebox.faas.schedd.v1.SandboxRunFrozen
+	(*SandboxRunFreezeRefused)(nil),           // 48: onebox.faas.schedd.v1.SandboxRunFreezeRefused
+	(*SandboxRunThawed)(nil),                  // 49: onebox.faas.schedd.v1.SandboxRunThawed
+	(*SandboxRunPersistRequested)(nil),        // 50: onebox.faas.schedd.v1.SandboxRunPersistRequested
+	(*SandboxRunPersistGrant)(nil),            // 51: onebox.faas.schedd.v1.SandboxRunPersistGrant
+	(*SandboxRunPersistDone)(nil),             // 52: onebox.faas.schedd.v1.SandboxRunPersistDone
+	(*SandboxRunPersistRecorded)(nil),         // 53: onebox.faas.schedd.v1.SandboxRunPersistRecorded
+	(*AgentRunRequest)(nil),                   // 54: onebox.faas.schedd.v1.AgentRunRequest
+	(*AgentRunExtend)(nil),                    // 55: onebox.faas.schedd.v1.AgentRunExtend
+	(*AgentRunProceed)(nil),                   // 56: onebox.faas.schedd.v1.AgentRunProceed
+	(*AgentRunStart)(nil),                     // 57: onebox.faas.schedd.v1.AgentRunStart
+	(*AgentRunRelay)(nil),                     // 58: onebox.faas.schedd.v1.AgentRunRelay
+	(*AgentRunCancel)(nil),                    // 59: onebox.faas.schedd.v1.AgentRunCancel
+	(*AgentRunEvent)(nil),                     // 60: onebox.faas.schedd.v1.AgentRunEvent
+	(*AgentRunPlaced)(nil),                    // 61: onebox.faas.schedd.v1.AgentRunPlaced
+	(*AgentRunBooted)(nil),                    // 62: onebox.faas.schedd.v1.AgentRunBooted
+	(*AgentRunOutput)(nil),                    // 63: onebox.faas.schedd.v1.AgentRunOutput
+	(*AgentRunResult)(nil),                    // 64: onebox.faas.schedd.v1.AgentRunResult
+	(*AgentRunUsage)(nil),                     // 65: onebox.faas.schedd.v1.AgentRunUsage
+	(*ReportMemoryPressureRequest)(nil),       // 66: onebox.faas.schedd.v1.ReportMemoryPressureRequest
+	(*ReportMemoryPressureAck)(nil),           // 67: onebox.faas.schedd.v1.ReportMemoryPressureAck
+	(*ReportSlowRequestRequest)(nil),          // 68: onebox.faas.schedd.v1.ReportSlowRequestRequest
+	(*ReportSlowRequestAck)(nil),              // 69: onebox.faas.schedd.v1.ReportSlowRequestAck
+	(*DatabaseRef)(nil),                       // 70: onebox.faas.schedd.v1.DatabaseRef
+	(*ProvisionDatabaseRequest)(nil),          // 71: onebox.faas.schedd.v1.ProvisionDatabaseRequest
+	(*RestoreDatabaseRequest)(nil),            // 72: onebox.faas.schedd.v1.RestoreDatabaseRequest
+	(*CaptureDatabaseSnapshotRequest)(nil),    // 73: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
+	(*DatabaseSnapshotRef)(nil),               // 74: onebox.faas.schedd.v1.DatabaseSnapshotRef
+	(*DatabaseSnapshot)(nil),                  // 75: onebox.faas.schedd.v1.DatabaseSnapshot
+	(*DeleteDatabaseSnapshotResponse)(nil),    // 76: onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
+	(*SetDatabaseAlwaysOnRequest)(nil),        // 77: onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
+	(*HoldDatabaseRequest)(nil),               // 78: onebox.faas.schedd.v1.HoldDatabaseRequest
+	(*SetDatabaseComputeQuotaRequest)(nil),    // 79: onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest
+	(*DatabaseRuntime)(nil),                   // 80: onebox.faas.schedd.v1.DatabaseRuntime
+	(*DatabaseMajorSpan)(nil),                 // 81: onebox.faas.schedd.v1.DatabaseMajorSpan
+	(*UpgradeDatabaseRequest)(nil),            // 82: onebox.faas.schedd.v1.UpgradeDatabaseRequest
+	(*DatabaseUpgrade)(nil),                   // 83: onebox.faas.schedd.v1.DatabaseUpgrade
+	(*ImportDatabaseRequest)(nil),             // 84: onebox.faas.schedd.v1.ImportDatabaseRequest
+	(*DatabaseImportProgress)(nil),            // 85: onebox.faas.schedd.v1.DatabaseImportProgress
+	(*ResizeDatabaseRequest)(nil),             // 86: onebox.faas.schedd.v1.ResizeDatabaseRequest
+	(*TouchDatabaseRequest)(nil),              // 87: onebox.faas.schedd.v1.TouchDatabaseRequest
+	(*TouchDatabaseResponse)(nil),             // 88: onebox.faas.schedd.v1.TouchDatabaseResponse
+	(*DatabaseUsageRequest)(nil),              // 89: onebox.faas.schedd.v1.DatabaseUsageRequest
+	(*DatabaseUsageResponse)(nil),             // 90: onebox.faas.schedd.v1.DatabaseUsageResponse
+	(*DatabaseAdminRequest)(nil),              // 91: onebox.faas.schedd.v1.DatabaseAdminRequest
+	(*DatabaseAdminResponse)(nil),             // 92: onebox.faas.schedd.v1.DatabaseAdminResponse
+	(*DeleteDatabaseResponse)(nil),            // 93: onebox.faas.schedd.v1.DeleteDatabaseResponse
+	(*InterruptHostedTaskWorkerRequest)(nil),  // 94: onebox.faas.schedd.v1.InterruptHostedTaskWorkerRequest
+	(*InterruptHostedTaskWorkerResponse)(nil), // 95: onebox.faas.schedd.v1.InterruptHostedTaskWorkerResponse
+	(*structpb.Struct)(nil),                   // 96: google.protobuf.Struct
+	(*wrapperspb.Int64Value)(nil),             // 97: google.protobuf.Int64Value
+	(*timestamppb.Timestamp)(nil),             // 98: google.protobuf.Timestamp
+	(*wrapperspb.DoubleValue)(nil),            // 99: google.protobuf.DoubleValue
 }
 var file_onebox_faas_schedd_v1_schedd_proto_depIdxs = []int32{
 	0,   // 0: onebox.faas.schedd.v1.WakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	94,  // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
+	96,  // 1: onebox.faas.schedd.v1.WakeResponse.problem:type_name -> google.protobuf.Struct
 	6,   // 2: onebox.faas.schedd.v1.WakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	0,   // 3: onebox.faas.schedd.v1.AdmitInstanceResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	94,  // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
+	96,  // 4: onebox.faas.schedd.v1.AdmitInstanceResponse.problem:type_name -> google.protobuf.Struct
 	6,   // 5: onebox.faas.schedd.v1.AdmitInstanceResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	10,  // 6: onebox.faas.schedd.v1.ReportActivityRequest.touches:type_name -> onebox.faas.schedd.v1.Touch
-	95,  // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	95,  // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
-	95,  // 9: onebox.faas.schedd.v1.InstanceStatsRow.internal_tx_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 7: onebox.faas.schedd.v1.InstanceStatsRow.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 8: onebox.faas.schedd.v1.InstanceStatsRow.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 9: onebox.faas.schedd.v1.InstanceStatsRow.internal_tx_bytes:type_name -> google.protobuf.Int64Value
 	19,  // 10: onebox.faas.schedd.v1.ListInstanceStatsResponse.rows:type_name -> onebox.faas.schedd.v1.InstanceStatsRow
-	96,  // 11: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
-	96,  // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
-	96,  // 13: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
-	96,  // 14: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
+	98,  // 11: onebox.faas.schedd.v1.StreamAppLogsRequest.since_written_at:type_name -> google.protobuf.Timestamp
+	98,  // 12: onebox.faas.schedd.v1.StreamAppLogsResponse.written_at:type_name -> google.protobuf.Timestamp
+	98,  // 13: onebox.faas.schedd.v1.StreamAppLogsResponse.gap_to_written_at:type_name -> google.protobuf.Timestamp
+	98,  // 14: onebox.faas.schedd.v1.StreamWarmHintsResponse.written_at:type_name -> google.protobuf.Timestamp
 	28,  // 15: onebox.faas.schedd.v1.CapacityReport.instances:type_name -> onebox.faas.schedd.v1.InstanceTelemetry
 	27,  // 16: onebox.faas.schedd.v1.CapacityReport.instance_inventory:type_name -> onebox.faas.schedd.v1.NodeInstanceInventory
-	95,  // 17: onebox.faas.schedd.v1.CapacityReport.instance_bridge_resident_bytes:type_name -> google.protobuf.Int64Value
-	97,  // 18: onebox.faas.schedd.v1.CapacityReport.tenant_cpu_pressure_some_avg10:type_name -> google.protobuf.DoubleValue
-	97,  // 19: onebox.faas.schedd.v1.CapacityReport.host_cpu_busy_percent:type_name -> google.protobuf.DoubleValue
-	95,  // 20: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
-	97,  // 21: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
-	97,  // 22: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
-	97,  // 23: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
-	96,  // 24: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
-	95,  // 25: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
-	95,  // 26: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
-	95,  // 27: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
-	95,  // 28: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
-	95,  // 29: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 17: onebox.faas.schedd.v1.CapacityReport.instance_bridge_resident_bytes:type_name -> google.protobuf.Int64Value
+	99,  // 18: onebox.faas.schedd.v1.CapacityReport.tenant_cpu_pressure_some_avg10:type_name -> google.protobuf.DoubleValue
+	99,  // 19: onebox.faas.schedd.v1.CapacityReport.host_cpu_busy_percent:type_name -> google.protobuf.DoubleValue
+	97,  // 20: onebox.faas.schedd.v1.InstanceTelemetry.resident_bytes:type_name -> google.protobuf.Int64Value
+	99,  // 21: onebox.faas.schedd.v1.InstanceTelemetry.cpu_pct:type_name -> google.protobuf.DoubleValue
+	99,  // 22: onebox.faas.schedd.v1.InstanceTelemetry.cpu_seconds:type_name -> google.protobuf.DoubleValue
+	99,  // 23: onebox.faas.schedd.v1.InstanceTelemetry.cpu_throttled_seconds:type_name -> google.protobuf.DoubleValue
+	98,  // 24: onebox.faas.schedd.v1.InstanceTelemetry.last_request_at:type_name -> google.protobuf.Timestamp
+	97,  // 25: onebox.faas.schedd.v1.InstanceTelemetry.net_tx_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 26: onebox.faas.schedd.v1.InstanceTelemetry.net_rx_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 27: onebox.faas.schedd.v1.InstanceTelemetry.request_count_total:type_name -> google.protobuf.Int64Value
+	97,  // 28: onebox.faas.schedd.v1.InstanceTelemetry.disk_used_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 29: onebox.faas.schedd.v1.InstanceTelemetry.disk_capacity_bytes:type_name -> google.protobuf.Int64Value
 	34,  // 30: onebox.faas.schedd.v1.InstanceTelemetry.flow_summaries:type_name -> onebox.faas.schedd.v1.FlowSummary
-	95,  // 31: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
-	95,  // 32: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
-	96,  // 33: onebox.faas.schedd.v1.InstanceTelemetry.quiet_paused_since:type_name -> google.protobuf.Timestamp
-	96,  // 34: onebox.faas.schedd.v1.InstanceTelemetry.quiet_last_pause_started_at:type_name -> google.protobuf.Timestamp
-	96,  // 35: onebox.faas.schedd.v1.InstanceTelemetry.quiet_last_pause_ended_at:type_name -> google.protobuf.Timestamp
-	95,  // 36: onebox.faas.schedd.v1.InstanceTelemetry.quiet_paused_ns_total:type_name -> google.protobuf.Int64Value
-	95,  // 37: onebox.faas.schedd.v1.InstanceTelemetry.internal_tx_bytes:type_name -> google.protobuf.Int64Value
+	97,  // 31: onebox.faas.schedd.v1.InstanceTelemetry.egress_new_destinations_per_min:type_name -> google.protobuf.Int64Value
+	97,  // 32: onebox.faas.schedd.v1.InstanceTelemetry.egress_flood_drops_per_min:type_name -> google.protobuf.Int64Value
+	98,  // 33: onebox.faas.schedd.v1.InstanceTelemetry.quiet_paused_since:type_name -> google.protobuf.Timestamp
+	98,  // 34: onebox.faas.schedd.v1.InstanceTelemetry.quiet_last_pause_started_at:type_name -> google.protobuf.Timestamp
+	98,  // 35: onebox.faas.schedd.v1.InstanceTelemetry.quiet_last_pause_ended_at:type_name -> google.protobuf.Timestamp
+	97,  // 36: onebox.faas.schedd.v1.InstanceTelemetry.quiet_paused_ns_total:type_name -> google.protobuf.Int64Value
+	97,  // 37: onebox.faas.schedd.v1.InstanceTelemetry.internal_tx_bytes:type_name -> google.protobuf.Int64Value
 	0,   // 38: onebox.faas.schedd.v1.EnsureWakeResponse.method:type_name -> onebox.faas.schedd.v1.WakeMethod
-	94,  // 39: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
+	96,  // 39: onebox.faas.schedd.v1.EnsureWakeResponse.problem:type_name -> google.protobuf.Struct
 	9,   // 40: onebox.faas.schedd.v1.EnsureWakeResponse.additional_instances:type_name -> onebox.faas.schedd.v1.AdmitInstanceResponse
 	6,   // 41: onebox.faas.schedd.v1.EnsureWakeResponse.identity:type_name -> onebox.faas.schedd.v1.PlatformIdentity
 	36,  // 42: onebox.faas.schedd.v1.SandboxRunRequest.start:type_name -> onebox.faas.schedd.v1.SandboxRunStart
@@ -8618,99 +8811,102 @@ var file_onebox_faas_schedd_v1_schedd_proto_depIdxs = []int32{
 	64,  // 71: onebox.faas.schedd.v1.AgentRunEvent.result:type_name -> onebox.faas.schedd.v1.AgentRunResult
 	65,  // 72: onebox.faas.schedd.v1.AgentRunEvent.usage:type_name -> onebox.faas.schedd.v1.AgentRunUsage
 	71,  // 73: onebox.faas.schedd.v1.RestoreDatabaseRequest.database:type_name -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	96,  // 74: onebox.faas.schedd.v1.RestoreDatabaseRequest.point_in_time:type_name -> google.protobuf.Timestamp
-	96,  // 75: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest.point_in_time:type_name -> google.protobuf.Timestamp
-	96,  // 76: onebox.faas.schedd.v1.DatabaseSnapshot.point_in_time:type_name -> google.protobuf.Timestamp
-	96,  // 77: onebox.faas.schedd.v1.DatabaseSnapshot.created_at:type_name -> google.protobuf.Timestamp
-	96,  // 78: onebox.faas.schedd.v1.DatabaseRuntime.restore_target:type_name -> google.protobuf.Timestamp
-	96,  // 79: onebox.faas.schedd.v1.DatabaseRuntime.restore_recovered_to:type_name -> google.protobuf.Timestamp
-	96,  // 80: onebox.faas.schedd.v1.DatabaseRuntime.created_at:type_name -> google.protobuf.Timestamp
+	98,  // 74: onebox.faas.schedd.v1.RestoreDatabaseRequest.point_in_time:type_name -> google.protobuf.Timestamp
+	98,  // 75: onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest.point_in_time:type_name -> google.protobuf.Timestamp
+	98,  // 76: onebox.faas.schedd.v1.DatabaseSnapshot.point_in_time:type_name -> google.protobuf.Timestamp
+	98,  // 77: onebox.faas.schedd.v1.DatabaseSnapshot.created_at:type_name -> google.protobuf.Timestamp
+	98,  // 78: onebox.faas.schedd.v1.DatabaseRuntime.restore_target:type_name -> google.protobuf.Timestamp
+	98,  // 79: onebox.faas.schedd.v1.DatabaseRuntime.restore_recovered_to:type_name -> google.protobuf.Timestamp
+	98,  // 80: onebox.faas.schedd.v1.DatabaseRuntime.created_at:type_name -> google.protobuf.Timestamp
 	83,  // 81: onebox.faas.schedd.v1.DatabaseRuntime.upgrade:type_name -> onebox.faas.schedd.v1.DatabaseUpgrade
 	81,  // 82: onebox.faas.schedd.v1.DatabaseRuntime.major_history:type_name -> onebox.faas.schedd.v1.DatabaseMajorSpan
-	96,  // 83: onebox.faas.schedd.v1.DatabaseMajorSpan.until:type_name -> google.protobuf.Timestamp
-	96,  // 84: onebox.faas.schedd.v1.DatabaseImportProgress.started_at:type_name -> google.protobuf.Timestamp
-	96,  // 85: onebox.faas.schedd.v1.DatabaseImportProgress.finished_at:type_name -> google.protobuf.Timestamp
-	96,  // 86: onebox.faas.schedd.v1.DatabaseUsageRequest.from:type_name -> google.protobuf.Timestamp
-	96,  // 87: onebox.faas.schedd.v1.DatabaseUsageRequest.to:type_name -> google.protobuf.Timestamp
-	5,   // 88: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
-	8,   // 89: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
-	11,  // 90: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
-	32,  // 91: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
-	13,  // 92: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
-	15,  // 93: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
-	17,  // 94: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
-	20,  // 95: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
-	22,  // 96: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
-	24,  // 97: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
-	26,  // 98: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
-	1,   // 99: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
-	30,  // 100: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
-	3,   // 101: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
-	54,  // 102: onebox.faas.schedd.v1.Schedd.RunAgent:input_type -> onebox.faas.schedd.v1.AgentRunRequest
-	35,  // 103: onebox.faas.schedd.v1.Schedd.RunSandbox:input_type -> onebox.faas.schedd.v1.SandboxRunRequest
-	66,  // 104: onebox.faas.schedd.v1.Schedd.ReportMemoryPressure:input_type -> onebox.faas.schedd.v1.ReportMemoryPressureRequest
-	68,  // 105: onebox.faas.schedd.v1.Schedd.ReportSlowRequest:input_type -> onebox.faas.schedd.v1.ReportSlowRequestRequest
-	71,  // 106: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:input_type -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
-	70,  // 107: onebox.faas.schedd.v1.Schedd.WakeDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	70,  // 108: onebox.faas.schedd.v1.Schedd.ParkDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	87,  // 109: onebox.faas.schedd.v1.Schedd.TouchDatabase:input_type -> onebox.faas.schedd.v1.TouchDatabaseRequest
-	91,  // 110: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:input_type -> onebox.faas.schedd.v1.DatabaseAdminRequest
-	70,  // 111: onebox.faas.schedd.v1.Schedd.DeleteDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	70,  // 112: onebox.faas.schedd.v1.Schedd.GetDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	77,  // 113: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:input_type -> onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
-	72,  // 114: onebox.faas.schedd.v1.Schedd.RestoreDatabase:input_type -> onebox.faas.schedd.v1.RestoreDatabaseRequest
-	89,  // 115: onebox.faas.schedd.v1.Schedd.DatabaseUsage:input_type -> onebox.faas.schedd.v1.DatabaseUsageRequest
-	86,  // 116: onebox.faas.schedd.v1.Schedd.ResizeDatabase:input_type -> onebox.faas.schedd.v1.ResizeDatabaseRequest
-	82,  // 117: onebox.faas.schedd.v1.Schedd.UpgradeDatabase:input_type -> onebox.faas.schedd.v1.UpgradeDatabaseRequest
-	84,  // 118: onebox.faas.schedd.v1.Schedd.ImportDatabase:input_type -> onebox.faas.schedd.v1.ImportDatabaseRequest
-	70,  // 119: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:input_type -> onebox.faas.schedd.v1.DatabaseRef
-	73,  // 120: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
-	74,  // 121: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
-	74,  // 122: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
-	78,  // 123: onebox.faas.schedd.v1.Schedd.HoldDatabase:input_type -> onebox.faas.schedd.v1.HoldDatabaseRequest
-	79,  // 124: onebox.faas.schedd.v1.Schedd.SetDatabaseComputeQuota:input_type -> onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest
-	7,   // 125: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
-	9,   // 126: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
-	12,  // 127: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
-	33,  // 128: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
-	14,  // 129: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
-	16,  // 130: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
-	18,  // 131: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
-	21,  // 132: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
-	23,  // 133: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
-	25,  // 134: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
-	29,  // 135: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
-	2,   // 136: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
-	31,  // 137: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
-	4,   // 138: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
-	60,  // 139: onebox.faas.schedd.v1.Schedd.RunAgent:output_type -> onebox.faas.schedd.v1.AgentRunEvent
-	43,  // 140: onebox.faas.schedd.v1.Schedd.RunSandbox:output_type -> onebox.faas.schedd.v1.SandboxRunEvent
-	67,  // 141: onebox.faas.schedd.v1.Schedd.ReportMemoryPressure:output_type -> onebox.faas.schedd.v1.ReportMemoryPressureAck
-	69,  // 142: onebox.faas.schedd.v1.Schedd.ReportSlowRequest:output_type -> onebox.faas.schedd.v1.ReportSlowRequestAck
-	80,  // 143: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 144: onebox.faas.schedd.v1.Schedd.WakeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 145: onebox.faas.schedd.v1.Schedd.ParkDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	88,  // 146: onebox.faas.schedd.v1.Schedd.TouchDatabase:output_type -> onebox.faas.schedd.v1.TouchDatabaseResponse
-	92,  // 147: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:output_type -> onebox.faas.schedd.v1.DatabaseAdminResponse
-	93,  // 148: onebox.faas.schedd.v1.Schedd.DeleteDatabase:output_type -> onebox.faas.schedd.v1.DeleteDatabaseResponse
-	80,  // 149: onebox.faas.schedd.v1.Schedd.GetDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 150: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 151: onebox.faas.schedd.v1.Schedd.RestoreDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	90,  // 152: onebox.faas.schedd.v1.Schedd.DatabaseUsage:output_type -> onebox.faas.schedd.v1.DatabaseUsageResponse
-	80,  // 153: onebox.faas.schedd.v1.Schedd.ResizeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 154: onebox.faas.schedd.v1.Schedd.UpgradeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	85,  // 155: onebox.faas.schedd.v1.Schedd.ImportDatabase:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
-	85,  // 156: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
-	75,  // 157: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
-	75,  // 158: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
-	76,  // 159: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
-	80,  // 160: onebox.faas.schedd.v1.Schedd.HoldDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	80,  // 161: onebox.faas.schedd.v1.Schedd.SetDatabaseComputeQuota:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
-	125, // [125:162] is the sub-list for method output_type
-	88,  // [88:125] is the sub-list for method input_type
-	88,  // [88:88] is the sub-list for extension type_name
-	88,  // [88:88] is the sub-list for extension extendee
-	0,   // [0:88] is the sub-list for field type_name
+	98,  // 83: onebox.faas.schedd.v1.DatabaseMajorSpan.until:type_name -> google.protobuf.Timestamp
+	98,  // 84: onebox.faas.schedd.v1.DatabaseImportProgress.started_at:type_name -> google.protobuf.Timestamp
+	98,  // 85: onebox.faas.schedd.v1.DatabaseImportProgress.finished_at:type_name -> google.protobuf.Timestamp
+	98,  // 86: onebox.faas.schedd.v1.DatabaseUsageRequest.from:type_name -> google.protobuf.Timestamp
+	98,  // 87: onebox.faas.schedd.v1.DatabaseUsageRequest.to:type_name -> google.protobuf.Timestamp
+	98,  // 88: onebox.faas.schedd.v1.InterruptHostedTaskWorkerRequest.observed_at:type_name -> google.protobuf.Timestamp
+	5,   // 89: onebox.faas.schedd.v1.Schedd.Wake:input_type -> onebox.faas.schedd.v1.WakeRequest
+	8,   // 90: onebox.faas.schedd.v1.Schedd.AdmitInstance:input_type -> onebox.faas.schedd.v1.AdmitInstanceRequest
+	11,  // 91: onebox.faas.schedd.v1.Schedd.ReportActivity:input_type -> onebox.faas.schedd.v1.ReportActivityRequest
+	32,  // 92: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:input_type -> onebox.faas.schedd.v1.FrameworkReadyReport
+	13,  // 93: onebox.faas.schedd.v1.Schedd.ParkInstance:input_type -> onebox.faas.schedd.v1.ParkInstanceRequest
+	15,  // 94: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:input_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeRequest
+	17,  // 95: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:input_type -> onebox.faas.schedd.v1.ForceRestartInstanceRequest
+	20,  // 96: onebox.faas.schedd.v1.Schedd.ListInstanceStats:input_type -> onebox.faas.schedd.v1.ListInstanceStatsRequest
+	22,  // 97: onebox.faas.schedd.v1.Schedd.StreamAppLogs:input_type -> onebox.faas.schedd.v1.StreamAppLogsRequest
+	24,  // 98: onebox.faas.schedd.v1.Schedd.StreamWarmHints:input_type -> onebox.faas.schedd.v1.StreamWarmHintsRequest
+	26,  // 99: onebox.faas.schedd.v1.Schedd.ReportCapacity:input_type -> onebox.faas.schedd.v1.CapacityReport
+	1,   // 100: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:input_type -> onebox.faas.schedd.v1.LivenessFailedReport
+	30,  // 101: onebox.faas.schedd.v1.Schedd.EnsureWake:input_type -> onebox.faas.schedd.v1.EnsureWakeRequest
+	3,   // 102: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:input_type -> onebox.faas.schedd.v1.ReportWorkloadOOMRequest
+	54,  // 103: onebox.faas.schedd.v1.Schedd.RunAgent:input_type -> onebox.faas.schedd.v1.AgentRunRequest
+	35,  // 104: onebox.faas.schedd.v1.Schedd.RunSandbox:input_type -> onebox.faas.schedd.v1.SandboxRunRequest
+	66,  // 105: onebox.faas.schedd.v1.Schedd.ReportMemoryPressure:input_type -> onebox.faas.schedd.v1.ReportMemoryPressureRequest
+	68,  // 106: onebox.faas.schedd.v1.Schedd.ReportSlowRequest:input_type -> onebox.faas.schedd.v1.ReportSlowRequestRequest
+	71,  // 107: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:input_type -> onebox.faas.schedd.v1.ProvisionDatabaseRequest
+	70,  // 108: onebox.faas.schedd.v1.Schedd.WakeDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	70,  // 109: onebox.faas.schedd.v1.Schedd.ParkDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	87,  // 110: onebox.faas.schedd.v1.Schedd.TouchDatabase:input_type -> onebox.faas.schedd.v1.TouchDatabaseRequest
+	91,  // 111: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:input_type -> onebox.faas.schedd.v1.DatabaseAdminRequest
+	70,  // 112: onebox.faas.schedd.v1.Schedd.DeleteDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	70,  // 113: onebox.faas.schedd.v1.Schedd.GetDatabase:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	77,  // 114: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:input_type -> onebox.faas.schedd.v1.SetDatabaseAlwaysOnRequest
+	72,  // 115: onebox.faas.schedd.v1.Schedd.RestoreDatabase:input_type -> onebox.faas.schedd.v1.RestoreDatabaseRequest
+	89,  // 116: onebox.faas.schedd.v1.Schedd.DatabaseUsage:input_type -> onebox.faas.schedd.v1.DatabaseUsageRequest
+	86,  // 117: onebox.faas.schedd.v1.Schedd.ResizeDatabase:input_type -> onebox.faas.schedd.v1.ResizeDatabaseRequest
+	82,  // 118: onebox.faas.schedd.v1.Schedd.UpgradeDatabase:input_type -> onebox.faas.schedd.v1.UpgradeDatabaseRequest
+	84,  // 119: onebox.faas.schedd.v1.Schedd.ImportDatabase:input_type -> onebox.faas.schedd.v1.ImportDatabaseRequest
+	70,  // 120: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:input_type -> onebox.faas.schedd.v1.DatabaseRef
+	73,  // 121: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.CaptureDatabaseSnapshotRequest
+	74,  // 122: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
+	74,  // 123: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:input_type -> onebox.faas.schedd.v1.DatabaseSnapshotRef
+	78,  // 124: onebox.faas.schedd.v1.Schedd.HoldDatabase:input_type -> onebox.faas.schedd.v1.HoldDatabaseRequest
+	79,  // 125: onebox.faas.schedd.v1.Schedd.SetDatabaseComputeQuota:input_type -> onebox.faas.schedd.v1.SetDatabaseComputeQuotaRequest
+	94,  // 126: onebox.faas.schedd.v1.Schedd.InterruptHostedTaskWorker:input_type -> onebox.faas.schedd.v1.InterruptHostedTaskWorkerRequest
+	7,   // 127: onebox.faas.schedd.v1.Schedd.Wake:output_type -> onebox.faas.schedd.v1.WakeResponse
+	9,   // 128: onebox.faas.schedd.v1.Schedd.AdmitInstance:output_type -> onebox.faas.schedd.v1.AdmitInstanceResponse
+	12,  // 129: onebox.faas.schedd.v1.Schedd.ReportActivity:output_type -> onebox.faas.schedd.v1.ReportActivityResponse
+	33,  // 130: onebox.faas.schedd.v1.Schedd.ReportFrameworkReady:output_type -> onebox.faas.schedd.v1.FrameworkReadyAck
+	14,  // 131: onebox.faas.schedd.v1.Schedd.ParkInstance:output_type -> onebox.faas.schedd.v1.ParkInstanceResponse
+	16,  // 132: onebox.faas.schedd.v1.Schedd.ForceColdBootNextWake:output_type -> onebox.faas.schedd.v1.ForceColdBootNextWakeResponse
+	18,  // 133: onebox.faas.schedd.v1.Schedd.ForceRestartInstance:output_type -> onebox.faas.schedd.v1.ForceRestartInstanceResponse
+	21,  // 134: onebox.faas.schedd.v1.Schedd.ListInstanceStats:output_type -> onebox.faas.schedd.v1.ListInstanceStatsResponse
+	23,  // 135: onebox.faas.schedd.v1.Schedd.StreamAppLogs:output_type -> onebox.faas.schedd.v1.StreamAppLogsResponse
+	25,  // 136: onebox.faas.schedd.v1.Schedd.StreamWarmHints:output_type -> onebox.faas.schedd.v1.StreamWarmHintsResponse
+	29,  // 137: onebox.faas.schedd.v1.Schedd.ReportCapacity:output_type -> onebox.faas.schedd.v1.ReportCapacityAck
+	2,   // 138: onebox.faas.schedd.v1.Schedd.ReportLivenessFailed:output_type -> onebox.faas.schedd.v1.LivenessFailedAck
+	31,  // 139: onebox.faas.schedd.v1.Schedd.EnsureWake:output_type -> onebox.faas.schedd.v1.EnsureWakeResponse
+	4,   // 140: onebox.faas.schedd.v1.Schedd.ReportWorkloadOOM:output_type -> onebox.faas.schedd.v1.ReportWorkloadOOMAck
+	60,  // 141: onebox.faas.schedd.v1.Schedd.RunAgent:output_type -> onebox.faas.schedd.v1.AgentRunEvent
+	43,  // 142: onebox.faas.schedd.v1.Schedd.RunSandbox:output_type -> onebox.faas.schedd.v1.SandboxRunEvent
+	67,  // 143: onebox.faas.schedd.v1.Schedd.ReportMemoryPressure:output_type -> onebox.faas.schedd.v1.ReportMemoryPressureAck
+	69,  // 144: onebox.faas.schedd.v1.Schedd.ReportSlowRequest:output_type -> onebox.faas.schedd.v1.ReportSlowRequestAck
+	80,  // 145: onebox.faas.schedd.v1.Schedd.ProvisionDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 146: onebox.faas.schedd.v1.Schedd.WakeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 147: onebox.faas.schedd.v1.Schedd.ParkDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	88,  // 148: onebox.faas.schedd.v1.Schedd.TouchDatabase:output_type -> onebox.faas.schedd.v1.TouchDatabaseResponse
+	92,  // 149: onebox.faas.schedd.v1.Schedd.DatabaseAdmin:output_type -> onebox.faas.schedd.v1.DatabaseAdminResponse
+	93,  // 150: onebox.faas.schedd.v1.Schedd.DeleteDatabase:output_type -> onebox.faas.schedd.v1.DeleteDatabaseResponse
+	80,  // 151: onebox.faas.schedd.v1.Schedd.GetDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 152: onebox.faas.schedd.v1.Schedd.SetDatabaseAlwaysOn:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 153: onebox.faas.schedd.v1.Schedd.RestoreDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	90,  // 154: onebox.faas.schedd.v1.Schedd.DatabaseUsage:output_type -> onebox.faas.schedd.v1.DatabaseUsageResponse
+	80,  // 155: onebox.faas.schedd.v1.Schedd.ResizeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 156: onebox.faas.schedd.v1.Schedd.UpgradeDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	85,  // 157: onebox.faas.schedd.v1.Schedd.ImportDatabase:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
+	85,  // 158: onebox.faas.schedd.v1.Schedd.DatabaseImportStatus:output_type -> onebox.faas.schedd.v1.DatabaseImportProgress
+	75,  // 159: onebox.faas.schedd.v1.Schedd.CaptureDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
+	75,  // 160: onebox.faas.schedd.v1.Schedd.GetDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DatabaseSnapshot
+	76,  // 161: onebox.faas.schedd.v1.Schedd.DeleteDatabaseSnapshot:output_type -> onebox.faas.schedd.v1.DeleteDatabaseSnapshotResponse
+	80,  // 162: onebox.faas.schedd.v1.Schedd.HoldDatabase:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	80,  // 163: onebox.faas.schedd.v1.Schedd.SetDatabaseComputeQuota:output_type -> onebox.faas.schedd.v1.DatabaseRuntime
+	95,  // 164: onebox.faas.schedd.v1.Schedd.InterruptHostedTaskWorker:output_type -> onebox.faas.schedd.v1.InterruptHostedTaskWorkerResponse
+	127, // [127:165] is the sub-list for method output_type
+	89,  // [89:127] is the sub-list for method input_type
+	89,  // [89:89] is the sub-list for extension type_name
+	89,  // [89:89] is the sub-list for extension extendee
+	0,   // [0:89] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_schedd_v1_schedd_proto_init() }
@@ -8763,7 +8959,7 @@ func file_onebox_faas_schedd_v1_schedd_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_schedd_v1_schedd_proto_rawDesc), len(file_onebox_faas_schedd_v1_schedd_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   93,
+			NumMessages:   95,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -73,3 +73,19 @@ labels is refused.
   users choose `mcp-node-tasks` explicitly.
 - CI runs the plain starter's tests and keeps the Task suites, restart
   qualification and SDK qualification on `mcp-node-tasks`.
+
+## Amendment 1 (2026-11-21): Go and Python starters
+
+`mcp-go` and `mcp-python` split the same way. The previous starters become
+`mcp-go-tasks` and `mcp-python-tasks`, unchanged. The plain starters share
+their server code through `sharedTemplateCopies` and replace the Task modules
+with a small disabled runtime: `tasks_off.go` (shipped as `tasks_off.go.tmpl`,
+since this repository compiles the template directories as Go packages) and a
+stub `tasks.py`. Their configs drop the `tasks` block and the `task://`
+resource scope; `build_report` stays as a synchronous sample tool. A plain Go
+project is about 5,800 lines (was about 11,000); a plain Python project about
+5,500 (was 7,500), because the shared `server.py` keeps its Task branches.
+The plain Go `go.mod` still lists `pgx`: dropping it changes the pruned module
+graph and needs `go.sum` entries only a download can add, and `go mod tidy`
+removes it. `gregale mcp init --tasks` uses the runtime's `-tasks` starter. CI
+runs the plain and Tasks starters' tests for all three runtimes.

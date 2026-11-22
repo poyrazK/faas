@@ -1162,7 +1162,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fleetEgress := &fleetGatewayEgressAdapter{
 			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
-			active: make(map[string]*fleetEgressEntry),
+			gatewayResponseEgress: mc.GatewayResponseEgress,
+			active:                make(map[string]*fleetEgressEntry),
+		}
+		if mc.GatewayResponseEgress {
+			log.Info("meterd: gateway response bytes are billed as app egress (ADR-20261121210517)")
 		}
 		gwEgress = fleetEgress
 		go fleetEgress.Run(ctx)
@@ -1213,11 +1217,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	dashboardURL := dashboardBaseURL(deps.getenv, appsDomain)
+	evaluator.SetDashboardBaseURL(dashboardURL)
 	// ADR 20261022111812: apid relays the test sends it cannot open here;
 	// meterd holds the alerting key.
 	go runAlertTestSends(ctx, evaluator, log)
 	startAgentApprovalNotifications(ctx, store, mailer, evaluator, ops.Registry(), log)
-	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log)
+	startPlatformAlerts(ctx, store, mailer, promClient, ops.Registry(), log, dashboardURL, release)
 	evaluator.SetRuleRelease(release.ForAccount)
 	evaluator.SetRuleLimits(release.RuleLimits)
 	evaluator.SetRuleOutcome(newAlertRuleSkipCounter(ops.Registry()))
@@ -1943,9 +1949,14 @@ func (a storageStoreAdapter) ListAllApps(ctx context.Context) ([]meter.AppRow, e
 	if err != nil {
 		return nil, err
 	}
-	out := make([]meter.AppRow, len(rows))
-	for i, r := range rows {
-		out[i] = meter.AppRow{AccountID: r.AccountID, AppID: r.ID}
+	out := make([]meter.AppRow, 0, len(rows))
+	for _, r := range rows {
+		// A deleted app's snapshots are being torn down; the storage view
+		// stops counting it (ADR-20261121231500).
+		if r.DeletedAt != nil {
+			continue
+		}
+		out = append(out, meter.AppRow{AccountID: r.AccountID, AppID: r.ID})
 	}
 	return out, nil
 }
