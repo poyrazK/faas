@@ -69,6 +69,7 @@ var Routes = []Route{
 	{"read endpoint", http.MethodGet, "/projects/{project}/endpoints/{endpoint}", TierProject, KindRead},
 	{"update endpoint", http.MethodPatch, "/projects/{project}/endpoints/{endpoint}", TierProject, KindWrite},
 	{"delete endpoint", http.MethodDelete, "/projects/{project}/endpoints/{endpoint}", TierProject, KindDestructive},
+	{"suspend endpoint", http.MethodPost, "/projects/{project}/endpoints/{endpoint}/suspend", TierProject, KindWrite},
 	{"list snapshots", http.MethodGet, "/projects/{project}/snapshots", TierProject, KindRead},
 	{"update snapshot", http.MethodPatch, "/projects/{project}/snapshots/{snapshot}", TierProject, KindWrite},
 	{"delete snapshot", http.MethodDelete, "/projects/{project}/snapshots/{snapshot}", TierProject, KindDestructive},
