@@ -112,6 +112,9 @@ func (s *Service) queueNativeObjectInventory(ctx context.Context, accounting sta
 	releaseObjectInventory(ctx, accounting, b.ID, token)
 	_, err = capacity.RequestObjectCapacityReconciliation(ctx, b.AccountID, b.AppID, b.ID)
 	if errors.Is(err, state.ErrConflict) {
+		// A live multipart session, deletion or versioning change must end
+		// first (ADR-533). Once per cadence, so a long wait is visible.
+		s.Host.Logger().Info("object storage all-version refresh deferred", "bucket_id", b.ID, "backend_id", b.BackendID)
 		return true, nil
 	}
 	return true, err

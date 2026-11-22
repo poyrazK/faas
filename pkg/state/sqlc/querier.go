@@ -5603,8 +5603,9 @@ type Querier interface {
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).
 	// oldest_age_seconds is the oldest observation admission still holds to the
-	// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-	// (with an observation), or whose listing advanced within progress_window on
+	// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+	// or whose all-version refresh waits for a live multipart session (with an
+	// observation), or whose listing advanced within progress_window on
 	// an observation under scan_max_age, stays fresh on an older one and does not
 	// count (objectBucketInventoryStale). A bucket never observed counts from its
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
