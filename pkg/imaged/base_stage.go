@@ -843,29 +843,6 @@ func (h *Handler) baseSkipDeclined(be storage.StorageBackend, baseKey, outImage,
 // and imaged's systemd unit can drop AmbientCapabilities=
 // entirely (ADR-075). imaged no longer needs CAP_SYS_ADMIN.
 
-// openStringReader returns an io.Reader for the supplied string. The
-// helper exists so the digest sidecar Put has a content source without
-// dragging in bytes.NewReader (which would also force a package-level
-// bytes import that's only used here).
-func openStringReader(s string) (io.Reader, error) {
-	return stringReader(s), nil
-}
-
-type stringReaderImpl struct {
-	s   string
-	off int
-}
-
-func stringReader(s string) io.Reader { return &stringReaderImpl{s: s} }
-func (r *stringReaderImpl) Read(p []byte) (int, error) {
-	if r.off >= len(r.s) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.s[r.off:])
-	r.off += n
-	return n, nil
-}
-
 // writeScanSidecar runs a Grype scan of the staged base ext4 and
 // writes the per-severity finding counts to the scan sidecar
 // (issue #299). The sidecar is keyed by wire.ScanKeyForBaseKey so
