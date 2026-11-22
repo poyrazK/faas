@@ -324,7 +324,7 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 	// through Listener.Close, as gRPC's GracefulStop lets streams finish.
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent)) //nolint:contextcheck // see above
 	defer cancel()
-	stopServer := context.AfterFunc(s.ctx, cancel)
+	stopServer := context.AfterFunc(s.ctx, cancel) //nolint:contextcheck // Server.Close ends every connection through s.ctx
 	defer stopServer()
 	stop := context.AfterFunc(ctx, func() { _ = raw.Close() })
 	defer stop()
