@@ -23,12 +23,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 
 	spb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // ALPN is the TLS application protocol that selects the hop on vmmd's port.
@@ -51,23 +52,23 @@ const (
 	frameGoAway = 5
 )
 
-// Limits (ADR-20261121202814, security requirement 3).
+// Limits (ADR-20261121202814, security requirement 3), from pkg/api/limits.go.
 const (
 	// MaxMessageBytes matches gRPC's default receive limit on both ends.
-	MaxMessageBytes = 4 << 20
+	MaxMessageBytes = api.VmmdForwardHopMaxMessageBytes
 	// maxStatusBytes bounds the final status, details included.
-	maxStatusBytes = 64 << 10
+	maxStatusBytes = api.VmmdForwardHopMaxStatusBytes
 	// maxMetadataBytes bounds the preamble's metadata keys and values.
-	maxMetadataBytes = 64 << 10
+	maxMetadataBytes = api.VmmdForwardHopMaxMetadataBytes
 	// maxMethodBytes bounds the method name.
-	maxMethodBytes = 256
+	maxMethodBytes = api.VmmdForwardHopMaxMethodBytes
 	// handshakeTimeout bounds the ClientHello peek and the TLS handshake.
-	handshakeTimeout = 10 * time.Second
+	handshakeTimeout = api.VmmdForwardHopHandshakeTimeout
 	// serverIdleTimeout ends a connection that starts no exchange.
-	serverIdleTimeout = 2 * time.Minute
+	serverIdleTimeout = api.VmmdForwardHopServerIdleTimeout
 	// clientIdleTimeout keeps the client's pool inside the server's
 	// timeout, so the server rarely closes a connection the client reuses.
-	clientIdleTimeout = 60 * time.Second
+	clientIdleTimeout = api.VmmdForwardHopClientIdleTimeout
 )
 
 var errMalformed = errors.New("vmmdhop: malformed frame")

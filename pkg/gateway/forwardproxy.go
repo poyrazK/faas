@@ -1641,19 +1641,22 @@ func (c *NodeClientCache) WithNodeBinding(name func(ctx context.Context, nodeID 
 }
 
 // dialFor opens the connection for nodeID at target, bound to the node's
-// name when WithNodeBinding is set.
-func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, error) {
+// name when WithNodeBinding is set. It returns the name it bound to, ""
+// without the binding.
+func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, string, error) {
 	if c.dialNode != nil {
 		name, ok := c.nodeName(ctx, nodeID)
 		if !ok || name == "" {
-			return nil, fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
+			return nil, "", fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
 		}
-		return c.dialNode(ctx, target, name)
+		conn, err := c.dialNode(ctx, target, name)
+		return conn, name, err
 	}
 	if c.dial == nil {
-		return nil, errors.New("gateway: node client cache has no dialer")
+		return nil, "", errors.New("gateway: node client cache has no dialer")
 	}
-	return c.dial(ctx, target)
+	conn, err := c.dial(ctx, target)
+	return conn, "", err
 }
 
 // client is the VmmdClient a lease of conn hands out.
@@ -1752,7 +1755,7 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 		c.finishNodeDial(nodeID, call, nil, "", nil)
 		return nil, nil, false
 	}
-	conn, err := c.dialFor(ctx, nodeID, target)
+	conn, name, err := c.dialFor(ctx, nodeID, target)
 	if err != nil {
 		if c.log != nil {
 			c.log.Warn("gateway: vmmd dial failed",
@@ -1763,7 +1766,9 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	}
 	var hop *vmmdhop.Client
 	if c.forwardHop != nil {
-		hop = c.forwardHop(ctx, nodeID, target)
+		// The name the gRPC dial was bound to: building the hop adds no
+		// lookup to the dial every waiter on this node is held behind.
+		hop = c.forwardHop(nodeID, target, name)
 	}
 	cli, lease, ok := c.finishNodeDial(nodeID, call, conn, target, hop)
 	if !ok {

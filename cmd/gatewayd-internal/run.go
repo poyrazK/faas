@@ -2366,7 +2366,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// ADR-20261121202814: ForwardHTTPStream over the light hop where vmmd
 	// offers it, gRPC otherwise. Set before the cache serves any forward.
 	if strings.TrimSpace(osGetenv(forwardHopEnv)) == "1" && pgStore != nil && vmmdTLS != nil {
-		deps.nodeCache.cache.WithForwardHop(forwardHopFactory(pgStore, vmmdTLS, vmmdLocal, gatewayOps.Registry(), log))
+		deps.nodeCache.cache.WithForwardHop(forwardHopFactory(vmmdTLS, vmmdLocal, gatewayOps.Registry(), log))
 		log.Info("gateway: vmmd forward hop on", "env", forwardHopEnv)
 	}
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as

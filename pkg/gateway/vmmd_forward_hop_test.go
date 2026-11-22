@@ -53,7 +53,7 @@ func TestNodeClientCacheBuildsForwardHopPerNode(t *testing.T) {
 	built := map[string]string{}
 	cache := NewNodeClientCache(func(_ context.Context, target string) (*grpc.ClientConn, error) {
 		return grpc.NewClient("passthrough:///127.0.0.1:1", grpc.WithTransportCredentials(insecure.NewCredentials()))
-	}, nil).WithForwardHop(func(_ context.Context, nodeID, target string) *vmmdhop.Client {
+	}, nil).WithForwardHop(func(nodeID, target, _ string) *vmmdhop.Client {
 		mu.Lock()
 		built[nodeID] = target
 		mu.Unlock()

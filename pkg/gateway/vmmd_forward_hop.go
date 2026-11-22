@@ -12,7 +12,10 @@ import (
 
 // ForwardHopFactory builds the forward hop client for one node's vmmd at
 // target, or returns nil to keep that node on gRPC (ADR-20261121202814).
-type ForwardHopFactory func(ctx context.Context, nodeID, target string) *vmmdhop.Client
+// name is the compute_nodes.name the node's gRPC dial was bound to
+// (WithNodeBinding), "" without the binding; the hop pins the vmmd leaf to
+// it. It runs inside the node's dial, so it must not block.
+type ForwardHopFactory func(nodeID, target, name string) *vmmdhop.Client
 
 // WithForwardHop makes each node's client carry ForwardHTTPStream over the
 // light hop when its vmmd offers it, and over gRPC otherwise. Every other

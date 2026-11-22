@@ -1,18 +1,15 @@
 package main
 
 import (
-	"context"
 	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
-	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/vmmdhop"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -21,22 +18,13 @@ import (
 // vmmd for ForwardHTTPStream (ADR-20261121202814). Off by default.
 const forwardHopEnv = "FAAS_GATEWAY_VMMD_FORWARD_HOP"
 
-// forwardHopLookupTimeout bounds the node-name lookup a hop client needs.
-const forwardHopLookupTimeout = 5 * time.Second
-
-type computeNodeByID interface {
-	ComputeNodeByID(ctx context.Context, id string) (state.ComputeNode, error)
-}
-
 // forwardHopFactory builds a node's hop client with the TLS config its gRPC
 // dial uses: the gateway's client certificate and the vmmd leaf pinned to
 // the node's name (wire.ExpectPeerCN, ADR-20261108124106). A node without a
-// TLS target (the local data socket) or without a name stays on gRPC.
-//
-// The node's hop lives as long as its cached gRPC connection, so the name
-// lookup must not fail because the request that triggered the dial ended:
-// it runs detached from that request, with its own deadline.
-func forwardHopFactory(store computeNodeByID, vmmdTLS *tls.Config, local *localVmmd, reg prometheus.Registerer, log *slog.Logger) gateway.ForwardHopFactory {
+// TLS target (the local data socket) or without a name stays on gRPC. The
+// name is the one the node's gRPC dial was bound to, so the hop adds no
+// lookup and is pinned to the same node.
+func forwardHopFactory(vmmdTLS *tls.Config, local *localVmmd, reg prometheus.Registerer, log *slog.Logger) gateway.ForwardHopFactory {
 	calls := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "gateway_vmmd_forward_hop_total",
 		Help: "ForwardHTTPStream calls by how they reached vmmd (ADR-20261121202814): hop, fallback (vmmd does not offer it), dial_error, retried (resent after vmmd's GOAWAY).",
@@ -51,7 +39,7 @@ func forwardHopFactory(store computeNodeByID, vmmdTLS *tls.Config, local *localV
 			}
 		}
 	}
-	return func(ctx context.Context, nodeID, target string) *vmmdhop.Client {
+	return func(nodeID, target, name string) *vmmdhop.Client {
 		address, ok := forwardHopAddress(target)
 		if !ok {
 			return nil
@@ -60,14 +48,10 @@ func forwardHopFactory(store computeNodeByID, vmmdTLS *tls.Config, local *localV
 		if base == nil {
 			return nil
 		}
-		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), forwardHopLookupTimeout)
-		defer cancel()
-		node, err := store.ComputeNodeByID(lctx, nodeID)
-		if err != nil || node.Name == "" {
-			log.Warn("gateway: forward hop has no node name; node stays on gRPC until its connection is redialed", "node", nodeID, "err", err)
+		if name == "" {
 			return nil
 		}
-		cfg := wire.ExpectPeerCN(base, node.Name)
+		cfg := wire.ExpectPeerCN(base, name)
 		if cfg.ServerName == "" {
 			// As gRPC's TLS credentials do: verify the target's host.
 			host, _, _ := net.SplitHostPort(address)

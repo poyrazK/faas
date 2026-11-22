@@ -4,13 +4,64 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
+
+	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
+
+// A send blocked on a full TCP window must not stop the response from being
+// read: vmmd's handler answers 16 MiB without reading a 16 MiB upload, so
+// each side's write waits for the other to read.
+func TestBlockedSendDoesNotBlockRecv(t *testing.T) {
+	const size = 16 << 20
+	v := startVmmd(t, &fakeVmmd{answerEarly: size}, true)
+	c := v.client(t, "gatewayd-internal.faas")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	s, err := NewStream[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse](ctx, c, forwardMethod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Send(&vmmdpb.ForwardHTTPStreamRequest{Frame: &vmmdpb.ForwardHTTPStreamRequest_Init{Init: &vmmdpb.ForwardHTTPRequestInit{Instance: "i-1", Method: "POST"}}}); err != nil {
+		t.Fatal(err)
+	}
+	sent := make(chan struct{})
+	go func() {
+		defer close(sent)
+		chunk := make([]byte, 1<<20)
+		for range size / len(chunk) {
+			if s.Send(&vmmdpb.ForwardHTTPStreamRequest{Frame: &vmmdpb.ForwardHTTPStreamRequest_BodyChunk{BodyChunk: chunk}}) != nil {
+				return
+			}
+		}
+		_ = s.CloseSend()
+	}()
+	got := 0
+	for {
+		m, err := s.Recv()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				t.Fatalf("Recv: %v", err)
+			}
+			break
+		}
+		got += len(m.GetBodyChunk())
+	}
+	if got != size {
+		t.Fatalf("read %d response bytes, want %d", got, size)
+	}
+	select {
+	case <-sent:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the blocked send never returned after the call ended")
+	}
+}
 
 // A connection vmmd ends between exchanges carries a GOAWAY. A client that
 // claimed it before the GOAWAY arrived sends its exchange anyway; vmmd never

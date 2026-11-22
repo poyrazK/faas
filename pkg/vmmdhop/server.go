@@ -55,8 +55,8 @@ type Server struct {
 	// (serverIdleTimeout; tests shorten it).
 	idleTimeout time.Duration
 	ctx         context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 
 	mu       sync.Mutex
 	idle     map[*tls.Conn]struct{} // connections waiting for an exchange
@@ -179,13 +179,15 @@ type Listener struct {
 	errc   chan error
 	done   chan struct{}
 	closed atomic.Bool
+	ctx    context.Context
+	start  sync.Once
 }
 
-// NewListener starts routing lis's connections.
+// NewListener routes lis's connections. Routing, and so the hop, starts on
+// the gRPC server's first Accept: hop exchanges are served only once gRPC
+// is, inside the lifecycle vmmd's readiness and shutdown track.
 func NewListener(ctx context.Context, lis net.Listener, hop *Server) *Listener {
-	l := &Listener{Listener: lis, hop: hop, conns: make(chan net.Conn), errc: make(chan error, 1), done: make(chan struct{})}
-	go l.acceptLoop(ctx)
-	return l
+	return &Listener{Listener: lis, hop: hop, conns: make(chan net.Conn), errc: make(chan error, 1), done: make(chan struct{}), ctx: ctx}
 }
 
 // acceptLoop feeds route. A temporary accept error (EMFILE, ECONNABORTED)
@@ -240,6 +242,7 @@ func (l *Listener) route(ctx context.Context, c net.Conn) {
 
 // Accept returns the next connection for the gRPC server.
 func (l *Listener) Accept() (net.Conn, error) {
+	l.start.Do(func() { go l.acceptLoop(l.ctx) })
 	select {
 	case c := <-l.conns:
 		return c, nil

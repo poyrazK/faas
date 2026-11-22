@@ -2631,6 +2631,11 @@ heartbeat:
 			log.Debug("heartbeat", "live", mgr.LiveCount(), "leased", mgr.LeasedCount())
 		case err := <-serveErr:
 			if err != nil {
+				// The deferred impl.Close must not run under live hop
+				// exchanges (ADR-20261121202814).
+				if forwardHop != nil {
+					forwardHop.Close()
+				}
 				return err
 			}
 		}

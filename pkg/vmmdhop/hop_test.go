@@ -114,6 +114,9 @@ type fakeVmmd struct {
 	release chan struct{} // when set, the handler waits for it before answering
 	ended   chan error
 	details bool
+	// answerEarly sends answerEarly bytes of response without reading the
+	// request body, as an app that answers before reading its upload does.
+	answerEarly int
 }
 
 func (f *fakeVmmd) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.ForwardHTTPStreamRequest, vmmdpb.ForwardHTTPStreamResponse]) error {
@@ -126,6 +129,15 @@ func (f *fakeVmmd) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	if f.details {
 		st, _ := status.New(codes.ResourceExhausted, "busy").WithDetails(&errdetails.ErrorInfo{Reason: "concurrency_throttled"})
 		return st.Err()
+	}
+	if f.answerEarly > 0 {
+		chunk := make([]byte, 1<<20)
+		for sent := 0; sent < f.answerEarly; sent += len(chunk) {
+			if err := stream.Send(&vmmdpb.ForwardHTTPStreamResponse{Frame: &vmmdpb.ForwardHTTPStreamResponse_BodyChunk{BodyChunk: chunk}}); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	if f.block {
 		<-ctx.Done()
@@ -388,6 +400,14 @@ func TestHopFallsBackWhenVmmdLacksIt(t *testing.T) {
 	}
 	if dials.Load() != 1 {
 		t.Fatalf("dials = %d, want 1 during the fallback window", dials.Load())
+	}
+	// The refusal is recognized as "no hop here": the node stays on gRPC for
+	// the full fallback window, not the short dial-error one.
+	c.mu.Lock()
+	reason, left := c.fallbackReason, c.fallbackUntil.Sub(c.now())
+	c.mu.Unlock()
+	if reason != ResultFallback || left <= dialErrorFor {
+		t.Fatalf("fallback reason %q for %v, want %q for about %v", reason, left, ResultFallback, fallbackFor)
 	}
 }
 
