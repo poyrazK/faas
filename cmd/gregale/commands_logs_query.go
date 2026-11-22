@@ -243,6 +243,7 @@ func emitHTTPLogQueryEvents(events []api.LogQueryEvent) int {
 	}
 	if len(events) == 0 {
 		_, _ = fmt.Fprintln(osStderr, "No HTTP requests matched these filters.")
+		_, _ = fmt.Fprintln(osStderr, httpLogsLagNote)
 		return 0
 	}
 	for _, event := range events {
