@@ -370,7 +370,7 @@ func TestBinaryHopLimitsAndFailures(t *testing.T) {
 			_ = resp.Body.Close()
 		}
 		var dialErr *hopDialError
-		if !errors.As(err, &dialErr) || dialErr.reason() != HopFallbackNoSocket {
+		if !errors.As(err, &dialErr) || hopFallbackReason(dialErr) != HopFallbackNoSocket {
 			t.Fatalf("err %v, want a %s dial error", err, HopFallbackNoSocket)
 		}
 	})
