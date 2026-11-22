@@ -86,7 +86,30 @@ sending anything.
   paused VMs send nothing.
 - Old guests send no slots, so their apps show only
   `route_minutes_without_resources` until redeployed on a new base.
-- Follow-up (not in this change): a `gregale app scale --plan` suggestion
-  that, when one route holds most peaks while running in few minutes,
-  prints the split (a new app at the route's size, a `kind=route` rule, and
-  the main app sized to `mem_peak_p95_without_mb`).
+- Native acceptance (`TestRouteResourcePeaksMetal`, lane
+  `route-resource-peaks-only`) passed on a nested-KVM host: `/grow` held all
+  memory peaks at 25% presence. Its first run found that a single-process
+  app's cgroup has no `memory.max`/`cpu.max` of its own; the guest now
+  reports the VM's `MemTotal` and vCPUs as the limit in that case.
+
+## Amendment 1 (2026-11-22): split suggestion
+
+The read route adds `split` when one route holds at least 80% of at least
+three attributed memory peaks while running in at most 30% of active
+minutes, and the rest of the app would fit in less memory than it has now
+(`pkg/routeresources.SuggestSplit`). Sizes add 25% headroom and round up to
+64 MB:
+
+- the route's app: the route's p95 peak;
+- the main app: the median peak plus the p95 rise in minutes without the
+  route. Not the p95 peak without it: apps keep the memory a route raised
+  for minutes afterwards (the acceptance run's quiet minutes after `/grow`
+  stayed at 272 MB), which would size the main app for the route it no
+  longer serves.
+
+`route_ram_over_plan` marks a route that needs more than the plan's largest
+app. `gregale app scale <slug> --suggest` (hidden with the capability)
+prints the split as four commands: deploy the same code under a second
+name, size it, add the `kind=route` edge rule for the route's path glob,
+then size the main app down. Nothing is applied for the customer; every
+resize goes through `app scale --plan`.

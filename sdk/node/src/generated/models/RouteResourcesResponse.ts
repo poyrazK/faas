@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { RouteResourceAttribution } from './RouteResourceAttribution.js';
+import type { RouteResourceSplit } from './RouteResourceSplit.js';
 /**
  * Route attribution of an app's memory and CPU peaks over a window.
  */
@@ -59,5 +60,6 @@ export type RouteResourcesResponse = {
    * Routes past the 50 reported.
    */
   routes_omitted: number;
+  split?: RouteResourceSplit;
 };
 

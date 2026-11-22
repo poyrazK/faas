@@ -7,8 +7,11 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.route_resource_attribution import RouteResourceAttribution
+    from ..models.route_resource_split import RouteResourceSplit
 
 
 T = TypeVar("T", bound="RouteResourcesResponse")
@@ -48,6 +51,10 @@ class RouteResourcesResponse:
     routes: list[RouteResourceAttribution]
     routes_omitted: int
     """Routes past the 50 reported."""
+    split: RouteResourceSplit | Unset = UNSET
+    """Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of
+    minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down.
+   """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +99,10 @@ class RouteResourcesResponse:
 
         routes_omitted = self.routes_omitted
 
+        split: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.split, Unset):
+            split = self.split.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -117,12 +128,15 @@ class RouteResourcesResponse:
                 "routes_omitted": routes_omitted,
             }
         )
+        if split is not UNSET:
+            field_dict["split"] = split
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.route_resource_attribution import RouteResourceAttribution
+        from ..models.route_resource_split import RouteResourceSplit
 
         d = dict(src_dict)
         slug = d.pop("slug")
@@ -168,6 +182,13 @@ class RouteResourcesResponse:
 
         routes_omitted = d.pop("routes_omitted")
 
+        _split = d.pop("split", UNSET)
+        split: RouteResourceSplit | Unset
+        if isinstance(_split, Unset):
+            split = UNSET
+        else:
+            split = RouteResourceSplit.from_dict(_split)
+
         route_resources_response = cls(
             slug=slug,
             from_=from_,
@@ -188,6 +209,7 @@ class RouteResourcesResponse:
             high_cpu_minutes=high_cpu_minutes,
             routes=routes,
             routes_omitted=routes_omitted,
+            split=split,
         )
 
         route_resources_response.additional_properties = d
