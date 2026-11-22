@@ -103,6 +103,12 @@ func renderProjectEndpoints(ctx context.Context, w io.Writer, client projectAppR
 	if len(internal) > 0 {
 		_, _ = fmt.Fprintf(w, "  internal only (service mesh): %s\n", strings.Join(internal, ", "))
 	}
+	// An app's visibility is set when it is created: a service first deployed
+	// without ports stays internal after ports are added, and nothing said so
+	// (deploy-path probe 2026-11-21, R6-3: "Endpoints:" listed no URL).
+	if len(public) == 0 && len(internal) > 0 {
+		_, _ = fmt.Fprintf(w, "  no app has a public URL; to give one a public URL: %s app %s --visibility public\n", recoveryCLI(), recoveryArgument(internal[0]))
+	}
 	for _, slug := range keyed {
 		_, _ = fmt.Fprintf(w, "  %s needs a Gregale API key; to serve it publicly: %s app update %s --no-require-authn\n", slug, recoveryCLI(), recoveryArgument(slug))
 	}
