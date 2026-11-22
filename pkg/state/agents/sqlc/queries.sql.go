@@ -392,6 +392,22 @@ func (q *Queries) CompleteSandboxSnapshot(ctx context.Context, db DBTX, arg Comp
 	return result.RowsAffected(), nil
 }
 
+const consumeSpentSandboxForkCaptures = `-- name: ConsumeSpentSandboxForkCaptures :execrows
+UPDATE sandbox_session_captures cap SET state='consumed', consumed_at=now()
+ WHERE cap.purpose='fork' AND cap.state='live' AND cap.created_at < now() - interval '1 minute'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'))
+`
+
+// A fork capture no fork waits for any more is used; the capture sweep
+// deletes its objects.
+func (q *Queries) ConsumeSpentSandboxForkCaptures(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, consumeSpentSandboxForkCaptures)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countActiveAgents = `-- name: CountActiveAgents :one
 SELECT count(*)::integer FROM agents WHERE account_id=$1::text::uuid AND state='active'
 `
@@ -566,7 +582,8 @@ func (q *Queries) DeleteSandboxPort(ctx context.Context, db DBTX, arg DeleteSand
 }
 
 const deleteSandboxSessionCapture = `-- name: DeleteSandboxSessionCapture :execrows
-DELETE FROM sandbox_session_captures WHERE id=$1::text::uuid AND state='consumed'
+DELETE FROM sandbox_session_captures cap WHERE cap.id=$1::text::uuid AND cap.state='consumed'
+ AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'))
 `
 
 func (q *Queries) DeleteSandboxSessionCapture(ctx context.Context, db DBTX, captureID string) (int64, error) {
@@ -912,6 +929,23 @@ UPDATE sandbox_sessions sb SET state='failed', outcome_code='image_unavailable',
 // deleted.
 func (q *Queries) FailImageUnavailableSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
 	result, err := db.Exec(ctx, failImageUnavailableSandboxSessions)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const failOrphanedSandboxForks = `-- name: FailOrphanedSandboxForks :execrows
+UPDATE sandbox_sessions f SET state='failed', outcome_code='fork_source_ended',
+  outcome_message='the session it forked ended before the fork was taken', closed_at=now(), updated_at=now()
+ FROM sandbox_sessions src
+ WHERE f.forked_from=src.id AND f.state='queued' AND f.fork_capture_id IS NULL
+ AND src.state IN ('closed','expired','failed')
+`
+
+// A fork whose source ended before it was captured never starts.
+func (q *Queries) FailOrphanedSandboxForks(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, failOrphanedSandboxForks)
 	if err != nil {
 		return 0, err
 	}
@@ -1519,6 +1553,41 @@ func (q *Queries) GetSandboxEgressPolicy(ctx context.Context, db DBTX, accountID
 	return i, err
 }
 
+const getSandboxForkSource = `-- name: GetSandboxForkSource :one
+SELECT state, (task_kind IS NOT NULL)::boolean AS is_task,
+  coalesce((SELECT c.id::text FROM sandbox_session_captures c
+    WHERE c.session_id=sb.id AND c.state='live' AND c.purpose='pause'), '')::text AS pause_capture_id,
+  (close_requested_at IS NOT NULL)::boolean AS close_requested
+ FROM sandbox_sessions sb WHERE sb.id=$1::text::uuid AND sb.account_id=$2::text::uuid
+ FOR UPDATE OF sb
+`
+
+type GetSandboxForkSourceParams struct {
+	SessionID string
+	AccountID string
+}
+
+type GetSandboxForkSourceRow struct {
+	State          string
+	IsTask         bool
+	PauseCaptureID string
+	CloseRequested bool
+}
+
+// ADR-20261122132055 §3: the session a fork request names, locked so its
+// forks see one state.
+func (q *Queries) GetSandboxForkSource(ctx context.Context, db DBTX, arg GetSandboxForkSourceParams) (GetSandboxForkSourceRow, error) {
+	row := db.QueryRow(ctx, getSandboxForkSource, arg.SessionID, arg.AccountID)
+	var i GetSandboxForkSourceRow
+	err := row.Scan(
+		&i.State,
+		&i.IsTask,
+		&i.PauseCaptureID,
+		&i.CloseRequested,
+	)
+	return i, err
+}
+
 const getSandboxPreviewRoute = `-- name: GetSandboxPreviewRoute :one
 SELECT sb.account_id::text AS account_id, a.plan, sb.state, coalesce(sb.node_id, '')::text AS node_id,
   coalesce(sb.instance_id, '')::text AS instance_id,
@@ -1665,9 +1734,13 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id, a.plan, sb.ram_mb, 
   coalesce(sb.volume_gb, 0)::integer AS volume_gb, coalesce(vol.latest_backup_id::text, '')::text AS volume_backup_id,
   coalesce(vol.node_id, '')::text AS volume_node_id,
   coalesce((SELECT b.id::text FROM sandbox_volume_backups b WHERE b.session_id=sb.id AND b.state='stored'
-    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id
+    ORDER BY b.created_at DESC, b.id DESC LIMIT 1), '')::text AS volume_stored_backup_id,
+  coalesce(sb.fork_capture_id::text, '')::text AS fork_capture_id,
+  coalesce(cap.volume_backup_id::text, '')::text AS capture_volume_backup_id,
+  coalesce(cap.session_id::text, '')::text AS capture_session_id
  FROM sandbox_sessions sb JOIN accounts a ON a.id=sb.account_id
- LEFT JOIN sandbox_session_captures cap ON cap.session_id=sb.id AND cap.state='live'
+ LEFT JOIN sandbox_session_captures cap ON (sb.fork_capture_id IS NOT NULL AND cap.id=sb.fork_capture_id)
+   OR (sb.fork_capture_id IS NULL AND cap.session_id=sb.id AND cap.state='live' AND cap.purpose='pause')
  LEFT JOIN sandbox_volumes vol ON vol.session_id=sb.id
  LEFT JOIN sandbox_templates st ON st.id=sb.template_id AND st.account_id=sb.account_id
  LEFT JOIN sandbox_workspace_snapshots ws ON ws.id=sb.workspace_snapshot_id AND ws.account_id=sb.account_id
@@ -1714,6 +1787,9 @@ type GetSandboxSessionClaimRow struct {
 	VolumeBackupID           string
 	VolumeNodeID             string
 	VolumeStoredBackupID     string
+	ForkCaptureID            string
+	CaptureVolumeBackupID    string
+	CaptureSessionID         string
 }
 
 // A session that starts from a persisted workspace carries its archive's
@@ -1757,6 +1833,9 @@ func (q *Queries) GetSandboxSessionClaim(ctx context.Context, db DBTX, sessionID
 		&i.VolumeBackupID,
 		&i.VolumeNodeID,
 		&i.VolumeStoredBackupID,
+		&i.ForkCaptureID,
+		&i.CaptureVolumeBackupID,
+		&i.CaptureSessionID,
 	)
 	return i, err
 }
@@ -2376,6 +2455,41 @@ func (q *Queries) InsertSandboxAction(ctx context.Context, db DBTX, arg InsertSa
 	return i, err
 }
 
+const insertSandboxFork = `-- name: InsertSandboxFork :one
+INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,
+  image_ref,image_job_id,template_id,browser,egress_allow,egress_deny,vcpu,volume_gb,forked_from,fork_capture_id)
+SELECT src.account_id, src.tenant_id, $1::text, src.preset, src.ram_mb, src.network_mode, src.idle_timeout_sec,
+  $2::timestamptz, $3::jsonb, src.image_ref, src.image_job_id, src.template_id, src.browser,
+  src.egress_allow, src.egress_deny, src.vcpu, src.volume_gb, src.id, NULLIF($4::text, '')::uuid
+ FROM sandbox_sessions src WHERE src.id=$5::text::uuid AND src.account_id=$6::text::uuid
+RETURNING id::text AS id
+`
+
+type InsertSandboxForkParams struct {
+	Kind          string
+	ExpiresAt     pgtype.Timestamptz
+	Labels        []byte
+	ForkCaptureID string
+	SourceID      string
+	AccountID     string
+}
+
+// A fork is a new session with its source's machine, network, image and
+// volume size, queued until its capture is uploaded.
+func (q *Queries) InsertSandboxFork(ctx context.Context, db DBTX, arg InsertSandboxForkParams) (string, error) {
+	row := db.QueryRow(ctx, insertSandboxFork,
+		arg.Kind,
+		arg.ExpiresAt,
+		arg.Labels,
+		arg.ForkCaptureID,
+		arg.SourceID,
+		arg.AccountID,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertSandboxSession = `-- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
   image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb)
@@ -2923,7 +3037,9 @@ SELECT sb.id::text AS id, sb.account_id::text AS account_id FROM sandbox_session
  AND (sb.image_ref IS NULL OR EXISTS (SELECT 1 FROM jobs j WHERE j.id=sb.image_job_id AND j.account_id=sb.account_id
    AND j.status <> 'deleted' AND j.image_materialization_status='ready' AND j.image_storage_key IS NOT NULL)
    OR EXISTS (SELECT 1 FROM sandbox_templates t JOIN deployments d ON d.app_id=t.app_id
-   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> '')))
+   WHERE t.id=sb.template_id AND t.account_id=sb.account_id AND d.status='live' AND d.rootfs_key <> ''))
+ AND (sb.forked_from IS NULL OR EXISTS (SELECT 1 FROM sandbox_session_captures c
+   WHERE c.id=sb.fork_capture_id AND c.uploaded_at IS NOT NULL)))
  OR (sb.state='paused' AND sb.resume_requested_at IS NOT NULL AND sb.close_requested_at IS NULL AND sb.expires_at > now()
    AND (sb.resume_not_before IS NULL OR sb.resume_not_before <= now()))
  ORDER BY sb.created_at, sb.id LIMIT $1::integer FOR UPDATE OF sb SKIP LOCKED
@@ -2961,8 +3077,10 @@ func (q *Queries) ListClaimableSandboxSessions(ctx context.Context, db DBTX, max
 }
 
 const listConsumedSandboxSessionCaptures = `-- name: ListConsumedSandboxSessionCaptures :many
-SELECT id::text AS id, storage_key, vmstate_storage_key, has_backing, created_at FROM sandbox_session_captures
- WHERE state='consumed' ORDER BY checked_at NULLS FIRST, created_at, id LIMIT $1::integer
+SELECT cap.id::text AS id, cap.storage_key, cap.vmstate_storage_key, cap.has_backing, cap.created_at FROM sandbox_session_captures cap
+ WHERE cap.state='consumed' AND NOT EXISTS (SELECT 1 FROM sandbox_sessions f
+   WHERE f.fork_capture_id=cap.id AND f.state IN ('queued','starting'))
+ ORDER BY cap.checked_at NULLS FIRST, cap.created_at, cap.id LIMIT $1::integer
 `
 
 type ListConsumedSandboxSessionCapturesRow struct {
@@ -2975,7 +3093,8 @@ type ListConsumedSandboxSessionCapturesRow struct {
 
 // Captures a resume used or a session's end left: the sweep deletes their
 // objects once their node's upload is over, then the row. Oldest capture
-// first: those are past any upload.
+// first: those are past any upload. A fork capture waits for the forks that
+// still restore it.
 func (q *Queries) ListConsumedSandboxSessionCaptures(ctx context.Context, db DBTX, maxRows int32) ([]ListConsumedSandboxSessionCapturesRow, error) {
 	rows, err := db.Query(ctx, listConsumedSandboxSessionCaptures, maxRows)
 	if err != nil {
@@ -3006,6 +3125,8 @@ const listEndedSandboxVolumes = `-- name: ListEndedSandboxVolumes :many
 SELECT v.session_id::text AS session_id, v.account_id::text AS account_id, v.node_id
   FROM sandbox_volumes v JOIN sandbox_sessions sb ON sb.id=v.session_id
  WHERE sb.state IN ('closed','expired','failed')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c JOIN sandbox_volume_backups b ON b.id=c.volume_backup_id
+     WHERE b.session_id=v.session_id AND (c.state='live' OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=c.id AND f.state IN ('queued','starting'))))
  ORDER BY v.updated_at, v.session_id LIMIT $1::integer
 `
 
@@ -3553,7 +3674,8 @@ SELECT b.id::text AS id, b.session_id::text AS session_id, b.account_id::text AS
   JOIN sandbox_volume_backups l ON l.id=v.latest_backup_id
  WHERE b.state <> 'deleted' AND b.id <> l.id AND b.created_at < l.created_at
    AND (b.state='stored' OR b.created_at < now() - make_interval(secs=>$1::double precision))
-   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id AND c.state='live')
+   AND NOT EXISTS (SELECT 1 FROM sandbox_session_captures c WHERE c.volume_backup_id=b.id
+     AND (c.state='live' OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=c.id AND f.state IN ('queued','starting'))))
  ORDER BY b.created_at, b.id LIMIT $2::integer
 `
 
@@ -3873,6 +3995,57 @@ func (q *Queries) ListUndeliveredWorkflowAgentRuns(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const listUnuploadedSandboxForkCaptures = `-- name: ListUnuploadedSandboxForkCaptures :many
+SELECT cap.id::text AS id, cap.session_id::text AS session_id, cap.account_id::text AS account_id, cap.storage_key,
+  cap.vmstate_storage_key, cap.has_backing, coalesce(cap.volume_backup_id::text, '')::text AS volume_backup_id
+  FROM sandbox_session_captures cap WHERE cap.uploaded_at IS NULL
+   AND ((cap.purpose='fork' AND cap.state='live')
+     OR EXISTS (SELECT 1 FROM sandbox_sessions f WHERE f.fork_capture_id=cap.id AND f.state='queued'))
+ ORDER BY cap.created_at, cap.id LIMIT $1::integer
+`
+
+type ListUnuploadedSandboxForkCapturesRow struct {
+	ID                string
+	SessionID         string
+	AccountID         string
+	StorageKey        string
+	VmstateStorageKey string
+	HasBacking        bool
+	VolumeBackupID    string
+}
+
+// Captures forks wait for that the shared store may not hold yet: a live
+// fork capture, or a pause capture a queued fork names (its session may have
+// resumed before the upload). agentd checks each and marks it uploaded once
+// the store holds it, and its forks become claimable.
+func (q *Queries) ListUnuploadedSandboxForkCaptures(ctx context.Context, db DBTX, maxRows int32) ([]ListUnuploadedSandboxForkCapturesRow, error) {
+	rows, err := db.Query(ctx, listUnuploadedSandboxForkCaptures, maxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListUnuploadedSandboxForkCapturesRow{}
+	for rows.Next() {
+		var i ListUnuploadedSandboxForkCapturesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.AccountID,
+			&i.StorageKey,
+			&i.VmstateStorageKey,
+			&i.HasBacking,
+			&i.VolumeBackupID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockAccountAgents = `-- name: LockAccountAgents :exec
 SELECT pg_advisory_xact_lock(hashtextextended('agent-runs:' || $1::text, 0))
 `
@@ -4001,10 +4174,14 @@ func (q *Queries) MarkSandboxActionDelivered(ctx context.Context, db DBTX, id st
 }
 
 const markSandboxCaptureRemote = `-- name: MarkSandboxCaptureRemote :execrows
+WITH uploaded AS (
+  UPDATE sandbox_session_captures SET uploaded_at=coalesce(uploaded_at, now())
+   WHERE id=$2::text::uuid AND session_id=$1::text::uuid AND state='live'
+  RETURNING id
+)
 UPDATE sandbox_sessions sb SET durability='remote', updated_at=now()
  WHERE sb.id=$1::text::uuid AND sb.state='paused' AND sb.durability='node'
- AND EXISTS (SELECT 1 FROM sandbox_session_captures cap
-   WHERE cap.id=$2::text::uuid AND cap.session_id=sb.id AND cap.state='live')
+ AND EXISTS (SELECT 1 FROM uploaded)
 `
 
 type MarkSandboxCaptureRemoteParams struct {
@@ -4014,6 +4191,19 @@ type MarkSandboxCaptureRemoteParams struct {
 
 func (q *Queries) MarkSandboxCaptureRemote(ctx context.Context, db DBTX, arg MarkSandboxCaptureRemoteParams) (int64, error) {
 	result, err := db.Exec(ctx, markSandboxCaptureRemote, arg.SessionID, arg.CaptureID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markSandboxForkCaptureUploaded = `-- name: MarkSandboxForkCaptureUploaded :execrows
+UPDATE sandbox_session_captures SET uploaded_at=now()
+ WHERE id=$1::text::uuid AND uploaded_at IS NULL
+`
+
+func (q *Queries) MarkSandboxForkCaptureUploaded(ctx context.Context, db DBTX, captureID string) (int64, error) {
+	result, err := db.Exec(ctx, markSandboxForkCaptureUploaded, captureID)
 	if err != nil {
 		return 0, err
 	}
@@ -4032,8 +4222,11 @@ WITH session AS (
     $11::boolean, NULLIF($12::text, '')::uuid
   FROM session
   RETURNING session_id
+), forks AS (
+  UPDATE sandbox_sessions f SET fork_capture_id=$4::text::uuid, updated_at=now()
+   WHERE f.forked_from IN (SELECT session_id FROM capture) AND f.fork_capture_id IS NULL AND f.state='queued'
 )
-UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, durability='node',
+UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, fork_requested_at=NULL, durability='node',
   node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(secs=>$1::double precision), updated_at=now()
  WHERE sb.id IN (SELECT session_id FROM capture)
@@ -4101,7 +4294,7 @@ func (q *Queries) MarkSandboxSessionPlaced(ctx context.Context, db DBTX, arg Mar
 
 const markSandboxSessionReady = `-- name: MarkSandboxSessionReady :execrows
 UPDATE sandbox_sessions SET state='ready', node_id=$1::text, instance_id=$2::text,
-  last_activity_at=now(), updated_at=now()
+  fork_capture_id=NULL, last_activity_at=now(), updated_at=now()
  WHERE id=$3::text::uuid AND lease_token=$4::text AND state='starting'
 `
 
@@ -4492,6 +4685,63 @@ func (q *Queries) RecordSandboxSessionDomains(ctx context.Context, db DBTX, arg 
 	return result.RowsAffected(), nil
 }
 
+const recordSandboxSessionFork = `-- name: RecordSandboxSessionFork :one
+WITH source AS (
+  SELECT id, account_id FROM sandbox_sessions
+   WHERE id=$1::text::uuid AND lease_token=$2::text
+), capture AS (
+  INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
+    mem_bytes, vmstate_bytes, has_backing, volume_backup_id, purpose)
+  SELECT $3::text::uuid, id, account_id, $4::text, $5::text,
+    $6::text, $7::text, $8::bigint, $9::bigint,
+    $10::boolean, NULLIF($11::text, '')::uuid, 'fork'
+  FROM source
+  RETURNING id, session_id
+), forks AS (
+  UPDATE sandbox_sessions f SET fork_capture_id=c.id, updated_at=now() FROM capture c
+   WHERE f.forked_from=c.session_id AND f.fork_capture_id IS NULL AND f.state='queued'
+  RETURNING f.id
+), answered AS (
+  UPDATE sandbox_sessions sb SET fork_requested_at=NULL, updated_at=now() FROM capture c WHERE sb.id=c.session_id
+)
+SELECT count(*)::bigint AS forks FROM forks
+`
+
+type RecordSandboxSessionForkParams struct {
+	SessionID         string
+	LeaseToken        string
+	CaptureID         string
+	NodeID            string
+	StorageKey        string
+	VmstateStorageKey string
+	FcVersion         string
+	MemBytes          int64
+	VmstateBytes      int64
+	HasBacking        bool
+	VolumeBackupID    string
+}
+
+// vmmd captured the running source: the capture serves the forks waiting
+// for one, and the request is answered.
+func (q *Queries) RecordSandboxSessionFork(ctx context.Context, db DBTX, arg RecordSandboxSessionForkParams) (int64, error) {
+	row := db.QueryRow(ctx, recordSandboxSessionFork,
+		arg.SessionID,
+		arg.LeaseToken,
+		arg.CaptureID,
+		arg.NodeID,
+		arg.StorageKey,
+		arg.VmstateStorageKey,
+		arg.FcVersion,
+		arg.MemBytes,
+		arg.VmstateBytes,
+		arg.HasBacking,
+		arg.VolumeBackupID,
+	)
+	var forks int64
+	err := row.Scan(&forks)
+	return forks, err
+}
+
 const recordSandboxSessionUsage = `-- name: RecordSandboxSessionUsage :execrows
 WITH prev AS (
   SELECT p.samples, p.expected_samples, p.measured_ms, p.paused_ms, p.frozen_ms, p.private_mb_ms, p.unpaused_private_mb_ms,
@@ -4686,7 +4936,7 @@ UPDATE sandbox_sessions SET lease_expires_at=now()+make_interval(secs=>$1::doubl
  WHERE id=$3::text::uuid AND lease_token=$4::text
  AND state IN ('starting','ready','frozen','pausing','resuming')
  RETURNING (close_requested_at IS NOT NULL)::boolean AS close_requested, idle_timeout_sec, expires_at,
-  (pause_requested_at IS NOT NULL)::boolean AS pause_requested
+  (pause_requested_at IS NOT NULL)::boolean AS pause_requested, (fork_requested_at IS NOT NULL)::boolean AS fork_requested
 `
 
 type RenewSandboxSessionLeaseParams struct {
@@ -4701,6 +4951,7 @@ type RenewSandboxSessionLeaseRow struct {
 	IdleTimeoutSec int32
 	ExpiresAt      pgtype.Timestamptz
 	PauseRequested bool
+	ForkRequested  bool
 }
 
 // Renewing also records the last call agentd has seen, so last_activity_at
@@ -4718,6 +4969,7 @@ func (q *Queries) RenewSandboxSessionLease(ctx context.Context, db DBTX, arg Ren
 		&i.IdleTimeoutSec,
 		&i.ExpiresAt,
 		&i.PauseRequested,
+		&i.ForkRequested,
 	)
 	return i, err
 }
@@ -4757,6 +5009,26 @@ type RequestSandboxSessionCloseParams struct {
 // the VM down and closes it.
 func (q *Queries) RequestSandboxSessionClose(ctx context.Context, db DBTX, arg RequestSandboxSessionCloseParams) (int64, error) {
 	result, err := db.Exec(ctx, requestSandboxSessionClose, arg.SessionID, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requestSandboxSessionFork = `-- name: RequestSandboxSessionFork :execrows
+UPDATE sandbox_sessions SET fork_requested_at=coalesce(fork_requested_at, now()), updated_at=now()
+ WHERE id=$1::text::uuid AND account_id=$2::text::uuid
+ AND state IN ('starting','ready','frozen','pausing')
+`
+
+type RequestSandboxSessionForkParams struct {
+	SessionID string
+	AccountID string
+}
+
+// A running source's fork capture is agentd's: apid records the request.
+func (q *Queries) RequestSandboxSessionFork(ctx context.Context, db DBTX, arg RequestSandboxSessionForkParams) (int64, error) {
+	result, err := db.Exec(ctx, requestSandboxSessionFork, arg.SessionID, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}

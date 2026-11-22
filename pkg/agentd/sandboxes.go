@@ -77,6 +77,11 @@ type SandboxStore interface {
 	SandboxVolumeBackupIDs(ctx context.Context, sessionID string) ([]string, error)
 	MarkSandboxVolumeBackupDeleted(ctx context.Context, backupID string) error
 	DeleteSandboxVolume(ctx context.Context, sessionID string) error
+	// Forks (ADR-20261122132055 §3).
+	RecordSandboxFork(ctx context.Context, id, token string, c agentstore.SandboxCapture) (int, error)
+	UnuploadedSandboxForkCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
+	MarkSandboxForkCaptureUploaded(ctx context.Context, captureID string) error
+	SweepSandboxForks(ctx context.Context) (consumed, failed int, err error)
 }
 
 // SandboxSchedd opens RunSandbox streams; scheddpb.ScheddClient implements
@@ -255,7 +260,7 @@ func (s *Sandboxes) SweepOnce(ctx context.Context) error {
 	if requeued+failed+expired > 0 {
 		s.log.Info("agentd: expired sandbox leases", "requeued", requeued, "failed", failed, "expired", expired)
 	}
-	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx), s.sweepDurability(ctx), s.sweepVolumes(ctx))
+	return errors.Join(err, s.sweepSnapshots(ctx), s.sweepScreenshots(ctx), s.sweepCaptures(ctx), s.sweepDurability(ctx), s.sweepVolumes(ctx), s.sweepForks(ctx))
 }
 
 func (s *Sandboxes) sweep(ctx context.Context) {
@@ -314,6 +319,13 @@ type session struct {
 	abandoned []string
 	// placedNode is where schedd placed the VM.
 	placedNode string
+	// A fork capture of the running session (ADR-20261122132055 §3):
+	// forking while vmmd takes it, its ID and when it was asked, and the
+	// earliest next try after a refusal.
+	forking     bool
+	forkID      string
+	forkAsked   time.Time
+	forkRetryAt time.Time
 }
 
 type sessionEnd struct{ state, code, message string }
@@ -354,7 +366,9 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	}
 	persistent := claim.Kind == agentstore.SandboxPersistent
 	vcpu := api.AgentRunVCPUMax[plan.PlanIndex()]
-	if persistent && claim.VCPU > 0 {
+	// A fork restores its source's machine, vCPUs included
+	// (ADR-20261122132055 §3).
+	if (persistent || claim.ForkOf != "") && claim.VCPU > 0 {
 		vcpu = claim.VCPU
 	}
 	claimed := s.now()
@@ -379,12 +393,22 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		EgressAllow: claim.EgressAllow, EgressDeny: claim.EgressDeny, WebDomainLog: claim.Network == api.SandboxNetworkWeb,
 		Persistent: persistent,
 	}
-	if persistent && claim.VolumeGB > 0 {
-		// The session's /workspace is its volume, backed up while it runs
-		// (ADR-20261122132055 §4).
+	if claim.VolumeGB > 0 {
+		// The session's /workspace is its volume, backed up while a
+		// persistent session runs (ADR-20261122132055 §4). A fork's starts
+		// from its source's backup (§3).
 		start.VolumeGb, start.VolumeBackupId = int32(claim.VolumeGB), claim.VolumeBackupID //nolint:gosec // G115: bounded by the plan's volume cap.
-		start.VolumeBackupIntervalMs = int64(api.SandboxVolumeBackupSec) * 1000
 		start.VolumeNodeId, start.VolumeStoredBackupId = claim.VolumeNodeID, claim.VolumeStoredBackupID
+		start.VolumeSourceSandboxId = claim.ForkOf
+		if persistent {
+			start.VolumeBackupIntervalMs = int64(api.SandboxVolumeBackupSec) * 1000
+		}
+	}
+	if c := claim.Resume; c != nil && claim.ForkOf != "" {
+		// A fork restores its source's capture, which the shared store holds.
+		start.WorkspaceKey = ""
+		start.Resume = &scheddpb.SandboxRunResume{StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey,
+			FcVersion: c.FCVersion, MemBytes: c.MemBytes, NodeId: c.NodeID, Fork: true}
 	}
 	if claim.Resuming {
 		// A resumed session's workspace is in its capture; one without a
@@ -569,6 +593,12 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			}
 		case ev.GetPauseRefused() != nil:
 			s.pauseRefused(ctx, ss, ev.GetPauseRefused().GetReason())
+		case ev.GetForked() != nil:
+			if err := s.markForked(ctx, ss, ev.GetForked()); err != nil {
+				return err
+			}
+		case ev.GetForkRefused() != nil:
+			s.forkRefused(ss, ev.GetForkRefused().GetReason())
 		case ev.GetVolumeBackup() != nil:
 			s.recordVolumeBackup(ctx, ss, ev.GetVolumeBackup())
 		}
@@ -632,6 +662,9 @@ func (s *Sandboxes) timeSession(ctx context.Context, ss *session, send func(*sch
 		pausing := ss.pausing || ss.paused
 		freeze := ready && !frozen && !freezing && !pausing && idle >= s.scfg.IdleFreeze
 		ss.mu.Unlock()
+		if s.forkDue(ss, now) {
+			s.fork(ss, send)
+		}
 		sendFreeze := func() {
 			ss.mu.Lock()
 			ss.freezing = true
@@ -699,7 +732,7 @@ func (s *Sandboxes) overran(ss *session, now time.Time) bool {
 func (s *Sandboxes) pauseDue(ss *session, now time.Time, idle time.Duration) string {
 	ss.mu.Lock()
 	defer ss.mu.Unlock()
-	if !ss.ready || ss.end != nil || now.Before(ss.pauseRetryAt) || ss.lateCaptureID != "" {
+	if !ss.ready || ss.end != nil || ss.forking || now.Before(ss.pauseRetryAt) || ss.lateCaptureID != "" {
 		return ""
 	}
 	plan := api.Plan(ss.claim.Plan)

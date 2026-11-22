@@ -17011,6 +17011,8 @@ type SandboxSession struct {
 	ResumedCold       bool
 	ForkedFrom        pgtype.UUID
 	ResumeNotBefore   pgtype.Timestamptz
+	ForkCaptureID     pgtype.UUID
+	ForkRequestedAt   pgtype.Timestamptz
 }
 
 type SandboxSessionCapture struct {
@@ -17029,6 +17031,8 @@ type SandboxSessionCapture struct {
 	ConsumedAt        pgtype.Timestamptz
 	CheckedAt         pgtype.Timestamptz
 	VolumeBackupID    pgtype.UUID
+	Purpose           string
+	UploadedAt        pgtype.Timestamptz
 }
 
 // ADR-20261117091026 domains a web-mode sandbox session was granted or refused, written by agentd from vmmd's domain log.

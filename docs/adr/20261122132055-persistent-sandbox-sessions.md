@@ -209,6 +209,15 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Metrics.** `sandbox_volume_backup_seconds` and `sandbox_volume_backup_bytes` (running backups); vmmd's operations `SandboxVolumeBackup` and `SandboxVolumeRestore`.
 - **Not yet:** collecting chunks no manifest refers to (they stay in the store); backups sealed to the account (with captures, after 3d-3); a `sync` in the guest before a running backup (a backup is crash-consistent, as after a power cut).
 
+### Step 6 as built
+
+- **Request.** `POST /v1/sandboxes/{id}/fork {count, kind?, labels?}` queues `count` sessions `forked_from` the source with its machine, network, image, egress policy and volume size; `kind` defaults to `ephemeral`, labels to the source's. An ephemeral fork needs the source's RAM, vCPUs and volume within the ephemeral shapes. `SandboxForkMax`, the queued cap and the persistent cap apply to the whole request under the account's lock. The route is dark behind `FAAS_SANDBOX_PERSISTENT`.
+- **Which capture.** A paused source's forks restore its pause capture. For a running or frozen source apid sets `fork_requested_at`; agentd sees it at the next lease renewal and sends `fork`. vmmd takes a live capture (the warm-snapshot path: the VM pauses only while its memory is written, node-first) and clones the volume while the guest is paused, so the two agree. It answers `forked`, and agentd records a capture of purpose `fork` and hands it to every fork still waiting. A pause and a fork never run together; a refused or unanswered fork is retried.
+- **Start.** A fork is claimable only once the shared store holds its whole capture and the volume backup (`uploaded_at`, set by the agentd sweep). It restores on any node as `Resume{fork}` with the source's vCPUs, and its volume restores from the source's backup (`volume_source_sandbox_id`). An ephemeral fork's volume is still recorded, so it is deleted when the fork ends.
+- **Lifetime of what forks share.** A capture, the backup it names and the source's volume row stay while a queued or starting fork names the capture, even after the source resumed or ended. Once none does, a fork capture is consumed (after a minute's grace) and the capture sweep deletes its objects. A fork whose source ended before it was captured fails with `fork_source_ended`.
+- **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
+- **Not yet:** the reflink fast path for a fork on its source's node (every fork restores from the shared store today); the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook (§3); `sandbox_fork_seconds` and `sandbox_forks_total`; clients (step 10).
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.
