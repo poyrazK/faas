@@ -48,7 +48,7 @@ gregale run deliveries deliver report-agent reports \
   --idempotency-key customer-report-001 --wait --json
 
 gregale run deliveries status report-agent reports DELIVERY_UUID --json
-gregale run deliveries download-url report-agent reports DELIVERY_UUID --json
+gregale sandbox delivery sign report-agent reports DELIVERY_UUID --json
 ```
 
 The CLI obtains size and SHA-256 from the source receipt. It refuses unsuccessful
