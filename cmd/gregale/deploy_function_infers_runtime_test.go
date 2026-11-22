@@ -17,7 +17,7 @@ import (
 // plain `deploy` of the same directory infers python.
 func TestDeployFunctionInfersTheRuntimeFromTheSource(t *testing.T) {
 	for _, tc := range []struct {
-		name, file string
+		name, file  string
 		wantRefusal bool
 	}{
 		{"python handler", "handler.py", false},
