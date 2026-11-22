@@ -13,6 +13,20 @@
 
 -- +goose Up
 SET lock_timeout = '5s';
+-- The concurrent build must not be cancelled by the migrator's 30 s
+-- statement_timeout, which would leave an invalid index.
+SET statement_timeout = 0;
+
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF EXISTS (SELECT 1 FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+            WHERE c.relname = 'object_storage_multipart_completion_versions_idx' AND NOT i.indisvalid) THEN
+  -- A failed concurrent build leaves an invalid index that IF NOT EXISTS
+  -- would keep; drop it so a rerun builds it again.
+  EXECUTE 'DROP INDEX object_storage_multipart_completion_versions_idx';
+ END IF;
+END $$;
+-- +goose StatementEnd
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS object_storage_multipart_completion_versions_idx
     ON object_storage_multipart_uploads (bucket_id) WHERE completion_versions_observed;
@@ -30,6 +44,7 @@ END
 $index$;
 -- +goose StatementEnd
 
+RESET statement_timeout;
 RESET lock_timeout;
 
 -- +goose Down
