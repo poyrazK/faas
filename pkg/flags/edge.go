@@ -2,6 +2,7 @@ package flags
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -113,6 +114,22 @@ func validateEdge(c Config) error {
 		return fmt.Errorf("at most %d flags may route at the edge (%d do)", api.FlagsMaxEdgeFlags, edgeFlags)
 	}
 	return nil
+}
+
+// SameEdge reports whether a and b route the same paths the same way, flag
+// by flag: an edit that leaves edge routes alone keeps publishing after the
+// edge_flags platform flag is turned off.
+func SameEdge(a, b Config) bool {
+	routes := func(c Config) map[string]Edge {
+		out := map[string]Edge{}
+		for _, f := range c.Flags {
+			if f.Edge != nil {
+				out[f.Key] = *f.Edge
+			}
+		}
+		return out
+	}
+	return reflect.DeepEqual(routes(a), routes(b))
 }
 
 // HasEdge reports whether any flag of c routes at the edge.

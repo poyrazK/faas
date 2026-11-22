@@ -196,13 +196,25 @@ func (s *server) updateFeatureFlags(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrValidation("expected_version is required"))
 		return
 	}
-	if flags.HasEdge(req.Config) && !s.platformFlagFor(platformflags.EdgeFlags, flagSubject(r, acct)) {
+	if !s.edgeRoutesAllowed(r, acct, store, scope, req.Config) {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Edge flags unavailable", "edge flag routing is not enabled for this account").
 			WithHint("An operator releases edge flag routing account by account (ADR-20261122090000). Your credentials are not the cause."))
 		return
 	}
 	s.publishFeatureFlags(w, r, store, state.FeatureFlagUpdate{Scope: scope, ExpectedVersion: *req.ExpectedVersion, Config: req.Config, Actor: acct.ID})
 }
+// edgeRoutesAllowed refuses a publish that adds or changes edge routes while
+// the edge_flags platform flag is off for the account (ADR-20261122090000).
+// An edit that leaves existing routes as they are publishes, so turning the
+// flag off never blocks kills or rollouts.
+func (s *server) edgeRoutesAllowed(r *http.Request, acct state.Account, store state.FeatureFlagStore, scope state.FeatureFlagScope, next flags.Config) bool {
+	if !flags.HasEdge(next) || s.platformFlagFor(platformflags.EdgeFlags, flagSubject(r, acct)) {
+		return true
+	}
+	current, err := store.GetFeatureFlags(r.Context(), scope, 0)
+	return err == nil && flags.SameEdge(current.Config, next)
+}
+
 func (s *server) rollbackFeatureFlags(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	scope, store, ok := s.featureFlagWriteScope(w, r, acct)
 	if !ok {

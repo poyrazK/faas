@@ -117,6 +117,15 @@ func TestMergeEvidenceKeepsApplicationDecisions(t *testing.T) {
 	}
 }
 
+func TestSameEdge(t *testing.T) {
+	a := Config{Flags: []Flag{{Key: "plain"}, edgeFlag("e", route("/p", "b", "/q"))}}
+	reordered := Config{Flags: []Flag{edgeFlag("e", route("/p", "b", "/q")), {Key: "plain", Enabled: true}}}
+	changed := Config{Flags: []Flag{edgeFlag("e", route("/p", "b", "/other"))}}
+	if !SameEdge(a, reordered) || SameEdge(a, changed) || SameEdge(a, Config{}) || !SameEdge(Config{}, Config{Flags: []Flag{{Key: "x"}}}) {
+		t.Fatal("SameEdge compares edge routes per flag only")
+	}
+}
+
 func TestWithoutEdgeAndEdgeOnly(t *testing.T) {
 	c := Config{Flags: []Flag{{Key: "plain"}, edgeFlag("e", route("/p", "b", "/q"))}}
 	stripped := WithoutEdge(c)
