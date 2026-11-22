@@ -5977,6 +5977,11 @@ type Querier interface {
 	OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error)
 	OperatorIncidents(ctx context.Context, db DBTX, arg OperatorIncidentsParams) ([]OperatorIncidentsRow, error)
 	OperatorInsertAuditLog(ctx context.Context, db DBTX, arg OperatorInsertAuditLogParams) error
+	// Live deployments of active apps with no usable snapshot (none, or every one
+	// stale or pending deletion): they cold boot on every wake until a snapshot
+	// is taken. cold_bootable is false when the deployment has no rootfs either,
+	// which breaks spec invariant 6.2-3. Those come first, then the newest.
+	OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error)
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
 	// Deploys and new accounts by the coding agent the Gregale CLI reported
@@ -6003,6 +6008,12 @@ type Querier interface {
 	// Legacy rows are ambiguous even after the old cache's TTL. Never reclaim them here.
 	OperatorRecoveryLegacyKeyExists(ctx context.Context, db DBTX, arg OperatorRecoveryLegacyKeyExistsParams) (bool, error)
 	OperatorRestartDatabaseTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	// The operator snapshot health report (ADR-20261122135018): every snapshot
+	// row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+	// definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+	// plus the deployment's above-base layer) and its app, largest first. The
+	// caller asks for one row more than it keeps to learn whether it was cut.
+	OperatorSnapshotInventory(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorSnapshotInventoryRow, error)
 	OperatorSnapshotPrimeSnapshot(ctx context.Context, db DBTX, arg OperatorSnapshotPrimeSnapshotParams) ([]OperatorSnapshotPrimeSnapshotRow, error)
 	OperatorTenantApps(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) ([]OperatorTenantAppsRow, error)
 	OperatorTenantCounts(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) (OperatorTenantCountsRow, error)

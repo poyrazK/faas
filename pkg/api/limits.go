@@ -229,6 +229,19 @@ const (
 	ObsWakeLatencyWindowMax       = 24 * time.Hour
 )
 
+// Operator snapshot health report (ADR-20261122135018). The report reads at
+// most ObsSnapshotInventoryMax snapshot rows, largest first (beyond that it
+// says it was truncated), and lists the largest and recently stale ones and
+// the live deployments with no usable snapshot. The fleet average is judged
+// against FleetSnapshotAvgTargetMB and the §12 warn and page thresholds.
+const (
+	ObsSnapshotInventoryMax     = 20000
+	ObsSnapshotListMax          = 25
+	ObsSnapshotUnsnapshottedMax = 200
+	ObsSnapshotFleetAvgWarnMB   = 160
+	ObsSnapshotFleetAvgPageMB   = 200
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
