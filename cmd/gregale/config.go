@@ -312,6 +312,26 @@ func envToken() string { return strings.TrimSpace(os.Getenv("FAAS_TOKEN")) }
 // credential saved for the selected profile. Logout and re-login revoke the
 // key behind this credential, never the environment's.
 func loadStoredToken(diagnostics io.Writer) string {
+	lookup := lookupStoredToken(diagnostics)
+	if lookup.keychainErr != nil {
+		warnKeychainRead(diagnostics, lookup.keychainErr)
+	}
+	return lookup.token
+}
+
+type storedTokenLookup struct {
+	token           string
+	keychainChecked bool
+	keychainErr     error
+}
+
+func warnKeychainRead(diagnostics io.Writer, err error) {
+	PrintWarn(diagnostics, "Could not read the API key from the OS keychain: %s. %s", describeKeyringErr(err), keyringOptOutHint)
+}
+
+// lookupStoredToken gives guided login the result of its initial keychain
+// lookup so it can offer a storage choice without probing the keychain again.
+func lookupStoredToken(diagnostics io.Writer) storedTokenLookup {
 	// The token file first: it exists only when the keychain did not
 	// take the key, and reading it never raises a keyring unlock dialog.
 	invalidFile := false
@@ -319,25 +339,22 @@ func loadStoredToken(diagnostics io.Writer) string {
 		if b, err := os.ReadFile(p); err == nil {
 			v := strings.TrimSpace(string(b))
 			if validPersistedToken(v) {
-				return v
+				return storedTokenLookup{token: v}
 			}
 			invalidFile = true
 		}
 	}
-	keychainReachable := true
 	v, err := effectiveKeyring().Get(keyringService, profileKeyringAccount())
 	switch {
 	case err == nil:
 		v = strings.TrimSpace(v)
 		if validPersistedToken(v) {
-			return v
+			return storedTokenLookup{token: v, keychainChecked: true}
 		}
 		PrintWarn(diagnostics, "OS keychain contains an invalid Gregale API key; ignoring it.")
 	case errors.Is(err, keyring.ErrNotFound):
 		// not saved in the keychain — not an error worth a WARN
-	default:
-		keychainReachable = false
-		PrintWarn(diagnostics, "Could not read the API key from the OS keychain: %s. %s", describeKeyringErr(err), keyringOptOutHint)
+		err = nil
 	}
 	if invalidFile {
 		PrintWarn(diagnostics, "Token file contains an invalid Gregale API key; trying legacy stores.")
@@ -345,7 +362,11 @@ func loadStoredToken(diagnostics io.Writer) string {
 	// A pre-#439 install has neither the new keychain entry nor the new
 	// file, so the legacy stores are the load path for everyone who
 	// hasn't re-logged-in after the rename.
-	return loadLegacyToken(diagnostics, keychainReachable)
+	return storedTokenLookup{
+		token:           loadLegacyToken(diagnostics, err == nil),
+		keychainChecked: true,
+		keychainErr:     err,
+	}
 }
 
 // loadLegacyToken probes the pre-#439 keychain service and the
@@ -466,6 +487,10 @@ func (s savedTokenStore) describe() string {
 
 // saveTokenStore is saveToken, also reporting which store took the key.
 func saveTokenStore(token string) (savedTokenStore, error) {
+	return saveTokenStoreWithFallback(token, nil)
+}
+
+func saveTokenStoreWithFallback(token string, confirmFile func(error) error) (savedTokenStore, error) {
 	token = strings.TrimSpace(token)
 	if !validPersistedToken(token) {
 		return savedTokenStore{}, errors.New("gregale: refusing to persist an invalid API key")
@@ -513,6 +538,10 @@ func saveTokenStore(token string) (savedTokenStore, error) {
 		}
 		clearCompletionCaches()
 		return savedTokenStore{}, nil
+	} else if !errors.Is(err, errKeyringDisabled) && confirmFile != nil {
+		if err := confirmFile(err); err != nil {
+			return savedTokenStore{}, err
+		}
 	} else if !errors.Is(err, errKeyringDisabled) {
 		// Keychain unreachable (no D-Bus on headless Linux, a locked
 		// keyring whose unlock prompt was cancelled, a timeout). Say

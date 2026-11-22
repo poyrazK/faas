@@ -470,9 +470,11 @@ func TestStartStarterRefusesExistingFiles(t *testing.T) {
 	}
 }
 
-func TestStartBrowserLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
+func TestStartHeadlessLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
 	stdout, stderr := startTestEnvironment(t)
 	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("SSH_CONNECTION", "remote")
+	t.Setenv(keyringModeEnv, "")
 	setFakeKeyring(t)
 	launcher := stubBrowser(t, nil)
 	fastLoginPoll(t)
@@ -480,6 +482,10 @@ func TestStartBrowserLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
 	startTestAPI(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/cli-auth/code":
+			var request api.CliAuthCodeRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || !request.Device || request.LoopbackPort != 0 {
+				t.Errorf("expected a manual approval code: %+v %v", request, err)
+			}
 			_ = json.NewEncoder(w).Encode(api.CliAuthCodeResponse{Code: "WXYZ-1234", URL: "https://api.example.test/cli-auth?code=WXYZ-1234", ExpiresAt: time.Now().Add(time.Minute).Format(time.RFC3339)})
 		case "/v1/cli-auth/exchange":
 			_ = json.NewEncoder(w).Encode(api.CliAuthExchangeResponse{Plaintext: plaintext, KeyID: "key-1", Account: api.AccountResponse{ID: "acct-1", Email: "person@example.test", Plan: "free"}})
@@ -487,12 +493,21 @@ func TestStartBrowserLoginKeepsPromptInputAndCredentialSeparate(t *testing.T) {
 			api.WriteProblem(w, api.NewProblem(404, "not_found", "Not found", "No resource"))
 		}
 	})
-	runner := startTestRunner(t, startTestSource(t), "y\nnext prompt input\n")
+	runner := startTestRunner(t, startTestSource(t), "y\ny\nnext prompt input\n")
+	keychain := setFakeKeyring(t, withGetErr(errors.New("no D-Bus")))
 	if code := runner.authenticate(); code != 0 {
 		t.Fatalf("code=%d stderr=%s stdout=%s", code, stderr(), stdout)
 	}
-	if len(launcher.urls) != 1 || loadToken() != plaintext || strings.Contains(stdout.String(), plaintext) {
+	if len(launcher.urls) != 0 || loadToken() != plaintext || strings.Contains(stdout.String(), plaintext) {
 		t.Fatalf("login result: opened=%v stored=%t stdout=%s", launcher.urls, loadToken() == plaintext, stdout)
+	}
+	promptIndex := strings.Index(stdout.String(), "Save the API key in a plaintext file")
+	linkIndex := strings.Index(stdout.String(), "Open this link in a browser")
+	if promptIndex < 0 || linkIndex <= promptIndex {
+		t.Fatalf("expected a storage choice followed by the manual login: %s", stdout)
+	}
+	if calls := keychain.callLog(); len(calls) != 1 || !strings.HasPrefix(calls[0], "get ") {
+		t.Fatalf("headless login should reuse the failed read and skip keychain writes: %v", calls)
 	}
 	if next, err := runner.prompt.text(runner.ctx, "Next", ""); err != nil || next != "next prompt input" {
 		t.Fatalf("login consumed wizard input: %q, %v", next, err)

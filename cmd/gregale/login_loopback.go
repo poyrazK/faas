@@ -5,7 +5,8 @@ package main
 // approval page. The user clicks Authorize; the page sends a fresh device
 // code to this listener and the CLI exchanges it. Nobody types a code. A
 // terminal whose browser runs on another machine (SSH) uses the typed-code
-// flow instead: `gregale login --device`, or automatically over SSH.
+// flow instead: `gregale login --device`, or automatically over SSH or on
+// Linux without a display.
 
 import (
 	"context"
@@ -15,12 +16,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/zalando/go-keyring"
 )
 
 // loopbackListen opens the one-click callback listener. A variable so tests
@@ -34,10 +37,32 @@ func remoteShell() bool {
 	return os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != "" || os.Getenv("SSH_CLIENT") != ""
 }
 
-// browserLogin runs the interactive sign-in and saves the login. typed
-// forces the typed-code flow.
-func browserLogin(ctx context.Context, c *Client, typed bool) int {
-	if !typed && !remoteShell() {
+func manualBrowserLogin() bool {
+	return remoteShell() || (runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "")
+}
+
+// browserLogin runs interactive sign-in with the command's existing prompt reader.
+func browserLogin(ctx context.Context, c *Client, manual bool, prompt *startPrompt, lookup storedTokenLookup) int {
+	var confirmFile func(error) error
+	if manual {
+		confirmFile = func(err error) error {
+			return confirmLoginFileStorage(ctx, prompt, err)
+		}
+		if !keyringDisabled() {
+			keychainErr := lookup.keychainErr
+			if !lookup.keychainChecked {
+				_, keychainErr = effectiveKeyring().Get(keyringService, profileKeyringAccount())
+			}
+			if keychainErr != nil && !errors.Is(keychainErr, keyring.ErrNotFound) {
+				if err := confirmFile(keychainErr); err != nil {
+					return printErr("Login canceled", err)
+				}
+				loginInsecureStorage = true
+				defer func() { loginInsecureStorage = false }()
+			}
+		}
+	}
+	if !manual {
 		if ln, err := loopbackListen(); err == nil {
 			defer func() { _ = ln.Close() }()
 			port := ln.Addr().(*net.TCPAddr).Port
@@ -48,7 +73,7 @@ func browserLogin(ctx context.Context, c *Client, typed bool) int {
 				}
 				// The server ignored the port: its code takes the typed flow.
 				_ = ln.Close()
-				return typedCodeLogin(ctx, c, codeResp)
+				return typedCodeLogin(ctx, c, codeResp, nil)
 			}
 			// An older server refuses loopback_port (400): mint again
 			// without it for the typed-code flow.
@@ -63,20 +88,39 @@ func browserLogin(ctx context.Context, c *Client, typed bool) int {
 	if err != nil {
 		return printErr("Could not start login", err)
 	}
-	return typedCodeLogin(ctx, c, codeResp)
+	return typedCodeLogin(ctx, c, codeResp, confirmFile)
 }
 
-// typedCodeLogin shows the code to type on the approval page and waits.
-func typedCodeLogin(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse) int {
-	_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
-	_, _ = fmt.Fprintf(osStdout, "Open %s and enter the code there.\n", codeResp.URL)
+func confirmLoginFileStorage(ctx context.Context, prompt *startPrompt, keychainErr error) error {
+	PrintWarn(prompt.writer, "The OS keychain is unavailable: %s.", describeKeyringErr(keychainErr))
+	ok, err := prompt.confirm(ctx, "Save the API key in a plaintext file readable only by you on this machine")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("file storage declined. Unlock the OS keychain and try again")
+	}
+	return nil
+}
+
+// typedCodeLogin opens the approval page when possible. With explicit manual
+// approval the storage callback also handles a keychain that fails at save time.
+func typedCodeLogin(ctx context.Context, c *Client, codeResp api.CliAuthCodeResponse, confirmFile func(error) error) int {
+	if confirmFile != nil {
+		_, _ = fmt.Fprintf(osStdout, "Open this link in a browser and enter the code below.\n  %s\nYour code: %s\n", codeResp.URL, codeResp.Code)
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "Your code: %s\n", codeResp.Code)
+		_, _ = fmt.Fprintf(osStdout, "Open %s and enter the code there.\n", codeResp.URL)
+	}
 	_, _ = fmt.Fprintln(osStdout, "  Never enter a code someone sent you.")
-	if err := openBrowser(codeResp.URL); err != nil {
-		PrintFail(os.Stderr, "Could not open browser: %v", err)
-		_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
+	if confirmFile == nil {
+		if err := openBrowser(codeResp.URL); err != nil {
+			PrintFail(os.Stderr, "Could not open browser: %v", err)
+			_, _ = fmt.Fprintf(os.Stderr, "  Open this URL manually:\n  %s\n", codeResp.URL)
+		}
 	}
 	_, _ = fmt.Fprintln(osStdout, "Waiting for approval...")
-	return waitForApproval(ctx, c, codeResp)
+	return waitForApproval(ctx, c, codeResp, confirmFile)
 }
 
 // loopbackResult is what the callback hands back to loopbackLogin.
