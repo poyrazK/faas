@@ -106,3 +106,39 @@ and one completed result in the reserved PostgreSQL namespace. The
 observer reads counts and the attempt number through its restricted login.
 The report is private to the harness. Native acceptance additionally
 requires running the journey on the enrolled KVM host.
+
+### Operator acceptance command
+
+A dedicated single-box acceptance host enrolls its compute node UUID as
+`node_id` in the existing root-owned
+`/etc/faas/rehearsal-acceptance-host.json` alongside the dedicated account and
+API origin. The enrolled node must resolve to the local schedd and vmmd
+Unix sockets. The platform stamp and clean checkout must match.
+
+Prepare the trusted fixture from that checkout with
+`scripts/ci/rehearsal-native.py --journey hosted-task --prepare-only --out DIR`.
+Use those sources in the normal hosted source review and binding checks,
+then approve a fresh rehearsal plan through the existing owner workflow.
+On the enrolled host, use the same personal administrator in `FAAS_TOKEN`
+and the dedicated HTTPS API origin in `FAAS_API`. Supply the deployed APID
+credential and fixture environment. Paths to the account-domain identity,
+credential lookup policy, runtime recipient and value-fingerprint key
+must be readable by the `faas-apid` service identity. The child uses the
+existing rehearsal admission switches and dedicated PostgreSQL fixture
+configuration. Use a new evidence directory outside the checkout.
+
+```sh
+GREGALE_REHEARSAL_NATIVE_ACCEPTANCE=1 scripts/ci/rehearsal-native.py \
+  --journey hosted-task --out "$evidence_dir" \
+  --hosted-task-intent "$intent_id" --hosted-task-plan "$plan_sha256"
+```
+
+The root wrapper takes the shared native acceptance lock and runs host
+leak checks. It invokes a tagged one-shot child under the APID service
+identity with the four prepared SHA-256 pins. The child authenticates the
+same owner, opens the configured stores, and calls the existing private
+runner. It reads the PostgreSQL catalog, workload and secret rows, and
+source storage after cleanup. The wrapper validates the receipt while it
+is pending, repeats the host identity check and publishes success only
+after the final leak check. A partial run leaves private evidence and
+logs. Its consumed approval cannot be replayed.
