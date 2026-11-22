@@ -7,6 +7,26 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Object storage GA on OVH — 2026-11-21 (not released)
+
+[ADR-20261121230052](adr/20261121230052-object-storage-ga.md) moves
+`object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`,
+`object-storage-compute` and `object-storage-key-scopes` to `ga` on their
+current plans. `object-versioning` and `object-protection` stay `preview`
+because the OVH backend is `"versioning": "unsupported"`
+(ADR-20261121150000). `bucket-encryption`, `object-lifecycle`, `bucket-cors`
+and `bucket-access-grants` also stay `preview`: they are not qualified on OVH.
+`/docs/object-storage` is published.
+
+The OVH launch blockers found on 2026-11-21 are fixed by #7762 and #7792. The
+six flags keep their stored `default: false` (owner and release-acceptance
+accounts only), so the release opens nothing.
+
+Open evidence:
+- `tests/journeys/object_storage_test.go::TestObjectStorage` has not run
+  against production with this release. Record its result here. The flag
+  defaults turn `true`, per key, only after it passes (ADR rollout step 4).
+
 ## Data API investigation fixes — 2026-11-12 (branch, not released)
 
 All 30 retained findings have implementations and regression coverage in

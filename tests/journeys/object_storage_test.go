@@ -23,8 +23,9 @@ import (
 	"github.com/aws/smithy-go"
 )
 
-// GA inventory row 108: managed object storage. It is still a preview
-// capability released per account, so the journey first checks that the
+// GA inventory row 108: managed object storage, GA on OVH
+// (ADR-20261121230052). Its platform flags stay released per account until
+// this journey passes on production, so the journey first checks that the
 // account may use it; until it may, that step is a known failure
 // (known_failures.json) and the rest report blocked.
 
@@ -73,7 +74,8 @@ type objectJourney struct {
 // S3 SDK on the branded endpoint, check that another tenant's credential, a
 // forged signature, an unsigned request and a revoked credential reach
 // nothing, then empty and delete the bucket. Versioning, Object Lock,
-// lifecycle rules, notifications and CORS rules stay preview and are not run.
+// lifecycle rules and CORS rules stay preview and are not run; nor are public
+// buckets, upload routes, app bindings, notifications or key-scoped bindings.
 func TestObjectStorage(t *testing.T) {
 	tg := needs(t, tierFull, true)
 	t.Parallel()
