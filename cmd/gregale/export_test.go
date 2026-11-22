@@ -3009,3 +3009,6 @@ var FormatObserved = formatObserved
 
 // PrintAffectedText renders a project plan's affected apps.
 var PrintAffectedText = printAffectedText
+
+// AppGetURL is the url row of `app get`.
+var AppGetURL = appGetURL

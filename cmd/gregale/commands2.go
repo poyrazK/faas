@@ -815,7 +815,7 @@ func cmdApp(args []string) int {
 		}
 		printAppReadContext(slug, *environment)
 		fmt.Printf("%-30s %s\n", "slug:", a.Slug)
-		fmt.Printf("%-30s %s\n", "url:", canonicalAppURL(a))
+		fmt.Printf("%-30s %s\n", "url:", appGetURL(a))
 		printAppProtectionLine(ctx, client, slug, *environment)
 		fmt.Printf("%-30s %s\n", "visibility:", api.NormalizeAppVisibility(api.AppVisibility(a.Visibility)))
 		fmt.Printf("%-30s %d MB\n", "ram:", a.RAMMB)
@@ -3014,6 +3014,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if slug == "" {
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
+		// A plain `gregale deploy` of a Compose project becomes a project
+		// deploy below (multiServiceSource), but the project-only link the
+		// first deploy wrote was refused here first, so every later plain
+		// deploy or --dry-run failed (prod hunt r26).
+		if nameErr != nil && !projectRequested && multiServiceSource(contextDir) != "" {
+			if project, err := linkedProjectSlug(contextDir); err == nil && project != "" {
+				slug, nameErr = projectDeployPlaceholderSlug(contextDir, project), nil
+			}
+		}
 		if nameErr != nil {
 			return printErr("Could not read local project context", nameErr)
 		}
@@ -8518,6 +8527,16 @@ func deployedAppURL(appID string) string {
 
 // canonicalAppURL prefers the server-resolved customer-facing URL while
 // retaining compatibility with older API responses that only include url.
+// appGetURL is the url row of `app get`. An internal app's canonical URL
+// answers 404 on the public edge (prod hunt r26), so it says so instead of
+// printing a dead link.
+func appGetURL(app api.AppResponse) string {
+	if api.NormalizeAppVisibility(api.AppVisibility(app.Visibility)) == api.AppVisibilityInternal {
+		return "none (internal: reached by service bindings only)"
+	}
+	return canonicalAppURL(app)
+}
+
 func canonicalAppURL(app api.AppResponse) string {
 	if value := strings.TrimSpace(app.CanonicalURL); value != "" {
 		return value

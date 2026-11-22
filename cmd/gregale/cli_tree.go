@@ -958,6 +958,13 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	// `app show APP` is the spelling most nouns use for reading one thing;
+	// it answered "unexpected positional argument" (prod hunt r26). Only
+	// with an explicit target, so a bare `app show` still reads an app
+	// named "show".
+	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		verb = "get"
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}
