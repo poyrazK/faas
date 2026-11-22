@@ -342,6 +342,19 @@ type AgentBudgetStanding struct {
 	UpdatedAt          pgtype.Timestamptz
 }
 
+// ADR-20261030125501 stored stateless-agent tool results written by apid: the body lives in the artifact store until expires_at.
+type AgentCallbackResult struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	EndpointID pgtype.UUID
+	ThreadID   string
+	MessageID  string
+	Sha256     string
+	SizeBytes  int32
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
 type AgentCallbackRevocation struct {
 	EndpointID pgtype.UUID

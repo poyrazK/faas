@@ -31341,6 +31341,35 @@ CREATE TABLE public.agent_budget_standing (
 
 
 --
+-- Name: agent_callback_results; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.agent_callback_results (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    endpoint_id uuid NOT NULL,
+    thread_id text NOT NULL,
+    message_id text NOT NULL,
+    sha256 text NOT NULL,
+    size_bytes integer NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_callback_results_check CHECK ((expires_at > created_at)),
+    CONSTRAINT agent_callback_results_message_id_check CHECK (((char_length(message_id) >= 1) AND (char_length(message_id) <= 54))),
+    CONSTRAINT agent_callback_results_sha256_check CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT agent_callback_results_size_bytes_check CHECK (((size_bytes >= 1) AND (size_bytes <= 1048576))),
+    CONSTRAINT agent_callback_results_thread_id_check CHECK (((char_length(thread_id) >= 1) AND (char_length(thread_id) <= 64)))
+);
+
+
+--
+-- Name: TABLE agent_callback_results; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.agent_callback_results IS 'ADR-20261030125501 stored stateless-agent tool results written by apid: the body lives in the artifact store until expires_at.';
+
+
+--
 -- Name: agent_callback_revocations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -64186,6 +64215,22 @@ ALTER TABLE ONLY public.agent_budget_standing
 
 
 --
+-- Name: agent_callback_results agent_callback_results_endpoint_id_thread_id_message_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_results
+    ADD CONSTRAINT agent_callback_results_endpoint_id_thread_id_message_id_key UNIQUE (endpoint_id, thread_id, message_id);
+
+
+--
+-- Name: agent_callback_results agent_callback_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_results
+    ADD CONSTRAINT agent_callback_results_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: agent_callback_revocations agent_callback_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -78795,6 +78840,20 @@ CREATE INDEX agent_approval_requests_pending_account_idx ON public.agent_approva
 --
 
 CREATE INDEX agent_approval_requests_pending_org_idx ON public.agent_approval_requests USING btree (org_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: agent_callback_results_endpoint_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_callback_results_endpoint_idx ON public.agent_callback_results USING btree (endpoint_id, expires_at);
+
+
+--
+-- Name: agent_callback_results_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX agent_callback_results_expiry_idx ON public.agent_callback_results USING btree (expires_at);
 
 
 --
@@ -98433,6 +98492,22 @@ ALTER TABLE ONLY public.agent_budget_spend
 
 ALTER TABLE ONLY public.agent_budget_standing
     ADD CONSTRAINT agent_budget_standing_key_id_fkey FOREIGN KEY (key_id) REFERENCES public.api_keys(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_callback_results agent_callback_results_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_results
+    ADD CONSTRAINT agent_callback_results_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: agent_callback_results agent_callback_results_endpoint_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.agent_callback_results
+    ADD CONSTRAINT agent_callback_results_endpoint_id_fkey FOREIGN KEY (endpoint_id) REFERENCES public.managed_realtime_endpoints(id) ON DELETE CASCADE;
 
 
 --
