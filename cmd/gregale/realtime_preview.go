@@ -10,6 +10,7 @@ package main
 // the rollout in apid, shows them everywhere, including the reference.
 
 import (
+	"context"
 	"errors"
 	"os"
 	"slices"
@@ -43,7 +44,19 @@ func realtimePreviewInView(view capabilityView) bool {
 // delivery and the gregale.yaml realtime section follow the account's
 // rollout instead of needing the operator variable in the user's shell.
 func realtimePreviewForAccount() bool {
-	return realtimePreviewCLI() || realtimePreviewInView(discoveryCapabilityView())
+	return realtimePreviewForAccountContext(context.Background())
+}
+
+// realtimePreviewForAccountContext is realtimePreviewForAccount for a caller
+// holding a context, which bounds the account view read.
+func realtimePreviewForAccountContext(ctx context.Context) bool {
+	return realtimePreviewInView(discoveryCapabilityViewContext(ctx))
+}
+
+// realtimePreviewOffline is realtimePreviewInView for usage and error text:
+// the run's view or the cached one, never a new API read (Hunt 14 H14-89).
+func realtimePreviewOffline() bool {
+	return realtimePreviewInView(offlineCapabilityView())
 }
 
 // realtimeVerbs are the realtime subcommands in usage order;
@@ -63,12 +76,15 @@ func hiddenRealtimeVerb(verb string) bool {
 }
 
 func realtimeUsage() string {
-	verbs := slices.DeleteFunc(slices.Clone(realtimeVerbs), hiddenRealtimeVerb)
+	verbs := slices.Clone(realtimeVerbs)
+	if !realtimePreviewOffline() {
+		verbs = slices.DeleteFunc(verbs, func(verb string) bool { return slices.Contains(realtimePreviewVerbs, verb) })
+	}
 	return "usage: gregale realtime <" + strings.Join(verbs, "|") + ">"
 }
 
 func realtimePublishUsage() string {
-	if realtimePreviewCLI() {
+	if realtimePreviewOffline() {
 		return "usage: gregale realtime publish APP_SLUG ENDPOINT_ID CHANNEL (--data-stdin|--data DATA) [--binary] [--delivery live|retained] [--idempotency-key KEY]"
 	}
 	return "usage: gregale realtime publish APP_SLUG ENDPOINT_ID CHANNEL (--data-stdin|--data DATA) [--binary] [--delivery live] [--idempotency-key KEY]"
