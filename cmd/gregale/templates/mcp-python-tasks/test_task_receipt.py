@@ -86,9 +86,12 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         self.run_receipt_journey()
 
     def test_reviewed_input_resumes_only_the_original_task(self):
-        self.run_receipt_journey(reviewed_input=True)
+        self.run_receipt_journey(reviewed_verb="wait")
 
-    def run_receipt_journey(self, reviewed_input=False):
+    def test_receipt_responds_and_cancels_after_lost_replies(self):
+        self.run_receipt_journey(reviewed_verb="respond")
+
+    def run_receipt_journey(self, reviewed_verb=None):
         config = {"endpoint": "/mcp", "tasks": {"enabled": True, "poll_interval_ms": 500},
                   "auth": {"mode": "external-oauth", "issuer": "https://issuer.example",
                            "jwks_url": "https://issuer.example/jwks", "resource": "https://mcp.example/mcp",
@@ -123,16 +126,33 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         change_prompt = threading.Event()
         changed_reads = []
         updates = []
+        requests = []
+        dropped_mutations = []
+
+        def assert_requests(*expected):
+            self.assertEqual(requests, list(expected))
+            requests.clear()
 
         class ReceiptJourneyHandler(MCPHandler):
             def do_POST(self):
-                if self.headers.get("Mcp-Method") == "tasks/update":
+                method = self.headers.get("Mcp-Method")
+                if reviewed_verb == "respond":
+                    requests.append(method)
+                if method == "tasks/update":
                     updates.append(True)
                 super().do_POST()
+
+            def drop_reply(self):
+                self.close_connection = True
+                self.connection.shutdown(socket.SHUT_RDWR)
 
             def send_json(self, status, value, extra_headers=None):
                 task = value.get("result", {})
                 method = self.headers.get("Mcp-Method")
+                if (reviewed_verb == "respond" and method in {"tasks/update", "tasks/cancel"}
+                        and status == 200 and task.get("resultType") == "complete"):
+                    dropped_mutations.append(method)
+                    return self.drop_reply()
                 if method == "tasks/get" and change_prompt.is_set() and task.get("status") == "input_required":
                     # Change only the served prompt, leaving the durable form pending.
                     task["inputRequests"]["approval"]["params"]["message"] = "Approve a different report?"
@@ -152,8 +172,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                     dropped.put((task["taskId"], row["expires_at"]))
                 except Exception as exc:
                     dropped.put(exc)
-                self.close_connection = True
-                self.connection.shutdown(socket.SHUT_RDWR)
+                self.drop_reply()
 
         http = DrainingHTTPServer(("127.0.0.1", 0), ReceiptJourneyHandler)
         self.addCleanup(http.server_close)
@@ -180,7 +199,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
 
         def submit_args(path):
             args = ("--tool", "build_report", "--tasks", "--task-receipt", str(path), "--arguments")
-            if reviewed_input:
+            if reviewed_verb:
                 return (*args, form_args, "--defer-form-input")
             return (*args, original_args)
 
@@ -195,7 +214,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         key = receipt["submissionKey"]
         self.assertEqual(key[14], "7")
 
-        if reviewed_input:
+        if reviewed_verb:
             def rows():
                 with fixture.pool.connection() as connection:
                     return connection.execute("""SELECT task_id::text AS task_id,
@@ -203,15 +222,15 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                         result_encrypted IS NOT NULL AS has_result
                         FROM gregale_mcp_tasks WHERE namespace=%s""", (fixture.namespace,)).fetchall()
 
-            def wait_for_form(target):
+            def wait_for_status(target, status):
                 deadline = time.monotonic() + 8
                 while time.monotonic() < deadline:
-                    if any(row["task_id"] == target and row["status"] == "input_required" for row in rows()):
+                    if any(row["task_id"] == target and row["status"] == status for row in rows()):
                         return
                     time.sleep(0.05)
-                self.fail("Task did not reach input_required")
+                self.fail(f"Task did not reach {status}")
 
-            wait_for_form(task_id)
+            wait_for_status(task_id, "input_required")
             template_path = client_dir / "reviewed-input.json"
             snapshot = cli("status", owner, 0, "--task-receipt", str(receipt_path),
                            "--write-input-template", str(template_path))
@@ -228,18 +247,18 @@ class TaskReceiptJourneyTests(unittest.TestCase):
             self.assertEqual(approval["message"], "Approve generating this report?")
             self.assertIsNone(approval["response"])
 
-            def wait(token, code, path=receipt_path):
-                return cli("wait", token, code, "--task-receipt", str(path),
+            def answer(token, code, path=receipt_path):
+                return cli(reviewed_verb, token, code, "--task-receipt", str(path),
                            "--reviewed-input-file", str(template_path))
 
-            wait(owner, 1)
+            answer(owner, 1)
             approval["response"] = {"action": "accept", "content": {"approved": True}}
             template_path.write_text(json.dumps(template))
 
             other_receipt = client_dir / "other-receipt.json"
             other_id = cli("call", owner, 0, *submit_args(other_receipt))["result"]["taskId"]
             self.assertNotEqual(other_id, task_id)
-            wait_for_form(other_id)
+            wait_for_status(other_id, "input_required")
             other_path = client_dir / "other-input.json"
             cli("status", owner, 0, "--task-receipt", str(other_receipt), "--write-input-template", str(other_path))
             other_template = json.loads(other_path.read_text())
@@ -247,15 +266,50 @@ class TaskReceiptJourneyTests(unittest.TestCase):
             self.assertRegex(approval["formSha256"], r"^[0-9a-f]{64}$")
             self.assertEqual(other_template["forms"]["approval"]["formSha256"], approval["formSha256"])
 
-            wait(owner, 1, other_receipt)
-            wait(reduced, 1)
+            answer(owner, 1, other_receipt)
+            if reviewed_verb == "respond":
+                requests.clear()
+                for credential in (foreign, reduced):
+                    answer(credential, 1)
+                    assert_requests("server/discover", "gregale/tasks/lookup")
+            else:
+                answer(reduced, 1)
             change_prompt.set()
-            wait(owner, 1)
+            answer(owner, 1)
             change_prompt.clear()
             self.assertEqual(len(changed_reads), 1)
             self.assertEqual(updates, [])
 
-            completed = wait(owner, 0)
+            other_status = "input_required"
+            if reviewed_verb == "respond":
+                requests.clear()
+                observed = answer(owner, 0)
+                assert_requests("server/discover", "gregale/tasks/lookup", "tasks/get", "tasks/update", "tasks/get")
+                self.assertEqual(observed["taskId"], task_id)
+                self.assertIn((observed["status"], observed["nextAction"]),
+                              {("working", "poll_status"), ("completed", "read_result")})
+                metadata = {"taskId", "status", "lastUpdatedAt", "nextAction"}
+                if observed["status"] == "working":
+                    metadata.add("pollIntervalMs")
+                self.assertEqual(set(observed), metadata)
+
+                wait_for_status(task_id, "completed")
+                read_args = ("--task-receipt", str(receipt_path), "--read-result")
+                for credential in (foreign, reduced):
+                    cli("status", credential, 1, *read_args)
+                    assert_requests("server/discover", "gregale/tasks/lookup")
+                completed = cli("status", owner, 0, *read_args)
+                assert_requests("server/discover", "gregale/tasks/lookup", "tasks/get")
+
+                wait_for_status(other_id, "input_required")
+                cancelled = cli("cancel", owner, 0, "--task-receipt", str(other_receipt))
+                assert_requests("server/discover", "gregale/tasks/lookup", "tasks/cancel", "gregale/tasks/lookup")
+                self.assertEqual(cancelled, {"taskId": other_id, "status": "cancelled",
+                                             "lastUpdatedAt": cancelled["lastUpdatedAt"], "nextAction": "none"})
+                self.assertEqual(dropped_mutations, ["tasks/update", "tasks/cancel"])
+                other_status = "cancelled"
+            else:
+                completed = answer(owner, 0)
             self.assertEqual((completed["taskId"], completed["status"]), (task_id, "completed"))
             self.assertEqual(completed["result"]["content"],
                              [{"type": "text", "text": "Report receipt journey is ready after 1 steps."}])
@@ -266,7 +320,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                                              "status": "completed", "attempt_count": 1, "has_result": True})
             other = by_id[other_id]
             self.assertEqual((other["status"], other["attempt_count"], other["has_result"]),
-                             ("input_required", 1, False))
+                             (other_status, 1, False))
             return
 
         def submit(token, code, arguments):
