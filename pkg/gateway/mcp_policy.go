@@ -21,7 +21,7 @@ func mcpPolicyReject(w http.ResponseWriter, status int, p *api.MCPResourcePolicy
 		if status == http.StatusForbidden {
 			challenge += `, error="insufficient_scope"`
 		}
-		w.Header().Set("WWW-Authenticate", challenge)
+		w.Header().Set("Www-Authenticate", challenge)
 	}
 	api.WriteProblem(w, api.NewProblem(status, "mcp_access_denied", "MCP access denied", reason))
 	return true

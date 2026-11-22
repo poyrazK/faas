@@ -145,7 +145,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				w.Header().Add(k, v)
 			}
 		}
-		w.Header().Set("x-faas-cache", "hit")
+		w.Header().Set("X-Faas-Cache", "hit")
 		w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 		w.Header().Set("Content-Length", itoaLen(entry.body))
 		h.applyCachedRouteLifecycle(w, r, app, entry)
@@ -190,7 +190,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 				w.Header().Add(k, v)
 			}
 		}
-		w.Header().Set("x-faas-cache", "stale-while-revalidate")
+		w.Header().Set("X-Faas-Cache", "stale-while-revalidate")
 		w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 		w.Header().Set("X-From-Cache", "stale")
 		w.Header().Add("Warning", `110 - "Response is Stale"`)

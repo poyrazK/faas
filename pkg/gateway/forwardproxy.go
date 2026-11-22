@@ -92,9 +92,33 @@ func isSyntheticInvocation(ctx context.Context) bool {
 // remain internal. Dropping the workflow headers broke the documented
 // X-Faas-Workflow-Attempt contract (production-us hunt #5, H5-44).
 func guestReceivesFaasHeader(ctx context.Context, name string) bool {
-	return isTrustedServiceCallerAssertion(ctx, name) || isTrustedServiceCallerEnv(ctx, name) ||
+	return guestFaasHeaderPolicyFrom(ctx).receives(name)
+}
+
+// guestFaasHeaderPolicy is guestReceivesFaasHeader with its context marks
+// read once. The forwarders classify every x-faas-* header of a request, and
+// each mark is a context.Value walk of the request's ~60-layer context chain;
+// the request context does not change while its headers are classified, so
+// reading the marks once gives every header the same answer.
+type guestFaasHeaderPolicy struct {
+	callerAssertion bool // trustedServiceCallerAssertionContextKey
+	callerEnv       bool // trustedServiceCallerEnvContextKey
+	synthetic       bool // syntheticInvocationContextKey
+}
+
+func guestFaasHeaderPolicyFrom(ctx context.Context) guestFaasHeaderPolicy {
+	var p guestFaasHeaderPolicy
+	p.callerAssertion, _ = ctx.Value(trustedServiceCallerAssertionContextKey{}).(bool)
+	p.callerEnv, _ = ctx.Value(trustedServiceCallerEnvContextKey{}).(bool)
+	p.synthetic = isSyntheticInvocation(ctx)
+	return p
+}
+
+func (p guestFaasHeaderPolicy) receives(name string) bool {
+	return (p.callerAssertion && strings.EqualFold(name, ServiceCallerAssertionHeader)) ||
+		(p.callerEnv && (strings.EqualFold(name, ServiceCallerEnvHeader) || strings.EqualFold(name, ServiceCallerPreviewOfHeader))) ||
 		strings.EqualFold(name, api.InvocationIDHeader) ||
-		(isSyntheticInvocation(ctx) && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
+		(p.synthetic && (strings.EqualFold(name, api.InvocationSourceHeader) || api.IsInvocationAttemptHeader(name) || api.IsWorkflowStepHeader(name))) ||
 		api.IsGuestIdentityHeader(name) ||
 		api.IsOutboundWebhookHeader(name) ||
 		strings.EqualFold(name, wire.ClientIPHeader)
@@ -123,11 +147,6 @@ func guestDeadlineHeader(ctx context.Context) (*vmmdpb.Header, bool) {
 // platform-authored assertion may cross it.
 func withTrustedServiceCallerAssertion(r *http.Request) *http.Request {
 	return r.WithContext(context.WithValue(r.Context(), trustedServiceCallerAssertionContextKey{}, true))
-}
-
-func isTrustedServiceCallerEnv(ctx context.Context, header string) bool {
-	trusted, _ := ctx.Value(trustedServiceCallerEnvContextKey{}).(bool)
-	return trusted && (strings.EqualFold(header, ServiceCallerEnvHeader) || strings.EqualFold(header, ServiceCallerPreviewOfHeader))
 }
 
 func isTrustedServiceCallerAssertion(ctx context.Context, header string) bool {
@@ -395,7 +414,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// ADR-126: Handler.ServeHTTP stamps the app's wire-protocol choice
 	// on the request. ForwardHTTPRequestInit carries it to vmmd, which
 	// maps http1 to the H1 bridge and http2/grpc to the H2C bridge.
-	protocol := r.Header.Get("x-faas-protocol")
+	protocol := r.Header.Get("X-Faas-Protocol")
 	if protocol == "" {
 		protocol = "http1"
 	}
@@ -406,7 +425,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	if log.Enabled(r.Context(), slog.LevelDebug) {
 		log.Debug("gateway: framing selection",
 			"node", t.NodeID,
-			"app", logsanitize.Field(r.Header.Get("x-faas-app")),
+			"app", logsanitize.Field(r.Header.Get("X-Faas-App")),
 			"app_protocol", logsanitize.Field(protocol))
 	}
 
@@ -450,7 +469,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		port = uint32(sidecarPort)
 	}
 	init := &vmmdpb.ForwardHTTPRequestInit{
-		Instance:           r.Header.Get("x-faas-instance"),
+		Instance:           r.Header.Get("X-Faas-Instance"),
 		Method:             r.Method,
 		RequestUri:         r.URL.RequestURI(),
 		Port:               port,
@@ -467,8 +486,9 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 	// SDKs can join the platform trace, including on warm instances.
 	guestHeaders := stripHopByHop(r.Header)
 	injectGuestTraceContext(r.Context(), guestHeaders)
+	faasPolicy := guestFaasHeaderPolicyFrom(r.Context())
 	for name, vals := range guestHeaders {
-		if api.HasLowerPrefix(name, "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
+		if api.HasLowerPrefix(name, "x-faas-") && !faasPolicy.receives(name) {
 			continue
 		}
 		for _, v := range vals {
@@ -671,7 +691,7 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				budgetDetached = isLongLivedForward(r)
 				if budgetDetached {
 					recordTrafficStreamDetached(r.Context())
-					if isEventStream(w.Header()) || r.Header.Get("x-faas-protocol") == "grpc" {
+					if isEventStream(w.Header()) || r.Header.Get("X-Faas-Protocol") == "grpc" {
 						recordTrafficLongLivedSession(r.Context())
 					}
 					if isEventStream(w.Header()) {
@@ -938,7 +958,7 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		port = uint32(sidecarPort)
 	}
 	init := &vmmdpb.ForwardRawRequestInit{
-		Instance:        r.Header.Get("x-faas-instance"),
+		Instance:        r.Header.Get("X-Faas-Instance"),
 		Port:            port,
 		MaxRequestBytes: api.RawStreamMaxRequestBytes,
 		// ADR-20261110210000 slice 3i: sealed rule headers vmmd adds to
@@ -1357,8 +1377,9 @@ func rawRequestHead(r *http.Request) ([]byte, error) {
 	}
 
 	headers := r.Header.Clone()
+	faasPolicy := guestFaasHeaderPolicyFrom(r.Context())
 	for name := range headers {
-		if api.HasLowerPrefix(name, "x-faas-") && !guestReceivesFaasHeader(r.Context(), name) {
+		if api.HasLowerPrefix(name, "x-faas-") && !faasPolicy.receives(name) {
 			headers.Del(name)
 		}
 	}

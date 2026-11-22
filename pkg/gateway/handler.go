@@ -2167,7 +2167,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		}); ok {
 			resolved, err := resolver.ResolveScopedRoutePolicy(r.Context(), app)
 			if err != nil {
-				w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+				w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 					"Declared route policy unavailable", "the environment route policy could not be loaded"))
 				return true
@@ -2186,7 +2186,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 	if h.declaredRoutes == nil {
-		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 			"Declared route policy unavailable", "the gateway has no declared-route matcher configured"))
 		return true
@@ -2206,7 +2206,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 		if h.log != nil {
 			h.log.Warn("gateway: declared route policy unavailable", "app_id", app.ID, "path", logsanitize.Field(requestPath), "method", logsanitize.Field(requestMethod), "err", logsanitize.FieldAny(err))
 		}
-		w.Header().Set("x-faas-error-reason", api.CodeDeclaredRoutePolicyUnavailable)
+		w.Header().Set("X-Faas-Error-Reason", api.CodeDeclaredRoutePolicyUnavailable)
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeDeclaredRoutePolicyUnavailable,
 			"Declared route policy unavailable", "the configured OpenAPI document or route list could not be loaded"))
 		return true
@@ -2214,7 +2214,7 @@ func (h *Handler) enforceDeclaredRoute(w http.ResponseWriter, r *http.Request, a
 	if allowed {
 		return false
 	}
-	w.Header().Set("x-faas-error-reason", api.CodeUndeclaredRoute)
+	w.Header().Set("X-Faas-Error-Reason", api.CodeUndeclaredRoute)
 	api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeUndeclaredRoute,
 		"Route not declared", fmt.Sprintf("%s %s is not declared for this app", requestMethod, requestPath)))
 	return true
@@ -3304,7 +3304,7 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 	}
 	raw := bearerTokenFromHeader(r.Header.Get("Authorization"))
 	if raw == "" {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
+		w.Header().Set("Www-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "Missing bearer token",
 			"Authorization: Bearer <token> required for this edge rule"))
@@ -3333,7 +3333,7 @@ func (h *Handler) applyEdgeRuleJWTRule(w http.ResponseWriter, r *http.Request, a
 		return true
 	}
 	if err != nil {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="apps"`)
+		w.Header().Set("Www-Authenticate", `Bearer realm="apps"`)
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized,
 			api.CodeUnauthorized, "JWT verification failed", "the bearer token did not satisfy this edge rule"))
 		h.jwtEmit(r.Context(), "jwt", "failed", rule.ID, r.Host, nil, map[string]any{"err": err.Error()})
@@ -4974,7 +4974,7 @@ func (h *Handler) applyEdgeRuleThrottleRule(w http.ResponseWriter, r *http.Reque
 		// `route` is a new scope value alongside `account` + `app`
 		// (established by per-account / per-app 429 paths
 		// respectively) — see writeRouteRateLimitHeaders comment.
-		w.Header().Set("x-faas-rate-limit-scope", "route")
+		w.Header().Set("X-Faas-Rate-Limit-Scope", "route")
 		// The policy names the authoritative bucket family: `route` for a
 		// shared rule bucket and `per-consumer` for every dimensional rule,
 		// whether the identity owns a dedicated bucket or shares __other__.
@@ -5186,8 +5186,8 @@ func stampTrustedClientIP(r *http.Request) {
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		r.Header.Set(wire.ClientIPHeader, ip.String())
-		r.Header.Set("True-Client-IP", ip.String())
-		r.Header.Set("X-Real-IP", ip.String())
+		r.Header.Set("True-Client-Ip", ip.String())
+		r.Header.Set("X-Real-Ip", ip.String())
 	}
 }
 
@@ -6284,7 +6284,7 @@ func (h *Handler) AccountLimiter() *Limiter { return h.accountLimiter }
 // canonical "feature not enabled on this deployment" code (the
 // WS protocol allows clients to back off; 502 doesn't).
 func (h *Handler) writeWebSocketNotAllowed(w http.ResponseWriter, appID string, forwarderMissing bool) {
-	w.Header().Set("x-faas-error-reason", "websocket_not_on_plan")
+	w.Header().Set("X-Faas-Error-Reason", "websocket_not_on_plan")
 	w.Header().Set("Content-Type", "application/problem+json")
 	detail := "This app has WebSocket / Upgrade traffic disabled."
 	if forwarderMissing {
@@ -6344,8 +6344,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// These forwarding controls are authored below from the pinned app and
 	// streaming decision. A public header cannot turn ordinary HTTP into a
 	// detachable response and escape its deadline.
-	r.Header.Del("x-faas-stream")
-	r.Header.Del("x-faas-protocol")
+	r.Header.Del("X-Faas-Stream")
+	r.Header.Del("X-Faas-Protocol")
 	r.Header.Del(trafficdeadline.Header)
 	// The public edge's nonce for a not-dispatched marker lives in the
 	// request context from here on (ADR-20261022184531 step 5).
@@ -7843,7 +7843,7 @@ haveApp:
 				// retry land on the app without a manual reload.
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
 				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
-				writeWakePage(w, r.Header.Get("x-faas-wake-id"))
+				writeWakePage(w, r.Header.Get("X-Faas-Wake-Id"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
 			}
@@ -8234,7 +8234,7 @@ haveApp:
 		// Per-wake correlation handle (gaps analysis 2026-07-23). Sits
 		// next to x-faas-wake so the two are co-located on every
 		// response, and never set on a Phase-1 fast-path response.
-		w.Header().Set("x-faas-wake-id", wakeID)
+		w.Header().Set("X-Faas-Wake-Id", wakeID)
 	}
 
 	// The forwarding bridge can detect a terminal vmmd/netns failure after
@@ -8367,7 +8367,7 @@ haveApp:
 		// to the client (the request stays on the inbound HTTP
 		// path); the forwarder strips x-faas-* headers before
 		// bridging so the guest never sees it.
-		r.Header.Set("x-faas-stream", "true")
+		r.Header.Set("X-Faas-Stream", "true")
 		// ADR-124: per-app wire-protocol selector stamp. Same
 		// internal-header contract as x-faas-stream above —
 		// the forwarder reads x-faas-protocol as
@@ -8383,7 +8383,7 @@ haveApp:
 		// bridge re-frames to H1+chunked on the guest side
 		// per PR #750, so the per-app selector is metadata-
 		// only on the read side.
-		r.Header.Set("x-faas-protocol", decideProtocol(app))
+		r.Header.Set("X-Faas-Protocol", decideProtocol(app))
 		// ADR-047 PR-D: bookend the streaming concurrency gauge.
 		// setupStreamingWriter installs the per-flush onFlush hook
 		// that increments streamFlushes; this Inc opens the
@@ -8468,7 +8468,7 @@ haveApp:
 		// downstream observability (slog fields, dashboards)
 		// can distinguish raw-bytes sessions from plain HTTP
 		// without re-deriving from Connection/Upgrade.
-		r.Header.Set("x-faas-upgrade", "true")
+		r.Header.Set("X-Faas-Upgrade", "true")
 		platformWakeTrace.markProxyStarted(time.Now())
 		if h.sessionAffinity(app) {
 			if _, ok := h.backend.(affinityPicker); ok {
@@ -8535,7 +8535,7 @@ haveApp:
 		// the inner leg is a separate file (the bridge today
 		// re-frames to H1+chunked on the guest side per
 		// PR #750).
-		r.Header.Set("x-faas-protocol", decideProtocol(app))
+		r.Header.Set("X-Faas-Protocol", decideProtocol(app))
 		// ADR-201 §1. Retry only wraps the BUFFERED path: a streaming
 		// response commits on its first flush, so a replay is impossible by
 		// construction, and wrapping it would put a buffering writer in front
@@ -9208,9 +9208,9 @@ func (h *Handler) writeAppRateLimitHeaders(w http.ResponseWriter, appID string, 
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-RateLimit-Limit", intToString(limit))
-	w.Header().Set("X-RateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-RateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Ratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Ratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Ratelimit-Reset", intToString(reset))
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
@@ -9229,9 +9229,9 @@ func (h *Handler) writeAccountRateLimitHeaders(w http.ResponseWriter, accountID 
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-AccountRateLimit-Limit", intToString(limit))
-	w.Header().Set("X-AccountRateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-AccountRateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Accountratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Accountratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Accountratelimit-Reset", intToString(reset))
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
@@ -9273,9 +9273,9 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 	if !ok {
 		return rateLimitBucket{}
 	}
-	w.Header().Set("X-RouteRateLimit-Limit", intToString(limit))
-	w.Header().Set("X-RouteRateLimit-Remaining", intToString(remaining))
-	w.Header().Set("X-RouteRateLimit-Reset", intToString(reset))
+	w.Header().Set("X-Routeratelimit-Limit", intToString(limit))
+	w.Header().Set("X-Routeratelimit-Remaining", intToString(remaining))
+	w.Header().Set("X-Routeratelimit-Reset", intToString(reset))
 	// ADR-104 amendment 5 (issue #881 Phase 4 H1): the policy
 	// hint is emitted unconditionally so dashboards that key off
 	// its presence don't break; the value distinguishes the
@@ -9284,7 +9284,7 @@ func (h *Handler) writeRouteRateLimitHeadersFromLimiter(w http.ResponseWriter, l
 	if policy == "" {
 		policy = rateLimitScopeRoute
 	}
-	w.Header().Set("X-RouteRateLimit-Policy", policy)
+	w.Header().Set("X-Routeratelimit-Policy", policy)
 	return rateLimitBucket{limit: limit, remaining: remaining, ok: true}
 }
 
