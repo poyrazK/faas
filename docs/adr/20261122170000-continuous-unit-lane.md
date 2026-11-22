@@ -247,7 +247,12 @@ hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
   (`affected_packages.py` test set and the large packages' related tests)
   for what CI did not see together (the other pull requests that landed
   meanwhile, and the commit's own change), limited to packages the shipped
-  daemons build from, at the released commit. The release is built only
+  daemons build from, at the released commit. When ci-light passed on the
+  pull request's head, only packages affected by both sides run: the head
+  tested the commit's own change over an older main, main tested the other
+  merges, so a package only one side affects has inputs CI already saw
+  together (first merge after #7864, 2026-11-22: 710 s on a cold hosted
+  runner, 4 of 5 package runs were of that kind). The release is built only
   when they pass. These tests get no database URL (on the control plane
   it would be production's), so PostgreSQL-backed tests skip there; main's
   light run and the watch still cover them.
