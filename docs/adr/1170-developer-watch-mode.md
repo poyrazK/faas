@@ -67,7 +67,10 @@ Production deploys ignore the setting.
 
 - the plan's RAM for the developer app is below `DevWatchMinRAMMB` (new,
   per plan in `pkg/api/limits.go`); development servers for these frameworks
-  need noticeably more memory than the production server;
+  need noticeably more memory than the production server. A new watch-mode
+  developer app is created with `DevWatchRAMMB` (1024 MB, capped at the
+  plan's RAM; amended 2026-11-22 after a Next.js 15 first compile took 31.8 s
+  at 512 MB);
 - the app is built from a Dockerfile (`not_railpack`); a Dockerfile owner
   writes the development stage themselves;
 - the developer app does not require authentication. Development servers
