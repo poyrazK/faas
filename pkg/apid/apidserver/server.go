@@ -1014,6 +1014,9 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
+	// Read at evaluation time: the runtime config manager may be attached
+	// after the cache and changes without a restart.
+	s.statusCache.excludedAccounts = func() []string { return s.runtimeConfig.statusExcludedAccounts() }
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}

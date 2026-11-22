@@ -6086,12 +6086,16 @@ func (m *MemStore) ListAllDeployments(_ context.Context) ([]Deployment, error) {
 // CountDeploymentOutcomesSince mirrors the production aggregate without
 // widening Store. Status evaluators discover it through a narrow optional
 // interface, keeping existing test stores source-compatible.
-func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	failedTenants := map[string]struct{}{}
+	failures := map[string]struct{}{}
 	for _, d := range m.deployments {
+		if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" && slices.Contains(excludedAccounts, app.AccountID) {
+			continue
+		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -6111,7 +6115,11 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 				continue
 			}
 			if !m.customerCausedFailureLocked(d) {
-				out.Failed++
+				key := d.AppID
+				if key == "" {
+					key = d.ID
+				}
+				failures[key+":"+d.ErrorCode] = struct{}{}
 				tenant := d.AppID
 				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
 					tenant = app.AccountID
@@ -6120,13 +6128,16 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 		}
 	}
+	out.Failed = len(failures)
 	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
 // customerCausedFailureLocked mirrors the PgStore status aggregates' exclusion
-// of a failed deployment: a user_error build, or an error code that places the
-// failure in the customer's workload. Caller holds m.mu.
+// of a failed deployment (customerCausedDeploymentFailureSQL): a user_error
+// build, an error code that places the failure in the customer's workload, a
+// release command that failed other than with a platform exit code, or a
+// smoke check the candidate itself answered unacceptably. Caller holds m.mu.
 func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 	if api.IsCustomerCausedDeploymentFailure(d.ErrorCode) {
 		return true
@@ -6135,6 +6146,22 @@ func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 		if build.DeploymentID == d.ID && build.FailureClass == FailureUserError {
 			return true
 		}
+	}
+	switch d.ErrorCode {
+	case api.CodeReleaseCommandFailed:
+		for _, task := range m.appTasks {
+			if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease && !api.IsCustomerCausedReleaseExit(task.ExitCode) {
+				return false
+			}
+		}
+		return true
+	case api.CodeDeploymentSmokeFailed:
+		var receipt struct {
+			Smoke struct {
+				ErrorCode string `json:"error_code"`
+			} `json:"smoke"`
+		}
+		return json.Unmarshal(d.APIHostingReceipt, &receipt) == nil && receipt.Smoke.ErrorCode == api.CustomerCausedSmokeErrorCode
 	}
 	return false
 }

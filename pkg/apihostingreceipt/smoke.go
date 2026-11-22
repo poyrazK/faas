@@ -352,11 +352,13 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 	case VerificationRouteConnectivity:
 		// 415 is how a gRPC server answers a non-gRPC request (the gRPC
 		// HTTP/2 spec), and 405 how a Go workflow function's
-		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1);
-		// like 401/403/404 they prove the candidate answered.
-		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
-			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound ||
-			resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusUnsupportedMediaType
+		// ServeWorkflows answers a GET (ADR-20261113120824 amendment 1).
+		// Any proven 4xx shows the candidate is up and routed: the app
+		// never promised this path, so a framework's 400/422 for a GET it
+		// does not expect (prod 2026-11-22: an Express worker answered the
+		// platform's default /healthz with 422) is an answer, not a fault.
+		// A 5xx still fails the check.
+		acceptable = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError
 	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden

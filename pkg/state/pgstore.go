@@ -8964,20 +8964,21 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // remain in the aggregate because release-acceptance apps are deliberately
 // cleaned up after their terminal result is recorded. FailedAccounts counts the
 // tenants behind the failures; a deployment whose app row is gone counts as
-// its own tenant.
-func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+// its own tenant. A release command's own failure and an app's proven smoke
+// answer are customer-caused too (customerCausedDeploymentFailureSQL).
+// Repeated failures of one app with one error code count once: an owner (or
+// an agent) retrying the same broken release is one problem, not one per
+// attempt. excludedAccounts (operator runtime config
+// status_excluded_account_ids: internal test, probe and release-acceptance
+// accounts) leave both sides of the ratio.
+func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
 		with outcomes as (
 			select coalesce(a.account_id, d.app_id) as tenant,
+			       coalesce(d.app_id::text, d.id::text) || ':' || coalesce(d.error_code, '') as failure_key,
 			       d.status in ('live', 'superseded') as succeeded,
-			       d.status = 'failed'
-			         and coalesce(d.error_code, '') <> all($2::text[])
-			         and not exists (
-					select 1 from builds b
-					 where b.deployment_id = d.id
-					   and b.failure_class = 'user_error'
-				 ) as platform_failed
+			       d.status = 'failed' and not (`+customerCausedDeploymentFailureSQL("$2", "$3", "$4")+`) as platform_failed
 			  from deployments d
 			  left join apps a on a.id = d.app_id
 			 where (
@@ -8985,13 +8986,38 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				or
 				(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
 			   )
+			   and coalesce(a.account_id::text, '') <> all($5::text[])
 		)
 		select
 			count(*) filter (where succeeded),
-			count(*) filter (where platform_failed),
+			count(distinct failure_key) filter (where platform_failed),
 			count(distinct tenant) filter (where platform_failed)
-		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
+		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
+		api.CustomerCausedSmokeErrorCode, nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
+}
+
+// customerCausedDeploymentFailureSQL is the predicate, over a failed
+// deployments row d, that places the failure in the customer's workload: a
+// customer-caused error code (codes), a user_error build, a release command
+// that ran and failed other than with a platform exit code (exitCodes:
+// api.PlatformReleaseExitCodes), or a smoke check the candidate itself
+// answered unacceptably (smokeCode: api.CustomerCausedSmokeErrorCode).
+func customerCausedDeploymentFailureSQL(codes, exitCodes, smokeCode string) string {
+	return `coalesce(d.error_code, '') = any(` + codes + `::text[])
+			or exists (
+				select 1 from builds b
+				 where b.deployment_id = d.id
+				   and b.failure_class = 'user_error'
+			)
+			or (d.error_code = '` + api.CodeReleaseCommandFailed + `' and not exists (
+				select 1 from app_tasks t
+				 where t.deployment_id = d.id
+				   and t.kind = 'release'
+				   and t.exit_code = any(` + exitCodes + `::int[])
+			))
+			or (d.error_code = '` + api.CodeDeploymentSmokeFailed + `'
+			    and d.api_hosting_receipt #>> '{smoke,error_code}' = ` + smokeCode + `::text)`
 }
 
 // LatestPlatformDeploymentOutcome returns the newest successful deployment or
@@ -9010,17 +9036,10 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDe
 		  from deployments d
 		 where d.status in ('live', 'superseded', 'failed')
 		   and not (
-		     d.status = 'failed' and (
-		       coalesce(d.error_code, '') = any($1::text[])
-		       or exists (
-		         select 1 from builds b
-		          where b.deployment_id = d.id
-		            and b.failure_class = 'user_error'
-		       )
-		     )
+		     d.status = 'failed' and (`+customerCausedDeploymentFailureSQL("$1", "$2", "$3")+`)
 		   )
 		 order by observed_at desc, d.created_at desc
-		 limit 1`, api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.ObservedAt)
+		 limit 1`, api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes, api.CustomerCausedSmokeErrorCode).Scan(&out.Succeeded, &out.ObservedAt)
 	if err != nil {
 		return LatestDeploymentOutcome{}, mapErr(err)
 	}
