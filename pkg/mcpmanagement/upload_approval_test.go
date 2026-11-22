@@ -198,7 +198,19 @@ func testHostedUploadApprovalWindow(t *testing.T, scenario, wantCode string, res
 			t.Fatal(err)
 		}
 		defer func() { _ = journal.Close() }()
+		if scenario == "restart while awaiting approval" {
+			for _, dir := range []string{root, filepath.Join(root, "plans")} {
+				if err := os.Chmod(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
 		store = openUploads()
+		for _, dir := range []string{root, filepath.Join(root, "plans")} {
+			if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+				t.Fatalf("upload directory was not made private: %v, %v", info, err)
+			}
+		}
 		opts.uploads, opts.planStore = store, journal
 		manager, cs, closeConnection = connectUploadApprovalTest(t, client, opts)
 		if _, err := os.Stat(orphans); !errors.Is(err, os.ErrNotExist) {
