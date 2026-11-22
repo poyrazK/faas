@@ -41,7 +41,7 @@ func TestSnapshotHealthStores(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				d, err := s.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: a.ID, Status: state.DeployLive,
+				d, err := s.CreateDeployment(ctx, state.Deployment{ID: uuid.NewString(), AppID: a.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive,
 					ImageDigest: "sha256:" + fmt.Sprintf("%064d", 1), RootfsKey: rootfsKey, RootfsBytes: layer})
 				if err != nil {
 					t.Fatal(err)
