@@ -319,7 +319,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		}
 		writeRPCResult(w, request.ID, map[string]any{
 			"supportedVersions": supportedMCPVersions(config.Legacy),
-			"capabilities":      serverCapabilities(tasks, true),
+			"capabilities":      serverCapabilities(tasks, auth, true),
 		})
 	case "initialize":
 		var params struct {
@@ -332,7 +332,7 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		}
 		writeRPCResult(w, request.ID, map[string]any{
 			"protocolVersion": params.ProtocolVersion,
-			"capabilities":    serverCapabilities(tasks, params.ProtocolVersion == currentProtocol),
+			"capabilities":    serverCapabilities(tasks, auth, params.ProtocolVersion == currentProtocol),
 			"serverInfo":      map[string]string{"name": "gregale-mcp-go", "version": "1.0.0"},
 		})
 	case "ping":
@@ -359,6 +359,8 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		complete(w, request.ID, request.Params, auth, identity)
 	case "tasks/get":
 		serveTaskGet(w, r, request.ID, request.Params, auth, identity, tasks)
+	case taskSubmissionLookupMethod:
+		serveTaskSubmissionLookup(w, r, request, auth, identity, tasks, version)
 	case "tasks/cancel":
 		serveTaskCancel(w, r, request.ID, request.Params, auth, identity, tasks)
 	case "tasks/update":
@@ -390,7 +392,7 @@ func runtimeCatalogStatus(config mcpConfig, tasks *mcpTaskRuntime) (bool, uint64
 	return config.CatalogExpectedSHA256 == "" || config.CatalogExpectedSHA256 == digest, revision, digest
 }
 
-func serverCapabilities(tasks *mcpTaskRuntime, modern bool) map[string]any {
+func serverCapabilities(tasks *mcpTaskRuntime, auth *authenticator, modern bool) map[string]any {
 	resources := map[string]any{"listChanged": true}
 	if modern {
 		resources["subscribe"] = true
@@ -402,7 +404,12 @@ func serverCapabilities(tasks *mcpTaskRuntime, modern bool) map[string]any {
 		"completions": map[string]any{},
 	}
 	if tasks != nil && modern {
-		capabilities["extensions"] = map[string]any{"io.modelcontextprotocol/tasks": map[string]any{}}
+		extensions := map[string]any{"io.modelcontextprotocol/tasks": map[string]any{}}
+		if tasks.supportsTaskSubmission(auth) {
+			extensions[taskSubmissionExtension] = map[string]any{}
+			extensions[taskSubmissionLookupExtension] = map[string]any{}
+		}
+		capabilities["extensions"] = extensions
 	}
 	return capabilities
 }
@@ -470,6 +477,7 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 		Meta      struct {
 			ProgressToken      json.RawMessage `json:"progressToken"`
 			ClientCapabilities map[string]any  `json:"io.modelcontextprotocol/clientCapabilities"`
+			SubmissionKey      string          `json:"io.gregale/task-submission-key"`
 		} `json:"_meta"`
 	}
 	if err := json.Unmarshal(rawParams, &params); err != nil || params.Name == "" {
@@ -492,21 +500,27 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 		writeToolError(w, id, "tool arguments do not match inputSchema")
 		return
 	}
-	if tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities) {
-		if _, registered := tasks.taskHandlers[params.Name]; registered {
-			if params.Name == "build_report" && params.Arguments["request_approval"] == true && !containsString(taskInputMethodsFor(params.Meta.ClientCapabilities), "elicitation/create:form") {
-				writeToolError(w, id, "request_approval requires client support for elicitation form requests")
-				return
-			}
-			outputSchema, _ := entry.definition["outputSchema"].(map[string]any)
-			result, err := tasks.create(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities, outputSchema)
-			if err != nil {
-				writeToolError(w, id, "invalid task arguments or task queue unavailable")
-				return
-			}
-			writeRPCResult(w, id, result)
+	canCreateTask := tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities)
+	if canCreateTask {
+		_, canCreateTask = tasks.taskHandlers[params.Name]
+	}
+	if params.Meta.SubmissionKey != "" && (!canCreateTask || !tasks.supportsTaskSubmission(auth)) {
+		writeRPCError(w, id, -32602, "keyed Task submission is unavailable for this request", http.StatusBadRequest)
+		return
+	}
+	if canCreateTask {
+		if params.Name == "build_report" && params.Arguments["request_approval"] == true && !containsString(taskInputMethodsFor(params.Meta.ClientCapabilities), "elicitation/create:form") {
+			writeToolError(w, id, "request_approval requires client support for elicitation form requests")
 			return
 		}
+		outputSchema, _ := entry.definition["outputSchema"].(map[string]any)
+		result, err := tasks.createWithSubmission(r.Context(), params.Name, params.Arguments, identity, params.Meta.ClientCapabilities, params.Meta.SubmissionKey, outputSchema)
+		if err != nil {
+			writeToolError(w, id, "invalid task arguments or task queue unavailable")
+			return
+		}
+		writeRPCResult(w, id, result)
+		return
 	}
 	if entry.tool != nil {
 		result, err := entry.tool(r.Context(), params.Arguments, requestContext(identity))

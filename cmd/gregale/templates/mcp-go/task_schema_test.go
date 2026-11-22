@@ -100,6 +100,24 @@ func TestTaskSchemaRestrictedRuntimePostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer runtime.close()
+	if !runtime.taskSubmissionReady {
+		t.Fatal("migrated queue did not enable keyed submission for the restricted web role")
+	}
+	if _, err := migration.Exec(ctx, `ALTER TABLE gregale_mcp_tasks DROP COLUMN submission_key`); err != nil {
+		t.Fatal(err)
+	}
+	oldSchema, err := startMCPTaskRuntime(config, "web")
+	if err != nil {
+		t.Fatalf("ordinary Tasks cannot start on the previous schema: %v", err)
+	}
+	defer oldSchema.close()
+	if oldSchema.taskSubmissionReady {
+		t.Fatal("previous schema enabled keyed submission")
+	}
+	accepted, err := oldSchema.create(ctx, "build_report", map[string]any{"report": "previous schema", "steps": float64(1)}, nil, nil)
+	if err != nil || accepted["taskId"] == "" || accepted["resultType"] != "task" {
+		t.Fatalf("ordinary Task admission requires the additive migration: %v", err)
+	}
 	var canCreate bool
 	if err = runtime.pool.QueryRow(ctx, `SELECT has_schema_privilege(current_user,current_schema(),'CREATE')`).Scan(&canCreate); err != nil || canCreate {
 		t.Fatalf("runtime CREATE = %v, error=%v", canCreate, err)

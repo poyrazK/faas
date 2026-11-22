@@ -397,7 +397,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/mcp-python-venv"
           "$RUNNER_TEMP/mcp-python-venv/bin/python" -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/mcp-python/requirements.txt"
           cd "$RUNNER_TEMP/mcp-go"
-          go test ./...
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" go test ./...
           cd "$RUNNER_TEMP/mcp-python"
           "$RUNNER_TEMP/mcp-python-venv/bin/python" -m unittest discover -s . -p 'test_*.py'
           cd "$RUNNER_TEMP/mcp-node-plain"
