@@ -3006,3 +3006,8 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
+
+// WaitForDevPostgres exposes waitForDevPostgres.
+func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, timeout, poll time.Duration, get func(context.Context) (api.DevSessionResponse, error), waiting func(string)) (api.DevSessionResponse, error) {
+	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
+}
