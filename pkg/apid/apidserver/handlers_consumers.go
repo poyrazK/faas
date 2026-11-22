@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -194,10 +195,16 @@ func (s *server) consumerKeyScopesProblem(accountID string, scopes []string) *ap
 	if billing {
 		allowed = "scopes must contain only read, write, admin, or billing"
 	}
+	// "mcp:<scope>" scopes grant only hosted MCP access (ADR-20261122194324).
+	mcp := s.platformFlagFor(platformflags.MCPGatewayAuth, platformflags.Subject{AccountID: accountID})
+	if mcp {
+		allowed = strings.TrimSuffix(allowed, ".") + ", or mcp:<scope>"
+	}
 	seen := make(map[string]struct{}, len(scopes))
 	for i, scope := range scopes {
 		scopes[i] = strings.TrimSpace(scope)
-		if scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
+		mcpScope := mcp && api.ValidConsumerKeyMCPScope(scopes[i])
+		if !mcpScope && scopes[i] != "read" && scopes[i] != "write" && scopes[i] != "admin" && (!billing || scopes[i] != api.ConsumerScopeBilling) {
 			return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Invalid consumer key scope", allowed)
 		}
 		if _, ok := seen[scopes[i]]; ok {

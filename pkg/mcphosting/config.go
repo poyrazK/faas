@@ -80,7 +80,26 @@ type AuthConfig struct {
 	ToolScopes     ToolScopePolicy `json:"tool_scopes,omitzero"`
 	ResourceScopes ScopePolicy     `json:"resource_scopes,omitzero"`
 	PromptScopes   ScopePolicy     `json:"prompt_scopes,omitzero"`
+	// ToolLimits caps tools/call per caller (ADR-20261122194324). Callers
+	// are identified by key or token, so open servers cannot use them.
+	ToolLimits map[string]api.MCPToolLimit `json:"tool_limits,omitempty"`
 }
+
+// Auth modes. AuthAPIKey and AuthOAuthProxy are enforced only at the gateway
+// (ADR-20261122194324).
+const (
+	AuthOpen          = "open"
+	AuthExternalOAuth = "external-oauth"
+	AuthAPIKey        = "api-key"
+	AuthOAuthProxy    = "oauth-proxy"
+)
+
+// GatewayOnly reports whether the mode has no guest-side verification: the
+// gateway policy is the only access control.
+func (a AuthConfig) GatewayOnly() bool { return a.Mode == AuthAPIKey || a.Mode == AuthOAuthProxy }
+
+// UsesJWT reports whether callers present bearer JWTs from an issuer.
+func (a AuthConfig) UsesJWT() bool { return a.Mode == AuthExternalOAuth || a.Mode == AuthOAuthProxy }
 
 // ToolScopePolicy preserves the existing tool policy type name.
 type ToolScopePolicy = ScopePolicy
@@ -110,8 +129,8 @@ func (p ScopePolicy) validate(field, mode string, validateKey func(string) error
 		if scopes == nil {
 			return fmt.Errorf("%s values must be explicit scope arrays", field)
 		}
-		if mode == "open" && len(scopes) > 0 {
-			return fmt.Errorf("scoped %s entries require external-oauth", field)
+		if (mode == AuthOpen || mode == AuthOAuthProxy) && len(scopes) > 0 {
+			return fmt.Errorf("scoped %s entries require external-oauth or api-key", field)
 		}
 		if err := validateScopes(scopes); err != nil {
 			return fmt.Errorf("%s: %w", field, err)
@@ -224,30 +243,87 @@ func (c Config) Validate() error {
 	if err := c.Tasks.validate(); err != nil {
 		return err
 	}
-	if c.Auth.Mode == "open" {
-		if c.Auth.Issuer != "" || c.Auth.JWKSURL != "" || c.Auth.Resource != "" || len(c.Auth.Scopes) > 0 {
-			return fmt.Errorf("open auth must not contain OAuth settings")
+	if c.Auth.GatewayOnly() && c.Tasks != nil && c.Tasks.Enabled != nil && *c.Tasks.Enabled {
+		// The server cannot tell callers apart in these modes, so tasks would
+		// have no owner (ADR-20261122194324).
+		return fmt.Errorf("tasks need per-caller ownership; use external-oauth with tasks enabled")
+	}
+	return c.Auth.validate(c.Endpoint)
+}
+
+// OAuthProxyJWKSURL is the key set of a Gregale Auth issuer
+// (https://<auth app>/auth/v1).
+func OAuthProxyJWKSURL(issuer string) string {
+	return strings.TrimSuffix(issuer, "/") + "/.well-known/jwks.json"
+}
+
+func (a AuthConfig) validate(endpoint string) error {
+	if len(a.ToolLimits) > api.MCPPolicyMaxEntries {
+		return fmt.Errorf("auth.tool_limits exceeds %d entries", api.MCPPolicyMaxEntries)
+	}
+	for name, limit := range a.ToolLimits {
+		if validatePolicyName(name) != nil {
+			return fmt.Errorf("auth.tool_limits keys must be tool names")
+		}
+		if limit.Requests < 1 || limit.Requests > api.MCPToolLimitMaxRequests || limit.WindowSeconds < 1 || limit.WindowSeconds > api.MCPToolLimitMaxWindowSeconds {
+			return fmt.Errorf("auth.tool_limits.%s needs 1 to %d requests per 1 to %d seconds", name, api.MCPToolLimitMaxRequests, api.MCPToolLimitMaxWindowSeconds)
+		}
+	}
+	switch a.Mode {
+	case AuthOpen:
+		if a.Issuer != "" || a.JWKSURL != "" || a.Resource != "" || len(a.Scopes) > 0 || len(a.ToolLimits) > 0 {
+			return fmt.Errorf("open auth must not contain OAuth settings or tool limits")
 		}
 		return nil
+	case AuthExternalOAuth, AuthAPIKey, AuthOAuthProxy:
+	default:
+		return fmt.Errorf("auth.mode must explicitly be open, external-oauth, api-key or oauth-proxy")
 	}
-	if c.Auth.Mode != "external-oauth" {
-		return fmt.Errorf("auth.mode must explicitly be open or external-oauth")
+	urls := []struct{ name, value string }{{"resource", a.Resource}}
+	switch a.Mode {
+	case AuthExternalOAuth:
+		urls = append(urls, struct{ name, value string }{"issuer", a.Issuer}, struct{ name, value string }{"jwks_url", a.JWKSURL})
+	case AuthOAuthProxy:
+		if a.JWKSURL != "" {
+			return fmt.Errorf("oauth-proxy derives jwks_url from the Gregale Auth issuer; omit it")
+		}
+		urls = append(urls, struct{ name, value string }{"issuer", a.Issuer})
+	case AuthAPIKey:
+		if a.Issuer != "" || a.JWKSURL != "" {
+			return fmt.Errorf("api-key auth must not name an issuer or jwks_url")
+		}
 	}
-	for _, field := range []struct{ name, value string }{{"issuer", c.Auth.Issuer}, {"jwks_url", c.Auth.JWKSURL}, {"resource", c.Auth.Resource}} {
-		value := field.value
-		u, err := url.Parse(value)
+	for _, field := range urls {
+		u, err := url.Parse(field.value)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 			return fmt.Errorf("auth.%s must be an HTTPS URL without credentials, query, or fragment", field.name)
 		}
 	}
-	resource, _ := url.Parse(c.Auth.Resource)
-	if resource.Path != c.Endpoint {
+	resource, _ := url.Parse(a.Resource)
+	if resource.Path != endpoint {
 		return fmt.Errorf("auth.resource must identify the canonical MCP endpoint")
 	}
-	if len(c.Auth.Scopes) == 0 {
-		return fmt.Errorf("external-oauth requires at least one scope")
+	switch a.Mode {
+	case AuthOAuthProxy:
+		// Gregale Auth client tokens are audience-bound to the resource but
+		// carry no scope claim yet, so scopes would refuse every caller.
+		if issuer, _ := url.Parse(a.Issuer); issuer.Path != "/auth/v1" {
+			return fmt.Errorf("oauth-proxy auth.issuer must be a Gregale Auth issuer, https://<auth app>/auth/v1")
+		}
+		if len(a.Scopes) > 0 {
+			return fmt.Errorf("oauth-proxy does not support scopes yet; access is bound to the resource")
+		}
+		return nil
+	case AuthAPIKey:
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("api-key requires at least one scope; consumer keys grant it as mcp:<scope>")
+		}
+	default:
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("external-oauth requires at least one scope")
+		}
 	}
-	return validateScopes(c.Auth.Scopes)
+	return validateScopes(a.Scopes)
 }
 
 func (c *TasksConfig) validate() error {

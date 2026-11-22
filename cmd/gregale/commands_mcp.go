@@ -879,8 +879,8 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err != nil {
 		return printErr("MCP client token", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && token == "" && o.publicationID == "" {
-		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
+	if cfg.Auth.Mode != mcphosting.AuthOpen && token == "" && o.publicationID == "" {
+		return printErr("MCP verification", fmt.Errorf("%s deploy requires --token-env with a %s for verification", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
 	}
 	if o.validateEndpoint != "" {
 		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)
@@ -917,6 +917,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if err := precheckMCPServingIngress(ctx, c, o.slug); err != nil {
 		return printErr("MCP candidate", err)
+	}
+	if err := requireMCPGatewayPolicy(ctx, c, o.slug, cfg); err != nil {
+		return printErr("MCP gateway policy", err)
 	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)

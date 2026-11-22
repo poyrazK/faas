@@ -61,8 +61,9 @@ endpoint `scopes` and optional tool/resource/prompt scopes, and no issuer or
 JWKS. The rule's action sets `mcp.credential = "consumer_key"`. It still
 carries a complete JWT shape: issuer `<API>/v1/mcp/consumer-key-issuer`,
 audience = the resource, `ES256`, and `jwks_url`
-`<API>/.well-known/mcp-consumer-key-jwks.json`, which apid serves as an empty
-key set. A gateway that understands `credential` ignores these fields. An older
+`<API>/v1/mcp/consumer-key-jwks.json`, which apid serves as an empty key set
+(under `/v1`, because a new root path on the API host would be reserved on
+every app host too). A gateway that understands `credential` ignores these fields. An older
 gateway does not know `credential`, compiles an ordinary MCP JWT policy, and
 refuses every request because no token can verify against an empty key set:
 it fails closed. (Leaving the JWT fields empty would fail open: old gateways

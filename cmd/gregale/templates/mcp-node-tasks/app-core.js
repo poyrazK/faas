@@ -158,7 +158,14 @@ function installDefaultCatalog(catalog, { clientSupportsMcpTasks, mcpTaskHandler
   return { sampleCustomerRecord };
 }
 
-export function createApp(config, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+// Gregale's gateway authorizes every request for api-key and oauth-proxy
+// before it reaches this server, so the server itself serves them as open.
+function guestConfig(config) {
+  return ['api-key', 'oauth-proxy'].includes(config?.auth?.mode) ? { ...config, auth: { mode: 'open' } } : config;
+}
+
+export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+  const config = guestConfig(suppliedConfig);
   const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID } = tasks;
   if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');

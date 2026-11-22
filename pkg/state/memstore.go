@@ -29169,6 +29169,9 @@ func (m *MemStore) CreateConsumerKey(_ context.Context, accountID, appID, name, 
 		case "read", "write", "admin", "billing":
 			// ok
 		default:
+			if api.ValidConsumerKeyMCPScope(s) {
+				continue
+			}
 			return ConsumerKey{}, fmt.Errorf("memstore: CreateConsumerKey: scope %q is not in the closed-set {read, write, admin} (00329 vocab CHECK)", s)
 		}
 	}

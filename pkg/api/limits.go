@@ -1399,8 +1399,11 @@ const (
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
 	MCPPolicyMaxRequestBytes             = 1 << 20
-	MCPReleaseMaxRoles                   = 32
-	MCPReleasePolicyMaxBytes             = 64 << 10
+	// MCP tool limits (ADR-20261122194324): per caller and tool.
+	MCPToolLimitMaxRequests      = 100000
+	MCPToolLimitMaxWindowSeconds = 3600
+	MCPReleaseMaxRoles           = 32
+	MCPReleasePolicyMaxBytes     = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).

@@ -148,6 +148,11 @@ func newAuthenticator(config mcpConfig) (*authenticator, error) {
 	if err := json.Unmarshal(config.Auth, &raw); err != nil {
 		return nil, errors.New("auth settings are invalid")
 	}
+	if raw.Mode == "api-key" || raw.Mode == "oauth-proxy" {
+		// Gregale's gateway authorizes every request for these modes before
+		// it reaches this server, so the server itself serves them as open.
+		return &authenticator{mode: "open", endpoint: config.Endpoint}, nil
+	}
 	auth := &authenticator{
 		mode:       raw.Mode,
 		issuer:     raw.Issuer,

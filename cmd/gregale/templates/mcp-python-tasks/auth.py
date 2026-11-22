@@ -198,6 +198,10 @@ class Authenticator:
         if not isinstance(config, dict) or not isinstance(config.get("auth"), dict):
             raise AuthConfigurationError("auth settings are required")
         auth = config["auth"]
+        if auth.get("mode") in {"api-key", "oauth-proxy"}:
+            # Gregale's gateway authorizes every request for these modes
+            # before it reaches this server, so it serves them as open.
+            auth = {"mode": "open"}
         self.mode = auth.get("mode")
         if not isinstance(self.mode, str) or self.mode not in {"open", "external-oauth"}:
             raise AuthConfigurationError("auth.mode must be open or external-oauth")
