@@ -42,6 +42,8 @@ class FakeGitHub:
         self.requests = []
         # Runs that uploaded the release marker for SHA.
         self.released_by = []
+        # run id -> the commit its marker names (actions/runs/{id}/artifacts).
+        self.markers = {}
 
     def get(self, path, params=None):
         self.requests.append(path)
@@ -61,6 +63,9 @@ class FakeGitHub:
             return {"workflow_runs": self.light}
         if path == "actions/runs":
             return {"workflow_runs": self.active[params["status"]]}
+        if path.startswith("actions/runs/") and path.endswith("/artifacts"):
+            sha = self.markers.get(int(path.split("/")[2]))
+            return {"artifacts": [{"name": dp.RELEASE_MARKER + sha}] if sha else []}
         if path in self.runs:
             return self.runs[path]
         if path.startswith("actions/runs/") and path.endswith("/jobs"):
@@ -98,15 +103,17 @@ class PreflightCase(unittest.TestCase):
         self.logs = []
         self.on_sleep = None
 
-    def run_preflight(self, wait=600, interval=60):
-        pre = dp.Preflight(self.gh, lambda: self.host, ME, SHA, log=self.logs.append)
+    def run_preflight(self, wait=600, interval=60, follow=False):
+        pre = dp.Preflight(self.gh, lambda: self.host, ME, "" if follow else SHA, log=self.logs.append,
+                           follow_build=follow, full_every=interval, clock=self.clock.now)
 
         def sleep(s):
             self.clock.sleep(s)
             if self.on_sleep:
                 self.on_sleep(self)
 
-        return dp.run(pre, wait, interval, now=self.clock.now, sleep=sleep, log=self.logs.append)
+        return dp.run(pre, wait, interval, now=self.clock.now, sleep=sleep, log=self.logs.append,
+                      poll=10 if follow else None)
 
 
 class PreflightTest(PreflightCase):
@@ -175,21 +182,34 @@ class PreflightTest(PreflightCase):
     def test_newer_deploying_run_takes_over(self):
         self.gh.unit_runs.append(run_obj(101, 51))
         self.gh.jobs[101] = [job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, status="in_progress", conclusion=None)]
+        self.gh.markers[101] = "c" * 40
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (0, False))
         self.assertIn("Stood down", summary)
 
-    def test_newer_ineligible_run_does_not_take_over(self):
-        self.gh.unit_runs.append(run_obj(101, 51, status="completed"))
-        self.gh.jobs[101] = [job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, conclusion="skipped")]
-        self.assertEqual(self.run_preflight()[:2], (0, True))
+    def test_newer_run_that_deploys_nothing_does_not_take_over(self):
+        cases = {
+            "build only": ([job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, conclusion="skipped")], "c" * 40),
+            "released nothing": ([job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, status="in_progress", conclusion=None)], None),
+            "build failed": ([job(dp.BUILD_JOB, conclusion="failure"), job(dp.PREFLIGHT_JOB, conclusion="success")], None),
+            "build-only run still building": ([job(dp.BUILD_JOB, status="in_progress", conclusion=None),
+                                               job(dp.PREFLIGHT_JOB, conclusion="skipped")], None),
+        }
+        for name, (jobs, marker) in cases.items():
+            with self.subTest(name):
+                self.gh.unit_runs = [run_obj(ME, 50, sha=SHA), run_obj(101, 51)]
+                self.gh.jobs[101], self.gh.markers = jobs, {101: marker} if marker else {}
+                self.assertEqual(self.run_preflight()[:2], (0, True))
 
     def test_waits_for_a_newer_build_then_stands_down(self):
         self.gh.unit_runs.append(run_obj(101, 51))
-        self.gh.jobs[101] = [job(dp.BUILD_JOB, status="in_progress", conclusion=None)]
+        # Its preflight starts beside its build.
+        self.gh.jobs[101] = [job(dp.BUILD_JOB, status="in_progress", conclusion=None),
+                             job(dp.PREFLIGHT_JOB, status="in_progress", conclusion=None)]
 
         def build_done(t):
-            t.gh.jobs[101] = [job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, status="queued", conclusion=None)]
+            t.gh.jobs[101] = [job(dp.BUILD_JOB), job(dp.PREFLIGHT_JOB, status="in_progress", conclusion=None)]
+            t.gh.markers[101] = "c" * 40
         self.on_sleep = build_done
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (0, False))
@@ -288,6 +308,78 @@ class PreflightTest(PreflightCase):
         self.assertLess(len(self.gh.requests), 400)
 
 
+class FollowBuildTest(PreflightCase):
+    """--follow-build: the preflight starts beside this run's build
+    (ADR-20261122170000, "Preflight beside the build")."""
+
+    def building(self):
+        self.gh.jobs[ME] = [job(dp.BUILD_JOB, status="in_progress", conclusion=None)]
+
+    def finish_at(self, t_done, conclusion="success", marker=SHA):
+        def step(t):
+            if t.clock.t >= 1_800_000_000.0 + t_done:
+                t.gh.jobs[ME] = [job(dp.BUILD_JOB, conclusion=conclusion)]
+                if marker:
+                    t.gh.markers[ME] = marker
+        self.on_sleep = step
+
+    def test_goes_within_one_poll_of_the_build_ending_on_a_fresh_round(self):
+        self.building()
+        self.finish_at(95)
+        rounds = []
+        orig = self.gh.get
+
+        def counting(path, params=None):
+            if path == "issues":
+                rounds.append(self.clock.t)
+            return orig(path, params)
+        self.gh.get = counting
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (0, True))
+        self.assertEqual(self.clock.t, 1_800_000_000.0 + 100, "the poll after the build ended goes")
+        self.assertEqual(rounds[-1], self.clock.t, "the go comes from a full round taken after the build")
+        self.assertIn(f"this run released {SHA[:12]}", summary)
+
+    def test_other_checks_are_reread_every_interval_while_building(self):
+        self.building()
+        self.finish_at(300)
+        self.run_preflight(follow=True, interval=60)
+        freeze_reads = [p for p in self.gh.requests if p == "issues"]
+        self.assertEqual(len(freeze_reads), 6, "t=0,60,...,240 while building, then t=300")
+
+    def test_sha_checks_read_the_released_commit(self):
+        self.building()
+        self.finish_at(10)
+        self.gh.light = [{"status": "completed", "conclusion": "failure", "html_url": "https://github.example/light"}]
+        code, go, summary = self.run_preflight(follow=True)
+        self.assertEqual((code, go), (1, False))
+        self.assertIn(f"light tier failed on {SHA[:12]}", summary)
+
+    def test_failed_or_empty_build_stands_down(self):
+        for conclusion, marker, want in (("failure", None, "ended failure"), ("cancelled", None, "ended cancelled"),
+                                         ("success", None, "released nothing")):
+            with self.subTest(conclusion=conclusion):
+                self.setUp()
+                self.building()
+                self.finish_at(20, conclusion, marker)
+                code, go, summary = self.run_preflight(follow=True)
+                self.assertEqual((code, go), (0, False))
+                self.assertIn(want, summary)
+
+    def test_freeze_holds_without_waiting_for_the_build(self):
+        self.building()
+        self.gh.issues = [{"number": 7, "title": "paused", "html_url": "x"}]
+        self.assertEqual(self.run_preflight(follow=True)[:2], (0, False))
+        self.assertEqual(self.clock.t, 1_800_000_000.0)
+
+    def test_busy_production_polls_at_the_interval_not_the_poll(self):
+        self.gh.jobs[ME] = [job(dp.BUILD_JOB)]
+        self.gh.markers[ME] = SHA
+        self.host = healthy_host(lock="held")
+        self.run_preflight(follow=True, wait=300, interval=60)
+        self.assertEqual(len([p for p in self.gh.requests if p == "issues"]), 6)
+
+
 class WatchCapTest(PreflightCase):
     def watched(self, releases, owner="90"):
         self.host = healthy_host()
@@ -327,6 +419,11 @@ class MainTest(unittest.TestCase):
     def test_usage_error_without_token(self):
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(dp.main(["--repo", "o/r", "--run-id", "1", "--sha", SHA]), 2)
+
+    def test_usage_error_without_sha_unless_following_the_build(self):
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"GH_TOKEN": "t"}), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(dp.main(["--repo", "o/r", "--run-id", "1"]), 2)
 
     def test_writes_summary_and_output(self):
         gh = FakeGitHub()

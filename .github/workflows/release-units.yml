@@ -520,12 +520,20 @@ jobs:
   # commit, or 40 minutes of waiting, fails it. The step summary says what it
   # waited for. Dispatching cd-controlplane or cd-edge-units directly is the
   # repair path and skips this.
+  #
+  # It starts beside the build, not after it (ADR-20261122170000, "Preflight
+  # beside the build"): runner pickup, checkout, SSH and the first round
+  # overlap the build, and the waits for production happen while it builds.
+  # --follow-build polls this run's build job and gives its go only from a
+  # round taken after the build ended, reading the released commit from the
+  # build's marker artifact; a build that fails or releases nothing stands
+  # it down. It holds a fleet runner while the build runs, so the fleet
+  # runner host needs a second instance (faas_runner_instances) for the
+  # lanes of another run, as it already did for a preflight waiting on one.
   preflight:
     name: Check production can take a deploy
-    needs: [build]
     if: >-
-      needs.build.outputs.eligible == 'true' &&
-      (inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+      inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')
     environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
     runs-on: ${{ fromJSON((inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     timeout-minutes: 50
@@ -586,10 +594,10 @@ jobs:
           export UNIT_SSH_TARGET="root@${CP_HOST}" UNIT_SSH_KEY="$HOME/.ssh/deploy_key" \
             UNIT_SSH_KNOWN_HOSTS="$HOME/.ssh/known_hosts"
           # The commit this run releases, which may be behind main's head
-          # (the lane's whole-commit prefix): its light run is the one that
-          # must not have failed.
-          python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s \
-            --sha "${{ needs.build.outputs.release_sha }}"
+          # (the lane's whole-commit prefix), comes from the build's marker:
+          # its light run is the one that must not have failed.
+          python3 preflight-src/scripts/ci/deploy_preflight.py --follow-build \
+            --wait 40m --interval 60s --poll 10s
 
   # Deploy order (docs/release-compatibility.md): the control-plane lane,
   # held on its SLO gate, then the edge lane host by host. Automatic deploys

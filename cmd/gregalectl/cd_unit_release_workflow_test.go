@@ -506,20 +506,26 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	preflight := jobBlock(t, release, "preflight")
 	for _, required := range []string{
-		"needs: [build]",
-		"needs.build.outputs.eligible == 'true'",
-		"(inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
+		"inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')",
 		"issues: read",
+		"actions: read",
 		"go: ${{ steps.preflight.outputs.go }}",
-		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
-		// The released commit, which a stalled lane keeps behind main's head.
-		`--sha "${{ needs.build.outputs.release_sha }}"`,
+		// Beside the build (ADR-20261122170000): it waits for this run's
+		// build and reads the released commit, which a stalled lane keeps
+		// behind main's head, from the build's marker.
+		"python3 preflight-src/scripts/ci/deploy_preflight.py --follow-build",
+		"--wait 40m --interval 60s --poll 10s",
 	} {
 		if !strings.Contains(preflight, required) {
 			t.Errorf("release-units preflight is missing %q", required)
 		}
 	}
-	for _, forbidden := range []string{"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no"} {
+	for _, forbidden := range []string{
+		"issues: write", "contents: write", "actions: write", "id-token: write", "StrictHostKeyChecking=no",
+		// A preflight after the build puts its runner pickup, checkout and
+		// first round on the deploy's critical path.
+		"needs:",
+	} {
 		if strings.Contains(preflight, forbidden) {
 			t.Errorf("release-units preflight must not have %q", forbidden)
 		}
@@ -617,7 +623,7 @@ func TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace(t *testin
 	if strings.Contains(build, "group: release-units-build\n") {
 		t.Error("a single build group lets a build-only push cancel a dispatched deploy")
 	}
-	if !strings.Contains(release, "(inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))") {
+	if !strings.Contains(release, "inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != '')") {
 		t.Error("the preflight's deploy condition changed; key the build group the same way")
 	}
 }

@@ -182,6 +182,25 @@ Budget, merge to new code serving on the control plane:
     bootstrap and its role are operator paths no release runs, so they are
     `inert` in the deploy classes (the deployment runner's playbook stays
     `blocking`: a release workflow names it).
+- **Preflight beside the build** (done). The preflight job no longer
+  needs the build: it starts with the run, so its runner pickup,
+  checkout, SSH setup and first round overlap the build, and any wait
+  for production (freeze, idle, healthy, watch cap) happens while the
+  build runs. `deploy_preflight.py --follow-build` adds a leading `built`
+  check: it reads this run's build job every 10 s, and once the build
+  succeeds takes the released commit from the build's marker artifact
+  for the `current` and `main` checks. Other checks are reread every
+  60 s while the build runs, and the round that sees the build end
+  rereads every check, so a go is never staler than that one round. A
+  build that fails, is cancelled by a newer build, or releases nothing
+  stands the preflight down; a freeze holds it without waiting for the
+  build. Because a preflight now runs for every deploying run, `newest`
+  counts a newer run as taking over only once its build released a
+  commit (its marker), and ignores build-only runs (preflight skipped).
+  The preflight holds a fleet runner slot while the build runs; the
+  fleet runner host keeps a second instance (`faas_runner_instances`)
+  for another run's lanes, as it already needed for a preflight waiting
+  on one.
 - **Rollback stays the same speed.** deployctl keeps the previous
   generation; a failed smoke check or a watch breach puts it back.
 
@@ -303,10 +322,9 @@ summary and annotations (stopping commit, reason, commits waiting).
 1. This ADR; `lane_prefix`, `cross_lane`, per-commit host hashes, literal
    hostvars, the `current` preflight check, and the workflow wiring, with
    tests.
-2. Version stamp out of the binary (deployctl, `pkg/wire`, the unit
-   release build), one build for selection and release.
+2. One build for selection and release (neutral stamps, done).
 3. Build runner on the control plane (role kind, playbook, workflow switch:
    done); the owner bootstraps it and sets `UNIT_RELEASE_BUILD_RUNNER`;
-   preflight beside the build.
+   preflight beside the build (done).
 4. Parallel activation; smoke check in place of the pre-done SLO hold.
 5. Owner turns on automatic deploys.
