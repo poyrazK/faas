@@ -360,7 +360,8 @@ func (v capabilityView) withoutHiddenFlags(lines []string, flags []cliFlag) []st
 // discoverableCliCommands is the manifest discovery surfaces read: the
 // released commands without those, or the verbs, the capability view hides.
 func discoverableCliCommands() []cliCommand {
-	return discoveryCapabilityView().discoverableCommands(visibleCliCommands())
+	view := discoveryCapabilityView()
+	return view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view)))
 }
 
 // publicReferenceCommands is the manifest the public reference documents:
