@@ -36,7 +36,7 @@ func (m *MemStore) CreateAPIConsumer(_ context.Context, accountID, appID, extern
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, c := range m.apiConsumers {
-		if c.AppID == appID && c.ExternalRef == externalRef {
+		if c.AppID == appID && c.ExternalRef == externalRef && c.EnvironmentID == "" {
 			return APIConsumer{}, ErrConflict
 		}
 	}
@@ -76,7 +76,7 @@ func (m *MemStore) ListAPIConsumersForApp(_ context.Context, accountID, appID st
 	defer m.mu.Unlock()
 	var out []APIConsumer
 	for _, c := range m.apiConsumers {
-		if c.AccountID == accountID && c.AppID == appID {
+		if c.AccountID == accountID && c.AppID == appID && c.EnvironmentID == "" {
 			out = append(out, c)
 		}
 	}
@@ -166,6 +166,9 @@ func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, nam
 		}
 	}
 	for _, k := range m.consumerKeys {
+		if k.EnvironmentID != c.EnvironmentID {
+			continue
+		}
 		if k.AccountID == c.AccountID && k.AppID == c.AppID && k.Name == name {
 			return ConsumerKey{}, ErrConflict
 		}
@@ -184,6 +187,8 @@ func (m *MemStore) createConsumerKeyForConsumerLocked(accountID, consumerID, nam
 		Scopes:     append([]string(nil), scopes...),
 		CreatedAt:  time.Now().UTC(),
 		ExpiresAt:  expiresAt,
+		// A key takes its consumer's environment.
+		EnvironmentID: c.EnvironmentID,
 	}
 	m.consumerKeys[k.ID] = k
 	return k, nil
