@@ -2176,15 +2176,21 @@ func (q *Queries) RecordReferralPayment(ctx context.Context, db DBTX, invoiceID 
 }
 
 const referralSummary = `-- name: ReferralSummary :many
-SELECT kind,currency,count(*)::bigint AS signups,
- count(*) FILTER (WHERE paid)::bigint AS paid,
- count(*) FILTER (WHERE reward_status='eligible')::bigint AS eligible,
- COALESCE(sum(reward_cents) FILTER (WHERE reward_status='eligible'),0)::bigint AS reward_cents,
- COALESCE(sum(paid_cents) FILTER (WHERE paid AND reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents
-FROM sales_referral_overview
-WHERE (owner_id=$1::uuid OR $2::boolean)
- AND ($3::text='' OR kind=$3::text)
-GROUP BY kind,currency ORDER BY kind,currency
+SELECT v.kind,v.currency,count(*)::bigint AS signups,
+ count(*) FILTER (WHERE v.paid)::bigint AS paid,
+ count(*) FILTER (WHERE v.reward_status='eligible')::bigint AS eligible,
+ COALESCE(sum(v.reward_cents) FILTER (WHERE v.reward_status='eligible'),0)::bigint AS reward_cents,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')),0)::bigint AS paid_cents,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch'))::bigint AS sales,
+ count(*) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::bigint AS sales_this_month,
+ COALESCE(sum(v.paid_cents) FILTER (WHERE v.paid AND v.reward_status NOT IN ('reversed','currency_mismatch')
+  AND r.first_paid_at>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'),0)::bigint AS paid_this_month_cents
+FROM sales_referral_overview v
+JOIN referral_attributions r ON r.account_id=v.account_id
+WHERE (v.owner_id=$1::uuid OR $2::boolean)
+ AND ($3::text='' OR v.kind=$3::text)
+GROUP BY v.kind,v.currency ORDER BY v.kind,v.currency
 `
 
 type ReferralSummaryParams struct {
@@ -2194,15 +2200,20 @@ type ReferralSummaryParams struct {
 }
 
 type ReferralSummaryRow struct {
-	Kind        string
-	Currency    string
-	Signups     int64
-	Paid        int64
-	Eligible    int64
-	RewardCents int64
-	PaidCents   int64
+	Kind               string
+	Currency           string
+	Signups            int64
+	Paid               int64
+	Eligible           int64
+	RewardCents        int64
+	PaidCents          int64
+	Sales              int64
+	SalesThisMonth     int64
+	PaidThisMonthCents int64
 }
 
+// A sale is a paid first invoice that was not refunded or paid in another
+// currency; "this month" is the calendar month in UTC of that first payment.
 func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSummaryParams) ([]ReferralSummaryRow, error) {
 	rows, err := db.Query(ctx, referralSummary, arg.OwnerID, arg.AllOwners, arg.Kind)
 	if err != nil {
@@ -2220,6 +2231,9 @@ func (q *Queries) ReferralSummary(ctx context.Context, db DBTX, arg ReferralSumm
 			&i.Eligible,
 			&i.RewardCents,
 			&i.PaidCents,
+			&i.Sales,
+			&i.SalesThisMonth,
+			&i.PaidThisMonthCents,
 		); err != nil {
 			return nil, err
 		}

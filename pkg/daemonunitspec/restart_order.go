@@ -201,3 +201,32 @@ func IsUnknownDependency(err error) bool {
 	var u *ErrUnknownDependency
 	return errors.As(err, &u)
 }
+
+// RestartDepth returns each registered daemon's depth in the Lifecycle.After
+// graph: 0 for a daemon with no registered dependency, otherwise one more
+// than its deepest dependency. Two daemons of equal depth have no ordering
+// path between them, so deployctl may restart them together
+// (docs/adr/20261122170000-continuous-unit-lane.md, "Parallel activation").
+func RestartDepth() (map[string]int, error) {
+	order, err := RestartOrder()
+	if err != nil {
+		return nil, err
+	}
+	after := make(map[string][]string, len(Registry))
+	for _, entry := range Registry {
+		after[entry.Name] = entry.Lifecycle.After
+	}
+	depth := make(map[string]int, len(order))
+	// RestartOrder puts every daemon after its dependencies, so one pass
+	// in that order sees each dependency's depth first.
+	for _, name := range order {
+		d := 0
+		for _, dep := range after[name] {
+			if depth[dep]+1 > d {
+				d = depth[dep] + 1
+			}
+		}
+		depth[name] = d
+	}
+	return depth, nil
+}

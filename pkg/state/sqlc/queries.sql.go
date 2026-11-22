@@ -77994,6 +77994,145 @@ func (q *Queries) ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectV
 	return err
 }
 
+const objectWorkloadCredentialDeleteExpired = `-- name: ObjectWorkloadCredentialDeleteExpired :execrows
+DELETE FROM object_storage_workload_credentials
+WHERE id IN (
+    SELECT id FROM object_storage_workload_credentials
+    WHERE expires_at <= $1::timestamptz
+    ORDER BY expires_at
+    LIMIT $2::int
+)
+`
+
+type ObjectWorkloadCredentialDeleteExpiredParams struct {
+	Before     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+func (q *Queries) ObjectWorkloadCredentialDeleteExpired(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteExpiredParams) (int64, error) {
+	result, err := db.Exec(ctx, objectWorkloadCredentialDeleteExpired, arg.Before, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectWorkloadCredentialInsert = `-- name: ObjectWorkloadCredentialInsert :exec
+
+INSERT INTO object_storage_workload_credentials
+    (id, account_id, bucket_id, caller_app_id, instance_id, access_key_id, secret_sealed, kid, permission, key_prefix, created_at, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6,
+        $7, $8, $9, $10, $11, $12)
+`
+
+type ObjectWorkloadCredentialInsertParams struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	BucketID     pgtype.UUID
+	CallerAppID  pgtype.UUID
+	InstanceID   string
+	AccessKeyID  string
+	SecretSealed []byte
+	Kid          string
+	Permission   string
+	KeyPrefix    pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+}
+
+// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
+func (q *Queries) ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error {
+	_, err := db.Exec(ctx, objectWorkloadCredentialInsert,
+		arg.ID,
+		arg.AccountID,
+		arg.BucketID,
+		arg.CallerAppID,
+		arg.InstanceID,
+		arg.AccessKeyID,
+		arg.SecretSealed,
+		arg.Kid,
+		arg.Permission,
+		arg.KeyPrefix,
+		arg.CreatedAt,
+		arg.ExpiresAt,
+	)
+	return err
+}
+
+const objectWorkloadCredentialResolve = `-- name: ObjectWorkloadCredentialResolve :one
+SELECT c.id, c.account_id, c.bucket_id, c.caller_app_id, c.access_key_id, c.secret_sealed, c.kid, c.permission, c.key_prefix,
+       c.created_at, c.expires_at,
+       b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
+       b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
+       b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
+       b.updated_at AS bucket_updated_at
+FROM object_storage_workload_credentials c
+JOIN object_buckets b ON b.id = c.bucket_id AND b.account_id = c.account_id
+JOIN orgs o ON o.id = b.org_id
+WHERE c.access_key_id = $1 AND c.expires_at > now() AND b.state = 'ready' AND NOT o.deleted_pending
+  AND b.environment_clone_operation_id IS NULL
+  AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+       ELSE EXISTS (SELECT 1 FROM accounts a WHERE a.id = b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
+`
+
+type ObjectWorkloadCredentialResolveRow struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	BucketID           pgtype.UUID
+	CallerAppID        pgtype.UUID
+	AccessKeyID        string
+	SecretSealed       []byte
+	Kid                string
+	Permission         string
+	KeyPrefix          pgtype.Text
+	CreatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+	AppID              pgtype.UUID
+	OrgID              pgtype.UUID
+	BucketName         string
+	BucketScope        string
+	BucketRegion       string
+	BackendID          string
+	BackendFingerprint string
+	PhysicalName       string
+	BucketState        string
+	BucketCreatedAt    pgtype.Timestamptz
+	BucketUpdatedAt    pgtype.Timestamptz
+}
+
+// A workload credential resolves while it has not expired, its bucket is
+// ready and the bucket's resource owner may use object storage: the same
+// owner rule object_storage_credential_live applies to compute keys.
+func (q *Queries) ObjectWorkloadCredentialResolve(ctx context.Context, db DBTX, accessKeyID string) (ObjectWorkloadCredentialResolveRow, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialResolve, accessKeyID)
+	var i ObjectWorkloadCredentialResolveRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.BucketID,
+		&i.CallerAppID,
+		&i.AccessKeyID,
+		&i.SecretSealed,
+		&i.Kid,
+		&i.Permission,
+		&i.KeyPrefix,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.AppID,
+		&i.OrgID,
+		&i.BucketName,
+		&i.BucketScope,
+		&i.BucketRegion,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.BucketState,
+		&i.BucketCreatedAt,
+		&i.BucketUpdatedAt,
+	)
+	return i, err
+}
+
 const objectWriteInsert = `-- name: ObjectWriteInsert :exec
 INSERT INTO object_storage_write_admissions(id,bucket_id,key_hash,kind,multipart_upload_id,route_receipt,native_version,native_bytes)
 VALUES($1,$2,$3,$4,$5,$6,$7::boolean,$8::bigint)
