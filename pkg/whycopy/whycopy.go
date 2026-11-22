@@ -155,6 +155,17 @@ var catalog = map[string]Render{
 			if !ok {
 				return "", ""
 			}
+			// The VM's RAM is the app's plan RAM, and the guest kernel and
+			// init use part of it, so a small app is killed with its own peak
+			// well under the plan figure. "Killed at 76 MB (plan cap 128 MB)"
+			// with "raise to at least 84 MB" read as a contradiction
+			// (deploy-path probe 2026-11-21, R4-2: gunicorn apps at 128 MB).
+			if v.PeakMB > 0 && v.PeakMB < v.PlanMB {
+				return fmt.Sprintf("your app's processes reached %d MB and the microVM ran out of memory: its %d MB also holds the guest kernel and runtime, which leave a small app noticeably less than its plan figure",
+						v.PeakMB, v.PlanMB),
+					fmt.Sprintf("• raise the app's memory, e.g. `gregale app <app> --ram %d` (your account plan sets the per-app maximum)\n• trim startup memory (fewer worker processes, lazy imports)",
+						OOMSuggestedRAMMB(v.PeakMB, v.PlanMB))
+			}
 			return fmt.Sprintf("the cgroup memory controller killed the process at %d MB (plan cap %d MB + 8 MB overhead); the kernel OOM-killer fired inside the microVM",
 					v.PeakMB, v.PlanMB),
 				fmt.Sprintf("• raise the app's memory from %d MB to at least %d MB, e.g. `gregale app <app> --ram %d` (your account plan sets the per-app maximum)\n• trim in-memory state (caches, buffers, large request bodies held in memory)",

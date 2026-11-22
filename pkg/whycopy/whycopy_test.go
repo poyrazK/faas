@@ -155,6 +155,20 @@ func TestDecorate_AppRuntimeOOM_TemplatesPeakAndPlan(t *testing.T) {
 	}
 }
 
+// Deploy-path probe 2026-11-21 (R4-2): a 128 MB gunicorn app was killed with
+// its processes at 76 MB, and the copy asked to raise 128 MB "to at least
+// 84 MB". A peak under the plan explains the guest's share instead.
+func TestDecorate_AppRuntimeOOM_PeakUnderPlan(t *testing.T) {
+	p := api.NewProblem(0, api.CodeAppRuntimeOOM, "title", "detail")
+	Decorate(p, api.CodeAppRuntimeOOM, struct{ PeakMB, PlanMB int }{PeakMB: 76, PlanMB: 128})
+	if !strings.Contains(p.Why, "76 MB") || !strings.Contains(p.Why, "guest kernel") {
+		t.Errorf("Why = %q, want the peak and the guest's share", p.Why)
+	}
+	if strings.Contains(p.Fix, "at least") || !strings.Contains(p.Fix, "--ram 256") {
+		t.Errorf("Fix = %q, want --ram 256 and no minimum below the plan", p.Fix)
+	}
+}
+
 func TestOOMSuggestedRAMMB(t *testing.T) {
 	for _, tc := range []struct{ peak, plan, want int }{
 		{peak: 384, plan: 256, want: 512},  // double the limit
