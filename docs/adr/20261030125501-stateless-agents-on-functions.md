@@ -70,6 +70,22 @@ The invocation limit is the app's request timeout under ADR-1180: Hobby 1 min, P
   - Following RAP's security guidance, tokens are short-lived where the tool allows.
 - **Protocol.** Results follow RAP's tool-result and subscription-event messages, so Infinity's RAP client works unchanged. A tool that speaks plain HTTP only needs to POST JSON.
 
+**Amendment (2026-11-22): stored large results.** A result is one inbox message, which carries at most `AgentCallbackPayloadMaxBytes` (4 KiB). Fetched pages, run results and reports are often larger, and the toolset dropped them (`result_omitted`). Owner decisions: keep them in the artifact store for 7 days, at most 1 MiB each and 256 MiB live per endpoint.
+
+- **What a large post does.** apid takes callback data up to `AgentCallbackResultMaxBytes`. Data over one inbox message is stored, and the message published into the thread is a stub that always fits:
+  - a RAP callback keeps its routing fields (`type`, `group_id`, `id`, `call_id`, `tool_call_id`, `subscription`, `is_error`), so the runtime still matches it to its call, and its `text` becomes a preview;
+  - other data becomes `{preview}`;
+  - both carry `truncated: true`, `result_url`, `result_bytes` and `result_sha256`.
+  The preview is at most `AgentCallbackResultPreviewMaxBytes` of the result's `text`, or of the JSON when it has none, cut on a rune boundary.
+- **Where it lives.** The body is in the artifact store agentd keeps run outputs in, at `agents/callback-results/<account>/<endpoint>/<id>`. A row in `agent_callback_results` (new table, expand) records the endpoint, thread, message, size, digest and expiry. The body never lives in Postgres.
+- **Once per message.** The row is unique per endpoint, thread and message, so a retried post finds its result and lands once. The same message with other data is a 409, as a publish would be. The row is recorded before the body is written: a failed write deletes the row and answers 5xx, so the tool retries.
+- **Bounds.** One endpoint keeps at most `AgentCallbackResultsPerEndpointMaxBytes` of live results. Past it a post is refused with 413 `agent_callback_results_full`, which carries the limit and the observed bytes. A post over `AgentCallbackResultMaxBytes` is a 413 as before.
+- **Reading it.** `GET /v1/agent-callbacks/results/{id}` returns the stored body as `application/json`, with `nosniff`, `Cache-Control: private, no-store` and an ETag of its digest. It takes the same credentials as issuing a callback URL: the app's `gregale:agents` workload token, which reaches only that app's endpoints, or an API key, under the organization check a read of the app gets. Any other caller, and an expired result, get 404.
+- **Gregale's own tools.** `gregale_run` stores a run result too large for one message instead of leaving it out. A storage failure is retried by the next delivery pass. A result past either limit is still left out, with `result_omitted`.
+- **Expiry.** Results expire after `AgentCallbackResultRetentionSec` (7 days). Every apid sweeps expired results every 5 minutes, deleting the body first and then the row, so a row never outlives a body it no longer guards.
+- **Templates.** The templates read `result_url` when a stub arrives and keep the full result in the seller's own history, so the 7-day expiry never shortens a thread's memory.
+- **Without an artifact store,** an apid refuses data over one inbox message, as before.
+
 ## 4. Platform tools
 
 The capability gateway (ADR-20261027090016) serves these platform tools over RAP. They acknowledge at once and post their results to the callback URL.
@@ -110,6 +126,10 @@ The slice calls the model through the app's managed AI integration over the rela
 | `AgentCallbackTokenTTLSec` | 86,400 | A tool call's result window. Subscriptions use their own lifetime. |
 | `AgentCallbackPayloadMaxBytes` | 4,096, the realtime message limit | A result is one inbox message |
 | `AgentCallbacksPerMinutePerThread` | 600, per apid replica | Stops a runaway tool from flooding one thread |
+| `AgentCallbackResultMaxBytes` | 1 MiB | A stored large result (§3 amendment 2026-11-22) |
+| `AgentCallbackResultsPerEndpointMaxBytes` | 256 MiB | Live stored results of one endpoint |
+| `AgentCallbackResultRetentionSec` | 604,800 (7 days) | How long a stored result is readable |
+| `AgentCallbackResultPreviewMaxBytes` | 2,048 | The preview in a stored result's inbox message |
 
 ## Rollout
 

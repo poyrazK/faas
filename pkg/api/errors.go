@@ -2338,7 +2338,7 @@ func StatusForCode(code string) int {
 		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited, CodeCronFireNowBusy, CodeAgentCallbackRateLimited,
 		CodeWebhookOutboxFull, CodeInboundWebhookBacklogFull, CodeInboundWebhookRateLimited:
 		return http.StatusTooManyRequests
-	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
+	case CodeSourceTooLarge, CodeInboundWebhookTooLarge, CodeAgentCallbackResultsFull:
 		return http.StatusRequestEntityTooLarge
 	case CodeSourceInvalid, CodeBuildUndetected, CodeValidation, CodeCronInvalid,
 		CodeAlertRuleInvalid, CodeAppWebhookInvalid, CodeInboundWebhookInvalid, CodeInboundWebhookBadSignature, CodeAppLogDrainInvalid, CodeRealtimeInvalid, CodeLogArchiveInvalidQuery, CodeHandlerMissing, CodeImageRequired,

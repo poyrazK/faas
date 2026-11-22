@@ -31,6 +31,43 @@ pub struct Record {
     /// input's dedup ID.
     pub message_id: String,
     pub input: Option<InputMessage>,
+    /// Set when the data is the stub of a stored large tool result
+    /// (ADR-20261030125501 §3 amendment 2026-11-22): the slice reads the
+    /// result and builds its input from it (stored_input).
+    pub stored: Option<StoredResult>,
+}
+
+/// A stored large tool result's URL, size and digest, from its stub.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredResult {
+    pub url: String,
+    pub bytes: usize,
+    pub sha256: String,
+}
+
+fn stored_result(kind: &str, data: &serde_json::Value) -> Option<StoredResult> {
+    if !matches!(kind, "tool_result" | "event") || data.get("truncated")?.as_bool() != Some(true) {
+        return None;
+    }
+    Some(StoredResult {
+        url: data.get("result_url")?.as_str()?.to_owned(),
+        bytes: usize::try_from(data.get("result_bytes")?.as_u64()?).ok()?,
+        sha256: data.get("result_sha256")?.as_str()?.to_owned(),
+    })
+}
+
+/// The input of a stored result's full body, which must be a callback for
+/// the same thread. None means it is not one.
+pub fn stored_input(thread_id: &str, body: &[u8]) -> Option<Option<InputMessage>> {
+    let data: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let input = runtime_input(data)?;
+    if input
+        .as_ref()
+        .is_some_and(|m| m.group_id.as_str() != thread_id)
+    {
+        return None;
+    }
+    Some(input)
 }
 
 /// Parse a trigger record. None means the body is not an inbox record.
@@ -42,6 +79,7 @@ pub fn parse(body: &[u8]) -> Option<Record> {
     let kind = raw.metadata.get("kind")?.as_str();
     let data: serde_json::Value =
         serde_json::from_slice(&STANDARD.decode(raw.data_base64).ok()?).ok()?;
+    let stored = stored_result(kind, &data);
     let input = match kind {
         "user" => Some(InputMessage::user_text(
             thread_id.clone(),
@@ -62,6 +100,7 @@ pub fn parse(body: &[u8]) -> Option<Record> {
         thread_id,
         message_id,
         input,
+        stored,
     })
 }
 
@@ -132,6 +171,37 @@ mod tests {
                 .input
                 .is_some()
         );
+    }
+
+    #[test]
+    fn a_stored_result_stub_is_noted() {
+        let stub = serde_json::json!({ "type": "tool_result", "group_id": "t-1", "id": "call_1", "text": "Vall",
+            "truncated": true, "result_url": "https://api.example.test/v1/agent-callbacks/results/x",
+            "result_bytes": 9000, "result_sha256": "ab" });
+        let rec = parse(&record("tool_result", "t-1", stub)).unwrap();
+        assert_eq!(
+            rec.stored,
+            Some(StoredResult {
+                url: "https://api.example.test/v1/agent-callbacks/results/x".to_owned(),
+                bytes: 9000,
+                sha256: "ab".to_owned()
+            })
+        );
+        let plain = serde_json::json!({ "type": "tool_result", "group_id": "t-1", "id": "call_1", "text": "x" });
+        assert!(
+            parse(&record("tool_result", "t-1", plain))
+                .unwrap()
+                .stored
+                .is_none()
+        );
+
+        let full = serde_json::to_vec(&serde_json::json!({ "type": "tool_result", "group_id": "t-1", "id": "call_1", "text": "Valletta" })).unwrap();
+        assert!(matches!(stored_input("t-1", &full), Some(Some(_))));
+        assert!(
+            stored_input("t-2", &full).is_none(),
+            "a result for another thread"
+        );
+        assert!(stored_input("t-1", b"not json").is_none());
     }
 
     #[test]

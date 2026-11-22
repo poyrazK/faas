@@ -3671,6 +3671,8 @@ func (s *server) handler() http.Handler {
 	// inbox, and the token-only route a tool posts its result to.
 	mux.HandleFunc("POST /v1/agent-callbacks", s.agentCallbackCallerRoute(s.createAgentCallback))
 	mux.HandleFunc("POST /v1/agent-callbacks/revocations", s.agentCallbackCallerRoute(s.revokeAgentCallbacks))
+	// A stored large tool result, read with the app's credential.
+	mux.HandleFunc("GET /v1/agent-callbacks/results/{id}", s.agentCallbackCallerRoute(s.getAgentCallbackResult))
 	mux.Handle("POST /v1/agent-callbacks/{token}", middleware.AuthLimit(middleware.AuthLimitConfig{
 		Log:           s.log,
 		Window:        time.Minute,

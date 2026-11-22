@@ -153,6 +153,7 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 	}
 	ticker := time.NewTicker(runCallbackInterval)
 	defer ticker.Stop()
+	var lastResultSweep time.Time
 	for {
 		select {
 		case <-ctx.Done():
@@ -175,6 +176,10 @@ func (h *Handler) RunRunCallbacks(ctx context.Context) {
 			h.Log.Warn("agent browser actions", "err", err)
 		}
 		h.sweepGitHubSubscriptions(ctx)
+		if now := h.now(); now.Sub(lastResultSweep) >= callbackResultSweepInterval {
+			lastResultSweep = now
+			h.sweepCallbackResults(ctx)
+		}
 	}
 }
 
@@ -216,8 +221,11 @@ func (h *Handler) deliverRunEnd(ctx context.Context, end agentstore.RunCallbackE
 		if end.Callback.ProviderCallID != "" {
 			inv.CallID = &end.Callback.ProviderCallID
 		}
-		post := runEndPost(grant, inv, end)
-		_, err := h.Inbox.AppendManagedRealtimeChannelMetadata(ctx, grant.EndpointID, api.AgentInboxChannel, post.Data, false,
+		post, err := h.runEndPostStored(ctx, grant, inv, end)
+		if err != nil {
+			return err
+		}
+		_, err = h.Inbox.AppendManagedRealtimeChannelMetadata(ctx, grant.EndpointID, api.AgentInboxChannel, post.Data, false,
 			callbackIdempotencyKey(grant.ThreadID, post.MessageID), callbackMetadata(grant.ThreadID, post))
 		// A conflict is another message under the call's ID: the call is
 		// already answered.
@@ -272,6 +280,48 @@ func runEndPost(grant CallbackToken, inv rapInvocation, end agentstore.RunCallba
 		post, _ = toolResultPost(grant, inv, runResultText(result))
 	}
 	return post
+}
+
+// runEndPostStored is runEndPost, except that a result too large for one
+// inbox message is stored (callback_results.go) when this apid can, rather
+// than left out. A store failure the next pass may not repeat is an error,
+// so the run's end is delivered then; a result over the stored-result limit,
+// or past the endpoint's, is left out as before.
+func (h *Handler) runEndPostStored(ctx context.Context, grant CallbackToken, inv rapInvocation, end agentstore.RunCallbackEnd) (api.AgentCallbackPost, error) {
+	post := runEndPost(grant, inv, end)
+	if !h.callbackResultsConfigured() || end.Result == nil || !runResultOmitted(post) {
+		return post, nil
+	}
+	result := runToolResult{RunID: end.RunID, State: end.State, Result: end.Result}
+	if end.OutcomeCode != "" {
+		message := end.OutcomeMessage
+		if len(message) > runOutcomeTextMax {
+			message = strings.ToValidUTF8(message[:runOutcomeTextMax], "")
+		}
+		result.Outcome = &api.AgentRunOutcome{Code: end.OutcomeCode, Message: message}
+	}
+	full, problem := toolResultPostMax(grant, inv, runResultText(result), api.AgentCallbackResultMaxBytes)
+	if problem != nil {
+		return post, nil
+	}
+	stored, problem := h.storeLargePost(ctx, grant, full)
+	switch {
+	case problem == nil:
+		return stored, nil
+	case problem.Status >= http.StatusInternalServerError:
+		return post, fmt.Errorf("store run result: %s", problem.Detail)
+	}
+	return post, nil
+}
+
+// runResultOmitted reports whether runEndPost left the run's result out.
+func runResultOmitted(post api.AgentCallbackPost) bool {
+	var msg rapToolResultMessage
+	if json.Unmarshal(post.Data, &msg) != nil {
+		return false
+	}
+	var result runToolResult
+	return json.Unmarshal([]byte(msg.Text), &result) == nil && result.ResultOmitted
 }
 
 func runResultText(result runToolResult) string {

@@ -128,16 +128,19 @@ func (h *Handler) ReceiveCallback(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	post, publish, problem := decodeCallbackPost(r, grant)
+	post, publish, problem := decodeCallbackPost(r, grant, h.callbackDataMax())
 	if problem == nil && !publish {
 		httpkit.WriteJSON(w, http.StatusAccepted, api.AgentCallbackReceipt{ThreadID: grant.ThreadID})
 		return
 	}
 	if problem == nil {
-		problem = checkCallbackPost(grant, post)
+		problem = checkCallbackPostMax(grant, post, h.callbackDataMax())
 	}
 	if problem == nil {
 		problem = h.admit(r.Context(), grant)
+	}
+	if problem == nil {
+		post, problem = h.storeLargePost(r.Context(), grant, post)
 	}
 	var message state.ManagedRealtimeChannelMessage
 	if problem == nil {
@@ -289,8 +292,15 @@ func (h *Handler) RevokeCallbacks(w http.ResponseWriter, r *http.Request, caller
 	httpkit.WriteJSON(w, http.StatusOK, api.AgentCallbackRevocation{EndpointID: endpoint.ID, ThreadID: req.ThreadID, RevokedAt: at.UTC()})
 }
 
-// checkCallbackPost checks one post against its token.
+// checkCallbackPost checks one post against its token, for one inbox
+// message.
 func checkCallbackPost(grant CallbackToken, post api.AgentCallbackPost) *api.Problem {
+	return checkCallbackPostMax(grant, post, api.AgentCallbackPayloadMaxBytes)
+}
+
+// checkCallbackPostMax checks one post whose data may be up to max bytes;
+// data over one inbox message is stored (callback_results.go).
+func checkCallbackPostMax(grant CallbackToken, post api.AgentCallbackPost, max int) *api.Problem {
 	switch {
 	case !ValidCallbackID(post.MessageID, api.AgentCallbackMessageIDMaxBytes):
 		return api.ErrValidation(fmt.Sprintf("message_id must be 1-%d bytes of letters, digits, '.', '_', ':' and '-'", api.AgentCallbackMessageIDMaxBytes))
@@ -298,9 +308,8 @@ func checkCallbackPost(grant CallbackToken, post api.AgentCallbackPost) *api.Pro
 		return api.NewProblem(http.StatusForbidden, api.CodeValidation, "Kind not allowed", "this callback URL does not carry messages of kind "+strconv.Quote(post.Kind))
 	case len(post.Data) == 0 || !json.Valid(post.Data) || string(bytes.TrimSpace(post.Data)) == "null":
 		return api.ErrValidation("data must be a JSON value other than null")
-	case len(post.Data) > api.AgentCallbackPayloadMaxBytes:
-		return api.NewProblem(http.StatusRequestEntityTooLarge, api.CodeValidation, "Callback too large",
-			fmt.Sprintf("data is %d bytes; a callback carries at most AgentCallbackPayloadMaxBytes (%d)", len(post.Data), api.AgentCallbackPayloadMaxBytes))
+	case len(post.Data) > max:
+		return callbackTooLarge(len(post.Data), max)
 	}
 	return nil
 }

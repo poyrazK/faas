@@ -78,6 +78,7 @@ export async function failSlice(message, err, { store, platform }, log = console
 // model picks the next step (model.js); platform issues and revokes callback
 // URLs (platform.js); tools dispatches a tool call (tools.js).
 export async function runSlice(message, { store, model, platform, tools }) {
+  message = await resolveStoredResult(message, platform);
   const turn = await store.transaction(message.threadId, async (tx) => {
     if (await tx.seen(message.messageId)) {
       // A redelivery: the turn is already persisted. Finish what the first
@@ -109,6 +110,21 @@ export async function runSlice(message, { store, model, platform, tools }) {
     await platform.revokeCallbacks(message.endpointId, message.threadId);
   }
   return turn;
+}
+
+// resolveStoredResult replaces a stored result's stub with the result. A
+// tool result too large for one inbox message arrives as a stub with
+// truncated, result_url, result_bytes and result_sha256; the full result is
+// read here and kept in the thread, so the platform's 7-day expiry of stored
+// results never shortens the agent's memory. It runs inside the slice, so a
+// read that keeps failing closes the thread on the last attempt.
+export async function resolveStoredResult(message, platform) {
+  const c = message.content;
+  if (!c || typeof c !== "object" || c.truncated !== true || typeof c.result_url !== "string" || typeof platform?.readResult !== "function") {
+    return message;
+  }
+  const body = await platform.readResult(c.result_url, { bytes: c.result_bytes, sha256: c.result_sha256 });
+  return { ...message, content: JSON.parse(body.toString("utf8")) };
 }
 
 function assistantID(messageID) {

@@ -41,9 +41,9 @@ type rapCallback struct {
 // {message_id, kind, data}, or a RAP callback, which has a type. A RAP view
 // update is a display side channel with no agent input, so it is
 // acknowledged and not published: ok is false with no problem.
-func decodeCallbackPost(r *http.Request, grant CallbackToken) (post api.AgentCallbackPost, ok bool, problem *api.Problem) {
+func decodeCallbackPost(r *http.Request, grant CallbackToken, maxData int) (post api.AgentCallbackPost, ok bool, problem *api.Problem) {
 	var raw json.RawMessage
-	if err := httpkit.DecodeJSONSized(r, &raw, api.AgentCallbackPayloadMaxBytes+callbackEnvelopeMaxBytes); err != nil {
+	if err := httpkit.DecodeJSONSized(r, &raw, int64(maxData)+callbackEnvelopeMaxBytes); err != nil {
 		return post, false, api.ErrValidation("the body must be a JSON callback of at most the payload limit")
 	}
 	var shape struct {

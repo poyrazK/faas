@@ -45,6 +45,73 @@ func (q *Queries) AgentCallbackClock(ctx context.Context, db DBTX) (pgtype.Times
 	return now, err
 }
 
+const agentCallbackResultByID = `-- name: AgentCallbackResultByID :one
+SELECT id::text AS id, endpoint_id::text AS endpoint_id, thread_id, message_id, sha256, size_bytes, expires_at
+ FROM agent_callback_results
+ WHERE id = $1::text::uuid AND account_id = $2::text::uuid
+`
+
+type AgentCallbackResultByIDParams struct {
+	ID        string
+	AccountID string
+}
+
+type AgentCallbackResultByIDRow struct {
+	ID         string
+	EndpointID string
+	ThreadID   string
+	MessageID  string
+	Sha256     string
+	SizeBytes  int32
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) AgentCallbackResultByID(ctx context.Context, db DBTX, arg AgentCallbackResultByIDParams) (AgentCallbackResultByIDRow, error) {
+	row := db.QueryRow(ctx, agentCallbackResultByID, arg.ID, arg.AccountID)
+	var i AgentCallbackResultByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.EndpointID,
+		&i.ThreadID,
+		&i.MessageID,
+		&i.Sha256,
+		&i.SizeBytes,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
+const agentCallbackResultByMessage = `-- name: AgentCallbackResultByMessage :one
+SELECT id::text AS id, sha256, size_bytes, expires_at FROM agent_callback_results
+ WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
+   AND message_id = $3::text
+`
+
+type AgentCallbackResultByMessageParams struct {
+	EndpointID string
+	ThreadID   string
+	MessageID  string
+}
+
+type AgentCallbackResultByMessageRow struct {
+	ID        string
+	Sha256    string
+	SizeBytes int32
+	ExpiresAt pgtype.Timestamptz
+}
+
+func (q *Queries) AgentCallbackResultByMessage(ctx context.Context, db DBTX, arg AgentCallbackResultByMessageParams) (AgentCallbackResultByMessageRow, error) {
+	row := db.QueryRow(ctx, agentCallbackResultByMessage, arg.EndpointID, arg.ThreadID, arg.MessageID)
+	var i AgentCallbackResultByMessageRow
+	err := row.Scan(
+		&i.ID,
+		&i.Sha256,
+		&i.SizeBytes,
+		&i.ExpiresAt,
+	)
+	return i, err
+}
+
 const agentCallbacksRevokedAt = `-- name: AgentCallbacksRevokedAt :one
 SELECT revoked_at FROM agent_callback_revocations
  WHERE endpoint_id = $1::text::uuid AND thread_id = $2::text
@@ -469,6 +536,15 @@ func (q *Queries) CountSandboxSessionDomains(ctx context.Context, db DBTX, sessi
 	return i, err
 }
 
+const deleteAgentCallbackResult = `-- name: DeleteAgentCallbackResult :exec
+DELETE FROM agent_callback_results WHERE id = $1::text::uuid
+`
+
+func (q *Queries) DeleteAgentCallbackResult(ctx context.Context, db DBTX, id string) error {
+	_, err := db.Exec(ctx, deleteAgentCallbackResult, id)
+	return err
+}
+
 const deleteExpiredAgentGitHubSubscriptions = `-- name: DeleteExpiredAgentGitHubSubscriptions :execrows
 DELETE FROM agent_github_subscriptions WHERE id IN (
   SELECT id FROM agent_github_subscriptions WHERE expires_at < $1::timestamptz
@@ -680,6 +756,43 @@ func (q *Queries) ExpireQueuedSandboxSessions(ctx context.Context, db DBTX) (int
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const expiredAgentCallbackResults = `-- name: ExpiredAgentCallbackResults :many
+SELECT id::text AS id, account_id::text AS account_id, endpoint_id::text AS endpoint_id
+ FROM agent_callback_results WHERE expires_at < $1::timestamptz
+ ORDER BY expires_at LIMIT $2::integer
+`
+
+type ExpiredAgentCallbackResultsParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+type ExpiredAgentCallbackResultsRow struct {
+	ID         string
+	AccountID  string
+	EndpointID string
+}
+
+func (q *Queries) ExpiredAgentCallbackResults(ctx context.Context, db DBTX, arg ExpiredAgentCallbackResultsParams) ([]ExpiredAgentCallbackResultsRow, error) {
+	rows, err := db.Query(ctx, expiredAgentCallbackResults, arg.Before, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpiredAgentCallbackResultsRow{}
+	for rows.Next() {
+		var i ExpiredAgentCallbackResultsRow
+		if err := rows.Scan(&i.ID, &i.AccountID, &i.EndpointID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const expiredSandboxScreenshots = `-- name: ExpiredSandboxScreenshots :many
@@ -1754,6 +1867,38 @@ func (q *Queries) InsertAgent(ctx context.Context, db DBTX, arg InsertAgentParam
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const insertAgentCallbackResult = `-- name: InsertAgentCallbackResult :one
+INSERT INTO agent_callback_results (account_id, endpoint_id, thread_id, message_id, sha256, size_bytes, expires_at)
+VALUES ($1::text::uuid, $2::text::uuid, $3::text, $4::text,
+  $5::text, $6::integer, $7::timestamptz)
+RETURNING id::text AS id
+`
+
+type InsertAgentCallbackResultParams struct {
+	AccountID  string
+	EndpointID string
+	ThreadID   string
+	MessageID  string
+	Sha256     string
+	SizeBytes  int32
+	ExpiresAt  pgtype.Timestamptz
+}
+
+func (q *Queries) InsertAgentCallbackResult(ctx context.Context, db DBTX, arg InsertAgentCallbackResultParams) (string, error) {
+	row := db.QueryRow(ctx, insertAgentCallbackResult,
+		arg.AccountID,
+		arg.EndpointID,
+		arg.ThreadID,
+		arg.MessageID,
+		arg.Sha256,
+		arg.SizeBytes,
+		arg.ExpiresAt,
+	)
+	var id string
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertAgentDelivery = `-- name: InsertAgentDelivery :exec
@@ -3422,6 +3567,23 @@ func (q *Queries) ListUndeliveredWorkflowAgentRuns(ctx context.Context, db DBTX,
 	return items, nil
 }
 
+const liveAgentCallbackResultBytes = `-- name: LiveAgentCallbackResultBytes :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM agent_callback_results
+ WHERE endpoint_id = $1::text::uuid AND expires_at > $2::timestamptz
+`
+
+type LiveAgentCallbackResultBytesParams struct {
+	EndpointID string
+	Now        pgtype.Timestamptz
+}
+
+func (q *Queries) LiveAgentCallbackResultBytes(ctx context.Context, db DBTX, arg LiveAgentCallbackResultBytesParams) (int64, error) {
+	row := db.QueryRow(ctx, liveAgentCallbackResultBytes, arg.EndpointID, arg.Now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const lockAccountAgents = `-- name: LockAccountAgents :exec
 SELECT pg_advisory_xact_lock(hashtextextended('agent-runs:' || $1::text, 0))
 `
@@ -3429,6 +3591,17 @@ SELECT pg_advisory_xact_lock(hashtextextended('agent-runs:' || $1::text, 0))
 // Serializes every agent write and run admission of one account (ADR-20261027090010 §4).
 func (q *Queries) LockAccountAgents(ctx context.Context, db DBTX, accountID string) error {
 	_, err := db.Exec(ctx, lockAccountAgents, accountID)
+	return err
+}
+
+const lockAgentCallbackResultEndpoint = `-- name: LockAgentCallbackResultEndpoint :exec
+SELECT pg_advisory_xact_lock(hashtextextended('agent-callback-results:' || $1::text, 0))
+`
+
+// ADR-20261030125501 §3 amendment 2026-11-22: serializes stored results of
+// one endpoint, so its live bytes stay within the limit.
+func (q *Queries) LockAgentCallbackResultEndpoint(ctx context.Context, db DBTX, endpointID string) error {
+	_, err := db.Exec(ctx, lockAgentCallbackResultEndpoint, endpointID)
 	return err
 }
 

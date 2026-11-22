@@ -135,6 +135,17 @@ CREATE TABLE agent_github_subscriptions (
  expires_at timestamptz NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE agent_callback_results (
+ id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+ account_id uuid NOT NULL,
+ endpoint_id uuid NOT NULL,
+ thread_id text NOT NULL,
+ message_id text NOT NULL,
+ sha256 text NOT NULL,
+ size_bytes integer NOT NULL,
+ expires_at timestamptz NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE agent_run_outputs (
  run_id uuid PRIMARY KEY,
  account_id uuid NOT NULL,

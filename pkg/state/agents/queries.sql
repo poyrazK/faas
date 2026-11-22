@@ -477,6 +477,39 @@ DELETE FROM agent_github_subscriptions WHERE id IN (
   SELECT id FROM agent_github_subscriptions WHERE expires_at < sqlc.arg(before)::timestamptz
    ORDER BY expires_at LIMIT sqlc.arg(max_rows)::integer);
 
+-- name: LockAgentCallbackResultEndpoint :exec
+-- ADR-20261030125501 §3 amendment 2026-11-22: serializes stored results of
+-- one endpoint, so its live bytes stay within the limit.
+SELECT pg_advisory_xact_lock(hashtextextended('agent-callback-results:' || sqlc.arg(endpoint_id)::text, 0));
+
+-- name: AgentCallbackResultByMessage :one
+SELECT id::text AS id, sha256, size_bytes, expires_at FROM agent_callback_results
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND thread_id = sqlc.arg(thread_id)::text
+   AND message_id = sqlc.arg(message_id)::text;
+
+-- name: LiveAgentCallbackResultBytes :one
+SELECT COALESCE(sum(size_bytes), 0)::bigint FROM agent_callback_results
+ WHERE endpoint_id = sqlc.arg(endpoint_id)::text::uuid AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: InsertAgentCallbackResult :one
+INSERT INTO agent_callback_results (account_id, endpoint_id, thread_id, message_id, sha256, size_bytes, expires_at)
+VALUES (sqlc.arg(account_id)::text::uuid, sqlc.arg(endpoint_id)::text::uuid, sqlc.arg(thread_id)::text, sqlc.arg(message_id)::text,
+  sqlc.arg(sha256)::text, sqlc.arg(size_bytes)::integer, sqlc.arg(expires_at)::timestamptz)
+RETURNING id::text AS id;
+
+-- name: AgentCallbackResultByID :one
+SELECT id::text AS id, endpoint_id::text AS endpoint_id, thread_id, message_id, sha256, size_bytes, expires_at
+ FROM agent_callback_results
+ WHERE id = sqlc.arg(id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid;
+
+-- name: DeleteAgentCallbackResult :exec
+DELETE FROM agent_callback_results WHERE id = sqlc.arg(id)::text::uuid;
+
+-- name: ExpiredAgentCallbackResults :many
+SELECT id::text AS id, account_id::text AS account_id, endpoint_id::text AS endpoint_id
+ FROM agent_callback_results WHERE expires_at < sqlc.arg(before)::timestamptz
+ ORDER BY expires_at LIMIT sqlc.arg(max_rows)::integer;
+
 -- name: AgentCallbackClock :one
 -- ADR-20261030125501 §3: the clock RevokeAgentCallbacks records, read when a
 -- callback URL is issued so issue and revocation compare on one clock.

@@ -1,7 +1,10 @@
 // Callback URLs (ADR-20261030125501 §3). The app asks Gregale for them with
 // its own workload-identity token, so it holds no account API key. A URL
 // carries only one thread's tool results into agent-inbox, and expires.
+import { createHash } from "node:crypto";
+
 const audience = "gregale:agents";
+const storedResultID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class GregalePlatform {
   constructor({ apiURL = process.env.GREGALE_API_URL || "https://api.gregale.dev",
@@ -30,6 +33,24 @@ export class GregalePlatform {
     if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
     const text = await res.text();
     return text ? JSON.parse(text) : undefined;
+  }
+
+  // readResult reads a stored large tool result (ADR-20261030125501 §3
+  // amendment 2026-11-22) with the app's workload token. Only this API's
+  // results route is read, so the token never goes to another host, and the
+  // body must match the stub's size and digest.
+  async readResult(url, { bytes, sha256 }) {
+    const prefix = `${this.apiURL}/v1/agent-callbacks/results/`;
+    if (typeof url !== "string" || !url.startsWith(prefix) || !storedResultID.test(url.slice(prefix.length))) {
+      throw new Error("result_url is not a stored result of this Gregale API");
+    }
+    const res = await this.fetch(url, { headers: { authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) throw new Error(`read stored result: HTTP ${res.status}`);
+    const body = Buffer.from(await res.arrayBuffer());
+    if (body.length !== bytes || createHash("sha256").update(body).digest("hex") !== sha256) {
+      throw new Error("the stored result does not match its size and digest");
+    }
+    return body;
   }
 
   // issueCallback returns { url, expires_at } for one thread's tool results.

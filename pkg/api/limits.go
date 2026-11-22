@@ -11938,6 +11938,17 @@ const (
 	// AgentCallbacksPerMinutePerThread bounds the callbacks one apid accepts
 	// for one thread in a minute, so a runaway tool cannot flood the thread.
 	AgentCallbacksPerMinutePerThread = 600
+	// Stored callback results (ADR-20261030125501 §3 amendment 2026-11-22):
+	// a tool result over AgentCallbackPayloadMaxBytes, up to
+	// AgentCallbackResultMaxBytes, is kept in the artifact store for
+	// AgentCallbackResultRetentionSec. The inbox message carries a preview of
+	// at most AgentCallbackResultPreviewMaxBytes and the result's URL. One
+	// endpoint keeps at most AgentCallbackResultsPerEndpointMaxBytes of live
+	// results; past it a post is refused with 413.
+	AgentCallbackResultMaxBytes             = 1 << 20
+	AgentCallbackResultsPerEndpointMaxBytes = 256 << 20
+	AgentCallbackResultRetentionSec         = 604_800
+	AgentCallbackResultPreviewMaxBytes      = 2048
 	// AgentSleepMaxSeconds bounds a gregale_sleep (ADR-20261030125501 §4):
 	// the wake-up is a realtime schedule on the inbox, and a schedule is due
 	// at most 30 days ahead. A sleep also counts against the endpoint's

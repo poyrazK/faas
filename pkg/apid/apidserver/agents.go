@@ -87,6 +87,11 @@ func (s *server) configureAgentCallbacks(h *agents.Handler) {
 	if subs, ok := h.Store.(agents.GitHubSubscriptionStore); ok {
 		h.GitHubSubscriptions = subs
 	}
+	// Stored callback results also need the artifact store, which
+	// withAgentOutputFiles sets.
+	if results, ok := h.Store.(agents.CallbackResultStore); ok {
+		h.CallbackResults = results
+	}
 	if s.sessions != nil {
 		if signer, err := agents.NewCallbackSigner(s.sessions.BindingKey()); err == nil {
 			h.Callbacks = signer
@@ -311,6 +316,17 @@ func (s *server) revokeAgentCallbacks(w http.ResponseWriter, r *http.Request, ca
 		return
 	}
 	s.agentAPI.RevokeCallbacks(w, r, caller)
+}
+
+// getAgentCallbackResult serves a stored large tool result to the app of
+// the endpoint it was posted to (ADR-20261030125501 §3 amendment
+// 2026-11-22).
+func (s *server) getAgentCallbackResult(w http.ResponseWriter, r *http.Request, caller agents.CallbackCaller) {
+	if s.agentAPI == nil {
+		api.WriteProblem(w, api.ErrCapacity("the agent API is unavailable on this control-plane host"))
+		return
+	}
+	s.agentAPI.GetCallbackResult(w, r, caller)
 }
 
 // receiveAgentCallback serves the token-only callback route; it needs the

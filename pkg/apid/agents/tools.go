@@ -237,12 +237,18 @@ func (h *Handler) answerTool(ctx context.Context, grant CallbackToken, inv rapIn
 // toolResultPost is the inbox message of a tool result, with the message ID
 // a RAP tool posting the same result to the callback URL would get.
 func toolResultPost(grant CallbackToken, inv rapInvocation, text string) (api.AgentCallbackPost, *api.Problem) {
+	return toolResultPostMax(grant, inv, text, api.AgentCallbackPayloadMaxBytes)
+}
+
+// toolResultPostMax is toolResultPost for a result that may be stored
+// (callback_results.go): its data may be up to max bytes.
+func toolResultPostMax(grant CallbackToken, inv rapInvocation, text string, max int) (api.AgentCallbackPost, *api.Problem) {
 	data, err := json.Marshal(rapToolResultMessage{Type: rapToolResult, GroupID: grant.ThreadID, ID: inv.ID, CallID: inv.CallID, Text: text})
 	if err != nil {
 		return api.AgentCallbackPost{}, api.ErrValidation("the tool result is not encodable")
 	}
 	post := api.AgentCallbackPost{MessageID: rapMessageID("rap-tool-result-", inv.ID), Kind: api.AgentCallbackKindToolResult, Data: data}
-	return post, checkCallbackPost(grant, post)
+	return post, checkCallbackPostMax(grant, post, max)
 }
 
 // sleep schedules the call's tool result on the inbox for the wake-up time.

@@ -21402,6 +21402,21 @@
     "kind": "operational"
   },
   {
+    "table": "agent_callback_results",
+    "columns": [
+      "account_id",
+      "created_at",
+      "endpoint_id",
+      "expires_at",
+      "id",
+      "message_id",
+      "sha256",
+      "size_bytes",
+      "thread_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_github_subscriptions",
     "columns": [
       "account_id",

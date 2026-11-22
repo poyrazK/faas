@@ -144,8 +144,18 @@ fn split_sslmode(url: &str) -> (String, Option<String>) {
 /// the thread's callback URLs if it answered and waits on nothing.
 async fn slice(
     platform: &Arc<Platform>,
-    rec: record::Record,
+    mut rec: record::Record,
 ) -> Result<serde_json::Value, BoxError> {
+    // A stored large tool result's stub: read the result and use it, so the
+    // full result enters the thread's history (ADR-20261030125501 §3
+    // amendment 2026-11-22).
+    if let Some(stored) = rec.stored.take() {
+        let body = platform
+            .read_result(&stored.url, stored.bytes, &stored.sha256)
+            .await?;
+        rec.input = record::stored_input(&rec.thread_id, &body)
+            .ok_or_else(|| BoxError::from("the stored result is not a callback of this thread"))?;
+    }
     let Some(input) = rec.input else {
         return Ok(serde_json::json!({ "ok": true, "display_only": true }));
     };

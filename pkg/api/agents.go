@@ -46,6 +46,10 @@ const (
 	// CodeAgentCallbackRateLimited: a thread got more callbacks in a minute
 	// than AgentCallbacksPerMinutePerThread.
 	CodeAgentCallbackRateLimited = "agent_callback_rate_limited"
+	// CodeAgentCallbackResultsFull: storing a large tool result would take
+	// the endpoint past AgentCallbackResultsPerEndpointMaxBytes of live
+	// results.
+	CodeAgentCallbackResultsFull = "agent_callback_results_full"
 	// CodeAgentIntegrationInvalid: a version names an integration that is
 	// not an enabled customer AI integration of the account for that provider.
 	CodeAgentIntegrationInvalid = "agent_integration_invalid"
@@ -445,6 +449,17 @@ func ErrAgentCallbackRateLimited(limit, observed int) *Problem {
 	return NewProblem(http.StatusTooManyRequests, CodeAgentCallbackRateLimited, "Callback rate limit reached",
 		fmt.Sprintf("The thread got %d callbacks this minute; AgentCallbacksPerMinutePerThread allows %d. Retry after the minute.", observed, limit)).
 		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans")
+}
+
+// ErrAgentCallbackResultsFull: a large tool result would take the endpoint's
+// stored results past their limit (ADR-20261030125501 §3 amendment
+// 2026-11-22). Results expire after AgentCallbackResultRetentionSec.
+func ErrAgentCallbackResultsFull(limit, observed int64) *Problem {
+	return NewProblem(http.StatusRequestEntityTooLarge, CodeAgentCallbackResultsFull, "Stored results full",
+		fmt.Sprintf("Storing this result would keep %d bytes of large tool results for the inbox; AgentCallbackResultsPerEndpointMaxBytes allows %d. Stored results expire after %d seconds; retry later or post a smaller result.",
+			observed, limit, AgentCallbackResultRetentionSec)).
+		WithLimit(limit, observed).
 		WithDocs(docsBase + "/plans")
 }
 

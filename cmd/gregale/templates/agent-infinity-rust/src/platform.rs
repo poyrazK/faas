@@ -126,6 +126,42 @@ impl Platform {
         Ok(res)
     }
 
+    /// Read a stored large tool result (ADR-20261030125501 §3 amendment
+    /// 2026-11-22) with the app's workload token. Only this API's results
+    /// route is read, so the token never goes to another host, and the body
+    /// must match the stub's size and digest.
+    pub async fn read_result(
+        &self,
+        url: &str,
+        bytes: usize,
+        sha256: &str,
+    ) -> Result<Vec<u8>, PlatformError> {
+        if !stored_result_url(&self.api_url, url) {
+            return Err(PlatformError(
+                "result_url is not a stored result of this Gregale API".to_owned(),
+            ));
+        }
+        let res = self
+            .http
+            .get(url)
+            .bearer_auth(self.token().await?)
+            .send()
+            .await?;
+        if !res.status().is_success() {
+            return Err(PlatformError(format!(
+                "read stored result: HTTP {}",
+                res.status()
+            )));
+        }
+        let body = res.bytes().await?.to_vec();
+        if body.len() != bytes || sha256_hex(&body) != sha256 {
+            return Err(PlatformError(
+                "the stored result does not match its size and digest".to_owned(),
+            ));
+        }
+        Ok(body)
+    }
+
     /// Gregale's toolset, loaded from its RAP discovery endpoint once per
     /// process. The manifest names no account, so it needs no token.
     pub async fn toolset(&self) -> Result<ToolsetManifest, PlatformError> {
@@ -201,6 +237,27 @@ impl Platform {
 /// account (ADR-20261030125501 step 5). Off Gregale there is no token, and
 /// the invocation goes without one: gregale_sleep needs only its callback
 /// URL.
+/// Whether url is a stored result of the API at api_url: its results route
+/// followed by a UUID and nothing else.
+pub fn stored_result_url(api_url: &str, url: &str) -> bool {
+    let Some(id) = url.strip_prefix(&format!("{api_url}/v1/agent-callbacks/results/")) else {
+        return false;
+    };
+    id.len() == 36
+        && id.bytes().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == b'-',
+            _ => c.is_ascii_digit() || (b'a'..=b'f').contains(&c),
+        })
+}
+
+fn sha256_hex(body: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(body)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 #[derive(Clone)]
 pub struct GregaleHttp {
     pub platform: Arc<Platform>,
@@ -284,7 +341,7 @@ pub fn message_id(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::message_id;
+    use super::{message_id, sha256_hex, stored_result_url};
 
     #[test]
     fn message_ids_fit_the_callback_endpoint() {
@@ -296,5 +353,28 @@ mod tests {
         assert!(long.starts_with("in-") && long.len() <= 54);
         assert_eq!(long, message_id(&"x".repeat(80)));
         assert_ne!(message_id("a b"), message_id("a c"));
+    }
+
+    #[test]
+    fn the_token_goes_only_to_this_apis_results() {
+        let api = "https://api.example.test";
+        let id = "0a1b2c3d-0000-4000-8000-00000000abcd";
+        assert!(stored_result_url(
+            api,
+            &format!("{api}/v1/agent-callbacks/results/{id}")
+        ));
+        for url in [
+            format!("https://evil.example.test/v1/agent-callbacks/results/{id}"),
+            format!("{api}.evil.test/v1/agent-callbacks/results/{id}"),
+            format!("{api}/v1/agent-callbacks/results/{id}/../x"),
+            format!("{api}/v1/agent-callbacks/results/not-a-uuid"),
+            format!("{api}/v1/agents/runs/{id}"),
+        ] {
+            assert!(!stored_result_url(api, &url), "{url}");
+        }
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

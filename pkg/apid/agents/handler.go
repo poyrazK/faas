@@ -46,11 +46,14 @@ type Store interface {
 // Handler serves the agent routes.
 type Handler struct {
 	Store Store
-	// Files is the artifact store holding runs' output files; nil: files
-	// cannot be downloaded from this host.
+	// Files is the artifact store holding runs' output files and stored
+	// callback results; nil: files cannot be downloaded from this host, and
+	// a callback over one inbox message is refused.
 	Files storage.StorageBackend
-	Audit func(ctx context.Context, action, accountID string, fields map[string]any)
-	Log   *slog.Logger
+	// CallbackResults records stored callback results (callback_results.go).
+	CallbackResults CallbackResultStore
+	Audit           func(ctx context.Context, action, accountID string, fields map[string]any)
+	Log             *slog.Logger
 	// Agent callbacks (ADR-20261030125501 §3, callbacks.go). Callbacks signs
 	// tokens and Inbox publishes them; without both the callback routes
 	// answer capacity_unavailable. CallbackBaseURL is the public API origin

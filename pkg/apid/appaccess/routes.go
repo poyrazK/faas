@@ -26,6 +26,7 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/agent-callbacks":                                                     authz.OrgActionManageAppSecurity,
 	"POST /v1/execution-files/{id}/agent-grants":                                   authz.OrgActionManageAppSecurity,
 	"POST /v1/agent-callbacks/revocations":                                         authz.OrgActionManageAppSecurity,
+	"GET /v1/agent-callbacks/results/{id}":                                         authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":                         authz.ManageObjectStorage,
 	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}":               authz.ReadObjectStorage,
 	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url": authz.ManageObjectStorage,
