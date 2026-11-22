@@ -94,14 +94,15 @@ func cmdWakeTimeline(args []string) int {
 	if len(pos) == 2 {
 		slug = pos[0]
 		wakeID = pos[1]
-	} else if _, uuidErr := uuid.Parse(pos[0]); uuidErr != nil && api.ValidAppSlug(pos[0]) {
-		// `app wake-timeline APP` named an app, not a wake: it was read as a
-		// wake ID of the linked app and failed in a project checkout (prod
-		// hunt r27). Show the app's most recent wake.
-		slug, wakeID, latestWake = pos[0], "", true
 	} else {
 		var resolveErr error
 		slug, resolveErr = resolveRequiredAppSlug("")
+		if _, uuidErr := uuid.Parse(pos[0]); resolveErr != nil && uuidErr != nil && api.ValidAppSlug(pos[0]) {
+			// `app wake-timeline APP` where the checkout names no one app:
+			// the slug was read as a wake ID and the command failed on the
+			// project link (prod hunt r27). Show the app's most recent wake.
+			slug, wakeID, latestWake, resolveErr = pos[0], "", true, nil
+		}
 		if resolveErr != nil {
 			if errors.Is(resolveErr, errProjectContextNotFound) {
 				PrintUsage(os.Stderr, "usage: gregale app wake-timeline [<slug>] <wake-id> [--since RFC3339] [--limit N] [--all] [--verbose] (or run `gregale link <project-slug>`)", "wake-timeline")
