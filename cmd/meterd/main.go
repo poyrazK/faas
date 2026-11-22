@@ -1162,7 +1162,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fleetEgress := &fleetGatewayEgressAdapter{
 			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
-			active: make(map[string]*fleetEgressEntry),
+			gatewayResponseEgress: mc.GatewayResponseEgress,
+			active:                make(map[string]*fleetEgressEntry),
+		}
+		if mc.GatewayResponseEgress {
+			log.Info("meterd: gateway response bytes are billed as app egress (ADR-20261121210517)")
 		}
 		gwEgress = fleetEgress
 		go fleetEgress.Run(ctx)

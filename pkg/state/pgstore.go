@@ -22994,8 +22994,11 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 
 // AppendGatewayUsageEvent durably deduplicates one replayable gateway frame
 // and applies its counters in the same transaction. The caller may ACK the
-// frame only after this method returns nil.
-func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
+// frame only after this method returns nil. billedEgress also adds the
+// frame's response bytes to net_tx_bytes, the billed app egress
+// (ADR-20261121210517): meterd sets it while compute nodes deliver public
+// responses outside the instance veth that net_tx_bytes otherwise counts.
+func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, billedEgress bool) error {
 	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
@@ -23031,6 +23034,7 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 			Column3: int32(requests),
 			Column4: txBytes,
 			Column5: coldBoots,
+			Column6: gatewayBilledEgress(txBytes, billedEgress),
 		})
 		if applyErr != nil {
 			return applyErr
@@ -23040,6 +23044,14 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// gatewayBilledEgress is the net_tx_bytes a gateway usage frame adds.
+func gatewayBilledEgress(txBytes int64, billed bool) int64 {
+	if !billed {
+		return 0
+	}
+	return txBytes
 }
 
 // AppendNetworkUsageObservation converts vmmd's cumulative host-interface

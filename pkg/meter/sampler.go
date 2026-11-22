@@ -255,6 +255,11 @@ type Sampler struct {
 	// review R8-2) subtracts each instance's internal egress from
 	// usage_minutes.net_tx_bytes. Off by default.
 	internalEgressUnbilled bool
+	// gatewayResponseEgress ([meter] gateway_response_egress,
+	// ADR-20261121210517) adds the gateway response bytes drained from the
+	// in-memory stream to billed egress. Persisted gateway frames are billed
+	// by the store instead (AppendGatewayUsageEvent).
+	gatewayResponseEgress bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -508,6 +513,14 @@ func (s *Sampler) WithRollSettle(settle time.Duration) *Sampler {
 // a store implementing state.InternalEgressObserver.
 func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
 	s.internalEgressUnbilled = on
+	return s
+}
+
+// WithGatewayResponseEgress bills the gateway response bytes drained from the
+// in-memory gateway stream as app egress (ADR-20261121210517), for compute
+// nodes whose public responses never cross the instance veth.
+func (s *Sampler) WithGatewayResponseEgress(on bool) *Sampler {
+	s.gatewayResponseEgress = on
 	return s
 }
 
@@ -1308,12 +1321,19 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetworkCumulative {
 		netTx, netRx = 0, 0
 	}
+	// Gateway response bytes billed as egress (ADR-20261121210517) are
+	// written with the minute, before the interface delta.
+	var gatewayEgress int64
+	if s.gatewayResponseEgress && row.TXBytes > 0 {
+		gatewayEgress = row.TXBytes
+	}
 	if err := s.store.AppendUsage(ctx, row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx, netRx,
+		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx+gatewayEgress, netRx,
 		row.ColdBootCount, row.TailSeconds); err != nil {
 		return err
 	}
 	if !usage.NetworkCumulative {
+		row.NetTxBytes = netTx + gatewayEgress
 		return nil
 	}
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
@@ -1323,7 +1343,7 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
-	row.NetTxBytes = deltaTx
+	row.NetTxBytes = deltaTx + gatewayEgress
 	row.NetRxBytes = deltaRx
 	return nil
 }
