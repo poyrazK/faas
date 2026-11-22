@@ -68,6 +68,8 @@ type RouteResourcesResponse struct {
 	// one read analyses; the newest ones were used.
 	Truncated bool `json:"truncated"`
 	routeresources.Report
+	// Split, when present, suggests moving one heavy route to its own app.
+	Split *routeresources.Split `json:"split,omitempty"`
 }
 
 // RouteResourcesOptions selects the window. Since is a duration back from

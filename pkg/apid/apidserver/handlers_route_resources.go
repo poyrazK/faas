@@ -52,7 +52,23 @@ func (s *server) getAppRouteResources(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	resp.Slug = app.Slug
+	resp.Split = s.routeResourcesSplit(r.Context(), app, resp.Report)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// routeResourcesSplit sizes a split against the app's current RAM and the
+// largest app its owner's plan allows (ADR-20261121170000 amendment 1).
+func (s *server) routeResourcesSplit(ctx context.Context, app state.App, rep routeresources.Report) *routeresources.Split {
+	planMax := 0
+	current := app.RAMMB
+	if owner, err := state.AppResourceAccount(ctx, s.store, app); err == nil {
+		limits := api.MustLimitsFor(owner.Plan)
+		planMax = limits.RAMMB
+		if current <= 0 {
+			current = api.StandaloneAppDefaultRAMMB(limits)
+		}
+	}
+	return routeresources.SuggestSplit(rep, current, planMax, routeresources.SplitOptions{})
 }
 
 func routeResourcesWindow(since string) (time.Duration, error) {
