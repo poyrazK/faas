@@ -32,30 +32,72 @@ const (
 	environmentBranchDataLease       = 10 * time.Minute
 	environmentBranchDataBatch       = 10
 	environmentBranchDataMaxAttempts = 20
+	// A copy or binding the provider is still making is checked again after
+	// environmentBranchDataInProgressRetry without spending an attempt, for
+	// environmentBranchDataInProgressBudget from the branch's creation. A
+	// Neon point-in-time branch is usually ready within seconds, and the
+	// doubling retry delay of a failed attempt kept such branches pending
+	// for 20-30 s.
+	environmentBranchDataInProgressRetry  = time.Second
+	environmentBranchDataInProgressBudget = 10 * time.Minute
 )
+
+// errEnvironmentBranchDataInProgress marks a copy or binding that is still
+// being made, which is not a failed attempt.
+var errEnvironmentBranchDataInProgress = errors.New("environment branch data is still being copied")
 
 func (s *server) runEnvironmentBranchDataReconciler(ctx context.Context) {
 	store, ok := s.store.(state.ProjectEnvironmentBranchDataStore)
 	if !ok {
 		return
 	}
-	ticker := time.NewTicker(environmentBranchDataInterval)
-	defer ticker.Stop()
+	wake := s.environmentBranchDataWakeChannel()
 	for {
-		if err := s.reconcileEnvironmentBranchData(ctx, store, time.Now().UTC()); err != nil && ctx.Err() == nil && s.log != nil {
+		soon, err := s.reconcileEnvironmentBranchDataPass(ctx, store, time.Now().UTC())
+		if err != nil && ctx.Err() == nil && s.log != nil {
 			s.log.Warn("environment branch data reconcile failed", "err", err)
 		}
+		delay := environmentBranchDataInterval
+		if soon {
+			delay = environmentBranchDataInProgressRetry
+		}
+		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
+		case <-wake:
+			timer.Stop()
 		}
+	}
+}
+
+// environmentBranchDataWakeChannel is the reconciler's wake-up: a branch
+// created with pending data starts its copy at once instead of on the next
+// tick.
+func (s *server) environmentBranchDataWakeChannel() chan struct{} {
+	s.environmentBranchDataWakeOnce.Do(func() { s.environmentBranchDataWake = make(chan struct{}, 1) })
+	return s.environmentBranchDataWake
+}
+
+func (s *server) wakeEnvironmentBranchData() {
+	select {
+	case s.environmentBranchDataWakeChannel() <- struct{}{}:
+	default:
 	}
 }
 
 // reconcileEnvironmentBranchData deletes orphaned copies, then copies the
 // data of due branches, one bounded batch of each.
 func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) error {
+	_, err := s.reconcileEnvironmentBranchDataPass(ctx, store, now)
+	return err
+}
+
+// reconcileEnvironmentBranchDataPass is one reconcile; soon reports a copy
+// still in progress, which the reconciler checks again shortly.
+func (s *server) reconcileEnvironmentBranchDataPass(ctx context.Context, store state.ProjectEnvironmentBranchDataStore, now time.Time) (soon bool, _ error) {
 	errs := s.reconcileOrphanedEnvironmentBranchBuckets(ctx, now)
 	for range environmentBranchDataBatch {
 		lease := uuid.NewString()
@@ -64,7 +106,7 @@ func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state
 			break
 		}
 		if err != nil {
-			return errors.Join(errs, err)
+			return soon, errors.Join(errs, err)
 		}
 		if err := s.deleteEnvironmentBranchDatabase(ctx, row); err != nil {
 			errs = errors.Join(errs, fmt.Errorf("delete branch database copy %s: %w", row.CopyName, err))
@@ -81,7 +123,7 @@ func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state
 			break
 		}
 		if err != nil {
-			return errors.Join(errs, err)
+			return soon, errors.Join(errs, err)
 		}
 		copyErr := s.copyEnvironmentBranchData(ctx, store, branch)
 		if copyErr == nil {
@@ -90,6 +132,13 @@ func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state
 				continue
 			}
 			s.activateEnvironmentBranch(ctx, store, branch)
+			continue
+		}
+		if environmentBranchDataInProgress(copyErr) && now.Sub(branch.CreatedAt) < environmentBranchDataInProgressBudget {
+			if err := store.DeferProjectEnvironmentBranchData(ctx, branch.EnvironmentID, lease, now.Add(environmentBranchDataInProgressRetry)); err != nil {
+				errs = errors.Join(errs, err)
+			}
+			soon = true
 			continue
 		}
 		attempts := branch.DataAttempts + 1
@@ -103,7 +152,11 @@ func (s *server) reconcileEnvironmentBranchData(ctx context.Context, store state
 				"environment", branch.Slug, "attempt", attempts, "failed", failed, "err", copyErr)
 		}
 	}
-	return errs
+	return soon, errs
+}
+
+func environmentBranchDataInProgress(err error) bool {
+	return errors.Is(err, errEnvironmentBranchDataInProgress) || errors.Is(err, errDatabaseCopyInProgress)
 }
 
 // reconcileOrphanedEnvironmentBranchBuckets empties and deletes one bounded
@@ -307,7 +360,7 @@ func (s *server) copyEnvironmentBranchDatabases(ctx context.Context, store state
 				return fmt.Errorf("bind database copy for workload %q: %w", plan.app.Slug, err)
 			}
 			if binding.State != managedpostgres.BindingStateReady || binding.DatabaseID != copied.ID {
-				return fmt.Errorf("database copy binding for workload %q is not ready: %w", plan.app.Slug, managedpostgres.ErrUnavailable)
+				return fmt.Errorf("database copy binding for workload %q is not ready: %w%w", plan.app.Slug, errEnvironmentBranchDataInProgress, managedpostgres.ErrUnavailable)
 			}
 		}
 	}
