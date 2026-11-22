@@ -244,6 +244,7 @@ func TestParkZeroTrafficSiblingKeepsServingAndBusyInstances(t *testing.T) {
 // never idle. Every smoke wake of the next release was refused at the cap
 // until verification gave up. A smoke admission now parks the busy
 // zero-traffic instance; an ordinary gateway admission still leaves it.
+// adr: 199 (rollout concurrency grant); spec: §6.2 invariant 1
 func TestSmokeAdmissionParksABusyZeroTrafficSibling(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
