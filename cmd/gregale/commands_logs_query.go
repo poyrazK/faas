@@ -195,6 +195,12 @@ func runHTTPLogsQuery(ctx context.Context, slug, deploymentID, requestID, traceI
 	}
 	if page != nil {
 		renderHTTPLogQueryPageWarnings(osStderr, *page)
+		// A window query always ends now; requests from the last minute or
+		// two are not recorded yet. One request or trace id is a lookup,
+		// where the delay is not why nothing matched.
+		if len(rows) == 0 && !jsonOutput {
+			_, _ = fmt.Fprintln(osStderr, httpLogsLagNote)
+		}
 	}
 	return 0
 }
@@ -243,7 +249,6 @@ func emitHTTPLogQueryEvents(events []api.LogQueryEvent) int {
 	}
 	if len(events) == 0 {
 		_, _ = fmt.Fprintln(osStderr, "No HTTP requests matched these filters.")
-		_, _ = fmt.Fprintln(osStderr, httpLogsLagNote)
 		return 0
 	}
 	for _, event := range events {

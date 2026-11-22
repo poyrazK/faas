@@ -7792,7 +7792,9 @@ func runLogsExplainingMissingArchive(ctx context.Context, slug, deployment strin
 	}
 	printedLines := retainedLines
 	markRuntimeLine := func() {}
-	if follow && archive == nil && !jsonOutput && printedLines == 0 {
+	// Only an unfiltered follow: with --grep, --level or --deployment a quiet
+	// stream says nothing about whether the app writes output.
+	if follow && archive == nil && !jsonOutput && printedLines == 0 && deployment == "" && filter.Grep == "" && filter.Level == "" {
 		var stopIdleHint func()
 		markRuntimeLine, stopIdleHint = startRuntimeFollowIdleHint(slug)
 		defer stopIdleHint()

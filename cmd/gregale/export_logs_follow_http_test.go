@@ -15,10 +15,10 @@ func SetHTTPLogsFollowForTest(interval time.Duration, maxPolls int) func() {
 func SetRuntimeFollowIdleHintForTest(after time.Duration) func() {
 	old := runtimeFollowIdleHintAfter
 	runtimeFollowIdleHintAfter = after
-	runtimeFollowIdleHintShown.Store(false)
+	runtimeFollowIdleHintDone.Store(false)
 	return func() {
 		runtimeFollowIdleHintAfter = old
-		runtimeFollowIdleHintShown.Store(false)
+		runtimeFollowIdleHintDone.Store(false)
 	}
 }
 

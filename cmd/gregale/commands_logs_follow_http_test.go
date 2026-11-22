@@ -22,6 +22,11 @@ func TestCmdLogsFollowHTTPPrintsEachRowOnce(t *testing.T) {
 	var polls atomic.Int32
 	var sinces []string
 	var mu sync.Mutex
+	base := time.Now().UTC().Truncate(time.Minute)
+	minute := func(offset int) string { return base.Add(time.Duration(offset) * time.Minute).Format(time.RFC3339) }
+	row := func(id string, offset int) string {
+		return fmt.Sprintf(`{"id":"row-%s","route":"GET /%s","method":"GET","status":500,"latency_ms":1,"count":1,"received_at":%q}`, id, id, minute(offset))
+	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/apps/myapp/debug/requests" {
 			http.NotFound(w, r)
@@ -36,17 +41,13 @@ func TestCmdLogsFollowHTTPPrintsEachRowOnce(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch polls.Add(1) {
 		case 1:
-			_, _ = fmt.Fprint(w, `{"complete":true,"requests":[
-				{"id":"row-b","route":"GET /b","method":"GET","status":500,"latency_ms":2,"count":1,"received_at":"2026-11-22T19:21:00Z"},
-				{"id":"row-a","route":"GET /a","method":"GET","status":500,"latency_ms":1,"count":1,"received_at":"2026-11-22T19:20:00Z"}]}`)
+			_, _ = fmt.Fprintf(w, `{"complete":true,"requests":[%s,%s]}`, row("b", 0), row("a", -1))
 		default:
-			// Newest first, as the API answers; row-c is a late flush for
-			// an earlier minute and row-d is new.
-			_, _ = fmt.Fprint(w, `{"complete":true,"requests":[
-				{"id":"row-d","route":"GET /d","method":"GET","status":500,"latency_ms":4,"count":3,"received_at":"2026-11-22T19:22:00Z"},
-				{"id":"row-b","route":"GET /b","method":"GET","status":500,"latency_ms":2,"count":1,"received_at":"2026-11-22T19:21:00Z"},
-				{"id":"row-a","route":"GET /a","method":"GET","status":500,"latency_ms":1,"count":1,"received_at":"2026-11-22T19:20:00Z"},
-				{"id":"row-c","route":"GET /c","method":"GET","status":500,"latency_ms":3,"count":1,"received_at":"2026-11-22T19:19:00Z"}]}`)
+			// Newest first, as the API answers. row-c is a late flush for
+			// an earlier minute inside the backlog, row-d is new, and row-old
+			// predates the 2m backlog the wider 5m poll window now reaches.
+			_, _ = fmt.Fprintf(w, `{"complete":true,"requests":[%s,%s,%s,%s,%s]}`,
+				row("d", 0), row("b", 0), row("a", -1), row("c", -1), row("old", -4))
 		}
 	}))
 	defer srv.Close()
@@ -171,5 +172,14 @@ func TestRuntimeFollowIdleHintSilentAfterALine(t *testing.T) {
 	stop()
 	if stderr.Len() != 0 {
 		t.Fatalf("hint printed after a runtime line: %q", stderr.String())
+	}
+
+	// The stream reconnecting after its idle timeout starts a new hint; an
+	// app that already wrote lines must not be told it has no output.
+	_, stop = main.StartRuntimeFollowIdleHint("chatty-app")
+	time.Sleep(60 * time.Millisecond)
+	stop()
+	if stderr.Len() != 0 {
+		t.Fatalf("hint printed after reconnect: %q", stderr.String())
 	}
 }
