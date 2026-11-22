@@ -58,3 +58,17 @@
         faas_runner_memory_max: 8G
         faas_runner_gomaxprocs: 4
         faas_runner_protect_system: strict
+
+    # The persistent Go build cache shares the disk PostgreSQL writes to:
+    # trim it, oldest use first, well before the disk is full. Go also drops
+    # entries unused for five days on its own; this bounds the rest.
+    - name: Trim the build runner's Go build cache
+      ansible.builtin.include_role:
+        name: go_cache_retention
+      vars:
+        go_cache_trim_filesystem: /var/lib
+        go_cache_trim_high_water_percent: 70
+        go_cache_trim_low_water_percent: 60
+        go_cache_trim_lock_path: /var/lock/faas-build-runner-cache.lock
+        go_cache_trim_globs:
+          - /var/lib/faas-builder/.cache/go-build

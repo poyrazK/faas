@@ -87,10 +87,16 @@ The unit of deployment is a commit of main, never a daemon or a path.
   against its parent, so a new group variable that no stateful role reads
   does not stop the lane.
 - **A stalled lane deploys once.** While stalled, every merge releases the
-  same commit; the preflight stands down when the control plane already
-  runs it (`current` check; `unit_deploy.sh preflight-state` reports the
-  running unit release's commit). The run summary and a warning name the
-  stopping commit and how many commits wait.
+  same commit. Each run that releases a commit uploads a marker artifact
+  named after it; the preflight's `current` check stands down when an
+  earlier run of that commit finished every lane it ran (control plane,
+  edge) green. A failed lane is deployed again once its deploy-freeze
+  issue is closed; a release the watch rolled back is not re-shipped on its
+  own (a person decides, ADR 20261020214632). The run summary and a warning
+  name the stopping commit and how many commits wait, only when the whole
+  range is not eligible.
+- **One lane table.** The build of a prefix release reads head's
+  `release_units.json`, the table its report was made with.
 
 ### 2. Literal hostvars (this change)
 
@@ -100,7 +106,10 @@ literal attribute (`hostvars[h].name`, `hostvars[h]['name']`,
 selectattr('name') | map(attribute='name')`, `hostvars | dict2items |
 selectattr('value.name') | map(attribute='key')`, and
 `set hv = hostvars[h]` followed only by `hv.name`) names those variables
-like any other reference. Every other use (a computed attribute, the whole
+like any other reference. An extract or `dict2items` chain counts only
+when it ends in values (`map(attribute=...)` or `length`), so no host dict
+is bound by `for`/`set` or passed on; dict methods (`.get(`, `.items(`,
+`.keys(`, `.values(`) and loops over `hostvars` itself read everything. Every other use (a computed attribute, the whole
 host dict passed on, dumped or iterated) still reads every variable. A
 repository test fails when a new `hostvars` use matches none of the
 shapes, so it is recognised or rewritten, not silently widened.
@@ -154,7 +163,10 @@ Budget, merge to new code serving on the control plane:
   - **Below the services.** CPU weight 10 and `CPUQuota=400%` (4 of the
     Ryzen 5600X's 12 threads), IO weight 10, `MemoryHigh=6G`,
     `MemoryMax=8G`, `GOMAXPROCS=4` (which also bounds `go build -p`),
-    `ProtectSystem=strict`.
+    `ProtectSystem=strict`. Its Go build cache is trimmed by
+    `go_cache_retention` at 70 % disk use (down to 60 %), well before
+    PostgreSQL's disk fills. It never touches the deployment runner's
+    `/etc/hosts` fleet block.
   - **Switched by a variable.** `UNIT_RELEASE_BUILD_RUNNER` (its labels as
     JSON) moves the build job to it; unset, the job runs on a
     GitHub-hosted runner with the restored caches, as before. The runner

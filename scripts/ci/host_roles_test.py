@@ -358,7 +358,16 @@ class LiteralHostvarsTest(unittest.TestCase):
             "{{ hostvars | dict2items | map(attribute='value') | list }}",
             "{%- set hv = hostvars[h] -%}{{ hv[key] }}",
             "{%- set hv = hostvars[h] -%}{{ hv | to_json }}",
+            "{%- set hv = hostvars[h] -%}{{ hv.get(key) }}",
+            "{%- set hv = hostvars[h] -%}{{ hv.items() | list }}",
             "{{ hostvars.keys() }}",
+            "{{ hostvars[h].get(name) }}",
+            "{{ hostvars[h].items() | list }}",
+            "{% for hv in groups['db'] | map('extract', hostvars) %}{{ hv[setting] }}{% endfor %}",
+            "{% for hv in groups['db'] | map('extract', hostvars) | selectattr('x', 'defined') %}{% endfor %}",
+            "{% set hs = groups['db'] | map('extract', hostvars) | list %}{{ hs | to_json }}",
+            "{% for i in hostvars | dict2items %}{{ i.value[k] }}{% endfor %}",
+            "{{ groups['x'] | map('extract', hostvars) | selectattr('faas_x') | first }}",
         ]:
             with self.subTest(text=text[:60]):
                 self.assertFalse(hr.literal_hostvars(text))

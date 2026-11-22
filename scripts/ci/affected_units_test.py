@@ -311,6 +311,19 @@ class LanePrefixTest(unittest.TestCase):
         self.assertEqual(got["head"], "c1")
         self.assertEqual(got["stalled_by"]["blocked_by"], ["stateful_restart"])
 
+    def test_comment_only_judged_per_commit(self):
+        # site.yml looks comment-only over the range (c3 reverted c2's real
+        # change), but c2 really changed it.
+        commits = [("c3", ["deploy/ansible/site.yml"]), ("c2", ["deploy/ansible/site.yml"]),
+                   ("c1", ["pkg/apid/server.go"])]
+        per_commit = {"c3": {"deploy/ansible/site.yml"}, "c2": set()}
+        got = self.prefix(commits, comment_only={"deploy/ansible/site.yml"},
+                          comments_for=lambda sha, paths: per_commit.get(sha, set()))
+        self.assertEqual(got["head"], "c1")
+        self.assertEqual(got["stalled_by"]["commit"], "c2")
+        # Without per-commit comments the range's set would have let c2 pass.
+        self.assertIsNone(self.prefix(commits, comment_only={"deploy/ansible/site.yml"})["stalled_by"])
+
     def test_migrations_judged_per_commit(self):
         config = dict(CONFIG, migrations_dir="migrations/")
         data = {"eligible": False, "blockers": ["migrations/00003_drop.sql: contract"], "migrations": [

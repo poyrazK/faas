@@ -203,11 +203,13 @@ jobs:
           tools="$RUNNER_TEMP/unit-tools"
           rm -rf "$tools" && cp -R scripts/ci "$tools"
           python3 "$tools/affected_units.py" --base "$BASE" --head HEAD --output "$OUT_DIR/report-main.json"
-          target="$(git rev-parse HEAD)"
+          target="$(git rev-parse HEAD)" stall=""
+          # The whole range's verdict wins: a commit that looks blocked on
+          # its own (a change a later commit reverts) does not stall it.
           if [[ "$(jq -r .eligible "$OUT_DIR/report-main.json")" != true ]]; then
             target="$(jq -r '.lane_prefix.head // empty' "$OUT_DIR/report-main.json")"
+            stall="$(jq -r '.lane_prefix.stalled_by | select(.) | "\(.commit[0:12]): \(.reasons | join("; "))"' "$OUT_DIR/report-main.json")"
           fi
-          stall="$(jq -r '.lane_prefix.stalled_by | select(.) | "\(.commit[0:12]): \(.reasons | join("; "))"' "$OUT_DIR/report-main.json")"
           if [[ -n "$stall" ]]; then
             echo "::warning::unit lane stalled behind ${stall}; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for a full release" >&2
           fi
@@ -220,7 +222,8 @@ jobs:
             python3 "$tools/affected_units.py" --base "$BASE" --head "$target" --code --code-cache "$CODE_CACHE" \
               --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json"
           fi
-          echo "release_sha=${target:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          # Empty when no commit is releasable; nothing downstream runs then.
+          echo "release_sha=${target}" >> "$GITHUB_OUTPUT"
           eligible="$(jq -r .eligible "$OUT_DIR/report.json")"
           deployable="$(jq -r '.deployable | join(",")' "$OUT_DIR/report.json")"
           {
@@ -231,7 +234,11 @@ jobs:
             echo "code_cache_new=$(jq -r '.code_selection.base_built | length > 0' "$OUT_DIR/report.json")"
           } >> "$GITHUB_OUTPUT"
           {
-            echo "## Unit release for \`${target:0:12}\` over \`$BASE\`"
+            if [[ -n "$target" ]]; then
+              echo "## Unit release for \`${target:0:12}\` over \`$BASE\`"
+            else
+              echo "## No releasable commit over \`$BASE\` (main at \`${GITHUB_SHA:0:12}\`)"
+            fi
             echo
             if [[ -n "$stall" ]]; then
               echo "**Lane stalled** at \`${stall}\`. Main is at \`${GITHUB_SHA:0:12}\`; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for the next full release. The lane never skips or splits a commit."
@@ -279,6 +286,9 @@ jobs:
         env:
           REPORT: ${{ runner.temp }}/gregale-units/report.json
           OUT_DIR: ${{ runner.temp }}/gregale-units/release
+          # The lane table the report was made with (head's), not the
+          # checked-out prefix commit's.
+          LANES: ${{ runner.temp }}/unit-tools/release_units.json
         run: scripts/build-unit-release.sh
 
       - name: Install pinned cosign
@@ -320,6 +330,20 @@ jobs:
         with:
           name: gregale-unit-release
           path: ${{ runner.temp }}/gregale-units/release/
+          if-no-files-found: error
+          retention-days: 30
+
+      # Names the released commit, so a later run's preflight finds the runs
+      # that already released it (deploy_preflight.py `current`).
+      - name: Mark the released commit
+        if: steps.detect.outputs.eligible == 'true'
+        run: echo "${{ steps.detect.outputs.release_sha }}" > "$RUNNER_TEMP/release-sha"
+      - name: Upload the release marker
+        if: steps.detect.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unit-release-sha-${{ steps.detect.outputs.release_sha }}
+          path: ${{ runner.temp }}/release-sha
           if-no-files-found: error
           retention-days: 30
 

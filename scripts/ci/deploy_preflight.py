@@ -8,7 +8,7 @@ checks:
 
   freeze   no open issue labelled deploy-freeze             else hold
   newest   no newer run of release-units will deploy        else stand down
-  current  the control plane does not run this commit already else stand down
+  current  no earlier run deployed this commit through every lane else stand down
   main     the commit's post-merge ci-light run did not fail else fail
   idle     no other deploy runs, the control plane's deploy lock is free
                                                             else wait
@@ -59,6 +59,9 @@ LIGHT_WORKFLOW = "ci-light.yml"
 LANE_JOB_PREFIXES = ("Deploy the control-plane lane", "Deploy the edge lane")
 BUILD_JOB = "Build and sign changed control-plane units"
 PREFLIGHT_JOB = "Check production can take a deploy"
+# release-units' build job uploads an empty artifact named this plus the
+# released commit, so a later run can find the runs that released it.
+RELEASE_MARKER = "unit-release-sha-"
 ACTIVE_RUN_STATUSES = ("in_progress", "queued", "waiting")
 ACTIVE_JOB_STATUSES = ("in_progress", "queued", "waiting", "pending", "requested")
 
@@ -135,23 +138,32 @@ class Preflight:
         return self._me
 
     def evaluate(self) -> list[Verdict]:
-        verdicts = [self.freeze(), self.newest(), self.main()]
+        verdicts = [self.freeze(), self.newest(), self.current(), self.main()]
         try:
             host = self.host_state()
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             host = {"error": str(err)}
-        verdicts += [self.current(host), self.idle(host), self.healthy(host), self.watch(host)]
+        verdicts += [self.idle(host), self.healthy(host), self.watch(host)]
         return verdicts
 
     # --- current ----------------------------------------------------------
-    def current(self, host: dict) -> Verdict:
+    def current(self) -> Verdict:
         """A stalled lane (docs/adr/20261122170000-continuous-unit-lane.md)
         releases the same commit on every merge until the next full
-        release; one deploy and one watch of it are enough."""
-        running = host.get("running") or ""
-        if not host.get("error") and running == self.sha:
-            return Verdict("current", STAND_DOWN, f"the control plane already runs the unit release of {self.sha[:12]}")
-        return Verdict("current", OK, f"the control plane runs {running[:12] or 'its full release'}, not {self.sha[:12]}")
+        release. Every release-units run that releases a commit uploads the
+        marker artifact RELEASE_MARKER + sha; when an earlier such run
+        finished every lane it ran (control plane, edge) green, this one has
+        nothing to add. A failed lane is retried (once its deploy-freeze
+        issue is closed); a release the watch rolled back is not re-shipped
+        on its own: a person decides that (ADR 20261020214632)."""
+        arts = self.gh.get("actions/artifacts", {"name": RELEASE_MARKER + self.sha, "per_page": 100})
+        for run_id in sorted({a.get("workflow_run", {}).get("id") for a in arts.get("artifacts", [])} - {None, self.run_id}):
+            lanes = [j for j in self.jobs(run_id) if j["name"].startswith(LANE_JOB_PREFIXES)
+                     and j.get("conclusion") != "skipped"]
+            if lanes and all(j.get("status") == "completed" and j.get("conclusion") == "success" for j in lanes):
+                return Verdict("current", STAND_DOWN, f"run {run_id} already deployed the unit release of "
+                               f"{self.sha[:12]}: every lane it ran passed")
+        return Verdict("current", OK, f"no earlier run deployed {self.sha[:12]} through every lane")
 
     # --- freeze -----------------------------------------------------------
     def freeze(self) -> Verdict:

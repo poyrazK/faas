@@ -93,14 +93,25 @@ DYNAMIC_VARS = re.compile(r"\bvars\s*\[|\bvarnames\b|(?:lookup|query)\(\s*[\"']v
 # passed on, dumped or iterated) still reads every variable.
 _LIT = r"[A-Za-z_][\w.]*"
 _SUB = r"\[(?:[^\[\]]|\[[^\[\]]*\])*\]"  # one subscript, one level of nesting
-_FILTER = (r"(?:(?:selectattr|rejectattr)\(\s*'" + _LIT + r"'[^()]*\)"
-           r"|map\(\s*attribute\s*=\s*'(?!value')" + _LIT + r"'\s*\)|map\(\s*'bool'\s*\)"
-           r"|(?:select|reject|list|length|sort|unique|first|last)\b)")
-_CHAIN = r"(?:\s*\|\s*" + _FILTER + r")*"
+# A dict method reads variables by computed name (or all of them).
+_METHODS = ("get", "items", "keys", "values")
+_ATTR = r"\.(?!(?:" + "|".join(_METHODS) + r")\b)[A-Za-z_]\w*(?!\s*\()"
+# Filters over host dicts that name variables only literally...
+_DICT_FILTER = (r"(?:(?:selectattr|rejectattr)\(\s*'" + _LIT + r"'[^()]*\)"
+                r"|(?:select|reject|list|sort|unique)\b)")
+# ...then one that turns them into values, so no host dict leaves the
+# expression (a dict bound by `for`/`set` or passed on could be read by
+# computed name later)...
+_TO_VALUE = r"(?:map\(\s*attribute\s*=\s*'(?!value')" + _LIT + r"'\s*\)|length\b)"
+# ...and any filters over those values.
+_VALUE_FILTER = (r"(?:map\(\s*attribute\s*=\s*'" + _LIT + r"'\s*\)|map\(\s*'bool'\s*\)"
+                 r"|(?:select|reject|list|length|sort|unique|first|last)\b)")
+_CHAIN = (r"(?:\s*\|\s*" + _DICT_FILTER + r")*\s*\|\s*" + _TO_VALUE +
+          r"(?:\s*\|\s*" + _VALUE_FILTER + r")*")
 _END = r"(?!\s*\||\s*\[|\s*\.)"  # the chain is the whole expression's use of the host dicts
 LITERAL_HOSTVARS = (
-    # hostvars[h].name, hostvars[h]['name']
-    re.compile(r"\bhostvars\s*" + _SUB + r"\s*(?:\.[A-Za-z_]\w*|\[\s*['\"][A-Za-z_]\w*['\"]\s*\])"),
+    # hostvars[h].name, hostvars[h]['name'] (not .get(...), .items() ...)
+    re.compile(r"\bhostvars\s*" + _SUB + r"\s*(?:" + _ATTR + r"|\[\s*['\"][A-Za-z_]\w*['\"]\s*\])"),
     # map('extract', hostvars, 'name')
     re.compile(r"map\(\s*'extract'\s*,\s*hostvars\s*,\s*'[A-Za-z_]\w*'\s*\)"),
     # map('extract', hostvars) | selectattr('name', ...) | map(attribute='name') | list ...
@@ -120,16 +131,25 @@ def literal_hostvars(text):
     name only (LITERAL_HOSTVARS, SET_HOSTVARS)."""
     if "hostvars" not in text:
         return True
+    # A loop over hostvars itself binds whole host dicts (`in hostvars` is
+    # otherwise a membership test).
+    if re.search(r"\bfor\s+\w+(?:\s*,\s*\w+)*\s+in\s+hostvars\b", text):
+        return False
     rest = text
     for alias in SET_HOSTVARS.findall(rest):
-        uses = re.findall(r"\b" + re.escape(alias) + r"\b(\s*\S)?", rest)
-        # The set itself, then only attribute reads (hv.name).
-        if any(not tail or tail.strip() not in (".", "=") for tail in uses):
+        # The set itself (alias =), then only attribute reads (hv.name, not
+        # hv.get(k) or hv[k]).
+        name = re.escape(alias)
+        unbound = re.sub(r"\bset\s+" + name + r"\s*=", "set _ =", rest)
+        attr = re.compile(r"\s*" + _ATTR)
+        if any(not attr.match(unbound, m.end()) for m in re.finditer(r"\b" + name + r"\b", unbound)):
             return False
         rest = SET_HOSTVARS.sub("set _ = _", rest)
     for pattern in LITERAL_HOSTVARS:
         rest = pattern.sub("_", rest)
     return not re.search(r"\bhostvars\b", rest)
+
+
 ROLE_INCLUDE = re.compile(r"(?:include_role|import_role):\s*\n?\s*name:\s*[\"']?([\w.-]+)")
 
 

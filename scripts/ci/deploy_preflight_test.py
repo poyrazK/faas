@@ -40,10 +40,15 @@ class FakeGitHub:
         self.light = []
         self.runs = {}
         self.requests = []
+        # Runs that uploaded the release marker for SHA.
+        self.released_by = []
 
     def get(self, path, params=None):
         self.requests.append(path)
         params = params or {}
+        if path == "actions/artifacts":
+            assert params["name"] == dp.RELEASE_MARKER + SHA
+            return {"artifacts": [{"name": params["name"], "workflow_run": {"id": r}} for r in self.released_by]}
         if path == "issues":
             assert params["labels"] == dp.FREEZE_LABEL and params["state"] == "open"
             return self.issues
@@ -118,17 +123,37 @@ class PreflightTest(PreflightCase):
         self.assertIn("Held, not deployed", summary)
         self.assertIn("#7 Autodeploy paused", summary)
 
-    def test_release_the_control_plane_already_runs_stands_down(self):
+    CP_LANE = "Deploy the control-plane lane / Deploy unit release to Control Plane Host"
+    EDGE_LANE = "Deploy the edge lane / Roll the edge"
+
+    def test_commit_an_earlier_run_deployed_through_every_lane_stands_down(self):
         # A stalled lane releases the same commit on every merge.
-        self.host = dict(healthy_host(), running=SHA)
+        self.gh.released_by = [90]
+        self.gh.jobs[90] = [job(self.CP_LANE), job(self.EDGE_LANE), job("Watch the deployed units / watch")]
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (0, False))
-        self.assertIn("already runs the unit release", summary)
+        self.assertIn("run 90 already deployed the unit release", summary)
 
-    def test_other_running_release_or_a_full_release_goes(self):
-        for running in ("f" * 40, ""):
-            with self.subTest(running=running):
-                self.host = dict(healthy_host(), running=running)
+    def test_edge_only_or_skipped_lane_counts_by_the_lanes_that_ran(self):
+        self.gh.released_by = [90]
+        self.gh.jobs[90] = [job(self.CP_LANE, conclusion="skipped"), job(self.EDGE_LANE)]
+        self.assertEqual(self.run_preflight()[:2], (0, False))
+
+    def test_failed_or_unfinished_lane_is_deployed_again(self):
+        for jobs in ([job(self.CP_LANE), job(self.EDGE_LANE, conclusion="failure")],
+                     [job(self.CP_LANE, conclusion="failure")],
+                     [job(self.CP_LANE), job(self.EDGE_LANE, status="in_progress", conclusion=None)],
+                     [job("Check production can take a deploy")]):
+            with self.subTest(jobs=jobs):
+                self.gh.released_by = [90]
+                self.gh.jobs[90] = jobs
+                self.assertEqual(self.run_preflight()[:2], (0, True))
+
+    def test_this_run_and_no_earlier_release_go(self):
+        for released in ([], [ME]):
+            with self.subTest(released=released):
+                self.gh.released_by = released
+                self.gh.jobs[ME] = [job(self.CP_LANE)]
                 self.assertEqual(self.run_preflight()[:2], (0, True))
 
     def test_pull_requests_with_the_label_do_not_freeze(self):

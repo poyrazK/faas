@@ -69,6 +69,17 @@
       {{ entry.address }} {{ entry.names | join(' ') }}
       {% endfor %}
     state: "{{ 'present' if faas_runner_private_hosts | length > 0 else 'absent' }}"
+  # The block belongs to the deployment runner. A build runner on the same
+  # host (build_runner.yml) resolves no fleet endpoints and must not remove
+  # the deployment runner's, which cd-compute needs.
+  when: faas_runner_kind | default('deploy') == 'deploy'
+
+- name: github_actions_runner — a build runner resolves no private fleet endpoints
+  ansible.builtin.assert:
+    that:
+      - faas_runner_private_hosts | length == 0
+    fail_msg: "a build runner holds no fleet endpoints; set faas_runner_private_hosts on the deployment runner"
+  when: faas_runner_kind | default('deploy') == 'build'
 
 - name: github_actions_runner — create service account group
   ansible.builtin.group:

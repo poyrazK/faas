@@ -680,7 +680,7 @@ def commit_verdict(data, paths, directory):
 
 
 def lane_prefix(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None,
-                comment_only=frozenset(), host_for=None):
+                comment_only=frozenset(), host_for=None, comments_for=None):
     """The newest commit the unit lane may release when the whole range may
     not: walking (base, head] oldest first, every commit up to it carries no
     blocking flag on its own (analyze over that commit alone). The lane never
@@ -695,16 +695,20 @@ def lane_prefix(commits, closures, config, exists, recipe_shas=frozenset(), data
     against its parent (role content hashes, so a new group variable no
     stateful role reads changes no stateful role), or None, and then the
     roles its own paths own count (changed_roles, every role for a group
-    global). The caller re-runs the full analysis at head before releasing
-    it, which is the verdict that counts."""
+    global). comments_for(sha, paths) gives the deploy paths that commit
+    changed only in comments (against its parent); without it,
+    comment_only (the range's) is used. The caller re-runs the full
+    analysis at head before releasing it, which is the verdict that
+    counts."""
     directory = config.get("migrations_dir")
     per_commit_host = {g: {k: v for k, v in view.items() if k != "changed"} for g, view in (host or {}).items()}
     head, done = None, 0
     ordered = list(reversed(commits))
     for sha, paths in ordered:
         view = (host_for(sha, paths) if host_for else None) or per_commit_host
+        comments = comments_for(sha, paths) if comments_for else comment_only
         rep = analyze([(sha, paths)], closures, config, exists, recipe_shas & {sha},
-                      commit_verdict(data, paths, directory), view, comment_only=comment_only)
+                      commit_verdict(data, paths, directory), view, comment_only=comments)
         if rep["blocked_by"]:
             reasons = [f"{f} ({rep['flags'][f]['count']} paths, e.g. {rep['flags'][f]['paths'][0]})"
                        for f in rep["blocked_by"]]
@@ -885,7 +889,13 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
         except (RuntimeError, KeyError, ValueError):
             return None
 
-    prefix = lane_prefix(commits, closures, config, exists, recipes, data, host, comments, host_for)
+    def comments_for(sha, paths):
+        # A change one commit makes and a later one reverts is no comment
+        # change for the commit that made it.
+        mine = {p for p in paths if matches(p, deploy_prefixes) and p not in owned}
+        return comment_only_paths(f"{sha}^", sha, mine, root) if mine else frozenset()
+
+    prefix = lane_prefix(commits, closures, config, exists, recipes, data, host, comments, host_for, comments_for)
     selection = None
     if code:
         names = code_candidates(out)

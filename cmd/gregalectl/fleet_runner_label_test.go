@@ -103,10 +103,20 @@ func TestBuildRunnerIsIsolatedFromTheDeploymentRunner(t *testing.T) {
 	if err := yaml.Unmarshal(body, &plays); err != nil {
 		t.Fatal(err)
 	}
-	if len(plays) != 1 || len(plays[0].Tasks) != 1 || plays[0].Tasks[0].IncludeRole["name"] != "github_actions_runner" {
-		t.Fatalf("build_runner.yml must be one play including github_actions_runner once, got %+v", plays)
+	if len(plays) != 1 {
+		t.Fatalf("build_runner.yml must be one play, got %d", len(plays))
 	}
-	vars := plays[0].Tasks[0].Vars
+	var vars map[string]any
+	runners := 0
+	for _, task := range plays[0].Tasks {
+		if task.IncludeRole["name"] == "github_actions_runner" {
+			vars = task.Vars
+			runners++
+		}
+	}
+	if runners != 1 {
+		t.Fatalf("build_runner.yml must include github_actions_runner once, got %d", runners)
+	}
 	str := func(k string) string { s, _ := vars[k].(string); return s }
 	for k, v := range map[string]string{
 		"faas_runner_kind":           "build",
