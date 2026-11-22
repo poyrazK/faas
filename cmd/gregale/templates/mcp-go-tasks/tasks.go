@@ -210,6 +210,7 @@ var errTaskInputCancelled = errors.New("MCP task was cancelled while requesting 
 type mcpTaskRuntime struct {
 	pool                     *pgxpool.Pool
 	role                     string
+	taskSubmissionReady      bool
 	namespace                string
 	notificationChannel      string
 	ttl                      time.Duration
@@ -451,6 +452,13 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 			pool.Close()
 			return nil, errors.New("MCP Task schema is unavailable or incompatible; run tasks-migrate apply with the migration account")
 		}
+		if role == "combined" || role == "web" {
+			runtime.taskSubmissionReady, err = checkTaskSubmissionIndex(ctx, pool)
+			if err != nil {
+				pool.Close()
+				return nil, errors.New("could not check MCP Task submission schema")
+			}
+		}
 		if err := runtime.checkTaskPayloadKeys(ctx); err != nil {
 			pool.Close()
 			return nil, errors.New("MCP Task payload preflight failed; verify retained keys and database connectivity before starting this runtime")
@@ -640,6 +648,9 @@ func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
 			ADD COLUMN IF NOT EXISTS resume_pending boolean NOT NULL DEFAULT false,
 			ADD COLUMN IF NOT EXISTS next_attempt_at timestamptz`,
 		`ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS output_schema jsonb CHECK(output_schema IS NULL OR jsonb_typeof(output_schema)='object')`,
+		`ALTER TABLE gregale_mcp_tasks ADD COLUMN IF NOT EXISTS submission_key uuid`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS gregale_mcp_tasks_submission_key_idx
+			ON gregale_mcp_tasks(namespace,submission_key) WHERE submission_key IS NOT NULL`,
 		`ALTER TABLE gregale_mcp_tasks DROP CONSTRAINT IF EXISTS gregale_mcp_tasks_status_check`,
 		`ALTER TABLE gregale_mcp_tasks ADD CONSTRAINT gregale_mcp_tasks_status_check
 			CHECK (status IN ('queued','running','input_required','completed','cancelled','failed'))`,
@@ -898,11 +909,23 @@ func (runtime *mcpTaskRuntime) decrypt(value []byte, taskID, field string, out a
 }
 
 func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map[string]any, identity *authContext, clientCapabilities map[string]any, outputSchemas ...map[string]any) (map[string]any, error) {
+	return runtime.createWithSubmission(ctx, name, args, identity, clientCapabilities, "", outputSchemas...)
+}
+
+func (runtime *mcpTaskRuntime) createWithSubmission(ctx context.Context, name string, args map[string]any, identity *authContext, clientCapabilities map[string]any, submissionKey string, outputSchemas ...map[string]any) (map[string]any, error) {
 	runtime.drainMu.Lock()
 	draining := !runtime.drainStarted.IsZero()
 	runtime.drainMu.Unlock()
 	if draining {
 		return nil, errors.New("MCP task runtime is draining")
+	}
+	var issuedAt time.Time
+	if submissionKey != "" {
+		var valid bool
+		issuedAt, valid = taskSubmissionIssuedAt(submissionKey)
+		if !runtime.taskSubmissionReady || identity == nil || identity.subject == "" || !valid {
+			return nil, errTaskSubmissionUnavailable
+		}
 	}
 	registered, ok := runtime.taskHandlers[name]
 	if !ok {
@@ -944,6 +967,12 @@ func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, taskTable+":admission:"+runtime.namespace); err != nil {
 		return nil, err
 	}
+	if submissionKey != "" {
+		prior, err := runtime.replayTaskSubmission(ctx, tx, submissionKey, issuedAt, name, args, inputMethods, owners)
+		if err != nil || prior != nil {
+			return prior, err
+		}
+	}
 	if err := runtime.associateOwnersTx(ctx, tx, owners); err != nil {
 		return nil, err
 	}
@@ -963,10 +992,15 @@ func (runtime *mcpTaskRuntime) create(ctx context.Context, name string, args map
 	if err != nil {
 		return nil, err
 	}
+	if submissionKey != "" {
+		if err := runtime.recordTaskSubmission(ctx, tx, id, submissionKey, issuedAt); err != nil {
+			return nil, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	return map[string]any{"resultType": "task", "taskId": id, "status": "working", "statusMessage": "Task accepted for processing.", "createdAt": created.UTC().Format(time.RFC3339Nano), "lastUpdatedAt": updated.UTC().Format(time.RFC3339Nano), "ttlMs": expires.Sub(created).Milliseconds(), "pollIntervalMs": runtime.pollInterval.Milliseconds()}, nil
+	return runtime.submittedTaskHandle(id, created, updated, expires), nil
 }
 
 func (runtime *mcpTaskRuntime) get(ctx context.Context, id string, identity *authContext) (map[string]any, *durableMCPTask, error) {
@@ -1024,24 +1058,27 @@ func (runtime *mcpTaskRuntime) readTask(ctx context.Context, id string, identity
 }
 
 func (runtime *mcpTaskRuntime) wire(task *durableMCPTask) map[string]any {
-	status := task.Status
-	if status == "queued" || status == "running" {
-		status = "working"
-	}
-	out := map[string]any{"resultType": "complete", "taskId": task.ID, "status": status, "createdAt": task.CreatedAt.UTC().Format(time.RFC3339Nano), "lastUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano), "ttlMs": task.ExpiresAt.Sub(task.CreatedAt).Milliseconds(), "pollIntervalMs": runtime.pollInterval.Milliseconds()}
-	if status == "completed" {
+	out := runtime.wireMetadata(task)
+	switch out["status"] {
+	case "completed":
 		out["result"] = task.Result
-	}
-	if status == "failed" {
+	case "failed":
 		out["error"] = task.Error
 		if task.Error == nil {
 			out["error"] = map[string]any{"code": -32603, "message": "Task execution failed"}
 		}
-	}
-	if status == "input_required" {
+	case "input_required":
 		out["inputRequests"] = task.InputRequests
 	}
 	return out
+}
+
+func (runtime *mcpTaskRuntime) wireMetadata(task *durableMCPTask) map[string]any {
+	status := task.Status
+	if status == "queued" || status == "running" {
+		status = "working"
+	}
+	return map[string]any{"resultType": "complete", "taskId": task.ID, "status": status, "createdAt": task.CreatedAt.UTC().Format(time.RFC3339Nano), "lastUpdatedAt": task.UpdatedAt.UTC().Format(time.RFC3339Nano), "ttlMs": task.ExpiresAt.Sub(task.CreatedAt).Milliseconds(), "pollIntervalMs": runtime.pollInterval.Milliseconds()}
 }
 
 func taskInputMethodsFor(capabilities map[string]any) []string {

@@ -5646,9 +5646,10 @@ the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
 
-The Node/PostgreSQL starter supports retrying a lost submission reply on an
-authenticated endpoint. Run the updated `tasks:migrate` before starting the
-updated starter. Generate and save a lowercase UUIDv7 before the first call.
+The `mcp-node-tasks` and `mcp-go-tasks` PostgreSQL starters support retrying a
+lost submission reply on an authenticated endpoint. Before starting the updated starter, run
+`npm run tasks:migrate` for Node or `go run . tasks-migrate apply` for Go with
+the migration binding. Generate and save a lowercase UUIDv7 before the first call.
 
 ```sh
 gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
