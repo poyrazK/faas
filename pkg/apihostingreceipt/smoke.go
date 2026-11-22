@@ -357,8 +357,11 @@ func verifyOnce(ctx context.Context, client *http.Client, baseURL, appsDomain, s
 		// never promised this path, so a framework's 400/422 for a GET it
 		// does not expect (prod 2026-11-22: an Express worker answered the
 		// platform's default /healthz with 422) is an answer, not a fault.
-		// A 5xx still fails the check.
-		acceptable = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError
+		// A 5xx still fails the check, and so do 408 and 429: a candidate
+		// that times out or sheds the request is not ready for traffic, and
+		// retryableSmoke retries a 429.
+		acceptable = resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusInternalServerError &&
+			resp.StatusCode != http.StatusRequestTimeout && resp.StatusCode != http.StatusTooManyRequests
 	case VerificationAPIRouteContract:
 		acceptable = (resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusBadRequest) ||
 			resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden

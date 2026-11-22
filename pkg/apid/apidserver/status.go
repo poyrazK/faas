@@ -391,6 +391,12 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 			buildAvailable = true
 			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
 			snap.deploymentFailedAccounts, snap.deploymentTenantsCounted = counts.FailedAccounts, true
+		case countErr == nil && len(excluded) > 0:
+			// An empty window after exclusions means only excluded
+			// accounts deployed. Prometheus cannot filter accounts, so
+			// falling back would let them drive the indicator again; the
+			// indicator is unavailable until a counted deployment lands.
+			queryPrometheusBuild = false
 		case countErr != nil:
 			queryPrometheusBuild = false
 			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)

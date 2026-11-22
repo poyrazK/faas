@@ -9,18 +9,36 @@ import (
 )
 
 // Prod 2026-11-22: test apps' migrations that exited 1 or 3 counted as
-// platform deployment failures. A release command's own failure is the
-// customer's; exit 126/127 (not executable, not found) stays platform
+// platform deployment failures. A release command's own failure (an exit,
+// its own timeout, its owner's cancel) is the customer's; exit 126/127 (not
+// executable, not found) and a task that ended with neither stay platform
 // evidence, as when the runner base lost npm.
 func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 	m := NewMemStore()
 	now := time.Now()
+	cancelAt := now
 	m.mu.Lock()
 	m.apps["app-1"] = App{ID: "app-1", AccountID: "acct-1"}
-	for i, exit := range []*int{exitCode(1), exitCode(3), nil, exitCode(127)} {
-		id := []string{"d-exit1", "d-exit3", "d-timeout", "d-notfound"}[i]
-		m.putDeploymentLocked(id, Deployment{ID: id, AppID: "app-1", Status: DeployFailed, ErrorCode: api.CodeReleaseCommandFailed, CreatedAt: now})
-		m.appTasks["t-"+id] = AppTask{ID: "t-" + id, AppID: "app-1", DeploymentID: id, Kind: AppTaskKindRelease, Status: AppTaskFailed, ExitCode: exit}
+	for _, tc := range []struct {
+		id     string
+		status AppTaskStatus
+		exit   *int
+		cancel *time.Time
+	}{
+		{"exit1", AppTaskFailed, exitCode(1), nil},
+		{"exit3", AppTaskFailed, exitCode(3), nil},
+		{"own-timeout", AppTaskTimedOut, nil, nil},
+		{"owner-cancel", AppTaskCancelled, nil, &cancelAt},
+		{"platform-cancel", AppTaskCancelled, nil, nil},
+		{"not-found", AppTaskFailed, exitCode(127), nil},
+		{"no-task", "", nil, nil},
+	} {
+		appID := "app-" + tc.id
+		m.apps[appID] = App{ID: appID, AccountID: "acct-1"}
+		m.putDeploymentLocked(tc.id, Deployment{ID: tc.id, AppID: appID, Status: DeployFailed, ErrorCode: api.CodeReleaseCommandFailed, CreatedAt: now})
+		if tc.status != "" {
+			m.appTasks["t-"+tc.id] = AppTask{ID: "t-" + tc.id, AppID: appID, DeploymentID: tc.id, Kind: AppTaskKindRelease, Status: tc.status, ExitCode: tc.exit, CancelRequested: tc.cancel}
+		}
 	}
 	m.mu.Unlock()
 
@@ -28,8 +46,9 @@ func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if counts.Failed != 1 || counts.FailedAccounts != 1 {
-		t.Fatalf("outcomes = %+v, want only the exit-127 release as a platform failure", counts)
+	// platform-cancel, not-found and no-task stay platform evidence.
+	if counts.Failed != 3 || counts.FailedAccounts != 1 {
+		t.Fatalf("outcomes = %+v, want 3 platform release failures on 1 account", counts)
 	}
 }
 

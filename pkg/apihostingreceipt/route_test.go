@@ -34,6 +34,7 @@ func TestRouteVerificationContract(t *testing.T) {
 		{"framework validation", 422, "candidate", "candidate", SmokeVerified},
 		{"bad request", 400, "candidate", "candidate", SmokeVerified},
 		{"unproven 422", 422, "candidate", "", SmokeSkipped},
+		{"candidate overloaded", 429, "candidate", "candidate", SmokeFailed},
 		{"app error", 500, "candidate", "candidate", SmokeFailed},
 		{"old revision", 200, "old", "old", SmokeSkipped},
 		{"old revision missing root", 404, "old", "old", SmokeSkipped},

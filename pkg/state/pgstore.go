@@ -8956,19 +8956,20 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 
 // CountDeploymentOutcomesSince returns one bounded fleet aggregate for the
 // public status page. Successful deployments are live or superseded rows.
-// Failed rows are excluded when a user_error build backs them or when their
-// error code places the failure in the customer's workload or content
+// Failed rows are excluded when the failure is the customer's
+// (deploymentOutcomeCustomerCausedSQL): a user_error build, an error code
+// that places it in the customer's workload or content
 // (api.CustomerCausedDeploymentFailureCodes: app crashed, nothing listening,
-// OOM, ...). Other failures after a successful build (scan, snapshot,
-// readiness timeouts) remain visible as platform failures. Deleted apps
-// remain in the aggregate because release-acceptance apps are deliberately
-// cleaned up after their terminal result is recorded. FailedAccounts counts the
-// tenants behind the failures; a deployment whose app row is gone counts as
-// its own tenant. A release command's own failure and an app's proven smoke
-// answer are customer-caused too (customerCausedDeploymentFailureSQL).
-// Repeated failures of one app with one error code count once: an owner (or
-// an agent) retrying the same broken release is one problem, not one per
-// attempt. excludedAccounts (operator runtime config
+// OOM, ...), a release command's own failure, or a 4xx the candidate itself
+// answered the smoke check with. Other failures after a successful build
+// (scan, snapshot, readiness timeouts) remain visible as platform failures.
+// Deleted apps stay in the aggregate (apps are soft-deleted; release-
+// acceptance apps are deleted after their terminal result is recorded); a
+// deployment whose app row was purged counts as its own tenant and cannot be
+// matched to an excluded account. Failures of one app with one error code in
+// the same hour count once: an owner (or an agent) retrying the same broken
+// release is one problem, while a fault that recurs through the day still
+// counts each hour. excludedAccounts (operator runtime config
 // status_excluded_account_ids: internal test, probe and release-acceptance
 // accounts) leave both sides of the ratio.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
@@ -8976,9 +8977,30 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 	err := s.pool.QueryRow(ctx, `
 		with outcomes as (
 			select coalesce(a.account_id, d.app_id) as tenant,
-			       coalesce(d.app_id::text, d.id::text) || ':' || coalesce(d.error_code, '') as failure_key,
+			       coalesce(d.app_id::text, d.id::text) || ':' || coalesce(d.error_code, '') || ':' ||
+			         date_trunc('hour', coalesce(d.rollout_aborted_at, d.created_at))::text as failure_key,
 			       d.status in ('live', 'superseded') as succeeded,
-			       d.status = 'failed' and not (`+customerCausedDeploymentFailureSQL("$2", "$3", "$4")+`) as platform_failed
+			       d.status = 'failed' and not (
+			         coalesce(d.error_code, '') = any($2::text[])
+			         or exists (
+			           select 1 from builds b
+			            where b.deployment_id = d.id
+			              and b.failure_class = 'user_error'
+			         )
+			         or (d.error_code = $4 and exists (
+			           select 1 from app_tasks t
+			            where t.deployment_id = d.id
+			              and t.kind = 'release'
+			              and (
+			                (t.exit_code is not null and t.exit_code <> all($3::int[]))
+			                or t.status = 'timed_out'
+			                or (t.status = 'cancelled' and t.cancel_requested_at is not null)
+			              )
+			         ))
+			         or (d.error_code = $5
+			             and d.api_hosting_receipt #>> '{smoke,error_code}' = $6
+			             and coalesce((d.api_hosting_receipt #>> '{smoke,status_code}')::int, 0) between 400 and 499)
+			       ) as platform_failed
 			  from deployments d
 			  left join apps a on a.id = d.app_id
 			 where (
@@ -8986,46 +9008,24 @@ func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.T
 				or
 				(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
 			   )
-			   and coalesce(a.account_id::text, '') <> all($5::text[])
+			   and coalesce(a.account_id::text, '') <> all($7::text[])
 		)
 		select
 			count(*) filter (where succeeded),
 			count(distinct failure_key) filter (where platform_failed),
 			count(distinct tenant) filter (where platform_failed)
 		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
-		api.CustomerCausedSmokeErrorCode, nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
+		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
+		nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
 }
 
-// customerCausedDeploymentFailureSQL is the predicate, over a failed
-// deployments row d, that places the failure in the customer's workload: a
-// customer-caused error code (codes), a user_error build, a release command
-// that ran and failed other than with a platform exit code (exitCodes:
-// api.PlatformReleaseExitCodes), or a smoke check the candidate itself
-// answered unacceptably (smokeCode: api.CustomerCausedSmokeErrorCode).
-func customerCausedDeploymentFailureSQL(codes, exitCodes, smokeCode string) string {
-	return `coalesce(d.error_code, '') = any(` + codes + `::text[])
-			or exists (
-				select 1 from builds b
-				 where b.deployment_id = d.id
-				   and b.failure_class = 'user_error'
-			)
-			or (d.error_code = '` + api.CodeReleaseCommandFailed + `' and not exists (
-				select 1 from app_tasks t
-				 where t.deployment_id = d.id
-				   and t.kind = 'release'
-				   and t.exit_code = any(` + exitCodes + `::int[])
-			))
-			or (d.error_code = '` + api.CodeDeploymentSmokeFailed + `'
-			    and d.api_hosting_receipt #>> '{smoke,error_code}' = ` + smokeCode + `::text)`
-}
-
 // LatestPlatformDeploymentOutcome returns the newest successful deployment or
-// platform-attributable failure. A user-code build failure or a
-// customer-caused runtime failure is not platform health evidence and is
-// skipped. The result remains authoritative until a newer terminal deployment
-// supersedes it.
-func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDeploymentOutcome, error) {
+// platform-attributable failure, with CountDeploymentOutcomesSince's
+// attribution and account exclusion. A customer-caused failure is not
+// platform health evidence and is skipped. The result remains authoritative
+// until a newer terminal deployment supersedes it.
+func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context, excludedAccounts ...string) (LatestDeploymentOutcome, error) {
 	var out LatestDeploymentOutcome
 	err := s.pool.QueryRow(ctx, `
 		select d.status in ('live', 'superseded') as succeeded,
@@ -9034,12 +9034,36 @@ func (s *PgStore) LatestPlatformDeploymentOutcome(ctx context.Context) (LatestDe
 		         else coalesce(d.rollout_aborted_at, d.created_at)
 		       end as observed_at
 		  from deployments d
+		  left join apps a on a.id = d.app_id
 		 where d.status in ('live', 'superseded', 'failed')
+		   and coalesce(a.account_id::text, '') <> all($6::text[])
 		   and not (
-		     d.status = 'failed' and (`+customerCausedDeploymentFailureSQL("$1", "$2", "$3")+`)
+		     d.status = 'failed' and (
+		       coalesce(d.error_code, '') = any($1::text[])
+		       or exists (
+		         select 1 from builds b
+		          where b.deployment_id = d.id
+		            and b.failure_class = 'user_error'
+		       )
+		       or (d.error_code = $3 and exists (
+		         select 1 from app_tasks t
+		          where t.deployment_id = d.id
+		            and t.kind = 'release'
+		            and (
+		              (t.exit_code is not null and t.exit_code <> all($2::int[]))
+		              or t.status = 'timed_out'
+		              or (t.status = 'cancelled' and t.cancel_requested_at is not null)
+		            )
+		       ))
+		       or (d.error_code = $4
+		           and d.api_hosting_receipt #>> '{smoke,error_code}' = $5
+		           and coalesce((d.api_hosting_receipt #>> '{smoke,status_code}')::int, 0) between 400 and 499)
+		     )
 		   )
 		 order by observed_at desc, d.created_at desc
-		 limit 1`, api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes, api.CustomerCausedSmokeErrorCode).Scan(&out.Succeeded, &out.ObservedAt)
+		 limit 1`, api.CustomerCausedDeploymentFailureCodes(), api.PlatformReleaseExitCodes,
+		api.CodeReleaseCommandFailed, api.CodeDeploymentSmokeFailed, api.CustomerCausedSmokeErrorCode,
+		nonNilStrings(excludedAccounts)).Scan(&out.Succeeded, &out.ObservedAt)
 	if err != nil {
 		return LatestDeploymentOutcome{}, mapErr(err)
 	}

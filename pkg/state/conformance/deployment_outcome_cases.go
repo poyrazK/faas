@@ -3,6 +3,7 @@ package conformance
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 
 type deploymentOutcomeStore interface {
 	CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
-	LatestPlatformDeploymentOutcome(context.Context) (state.LatestDeploymentOutcome, error)
+	LatestPlatformDeploymentOutcome(context.Context, ...string) (state.LatestDeploymentOutcome, error)
 }
 
 // testDeploymentOutcomesExcludeCustomerCausedFailures pins that the public
@@ -106,19 +107,32 @@ func testDeploymentOutcomesAttributeAppAnswersAndRetries(t *testing.T, fx *Fixtu
 		}
 	}
 	// The candidate answered 422 with proof: the app's verdict.
-	fail(api.CodeDeploymentSmokeFailed, `{"smoke":{"status":"failed","error_code":"`+api.CustomerCausedSmokeErrorCode+`"}}`)
-	// Unreachable verification stays platform evidence, three times over.
+	fail(api.CodeDeploymentSmokeFailed, `{"smoke":{"status":"failed","status_code":422,"error_code":"`+api.CustomerCausedSmokeErrorCode+`"}}`)
+	counts, err := outcomes.CountDeploymentOutcomesSince(fx.Ctx, since)
+	if err != nil || counts.Failed != 0 {
+		t.Fatalf("outcomes after a proven 422 = %+v, %v; want no platform failure", counts, err)
+	}
+	// A proven 502 can come from the platform's bridge hop: it counts.
+	fail(api.CodeDeploymentSmokeFailed, `{"smoke":{"status":"failed","status_code":502,"error_code":"`+api.CustomerCausedSmokeErrorCode+`"}}`)
+	counts, err = outcomes.CountDeploymentOutcomesSince(fx.Ctx, since)
+	if err != nil || counts.Failed != 1 {
+		t.Fatalf("outcomes after a proven 502 = %+v, %v; want one platform failure", counts, err)
+	}
+	// Unreachable verification of the same app in the same hour is the same
+	// problem as the 502, three times over.
 	for range 3 {
 		fail(api.CodeDeploymentSmokeFailed, `{"smoke":{"status":"failed","error_code":"smoke_verification_unavailable"}}`)
 	}
 	fail("internal", "")
 
-	counts, err := outcomes.CountDeploymentOutcomesSince(fx.Ctx, since)
+	counts, err = outcomes.CountDeploymentOutcomesSince(fx.Ctx, since)
 	if err != nil {
 		t.Fatalf("CountDeploymentOutcomesSince: %v", err)
 	}
-	// Two distinct platform problems on one app: smoke unavailable (×3) and
-	// internal. The fixture's live deployment is the one success.
+	// Two distinct platform problems on one app: smoke failed (502 and
+	// unavailable ×3, one code) and internal. The fixture's live deployment
+	// is the one success. (An hour boundary between the failures would split
+	// the smoke key; the cases run within milliseconds.)
 	if counts.Succeeded != 1 || counts.Failed != 2 || counts.FailedAccounts != 1 {
 		t.Fatalf("outcomes = %+v, want 1 succeeded, 2 distinct platform failures, 1 account", counts)
 	}
@@ -128,5 +142,8 @@ func testDeploymentOutcomesAttributeAppAnswersAndRetries(t *testing.T, fx *Fixtu
 	}
 	if excluded != (state.DeploymentOutcomeCounts{}) {
 		t.Fatalf("excluded account outcomes = %+v, want none", excluded)
+	}
+	if _, err := outcomes.LatestPlatformDeploymentOutcome(fx.Ctx, fx.Account.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("LatestPlatformDeploymentOutcome(excluded) err = %v, want ErrNotFound", err)
 	}
 }
