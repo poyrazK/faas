@@ -215,9 +215,11 @@ Live delivery alone charges no one. A charge needs both of these:
    `recordCapEvents`). Production runs the default, `shadow`. To start
    with either cap `on`, apid needs internal mail and that cap's
    qualification approval. Production has neither yet.
-2. **A subject with overage on.** Customers turn overage on only through
-   `postgres-overage`. In production its flag is off by default, and one
-   rule enables it for the owner's account. Database egress past the
+2. **A subject with overage on.** Overage is available only where the
+   `postgres-overage` capability is released. That includes Scale's
+   default-on overage (ADR-20261025094915 amendment 2026-11-11). In
+   production its flag is off by default, and one rule enables it for the
+   owner's account. Database egress past the
    shared allowance is the exception: it follows the app egress election
    instead (ADR-20261110160000 slice 3).
 
