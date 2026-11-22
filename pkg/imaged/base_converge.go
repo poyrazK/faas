@@ -24,7 +24,6 @@ package imaged
 // publication of this daemon's generation and never another release's.
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -116,7 +115,7 @@ func putBaseContent(ctx context.Context, be storage.StorageBackend, baseKey stri
 	if err != nil {
 		return err
 	}
-	if err := be.Put(ctx, baseContentKey(baseKey), bytes.NewReader(body)); err != nil {
+	if err := putSharedBaseSidecar(ctx, be, baseContentKey(baseKey), body); err != nil {
 		return fmt.Errorf("imaged: write base content sidecar %q: %w", baseContentKey(baseKey), err)
 	}
 	return nil

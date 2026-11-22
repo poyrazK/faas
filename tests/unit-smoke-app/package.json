@@ -1,0 +1,8 @@
+{
+  "name": "unit-smoke",
+  "private": true,
+  "description": "The unit lane's smoke app (ADR-20261122170000)",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

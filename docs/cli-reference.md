@@ -310,7 +310,7 @@ Search an app&#39;s runtime logs and HTTP requests, or follow them
 | `--latest-failure` | select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target |  |
 | `--latest-request-error` | select newest retained HTTP 5xx row; default 15m window; accepts app, since, route |  |
 | `--interactive` | choose source, time window, and filters and show the equivalent command |  |
-| `--follow` | stream logs until interrupted |  |
+| `--follow` | stream new runtime lines, or new HTTP requests with --source http, until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
 | `--release <ID|vN>` | release id or revision (alias for --deployment) |  |
 | `--source <SOURCE>` | log source | one of `runtime` · `http` |
@@ -335,6 +335,7 @@ Examples:
 ```sh
 gregale logs my-api --interactive
 gregale logs my-api --follow
+gregale logs my-api --follow --source http
 gregale logs --project shop --follow
 gregale logs my-api --since 1h --level error
 gregale logs views save runtime-errors --since 1h --level error
@@ -3281,7 +3282,7 @@ Reuse an idempotency key only with the same async request within the server&#39;
 
 ### invocation watch
 
-Watch invocations finish across your account in real time
+Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)
 
 `gregale invocation watch [--app <slug>] [--include-stateless] [<slug>]`
 

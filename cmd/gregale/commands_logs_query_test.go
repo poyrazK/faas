@@ -329,7 +329,8 @@ func TestCmdLogsRejectsInvalidHTTPFiltersBeforeNetwork(t *testing.T) {
 	for _, args := range [][]string{
 		{"myapp", "--status", "99"},
 		{"myapp", "--source", "runtime", "--route", "/checkout"},
-		{"myapp", "--source", "http", "--follow"},
+		{"myapp", "--source", "http", "--grep", "checkout"},
+		{"myapp", "--source", "http", "--follow", "--all"},
 		{"myapp", "--request", "req_1", "--all"},
 		{"myapp", "--trace", "not-a-trace-id"},
 		{"myapp", "--request", "req_1", "--trace", "4bf92f3577b34da6a3ce929d0e0e4736"},

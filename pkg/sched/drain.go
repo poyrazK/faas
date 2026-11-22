@@ -1028,7 +1028,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 				retryAfter = 0
 			}
 			budget := d.invocationAttemptBudget(ctx, inv)
-			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
+			failErr := d.store.FailInvocation(ctx, inv.ID, "debug replay: "+invocationErrorText(err), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 			if failErr == nil && retryAfter == 0 {
 				d.emitDone(ctx, inv, state.InvocationFailed)
 			}
@@ -1202,7 +1202,7 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		if errors.Is(err, ErrDispatchRefused) {
 			retryAfter, budget = cronPlatformRetry(inv, retryAfter, budget)
 		}
-		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+err.Error(), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
+		failErr := d.store.FailInvocation(ctx, inv.ID, "invoke: "+invocationErrorText(err), retryAfter, budget, failOutcome(err), state.WithInvocationClaim(inv))
 		d.observeScheduledFailure(inv, retryAfter, budget, failErr, err)
 		if failErr == nil && retryAfter == 0 {
 			d.emitDone(ctx, inv, state.InvocationFailed)
@@ -1263,7 +1263,7 @@ func (d *Drain) settleCronWorkPolicyResponse(ctx context.Context, inv, response 
 	budget := 0
 	var message string
 	if dispatchErr != nil {
-		message = "invoke: " + dispatchErr.Error()
+		message = "invoke: " + invocationErrorText(dispatchErr)
 	} else {
 		message = fmt.Sprintf("scheduled outcome %q classified as %s", response.OutcomeCode, decision.Action)
 	}

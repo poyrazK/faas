@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const inspectStateNoUrgentIssues = "No urgent issues reported"
+
 // Present existing observations first; do not add a health claim or JSON fields.
 func renderInspectAttention(w io.Writer, summary inspectSummary) {
 	state, reason, command := inspectAttention(summary)
@@ -13,6 +15,12 @@ func renderInspectAttention(w io.Writer, summary inspectSummary) {
 		reason = summary.Failure.Cause
 	}
 	_, _ = fmt.Fprintf(w, "%s: %s\n  Reason: %s\n", oneLine(summary.App.Slug), state, oneLine(redactErrorText(reason)))
+	// With nothing to act on, the "next step" was `app health APP`, which
+	// is the command `app health APP --explain` had just run (prod hunt r27).
+	if state == inspectStateNoUrgentIssues {
+		_, _ = fmt.Fprintln(w)
+		return
+	}
 	_, _ = fmt.Fprintf(w, "  Next step (POSIX shells):\n    %s\n\n", redactErrorText(command))
 }
 
@@ -57,7 +65,7 @@ func inspectAttention(summary inspectSummary) (state, reason, command string) {
 			return "Parked", recommendation.Message, inspectAttentionCommand(summary, recommendation.Code)
 		}
 	}
-	return "No urgent issues reported", "This snapshot has no error or warning recommendations; it does not verify every route or workload.", recoveryCLI() + " app health " + recoveryArgument(summary.App.Slug)
+	return inspectStateNoUrgentIssues, "This snapshot has no error or warning recommendations; it does not verify every route or workload.", recoveryCLI() + " app health " + recoveryArgument(summary.App.Slug)
 }
 
 // Construct commands from known observations, rather than executing or parsing

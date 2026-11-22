@@ -90,14 +90,16 @@ func (h *Handler) sharedRuntimeAppLayers(ctx context.Context, runtime, archivePa
 	if err != nil {
 		return sharedRuntimeLayers{}, err
 	}
-	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app)
+	return h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, archivePath, config, layers, manifest, app, false)
 }
 
 // sharedRuntimeAppLayersAt is sharedRuntimeAppLayers at the runner base
 // layers baseDiffIDs. The result follows from the artifact, baseDiffIDs,
-// runtime, manifest and app.StartCommand, so the app layer reuse key names
-// those instead of the result (ADR-20261112170911 amendment 1).
-func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App) (sharedRuntimeLayers, error) {
+// runtime, manifest, app.StartCommand and releaseKeepsToolchain, so the app
+// layer reuse key names those instead of the result (ADR-20261112170911
+// amendment 1). releaseKeepsToolchain keeps every layer above the base: the
+// deployment's release command calls a package manager the runner base lacks.
+func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, baseDiffIDs []string, archivePath string, config oci.Config, layers []io.ReadCloser, manifest *api.AppManifest, app state.App, releaseKeepsToolchain bool) (sharedRuntimeLayers, error) {
 	above, err := oci.LayersAboveBase(baseDiffIDs, config.DiffIDs)
 	if err != nil {
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base %s does not match the build artifact: %w", runtime, err)
@@ -105,6 +107,9 @@ func (h *Handler) sharedRuntimeAppLayersAt(ctx context.Context, runtime string, 
 	start := len(config.DiffIDs) - len(above)
 	if start < 0 || start > len(layers) {
 		return sharedRuntimeLayers{}, fmt.Errorf("runtime base layer boundary %d is outside artifact layer count %d", start, len(layers))
+	}
+	if releaseKeepsToolchain {
+		return sharedRuntimeLayers{layers: layersAsReaders(layers[start:]), cleanup: func() {}, Reason: sharedruntime.ReasonReleasePackageManager}, nil
 	}
 	report := &appLayerReport{PythonInterpreter: sharedruntime.PythonInterpreter(runtime)}
 	filtered, cleanup, filterErr := filterAppLayers(layers[start:], report)

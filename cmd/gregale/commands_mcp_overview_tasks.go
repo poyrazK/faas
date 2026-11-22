@@ -162,6 +162,7 @@ func collectMCPOverviewObserver(ctx context.Context, client *Client, worker api.
 	if slug != "" {
 		observer, err := client.GetApp(ctx, slug)
 		if err == nil {
+			worker, observer := mcpTasksRuntimeApp(ctx, client, worker), mcpTasksRuntimeApp(ctx, client, observer)
 			view.ProcessDetected = mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) || mcpTasksObserverRoleConfigured(observer.Manifest.Env, observer.Manifest.Entrypoint)
 			view.NamespaceMatches = mcpTasksObserverNamespacesMatch(worker, observer)
 			view.MetricsTargetMatches = mcpTasksObserverMetricsTargetMatches(observer, worker.Slug)

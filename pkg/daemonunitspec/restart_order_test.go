@@ -252,3 +252,32 @@ func TestRestartOrder_EmptyRegistry(t *testing.T) {
 		t.Errorf("got %v, want empty", got)
 	}
 }
+
+// TestRestartDepthPutsEveryDaemonBelowItsDependencies: deployctl restarts
+// daemons of equal depth together, so a daemon's depth must exceed every
+// dependency's, and roots sit at 0.
+func TestRestartDepthPutsEveryDaemonBelowItsDependencies(t *testing.T) {
+	depth, err := RestartDepth()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(depth) != len(Registry) {
+		t.Fatalf("depth covers %d daemons, registry has %d", len(depth), len(Registry))
+	}
+	for _, entry := range Registry {
+		if len(entry.Lifecycle.After) == 0 && depth[entry.Name] != 0 {
+			t.Errorf("%s has no dependency but depth %d", entry.Name, depth[entry.Name])
+		}
+		for _, dep := range entry.Lifecycle.After {
+			if depth[entry.Name] <= depth[dep] {
+				t.Errorf("%s (depth %d) must be deeper than its dependency %s (depth %d)",
+					entry.Name, depth[entry.Name], dep, depth[dep])
+			}
+		}
+	}
+	for name, want := range map[string]int{"vmmd": 0, "apid": 0, "schedd": 1, "gatewayd-internal": 2} {
+		if depth[name] != want {
+			t.Errorf("depth[%s] = %d, want %d", name, depth[name], want)
+		}
+	}
+}

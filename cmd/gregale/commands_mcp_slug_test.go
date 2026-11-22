@@ -24,6 +24,8 @@ func TestMCPRemoteLeavesAcceptLeadingSlug(t *testing.T) {
 		{name: "trailing positional", args: []string{"my-mcp", "--timeout", "1s", "extra"}, want: "unexpected positional arguments: extra"},
 		{name: "conflicting app", args: []string{"my-mcp", "--app", "other"}, want: "--app"},
 		{name: "nonpositive timeout", args: []string{"my-mcp", "--timeout", "0s"}, want: "--timeout must be positive"},
+		{name: "two endpoints", args: []string{"https://a.example/mcp", "--url", "https://b.example/mcp"}, want: "pass the endpoint once"},
+		{name: "url and app", args: []string{"https://a.example/mcp", "--app", "my-mcp"}, want: "choose --url or --app"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var stderr bytes.Buffer
