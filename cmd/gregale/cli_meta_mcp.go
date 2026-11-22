@@ -34,6 +34,9 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "timeout", Short: "total completion request timeout (default 30s)", Value: "DURATION"},
 	)
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
+	taskStatusFlags := append(append([]cliFlag{}, taskRemote...), cliFlag{
+		Name: "metadata-only", Short: "show Task metadata and next action",
+	})
 	for i := range callFlags {
 		if callFlags[i].Name == "timeout" {
 			callFlags[i].Short = "total request timeout (default 30s; interactive/--wait 5m)"
@@ -246,7 +249,7 @@ func mcpCLICommand() cliCommand {
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
-		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
 		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{

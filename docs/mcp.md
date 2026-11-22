@@ -5600,6 +5600,26 @@ gregale mcp client read --url https://mcp.example.com/mcp --uri task://tasks/TAS
 gregale mcp client watch --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
 ```
 
+Use `--metadata-only` for a status snapshot suitable for agent context.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --task-id TASK_ID --metadata-only
+```
+
+The command reads the saved handle once using the same MCP endpoint and
+caller credential. It emits JSON with the Task ID, state, last update,
+`nextAction`, and a polling delay in milliseconds when available. The snapshot
+is limited to those fields.
+
+- `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
+- `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
+- `read_result` means the Task completed. Use the default `client status` output to read its result.
+- `none` means the Task failed or was cancelled.
+- `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
+
+An access denial or missing Task returns an error without a snapshot. Status
+checks leave the Task untouched.
+
 With Tasks enabled, `task://tasks/{taskId}` exposes the caller-visible task
 status and result as a resource in all three starters. Reading it requires both
 ownership of the task and permission for its originating tool, plus the
