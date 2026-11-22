@@ -86,18 +86,22 @@ export async function runSlice(message, { store, model, platform, tools }) {
     }
     const history = await tx.history();
     await tx.append(message.messageId, message.role, message.content);
-    const step = model.next(history, message);
+    // A real model is called inside the thread's transaction: the consumer
+    // group already runs one slice per thread at a time, and a failed call
+    // persists nothing, so the message is retried whole.
+    const step = await model.next(history, message);
+    const blocks = Array.isArray(step.blocks) ? { blocks: step.blocks } : {};
     if (step.call) {
       // Issued before commit: if issuing fails, nothing is persisted and the
       // consumer group retries the message.
       const callback = await platform.issueCallback(message.endpointId, message.threadId);
       const call = { id: assistantID(message.messageId), provider_call_id: step.call.provider_call_id ?? assistantID(message.messageId), tool: step.call.tool, input: step.call.input, callback_url: callback.url,
         expires_at: callback.expires_at, dispatched: false };
-      await tx.append(assistantID(message.messageId), "assistant", { tool_call: call });
+      await tx.append(assistantID(message.messageId), "assistant", { tool_call: call, ...blocks });
       return { pending: call };
     }
     const final = step.final === true;
-    await tx.append(assistantID(message.messageId), "assistant", { text: step.text, final });
+    await tx.append(assistantID(message.messageId), "assistant", { text: step.text, final, ...blocks });
     return { final };
   });
   if (turn.pending) {

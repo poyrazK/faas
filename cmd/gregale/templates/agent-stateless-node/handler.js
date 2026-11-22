@@ -12,23 +12,26 @@
 //
 // Settings: DATABASE_URL (attach a Postgres database), AGENT_READ_TOKEN
 // (optional; GET /threads is off without it), TOOL_URL (optional, tools.js),
-// GREGALE_API_URL (defaults to https://api.gregale.dev).
+// GREGALE_API_URL (defaults to https://api.gregale.dev), the model settings
+// in claude.js, and AGENT_PLATFORM_TOOLS (tools.js).
 import { timingSafeEqual } from "node:crypto";
 import { handleSlice, parseRecord } from "./agent.js";
+import { ClaudeModel, claudeConfig } from "./claude.js";
 import { scriptedModel } from "./model.js";
 import { GregalePlatform } from "./platform.js";
 import { PostgresStore } from "./store.js";
-import { HTTPTools, GregaleTaskTools } from "./tools.js";
+import { Toolbox } from "./tools.js";
 
 let deps;
 
 function dependencies() {
   if (!deps) {
     const platform = new GregalePlatform();
-    const httpTools = new HTTPTools();
-    const taskTools = new GregaleTaskTools({ platform });
-    deps = { store: new PostgresStore(), model: scriptedModel, platform,
-      tools: { dispatch: (threadID, call) => (call.tool === "gregale_task" ? taskTools : httpTools).dispatch(threadID, call) } };
+    const tools = new Toolbox({ platform });
+    // Claude when a gateway integration or ANTHROPIC_API_KEY is configured
+    // (claude.js); otherwise the scripted model, which needs no key.
+    const config = claudeConfig();
+    deps = { store: new PostgresStore(), model: config ? new ClaudeModel(config, { tools }) : scriptedModel, platform, tools };
   }
   return deps;
 }

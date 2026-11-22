@@ -22,6 +22,9 @@ struct RawRecord {
     metadata: std::collections::HashMap<String, String>,
     #[serde(default)]
     data_base64: String,
+    /// The delivery attempt, 1 for the first.
+    #[serde(default)]
+    attempt: u32,
 }
 
 pub struct Record {
@@ -31,6 +34,8 @@ pub struct Record {
     /// input's dedup ID.
     pub message_id: String,
     pub input: Option<InputMessage>,
+    /// The consumer group's delivery attempt, at least 1.
+    pub attempt: u32,
 }
 
 /// Parse a trigger record. None means the body is not an inbox record.
@@ -62,6 +67,7 @@ pub fn parse(body: &[u8]) -> Option<Record> {
         thread_id,
         message_id,
         input,
+        attempt: raw.attempt.max(1),
     })
 }
 

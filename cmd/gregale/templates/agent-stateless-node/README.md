@@ -31,10 +31,40 @@ therefore closes the thread with a failed final turn
 (`{"final": true, "failed": true}`) and completes; `GET /threads/:id` shows
 why. Other threads are never affected.
 
-The model here is scripted (`model.js`), so the starter runs with no
-provider key: a user message calls the `lookup` tool, and the tool's
-result is the answer. Replace it with your loop, for example a model
-called through your Gregale AI integration (see the `ai-chat` template).
+## The model
+
+With no model configured, the starter runs a scripted model (`model.js`)
+that needs no key: a user message calls the `lookup` tool, and the tool's
+result is the answer.
+
+Configure Claude and each slice makes one Claude call (`claude.js`). The
+conversation is rebuilt from the thread's rows; Claude either calls one
+tool, whose result arrives later as the thread's next message, or answers.
+Its response blocks are stored with the turn and sent back unchanged.
+
+Through the Gregale AI gateway (no key in the app): create a managed
+outbound integration with `ai_provider` anthropic, store your Anthropic key
+on it, bind it to this app, then
+
+```sh
+gregale env set --app <slug> GREGALE_AI_INTEGRATION_ID=<integration-uuid> --restart
+```
+
+The gateway injects the key, applies the integration's rate and token
+limits and records usage. Or set `ANTHROPIC_API_KEY` as a secret instead.
+
+The model is `claude-opus-5-5` at effort `medium` with server-side refusal
+fallbacks on; see Settings to change them. A slice must finish inside the
+app's request timeout (1 min on Hobby), so the model call times out at 50 s
+and a failed call is retried as a whole message.
+
+Claude can call:
+
+- Gregale's platform tools, read from
+  `https://api.gregale.dev/v1/agent-tools/.well-known/rap-toolset` and
+  limited by `AGENT_PLATFORM_TOOLS` (default `gregale_sleep`). `gregale_run`
+  starts an agent run, so add it on purpose.
+- `lookup`, when `TOOL_URL` is set: your own tool service.
 
 ## Deploy
 
@@ -71,6 +101,14 @@ curl -X POST <callback_url> -H "content-type: application/json" \
 | `TOOL_URL` | Optional: each tool call is POSTed here with its callback URL |
 | `AGENT_MAX_ATTEMPTS` | Attempts before a failing message closes its thread; default 5. Keep it equal to `max_attempts` in `gregale.yaml` |
 | `GREGALE_API_URL` | The Gregale API; defaults to `https://api.gregale.dev` |
+| `GREGALE_AI_INTEGRATION_ID` | Claude through the Gregale AI gateway (an `ai_provider` anthropic integration bound to the app) |
+| `ANTHROPIC_API_KEY` | Or Claude with your own key (a secret); not both |
+| `AGENT_MODEL` | Claude model; default `claude-opus-5-5` |
+| `AGENT_EFFORT` | `low`, `medium` (default), `high`, `xhigh` or `max` |
+| `AGENT_SYSTEM_PROMPT` | Replaces the default system prompt |
+| `AGENT_MODEL_TIMEOUT_MS` | Model call timeout; default 50000 |
+| `AGENT_FALLBACKS` | `off` turns server-side refusal fallbacks off |
+| `AGENT_PLATFORM_TOOLS` | Comma-separated Gregale platform tools Claude may call; default `gregale_sleep` |
 
 ## Test
 
