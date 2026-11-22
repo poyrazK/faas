@@ -21,9 +21,8 @@ type nodeNetworkStore interface {
 // A live migration: the source node's final reading is metered once, the
 // destination's counter starts from zero even when it is above the source's,
 // and the source's departed reading is ignored after the switch.
-func runNodeNetworkObservationAcrossLiveMigration(t *testing.T, ctx context.Context, store nodeNetworkStore, accountID, appID string) {
+func runNodeNetworkObservationAcrossLiveMigration(t *testing.T, ctx context.Context, store nodeNetworkStore, accountID, appID, instanceID string) {
 	t.Helper()
-	instanceID := uuid.NewString()
 	minute := time.Date(2026, 11, 22, 8, 0, 0, 0, time.UTC)
 	steps := []struct {
 		name     string
@@ -63,7 +62,7 @@ func TestNodeNetworkObservationAcrossLiveMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runNodeNetworkObservationAcrossLiveMigration(t, ctx, store, acct.ID, uuid.NewString())
+	runNodeNetworkObservationAcrossLiveMigration(t, ctx, store, acct.ID, uuid.NewString(), uuid.NewString())
 }
 
 func TestPg_NodeNetworkObservationAcrossLiveMigration(t *testing.T) {
@@ -76,5 +75,14 @@ func TestPg_NodeNetworkObservationAcrossLiveMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runNodeNetworkObservationAcrossLiveMigration(t, ctx, s, acct.ID, app.ID)
+	dep, err := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:" + uuid.NewString(), Status: state.DeployPending})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// meter_network_checkpoints references instances.
+	ins, err := s.CreateInstance(ctx, app.ID, dep.ID, string(state.StateRunning), 512, resolveDefaultLocal(t, ctx, s), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runNodeNetworkObservationAcrossLiveMigration(t, ctx, s, acct.ID, app.ID, ins.ID)
 }
