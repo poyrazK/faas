@@ -88,10 +88,10 @@ import (
 // on the box's local unix socket (ADR-015), so the cost is
 // negligible vs. the 1-minute sampler cadence.
 type scheddCPUAdapter struct {
-	parker  parkInstanceParker
-	now     func() time.Time
-	mu      sync.Mutex
-	rows    map[string]scheddgrpc.InstanceStatsRow
+	parker parkInstanceParker
+	now    func() time.Time
+	mu     sync.Mutex
+	rows   map[string]scheddgrpc.InstanceStatsRow
 	// sourceFinal is the departed source-node row of each instance that
 	// live-migrated (sourceFinalStatsRows).
 	sourceFinal map[string]scheddgrpc.InstanceStatsRow
