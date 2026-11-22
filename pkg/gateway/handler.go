@@ -5163,7 +5163,7 @@ func clientIPFromForwardedFor(r *http.Request) (net.IP, bool) {
 // True-Client-IP first, then X-Real-IP). The gateway forwarded client-supplied
 // values unchanged, so a workload behind it could be handed a forged client
 // address (hunt #9 H9-67, production-us rc.252).
-var clientIPAliasHeaders = []string{"True-Client-IP", "X-Real-IP", "X-Client-IP", "X-Cluster-Client-IP", "Fastly-Client-IP"}
+var clientIPAliasHeaders = []string{"True-Client-Ip", "X-Real-Ip", "X-Client-Ip", "X-Cluster-Client-Ip", "Fastly-Client-Ip"} // canonical spelling: http.Header would allocate a canonical copy per call
 
 // stampTrustedClientIP replaces the customer-controlled value of
 // x-faas-client-ip with the one address established by the public listener's

@@ -254,7 +254,7 @@ func hasCacheCredentials(r *http.Request) bool {
 	// authenticates with Proxy-Authorization). The key was not part of the
 	// cache key, so a keyed caller's response was served to anonymous ones
 	// unless the app marked it private (ADR-20261103090000).
-	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-API-Key"} {
+	for _, name := range []string{"Authorization", "Proxy-Authorization", "X-Api-Key"} {
 		if len(r.Header.Values(name)) != 0 {
 			return true
 		}
