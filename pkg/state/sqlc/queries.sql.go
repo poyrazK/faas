@@ -2267,13 +2267,14 @@ func (q *Queries) ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg A
 
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count
 `
 
@@ -2283,8 +2284,12 @@ type ApplyGatewayUsageEventParams struct {
 	Column3 int32
 	Column4 int64
 	Column5 int32
+	Column6 int64
 }
 
+// $6 is the frame's billed egress: its response bytes when meterd counts
+// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+// public responses do not cross the instance veth), otherwise 0.
 func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error) {
 	result, err := db.Exec(ctx, applyGatewayUsageEvent,
 		arg.ID,
@@ -2292,6 +2297,7 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return 0, err

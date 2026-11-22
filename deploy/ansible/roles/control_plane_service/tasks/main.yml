@@ -36,6 +36,16 @@
       - meterd_quiet_pause_unbilled in ['off', 'shadow', 'on']
     fail_msg: "meterd_quiet_pause_unbilled must be \"off\", \"shadow\" or \"on\" (quoted: YAML reads a bare on/off as a boolean)"
 
+# ADR-20261121210517: public forwarding (ADR-1749) moves response bytes onto
+# the instance veth, which net_tx_bytes already bills. Billing the gateway's
+# copy too would charge every response twice.
+- name: control_plane_service — refuse gateway response egress next to public forwarding
+  ansible.builtin.assert:
+    that:
+      - not (meterd_gateway_response_egress | bool) or
+        (groups.get('compute_nodes', []) | map('extract', hostvars) | selectattr('faas_public_forwarding', 'defined') | selectattr('faas_public_forwarding') | list | length == 0)
+    fail_msg: "meterd_gateway_response_egress must be false while any compute node sets faas_public_forwarding (ADR-20261121210517)"
+
 - name: control_plane_service — ensure per-daemon users exist (non-root, no shell)
   ansible.builtin.user:
     name: "{{ item }}"
@@ -797,6 +807,15 @@
   ansible.builtin.template:
     src: zz-faas-quiet-pause-unbilled.conf.j2
     dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-quiet-pause-unbilled.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: control_plane_service — set whether meterd bills gateway response bytes as egress
+  notify: restart faas-meterd
+  ansible.builtin.template:
+    src: zz-faas-gateway-response-egress.conf.j2
+    dest: /etc/systemd/system/faas-meterd.service.d/zz-faas-gateway-response-egress.conf
     owner: root
     group: root
     mode: "0644"
