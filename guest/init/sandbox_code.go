@@ -115,7 +115,7 @@ func (s *sandboxServer) startCodeDriver() error {
 	if err != nil {
 		logFile = nil
 	}
-	var out io.Writer = io.Discard
+	out := io.Discard
 	if logFile != nil {
 		out = logFile
 	}
