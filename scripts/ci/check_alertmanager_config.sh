@@ -89,6 +89,19 @@ grep -q 'api_url_file:' "$work/slack.yml" || { echo "alertmanager config [slack]
 render email_pushover "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_pushover_token_file\": \"$work/pushover-token\", \"am_pushover_user_key_file\": \"$work/pushover-user-key\"}"
 route email_pushover faas-page severity=page component=apid family=x
 route email_pushover faas-warn severity=warn component=apid family=x
+route email_pushover faas-page severity=page alertname=FaasAlertmanagerNotificationsFailed
+test_alert=FaasDeliveryQualification_mq_123_1_delivery_page
+route email_pushover faas-silent severity=page alertname="$test_alert" qualification_id=mq-123-1
+
+printf 'fixture-routing-key\n' >"$work/delivery-pagerduty-key"
+render delivery_pagerduty "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_heartbeat_url_file\": \"$work/heartbeat-url\", \"am_delivery_pagerduty_key_file\": \"$work/delivery-pagerduty-key\", \"am_fleet_name\": \"production\"}"
+for alert in FaasPrometheusNotificationsDropped FaasAlertmanagerNotificationsFailed; do
+  route delivery_pagerduty faas-delivery-page,faas-page severity=page alertname="$alert"
+  route delivery_pagerduty faas-warn severity=warn alertname="$alert"
+done
+route delivery_pagerduty faas-page severity=page alertname=FaasSyntheticCanaryFailed
+route delivery_pagerduty faas-heartbeat severity=info alertname=FaasWatchdog
+route delivery_pagerduty faas-delivery-page severity=page alertname="$test_alert" qualification_id=mq-123-1
 
 render pushover_only "{\"am_pushover_token_file\": \"$work/pushover-token\", \"am_pushover_user_key_file\": \"$work/pushover-user-key\"}"
 route pushover_only faas-page severity=page component=apid family=x

@@ -98,6 +98,15 @@ type UsageDeltas struct {
 	// when WithInternalEgressUnbilled is on.
 	InternalTXBytes uint64
 	InternalTXValid bool
+	// NetworkNode is the node whose vmmd produced the cumulative network
+	// counters, and NetworkDeparted marks the final reading of an instance
+	// that left it (ADR-20261122090000). Empty means unknown.
+	NetworkNode     string
+	NetworkDeparted bool
+	// SourceFinal is the departed node's final cumulative reading of an
+	// instance that live-migrated, applied before this reading so the
+	// source's last bytes are metered once. nil when there is none.
+	SourceFinal *UsageDeltas
 }
 
 type EgressSource interface {
@@ -1339,10 +1348,21 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
 		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
 	}
+	var sourceTx, sourceRx int64
+	if final := usage.SourceFinal; final != nil && final.NetworkCumulative {
+		if final.NetTXBytes > math.MaxInt64 || final.NetRXBytes > math.MaxInt64 || final.InternalTXBytes > math.MaxInt64 {
+			return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
+		}
+		var err error
+		if sourceTx, sourceRx, err = s.appendNetworkObservation(ctx, row, *final); err != nil {
+			return fmt.Errorf("meter: checkpoint source network usage for instance %s: %w", row.InstanceID, err)
+		}
+	}
 	deltaTx, deltaRx, err := s.appendNetworkObservation(ctx, row, usage)
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
+	deltaTx, deltaRx = deltaTx+sourceTx, deltaRx+sourceRx
 	row.NetTxBytes = deltaTx + gatewayEgress
 	row.NetRxBytes = deltaRx
 	return nil
@@ -1354,6 +1374,21 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 // review R8-2). Financial usage evidence is append-only, so this happens as
 // the bytes are written, never after.
 func (s *Sampler) appendNetworkObservation(ctx context.Context, row *RolledRow, usage UsageDeltas) (int64, int64, error) {
+	if observer, ok := s.store.(state.NodeNetworkObserver); ok && usage.NetworkNode != "" {
+		var internal *int64
+		if s.internalEgressUnbilled && usage.InternalTXValid {
+			if usage.InternalTXBytes > math.MaxInt64 {
+				return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
+			}
+			v := int64(usage.InternalTXBytes)
+			internal = &v
+		}
+		tx, rx, _, err := observer.AppendNodeNetworkUsageObservation(ctx,
+			row.AccountID, row.AppID, row.InstanceID, row.Minute,
+			state.NetworkReading{NodeID: usage.NetworkNode, Departed: usage.NetworkDeparted},
+			int64(usage.NetTXBytes), usage.NetTXValid, int64(usage.NetRXBytes), usage.NetRXValid, internal)
+		return tx, rx, err
+	}
 	if observer, ok := s.store.(state.InternalEgressObserver); ok && s.internalEgressUnbilled && usage.InternalTXValid {
 		if usage.InternalTXBytes > math.MaxInt64 {
 			return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
