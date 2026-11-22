@@ -7,7 +7,7 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Object storage GA on OVH — 2026-11-21 (released v0.1.18-rc.368)
+## Object storage GA on OVH — 2026-11-21 (live: v0.1.18-rc.369, flags on 2026-11-22)
 
 [ADR-20261121230052](adr/20261121230052-object-storage-ga.md) moves
 `object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`,
@@ -35,8 +35,16 @@ Evidence:
   multipart create/complete/abort, high-level 12 MB copy, signed URL PUT/GET,
   API multipart, compute binding create/rotate/delete, usage, credential
   revoke) passed the same day.
-- Remaining step: the owner turns the flag defaults `true` with a step-up
-  (ADR rollout step 4, `object_storage` last).
+- GA: the owner turned the six flag defaults `true` after a TOTP step-up on
+  2026-11-22 (ADR rollout step 4, `object_storage` last, each key written
+  separately). The six preview children (`object_versioning`,
+  `object_protection`, `bucket_encryption`, `object_lifecycle`, `bucket_cors`,
+  `bucket_access_grants`) stay `default: false`.
+- Open owner decisions: three acceptance-account test buckets latched
+  versions-observed before #7792 (`smoke-20261121124839-6b045393`,
+  `probe-1121203745-32108`, `apiprobe-1121210106`) cannot be deleted without
+  bypassing the latch trigger; `docs/DPA.md` names US hosting while BHS is in
+  Canada; the OVH project bucket quota is 95 until OVH raises it.
 
 ## Data API investigation fixes — 2026-11-12 (branch, not released)
 
