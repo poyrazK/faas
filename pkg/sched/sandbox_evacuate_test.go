@@ -81,3 +81,37 @@ func TestSandboxResumeWaitsForADrainingNodesUpload(t *testing.T) {
 		t.Fatalf("resume of a draining node's node-only capture = %v, want a capacity refusal", err)
 	}
 }
+
+// adr: 20261122132055 §7 — a reattach goes to the session's node without
+// placement and asks vmmd for the running VM; a node outside the pool holds
+// none.
+func TestSandboxReattachGoesToItsNode(t *testing.T) {
+	runner, router, ledger, node, _ := sandboxRunnerStoreFixture(t, "base/sandbox-layer-v1-amd64.ext4", "agents-1", "agents-2")
+	a := sandboxAdmission()
+	a.Persistent = true
+	a.Reattach = &sched.SandboxReattach{NodeID: node, Instance: sched.SandboxInstanceID(a.SandboxID)}
+	ctx, cancel := context.WithCancel(context.Background())
+	var resident bool
+	booted := func(context.Context, sched.SandboxBooted) error {
+		resident = ledger.ResidentFor(a.Reattach.Instance)
+		cancel()
+		return nil
+	}
+	_ = runner.RunSandbox(ctx, a, nil, sched.SandboxHooks{Booted: booted}, nil)
+	if router.nodeID != node || !router.spec.Reattach || !router.spec.Persistent || router.spec.Snapshot != nil || !resident {
+		t.Fatalf("reattach routed to %q with %+v, booked %v", router.nodeID, router.spec, resident)
+	}
+	if ledger.ResidentFor(a.Reattach.Instance) {
+		t.Fatal("the reattach kept its booking after the stream ended")
+	}
+	a.Reattach.NodeID = "a-node-that-is-gone"
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.Is(err, sched.ErrSandboxNotDetached) {
+		t.Fatalf("reattach on a gone node = %v", err)
+	}
+	a.Reattach.Instance = "sandbox-another"
+	a.Reattach.NodeID = node
+	var invalid *sched.AgentRunInvalidError
+	if err := runner.RunSandbox(context.Background(), a, nil, sched.SandboxHooks{}, nil); !errors.As(err, &invalid) {
+		t.Fatalf("reattach to another instance = %v", err)
+	}
+}

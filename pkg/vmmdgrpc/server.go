@@ -287,6 +287,13 @@ type Server struct {
 	// keeps (ADR-20261027090013 §5), keyed by instance. The zero value is
 	// ready to use.
 	sandboxRuns sync.Map
+	// sandboxDetached holds the persistent session VMs whose stream ended
+	// without a close or a pause, by instance, until a reattach takes one
+	// over or its grace ends (ADR-20261122132055 §7).
+	sandboxDetached sync.Map
+	// sandboxReattachGrace is how long a detached VM waits; zero is
+	// api.SandboxReattachGraceSec. Tests shorten it.
+	sandboxReattachGrace time.Duration
 	// sandboxUsageEvery is how often RunSandbox reports a session's usage;
 	// zero is api.SandboxUsageReportSec. Tests shorten it.
 	sandboxUsageEvery time.Duration

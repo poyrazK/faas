@@ -3688,6 +3688,14 @@ message RunSandboxStart {
   // so later commands see GREGALE_FORKED_FROM and commands that asked get
   // SIGUSR2 to reseed. Only with session_capture. An older vmmd ignores it.
   string forked_from = 28;
+  // detachable keeps the VM running for SandboxReattachGraceSec when the
+  // stream ends without close or pause (ADR-20261122132055 §7); a start
+  // with reattach on the same instance takes it over. An older vmmd
+  // destroys the VM as before.
+  bool detachable = 29;
+  // reattach takes over a detached VM of this instance and session instead
+  // of booting one; vmmd answers NotFound when it has none.
+  bool reattach = 30;
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -3916,6 +3924,8 @@ message RunSandboxBooted {
   // (ADR-20261117091026 §3); agentd closes a session with a policy that
   // boots without it.
   bool egress_policy = 4;
+  // reattached: a start with reattach took over the running VM.
+  bool reattached = 5;
 }
 
 // RunSandboxActivity reports the session's calls, at most once a second

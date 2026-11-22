@@ -46,7 +46,16 @@ func TestLostPersistentSessionPausesForAColdResume(t *testing.T) {
 	ctx := context.Background()
 	withVolume := liveWithVolume(t, pool, s, "tok-volume", true, true)
 	without := liveWithVolume(t, pool, s, "tok-without", true, false)
+	// Within the reattach grace both VMs may still run: a replica may take
+	// them over (ADR-20261122132055 §7).
 	if _, err := pool.Exec(ctx, `UPDATE sandbox_sessions SET lease_expires_at=now()-interval '1 second' WHERE lease_token IS NOT NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if requeued, failed, _, err := s.ExpireSandboxLeases(ctx); err != nil || requeued != 0 || failed != 0 {
+		t.Fatalf("expire within the grace = %d requeued, %d failed, %v", requeued, failed, err)
+	}
+	// Past it (SandboxReattachGraceSec is minutes, not hours) the VMs are gone.
+	if _, err := pool.Exec(ctx, `UPDATE sandbox_sessions SET lease_expires_at=now()-interval '1 hour' WHERE lease_token IS NOT NULL`); err != nil {
 		t.Fatal(err)
 	}
 	requeued, failed, _, err := s.ExpireSandboxLeases(ctx)

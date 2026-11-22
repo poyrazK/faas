@@ -12254,6 +12254,10 @@ var (
 	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
 	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
 	SandboxResumeWaitSec          = 30
+	// SandboxReattachGraceSec is how long vmmd keeps a persistent session's VM
+	// running after its stream ended without a close or a pause, for agentd
+	// to take it over again (§7: schedd and agentd restarts).
+	SandboxReattachGraceSec = 120
 	// SandboxForkMax bounds the forks one request makes (§3).
 	SandboxForkMax = [4]int{0, 1, 10, 100}
 	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and

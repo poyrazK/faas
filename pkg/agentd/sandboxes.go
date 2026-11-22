@@ -41,6 +41,7 @@ import (
 // *agentstore.Store implements it.
 type SandboxStore interface {
 	ClaimSandbox(ctx context.Context, owner, token string, ttl time.Duration, maxLive func(plan string) int) (agentstore.SandboxClaim, bool, error)
+	ClaimDetachedSandbox(ctx context.Context, owner, token string, ttl, grace time.Duration) (agentstore.SandboxClaim, bool, error)
 	MarkSandboxPlaced(ctx context.Context, id, token, nodeID string) error
 	MarkSandboxReady(ctx context.Context, id, token, nodeID, instanceID string) error
 	RenewSandbox(ctx context.Context, id, token string, ttl time.Duration, lastActivity time.Time) (agentstore.SandboxLease, error)
@@ -251,6 +252,13 @@ func (s *Sandboxes) ClaimOnce(ctx context.Context) (bool, error) {
 }
 
 func (s *Sandboxes) claim(ctx context.Context) (agentstore.SandboxClaim, bool, error) {
+	// A running persistent session whose replica went away is taken over
+	// first: its VM waits on its node for a reattach (ADR-20261122132055 §7).
+	claim, found, err := s.store.ClaimDetachedSandbox(ctx, s.cfg.Owner, uuid.NewString(), s.cfg.LeaseTTL,
+		time.Duration(api.SandboxReattachGraceSec)*time.Second)
+	if err != nil || found {
+		return claim, found, err
+	}
 	return s.store.ClaimSandbox(ctx, s.cfg.Owner, uuid.NewString(), s.cfg.LeaseTTL, func(plan string) int {
 		p := api.Plan(plan)
 		if !p.Valid() {
@@ -414,6 +422,13 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 			start.VolumeBackupIntervalMs = int64(api.SandboxVolumeBackupSec) * 1000
 		}
 	}
+	if r := claim.Reattach; r != nil {
+		// The VM runs on: take it over instead of booting one
+		// (ADR-20261122132055 §7).
+		start.Reattach = &scheddpb.SandboxRunReattach{NodeId: r.NodeID, Instance: r.InstanceID}
+		start.WorkspaceKey, start.VolumeGb, start.VolumeBackupId, start.VolumeSourceSandboxId = "", 0, "", ""
+		start.VolumeBackupIntervalMs = 0
+	}
 	if c := claim.Resume; c != nil && claim.ForkOf != "" {
 		// A fork restores its source's capture. Until the shared store holds
 		// it, the fork runs on the capture's node, from that node's copy
@@ -438,7 +453,8 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 		s.requeue(ctx, claim, err)
 		return
 	}
-	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}, pauseAsked: claimed}
+	ss := &session{claim: claim, lease: claim.SandboxLease, lastActivity: s.now(), persists: map[string]string{}, pauseAsked: claimed,
+		frozen: claim.Frozen}
 	// A running action of an earlier claim ran in a VM that is gone.
 	s.endOpenActions(ctx, claim, agentstore.SandboxActionRunning)
 	defer s.actions.remove(claim.ID)
@@ -485,6 +501,12 @@ func (s *Sandboxes) drive(ctx context.Context, claim agentstore.SandboxClaim) {
 	switch code := status.Code(recvErr); {
 	case ctx.Err() != nil:
 		// The replica is stopping; the lease lapses and the sweeper decides.
+	case claim.Reattach != nil && !ready && code == codes.NotFound:
+		s.finish(ctx, claim, &sessionEnd{agentstore.SandboxFailed, sandboxOutcomeVMLost, "the session's VM ended unexpectedly"})
+	case claim.Reattach != nil && !ready, persistent && ready && code == codes.Unavailable:
+		// The VM may run on without a stream: the lease lapses and a claim
+		// reattaches to it within the grace (ADR-20261122132055 §7).
+		s.log.Info("agentd: sandbox stream lost; left for a reattach", "sandbox_id", claim.ID, "cause", code.String())
 	case claim.Resuming && !ready:
 		// A resume that never booted goes back to paused with its capture; a
 		// refused one waits for the next request.
@@ -524,9 +546,12 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			ss.placedNode = placed.GetNodeId()
 			ss.mu.Unlock()
 			// ADR-20261117190000: the node reads the session's image and
-			// snapshot through secretd grants before it boots the VM.
-			if err := s.store.MarkSandboxPlaced(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId()); err != nil {
-				return err
+			// snapshot through secretd grants before it boots the VM. A
+			// reattach boots nothing.
+			if ss.claim.Reattach == nil {
+				if err := s.store.MarkSandboxPlaced(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId()); err != nil {
+					return err
+				}
 			}
 			if err := send(&scheddpb.SandboxRunRequest{Frame: &scheddpb.SandboxRunRequest_Proceed{Proceed: &scheddpb.AgentRunProceed{}}}); err != nil {
 				return err
@@ -542,11 +567,17 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 				}
 				continue
 			}
-			if ss.claim.Resuming {
+			switch {
+			case ss.claim.Reattach != nil:
+				// The session is ready where it was; only its stream is new.
+				if !ev.GetBooted().GetReattached() {
+					return status.Error(codes.Internal, "schedd booted a session agentd asked to reattach")
+				}
+			case ss.claim.Resuming:
 				if err := s.markResumed(ctx, ss, placed, ev.GetBooted().GetMethod()); err != nil {
 					return err
 				}
-			} else {
+			default:
 				if err := s.store.MarkSandboxReady(ctx, ss.claim.ID, ss.claim.LeaseToken, placed.GetNodeId(), placed.GetInstance()); err != nil {
 					return err
 				}
@@ -554,8 +585,10 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 					s.metrics.forkOutcome(forkStartOutcome(ss.claim, placed.GetNodeId(), ev.GetBooted().GetMethod()), 1)
 				}
 			}
-			if err := s.markVolumeNode(ctx, ss, placed.GetNodeId()); err != nil {
-				return err
+			if ss.claim.Reattach == nil {
+				if err := s.markVolumeNode(ctx, ss, placed.GetNodeId()); err != nil {
+					return err
+				}
 			}
 			ss.mu.Lock()
 			ss.ready, ss.lastActivity = true, s.now()
@@ -1115,6 +1148,12 @@ func (s *Sandboxes) pauseLost(ctx context.Context, claim agentstore.SandboxClaim
 // requeue returns a session that never booted, after a capacity refusal or
 // a transport failure before placement.
 func (s *Sandboxes) requeue(ctx context.Context, claim agentstore.SandboxClaim, cause error) {
+	if claim.Reattach != nil {
+		// The session stays ready; its lease lapses and the next claim tries
+		// the reattach again (ADR-20261122132055 §7).
+		s.log.Info("agentd: sandbox reattach not started", "sandbox_id", claim.ID, "cause", status.Code(cause).String())
+		return
+	}
 	if claim.Resuming {
 		s.returnResume(ctx, claim, true, cause)
 		return
