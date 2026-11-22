@@ -2,7 +2,6 @@ package vmmdhop
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -153,7 +152,7 @@ func TestAcceptLoopRetriesTemporaryErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	flaky := &flakyListener{Listener: inner, failures: 3}
-	l := NewListener(context.Background(), flaky, &Server{idle: map[*tls.Conn]struct{}{}})
+	l := NewListener(context.Background(), flaky, &Server{idle: map[net.Conn]struct{}{}})
 	t.Cleanup(func() { _ = l.Close() })
 	go func() {
 		c, err := net.Dial("tcp", inner.Addr().String())

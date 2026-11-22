@@ -68,7 +68,8 @@ func noApplicationProtocol(err error) bool {
 // Client keeps hop connections to one vmmd.
 type Client struct {
 	address string
-	tls     *tls.Config
+	network string      // "tcp"; tests use "unix"
+	tls     *tls.Config // nil only in tests: a plain connection
 	dial    func(ctx context.Context, network, address string) (net.Conn, error)
 	// Result, when set, counts how each call was carried (Result*). A call
 	// turned to gRPC while a node is held there counts under the reason it
@@ -96,7 +97,7 @@ func NewClient(address string, tlsCfg *tls.Config) (*Client, error) {
 	cfg := tlsCfg.Clone()
 	cfg.NextProtos = []string{ALPN}
 	d := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
-	return &Client{address: address, tls: cfg, dial: d.DialContext, now: time.Now}, nil
+	return &Client{address: address, network: "tcp", tls: cfg, dial: d.DialContext, now: time.Now}, nil
 }
 
 func (c *Client) result(r string) {
@@ -117,7 +118,7 @@ func (c *Client) Close() {
 }
 
 type clientConn struct {
-	conn     *tls.Conn
+	conn     net.Conn
 	r        *bufio.Reader
 	w        *bufio.Writer
 	idleFrom time.Time
@@ -197,10 +198,13 @@ func (c *Client) get(ctx context.Context) (*clientConn, bool, error) {
 func (c *Client) dialConn(ctx context.Context) (*clientConn, error) {
 	dctx, cancel := context.WithTimeout(ctx, dialTimeout)
 	defer cancel()
-	raw, err := c.dial(dctx, "tcp", c.address)
+	raw, err := c.dial(dctx, c.network, c.address)
 	if err != nil {
 		c.noteFailure(ctx, ResultDialError, dialErrorFor)
 		return nil, fmt.Errorf("vmmdhop: dial %s: %w", c.address, err)
+	}
+	if c.tls == nil {
+		return &clientConn{conn: raw, r: bufio.NewReaderSize(raw, 32<<10), w: bufio.NewWriterSize(raw, 32<<10)}, nil
 	}
 	conn := tls.Client(raw, c.tls)
 	err = conn.HandshakeContext(dctx)

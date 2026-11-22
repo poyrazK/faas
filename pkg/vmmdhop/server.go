@@ -59,8 +59,8 @@ type Server struct {
 	wg          sync.WaitGroup
 
 	mu       sync.Mutex
-	idle     map[*tls.Conn]struct{} // connections waiting for an exchange
-	draining bool                   // no new connection or exchange starts
+	idle     map[net.Conn]struct{} // connections waiting for an exchange
+	draining bool                  // no new connection or exchange starts
 }
 
 // NewServer validates cfg. Serving starts with NewListener. The hop's
@@ -81,7 +81,7 @@ func NewServer(ctx context.Context, cfg ServerConfig) (*Server, error) {
 		cfg.Log = slog.Default()
 	}
 	ctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	return &Server{cfg: cfg, tls: hopServerTLS(cfg.TLS), tracer: otel.Tracer("github.com/onebox-faas/faas/pkg/vmmdhop"), idleTimeout: serverIdleTimeout, ctx: ctx, cancel: cancel, idle: map[*tls.Conn]struct{}{}}, nil
+	return &Server{cfg: cfg, tls: hopServerTLS(cfg.TLS), tracer: otel.Tracer("github.com/onebox-faas/faas/pkg/vmmdhop"), idleTimeout: serverIdleTimeout, ctx: ctx, cancel: cancel, idle: map[net.Conn]struct{}{}}, nil
 }
 
 // hopServerTLS offers only ALPN, including on the config a reload hook
@@ -151,7 +151,7 @@ func (s *Server) isDraining() bool {
 
 // awaitExchange marks conn idle until its next exchange starts. It reports
 // false once the server is draining.
-func (s *Server) awaitExchange(conn *tls.Conn) bool {
+func (s *Server) awaitExchange(conn net.Conn) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.draining {
@@ -162,7 +162,7 @@ func (s *Server) awaitExchange(conn *tls.Conn) bool {
 	return true
 }
 
-func (s *Server) exchangeStarted(conn *tls.Conn) {
+func (s *Server) exchangeStarted(conn net.Conn) {
 	s.mu.Lock()
 	delete(s.idle, conn)
 	s.mu.Unlock()
@@ -357,6 +357,12 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 			CommonAuthInfo: credentials.CommonAuthInfo{SecurityLevel: credentials.PrivacyAndIntegrity},
 		},
 	}
+	s.serveExchanges(ctx, conn, p)
+}
+
+// serveExchanges serves a connection's exchanges in turn, after its peer is
+// established. The TLS path above is the only caller in production.
+func (s *Server) serveExchanges(ctx context.Context, conn net.Conn, p *peer.Peer) {
 	hc := &serverConn{s: s, conn: conn, r: bufio.NewReaderSize(conn, 32<<10), w: bufio.NewWriterSize(conn, 32<<10), peer: p}
 	for {
 		if !s.awaitExchange(conn) {
@@ -372,7 +378,7 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 				// processed, so the client may send it again elsewhere.
 				hc.goAway()
 			case !errors.Is(err, io.EOF) && ctx.Err() == nil:
-				s.cfg.Log.Debug("vmmdhop: bad preamble", "remote", raw.RemoteAddr().String(), "err", fmt.Errorf("read preamble: %w", err))
+				s.cfg.Log.Debug("vmmdhop: bad preamble", "remote", p.Addr.String(), "err", fmt.Errorf("read preamble: %w", err))
 			}
 			return
 		}
@@ -415,7 +421,7 @@ func (c *serverConn) goAway() {
 // serverConn is one hop connection.
 type serverConn struct {
 	s    *Server
-	conn *tls.Conn
+	conn net.Conn
 	r    *bufio.Reader
 	w    *bufio.Writer
 	peer *peer.Peer

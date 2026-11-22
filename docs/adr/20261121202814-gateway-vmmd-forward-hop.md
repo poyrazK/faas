@@ -158,6 +158,15 @@ a test that runs before the switches can be turned on.
   a hello-world exchange) on an M3 Pro under load from parallel builds:
   gRPC 218–391 µs and 224 allocations per exchange, the hop 73–112 µs and
   109. A prod A/B on one node decides whether phase 1 ships on.
+- 2026-11-22: prod no longer takes the TCP leg. With
+  `FAAS_GATEWAY_LOCAL_VMMD_SOCKET=1` and edges handing requests to the VM
+  node's gatewayd-internal, a 1000 rps baseline showed every forward on the
+  local unix data socket (no TLS). `BenchmarkUnix{GRPC,Hop}` measured that
+  path: hello-world gRPC 24–33 µs and 221 allocations, the hop 15–22 µs and
+  117 (median saving ~11 µs, about 0.2% of the ~6.7 ms of platform CPU per
+  request); with a 16 KiB body both ~62–78 µs. Extending the hop to the unix
+  socket is not worth its ADR amendment and trust-path review; phase 1 stays
+  parked, switches off, until a cross-node TCP path carries real traffic.
 
 - Phase 1 removes gRPC's HTTP/2 transport, hpack and per-stream goroutines
   from both daemons on the request path, keeping protobuf, TLS and every
