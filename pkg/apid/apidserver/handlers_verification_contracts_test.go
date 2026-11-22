@@ -59,11 +59,11 @@ func TestVerificationContractRoutes(t *testing.T) {
 type verifyQueryProvider struct {
 	resizeAPIProvider
 	value string
-	sql   *string
+	sql   *[]string
 }
 
 func (p verifyQueryProvider) QueryReadOnly(_ context.Context, req managedpostgres.ReadOnlyQueryRequest) (managedpostgres.ReadOnlyQueryResult, error) {
-	*p.sql = req.SQL
+	*p.sql = append(*p.sql, req.SQL)
 	if req.SQL == "broken" {
 		return managedpostgres.ReadOnlyQueryResult{}, &managedpostgres.QueryError{SQLState: "42601", Message: "syntax error"}
 	}
@@ -74,7 +74,12 @@ func (p verifyQueryProvider) QueryReadOnly(_ context.Context, req managedpostgre
 func TestVerificationQueryWorkerRunsReadOnlySQL(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	accountID := (*e.Acct()).ID
-	var ran string
+	rec := e.Do(t, http.MethodPost, "/v1/apps", api.CreateAppRequest{Slug: "shop"}, nil)
+	var app api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &app); err != nil || rec.Code != http.StatusCreated {
+		t.Fatalf("create app: %d %s", rec.Code, rec.Body.String())
+	}
+	var ran []string
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "us-east-1", MaxDatabasesPerAccount: 3, Defaults: map[string]string{"us-east-1": "private-backend"},
 		Backends: []managedpostgres.BackendConfig{{ID: "private-backend", Driver: "fixture", Region: "us-east-1", Namespace: "private"}}},
 		func(string) string { return "PRIVATE_SECRET" }, map[string]managedpostgres.Factory{"fixture": func(managedpostgres.BackendConfig, func(string) string) (managedpostgres.Provider, error) {
@@ -83,38 +88,61 @@ func TestVerificationQueryWorkerRunsReadOnlySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := managedpostgres.NewService(registry, managedpostgres.NewMemoryStore(), managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
+	pgStore := managedpostgres.NewMemoryStore()
+	service, err := managedpostgres.NewService(registry, pgStore, managedpostgres.ServiceOptions{ProvisioningEnabled: func() bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Create(t.Context(), managedpostgres.CreateRequest{AccountID: accountID, Name: "main", Spec: managedpostgres.Spec{Region: "us-east-1", PostgresMajor: 17,
-		Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}}); err != nil {
+	bindings, err := managedpostgres.NewBindingService(registry, pgStore, pgStore, customRolesAPISink{}, managedpostgres.BindingServiceOptions{ProvisioningEnabled: func() bool { return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(name string) managedpostgres.Database {
+		d, err := service.Create(t.Context(), managedpostgres.CreateRequest{AccountID: accountID, Name: name, Spec: managedpostgres.Spec{Region: "us-east-1", PostgresMajor: 17,
+			Class: managedpostgres.ClassDevelopment, Availability: managedpostgres.AvailabilitySingleZone, ScaleToZero: true, StorageLimitBytes: 1 << 30, RestoreWindowSeconds: 3600}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	main := create("main")
+	create("other")
+	if _, err := bindings.Create(t.Context(), managedpostgres.CreateBindingRequest{AccountID: accountID, DatabaseID: main.ID, AppID: app.ID,
+		Scope: "default", EnvironmentKey: "DATABASE_URL", Access: managedpostgres.CredentialReadWrite}); err != nil {
 		t.Fatal(err)
 	}
 	*(*e.S()).ManagedPostgres() = service
+	*(*e.S()).ManagedPostgresBindings() = bindings
 	store := *e.Store()
 	expires := time.Now().Add(time.Minute)
 	queue := func(database, sql string) string {
-		q, err := store.CreateVerificationQuery(t.Context(), state.VerificationQuery{DeploymentID: "dep", AppID: "app", AccountID: accountID, CheckName: "sql", Database: database, Query: sql, ExpiresAt: expires})
+		q, err := store.CreateVerificationQuery(t.Context(), state.VerificationQuery{DeploymentID: "dep", AppID: app.ID, AccountID: accountID, CheckName: "sql", Database: database, Query: sql, ExpiresAt: expires})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return q.ID
 	}
-	ok, missing, broken := queue("main", "select count(*) from orders"), queue("nope", "select 1"), queue("main", "broken")
+	ok, unbound, missing, broken := queue("main", "select count(*) from orders"), queue("other", "select 1"), queue("nope", "select 1"), queue("main", "broken")
 	(*e.S()).RunVerificationQueriesOnce(t.Context())
 
 	got, _ := store.VerificationQueryByID(t.Context(), ok)
 	if got.Status != state.VerificationQueryDone || got.ErrorCode != "" || got.RowCount != 1 || !got.HasFirst || got.FirstValue == nil || *got.FirstValue != "0" {
 		t.Fatalf("ok query = %+v", got)
 	}
-	if got, _ := store.VerificationQueryByID(t.Context(), missing); got.ErrorCode != verifycontract.CodeDatabaseNotFound {
-		t.Fatalf("missing database = %+v", got)
+	for name, id := range map[string]string{"unbound": unbound, "missing": missing} {
+		if got, _ := store.VerificationQueryByID(t.Context(), id); got.ErrorCode != verifycontract.CodeDatabaseNotFound {
+			t.Fatalf("%s database = %+v", name, got)
+		}
 	}
 	if got, _ := store.VerificationQueryByID(t.Context(), broken); got.ErrorCode != verifycontract.CodeQueryFailed {
 		t.Fatalf("broken query = %+v", got)
 	}
-	if ran == "" {
-		t.Fatal("provider never ran a query")
+	if len(ran) != 2 {
+		t.Fatalf("provider ran %q; only the bound database's two queries may run", ran)
+	}
+	for _, sql := range ran {
+		if sql == "select 1" {
+			t.Fatalf("an unbound or missing database was queried: %q", ran)
+		}
 	}
 }

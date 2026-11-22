@@ -74,7 +74,7 @@ deployment. An invalid file stops the deploy.
 ## The report
 
 `gregale deployment <id>` prints the report under the deployment's
-hosting receipt, and `--json` returns it as `smoke.verification_contract`:
+hosting receipt, and `--json` returns it as `hosting_receipt.smoke.verification_contract`:
 
 ```json
 {"version": 1, "status": "failed", "environment": "production",

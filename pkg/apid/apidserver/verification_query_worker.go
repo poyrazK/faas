@@ -81,6 +81,16 @@ func (s *server) runVerificationQuery(ctx context.Context, q state.VerificationQ
 	if err != nil {
 		return fail(verifycontract.CodeQueryUnavailable, "the database could not be looked up")
 	}
+	// Like the agent query tools, a check reads only a database bound to its
+	// own app: whoever may change this app's contract must not reach another
+	// app's database through it.
+	bound, err := s.databaseBoundToApp(queryCtx, q.AccountID, database.ID, q.AppID)
+	if err != nil {
+		return fail(verifycontract.CodeQueryUnavailable, "the database's bindings could not be read")
+	}
+	if !bound {
+		return fail(verifycontract.CodeDatabaseNotFound, fmt.Sprintf("no managed Postgres database named %q is bound to this app", q.Database))
+	}
 	var result managedpostgres.ReadOnlyQueryResult
 	for {
 		result, err = s.managedPostgres.QueryReadOnly(queryCtx, database, q.Query, managedpostgres.QueryMaxRows)
@@ -129,4 +139,27 @@ func verificationQueryAudit(databaseID string, q state.VerificationQuery, result
 	audit["app_id"] = q.AppID
 	audit["deployment_id"] = q.DeploymentID
 	return audit
+}
+
+// databaseBoundToApp reports whether the app holds a live binding to the
+// database.
+func (s *server) databaseBoundToApp(ctx context.Context, accountID, databaseID, appID string) (bool, error) {
+	if s.managedPostgresBindings == nil {
+		return false, nil
+	}
+	bindings, err := s.managedPostgresBindings.List(ctx, accountID, databaseID)
+	if err != nil {
+		return false, err
+	}
+	for _, b := range bindings {
+		if b.AppID != appID {
+			continue
+		}
+		switch b.State {
+		case managedpostgres.BindingStateDeleting, managedpostgres.BindingStateRetiring, managedpostgres.BindingStateDeleted, managedpostgres.BindingStateFailed:
+			continue
+		}
+		return true, nil
+	}
+	return false, nil
 }
