@@ -297,7 +297,7 @@ var catalog = map[string]Render{
 		Title: "Snapshot prepare timed out",
 		Hint:  "the snapshot_prepare stage exceeded the scheduler's wall-clock ceiling",
 		Why:   "snapshot_prepare boots the generated guest, waits for its handler, and captures the first snapshot; the scheduler deadline elapsed before vmmd completed that sequence",
-		Fix:   "• check `gregale deploys status <id>` and `gregale logs <slug>` for the last completed startup step\n• retry once in case the compute node was temporarily saturated\n• if the same artifact fails again, include the deployment id in a support report",
+		Fix:   "• check `gregale logs <slug>` for how far startup got\n• if your app needs longer to start, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)\n• otherwise retry once in case the node was saturated; include the deployment id in a support report if it repeats",
 	},
 	api.CodeBeforeCheckpointFailed: {
 		Title: "Before checkpoint callback failed",
