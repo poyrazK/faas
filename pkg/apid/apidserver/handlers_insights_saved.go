@@ -225,5 +225,5 @@ func (s *server) runSavedInsight(w http.ResponseWriter, r *http.Request, acct st
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", si.Key+".csv"))
 	w.WriteHeader(http.StatusOK)
-	_ = insights.WriteCSV(w, res)
+	_ = api.WriteSavedInsightCSV(w, res)
 }

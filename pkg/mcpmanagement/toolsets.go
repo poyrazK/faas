@@ -175,6 +175,8 @@ var toolsetOf = map[string]string{
 	"gregale_get_insight_retention":       ToolsetDiagnose,
 	"gregale_get_insight_requests":        ToolsetDiagnose,
 	"gregale_list_insight_cohorts":        ToolsetDiagnose,
+	"gregale_list_saved_insights":         ToolsetDiagnose,
+	"gregale_run_saved_insight":           ToolsetDiagnose,
 	"gregale_get_environment":             ToolsetRelease,
 	"gregale_plan_environment_promotion":  ToolsetRelease,
 	"gregale_apply_environment_promotion": ToolsetRelease,

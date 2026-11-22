@@ -48,7 +48,7 @@ func TestRunSavedValues(t *testing.T) {
 		{"funnel", api.SavedInsightRequest{Key: "conv", Kind: "funnel", Funnel: &api.InsightFunnelRequest{
 			Steps: []api.InsightStepRequest{{Event: "signup"}, {Event: "order"}}}}, 0.5},
 		{"retention", api.SavedInsightRequest{Key: "ret", Kind: "retention", Retention: &api.InsightRetentionRequest{
-			Start: api.InsightStepRequest{Event: "signup"}, Return: api.InsightStepRequest{Event: "visit"}, Periods: 2}}, 0.5},
+			Start: api.InsightStepRequest{Event: "signup"}, Return: api.InsightStepRequest{Event: "visit"}, Periods: 2}}, 1}, // b's day 1 has not ended, so only a counts.
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -60,7 +60,7 @@ func TestRunSavedValues(t *testing.T) {
 				t.Fatalf("value = %v, want %v (%+v)", res.Value, tc.want, res)
 			}
 			var csv strings.Builder
-			if err := insights.WriteCSV(&csv, res); err != nil || strings.Count(csv.String(), "\n") < 2 {
+			if err := api.WriteSavedInsightCSV(&csv, res); err != nil || strings.Count(csv.String(), "\n") < 2 {
 				t.Fatalf("csv = %q, %v", csv.String(), err)
 			}
 		})
@@ -83,7 +83,10 @@ func TestNormalizeSavedRefuses(t *testing.T) {
 		{"bad measure", func(r *api.SavedInsightRequest) { r.Events.Measure = "units" }},
 		{"range past retention", func(r *api.SavedInsightRequest) { r.RangeDays = 400 }},
 		{"hourly over a week", func(r *api.SavedInsightRequest) { r.Events.Interval, r.RangeDays = "hour", 8 }},
-		{"bad digest", func(r *api.SavedInsightRequest) { r.Digest = "hourly"; r.ChannelIDs = []string{"6f1c2c55-6a3f-4d7c-9a51-1d0c1f1b8e01"} }},
+		{"bad digest", func(r *api.SavedInsightRequest) {
+			r.Digest = "hourly"
+			r.ChannelIDs = []string{"6f1c2c55-6a3f-4d7c-9a51-1d0c1f1b8e01"}
+		}},
 		{"bad comparison", func(r *api.SavedInsightRequest) {
 			r.Alert = &api.SavedInsightAlert{Comparison: "eq"}
 			r.ChannelIDs = []string{"6f1c2c55-6a3f-4d7c-9a51-1d0c1f1b8e01"}
