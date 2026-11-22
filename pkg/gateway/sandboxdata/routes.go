@@ -84,6 +84,13 @@ func (h *Handler) exec(w http.ResponseWriter, r *http.Request) {
 // execStream answers a foreground command as server-sent events: stdout and
 // stderr as they arrive, then one result event.
 func (h *Handler) execStream(w http.ResponseWriter, r *http.Request, c sandboxtoken.Claims, req sandboxproto.Request) {
+	h.streamCall(w, r, c, req, func(raw json.RawMessage) any { return execResponse(raw, nil, nil) })
+}
+
+// streamCall answers a call as server-sent events: stdout and stderr as
+// they come, then result (final's view of the guest's result) or error.
+func (h *Handler) streamCall(w http.ResponseWriter, r *http.Request, c sandboxtoken.Claims, req sandboxproto.Request,
+	final func(json.RawMessage) any) {
 	flusher, _ := w.(http.Flusher)
 	started := false
 	event := func(name string, v any) error {
@@ -118,7 +125,7 @@ func (h *Handler) execStream(w http.ResponseWriter, r *http.Request, c sandboxto
 	case prob != nil:
 		_ = event("error", prob)
 	default:
-		_ = event("result", execResponse(raw, nil, nil))
+		_ = event("result", final(raw))
 	}
 }
 

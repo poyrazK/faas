@@ -292,6 +292,11 @@ type SandboxImageSource struct {
 // sandbox template.
 const SandboxPresetTemplate = "template"
 
+// SandboxPresetCodeInterpreter boots the platform's code-interpreter image,
+// whose sessions run code in Jupyter kernels (ADR-20261027090013 step 14).
+// apid turns it into an image session, so sessions record preset image.
+const SandboxPresetCodeInterpreter = "code-interpreter"
+
 // SandboxTemplateRefPrefix starts the image reference a template session
 // records: template:<name>.
 const SandboxTemplateRefPrefix = "template:"
@@ -495,7 +500,7 @@ func ErrSandboxUnsupported(field, detail string) *Problem {
 
 // IsSandboxDataPath reports a sandbox session's data-plane path
 // (ADR-20261027090013 §3): its commands, files, terminal input, environment
-// (step 13) and workspace archives. Those calls run in the session's VM, so the compute gateway serves
+// (step 13), code interpreter (step 14) and workspace archives. Those calls run in the session's VM, so the compute gateway serves
 // them; the session itself and its ports are apid's.
 func IsSandboxDataPath(p string) bool {
 	rest, ok := strings.CutPrefix(p, "/v1/sandboxes/")
@@ -509,7 +514,7 @@ func IsSandboxDataPath(p string) bool {
 	resource, _, _ := strings.Cut(tail, "/")
 	resource, _, _ = strings.Cut(resource, ":")
 	switch resource {
-	case "exec", "files", "stdin", "env", "workspace":
+	case "exec", "files", "stdin", "env", "code", "workspace":
 		return true
 	}
 	return false
