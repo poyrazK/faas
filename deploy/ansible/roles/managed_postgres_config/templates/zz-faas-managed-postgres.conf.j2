@@ -1,0 +1,8 @@
+# Managed by the managed_postgres_config role: apid's managed PostgreSQL
+# provider registry, rendered from faas_managed_postgres_config. The operator
+# policy (limits, approval) is runtime config key managed_postgres_policy.
+[Service]
+Environment=FAAS_MANAGED_POSTGRES_CONFIG={{ faas_managed_postgres_config_path }}
+{% for path in faas_managed_postgres_env_files %}
+EnvironmentFile={{ path }}
+{% endfor %}

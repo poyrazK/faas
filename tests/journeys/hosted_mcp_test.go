@@ -49,17 +49,29 @@ func TestHostedMCP(t *testing.T) {
 	s.step("connection_listed", j.connectionListed)
 	s.step("connection_revoked", j.connectionRevoked)
 	s.step("org_created", j.orgCreated)
-	s.step("org_policy_read_only", j.orgPolicyReadOnly)
-	s.check("org_policy_refuses_deploy_key", j.orgPolicyRefusesDeployKey)
-	s.step("org_key_lists_org_apps", j.orgKeyListsOrgApps)
-	s.step("org_connection_listed", j.orgConnectionListed)
-	s.step("denying_agents_revokes", j.denyingAgentsRevokes)
+	// A skipped org_created passes, so the org steps check the org exists.
+	s.step("org_policy_read_only", j.needsOrg(j.orgPolicyReadOnly))
+	s.check("org_policy_refuses_deploy_key", j.needsOrg(j.orgPolicyRefusesDeployKey))
+	s.step("org_key_lists_org_apps", j.needsOrg(j.orgKeyListsOrgApps))
+	s.step("org_connection_listed", j.needsOrg(j.orgConnectionListed))
+	s.step("denying_agents_revokes", j.needsOrg(j.denyingAgentsRevokes))
+}
+
+// needsOrg skips an organization step when org_created made no organization.
+func (j *hostedMCPJourney) needsOrg(fn func(t *testing.T)) func(t *testing.T) {
+	return func(t *testing.T) {
+		if !j.orgMade {
+			t.Skip("no organization: org_created was skipped")
+		}
+		fn(t)
+	}
 }
 
 type hostedMCPJourney struct {
 	tg       *target
 	root     *testing.T // owns cleanups for what later steps use
 	endpoint string
+	orgMade  bool   // org_created made j.org
 	probe    string // the shared probe app: the account's, not the org's
 	admin    string // admin key for the connected-agents API
 	keyID    string // the account agent key
@@ -178,8 +190,18 @@ func (j *hostedMCPJourney) connectionRevoked(t *testing.T) {
 
 func (j *hostedMCPJourney) orgCreated(t *testing.T) {
 	j.org = j.tg.slug("mcp-org")
-	j.tg.ok(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	res := j.tg.run(t, time.Minute, "org", "create", "--slug", j.org, "--name", "E2E agents "+j.tg.runID)
+	if res.exit != 0 && strings.Contains(string(res.stderr)+string(res.stdout), "org_free_limit_exceeded") {
+		// Each run deletes the Free organization it made, and a Free
+		// organization deleted this month still counts, so only the first
+		// run of a month can make one on the same account.
+		t.Skip("the account has used its Free organization this month; the organization agent policy steps need another account or next month")
+	}
+	if res.exit != 0 {
+		t.Fatalf("gregale org create failed (exit %d): %s", res.exit, res.problem())
+	}
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "delete", j.org, "--yes") })
+	j.orgMade = true
 }
 
 // orgPolicyReadOnly: an owner sets the policy that lets agents in with

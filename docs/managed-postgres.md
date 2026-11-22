@@ -107,6 +107,40 @@ Provisioning opens while all of the following hold:
 `managed-postgres-qualify --check-production` prints the readiness codes and
 the configured backend's fingerprint without contacting the provider.
 
+#### Changing the policy without a restart
+
+The operator policy is hot runtime configuration, key
+`managed_postgres_policy`
+([ADR-20261121120000](adr/20261121120000-managed-postgres-live-policy.md)).
+apid applies a change within seconds and reports a receipt; nothing restarts.
+A field left out keeps the provider registry file's value, or for the
+approval, the `FAAS_MANAGED_POSTGRES_PRODUCTION_*` environment:
+
+```sh
+gregalectl config set -key managed_postgres_policy -yes -reason "launch limits" -value '{
+  "provisioning_enabled": true,
+  "max_databases_per_account": 10,
+  "fleet": {"max_databases": 80, "max_monthly_cost_millicents": 50000000},
+  "usage": {"max_monthly_cost_millicents": 50000000, "compute_unit_hour_millicents": 10600},
+  "production_approval": {"backend_id": "neon-production-canary",
+    "backend_fingerprint": "<64 hex>", "approved_at": "2026-11-21T10:23:57Z",
+    "until": "2027-02-19T10:23:57Z"}
+}'
+```
+
+- `usage` holds the ceilings and provider rates only. Whether usage metering
+  runs, and its collection interval, window and staleness, stay in the file:
+  the collector, metrics and cap enforcer are built from them at start.
+- Backends stay in the file too: a backend's settings are each database's
+  placement fingerprint.
+- apid refuses to store a value its registry would reject (an approval naming
+  an unknown backend, an invalid merged usage policy). A stored value that
+  stops fitting after a file change is logged at start and the file's values
+  serve until it is fixed.
+- `gregalectl config set -key managed_postgres_policy -value '{}'` goes back
+  to the file's values; `gregalectl config rollback` restores an earlier
+  version.
+
 The `managed-postgres` capability flag decides which accounts may create
 databases. The staging canary list is not read in production. Until
 `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` and
@@ -441,10 +475,14 @@ peer scheduler's replay worker can take it.
 
 ## Neon backend configuration
 
-Copy `deploy/managed-postgres.example.json` to an operator-owned path, set
-`FAAS_MANAGED_POSTGRES_CONFIG` to that path, and expose the API key through the
-environment variable named by `secret_env.api-key`. The API key itself must
-never appear in the JSON file.
+Set `faas_managed_postgres_config` (the shape of
+`deploy/managed-postgres.example.json`, as YAML) in the control plane's Ansible
+vars and converge: the `managed_postgres_config` role renders
+`/etc/faas/managed-postgres.json`, sets `FAAS_MANAGED_POSTGRES_CONFIG` in an
+apid drop-in, and refuses a config under which existing databases would no
+longer resolve (`deploy/ansible/roles/managed_postgres_config/README.md`).
+Expose the API key through the `sealed.env` variable named by
+`secret_env.api-key`. The API key itself must never appear in the config.
 
 `namespace` is the immutable Neon organization ID. `region` is Gregale's
 portable region name; `settings.region_id` is the current Neon placement for

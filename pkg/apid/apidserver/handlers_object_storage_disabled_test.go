@@ -30,6 +30,11 @@ func TestCreateBucketWhenObjectStorageDisabledSaysNotEnabled(t *testing.T) {
 	if problem.Code != "object_storage_unavailable" || !strings.Contains(problem.Detail, "not enabled on this Gregale installation") || strings.Contains(problem.Detail, "retry later") {
 		t.Fatalf("problem = %+v", problem)
 	}
+	// prod hunt 2026-11-21: with no hint of its own, the CLI's 5xx fallback
+	// told the customer to check service status and retry.
+	if !strings.Contains(problem.Hint, "not enabled") || !strings.Contains(problem.Hint, "operator") {
+		t.Fatalf("hint = %q, want the not-enabled remedy", problem.Hint)
+	}
 	if !errors.Is(object.ErrObjectStorageDisabled, objectstorage.ErrUnavailable) {
 		t.Fatal("disabled sentinel must still match objectstorage.ErrUnavailable")
 	}

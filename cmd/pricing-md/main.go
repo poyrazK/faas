@@ -51,7 +51,9 @@ func render() string {
 	b.WriteString("\n## What each limit means\n\n")
 	b.WriteString("- **Deployed apps** is the maximum number of production app records on the plan. `gregale dev` environments have a separate developer-app allowance.\n")
 	b.WriteString("- **PR preview environments** is the separate limit for temporary pull-request previews: one per open pull request, however many workloads it runs. One environment runs at most as many workloads as the plan can deploy, and a closed pull request frees its environment at once. See [PR preview environments](preview-environments.md#quota).\n")
-	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling; request concurrency inside one VM is separately bounded by the plan.\n")
+	// 80 is production's app_request_concurrency_default (runtime config,
+	// ADR-20261101215228); change this line when that value changes.
+	b.WriteString("- **Concurrent instances** is the per-app wake/instance ceiling. On every plan one instance takes up to 80 requests at once before Gregale starts another, up to that ceiling; past it, requests wait in the queue set by your [scaling policy](scaling-policy.md).\n")
 	b.WriteString("- **RAM / app** and **app layer** are hard build/runtime ceilings. Smaller resource profiles remain available where the plan permits them.\n")
 	b.WriteString("- **CPU** follows each instance's RAM, whatever the plan: one vCPU per GB, at least one (a 1024 MB instance has one vCPU, a 2048 MB instance two). An instance can use any CPU its host has idle; when the host is busy, CPU is shared in proportion to RAM. An app can cap itself at 250 or 500 millicores (`gregale app update APP --cpu-millicores 500`). CPU is not billed separately: compute is billed by RAM and time.\n")
 	b.WriteString("- **After a plan ends or shrinks**, for example when a subscription lapses, the plan's limits still bind: your oldest deployed apps up to its deployed-app limit keep serving, and other apps, or any app set above its RAM, park and stop waking until they fit. Delete apps, lower an app's RAM (`gregale app APP --ram MB`) or upgrade. A downgrade you request is refused until your apps fit.\n")

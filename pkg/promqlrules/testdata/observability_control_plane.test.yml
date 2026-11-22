@@ -45,6 +45,10 @@ tests:
             exp_annotations:
               summary: "Prometheus dropped alerts before Alertmanager delivery"
               description: "Prometheus has dropped one or more notifications during the last 10m. The page path is losing alerts before Alertmanager receives them; check Alertmanager reachability, the notifier queue, and Prometheus logs immediately."
+              first_action: "Check the Prometheus notifier queue and Alertmanager readiness from the control plane."
+              customer_impact: "Operator alerts were dropped before delivery. Customer impact is unknown."
+              failure_stage: "Prometheus notification queue"
+              dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
       - eval_time: 10m
         alertname: FaasAlertmanagerNotificationsFailed
@@ -58,6 +62,10 @@ tests:
             exp_annotations:
               summary: "Alertmanager notification delivery is failing"
               description: "Alertmanager has recorded failed notifications during the last 10m. One or more configured page or ticket integrations may be unreachable; inspect the integration label, receiver configuration, and provider response before assuming pages are delivered."
+              first_action: "Open Notification Receiver Failures and check the failing integration in the Alertmanager journal."
+              customer_impact: "Operator pages or warnings may be delayed or lost. Customer impact is unknown."
+              failure_stage: 'Alertmanager delivery (email)'
+              dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
       - eval_time: 10m
         alertname: FaasAlertmanagerConfigReloadFailed

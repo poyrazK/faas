@@ -484,12 +484,22 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 			names = append(names, c.Name)
 		}
 	}
+	// A typo of an earlier noun (`secret` for `secrets`) is matched against
+	// that noun but suggests the tree noun that replaced it (`env`).
+	type candidate struct{ match, suggest string }
+	var candidates []candidate
 	for _, name := range names {
-		d := editDistance(query, name)
+		candidates = append(candidates, candidate{name, name})
+	}
+	for old, tree := range cliTreeEarlierNouns(names) {
+		candidates = append(candidates, candidate{old, tree})
+	}
+	for _, c := range candidates {
+		d := editDistance(query, c.match)
 		switch {
 		case d < bestDist:
-			bestName, bestDist, tied = name, d, false
-		case d == bestDist:
+			bestName, bestDist, tied = c.suggest, d, false
+		case d == bestDist && c.suggest != bestName:
 			// Tie: another command at the same distance makes the
 			// suggestion ambiguous, so we suppress it.
 			tied = true
@@ -499,6 +509,33 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 		return "", false
 	}
 	return bestName, true
+}
+
+// cliTreeEarlierNouns maps each earlier top-level noun that is no longer a
+// command name to the one tree noun its aliases all moved to (`secrets` ->
+// `env`), when that tree noun is among names. A noun whose verbs moved to
+// several nouns has no single replacement and is left out.
+func cliTreeEarlierNouns(names []string) map[string]string {
+	current := map[string]bool{}
+	for _, name := range names {
+		current[name] = true
+	}
+	moved := map[string]string{}
+	ambiguous := map[string]bool{}
+	for _, alias := range cliTreeAliases {
+		old, tree := strings.Fields(alias.Old), strings.Fields(alias.New)
+		if len(old) == 0 || len(tree) == 0 || current[old[0]] || !current[tree[0]] {
+			continue
+		}
+		if prev, ok := moved[old[0]]; ok && prev != tree[0] {
+			ambiguous[old[0]] = true
+		}
+		moved[old[0]] = tree[0]
+	}
+	for old := range ambiguous {
+		delete(moved, old)
+	}
+	return moved
 }
 
 // suggestSubcommand is the per-top-level twin of suggestCommand:

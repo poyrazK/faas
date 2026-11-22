@@ -84,8 +84,15 @@ plain exclusive_work_operations.equivalence_digest
 plain exclusive_work_operations.idempotency_digest
 plain exclusive_work_operations.request_digest
 plain exclusive_work_submissions.idempotency_digest
+plain execution_admissions.key_hash
+plain execution_admissions.request_digest
+plain execution_admissions.scope_hash
+plain execution_task_invocations.callback_key
+plain execution_task_invocations.request_digest
 plain execution_artifact_grants.token_hash
 plain executions.artifacts
+# ADR-20261119173702 §1: SHA-256 of an end-user subject ID, as analytics_events.subject_hash; not a credential.
+plain flag_experiment_units.subject_hash
 plain github_webhook_deliveries.payload
 plain hosting_automation_credentials.token_hash
 plain idempotency_keys.request_digest

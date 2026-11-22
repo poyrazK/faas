@@ -439,6 +439,10 @@ func (s *server) applyStoredWorkflowMutation(w http.ResponseWriter, r *http.Requ
 		writeStoredWorkflowError(w, errors.New("stored workflow storage unavailable"))
 		return
 	}
+	if problem := s.storedWorkflowEventsRefusal(r.Context(), store, account, app, r.PathValue("name"), mutation); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if mutation.Action == "publish" {
 		mutation.ActorAccountID = account.ID
 		if _, key, authenticated := authmw.AccountFromContext(r); authenticated && key != nil {

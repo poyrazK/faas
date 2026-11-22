@@ -1907,6 +1907,17 @@ where ($1 = '' or actor = $1)
 order by at desc, id desc
 limit $5::int8;
 
+-- name: ListEventsByKindSince :many
+-- The operator wake-latency report (ADR-20261121200409): one kind's rows at
+-- or after since, newest first, as a backward scan of events_kind_at_idx
+-- (kind, at DESC). The caller asks for one row more than it keeps to learn
+-- whether the window was cut.
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = sqlc.arg(kind)::text AND at >= sqlc.arg(since)::timestamptz
+ORDER BY at DESC
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on
@@ -1970,14 +1981,18 @@ with inserted as (
 select exists(select 1 from inserted) as inserted;
 
 -- name: ApplyGatewayUsageEvent :execrows
+-- $6 is the frame's billed egress: its response bytes when meterd counts
+-- gateway responses as app egress (ADR-20261121210517, compute nodes whose
+-- public responses do not cross the instance veth), otherwise 0.
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count;
 
 -- name: ApplyGatewayEdgeUsageEvent :execrows
@@ -2051,6 +2066,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= sqlc.arg(month_start)::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds;
@@ -6738,19 +6756,23 @@ SELECT count(*) FROM executions
 WHERE account_id = sqlc.arg(account_id)
   AND status IN ('queued', 'restoring', 'running');
 
+-- name: ExecutionCountExtendedActive :one
+SELECT count(*) FROM executions WHERE account_id = sqlc.arg(account_id)
+AND execution_class = 'extended' AND status IN ('queued', 'restoring', 'running');
+
 -- name: ExecutionInsert :one
 INSERT INTO executions (
-  account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
+  account_id, runtime, profile, execution_class, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
   source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
-  workflow_id, step_label
+  workflow_id, step_label, max_artifact_bytes, input_file_bytes, environment_id, runtime_image_digest
 ) VALUES (
-  sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), 'queued', sqlc.arg(network_mode),
+  sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(execution_class), 'queued', sqlc.arg(network_mode),
   sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
   sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
   sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
   sqlc.arg(admitted_at), sqlc.arg(admitted_at), sqlc.narg(runs_principal_id)::uuid,
-  sqlc.narg(workflow_id), sqlc.narg(step_label)
+  sqlc.narg(workflow_id), sqlc.narg(step_label), sqlc.narg(max_artifact_bytes)::bigint, sqlc.narg(input_file_bytes)::bigint, sqlc.narg(environment_id)::uuid, (SELECT 'sha256:' || image_digest FROM execution_environments WHERE id=sqlc.narg(environment_id)::uuid)
 )
 RETURNING *;
 
@@ -6863,6 +6885,31 @@ FROM candidate
 WHERE execution.id = candidate.id
 RETURNING execution.*;
 
+-- name: ExecutionClaimNextForClass :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE (sqlc.narg(account_id)::uuid IS NULL OR executions.account_id = sqlc.narg(account_id)::uuid)
+    AND executions.execution_class = sqlc.arg(execution_class)
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= sqlc.arg(claimed_at)::timestamptz
+    AND executions.deadline_at > sqlc.arg(claimed_at)::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = sqlc.arg(lease_token),
+    lease_owner = sqlc.arg(lease_owner),
+    lease_expires_at = LEAST(sqlc.arg(lease_expires_at)::timestamptz, candidate.deadline_at),
+    updated_at = sqlc.arg(claimed_at)
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.*;
+
+
 -- name: ExecutionQueueStats :one
 SELECT count(*)::bigint AS queued, min(created_at) AS oldest_created_at
 FROM executions
@@ -6938,7 +6985,7 @@ WHERE id = sqlc.arg(execution_id)
   AND lease_expires_at > sqlc.arg(started_at)
   AND cancel_requested_at IS NULL
   AND deadline_at > sqlc.arg(started_at)
-  AND (profile = 'standard' OR runtime_image_digest IS NOT NULL)
+  AND (profile = 'standard' AND environment_id IS NULL OR runtime_image_digest IS NOT NULL)
 RETURNING *;
 
 -- name: ExecutionPinRuntime :one
@@ -6978,6 +7025,7 @@ SET status = sqlc.arg(terminal_status),
     result = NULLIF(sqlc.arg(result_json)::text, '')::jsonb,
     result_bytes = sqlc.arg(result_bytes),
     artifacts = sqlc.arg(artifacts),
+    result_validation = sqlc.narg(result_validation)::jsonb,
     stdout = sqlc.arg(stdout),
     stderr = sqlc.arg(stderr),
     output_truncated = sqlc.arg(output_truncated),
@@ -7154,13 +7202,13 @@ WHERE account_id = sqlc.arg(account_id)
 -- Publication is insert-only; retirement is the sole mutable transition.
 -- name: RuntimeSnapshotInsert :one
 INSERT INTO runtime_snapshots (
-    catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
+    fc_version, catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
     base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
     storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
     payload_free, state, created_at, published_at, retired_at
 )
 VALUES (
-    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(architecture),
+    sqlc.arg(fc_version), sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(architecture),
     sqlc.arg(kernel_digest), sqlc.arg(guest_executor_digest),
     sqlc.arg(base_image_digest), sqlc.arg(memory_mb), sqlc.arg(ephemeral_disk_mb),
     sqlc.arg(format_version), sqlc.arg(storage_key), sqlc.arg(snapshot_digest),
@@ -7809,7 +7857,7 @@ WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id):
 ORDER BY b.id;
 
 -- name: ReadProjectEnvironmentCloneObjectBuckets :many
-SELECT jsonb_build_object(
+SELECT (jsonb_build_object(
     'id', b.id::text, 'name', b.name, 'region', b.region,
     'backend_id', b.backend_id, 'backend_fingerprint', b.backend_fingerprint,
     'physical_name', b.physical_name, 'public_read', b.public_read, 'serve_at', coalesce(b.serve_at, ''),
@@ -7832,7 +7880,13 @@ SELECT jsonb_build_object(
         SELECT jsonb_agg(jsonb_build_object('api_key_id', g.api_key_id::text, 'permission', g.permission) ORDER BY g.api_key_id)
         FROM object_storage_access_grants g WHERE g.bucket_id = b.id AND g.account_id = b.account_id
     ), '[]'::jsonb)
-) AS definition, (b.state = 'ready')::boolean AS ready
+) || coalesce((
+    -- ADR-20261104120000 amendment 2026-11-16: present only when the bucket
+    -- has a notification configuration, as the Go capture omits it.
+    SELECT jsonb_build_object('notifications', jsonb_build_object('revision', n.revision, 'rules', n.rules,
+        'managed_rule_ids', (SELECT coalesce(jsonb_agg(m->>'id' ORDER BY m->>'id'), '[]'::jsonb) FROM jsonb_array_elements(n.managed_rules) m)))
+    FROM object_bucket_notifications n WHERE n.bucket_id = b.id
+), '{}'::jsonb))::jsonb AS definition, (b.state = 'ready')::boolean AS ready
 FROM object_buckets b
 WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
   AND b.scope = sqlc.arg(source_scope)::text AND b.state <> 'deleted'
@@ -13042,7 +13096,12 @@ WHERE id IN (sqlc.arg(from_node_id)::uuid, sqlc.arg(to_node_id)::uuid)
 ORDER BY id FOR SHARE;
 
 -- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+-- ADR-20261121203000: a displacement remembers the node the app came from
+-- (its home), keeps an older home across a chain of drains, and clears it
+-- when the app lands back on its home.
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=sqlc.arg(to_node_id)::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, sqlc.arg(from_node_id)::uuid) END
 WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
   AND status IN ('active', 'evicted_cold')
   AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL
@@ -15106,13 +15165,42 @@ VALUES ('objectstorage', 'event.published', sqlc.arg(account_id)::uuid,
         sqlc.arg(payload)::jsonb, sqlc.arg(at)::timestamptz);
 
 -- name: ObjectNotificationsGet :one
-SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id
+SELECT n.revision, n.rules, n.managed_rules, b.name, b.region, b.account_id, b.app_id, n.clone_paused
 FROM object_bucket_notifications n JOIN object_buckets b ON b.id=n.bucket_id
 WHERE n.bucket_id=$1;
 
 -- name: ObjectNotificationsSave :exec
+-- Any explicit write of the rules clears a clone's pause (ADR-20261104120000
+-- amendment 2026-11-16).
 INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules) VALUES ($1,$2,$3,$4)
-ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules;
+ON CONFLICT (bucket_id) DO UPDATE SET revision=EXCLUDED.revision, rules=EXCLUDED.rules, managed_rules=EXCLUDED.managed_rules, clone_paused=false;
+
+-- name: ObjectNotificationsClearClonePause :exec
+UPDATE object_bucket_notifications SET clone_paused = false WHERE bucket_id = sqlc.arg(bucket_id)::uuid AND clone_paused;
+
+-- name: InsertProjectEnvironmentCloneBucketNotifications :exec
+-- A full clone's target bucket gets its source's configuration paused.
+INSERT INTO object_bucket_notifications (bucket_id, revision, rules, managed_rules, clone_paused)
+VALUES (sqlc.arg(bucket_id)::uuid, sqlc.arg(revision)::bigint, sqlc.arg(rules)::jsonb, sqlc.arg(managed_rules)::jsonb, true)
+ON CONFLICT (bucket_id) DO NOTHING;
+
+-- name: ReadProjectEnvironmentCloneTargetBucketNotifications :many
+SELECT b.id AS bucket_id, (n.bucket_id IS NOT NULL)::boolean AS present, coalesce(n.revision, 0)::bigint AS revision,
+    coalesce(n.rules, '[]'::jsonb)::jsonb AS rules, coalesce(n.managed_rules, '[]'::jsonb)::jsonb AS managed_rules,
+    coalesce(n.clone_paused, false)::boolean AS clone_paused
+FROM object_buckets b LEFT JOIN object_bucket_notifications n ON n.bucket_id = b.id
+WHERE b.environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND b.account_id = sqlc.arg(account_id)::uuid
+  AND b.environment_clone_source_bucket_id = sqlc.arg(source_bucket_id)::uuid AND b.state <> 'deleted'
+ORDER BY b.id;
+
+-- name: ResumeEnvironmentClonePausedBucketNotifications :many
+-- Resumes the notifications a full clone paused on its target buckets in one
+-- stage.
+UPDATE object_bucket_notifications n SET clone_paused = false
+FROM object_buckets b JOIN project_environment_clone_operations o ON o.id = b.environment_clone_operation_id
+WHERE n.bucket_id = b.id AND n.clone_paused AND b.account_id = sqlc.arg(account_id)::uuid
+  AND o.project_id = sqlc.arg(project_id)::uuid AND b.scope = sqlc.arg(environment)::text
+RETURNING n.bucket_id;
 
 -- name: ObjectNotificationsCapture :execrows
 -- Notification recipients meet the same company reach as subscriptions
@@ -15137,7 +15225,16 @@ SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted';
 SELECT event_app_in_producer_reach(sqlc.arg(account_id)::uuid, sqlc.arg(producer)::text, sqlc.arg(target_app_id)::text)::boolean AS in_reach;
 
 -- name: ObjectNotificationTargetQueue :many
-SELECT * FROM queue_bindings WHERE account_id=$1 AND app_id=$2 AND queue_name=$3 AND enabled AND retired_at IS NULL LIMIT 2;
+-- A rule's queue resolves in its bucket's environment (ADR-20261104120000
+-- amendment 2026-11-16): production's unscoped binding, or the stage's.
+SELECT * FROM queue_bindings WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+  AND queue_name=sqlc.arg(queue_name)::text AND enabled AND retired_at IS NULL
+  AND deployment_scope = sqlc.arg(scope)::text
+  AND environment_id IS NOT DISTINCT FROM sqlc.narg(environment_id)::uuid
+LIMIT 2;
+
+-- name: ObjectNotificationEnvironmentSlug :one
+SELECT slug FROM project_environments WHERE id = sqlc.arg(environment_id)::uuid;
 
 -- name: ObjectNotificationLockApp :one
 SELECT id FROM apps WHERE id=$1 AND account_id=$2 AND status<>'deleted' FOR UPDATE;
@@ -26634,6 +26731,10 @@ ORDER BY window_start, method, path;
 -- default-scope canary and a serving predecessor. apid probes the default
 -- path on both so a quiet canary is judged on evidence. An app with several
 -- serving predecessors returns several rows and is skipped by the caller.
+-- A function is probed only on paths it declares in release_probe_paths:
+-- every path of a function is its handler, so a default GET / ran a queue or
+-- cron handler with a synthetic event about 20 times a minute for the whole
+-- canary (prod 2026-11-20, ADR-1446 amendment).
 SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
  d.id::text AS candidate_id, s.id::text AS stable_id,
  coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
@@ -26647,6 +26748,7 @@ JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND
 WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
  AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
  AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ AND (a.type <> 'function' OR jsonb_array_length(coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)) > 0)
 ORDER BY a.id, d.id, s.id
 LIMIT sqlc.arg(batch_limit)::int;
 
@@ -30602,6 +30704,10 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: RuntimeSnapshotRecords :many
+-- Both ready and retired entries retain their immutable native objects.
+SELECT * FROM runtime_snapshots ORDER BY catalog_key;
 
 -- ADR-20261104120000: the project environment a published event belongs to.
 -- Production is the empty environment, so its row reports production = true.

@@ -171,6 +171,15 @@
     "kind": "operational"
   },
   {
+    "table": "agent_budget_standing",
+    "columns": [
+      "key_id",
+      "standing_millicents",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "agent_key_budgets",
     "columns": [
       "key_id",
@@ -1522,6 +1531,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -1543,6 +1553,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize"
     ],
     "clone": {
@@ -2139,7 +2150,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -2347,7 +2359,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -2377,7 +2390,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -3027,6 +3041,7 @@
       "only_declared_routes",
       "org_id",
       "overflow_node",
+      "owner_home_node_id",
       "park_transition_id",
       "platform_tenant_required",
       "preview_destroy_commented_at",
@@ -5595,7 +5610,10 @@
       "urls"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "deployment"
     }
@@ -6310,7 +6328,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -6342,7 +6361,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -7895,6 +7915,20 @@
     "kind": "operational"
   },
   {
+    "table": "execution_workflow_pipelines",
+    "columns": [
+      "cancel_requested",
+      "completion",
+      "deadline_at",
+      "delivered_at",
+      "due_at",
+      "job_id",
+      "journal",
+      "policy"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "executions",
     "columns": [
       "account_id",
@@ -7904,16 +7938,20 @@
       "cpu_time_ms",
       "created_at",
       "deadline_at",
+      "environment_id",
       "ephemeral_disk_mb",
+      "execution_class",
       "exit_code",
       "failure_code",
       "failure_message",
       "finished_at",
       "id",
       "input_bytes",
+      "input_file_bytes",
       "lease_expires_at",
       "lease_owner",
       "lease_token",
+      "max_artifact_bytes",
       "max_output_bytes",
       "memory_mb",
       "network_mode",
@@ -7923,6 +7961,7 @@
       "profile",
       "result",
       "result_bytes",
+      "result_validation",
       "runs_principal_id",
       "runtime",
       "runtime_image_digest",
@@ -12615,6 +12654,7 @@
       "net_rx_valid",
       "net_tx_bytes",
       "net_tx_valid",
+      "node_id",
       "observed_at",
       "service_reply_pending",
       "updated_at"
@@ -13069,12 +13109,16 @@
     "table": "object_bucket_notifications",
     "columns": [
       "bucket_id",
+      "clone_paused",
       "managed_rules",
       "revision",
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": [],
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
     "clone": {
       "owner": "app",
       "via": [
@@ -13083,8 +13127,7 @@
           "object_buckets",
           "id"
         ]
-      ],
-      "unavailable": "object_bucket_setting_unavailable"
+      ]
     }
   },
   {
@@ -17540,6 +17583,7 @@
     ],
     "kind": "configuration",
     "capabilities": [
+      "capture",
       "materialize",
       "qualify"
     ],
@@ -18800,7 +18844,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -19147,6 +19192,7 @@
       "catalog_key",
       "created_at",
       "ephemeral_disk_mb",
+      "fc_version",
       "format_version",
       "guest_executor_digest",
       "id",
@@ -20063,7 +20109,8 @@
     "kind": "configuration",
     "capabilities": [],
     "clone": {
-      "owner": "app"
+      "owner": "app",
+      "strategy": "production_only"
     }
   },
   {
@@ -21279,6 +21326,7 @@
       "checkout_commit",
       "checkout_installation_id",
       "checkout_repository",
+      "deadline_credit_max_sec",
       "dedupe_key",
       "exit_code",
       "finished_at",
@@ -21478,6 +21526,7 @@
       "created_at",
       "expires_at",
       "id",
+      "released_at",
       "run_id",
       "tool"
     ],
@@ -21680,7 +21729,9 @@
       "hold_days",
       "note",
       "referred_reward_cents",
+      "selected_by",
       "stage",
+      "subject_kind",
       "updated_at",
       "updated_by"
     ],
@@ -21823,6 +21874,66 @@
       "updated_at",
       "updated_by",
       "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_team_members",
+    "columns": [
+      "account_id",
+      "active",
+      "created_at",
+      "role",
+      "updated_at",
+      "updated_by",
+      "version"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_agreements",
+    "columns": [
+      "account_id",
+      "commission_bps",
+      "created_at",
+      "created_by",
+      "effective_from",
+      "id",
+      "note"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "referral_credit_changes",
+    "columns": [
+      "account_id",
+      "changed_by",
+      "created_at",
+      "from_commission_bps",
+      "from_owner_id",
+      "id",
+      "reason",
+      "to_commission_bps",
+      "to_owner_id"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "sales_commission_payouts",
+    "columns": [
+      "account_id",
+      "amount_cents",
+      "created_at",
+      "currency",
+      "id",
+      "note",
+      "owner_id",
+      "paid_on",
+      "recorded_by",
+      "reference",
+      "void_reason",
+      "voided_at",
+      "voided_by"
     ],
     "kind": "account_identity"
   },
@@ -22265,6 +22376,7 @@
       "converted_at",
       "crossed",
       "customer_id",
+      "den_sum",
       "errors",
       "experiment_id",
       "first_exposed_at",
@@ -22272,6 +22384,8 @@
       "pre_value",
       "requests",
       "slow_requests",
+      "subject_hash",
+      "unit_customer_id",
       "value_sum",
       "variant"
     ],
@@ -22281,23 +22395,31 @@
     "table": "flag_experiments",
     "columns": [
       "account_id",
+      "allocation",
+      "bandit",
+      "bandit_weighted_at",
       "breach",
       "control",
       "created_at",
       "created_by",
       "cuped",
+      "denominator_event",
       "environment_id",
       "flag_key",
       "guardrails",
       "id",
       "key",
       "latency_threshold_ms",
+      "layer",
+      "layer_from",
+      "layer_to",
       "metric_definition",
       "metric_event",
       "metric_kind",
       "min_cuped_p_values",
       "min_p_values",
       "mixing_lift",
+      "percentile",
       "project_id",
       "rule_id",
       "started_at",
@@ -22305,6 +22427,8 @@
       "stop_reason",
       "stopped_at",
       "telemetry_cursor",
+      "traffic",
+      "unit",
       "value_through_day",
       "weights"
     ],
@@ -22417,6 +22541,174 @@
       "created_at",
       "eviction_policy",
       "memory_mb"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_admissions",
+    "columns": [
+      "account_id",
+      "created_at",
+      "execution_id",
+      "expires_at",
+      "key_hash",
+      "request_digest",
+      "scope_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_environment_diagnostics",
+    "columns": [
+      "diagnostic_sequence",
+      "diagnostics",
+      "environment_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_environments",
+    "columns": [
+      "account_id",
+      "artifact_bytes",
+      "artifact_keys",
+      "base_key",
+      "base_ref",
+      "build_attempts",
+      "created_at",
+      "export_digest",
+      "export_key",
+      "failure_code",
+      "guest_executor_digest",
+      "id",
+      "image_attempts",
+      "image_digest",
+      "lease",
+      "lease_expires_at",
+      "principal_id",
+      "recipe",
+      "recipe_digest",
+      "runtime",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_file_links",
+    "columns": [
+      "execution_id",
+      "file_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_files",
+    "columns": [
+      "account_id",
+      "created_at",
+      "execution_id",
+      "expires_at",
+      "id",
+      "kind",
+      "lease_expires_at",
+      "name",
+      "principal_id",
+      "sealed_key",
+      "sha256",
+      "size_bytes",
+      "status",
+      "storage_key",
+      "token",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_run_bindings",
+    "columns": [
+      "account_id",
+      "agent_ref",
+      "customer_ref",
+      "enabled",
+      "revision",
+      "subject_id",
+      "subject_kind"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "execution_run_budget_alerts",
+    "columns": [
+      "account_id",
+      "created_at",
+      "day",
+      "event_id",
+      "kind",
+      "maximum",
+      "metric",
+      "observed",
+      "ref",
+      "threshold_percent"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_run_budgets",
+    "columns": [
+      "account_id",
+      "enabled",
+      "kind",
+      "max_compute_mb_ms",
+      "max_concurrent",
+      "max_invocations",
+      "ref",
+      "revision"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "execution_run_reservations",
+    "columns": [
+      "account_id",
+      "admitted_at",
+      "agent_ref",
+      "customer_ref",
+      "execution_id",
+      "reserved_mb_ms",
+      "task_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_task_invocations",
+    "columns": [
+      "account_id",
+      "callback",
+      "callback_key",
+      "created_at",
+      "delivered_at",
+      "execution_id",
+      "request_digest",
+      "version_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "execution_task_versions",
+    "columns": [
+      "account_id",
+      "agent_endpoint_ids",
+      "created_at",
+      "digest",
+      "environment_id",
+      "id",
+      "kid",
+      "metadata",
+      "name",
+      "runtime",
+      "sealed_definition",
+      "status",
+      "version"
     ],
     "kind": "operational"
   }

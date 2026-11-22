@@ -86,6 +86,8 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var CronResidentSecondsPerMonth = cronResidentSecondsPerMonth
+
 // SealNotificationChannel validates a channel create request (ADR-749).
 var SealNotificationChannel = sealChannel
 
@@ -2162,6 +2164,22 @@ func (r *server) EnsureDevPostgresForTest(ctx context.Context, acct state.Accoun
 	return r.ensureDevPostgres(ctx, acct, app, &api.DevPostgresRequest{})
 }
 
+// DevPostgresSecretConflictKey reports the key of ensureDevPostgres's refusal
+// when the developer app already holds a database variable of its own.
+func DevPostgresSecretConflictKey(err error) (string, bool) {
+	var conflict devPostgresSecretConflict
+	if errors.As(err, &conflict) {
+		return conflict.key, true
+	}
+	return "", false
+}
+
+// CleanupDevPostgresForTest tears down a developer environment's database as
+// the janitor and `gregale dev --stop` do.
+func (r *server) CleanupDevPostgresForTest(ctx context.Context, app state.App) error {
+	return r.cleanupDevPostgres(ctx, app)
+}
+
 // RequestBillingMailOutboxesForTest selects the three webhook billing-mail
 // outboxes without configuring one, so a delivery that reaches an outbox
 // fails closed with 503 (Hunt 17 H17-3).
@@ -2627,6 +2645,15 @@ func PlatformOwnedDomain(apps, platform, domain string) bool {
 
 var FinancialBudgetProblem = financialBudgetProblem
 
+// DriveExecutionPipelineForTest exercises the production continuation adapter.
+func (s *server) DriveExecutionPipelineForTest(ctx context.Context, claim state.ExecutionWorkflowJobClaim) error {
+	return s.pipelineWorker().Drive(ctx, claim)
+}
+
+func (s *server) DeliverPipelineCallbacksForTest(ctx context.Context) (int, error) {
+	return s.agentAPI.DeliverPipelineCallbacks(ctx)
+}
+
 // AppOOMRecommendation is the operational-summary OOM recommendation (2026-11-13).
 var AppOOMRecommendation = appOOMRecommendation
 
@@ -2664,3 +2691,6 @@ var (
 func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmission {
 	return &s.runtimeBuildAdmission
 }
+
+// OwnDomainHolderHint explains a domain conflict held by the caller's app.
+var OwnDomainHolderHint = ownDomainHolderHint

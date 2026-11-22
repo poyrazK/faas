@@ -2514,7 +2514,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
-			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+			api.WriteProblem(w, s.trafficChangeDuringCanaryProblem(guardCtx, app))
 		case errors.As(err, &limitErr):
 			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):
@@ -3791,6 +3791,8 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			var pending *claimPendingError
 			if errors.As(err, &pending) {
 				problem.Hint = pending.hint()
+			} else if hint := ownDomainHolderHint(r.Context(), s.store, acct.ID, domain); hint != "" {
+				problem.Detail, problem.Hint = hint, hint
 			}
 			api.WriteProblem(w, problem)
 			return
@@ -4435,6 +4437,16 @@ func doctorReportFromObs(d state.CustomDomain, obs state.DomainDoctorObservation
 	if detail, rem, ok := onDemandTLSAdvice(d, obs); ok {
 		tlsDetail, tlsRem = detail, rem
 	}
+	// No certificate is issued, on demand or otherwise, until the
+	// _faas-verify TXT record has been seen. The doctor checked only the
+	// CNAME and promised a certificate "once the domain resolves", so a
+	// customer who skipped the TXT record waited forever (prod hunt
+	// 2026-11-21).
+	if !d.Verified() && d.ChallengeToken != "" && (obs.CertState == "" || obs.CertState == "none" || obs.CertState == certStatusPending) {
+		tlsStatus, report.Healthy = probePending, false
+		tlsDetail = "ownership not verified: the _faas-verify TXT record has not been seen, and no certificate is issued until it is"
+		tlsRem = fmt.Sprintf("Publish TXT _faas-verify.%s with the value %s.", d.Domain, d.ChallengeToken)
+	}
 	report.Checks = append(report.Checks, api.DomainDoctorCheck{
 		Name: "tls_certificate", Status: string(tlsStatus), Detail: tlsDetail,
 		Remediation: tlsRem, CheckedAt: obs.CertCheckedAt.UTC().Format(time.RFC3339),
@@ -4630,6 +4642,11 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.SkipIfRunning != nil {
 		skipIfRunning = *req.SkipIfRunning
 	}
+	commitBudget, answered := s.chargeAgentBudget(w, r, acct.Plan, 0,
+		cronStandingMillicents(app, acct.Plan, req.Schedule, timezone, enabled, cronCommand, commandTimeoutSeconds, time.Now().UTC()))
+	if answered {
+		return
+	}
 	c, err := s.store.CreateCronIfUnderQuotaWithOptions(r.Context(), app.ID, req.Schedule, path, enabled, limits, state.CronOptions{
 		SchedulePolicy: req.SchedulePolicy, FailureRules: req.FailureRules,
 		Timezone: timezone, SkipIfRunning: skipIfRunning, Command: cronCommand,
@@ -4651,6 +4668,7 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"created","app_id":"`+app.ID+`"}`)
 	s.log.Info("cron created", "cron", c.ID, "app", app.ID, "account", acct.ID)
 	// IAM-4 (issue #291): record the cron schedule so a stolen CI
@@ -4837,6 +4855,10 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 	if req.Timezone != nil {
 		timezonePatch = &timezone
 	}
+	commitBudget, answered := s.chargeCronUpdate(w, r, acct.Plan, app, c, req, timezonePatch)
+	if answered {
+		return
+	}
 	updated, err := s.store.UpdateCronWithOptions(r.Context(), id, req.Schedule, req.Path, req.Enabled, timezonePatch, req.SkipIfRunning, nil, retryOptions...)
 	if errors.Is(err, state.ErrConflict) {
 		api.WriteProblem(w, api.ErrCronConflict())
@@ -4846,6 +4868,7 @@ func (s *server) updateCron(w http.ResponseWriter, r *http.Request, acct state.A
 		api.WriteProblem(w, api.ErrCapacity("could not update cron"))
 		return
 	}
+	commitBudget()
 	_ = s.notif.Notify(r.Context(), db.NotifyCronChanged, `{"kind":"updated","cron":"`+id+`"}`)
 	// IAM-4 (issue #291): record what changed and to what. We
 	// capture only the fields the caller actually sent (req.X != nil)

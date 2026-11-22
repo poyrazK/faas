@@ -413,6 +413,10 @@ service Schedd {
   // "database_compute_quota"). DatabaseUsage reads the month's compute.
   // apid only.
   rpc SetDatabaseComputeQuota(SetDatabaseComputeQuotaRequest) returns (DatabaseRuntime);
+
+  // InterruptHostedTaskWorker is available only on the local scheduler socket.
+  // The private acceptance caller must first observe an exact live Task lease.
+  rpc InterruptHostedTaskWorker(InterruptHostedTaskWorkerRequest) returns (InterruptHostedTaskWorkerResponse);
 }
 
 message LivenessFailedReport {
@@ -652,6 +656,13 @@ message AdmitInstanceRequest {
   // the ledger, placement, RAM, and node limits still apply to every
   // admission. Additive per ADR-016.
   bool burst_continuation = 7;
+  // stale_instance_id names an instance whose forward the gateway just saw
+  // fail with "target not found on node". Before admitting, schedd asks
+  // that instance's vmmd for its live set and fails the row if the VM is
+  // not there, so a row left RUNNING after its VM was retired (for example
+  // during a database outage) stops holding the app's concurrency slot.
+  // Empty means no hint. Older schedds ignore it. Additive per ADR-016.
+  string stale_instance_id = 8;
 }
 
 // AdmitInstanceResponse is the typed result of Engine.AdmitInstance.
@@ -1481,7 +1492,15 @@ message AgentRunRequest {
     AgentRunStart start = 1;
     AgentRunCancel cancel = 2;
     AgentRunProceed proceed = 3;
+    AgentRunExtend extend = 4;
   }
+}
+
+// AgentRunExtend is the run's total approval-wait credit (ADR-20261027090016
+// amendment 3); schedd forwards it to vmmd. A schedd that predates it
+// ignores it.
+message AgentRunExtend {
+  int64 credit_ms = 1;
 }
 
 // AgentRunProceed lets a placed run boot.
@@ -1512,6 +1531,10 @@ message AgentRunStart {
   // version has AgentSizeHistoryMinRuns of them. schedd's measured charge
   // books and charges the run from it; an older agentd sends 0.
   int32 history_peak_private_mb = 11;
+  // deadline_sec is the seller's timeout when the run's timeout_sec is a
+  // guest ceiling above it (ADR-20261027090016 amendment 3); 0: the run's
+  // timeout_sec.
+  int32 deadline_sec = 12;
 }
 
 // AgentRunRelay is placement data for the run's relay assertion (ADR-20261027090010
@@ -1848,3 +1871,24 @@ message DatabaseAdminResponse {
 }
 
 message DeleteDatabaseResponse {}
+
+
+// Identity fence for a freshly observed first-attempt rehearsal lease.
+// Carries no guest credential or lease token.
+message InterruptHostedTaskWorkerRequest {
+  string account_id = 1;
+  string run_id = 2;
+  string plan_sha256 = 3;
+  string task_id = 4;
+  string app_id = 5;
+  string deployment_id = 6;
+  string instance_id = 7;
+  string node_id = 8;
+  string wake_id = 9;
+  google.protobuf.Timestamp observed_at = 10;
+}
+
+message InterruptHostedTaskWorkerResponse {
+  string instance_id = 1;
+  string deployment_id = 2;
+}

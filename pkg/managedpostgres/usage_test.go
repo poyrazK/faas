@@ -100,7 +100,7 @@ func TestUsagePolicyAdmitWithCeilingsRejectsPlanStorageCap(t *testing.T) {
 // admission enforces, the plan's capped by the operator policy.
 func TestServiceEffectiveComputeCeilingAppliesOperatorPolicy(t *testing.T) {
 	policy := enabledUsagePolicy() // operator cap: 1000 unit-seconds
-	s := &Service{registry: &Registry{usage: policy}}
+	s := &Service{registry: registryWithUsage(policy)}
 	if got := s.EffectiveComputeCeiling(1_440_000); got != 1000 {
 		t.Fatalf("plan above the operator cap = %d, want 1000", got)
 	}
@@ -108,7 +108,7 @@ func TestServiceEffectiveComputeCeilingAppliesOperatorPolicy(t *testing.T) {
 		t.Fatalf("plan below the operator cap = %d, want 500", got)
 	}
 	policy.Enabled = false
-	if got := (&Service{registry: &Registry{usage: policy}}).EffectiveComputeCeiling(1_440_000); got != 1_440_000 {
+	if got := (&Service{registry: registryWithUsage(policy)}).EffectiveComputeCeiling(1_440_000); got != 1_440_000 {
 		t.Fatalf("disabled policy = %d, want the plan ceiling", got)
 	}
 	if got := (*Service)(nil).EffectiveComputeCeiling(7); got != 7 {

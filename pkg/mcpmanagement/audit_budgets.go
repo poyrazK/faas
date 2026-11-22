@@ -136,7 +136,35 @@ func (m *management) getSpendForecast(ctx context.Context, a forecastArgs) (any,
 	if m.opts.AllowedApps != nil {
 		return nil, invalid("app_access_denied", "the account forecast needs a connection to every app; use gregale_get_costs for one app")
 	}
-	return m.client.GetFinancialForecast(ctx, a.Month)
+	out, err := m.client.GetFinancialForecast(ctx, a.Month)
+	if err != nil {
+		return nil, err
+	}
+	return compactForecast(out), nil
+}
+
+// spendForecast is the account forecast without its per-usage allocation
+// evidence. Allocations were over 300 KB on an ordinary account, far past the
+// MCP result bound, so the tool failed with response_too_large.
+type spendForecast struct {
+	api.FinancialForecastResponse
+	AllocationsOmitted int    `json:"allocations_omitted"`
+	Note               string `json:"note,omitempty"`
+}
+
+func compactForecast(f api.FinancialForecastResponse) spendForecast {
+	omitted := 0
+	for i := range f.Meters {
+		for j := range f.Meters[i].Accrued.Contracts {
+			omitted += len(f.Meters[i].Accrued.Contracts[j].Allocations)
+			f.Meters[i].Accrued.Contracts[j].Allocations = nil
+		}
+	}
+	out := spendForecast{FinancialForecastResponse: f, AllocationsOmitted: omitted}
+	if omitted > 0 {
+		out.Note = "Per-usage allocation evidence is omitted; read one app's costs with gregale_get_costs."
+	}
+	return out
 }
 
 // budgetVisible reports whether this connection may see and plan the
@@ -243,6 +271,10 @@ func (m *management) planBudgetChange(ctx context.Context, a planBudgetArgs) (an
 	}
 	p.ID = hex.EncodeToString(id)
 	m.budgetPlans[p.ID] = p
+	if err := m.persistMemoryPlansLocked(); err != nil {
+		delete(m.budgetPlans, p.ID)
+		return nil, err
+	}
 	return *p, nil
 }
 
@@ -251,7 +283,7 @@ func (m *management) applyBudgetChange(ctx context.Context, a applyArgs) (any, e
 	defer m.mu.Unlock()
 	p := m.budgetPlans[a.PlanID]
 	if p == nil {
-		return nil, invalid("invalid_plan", "unknown budget plan; plans end with the connection, so review a new one")
+		return nil, invalid("invalid_plan", "unknown or expired budget plan; review a new one")
 	}
 	if p.receipt != nil {
 		return p.receipt, nil
@@ -278,6 +310,9 @@ func (m *management) applyBudgetChange(ctx context.Context, a applyArgs) (any, e
 		return nil, err
 	}
 	p.receipt = map[string]any{"plan_id": p.ID, "op": p.Op, "budget": out}
+	// The write succeeded under its idempotency key; a failed journal only
+	// costs the replayed receipt.
+	_ = m.persistMemoryPlansLocked()
 	return p.receipt, nil
 }
 

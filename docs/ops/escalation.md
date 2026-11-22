@@ -17,28 +17,21 @@ Alertmanager routes by the `severity` label on each rule in
 | Alert | Receiver | Delivery | Repeat |
 |---|---|---|---|
 | `severity=page` | `faas-page` | Pushover at priority 2 (emergency: bypasses quiet hours, retries every minute for an hour until acknowledged), email to `am_email_to_page`, and the page chat webhook (Discord or Slack) when configured | every hour while firing |
+| `FaasPrometheusNotificationsDropped`, `FaasAlertmanagerNotificationsFailed` at page severity | `faas-delivery-page` plus `faas-page` | Optional PagerDuty incident assigned to the primary on-call schedule, escalating to the secondary after five minutes without action | one open PagerDuty incident per fleet while either condition is firing |
 | `severity=warn` | `faas-warn` | email to `am_email_to_warn` and the warn chat webhook (falls back to the page webhook when no warn-only one is set). A review queue, not an interrupt (ADR-1236): grouped by `family`, new alerts batched for an hour | once a day (`am_warn_repeat_interval`, default 24h) |
 | `severity=info` | none | Prometheus and Grafana only | n/a |
 | `FaasWatchdog` (always firing) | `faas-heartbeat` | posts to the external monitor URL in `am_heartbeat_url_file` | every `am_heartbeat_interval` (default 5m) |
 
-Secrets (SMTP password, Pushover token and user key, chat webhooks, heartbeat
-URL) are files under `/etc/alertmanager/secrets/`. They are never in the
-rendered config.
-
-**Production today (checked 2026-11-07 on the control plane).** Only the
-Slack webhook and the heartbeat URL are provisioned. No Pushover or SMTP
-secrets exist, so every page and warn goes to Slack only. Alertmanager has
-never sent a Pushover or email notification there. A page wakes someone only
-if that Slack channel pushes to a phone with sound. The heartbeat is live and
-delivering with no failures. Provisioning Pushover (or a Pushover delivery
-group) is the open action that turns a page into a phone alarm.
+Receiver credentials live in files under `/etc/alertmanager/secrets/`. Use
+`gregalectl obs notification-health` to see the current deployment inventory
+and transport observations for the fleet.
 
 What this means during an incident:
 
-- **There is one Pushover target.** Alertmanager has no secondary rotation.
-  Moving to a second responder is a human step (below), not an automatic
-  one. To page a group, point `am_pushover_user_key_file` at a Pushover
-  *delivery group* key instead of a single user key.
+- Acknowledge the delivery incident in PagerDuty to stop its escalation.
+  Other pages use the manual on-call tiers below.
+- Pushover supports an individual key or a delivery group key in
+  `am_pushover_user_key_file`.
 - **A silent warn is not a resolved warn.** A still-firing warn family is
   repeated once a day. Check Alertmanager or Grafana for its current state.
 - **If Alertmanager or Prometheus is down, nothing pages from inside.** The
@@ -50,15 +43,39 @@ What this means during an incident:
   `FaasPrometheusAlertingPathDegraded` cover partial failures of the
   alerting path.
 
+### Enable delivery escalation for a fleet
+
+1. Create a dedicated PagerDuty service with an Events API v2 integration
+   for the fleet. Assign it the Gregale Platform on-call policy. Put the
+   primary and secondary on-call schedules at levels one and two. Set the
+   primary escalation delay to five minutes. Check that both schedules have
+   coverage and that the service sends high-urgency notifications. [PagerDuty escalation policies](https://support.pagerduty.com/main/docs/escalation-policies)
+2. Provision the integration key through the host secret procedure at
+   `/etc/alertmanager/secrets/delivery-pagerduty-key`, owned by
+   `alertmanager:alertmanager` with mode `0400`. Set
+   `am_delivery_pagerduty_key_file` to that path and set `am_fleet_name` to
+   the fleet ID in the fleet's Ansible vars. Each fleet gets its own PagerDuty
+   service and key. Roll out the release containing the receiver health API
+   and the Alertmanager role with the fleet's normal deployment procedure.
+3. Confirm the expected `faas-delivery-page/pagerduty` group appears in
+   `gregalectl obs notification-health`. Run the approved
+   [monitoring qualification exercise](notification-delivery.md#rollout-and-operational-qualification).
+   Have the primary confirm the labeled PagerDuty incident and its recovery.
+   Use a separate labeled incident on the PagerDuty service to leave the
+   first notification unacknowledged for five minutes. Verify the secondary
+   receives the escalation, acknowledge it, and close the test. Record the
+   PagerDuty incident IDs and the trigger, receipt, acknowledgment, and
+   escalation times in the drill record.
+
 ## Tiers
 
 | Tier | Who | Paged when | Acknowledge | Engage |
 |---|---|---|---|---|
-| 0 | Primary on-call: the holder of the Pushover target | Any `page` alert, or a customer or security report | 5 min | 15 min (first command, first log line, or first status update) |
-| 1 | Secondary on-call | Tier 0 has not acknowledged in 15 min, or hands off (asleep, in another incident, workstation lost) | 5 min after the call | 15 min |
+| 0 | Primary on-call | Any `page` alert, or a customer or security report | 5 min | 15 min (first command, first log line, or first status update) |
+| 1 | Secondary on-call | PagerDuty escalates delivery incidents after 5 min if the primary has taken no action. For other pages, call when Tier 0 has not acknowledged in 15 min or hands off. | 5 min after receiving the escalation | 15 min |
 | 2 | Platform owner | Both tiers silent for 30 min, **or** any SEV1 (fleet-wide outage, data loss, security incident) | immediately | immediately |
 
-Tier 1 and Tier 2 are reached by phone call or direct message from whoever
+Manual escalations reach Tier 1 and Tier 2 by phone call or direct message from whoever
 noticed the gap: the Tier 0 responder, a teammate, or the reporter. Keep
 their contact details in the private on-call roster, not in this repository.
 

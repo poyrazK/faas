@@ -104,7 +104,7 @@ func secretsRotate(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(line)
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 1

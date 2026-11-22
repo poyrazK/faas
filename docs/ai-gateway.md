@@ -15,7 +15,12 @@ account during the preview; contact support to have it turned on for yours.
   Gemini, Azure OpenAI, AWS Bedrock and Google Vertex AI.
 - **Hard caps.** Daily token limits, daily and monthly cost limits, per-app
   token limits and per-end-user limits. A call is refused before it reaches the
-  provider when its reservation would pass a cap.
+  provider when its reservation would pass a cap. A call that sets no
+  `max_tokens` (and an app with no output-token ceiling) reserves the
+  longest response its model can return, or 32,768 output tokens for a model
+  Gregale has no price for, so concurrent calls cannot run past a cost cap.
+  Set `max_tokens` to reserve less; per-minute token limits still count
+  4,096 output tokens for such a call.
 - **Guardrails.** Per-app requests and tokens per minute, model allow-lists and
   output-token ceilings.
 - **Content guardrails.** Redact or block e-mail addresses, payment card

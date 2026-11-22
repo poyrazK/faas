@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reposcan"
 )
 
 // osStdout and osStdin are the package-level I/O seams so tests can pipe
@@ -603,7 +604,7 @@ func secretsSet(args []string) int {
 			}
 			// Errors name the line number only: a malformed line may hold a
 			// secret value, so it is never echoed (#6662).
-			p, err := parseSecretsPair(line)
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Invalid secret input", fmt.Errorf("stdin line %d: %w", lineNo, err))
 			}
@@ -895,15 +896,42 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		pair, parseErr := parseSecretsPair(line)
+		// A quoted value may span lines, as dotenv allows: a PEM key pasted
+		// as KEY="-----BEGIN ...\n...\n-----END ..." was refused at its
+		// second line, so RSA keys had to be set one by one (boa
+		// multi-service deploy, 2026-11-21).
+		startLine := lineNo
+		if quote, open := dotenvOpenQuote(line); open {
+			var value strings.Builder
+			value.WriteString(line)
+			closed := false
+			for scanner.Scan() {
+				lineNo++
+				next := strings.TrimRight(scanner.Text(), "\r")
+				value.WriteByte('\n')
+				value.WriteString(next)
+				if dotenvClosesQuote(strings.TrimRight(next, " \t"), quote) {
+					closed = true
+					break
+				}
+			}
+			if err := scanner.Err(); err != nil {
+				return nil, keyValueScanErr(err)
+			}
+			if !closed {
+				return nil, fmt.Errorf("line %d: quoted value has no closing %c", startLine, quote)
+			}
+			line = strings.TrimRight(value.String(), " \t")
+		}
+		pair, parseErr := parseDotenvLine(line)
 		if parseErr != nil {
-			return nil, fmt.Errorf("line %d: %w", lineNo, parseErr)
+			return nil, fmt.Errorf("line %d: %w", startLine, parseErr)
 		}
 		if _, ok := seen[pair.Key]; ok {
-			return nil, fmt.Errorf("line %d: duplicate secret key %s", lineNo, pair.Key)
+			return nil, fmt.Errorf("line %d: duplicate secret key %s", startLine, pair.Key)
 		}
 		if problem := api.ValidateSecretKey(pair.Key); problem != nil {
-			return nil, fmt.Errorf("line %d: %s", lineNo, problem.Detail)
+			return nil, fmt.Errorf("line %d: %s", startLine, problem.Detail)
 		}
 		seen[pair.Key] = struct{}{}
 		pairs = append(pairs, pair)
@@ -915,6 +943,38 @@ func readSecretsFile(path string) ([]secretsPair, error) {
 		return nil, errors.New("no KEY=VALUE pairs found")
 	}
 	return pairs, nil
+}
+
+// dotenvOpenQuote reports whether a KEY=VALUE line opens a quoted value it
+// does not close, so the value continues on the following lines.
+func dotenvOpenQuote(line string) (byte, bool) {
+	i := strings.IndexByte(line, '=')
+	if i <= 0 {
+		return 0, false
+	}
+	value := line[i+1:]
+	if value == "" || value[0] != '"' && value[0] != '\'' {
+		return 0, false
+	}
+	quote := value[0]
+	return quote, !dotenvClosesQuote(value[1:], quote)
+}
+
+// dotenvClosesQuote reports whether s ends with an unescaped closing quote.
+// Single-quoted values have no escapes; in double-quoted ones a quote
+// preceded by an odd number of backslashes is part of the value.
+func dotenvClosesQuote(s string, quote byte) bool {
+	if s == "" || s[len(s)-1] != quote {
+		return false
+	}
+	if quote == '\'' {
+		return true
+	}
+	backslashes := 0
+	for i := len(s) - 2; i >= 0 && s[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 0
 }
 
 // setDeploySecrets seals a validated secret bundle after CreateApp and before
@@ -931,8 +991,10 @@ func setDeploySecretsWithScope(ctx context.Context, client *Client, app string, 
 }
 
 // projectDeployInitialSecrets keeps the bundle in the request for the reviewed
-// selection, so the server can seal it before any builds are enqueued.
-func projectDeployInitialSecrets(workloads []api.PlanWorkload, pairs []secretsPair) api.ProjectInitialSecrets {
+// selection, so the server can seal it before any builds are enqueued. Each
+// key goes only to the selected services that name it (owners); a key no
+// service names goes to every selected service, as before.
+func projectDeployInitialSecrets(workloads []api.PlanWorkload, pairs []secretsPair, owners projectSecretOwners) api.ProjectInitialSecrets {
 	if len(pairs) == 0 {
 		return nil
 	}
@@ -941,12 +1003,71 @@ func projectDeployInitialSecrets(workloads []api.PlanWorkload, pairs []secretsPa
 		if workload.Name == "" {
 			continue
 		}
-		values[workload.Name] = make(map[string]string, len(pairs))
 		for _, pair := range pairs {
+			if !owners.targets(workload.Name, pair.Key) {
+				continue
+			}
+			if values[workload.Name] == nil {
+				values[workload.Name] = make(map[string]string, len(pairs))
+			}
 			values[workload.Name][pair.Key] = pair.Value
 		}
 	}
 	return values
+}
+
+// projectSecretOwners maps an environment key to the services (lower-case
+// workload names) that name it. A --secrets-file used to write every key to
+// every selected service, so `deploy --project --only a` handed service b's
+// credentials to a (boa multi-service deploy, 2026-11-21). The selection's
+// plan lists only the selected services, so the owners also come from a scan
+// of the local source, which sees every service. Nil targets everything.
+type projectSecretOwners map[string]map[string]bool
+
+func (o projectSecretOwners) targets(workload, key string) bool {
+	owners := o[key]
+	return len(owners) == 0 || owners[strings.ToLower(workload)]
+}
+
+// skipped lists, per key, the selected services a key does not go to.
+func (o projectSecretOwners) skipped(workloads []api.PlanWorkload, pairs []secretsPair) map[string][]string {
+	out := map[string][]string{}
+	for _, pair := range pairs {
+		for _, workload := range workloads {
+			if workload.Name != "" && !o.targets(workload.Name, pair.Key) {
+				out[pair.Key] = append(out[pair.Key], workload.Name)
+			}
+		}
+	}
+	return out
+}
+
+// projectSecretOwnersFor reads which services name each key: the plan's
+// selected services, plus every service a scan of sourceDir finds. A scan
+// failure leaves the plan's view, which is the selection only.
+func projectSecretOwnersFor(sourceDir string, workloads []api.PlanWorkload) projectSecretOwners {
+	owners := projectSecretOwners{}
+	add := func(name string, keys ...[]string) {
+		for _, group := range keys {
+			for _, key := range group {
+				if owners[key] == nil {
+					owners[key] = map[string]bool{}
+				}
+				owners[key][strings.ToLower(name)] = true
+			}
+		}
+	}
+	for _, workload := range workloads {
+		add(workload.Name, workload.EnvKeys, workload.RequiredEnvKeys)
+	}
+	if sourceDir != "" {
+		if scan, err := reposcan.Scan(os.DirFS(sourceDir)); err == nil {
+			for _, workload := range scan.Workloads {
+				add(workload.Name, workload.EnvKeys)
+			}
+		}
+	}
+	return owners
 }
 
 // setProjectDeploySecrets preserves the legacy direct-write helper for callers

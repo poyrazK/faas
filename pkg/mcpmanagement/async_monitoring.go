@@ -316,7 +316,7 @@ func (m *management) listWorkflowAttention(ctx context.Context, a appArgs) (any,
 	if err != nil {
 		return nil, err
 	}
-	out, err := m.client.ListAccountWorkflowAttention(ctx, a.App, api.OperationWorkflowAttentionOptions{AppID: app.ID, Limit: 50})
+	out, err := m.client.ListAccountWorkflowAttention(ctx, a.App, api.OperationWorkflowAttentionOptions{AppID: app.ID, Scope: api.DefaultEnvScope, Limit: 50})
 	if err != nil {
 		return nil, err
 	}

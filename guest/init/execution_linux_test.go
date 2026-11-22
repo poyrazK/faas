@@ -4,15 +4,60 @@ package main
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
+	"os"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/executionproto"
+	"golang.org/x/sys/unix"
 )
+
+func TestExecutionPayloadRevokesPristineRestoreFence(t *testing.T) {
+	previous := executionGuest.Load()
+	previousMode := executionGuestMode.Load()
+	t.Cleanup(func() { executionGuest.Store(previous); executionGuestMode.Store(previousMode) })
+	executionGuestMode.Store(true)
+	executionGuest.Store(true)
+	if !restoreReseedContractHolds() {
+		t.Fatal("pristine execution listener cannot acknowledge restore")
+	}
+	handler := executionPayloadHandler(func(context.Context, executionproto.Request, *executionproto.OutputWriter, *executionproto.OutputWriter, executionproto.OutboundBroker) (executionproto.Result, error) {
+		if executionGuest.Load() {
+			t.Fatal("payload crossed the pristine restore fence")
+		}
+		return executionproto.Result{}, nil
+	})
+	if _, err := handler(t.Context(), executionproto.Request{}, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if executionGuest.Load() {
+		t.Fatal("payload handler restored snapshot eligibility")
+	}
+	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	guest := os.NewFile(uintptr(fds[0]), "guest-resume")
+	host := os.NewFile(uintptr(fds[1]), "host-resume")
+	defer host.Close()
+	var header [8]byte
+	binary.BigEndian.PutUint32(header[:4], VsockResumeMsgType)
+	if _, err := host.Write(header[:]); err != nil {
+		t.Fatal(err)
+	}
+	handleResumeConn(guest, slog.Default())
+	ack, err := io.ReadAll(host)
+	if err != nil || len(ack) != 1 || ack[0] != VsockResumeAckNack {
+		t.Fatalf("post-payload resume was not rejected: %v, %v", ack, err)
+	}
+}
 
 func TestDecideMode_ExecutionMarkerWins(t *testing.T) {
 	fsys := fstest.MapFS{
@@ -57,11 +102,17 @@ func TestValidateExecutionManifestRejectsUnknownFields(t *testing.T) {
 }
 
 func TestServeExecutionOnceHandlesOneRequest(t *testing.T) {
+	previous := executionGuest.Load()
+	t.Cleanup(func() { executionGuest.Store(previous) })
+	executionGuest.Store(true)
 	server, client := net.Pipe()
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	handler := func(_ context.Context, req executionproto.Request, out, _ *executionproto.OutputWriter) (executionproto.Result, error) {
+		if executionGuest.Load() {
+			t.Fatal("caller bytes reached a pristine-marked guest")
+		}
 		if req.ExecutionID != "exec-test" {
 			t.Fatalf("execution id = %q", req.ExecutionID)
 		}

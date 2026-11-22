@@ -604,13 +604,28 @@ host_config_dir() {
   printf '%s' "$dir"
 }
 
+# The active release link; tests point HOST_CURRENT_RELEASE elsewhere.
+host_current_release() {
+  local link="${HOST_CURRENT_RELEASE:-/opt/faas/current}"
+  [[ "$link" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "bad current release link: $link"
+  printf '%s' "$link"
+}
+
+# host-state prints what the control plane runs and last converged. A host
+# with no active release at all (no /opt/faas/current: a control plane
+# rebuilt from backups before its first activation) reports current,
+# base_git_sha and manifest_hash as null, so a full release converges every
+# role (plan_host_config.py) and a unit release is refused. A link whose
+# release has no release-manifest.json is a broken host and still fails.
 cmd_host_state() {
-  local target
+  local target dir link
   target="$(deploy_target)"
-  remote UNIT "$target" "$(as_root "$target") -s -- '$(host_config_dir)'" <<'REMOTE'
+  # Resolved here, not inside the remote command's quotes, so a refused path
+  # stops the command instead of passing an empty argument.
+  dir="$(host_config_dir)"
+  link="$(host_current_release)"
+  remote UNIT "$target" "$(as_root "$target") -s -- '$dir' '$link'" <<'REMOTE'
 set -euo pipefail
-current="$(readlink -f /opt/faas/current)"
-test -s "$current/release-manifest.json"
 record=null
 if jq -e 'type == "object"' "$1/control-plane-roles.json" >/dev/null 2>&1; then
   record="$(cat "$1/control-plane-roles.json")"
@@ -619,6 +634,14 @@ contract=""
 if [[ -f "$1/control-plane-bootstrap-contract.sha256" ]]; then
   contract="$(tr -d '[:space:]' < "$1/control-plane-bootstrap-contract.sha256")"
 fi
+if [[ ! -e "$2" && ! -L "$2" ]]; then
+  jq -n --argjson record "$record" --arg contract "$contract" \
+    '{current: null, base_git_sha: null, manifest_hash: null, record: $record,
+      contract: (if $contract == "" then null else $contract end)}'
+  exit 0
+fi
+current="$(readlink -f "$2")"
+test -s "$current/release-manifest.json"
 jq -n --arg current "$(basename "$current")" \
   --argjson release "$(cat "$current/release-manifest.json")" \
   --argjson record "$record" --arg contract "$contract" \

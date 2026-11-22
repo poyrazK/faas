@@ -720,6 +720,11 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
 		return fmt.Errorf("run app: prepare working directory: %w", err)
 	}
+	if devWatchActive.Load() {
+		if err := prepareDevWatchWorkdir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+			slog.Warn("dev watch: working directory stays read-only for the app user", "dir", cmd.Dir, "err", err)
+		}
+	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can
@@ -1519,8 +1524,9 @@ func runBuildOnce(m api.BuildManifest) error {
 		"BUILDKIT_SESSION_HEALTH_TIMEOUT_MS=300000",
 	), secretEnv...)
 	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(os.Stdout, &buf)
-	cmd.Stderr = io.MultiWriter(os.Stderr, &buf)
+	stdoutConsole, stderrConsole := newBuildOutputFilter(os.Stdout), newBuildOutputFilter(os.Stderr)
+	cmd.Stdout = io.MultiWriter(stdoutConsole, &buf)
+	cmd.Stderr = io.MultiWriter(stderrConsole, &buf)
 	clock.stage("build-command")
 	buildStarted := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -1543,6 +1549,12 @@ func runBuildOnce(m api.BuildManifest) error {
 		// Use exit 124 for the durable build marker even when the stuck
 		// descendant prevents exec.Cmd.Wait from returning.
 		err = context.DeadlineExceeded
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		// A stuck descendant may still be writing after a timeout; only a
+		// finished command's last partial line is flushed.
+		stdoutConsole.Flush()
+		stderrConsole.Flush()
 	}
 	clock.finishBuild(time.Since(buildStarted), buf.Bytes())
 	// A failure to reach the registry for a platform-owned image is the

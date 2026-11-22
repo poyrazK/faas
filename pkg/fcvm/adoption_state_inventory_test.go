@@ -21,6 +21,7 @@ import (
 //	bootonly  daemon wiring, or only for kinds that are never adopted
 var adoptionStateInventory = map[string]map[string]string{
 	"Manager": {
+		"agentDeadlines":                    "reset",    // agent-run guests are refused at adoption, so no run has one
 		"agentWaits":                        "reset",    // agent-run guests are refused at adoption, so no run has one
 		"appCPUPolicies":                    "repushed", // per-app CPU policy revisions; the lease keeps the applied quota
 		"appEgressPolicies":                 "repushed", // egress policy revisions; per-netns rules survive in the netns
@@ -125,6 +126,7 @@ var adoptionInstanceInventory = map[string]string{
 	"runtimeAdmissionReceipt":         "rebuilt", // the block's admission (ADR-595 extension)
 	"runtimeAdmissionEgress":          "rebuilt",
 	"admissionHeldFrom":               "rebuilt",
+	"executionTemplateOnly":           "refused", // template captures retain the disposable execution journal kind
 	"ExecutionOnly":                   "refused", // execution kind
 	"SandboxID":                       "refused", // sandbox sessions are execution-only
 	"agentEgressIP":                   "refused", // a sandbox session's agent tunnel address (ADR-20261117185346)
@@ -135,6 +137,7 @@ var adoptionInstanceInventory = map[string]string{
 	"AgentRunOnly":                    "refused", // agent runs record the execution kind and are killed
 	"AgentRunRelay":                   "refused", // agent-run guests only
 	"AgentWaitPauseAfter":             "refused", // agent-run guests only
+	"AgentRunDeadline":                "refused", // agent-run guests only
 	"QualificationOnly":               "refused", // qualification kind
 	"Paused":                          "rebuilt", // warm-pool restore, claimed or not
 	"QuietPauseAfter":                 "rebuilt",

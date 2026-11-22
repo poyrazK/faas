@@ -287,6 +287,7 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 			_, _ = fmt.Fprintf(osStdout, "Trace %s was not found; some trace data could not be queried.\n", traceID)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "No retained request evidence for trace %s.\n", traceID)
+			_, _ = fmt.Fprintln(osStdout, traceSamplingNote)
 		}
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "TRACE %s · %d app match(es) · %d invocation(s) · %d HTTP log(s) · %d span(s)\n", traceID, len(result.Matches), len(result.Invocations), len(result.Logs), len(result.Spans))
@@ -331,6 +332,9 @@ func renderTraceResult(traceID string, result api.AccountTraceLookupResponse) in
 		renderTraceWaterfall(osStdout, result)
 		if len(result.Spans) == 0 {
 			_, _ = fmt.Fprintln(osStdout, "span tree: no linked OTel spans")
+			if len(result.Matches) == 0 {
+				_, _ = fmt.Fprintln(osStdout, traceSamplingNote)
+			}
 		} else {
 			_, _ = fmt.Fprintln(osStdout, "SPAN TREE")
 			roots := buildDebugTraceRoots(result.Spans)
@@ -614,3 +618,11 @@ func traceLookupErrorLine(item api.AccountTraceLookupError) string {
 	}
 	return fmt.Sprintf("trace %s: %s", item.App, item.Detail)
 }
+
+// traceSamplingNote explains a trace with no request row: the gateway keeps
+// its own row, the one spans attach to, for the first
+// api.GatewayRequestTelemetryTracedExactPerBucket traced requests of each
+// route, method and status per minute and node, and counts the rest in an
+// aggregate row. A busy app's other traces were invisible with no word why
+// (Observe audit 2026-11-21, finding 9).
+var traceSamplingNote = fmt.Sprintf("note: on a busy app the gateway keeps a request record (and its spans) for the first %d traced requests per route, method and status each minute; later traces are counted in the totals but not kept.", api.GatewayRequestTelemetryTracedExactPerBucket)

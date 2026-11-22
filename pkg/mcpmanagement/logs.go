@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -32,7 +33,19 @@ type logSnapshot struct {
 	Items     []logEntry        `json:"items"`
 	Gaps      []api.LogGapEvent `json:"gaps,omitempty"`
 	Truncated bool              `json:"truncated"`
+	// Source is "archive" when a parked app's retained logs are shown;
+	// InstanceID and Note then name the instance and say what was read.
+	Source     string `json:"source,omitempty"`
+	InstanceID string `json:"instance_id,omitempty"`
+	Note       string `json:"note,omitempty"`
+	// endReason is the stream's terminal reason, such as archive_missing.
+	endReason string
 }
+
+// errNoRunningInstance is the live stream's degraded frame for an app with no
+// running instance (code not_found). Any other degraded frame means the
+// scheduler is unavailable.
+var errNoRunningInstance = errors.New("app has no running instance")
 
 func validateLogs(args logsArgs) error {
 	if err := validateSegment(args.App, "app"); err != nil {
@@ -68,7 +81,7 @@ func (m *management) getLogs(ctx context.Context, args logsArgs) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	body, err := m.client.StreamAppLogs(ctx, args.App, args.DeploymentID, false, api.LogFilter{Level: args.Level, Grep: args.Grep, Since: args.Since})
+	body, err := m.logsClient().StreamAppLogs(ctx, args.App, args.DeploymentID, false, api.LogFilter{Level: args.Level, Grep: args.Grep, Since: args.Since})
 	if err != nil {
 		return nil, err
 	}
@@ -78,11 +91,35 @@ func (m *management) getLogs(ctx context.Context, args logsArgs) (any, error) {
 	// under a 1 MiB bound made get_logs fail for it unless the agent guessed
 	// a narrow since.
 	source := &countingReader{r: io.LimitReader(body, maxLogStreamBytes)}
-	result, err := decodeLogStream(ctx, source, limit, m.clean)
+	result, err := decodeLogStream(ctx, source, limit, m.clean, nil)
 	if source.n >= maxLogStreamBytes {
 		result.Truncated = true
 	}
+	if errors.Is(err, errNoRunningInstance) {
+		// A scale-to-zero app is parked most of the time: read its newest
+		// instance's retained logs, as `gregale logs` does (H10-72).
+		return m.parkedLogs(ctx, args, limit)
+	}
 	return result, err
+}
+
+// logsClient returns the client for app log streams: the connection's own
+// client, or one for LogsAPIBase with the same credential. App logs are served
+// by the compute gateway behind the public edge; apid's loopback listener,
+// which the hosted bridge uses for everything else, answers them 404.
+func (m *management) logsClient() *api.Client {
+	if m.opts.LogsAPIBase == "" || m.opts.LogsAPIBase == m.opts.APIBase {
+		return m.client
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.logs == nil {
+		c := api.NewClient(m.opts.LogsAPIBase, m.client.Token())
+		c.SetCompletionCache(nil)
+		c.HTTPClient().CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		m.logs = c
+	}
+	return m.logs
 }
 
 // countingReader counts the bytes read through it.
@@ -98,10 +135,12 @@ func (c *countingReader) Read(p []byte) (int, error) {
 }
 
 func decodeLogs(ctx context.Context, data []byte, limit int, clean func(string) string) (logSnapshot, error) {
-	return decodeLogStream(ctx, bytes.NewReader(data), limit, clean)
+	return decodeLogStream(ctx, bytes.NewReader(data), limit, clean, nil)
 }
 
-func decodeLogStream(ctx context.Context, source io.Reader, limit int, clean func(string) string) (logSnapshot, error) {
+// decodeLogStream keeps the newest limit entries; keep, when set, drops lines
+// the server did not filter (archived logs).
+func decodeLogStream(ctx context.Context, source io.Reader, limit int, clean func(string) string, keep func(api.LogEvent) bool) (logSnapshot, error) {
 	result := logSnapshot{Items: make([]logEntry, 0, limit)}
 	decoder := api.NewDecoder(source)
 	// The input is byte-bounded. Drain on early returns so the SDK parser
@@ -122,19 +161,22 @@ func decodeLogStream(ctx context.Context, source io.Reader, limit int, clean fun
 				}
 				return result, nil
 			}
-			if err := appendLogEvent(&result, event, limit, clean); err != nil {
+			if err := appendLogEvent(&result, event, limit, clean, keep); err != nil {
 				return result, err
 			}
 		}
 	}
 }
 
-func appendLogEvent(result *logSnapshot, event api.Event, limit int, clean func(string) string) error {
+func appendLogEvent(result *logSnapshot, event api.Event, limit int, clean func(string) string, keep func(api.LogEvent) bool) error {
 	switch event.Event {
 	case "log":
 		var line api.LogEvent
 		if json.Unmarshal([]byte(event.Data), &line) != nil {
 			return invalid("invalid_response", "API returned a malformed log entry")
+		}
+		if keep != nil && !keep(line) {
+			return nil
 		}
 		if len(result.Items) == limit {
 			copy(result.Items, result.Items[1:])
@@ -163,7 +205,20 @@ func appendLogEvent(result *logSnapshot, event api.Event, limit int, clean func(
 		}
 		return &api.APIError{Problem: p}
 	case "degraded":
-		return invalid("logs_unavailable", "Log backend is degraded; retry the snapshot later")
+		var frame struct {
+			Code string `json:"code"`
+		}
+		if json.Unmarshal([]byte(event.Data), &frame) == nil && frame.Code == "not_found" {
+			return errNoRunningInstance
+		}
+		return invalid("logs_unavailable", "The log stream is degraded because the scheduler is temporarily unavailable; retry shortly")
+	case "end":
+		var end struct {
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal([]byte(event.Data), &end) == nil {
+			result.endReason = end.Reason
+		}
 	}
 	return nil
 }

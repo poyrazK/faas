@@ -304,6 +304,9 @@ type runDeps struct {
 	detectFC    func(context.Context) (string, error)                                                                 // defaults to fcvm.DetectFirecrackerVersion
 	readHostCPU func() (fcvm.HostCPU, error)                                                                          // defaults to fcvm.ReadHostCPU (ADR-20261024225612)
 	listen      func(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser string) (net.Listener, error) // defaults to wire.ListenAs (issue #95 / ADR-025)
+	// readPhysBits is the host's physical address width, which gates pmem
+	// (ADR-908). nil reads /proc/cpuinfo.
+	readPhysBits func() (int, error)
 	// databaseLeases overrides the jail uid allocator of a database node;
 	// nil uses the whole range (tests share a host with a compute vmmd).
 	databaseLeases dbvm.Leaser
@@ -1062,11 +1065,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// parked time. Firecracker 1.16+ only, and only where KVM records the
 	// realtime clock flag in captures (a tsc host clocksource).
 	restoreClockRealtime := !cfg.DisableRestoreClockRealtime && fcvm.ClockRealtimeSupported(fcVersion) && fcvm.HostClocksourceTSC()
-	// ADR-908: pmem needs Firecracker 1.16+, and native recovery stages
-	// images through its own journal, which has no pmem slot yet.
-	pmemBaseDir := ""
-	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
-		pmemBaseDir = cfg.PmemBaseDir
+	// ADR-908: pmem needs Firecracker 1.16+, a host with at least 40 physical
+	// address bits, and no native recovery, whose image journal has no pmem
+	// slot yet.
+	pmemBaseDir, pmemOffReason := resolvePmemBaseDir(cfg.PmemBaseDir, fcVersion, cfg.NativeProcessRecovery, deps.readPhysBits, log)
+	if pmemOffReason != "" {
+		log.Warn("vmmd: pmem base disabled; app bases boot from virtio-blk", "reason", pmemOffReason)
 	}
 	protocolMetrics := mcpprotocol.New(ops.Registry())
 	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
@@ -2210,6 +2214,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").
 		// ADR-20261027090013 step 7: sandbox workspaces persist to, and
 		// sessions start from, this node's artifact store.
+		WithExecutionFileStorage(storageBackend).
 		WithSandboxWorkspaces(storageBackend)
 	// ADR-20261118154632: builders on borrowed slots, and vmmd's forced
 	// give-back of their memory to tenants.

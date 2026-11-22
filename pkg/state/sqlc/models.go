@@ -336,6 +336,12 @@ type AgentBudgetSpend struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type AgentBudgetStanding struct {
+	KeyID              pgtype.UUID
+	StandingMillicents int64
+	UpdatedAt          pgtype.Timestamptz
+}
+
 // ADR-20261030125501 agent callback revocations written by apid: a thread's latest revocation time.
 type AgentCallbackRevocation struct {
 	EndpointID pgtype.UUID
@@ -459,6 +465,8 @@ type AgentRun struct {
 	WorkflowRunID          pgtype.UUID
 	WorkflowStep           pgtype.Text
 	WorkflowEvent          pgtype.Text
+	// ADR-20261027090016 amendment 3: approval-wait credit this run may add to its deadline, written by agentd at running.
+	DeadlineCreditMaxSec int32
 }
 
 type AgentRunAiReservation struct {
@@ -488,6 +496,8 @@ type AgentRunApproval struct {
 	ArgumentsSummary string
 	CreatedAt        pgtype.Timestamptz
 	ExpiresAt        pgtype.Timestamptz
+	// ADR-20261027090016 amendment 3: when outboundd stopped holding the call; null while held or from an older outboundd.
+	ReleasedAt pgtype.Timestamptz
 }
 
 // ADR-20261027090016 amendment 2: the seller's decision on an agent run approval, written once by apid; outboundd reads it.
@@ -1220,6 +1230,7 @@ type App struct {
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
 	SandboxTemplate                   bool
+	OwnerHomeNodeID                   pgtype.UUID
 }
 
 type AppApiRoute struct {
@@ -6442,6 +6453,22 @@ type Execution struct {
 	RunsPrincipalID    pgtype.UUID
 	WorkflowID         pgtype.Text
 	StepLabel          pgtype.Text
+	ResultValidation   []byte
+	MaxArtifactBytes   pgtype.Int8
+	InputFileBytes     pgtype.Int8
+	ExecutionClass     string
+	EnvironmentID      pgtype.UUID
+}
+
+// Atomic source Run request identity, committed with quota, grants, payload and receipt; ADR-20261113010000.
+type ExecutionAdmission struct {
+	AccountID     pgtype.UUID
+	ScopeHash     []byte
+	KeyHash       []byte
+	RequestDigest []byte
+	ExecutionID   pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+	ExpiresAt     pgtype.Timestamptz
 }
 
 type ExecutionArtifactGrant struct {
@@ -6456,6 +6483,36 @@ type ExecutionArtifactGrant struct {
 	RedeemedExecutionID pgtype.UUID
 	RevokedAt           pgtype.Timestamptz
 	CreatedAt           pgtype.Timestamptz
+}
+
+type ExecutionEnvironment struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	PrincipalID         string
+	Runtime             string
+	Recipe              []byte
+	RecipeDigest        string
+	BaseRef             string
+	Status              string
+	Lease               string
+	LeaseExpiresAt      pgtype.Timestamptz
+	BuildAttempts       int32
+	ImageAttempts       int32
+	ExportKey           string
+	ExportDigest        string
+	BaseKey             string
+	ImageDigest         string
+	GuestExecutorDigest string
+	ArtifactKeys        []string
+	ArtifactBytes       int64
+	FailureCode         string
+	CreatedAt           pgtype.Timestamptz
+}
+
+type ExecutionEnvironmentDiagnostic struct {
+	EnvironmentID      pgtype.UUID
+	DiagnosticSequence int64
+	Diagnostics        []byte
 }
 
 type ExecutionEvent struct {
@@ -6473,6 +6530,30 @@ type ExecutionEventReplayCursor struct {
 	UpdatedAt     pgtype.Timestamptz
 }
 
+type ExecutionFile struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	PrincipalID    pgtype.UUID
+	ExecutionID    pgtype.UUID
+	Name           string
+	Kind           string
+	Status         string
+	SizeBytes      int64
+	Sha256         string
+	StorageKey     string
+	SealedKey      []byte
+	Token          pgtype.UUID
+	LeaseExpiresAt pgtype.Timestamptz
+	ExpiresAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type ExecutionFileLink struct {
+	ExecutionID pgtype.UUID
+	FileID      pgtype.UUID
+}
+
 type ExecutionOutboundIntegration struct {
 	ExecutionID   pgtype.UUID
 	IntegrationID pgtype.UUID
@@ -6483,6 +6564,77 @@ type ExecutionPayload struct {
 	SealedPayload []byte
 	Kid           string
 	CreatedAt     pgtype.Timestamptz
+}
+
+type ExecutionRunBinding struct {
+	AccountID   pgtype.UUID
+	SubjectKind string
+	SubjectID   pgtype.UUID
+	CustomerRef string
+	AgentRef    string
+	Revision    int64
+	Enabled     bool
+}
+
+type ExecutionRunBudget struct {
+	AccountID      pgtype.UUID
+	Kind           string
+	Ref            string
+	Revision       int64
+	Enabled        bool
+	MaxConcurrent  pgtype.Int8
+	MaxInvocations pgtype.Int8
+	MaxComputeMbMs pgtype.Int8
+}
+
+type ExecutionRunBudgetAlert struct {
+	EventID          pgtype.UUID
+	AccountID        pgtype.UUID
+	Kind             string
+	Ref              string
+	Day              pgtype.Date
+	Metric           string
+	ThresholdPercent int32
+	Maximum          int64
+	Observed         int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ExecutionRunReservation struct {
+	ExecutionID  pgtype.UUID
+	AccountID    pgtype.UUID
+	CustomerRef  string
+	AgentRef     string
+	TaskName     string
+	ReservedMbMs int64
+	AdmittedAt   pgtype.Timestamptz
+}
+
+type ExecutionTaskInvocation struct {
+	ExecutionID   pgtype.UUID
+	AccountID     pgtype.UUID
+	VersionID     pgtype.UUID
+	RequestDigest []byte
+	CallbackKey   []byte
+	Callback      []byte
+	DeliveredAt   pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
+type ExecutionTaskVersion struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	Name             string
+	Version          int32
+	Digest           string
+	Metadata         []byte
+	EnvironmentID    pgtype.UUID
+	Runtime          string
+	AgentEndpointIds []pgtype.UUID
+	Status           string
+	SealedDefinition []byte
+	Kid              string
+	CreatedAt        pgtype.Timestamptz
 }
 
 type ExecutionUsageLedger struct {
@@ -6498,6 +6650,17 @@ type ExecutionUsageLedger struct {
 	FinishedAt   pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
 	RecordedAt   pgtype.Timestamptz
+}
+
+type ExecutionWorkflowPipeline struct {
+	JobID           pgtype.UUID
+	Policy          []byte
+	DeadlineAt      pgtype.Timestamptz
+	DueAt           pgtype.Timestamptz
+	CancelRequested bool
+	Completion      []byte
+	DeliveredAt     pgtype.Timestamptz
+	Journal         []byte
 }
 
 type FeatureFlagVersion struct {
@@ -6834,6 +6997,16 @@ type FlagExperiment struct {
 	MetricDefinition   []byte
 	Cuped              bool
 	MinCupedPValues    []byte
+	Unit               string
+	Layer              string
+	Traffic            int32
+	LayerFrom          int32
+	LayerTo            int32
+	Allocation         string
+	Bandit             []byte
+	BanditWeightedAt   pgtype.Timestamptz
+	DenominatorEvent   string
+	Percentile         int32
 }
 
 type FlagExperimentLatency struct {
@@ -6856,6 +7029,9 @@ type FlagExperimentUnit struct {
 	SlowRequests    int64
 	ValueSum        int64
 	PreValue        pgtype.Float8
+	UnitCustomerID  pgtype.UUID
+	SubjectHash     []byte
+	DenSum          int64
 }
 
 // Singleton non-secret secretbox probe proving every admitted node shares the fleet.age unseal domain.
@@ -10302,6 +10478,7 @@ type MeterNetworkCheckpoint struct {
 	InternalTxValid     bool
 	InternalTxPending   int64
 	ServiceReplyPending int64
+	NodeID              string
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {
@@ -10674,6 +10851,7 @@ type ObjectBucketNotification struct {
 	Revision     int64
 	Rules        []byte
 	ManagedRules []byte
+	ClonePaused  bool
 }
 
 type ObjectBucketObjectLock struct {
@@ -14815,6 +14993,20 @@ type ReferralAttribution struct {
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
 	AttributionSource   string
+	SubjectKind         string
+	SelectedBy          pgtype.UUID
+}
+
+type ReferralCreditChange struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	FromOwnerID       pgtype.UUID
+	ToOwnerID         pgtype.UUID
+	FromCommissionBps int32
+	ToCommissionBps   int32
+	Reason            string
+	ChangedBy         pgtype.UUID
+	CreatedAt         pgtype.Timestamptz
 }
 
 type ReferralLink struct {
@@ -15671,6 +15863,7 @@ type RuntimeSnapshot struct {
 	PublishedAt         pgtype.Timestamptz
 	RetiredAt           pgtype.Timestamptz
 	Profile             string
+	FcVersion           string
 }
 
 type RuntimeUpgradeExternalFenceAuthority struct {
@@ -15887,6 +16080,32 @@ type SalesActivity struct {
 	TaskID        pgtype.UUID
 }
 
+type SalesCommissionAgreement struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	CommissionBps int32
+	EffectiveFrom pgtype.Timestamptz
+	Note          string
+	CreatedBy     pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type SalesCommissionPayout struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	OwnerID     pgtype.UUID
+	AmountCents int64
+	Currency    string
+	PaidOn      pgtype.Date
+	Reference   string
+	Note        string
+	RecordedBy  pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	VoidedAt    pgtype.Timestamptz
+	VoidedBy    pgtype.UUID
+	VoidReason  string
+}
+
 type SalesInquiry struct {
 	ID             pgtype.UUID
 	Name           string
@@ -15991,6 +16210,12 @@ type SalesReferralOverview struct {
 	RewardStatus        string
 	RewardCents         interface{}
 	ReferredRewardCents int64
+	SubjectKind         string
+	OrgName             string
+	CommissionBps       int32
+	PayoutID            pgtype.UUID
+	PayoutCents         int64
+	PayoutPaidOn        pgtype.Date
 }
 
 type SalesTask struct {
@@ -16004,6 +16229,16 @@ type SalesTask struct {
 	UpdatedBy   pgtype.UUID
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
+}
+
+type SalesTeamMember struct {
+	AccountID pgtype.UUID
+	Role      string
+	Active    bool
+	UpdatedBy pgtype.UUID
+	Version   int64
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
 }
 
 // ADR-20261117065818 gregale_browser actions: written by apid, run and ended by agentd under the session lease.

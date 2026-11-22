@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -131,7 +132,10 @@ func saveHostedTaskRehearsalPG(ctx context.Context, tx pgx.Tx, account, id strin
 	if err := tx.Commit(ctx); err != nil {
 		return zero, err
 	}
-	return HostedTaskRehearsalResult{Plan: r.Plan, ClaimAcquired: acquired, Run: run}, nil
+	return HostedTaskRehearsalResult{
+		Plan: r.Plan, ClaimAcquired: acquired, Run: run,
+		ReadyToClaim: r.Plan.Status == tasktoolrehearsal.Approved && r.ApprovalKeyID == owner,
+	}, nil
 }
 
 func saveHostedTaskRehearsalRun(ctx context.Context, tx pgx.Tx, plan api.HostedTaskRehearsalPlan, keys []pgtype.UUID, acquired bool) (*HostedTaskRehearsalRun, error) {
@@ -168,4 +172,13 @@ func saveHostedTaskRehearsalRun(ctx context.Context, tx pgx.Tx, plan api.HostedT
 		return nil, ErrConflict
 	}
 	return &persisted, nil
+}
+
+// MatchHostedTaskRehearsalReservation checks the private durable claim behind
+// the scheduler's exact-run worker interruption.
+func (s *PgStore) MatchHostedTaskRehearsalReservation(ctx context.Context, account, run, plan string, reservedAt time.Time) (bool, error) {
+	return toolpublicationdb.New().MatchHostedTaskRehearsalReservation(ctx, s.pool, toolpublicationdb.MatchHostedTaskRehearsalReservationParams{
+		AccountID: mustPgUUID(account), RunID: mustPgUUID(run), PlanSha256: plan,
+		ReservedAt: pgtype.Timestamptz{Time: reservedAt, Valid: true},
+	})
 }

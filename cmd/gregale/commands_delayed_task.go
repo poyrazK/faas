@@ -181,6 +181,10 @@ func cmdDelayedTaskAdd(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Delayed task %s scheduled for %s.", resp.ID, resp.ScheduledAt.Format(time.RFC3339))
+	// `cron create --in` lands here too; its id is not a cron, so `cron runs`
+	// answered "no such cron" and nothing said how to see the result (prod
+	// hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: gregale cron get --one-off %s\n", resp.ID)
 	return 0
 }
 

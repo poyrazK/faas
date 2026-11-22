@@ -72,6 +72,10 @@ func TestControlPlaneProxyKeepsAPIOnControlPlane(t *testing.T) {
 		want string
 	}{
 		{path: "/v1/whoami", want: "control-plane"},
+		{path: "/v2/executions", want: "control-plane"},
+		{path: "/v2/execution-workflows", want: "control-plane"},
+		{path: "/v2/executions.zip", want: "compute"},
+		{path: "/v2", want: "compute"},
 		{path: "/v1/apps/demo/invoke", want: "control-plane"},
 		{path: "/v1/apps/demo/logs", want: "compute"},
 		{path: "/v1/apps/demo/logs/stream", want: "compute"},
@@ -448,7 +452,7 @@ func TestControlPlaneProxyKeepsSessionsOffTenantHosts(t *testing.T) {
 
 	// ADR-480: on app, preview and customer hosts every reserved path belongs
 	// to the app, so apid never sees (or issues) a session there.
-	paths := []string{"/v1/keys", "/v1/whoami", "/status", "/docs", "/dashboard", "/login?next=%2Fdashboard", "/signup", "/logout", "/auth/reset/abc", "/cli-auth", "/oauth/callback"}
+	paths := []string{"/v1/keys", "/v1/whoami", "/v2/executions", "/v2/execution-workflows", "/status", "/docs", "/dashboard", "/login?next=%2Fdashboard", "/signup", "/logout", "/auth/reset/abc", "/cli-auth", "/oauth/callback"}
 	for _, host := range []string{"attacker.gregale.dev", "pr-1-shop.gregale.dev", "customer.example"} {
 		for _, path := range paths {
 			gotCookie = ""

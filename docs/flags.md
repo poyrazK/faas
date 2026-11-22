@@ -671,7 +671,8 @@ Customers with steady habits then add less noise, so significant results
 usually come sooner. `result get` shows the adjusted comparison, which drives
 status and the recommendation, beside the unadjusted one, with the variance
 reduction. The adjustment needs product analytics; without it, or when no
-customer has pre-period events, results are unadjusted and say why. Turn it
+customer has pre-period events, results are unadjusted and say why. It is not
+applied to subject, ratio or percentile experiments (`not_supported`). Turn it
 off with `--no-cuped` on create.
 
 ### Guardrails
@@ -720,6 +721,90 @@ gregale flag experiment promote checkout-v2 new --project shop
 and stops the experiment. MCP agents read the same results and recommendation
 with `gregale_list_flag_experiments` and
 `gregale_get_flag_experiment_results` (release toolset).
+
+### Experiment on end users
+
+By default the units are customers. When each customer has many end users, an
+experiment can count them instead
+([ADR-20261119173702](adr/20261119173702-experiment-subject-units-layers-bandits-metric-rollouts.md)).
+Give the rule `rollout_unit: subject` (the SDK then splits by customer and
+subject), turn product analytics on, and create the experiment with
+`--unit subject`:
+
+```bash
+gregale flag experiment create checkout-users --flag checkout --rule by-user --control legacy \
+  --metric order_completed --unit subject --start --project shop
+```
+
+The SDK reports each end user's first exposure to the rule, at most hourly,
+and only a hash of the subject is kept. Conversions are the subject's
+`track()` events (send them with the subject, see
+[Send properties and a subject](#send-properties-and-a-subject)). Subject
+experiments take `conversion`, `funnel` or `retention` metrics and have no
+guardrails: request telemetry is per customer. SDKs need capability
+`subject-exposures-v1`; older SDKs get `426` while the experiment runs.
+
+### Run experiments side by side
+
+Experiments on different flags can share customers, so one can skew another.
+Put experiments that must not overlap in one layer: each holds a slice of the
+layer's customers while it runs, and the slices never overlap.
+
+```bash
+gregale flag experiment layer create checkout --project shop
+gregale flag experiment create checkout-v2 --flag checkout --rule everyone-percent --control legacy \
+  --metric order_completed --layer checkout --traffic 50 --start --project shop
+gregale flag experiment layer list --project shop
+```
+
+`--traffic` is the percent of the layer the experiment takes; the start fails
+with `409 flag_experiment_layer_full` when the layer has no free slice that
+large. A customer outside the slice skips the rule. An environment has at
+most 10 layers; a layer in use cannot be deleted.
+
+The holdout keeps a share of customers (up to 20%) out of every experiment:
+they see each experiment's control. Its report shows the cumulative effect of
+everything you shipped while it ran:
+
+```bash
+gregale flag experiment holdout set 5 --project shop
+gregale flag experiment holdout report --event order_completed --project shop
+```
+
+The holdout cannot change while an experiment runs. Layers and the holdout
+need SDK capability `experiment-layers-v1`.
+
+### Ratio and percentile metrics
+
+- `--metric-kind ratio --denominator-event EVENT` compares the sum of the
+  metric event's values over the sum of the denominator event's values, such
+  as revenue per order. It uses the same always-valid test as other metrics.
+- `--metric-kind percentile --percentile 95` compares the 95th percentile of
+  each customer's summed metric values, with a bootstrap interval. It has no
+  sequential guarantee: results say `fixed_horizon`, so read them once, at
+  the end you planned.
+
+### Split results by a cohort
+
+```bash
+gregale flag experiment result get checkout-v2 --segment pro-buyers --project shop
+```
+
+This adds the results of the cohort's members and of everyone else, with
+p-values adjusted for the number of comparisons (Benjamini–Hochberg). Use
+segments to explore; the recommendation ignores them. Binary metrics of
+customer experiments only.
+
+### Let a bandit allocate traffic
+
+With `--allocation bandit`, Gregale moves traffic toward the variant that
+converts best while the experiment runs (Thompson sampling), keeping at least
+10% on each variant. Weights move at most hourly, once every variant has 100
+customers. Results show each variant's probability of being best and its
+expected loss instead of p-values, and recommend shipping a variant once it
+is best with 95% probability at an expected loss under 0.1 points. The rule
+must be the flag's only weighted rule, and the metric a conversion, funnel or
+retention.
 
 ## Analyze product events
 
@@ -875,6 +960,19 @@ pass. Insufficient or unhealthy evidence holds the stage; the reconciler logs
 the reason and retries on a later pass. Automatic promotion respects debugger
 telemetry entitlement and retention, and uses a version-checked write so a
 concurrent operator edit wins. Rules without explicit opt-in remain manual.
+
+A progression plan can also watch a conversion event. Add `metric` to it:
+
+```json
+"metric": { "event": "order_completed", "max_decrease": 0.01, "min_units": 100 }
+```
+
+After each stage's window, customers the stage serves are compared with every
+other customer that evaluated the flag, on the share that sent the event
+after their first evaluation. When their rate is clearly more than
+`max_decrease` lower, Gregale sets the rule's rollout to 0, removes the plan
+and audits `flags.rollout_auto_rolled_back`. The stage advances only when
+both groups have `min_units` customers and the rate is not clearly worse.
 
 The SDK does not add flags to cache keys automatically. Avoid shared caches for
 customer-dependent behavior unless their keys include the relevant customer and

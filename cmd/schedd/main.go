@@ -2643,14 +2643,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				if executor, ok := synth.(sched.WorkflowStepExecutor); ok {
 					orchestrator := sched.NewWorkflowOrchestrator(store, executor, schedulerAuditor, workflowMetrics, log)
 					if os.Getenv("FAAS_WORKFLOW_OUTBOUND_ENABLED") == "1" {
-						key, keyErr := store.LoadClusterSigningKey(ctx)
-						if keyErr != nil || key.RetiredAt != nil {
-							return errors.New("workflow outbound requires an active cluster signing key")
+						// Integration steps stay off (each fails with "workflow
+						// outbound executor is disabled") rather than stopping
+						// schedd, which also runs crons, jobs and every other step.
+						if reason := workflowOutboundUnavailable(ctx, mintViaSecretd, workflowOutboundMinter, store.LoadClusterSigningKey); reason != "" {
+							log.Error("schedd: workflow integration steps disabled", "reason", reason)
+						} else {
+							orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
+							log.Info("schedd: workflow integration steps enabled", "minter", map[bool]string{true: "secretd", false: "local"}[mintViaSecretd])
 						}
-						if workflowOutboundMinter == nil {
-							return errors.New("workflow outbound requires the scheduler signing key")
-						}
-						orchestrator.WithOutboundExecutor(sched.NewWorkflowOutboundExecutor(store, workflowOutboundMinter))
 					}
 					// ADR-20261027090010 §9: automation agent steps admit agent runs
 					// and wait for them; agentd runs them.
@@ -2737,7 +2738,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if strings.TrimSpace(executionNodeID) == "" {
 			return errors.New("schedd: execution dispatch enabled but no compute node is available")
 		}
-		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(storageBackend)
+		templateReader, err := sched.NewRuntimeSnapshotReader(storageBackend, envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
+		if err != nil {
+			return err
+		}
+		if err := startExecutionTemplates(ctx, log, store, templateReader, vmmRouter, executionNodeID, sched.ExecutionRuntimeArtifactsFunc(deps.executionArtifacts)); err != nil {
+			return err
+		}
+		catalogVerifier := sched.NewStorageRuntimeSnapshotVerifier(templateReader)
 		catalog := sched.NewRuntimeSnapshotCatalog(sched.NewStateRuntimeSnapshotIndex(store), catalogVerifier)
 		resolver := sched.NewExecutionClaimResolver(
 			store,
@@ -2751,10 +2759,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		backend := sched.NewRoutedVmmdExecutionBackendWithBundle(vmmRouter, decoder)
 		executionCoordinator = sched.NewExecutionCoordinator(store, backend, sched.ExecutionCoordinatorConfig{
-			Enabled:       true,
-			Owner:         executionNodeID,
-			MaxConcurrent: executionDispatchConcurrency,
-			Metrics:       ops,
+			Enabled:            true,
+			Owner:              executionNodeID,
+			MaxConcurrent:      executionDispatchConcurrency,
+			ExtendedConcurrent: api.ExecutionExtendedDispatchWorkers,
+			Metrics:            ops,
 		}, log).WithClaimResolver(resolver)
 		log.Info("schedd: execution dispatch enabled", "node_id", executionNodeID, "snapshot_verifier", "storage-digest-pair")
 	}

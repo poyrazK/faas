@@ -5,17 +5,19 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io/fs"
 	"os"
 
-	"github.com/onebox-faas/faas/pkg/apid/devloop"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+
 	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/apid/devloop"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
@@ -719,7 +721,16 @@ type server struct {
 	// executionAPIEnabled is an explicit, fail-closed gate for the public
 	// disposable execution admission surface (ADR-171). It remains false by
 	// default until the operator has enabled the scheduler/VM isolation path.
-	executionAPIEnabled bool
+	executionAPIEnabled          bool
+	executionV2Enabled           bool
+	executionTasksEnabled        bool
+	executionPipelinesEnabled    bool
+	executionExtendedEnabled     bool
+	executionEnvironmentsEnabled bool
+	executionEnvironmentBases    map[api.ExecutionRuntime]string
+	executionFileStorage         artifactstorage.StorageBackend
+	runArtifactDeliveryOnce      sync.Once
+	runArtifactDeliverySlots     chan struct{}
 	// appTaskAPIEnabled is the fail-closed public admission gate for commands
 	// attached to an app deployment (ADR-230). It remains separate from
 	// schedd's dispatch gate so apid cannot enqueue work into a disabled fleet.
@@ -1235,6 +1246,15 @@ func (s *server) WithWorkflowRuntimeEnabled(enabled bool) *server {
 // dispatch flag lets apid fail closed when the VM isolation path is not ready.
 func (s *server) WithExecutionAPIEnabled(enabled bool) *server {
 	s.executionAPIEnabled = enabled
+	s.refreshRunAgentTools()
+	return s
+}
+
+// WithExecutionV2Enabled controls new file/contract admissions. Replay and
+// retained file reads remain available when new admissions are disabled.
+func (s *server) WithExecutionV2Enabled(enabled bool) *server {
+	s.executionV2Enabled = enabled
+	s.refreshRunAgentTools()
 	return s
 }
 
@@ -2140,13 +2160,41 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/account/realtime-history-usage", s.realtimePreviewRoute(s.authLimited(s.requireMFA(s.requireScope(api.ScopesUsageReadSurface...)(s.realtime.GetManagedRealtimeHistoryUsage)))))
 	// Disposable one-shot executions (ADR-171). The handlers are mounted
 	// behind a separate explicit opt-in so a control-plane upgrade cannot
-	// accept work before the restore/execute/destroy path is ready. POST and
-	// DELETE use the existing idempotency/auth chain; all reads remain
-	// account-scoped through the authenticated account argument.
+	// accept work before the restore/execute/destroy path is ready.
+	// POST atomically binds its key with admission; DELETE retains
+	// response caching. All reads remain account-scoped through
+	// the authenticated account argument.
 	mux.HandleFunc("GET /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.listExecutions))))
 	mux.HandleFunc("GET /v1/execution-workflows/{workflow_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionWorkflow))))
 	mux.HandleFunc("POST /v1/execution-workflows", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.idempotent(s.createManagedExecutionWorkflow)))))
-	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.idempotent(s.createExecution)))))
+	mux.HandleFunc("POST /v1/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.createExecution))))
+	mux.HandleFunc("GET /v1/run-controls/budgets/{kind}/{ref}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runBudget))))
+	mux.HandleFunc("PUT /v1/run-controls/budgets/{kind}/{ref}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runBudget))))
+	mux.HandleFunc("GET /v1/run-controls/bindings/{kind}/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runBinding))))
+	mux.HandleFunc("PUT /v1/run-controls/bindings/{kind}/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runBinding))))
+	mux.HandleFunc("DELETE /v1/run-controls/bindings/{kind}/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.runBinding))))
+	mux.HandleFunc("GET /v1/run-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.runHistory))))
+	mux.HandleFunc("POST /v1/run-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.publishExecutionTask))))
+	mux.HandleFunc("GET /v1/run-tasks", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.listExecutionTasks))))
+	mux.HandleFunc("GET /v1/run-tasks/{name}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionTask))))
+	mux.HandleFunc("DELETE /v1/run-tasks/{name}/versions/{version}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.retireExecutionTask))))
+	mux.HandleFunc("POST /v1/run-tasks/invoke", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.invokeExecutionTask))))
+	mux.HandleFunc("POST /v1/execution-environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.createExecutionEnvironment))))
+	mux.HandleFunc("GET /v1/execution-environments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.listExecutionEnvironments))))
+	mux.HandleFunc("GET /v1/execution-environments/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.executionEnvironmentEvents))))
+	mux.HandleFunc("GET /v1/execution-environments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionEnvironment))))
+	mux.HandleFunc("DELETE /v1/execution-environments/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.deleteExecutionEnvironment))))
+	mux.HandleFunc("POST /v1/execution-files", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.prepareExecutionFile))))
+	mux.HandleFunc("PUT /v1/execution-files/{id}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.uploadExecutionFile))))
+	mux.HandleFunc("GET /v1/execution-files/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionFile))))
+	mux.HandleFunc("GET /v1/execution-files/{id}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.downloadExecutionFile))))
+	mux.HandleFunc("DELETE /v1/execution-files/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.deleteExecutionFile))))
+	mux.HandleFunc("POST /v1/execution-files/{id}/agent-grants", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createAgentExecutionFileGrant))))
+	mux.HandleFunc("POST /v2/executions", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.createExecution))))
+	mux.HandleFunc("POST /v2/execution-workflows", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.idempotent(s.createManagedExecutionWorkflow)))))
+	mux.HandleFunc("GET /v1/execution-pipelines/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.executionPipelineEvents))))
+	mux.HandleFunc("POST /v2/execution-pipelines/{id}/reruns", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.rerunExecutionPipeline))))
+	mux.HandleFunc("POST /v1/execution-workflows/{workflow_id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsWriteSurface...)(s.cancelExecutionPipeline))))
 	mux.HandleFunc("GET /v1/executions/capabilities", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecutionCapabilities))))
 	mux.HandleFunc("GET /v1/executions/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.getExecution))))
 	mux.HandleFunc("GET /v1/executions/{id}/events", s.authLimited(s.requireMFA(s.requireScope(api.ScopesRunsReadSurface...)(s.streamExecutionEvents))))
@@ -2477,6 +2525,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/cohorts/{key}/refresh", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.refreshInsightCohort))))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.shipFlagExperiment))))
 	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentResults)))
+	// ADR 20261119173702 §2: exclusive layers and the environment holdout.
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-layers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listFlagExperimentLayers)))
+	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/experiment-layers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createFlagExperimentLayer))))
+	mux.HandleFunc("DELETE /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteFlagExperimentLayer))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-holdout", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentHoldout)))
+	mux.HandleFunc("PUT /v1/projects/{slug}/environments/{environment}/experiment-holdout", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.setFlagExperimentHoldout))))
+	mux.HandleFunc("GET /v1/projects/{slug}/environments/{environment}/experiment-holdout/report", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getFlagExperimentHoldoutReport)))
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/flags/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.rollbackFeatureFlags))))
 	// ADR-20261104120000: enable the crons a full clone copied paused into a stage.
 	mux.HandleFunc("POST /v1/projects/{slug}/environments/{environment}/automation/resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.resumeEnvironmentAutomation))))
@@ -3626,6 +3681,13 @@ func (s *server) handler() http.Handler {
 	// closure carry no credential; an invocation is backed by the callback
 	// URL it carries, so a bad one counts like a bad callback token, and by
 	// the app's credential when it has one.
+	mux.HandleFunc("GET /v1/agent-tools/pipelines/{id}/events", s.agentCallbackCallerRoute(s.getAgentPipelineEvents))
+	mux.HandleFunc("POST /v1/apps/{slug}/run-artifact-deliveries/{route}", s.agentCallbackCallerRoute(s.deliverRunArtifact))
+	mux.HandleFunc("GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}", s.agentCallbackCallerRoute(s.getRunArtifactDelivery))
+	mux.HandleFunc("POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url", s.agentCallbackCallerRoute(s.signRunArtifactDelivery))
+	mux.HandleFunc("GET /v1/agent-tools/pipelines/{id}", s.agentCallbackCallerRoute(s.getAgentPipelineReceipt))
+	mux.HandleFunc("GET /v1/agent-tools/runs/{id}", s.agentCallbackCallerRoute(s.getAgentTaskReceipt))
+	mux.HandleFunc("GET /v1/agent-tools/runs/{id}/artifacts/{artifact...}", s.agentCallbackCallerRoute(s.downloadAgentTaskArtifact))
 	mux.HandleFunc("GET /v1/agent-tools/.well-known/rap-toolset", s.getAgentToolset)
 	mux.Handle("POST /v1/agent-tools/invoke", middleware.AuthLimit(middleware.AuthLimitConfig{
 		Log:           s.log,
@@ -4839,6 +4901,14 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorRead(s.obsListNodes)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/detail",
 		s.authLimited(s.requireOperatorSessionRead(s.obsNodeDetail)))
+	// ADR-20261121161842: running instances across the fleet, and one by id.
+	mux.HandleFunc("GET /v1/admin/obs/instances",
+		s.authLimited(s.requireOperatorSessionRead(s.obsListInstances)))
+	mux.HandleFunc("GET /v1/admin/obs/instances/{id}",
+		s.authLimited(s.requireOperatorSessionRead(s.obsGetInstance)))
+	// Fleet wake-latency report (ADR-20261121200409).
+	mux.HandleFunc("GET /v1/admin/obs/wake-latency",
+		s.authLimited(s.requireOperatorSessionRead(s.obsWakeLatency)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
@@ -5257,6 +5327,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{slug}/invoices", s.orgBillingRoute(authz.OrgActionManageBilling, s.listInvoices))
 	mux.HandleFunc("GET /v1/orgs/{slug}/billing/portal", s.orgBillingRoute(authz.OrgActionChangePlan, s.getBillingPortal))
 	mux.HandleFunc("PATCH /v1/orgs/{slug}/plan", s.orgBillingRoute(authz.OrgActionChangePlan, s.changeOrgPlan))
+	mux.HandleFunc("GET /v1/orgs/{slug}/referrals/checkout", s.orgBillingRoute(authz.OrgActionManageBilling, s.orgReferralCheckout))
 	// ADR-20261103131742: invoices and the billing portal follow the
 	// organization's billing email, not the member who first paid.
 	mux.HandleFunc("PUT /v1/orgs/{slug}/billing/email", s.orgBillingRoute(authz.OrgActionChangePlan, s.putOrgBillingEmail))
@@ -5580,6 +5651,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	mux.Handle("GET "+dashboardRunPipelinesPath, s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderRunPipelineHistory))))
+	mux.Handle("GET "+dashboardRunPipelinesPath+"/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderRunPipelineDetail))))
+	mux.Handle("GET "+dashboardRunPipelinesPath+"/{id}/runs/{run}/artifacts/{artifact...}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.downloadDashboardPipelineArtifact))))
+	mux.Handle("POST "+dashboardRunPipelinesPath+"/{id}/rerun-preview", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.previewDashboardPipelineRerun)))))
+	mux.Handle("POST "+dashboardRunPipelinesPath+"/{id}/reruns", s.dashboardChain(s.sessionAuth(s.requireVerifiedEmailHandler(http.HandlerFunc(s.rerunDashboardPipeline)))))
 	// ADR 20261022145950: the AI gateway's pages.
 	mux.Handle("GET "+aiconsole.Prefix, s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))
 	mux.Handle("GET "+aiconsole.Prefix+"/", s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))
@@ -6609,7 +6685,7 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 		// Partition receipts by the actual caller and credential so another
 		// member cannot replay an earlier member's response under that account.
 		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
-		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-workflows") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
+		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-workflows") || strings.HasPrefix(r.URL.Path, "/v1/execution-pipelines") || strings.HasPrefix(r.URL.Path, "/v2/execution-pipelines") || strings.HasPrefix(r.URL.Path, "/v1/run-tasks") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {
 				writeExecutionAccessError(w, problem)
@@ -6907,5 +6983,17 @@ func (s *server) notFound(w http.ResponseWriter, what string) { httpkit.NotFound
 
 func (s *server) WithRealtimeTicketsPreviewEnabled(enabled bool) *server {
 	s.realtime.TicketsPreviewEnabled = enabled
+	return s
+}
+
+// WithExtendedExecutionsEnabled gates new five-minute admissions after readers
+// and guest protocol v5 have rolled out; replay and retained readers stay live.
+func (s *server) WithExtendedExecutionsEnabled(enabled bool) *server {
+	s.executionExtendedEnabled = enabled
+	return s
+}
+func (s *server) WithExecutionEnvironments(enabled bool, bases map[api.ExecutionRuntime]string) *server {
+	s.executionEnvironmentsEnabled = enabled
+	s.executionEnvironmentBases = bases
 	return s
 }

@@ -1,6 +1,8 @@
 -- Projection of account/invoice fields read by the referral view.
 CREATE TABLE accounts (id uuid PRIMARY KEY, email text NOT NULL, plan text NOT NULL, status text NOT NULL, email_verified_at timestamptz, mfa_enrolled_at timestamptz, stripe_subscription_item text);
 CREATE TABLE apps (id uuid PRIMARY KEY, account_id uuid NOT NULL);
+CREATE TABLE orgs (id uuid PRIMARY KEY, name text NOT NULL, plan text NOT NULL, status text NOT NULL, personal_org boolean NOT NULL, deleted_pending boolean NOT NULL, stripe_subscription_item text);
+CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);
 CREATE TABLE invoices (id uuid PRIMARY KEY, account_id uuid NOT NULL, status text NOT NULL, currency text NOT NULL, amount_paid_cents bigint NOT NULL, subtotal_cents bigint NOT NULL, tax_cents bigint NOT NULL, amount_refunded_cents bigint NOT NULL, amount_refund_pending_cents bigint NOT NULL, created_at timestamptz NOT NULL);
 
 
@@ -16,7 +18,7 @@ CREATE TABLE referral_links (
 );
 
 CREATE TABLE referral_attributions (
- account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ account_id uuid PRIMARY KEY REFERENCES resource_namespaces(id) ON DELETE CASCADE,
  code text NOT NULL REFERENCES referral_links(code) ON DELETE CASCADE,
  currency text NOT NULL CHECK (currency IN ('usd','eur')),
  customer_reward_cents bigint NOT NULL CHECK (customer_reward_cents BETWEEN 0 AND 100000000),
@@ -36,37 +38,13 @@ CREATE TABLE referral_attributions (
 );
 ALTER TABLE referral_attributions ADD COLUMN attribution_source text NOT NULL DEFAULT 'signup'
  CHECK (attribution_source IN ('signup','checkout'));
+ALTER TABLE referral_attributions ADD COLUMN subject_kind text NOT NULL DEFAULT 'account' CHECK (subject_kind IN ('account','org'));
+ALTER TABLE referral_attributions ADD COLUMN selected_by uuid;
 CREATE INDEX referral_attributions_link ON referral_attributions(code,account_id);
 
 -- The first observed paid invoice is retained by the invoice writer in the
 -- same transaction. Refunds never advance attribution to a later invoice.
-CREATE VIEW sales_referral_overview AS
-SELECT r.account_id,l.owner_id,l.kind,a.email,a.plan,a.status AS account_status,
- r.created_at,r.stage,r.note,r.follow_up,r.currency,
- (SELECT count(*) FROM apps ap WHERE ap.account_id=a.id) AS apps,
- COALESCE(i.status='paid',false)::boolean AS paid,
- COALESCE(i.amount_paid_cents,0)::bigint AS paid_cents,
- (r.first_paid_at + make_interval(days=>r.hold_days))::timestamptz AS eligible_at,
- CASE
-  WHEN r.first_paid_at IS NULL THEN 'registered'
-  WHEN i.id IS NULL THEN 'review'
-  WHEN i.status<>'paid' OR i.amount_refunded_cents>0 OR i.amount_refund_pending_cents>0 THEN 'reversed'
-  WHEN i.currency<>r.currency THEN 'currency_mismatch'
-  WHEN a.status<>'active' OR a.email_verified_at IS NULL OR owner.status<>'active' THEN 'review'
-  WHEN (l.kind='customer' AND r.customer_reward_cents=0 AND r.referred_reward_cents=0)
-    OR (l.kind='sales' AND r.commission_bps=0) THEN 'unconfigured'
-  WHEN now()<r.first_paid_at+make_interval(days=>r.hold_days) THEN 'holding'
-  ELSE 'eligible'
- END AS reward_status,
- CASE WHEN l.kind='customer' THEN r.customer_reward_cents
-  ELSE COALESCE(trunc(LEAST(i.subtotal_cents,GREATEST(i.amount_paid_cents-i.tax_cents,0))::numeric*r.commission_bps/10000)::bigint,0)
- END::bigint AS reward_cents,
- CASE WHEN l.kind='customer' THEN r.referred_reward_cents ELSE 0::bigint END AS referred_reward_cents
-FROM referral_attributions r
-JOIN referral_links l ON l.code=r.code
-JOIN accounts a ON a.id=r.account_id
-JOIN accounts owner ON owner.id=l.owner_id
-LEFT JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id;
+-- Moved below the payout table it reads.
 ALTER TABLE referral_links ADD COLUMN share_code text CHECK (share_code IS NULL OR share_code ~ '^[A-Z0-9]{6}$');
 CREATE UNIQUE INDEX referral_links_share_code_unique ON referral_links(share_code) WHERE share_code IS NOT NULL;
 
@@ -215,3 +193,106 @@ CREATE TABLE sales_message_templates (
  updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
 );
 CREATE INDEX sales_message_templates_page ON sales_message_templates(status,id);
+
+-- Managers and salespeople managed by an owner admin in the sales portal.
+-- Owner admins come only from FAAS_SALES_ADMIN_EMAILS. Removal deactivates.
+CREATE TABLE sales_team_members (
+ account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
+ role text NOT NULL CHECK (role IN ('manager','rep')),
+ active boolean NOT NULL DEFAULT true,
+ updated_by uuid REFERENCES accounts(id) ON DELETE SET NULL,
+ version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
+ created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at)),
+ updated_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(updated_at))
+);
+
+-- Append-only agreement history. The agreement in force when a customer is
+-- attributed is copied onto that attribution and never rewritten.
+CREATE TABLE sales_commission_agreements (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+ commission_bps integer NOT NULL CHECK (commission_bps BETWEEN 0 AND 10000),
+ effective_from timestamptz NOT NULL CHECK (isfinite(effective_from)),
+ note text NOT NULL DEFAULT '' CHECK (octet_length(note) <= 500),
+ created_by uuid REFERENCES accounts(id) ON DELETE SET NULL,
+ created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at))
+);
+CREATE INDEX sales_commission_agreements_current
+ ON sales_commission_agreements(account_id,effective_from DESC,created_at DESC);
+
+-- Audited moves of sales credit between salespeople.
+CREATE TABLE referral_credit_changes (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES referral_attributions(account_id) ON DELETE CASCADE,
+ from_owner_id uuid,
+ to_owner_id uuid NOT NULL,
+ from_commission_bps integer NOT NULL CHECK (from_commission_bps BETWEEN 0 AND 10000),
+ to_commission_bps integer NOT NULL CHECK (to_commission_bps BETWEEN 0 AND 10000),
+ reason text NOT NULL CHECK (octet_length(reason) BETWEEN 1 AND 500),
+ changed_by uuid,
+ created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at))
+);
+CREATE INDEX referral_credit_changes_account ON referral_credit_changes(account_id,created_at);
+
+-- Bookkeeping of commission paid outside Gregale. No money moves here.
+CREATE TABLE sales_commission_payouts (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL REFERENCES referral_attributions(account_id) ON DELETE CASCADE,
+ owner_id uuid NOT NULL,
+ amount_cents bigint NOT NULL CHECK (amount_cents BETWEEN 1 AND 100000000),
+ currency text NOT NULL CHECK (currency IN ('usd','eur')),
+ paid_on date NOT NULL CHECK (isfinite(paid_on)),
+ reference text NOT NULL DEFAULT '' CHECK (octet_length(reference) <= 200),
+ note text NOT NULL DEFAULT '' CHECK (octet_length(note) <= 500),
+ recorded_by uuid,
+ created_at timestamptz NOT NULL DEFAULT now() CHECK (isfinite(created_at)),
+ voided_at timestamptz CHECK (voided_at IS NULL OR isfinite(voided_at)),
+ voided_by uuid,
+ void_reason text NOT NULL DEFAULT '' CHECK (octet_length(void_reason) <= 500),
+ CHECK ((voided_at IS NULL) = (void_reason = ''))
+);
+CREATE UNIQUE INDEX sales_commission_payouts_live
+ ON sales_commission_payouts(account_id) WHERE voided_at IS NULL;
+CREATE INDEX sales_commission_payouts_owner ON sales_commission_payouts(owner_id,paid_on);
+
+CREATE VIEW sales_referral_overview AS
+SELECT r.account_id,l.owner_id,l.kind,
+ COALESCE(a.email,buyer.email,'') AS email,
+ COALESCE(a.plan,o.plan,'')::text AS plan,
+ COALESCE(a.status,o.status,'')::text AS account_status,
+ r.created_at,r.stage,r.note,r.follow_up,r.currency,
+ (SELECT count(*) FROM apps ap WHERE ap.account_id=r.account_id) AS apps,
+ COALESCE(i.status='paid',false)::boolean AS paid,
+ COALESCE(i.amount_paid_cents,0)::bigint AS paid_cents,
+ (r.first_paid_at + make_interval(days=>r.hold_days))::timestamptz AS eligible_at,
+ CASE
+  WHEN r.first_paid_at IS NULL THEN 'registered'
+  WHEN i.id IS NULL THEN 'review'
+  WHEN i.status<>'paid' OR i.amount_refunded_cents>0 OR i.amount_refund_pending_cents>0 THEN 'reversed'
+  WHEN i.currency<>r.currency THEN 'currency_mismatch'
+  WHEN owner.status<>'active'
+    OR (r.subject_kind='account' AND (a.id IS NULL OR a.status<>'active' OR a.email_verified_at IS NULL))
+    OR (r.subject_kind='org' AND (o.id IS NULL OR o.status<>'active' OR o.deleted_pending)) THEN 'review'
+  WHEN (l.kind='customer' AND r.customer_reward_cents=0 AND r.referred_reward_cents=0)
+    OR (l.kind='sales' AND r.commission_bps=0) THEN 'unconfigured'
+  WHEN now()<r.first_paid_at+make_interval(days=>r.hold_days) THEN 'holding'
+  ELSE 'eligible'
+ END AS reward_status,
+ CASE WHEN l.kind='customer' THEN r.customer_reward_cents
+  ELSE COALESCE(trunc(LEAST(i.subtotal_cents,GREATEST(i.amount_paid_cents-i.tax_cents,0))::numeric*r.commission_bps/10000)::bigint,0)
+ END::bigint AS reward_cents,
+ CASE WHEN l.kind='customer' THEN r.referred_reward_cents ELSE 0::bigint END AS referred_reward_cents,
+ r.subject_kind,
+ COALESCE(o.name,'')::text AS org_name,
+ r.commission_bps,
+ p.id AS payout_id,
+ COALESCE(p.amount_cents,0)::bigint AS payout_cents,
+ p.paid_on AS payout_paid_on
+FROM referral_attributions r
+JOIN referral_links l ON l.code=r.code
+LEFT JOIN accounts a ON a.id=r.account_id AND r.subject_kind='account'
+LEFT JOIN orgs o ON o.id=r.account_id AND r.subject_kind='org'
+LEFT JOIN accounts buyer ON buyer.id=r.selected_by
+JOIN accounts owner ON owner.id=l.owner_id
+LEFT JOIN invoices i ON i.id=r.first_paid_invoice_id AND i.account_id=r.account_id
+LEFT JOIN sales_commission_payouts p ON p.account_id=r.account_id AND p.voided_at IS NULL;

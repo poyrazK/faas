@@ -461,7 +461,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad stdin line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -487,7 +487,7 @@ func envPush(args []string) int {
 			if line == "" || strings.HasPrefix(line, "#") {
 				continue
 			}
-			p, err := parseSecretsPair(stripDotenvExport(line))
+			p, err := parseDotenvLine(line)
 			if err != nil {
 				return printErr("Bad .env line", fmt.Errorf("line %d: %w", lineNo, err))
 			}
@@ -582,6 +582,22 @@ func envPush(args []string) int {
 		PrintFail(os.Stderr, "all KEY=VALUE pairs contained detected secrets; none were pushed. %s", envPushSecretHint(*app, envPushOrigin(*in, *fromStdin)))
 		return 1
 	}
+	// prod 2026-11-20: an `EMPTY=` line was refused by the API after the
+	// keys before it were saved, so the push half-applied and --restart
+	// never ran. Empty values are skipped up front instead.
+	nonEmpty := make([]pair, 0, len(pairs))
+	for _, p := range pairs {
+		if p.v == "" {
+			PrintWarn(osStderr, "%s has no value and was not pushed; to remove it, run `gregale env unset %s %s`", p.k, *app, p.k)
+			continue
+		}
+		nonEmpty = append(nonEmpty, p)
+	}
+	if len(nonEmpty) == 0 {
+		PrintFail(os.Stderr, "every KEY=VALUE pair has an empty value; nothing was pushed")
+		return 1
+	}
+	pairs = nonEmpty
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
@@ -814,7 +830,7 @@ func cmdAppScale(slug string, args []string) int {
 	// out of help, completions, man pages and the generated reference until
 	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
 	// answers an unlisted account as for an unknown field.
-	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = the platform default)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -1399,18 +1415,7 @@ func cmdDashboard(args []string) int {
 func cmdQueueDispatch(args []string) int {
 	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row (blocks)\n"+
-			"  state <slug>            depth + cap (no lease)\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		return 1
 	}
 	switch args[0] {
@@ -1428,6 +1433,11 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueuePeek(args[1:])
 	case "dead-letter":
 		return cmdQueueDeadLetter(args[1:])
+	case "dlq":
+		// `queue dlq list <slug>` is rewritten to dead-letter before this
+		// switch. list is dlq's only verb, so `queue dlq <slug>` lists too;
+		// it printed the pre-rename usage on prod (hunt 2026-11-21).
+		return cmdQueueDeadLetter(args[1:])
 	case "ack":
 		return cmdQueueAck(args[1:])
 	case "setup":
@@ -1436,22 +1446,24 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueBindings(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row\n"+
-			"  state <slug>            depth + cap\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		maybeSuggestSub(sug)
 		return 1
 	}
 }
+
+// queueDispatchUsage names queue's verbs as `gregale queue --help` does.
+const queueDispatchUsage = "usage: gregale queue <subcommand> <slug> [args]\n\n" +
+	"  watch <slug>           long-poll the unified event stream (queue drain signals)\n" +
+	"  send <slug> --payload J [--queue-name Q] enqueue one row\n" +
+	"  receive <slug>         wait for the next delivered row (blocks)\n" +
+	"  state <slug>           depth + cap (no lease)\n" +
+	"  status <slug>          queue depth, scaling, bindings, and liveness\n" +
+	"  peek <slug> [--limit N] inspect up to N rows without draining\n" +
+	"  dlq list <slug>        rows that exhausted attempts\n" +
+	"  ack <slug> <row-id>    acknowledge a processed message's result\n" +
+	"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n" +
+	"  bindings <verb> <slug> manage queue bindings\n"
 
 func cmdQueueBindings(args []string) int {
 	if len(args) == 0 {
@@ -1615,6 +1627,10 @@ func cmdQueueSend(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
+	// A push delivery can finish before `queue receive` starts, and receive
+	// waits for the next one: on prod it reported nothing while this row had
+	// already completed with its result (hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: %s invocation get %s\n", recoveryCLI(), recoveryArgument(resp.ID))
 	return 0
 }
 
@@ -2412,6 +2428,34 @@ func openCustomerDirectoryForSync(path string) (*os.File, error) {
 		return nil, fmt.Errorf("recovery directory changed during open: %q", path)
 	}
 	return directory, nil
+}
+
+// dotenvValue reads a .env value the way dotenv and Docker Compose do: a
+// value wrapped in double quotes loses them and has \n, \" and \\ unescaped;
+// one in single quotes loses them and stays literal. prod 2026-11-20:
+// API_URL="https://…" reached the app with the quotes, so every quoted URL
+// or token in a pushed .env was wrong. Other values are unchanged.
+func dotenvValue(v string) string {
+	if len(v) >= 2 && v[0] == '\'' && v[len(v)-1] == '\'' {
+		return v[1 : len(v)-1]
+	}
+	if len(v) >= 2 && v[0] == '"' && v[len(v)-1] == '"' {
+		return strings.NewReplacer(`\n`, "\n", `\"`, `"`, `\\`, `\`).Replace(v[1 : len(v)-1])
+	}
+	return v
+}
+
+// parseDotenvLine parses one line of a .env file or KEY=VALUE stdin: an
+// optional `export ` prefix, then KEY=VALUE with dotenv quoting. Every file and
+// stdin input reads values this way, so a .env pushes, deploys and runs under
+// `gregale dev` alike; KEY=VALUE arguments are left as the shell passed them.
+func parseDotenvLine(line string) (secretsPair, error) {
+	p, err := parseSecretsPair(stripDotenvExport(line))
+	if err != nil {
+		return p, err
+	}
+	p.Value = dotenvValue(p.Value)
+	return p, nil
 }
 
 // stripDotenvExport drops a dotenv `export ` prefix, so a file a shell can

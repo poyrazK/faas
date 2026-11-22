@@ -459,8 +459,9 @@ type Instance struct {
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
 	// one-shot guest by guessing its instance id.
-	ExecutionOnly  bool
-	DataRepairOnly bool
+	ExecutionOnly         bool
+	executionTemplateOnly bool
+	DataRepairOnly        bool
 	// AgentRunOnly marks a VM WakeAgentRun booted for one agent run. It is
 	// also ExecutionOnly; ExecuteExecution refuses it and RunAgent requires it.
 	AgentRunOnly bool
@@ -505,6 +506,11 @@ type Instance struct {
 	// (ADR-20261027090012; agent_wait_pause.go); zero means the run VM keeps
 	// running while it waits on the model.
 	AgentWaitPauseAfter time.Duration
+	// AgentRunDeadline is an agent run's seller deadline when it is below
+	// the request's timeout, the guest ceiling (ADR-20261027090016
+	// amendment 3; agent_run_deadline.go). Zero: the request's timeout.
+	// Guarded by Manager.mu.
+	AgentRunDeadline time.Duration
 	// Frozen (ADR-1151; freeze.go) marks an instance Freeze paused in place
 	// for the frozen tier, until Thaw resumes it or teardown kills it.
 	// FrozenSince is when that pause took effect. Both are guarded by
@@ -916,6 +922,7 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	executionTemplateCaptureActive  atomic.Int32
 	financialEgressRead             func(string) (uint64, error)
 	computeAuthority                FinancialComputeAuthority
 	computeNode, computeIncarnation string
@@ -1486,6 +1493,9 @@ type Manager struct {
 	agentWaitMetrics *AgentWaitMetrics
 	agentWaitMu      sync.Mutex
 	agentWaits       map[string]*agentWaitState
+	// agentDeadlineMu guards agentDeadlines, a leaf lock like agentWaitMu.
+	agentDeadlineMu sync.Mutex
+	agentDeadlines  map[string]*agentDeadline
 	// agentUsageTick is the agent run usage sample interval
 	// (agent_run_usage.go); zero is api.AgentRunUsageSampleMillis.
 	agentUsageTick time.Duration
@@ -4148,7 +4158,8 @@ type WakeRequest struct {
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
-	ExecutionOnly bool
+	ExecutionOnly         bool
+	executionTemplateOnly bool
 	// Runs broker metadata is host-only and is accepted only from
 	// WakeExecution. Ordinary app wake paths leave these fields empty.
 	ExecutionLeaseToken             string   `json:"-"`
@@ -5900,7 +5911,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID, resumeIdentity: resumeIdentity,
 		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
+		ExecutionOnly: req.ExecutionOnly, executionTemplateOnly: req.executionTemplateOnly, DataRepairOnly: req.dataRepairOnly, AgentRunOnly: req.agentRunOnly, SandboxID: req.sandboxID, AgentRunRelay: req.agentRunRelay, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),

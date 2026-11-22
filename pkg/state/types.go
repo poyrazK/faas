@@ -2924,6 +2924,8 @@ type Deployment struct {
 	// explicitly requested zero. It is persisted for activation semantics but
 	// remains internal; TrafficPercent is the customer-visible value.
 	TrafficPercentExplicit bool `json:"-"`
+	// ServingEndedAt records when this revision last stopped receiving traffic.
+	ServingEndedAt *time.Time `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads
@@ -3961,6 +3963,10 @@ const (
 	// the app's bound integrations within the window (ADR 20261027132936
 	// amendment 2).
 	AlertMetricAIBudgetAlerts AlertMetric = "ai_budget_alerts"
+	// AlertMetricOOMKills counts the app's instances the kernel killed for
+	// running out of memory within the window (Observe audit 2026-11-21,
+	// finding 18).
+	AlertMetricOOMKills AlertMetric = "oom_kills"
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
@@ -4302,6 +4308,8 @@ func (e *AlertRuleQuotaError) Error() string {
 // application-outbox calls; those names never participate in subscription
 // fan-out matching.
 type AppWebhookEvent string
+
+const AppWebhookEventExecutionFinished AppWebhookEvent = api.ExecutionFinishedWebhookEvent
 
 const (
 	AppWebhookEventConsumerUsageThreshold                  AppWebhookEvent = "consumer.usage_threshold"

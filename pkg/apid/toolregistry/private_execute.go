@@ -12,6 +12,7 @@ import (
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/taskrehearsal"
 	"github.com/onebox-faas/faas/pkg/mcphosting"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -21,6 +22,8 @@ import (
 )
 
 type PrivateExecutionOptions struct {
+	TaskRehearsalRunner        *taskrehearsal.Runner
+	TaskRehearsalProvisioner   *taskrehearsal.Provisioner
 	RehearsalPlanEnabled       bool
 	BindingVerificationEnabled bool
 	// BindingProbeConnect is a trusted driver seam for isolated native tests.

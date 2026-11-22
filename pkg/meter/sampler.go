@@ -98,6 +98,15 @@ type UsageDeltas struct {
 	// when WithInternalEgressUnbilled is on.
 	InternalTXBytes uint64
 	InternalTXValid bool
+	// NetworkNode is the node whose vmmd produced the cumulative network
+	// counters, and NetworkDeparted marks the final reading of an instance
+	// that left it (ADR-20261122090000). Empty means unknown.
+	NetworkNode     string
+	NetworkDeparted bool
+	// SourceFinal is the departed node's final cumulative reading of an
+	// instance that live-migrated, applied before this reading so the
+	// source's last bytes are metered once. nil when there is none.
+	SourceFinal *UsageDeltas
 }
 
 type EgressSource interface {
@@ -255,6 +264,11 @@ type Sampler struct {
 	// review R8-2) subtracts each instance's internal egress from
 	// usage_minutes.net_tx_bytes. Off by default.
 	internalEgressUnbilled bool
+	// gatewayResponseEgress ([meter] gateway_response_egress,
+	// ADR-20261121210517) adds the gateway response bytes drained from the
+	// in-memory stream to billed egress. Persisted gateway frames are billed
+	// by the store instead (AppendGatewayUsageEvent).
+	gatewayResponseEgress bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -511,6 +525,14 @@ func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
 	return s
 }
 
+// WithGatewayResponseEgress bills the gateway response bytes drained from the
+// in-memory gateway stream as app egress (ADR-20261121210517), for compute
+// nodes whose public responses never cross the instance veth.
+func (s *Sampler) WithGatewayResponseEgress(on bool) *Sampler {
+	s.gatewayResponseEgress = on
+	return s
+}
+
 // newestClosedMinute is the newest minute closed at least s.settle ago.
 func (s *Sampler) newestClosedMinute(observedAt time.Time) time.Time {
 	return observedAt.Add(-s.settle).Truncate(time.Minute).Add(-time.Minute)
@@ -639,6 +661,10 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	if err != nil {
 		return nil, err
 	}
+	tasksByApp, err := s.appTasksInMinute(ctx, minute)
+	if err != nil {
+		return nil, err
+	}
 	var out []RolledRow
 	// The previous app's unbilled paused usage is recorded when the next app
 	// starts, after every path through its floor below (rollout step 3). An
@@ -664,6 +690,9 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 		}
 		if app.Status == state.AppDeleted && !exactResidency {
 			continue
+		}
+		if out, err = s.rollAppTasks(ctx, out, app, tasksByApp[app.ID], planByAccount, minute, observedAt); err != nil {
+			return out, err
 		}
 		// The quiet_pause_unbilled flag decides per account whether on mode
 		// subtracts this app's paused seconds (ADR-20261023171905).
@@ -1003,6 +1032,15 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 			if !floorAvailable {
 				continue
 			}
+			if exactResidency {
+				held, heldErr := s.floorHeld(ctx, app, floorDeployment, minute)
+				if heldErr != nil {
+					return out, heldErr
+				}
+				if !held {
+					continue
+				}
+			}
 			// A floor instance runs the deployment's sidecars too, so it is
 			// priced like a live instance of that deployment
 			// (ADR-20261103131742 amendment 2).
@@ -1056,6 +1094,36 @@ func (s *Sampler) rollApps(ctx context.Context, observedAt, minute time.Time, ex
 	}
 	s.recordQuietPaused(ctx, &quietPausedUsage, minute)
 	return out, nil
+}
+
+// floorHeld reports whether the platform is holding appID's min-instances
+// floor in minute, so its synthetic gap may be billed: some instance of the
+// app was resident within api.MinInstancesFloorUnheldGrace before the minute
+// ends, or the floor itself is younger than the grace: its deployment was
+// created, or a scheduled window opened, within it (billed from t=0, ADR-060,
+// ADR-195). A store without the residency ledger keeps the old behaviour.
+func (s *Sampler) floorHeld(ctx context.Context, app state.App, deploymentID string, minute time.Time) (bool, error) {
+	ledger, ok := s.store.(state.AppFloorResidencyStore)
+	if !ok {
+		return true, nil
+	}
+	end := minute.Add(time.Minute)
+	since := minute.Add(-api.MinInstancesFloorUnheldGrace)
+	resident, err := ledger.AppResidentSince(ctx, app.ID, since, end)
+	if err != nil {
+		return false, fmt.Errorf("meter: floor residency %s: %w", app.ID, err)
+	}
+	if resident || deploymentID == "" || app.EffectiveMinInstancesAt(since) < app.EffectiveMinInstancesAt(minute) {
+		return true, nil
+	}
+	dep, err := s.store.DeploymentByID(ctx, deploymentID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("meter: floor deployment %s: %w", deploymentID, err)
+	}
+	return !dep.CreatedAt.IsZero() && dep.CreatedAt.After(since) && dep.CreatedAt.Before(end), nil
 }
 
 // billableFloorDeployment reports whether an app has capacity that is live or
@@ -1262,22 +1330,40 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetworkCumulative {
 		netTx, netRx = 0, 0
 	}
+	// Gateway response bytes billed as egress (ADR-20261121210517) are
+	// written with the minute, before the interface delta.
+	var gatewayEgress int64
+	if s.gatewayResponseEgress && row.TXBytes > 0 {
+		gatewayEgress = row.TXBytes
+	}
 	if err := s.store.AppendUsage(ctx, row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx, netRx,
+		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx+gatewayEgress, netRx,
 		row.ColdBootCount, row.TailSeconds); err != nil {
 		return err
 	}
 	if !usage.NetworkCumulative {
+		row.NetTxBytes = netTx + gatewayEgress
 		return nil
 	}
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
 		return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
 	}
+	var sourceTx, sourceRx int64
+	if final := usage.SourceFinal; final != nil && final.NetworkCumulative {
+		if final.NetTXBytes > math.MaxInt64 || final.NetRXBytes > math.MaxInt64 || final.InternalTXBytes > math.MaxInt64 {
+			return fmt.Errorf("meter: cumulative network counter exceeds int64 for instance %s", row.InstanceID)
+		}
+		var err error
+		if sourceTx, sourceRx, err = s.appendNetworkObservation(ctx, row, *final); err != nil {
+			return fmt.Errorf("meter: checkpoint source network usage for instance %s: %w", row.InstanceID, err)
+		}
+	}
 	deltaTx, deltaRx, err := s.appendNetworkObservation(ctx, row, usage)
 	if err != nil {
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
-	row.NetTxBytes = deltaTx
+	deltaTx, deltaRx = deltaTx+sourceTx, deltaRx+sourceRx
+	row.NetTxBytes = deltaTx + gatewayEgress
 	row.NetRxBytes = deltaRx
 	return nil
 }
@@ -1288,6 +1374,21 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 // review R8-2). Financial usage evidence is append-only, so this happens as
 // the bytes are written, never after.
 func (s *Sampler) appendNetworkObservation(ctx context.Context, row *RolledRow, usage UsageDeltas) (int64, int64, error) {
+	if observer, ok := s.store.(state.NodeNetworkObserver); ok && usage.NetworkNode != "" {
+		var internal *int64
+		if s.internalEgressUnbilled && usage.InternalTXValid {
+			if usage.InternalTXBytes > math.MaxInt64 {
+				return 0, 0, fmt.Errorf("internal egress counter exceeds int64")
+			}
+			v := int64(usage.InternalTXBytes)
+			internal = &v
+		}
+		tx, rx, _, err := observer.AppendNodeNetworkUsageObservation(ctx,
+			row.AccountID, row.AppID, row.InstanceID, row.Minute,
+			state.NetworkReading{NodeID: usage.NetworkNode, Departed: usage.NetworkDeparted},
+			int64(usage.NetTXBytes), usage.NetTXValid, int64(usage.NetRXBytes), usage.NetRXValid, internal)
+		return tx, rx, err
+	}
 	if observer, ok := s.store.(state.InternalEgressObserver); ok && s.internalEgressUnbilled && usage.InternalTXValid {
 		if usage.InternalTXBytes > math.MaxInt64 {
 			return 0, 0, fmt.Errorf("internal egress counter exceeds int64")

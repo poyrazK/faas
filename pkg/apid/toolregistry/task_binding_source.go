@@ -9,36 +9,59 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/tasktoolbinding"
+	"github.com/onebox-faas/faas/pkg/tasktoolsource"
 	"github.com/onebox-faas/faas/pkg/tasktoolsource/sourcecheck"
 )
 
-// Read only the server-retained, account-encrypted source. No customer code is
-// evaluated and no source or runtime secret is returned in a receipt.
-func (e *PrivateExecutor) hostedBindingPolicy(ctx context.Context, account, id string) (tasktoolbinding.Policy, error) {
-	var p tasktoolbinding.Policy
+type verifiedHostedTaskSource struct {
+	intent  api.HostedTaskSourceIntent
+	review  tasktoolsource.Review
+	entries map[string][]api.HostedTaskSourceEntry
+}
+
+// loadHostedTaskSource opens and verifies the account-encrypted source for
+// private consumers. The decoded entries never enter a public receipt.
+func (e *PrivateExecutor) loadHostedTaskSource(ctx context.Context, account, id string) (verifiedHostedTaskSource, error) {
+	var zero verifiedHostedTaskSource
 	journal, ok := e.store.(state.HostedTaskSourceIntentStore)
 	if !ok || e.opts.ConnectionIdentities == nil {
-		return p, state.ErrConflict
+		return zero, state.ErrConflict
 	}
 	row, err := journal.GetHostedTaskSourceIntent(ctx, account, id)
 	if err != nil {
-		return p, err
+		return zero, err
 	}
-	if row.Record.SourceState != "retained" || row.Record.ReviewStatus != "approved" || len(row.Ciphertext) > api.HostedTaskSourceCiphertextMaxBytes {
-		return p, state.ErrConflict
+	if row.Record.AccountID != account || row.Record.ID != id || row.Record.SourceState != "retained" ||
+		row.Record.ReviewStatus != "approved" || len(row.Ciphertext) > api.HostedTaskSourceCiphertextMaxBytes {
+		return zero, state.ErrConflict
 	}
 	ns, plain, err := secretbox.OpenBytesMulti(e.opts.ConnectionIdentities(ctx), row.Ciphertext)
+	defer clear(plain)
 	want := "gregale-hosted-task-source:" + account + ":" + row.Record.RequesterKeyID + ":" + id + ":" + row.Record.ReviewSHA256
 	if err != nil || ns != want || len(plain) > api.HostedTaskSourceRequestMaxBytes {
-		return p, state.ErrConflict
+		return zero, state.ErrConflict
 	}
 	var sources map[string][]api.HostedTaskSourceEntry
 	if json.Unmarshal(plain, &sources) != nil {
-		return p, state.ErrConflict
+		return zero, state.ErrConflict
 	}
-	if _, err := sourcecheck.ValidatePrepare(account, api.HostedTaskSourcePrepare{Review: row.Record.Review, Sources: sources}); err != nil {
-		return p, state.ErrConflict
+	review, err := sourcecheck.ValidatePrepare(account, api.HostedTaskSourcePrepare{Review: row.Record.Review, Sources: sources})
+	if err != nil || review.Fingerprint != row.Record.ReviewSHA256 {
+		return zero, state.ErrConflict
 	}
+	return verifiedHostedTaskSource{intent: row.Record, review: review, entries: sources}, nil
+}
+
+func (e *PrivateExecutor) hostedBindingPolicy(ctx context.Context, account, id string) (tasktoolbinding.Policy, error) {
+	source, err := e.loadHostedTaskSource(ctx, account, id)
+	if err != nil {
+		return tasktoolbinding.Policy{}, err
+	}
+	return reviewedHostedBindingPolicy(source.entries)
+}
+
+func reviewedHostedBindingPolicy(sources map[string][]api.HostedTaskSourceEntry) (tasktoolbinding.Policy, error) {
+	var p tasktoolbinding.Policy
 	web, err := sourcecheck.SourceConfig(sources["web"], false)
 	if err != nil {
 		return p, state.ErrConflict

@@ -16,7 +16,7 @@ import (
 // their warning.
 func TestFreshTemplatesPassDoctorEnvCheck(t *testing.T) {
 	for _, name := range []string{
-		"mcp-node", "mcp-go", "mcp-python", "rest-api-postgres", "rest-api-postgres-python",
+		"mcp-node", "mcp-node-tasks", "mcp-go", "mcp-go-tasks", "mcp-python", "mcp-python-tasks", "rest-api-postgres", "rest-api-postgres-python",
 		"data-api", "data-api-starter", "data-api-teams",
 		"hello-node", "function-python",
 	} {

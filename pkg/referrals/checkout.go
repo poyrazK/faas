@@ -23,6 +23,7 @@ type CheckoutState struct {
 
 type CheckoutStore interface {
 	CheckoutState(context.Context, string) (CheckoutState, error)
+	OrgCheckoutState(context.Context, string) (CheckoutState, error)
 	AttributeCheckout(context.Context, string, Attribution, []string) (bool, error)
 }
 
@@ -36,11 +37,25 @@ func LockBillingAccount(ctx context.Context, tx sqlc.DBTX, account string) error
 	return nil
 }
 
-func checkoutState(row sqlc.CheckoutReferralStateRow) CheckoutState {
+// Subject kinds: a personal account or a company organization.
+const (
+	SubjectAccount = "account"
+	SubjectOrg     = "org"
+)
+
+// checkoutRow is the first-purchase state shared by both subject kinds.
+type checkoutRow struct {
+	Plan, Status, Subscription, Code, Kind string
+	Attributed, Paid, Excluded             bool
+}
+
+func checkoutState(row checkoutRow) CheckoutState {
 	s := CheckoutState{Eligible: true}
 	switch {
 	case row.Attributed:
 		s.Reason, s.Code = "already_attributed", row.Code
+	case row.Excluded:
+		s.Reason = "unavailable"
 	case row.Paid || row.Plan != "free" || row.Subscription != "":
 		s.Reason = "not_first_purchase"
 	case row.Status != "active":
@@ -50,13 +65,41 @@ func checkoutState(row sqlc.CheckoutReferralStateRow) CheckoutState {
 	return s
 }
 
-func (s *PostgresStore) CheckoutState(ctx context.Context, account string) (CheckoutState, error) {
-	row, err := s.q.CheckoutReferralState(ctx, s.pool, pgID(account))
+func (s *PostgresStore) readCheckout(ctx context.Context, db sqlc.DBTX, subject, kind string) (checkoutRow, error) {
+	var out checkoutRow
+	if kind == SubjectOrg {
+		row, err := s.q.OrgCheckoutReferralState(ctx, db, pgID(subject))
+		if errors.Is(err, pgx.ErrNoRows) {
+			return out, ErrNotFound
+		}
+		if err != nil {
+			return out, fmt.Errorf("read organization checkout referral: %w", err)
+		}
+		return checkoutRow{Plan: row.Plan, Status: row.Status, Subscription: row.Subscription, Code: row.Code, Kind: row.Kind, Attributed: row.Attributed, Paid: row.Paid, Excluded: row.Excluded}, nil
+	}
+	row, err := s.q.CheckoutReferralState(ctx, db, pgID(subject))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return CheckoutState{}, ErrNotFound
+		return out, ErrNotFound
 	}
 	if err != nil {
-		return CheckoutState{}, fmt.Errorf("read checkout referral: %w", err)
+		return out, fmt.Errorf("read checkout referral: %w", err)
+	}
+	return checkoutRow{Plan: row.Plan, Status: row.Status, Subscription: row.Subscription, Code: row.Code, Kind: row.Kind, Attributed: row.Attributed, Paid: row.Paid}, nil
+}
+
+func (s *PostgresStore) CheckoutState(ctx context.Context, account string) (CheckoutState, error) {
+	row, err := s.readCheckout(ctx, s.pool, account, SubjectAccount)
+	if err != nil {
+		return CheckoutState{}, err
+	}
+	return checkoutState(row), nil
+}
+
+// OrgCheckoutState is CheckoutState for a company organization's first purchase.
+func (s *PostgresStore) OrgCheckoutState(ctx context.Context, org string) (CheckoutState, error) {
+	row, err := s.readCheckout(ctx, s.pool, org, SubjectOrg)
+	if err != nil {
+		return CheckoutState{}, err
 	}
 	return checkoutState(row), nil
 }
@@ -84,12 +127,13 @@ func (s *PostgresStore) AttributeCheckout(ctx context.Context, account string, i
 }
 
 func (s *PostgresStore) attributeCheckout(ctx context.Context, tx pgx.Tx, account string, input Attribution, members []string) (bool, error) {
-	row, err := s.q.CheckoutReferralState(ctx, tx, pgID(account))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, ErrNotFound
+	subject := input.SubjectKind
+	if subject == "" {
+		subject = SubjectAccount
 	}
+	row, err := s.readCheckout(ctx, tx, account, subject)
 	if err != nil {
-		return false, fmt.Errorf("check first paid purchase: %w", err)
+		return false, err
 	}
 	if row.Attributed {
 		if row.Kind == "sales" && row.Code == input.Code {
@@ -105,6 +149,7 @@ func (s *PostgresStore) attributeCheckout(ctx context.Context, tx pgx.Tx, accoun
 		AccountID: pgID(account), Code: input.Code, MemberEmails: members, Currency: p.Currency,
 		CustomerRewardCents: p.CustomerRewardCents, ReferredRewardCents: p.ReferredRewardCents,
 		CommissionBps: p.CommissionBPS, HoldDays: p.HoldDays, ConversionDays: p.ConversionDays,
+		SubjectKind: subject, SelectedBy: pgID(input.SelectedBy),
 	})
 	if err != nil {
 		return false, fmt.Errorf("attribute checkout: %w", err)

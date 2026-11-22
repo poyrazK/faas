@@ -449,6 +449,7 @@ func (s *server) renderIndex(w http.ResponseWriter, r *http.Request, log *slog.L
 	limits := api.MustLimitsFor(acct.Plan)
 	av := dashboardAccountView(view, appCount)
 	page := dashboard.Page{Title: "Overview", Body: "index", Account: av, Data: dashboard.IndexData{
+		RunPipelines:       s.executionAPIEnabled,
 		DeployedAppCount:   av.AppCount,
 		DeveloperAppCount:  developerAppCount,
 		DeveloperAppsLimit: limits.DeveloperApps,

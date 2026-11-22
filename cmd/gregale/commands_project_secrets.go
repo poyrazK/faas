@@ -151,7 +151,7 @@ func projectSecretPairs(positional []string, fromStdin bool, file string) ([]sec
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		pair, err := parseSecretsPair(line)
+		pair, err := parseDotenvLine(line)
 		if err != nil {
 			return nil, err
 		}

@@ -23,6 +23,10 @@ type memFlagExperimentUnit struct {
 	valueSum                       int64
 	convertedAt                    time.Time
 	preValue                       *float64
+	// customer and subjectHash are a subject unit's (ADR 20261119173702 §1).
+	customer    string
+	subjectHash []byte
+	denSum      int64
 }
 
 func (fe *memFlagEvents) experimentsLocked() map[string]*FlagExperiment {
@@ -47,6 +51,7 @@ func cloneFlagExperiment(x *FlagExperiment) FlagExperiment {
 	for k, v := range x.MinCupedPValues {
 		out.MinCupedPValues[k] = v
 	}
+	out.Bandit = slices.Clone(x.Bandit)
 	if x.Breach != nil {
 		out.Breach = map[string]any{}
 		for k, v := range x.Breach {
@@ -84,6 +89,8 @@ func (m *MemStore) CreateFlagExperiment(_ context.Context, x FlagExperiment, max
 	if x.MetricKind == "" {
 		x.MetricKind = flags.ExperimentMetricConversion
 	}
+	x.Unit = orDefault(x.Unit, flags.ExperimentUnitCustomer)
+	x.Allocation = orDefault(x.Allocation, flags.ExperimentAllocationFixed)
 	x.ID, x.Status, x.CreatedAt = uuid.NewString(), flags.ExperimentDraft, time.Now().UTC()
 	stored := cloneFlagExperiment(&x)
 	m.flagEvents.experiments[x.ID] = &stored
@@ -130,7 +137,7 @@ func compareStrings(a, b string) int {
 }
 
 // StartFlagExperiment implements FlagExperimentStore.
-func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key string, weights map[string]int, now time.Time, maxRunning int) (FlagExperiment, error) {
+func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key string, weights map[string]int, slice [2]int, now time.Time, maxRunning int) (FlagExperiment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	x := m.memExperiment(environmentID, key)
@@ -151,7 +158,8 @@ func (m *MemStore) StartFlagExperiment(_ context.Context, environmentID, key str
 		return FlagExperiment{}, ErrFlagExperimentLimit
 	}
 	at := now.UTC()
-	x.Status, x.StartedAt, x.TelemetryCursor, x.Weights = flags.ExperimentRunning, &at, at, weights
+	x.Status, x.StartedAt, x.TelemetryCursor, x.Weights = flags.ExperimentRunning, &at, FlagExperimentStartCursor(at), weights
+	x.LayerFrom, x.LayerTo = slice[0], slice[1]
 	return cloneFlagExperiment(x), nil
 }
 

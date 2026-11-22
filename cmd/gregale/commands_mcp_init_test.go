@@ -16,9 +16,9 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 		language string
 		files    []string
 	}{
-		{language: "node", files: []string{"package.json", "server.js", "task-output.js", "test/task-output.test.js", "task-owners.js", "resource-updates.js", "protocol-telemetry.js", "test/subscription-output.test.js", "test/http-errors.test.js", "test/auth-jwks.test.js", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "go", files: []string{"main.go", "auth.go", "tasks.go", "task_schema.go", "task_owners.go", "task_execution.go", "task_executor.go", "task_executor_test.go", "task_output.go", "task_output_test.go", "task_lease.go", "task_keys.go", "task_queue_metrics.go", "task_worker_registry.go", "task_metrics_test.go", "tool_schema.go", "tool_schema_test.go", "protocol_headers.go", "cors.go", "protocol_telemetry.go", "subscription_output_test.go", "auth_verification_test.go", "task_input_test.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
-		{language: "python", files: []string{"server.py", "auth.py", "bounded_jwks.py", "tasks.py", "task_schema.py", "task_owners.py", "task_execution.py", "task_keys.py", "task_queue_metrics.py", "test_task_metrics.py", "test_task_queue_metrics.py", "http_body.py", "protocol_headers.py", "protocol_telemetry.py", "test_server.py", "test_http_body.py", "test_auth_verification.py", "test_bounded_jwks.py", "test_tool_schema.py", "test_task_inputs.py", "test_task_output.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "node", files: []string{"package.json", "server.js", "app.js", "auth.js", "catalog.js", "tool-policy.js", "resource-updates.js", "protocol-telemetry.js", "test/subscription-output.test.js", "test/http-errors.test.js", "test/auth-jwks.test.js", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "go", files: []string{"main.go", "auth.go", "tasks_off.go", "tool_schema.go", "tool_schema_test.go", "protocol_headers.go", "cors.go", "protocol_telemetry.go", "subscription_output_test.go", "auth_verification_test.go", "main_test.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml"}},
+		{language: "python", files: []string{"server.py", "auth.py", "bounded_jwks.py", "tasks.py", "http_body.py", "protocol_headers.py", "protocol_telemetry.py", "test_server.py", "test_http_body.py", "test_auth_verification.py", "test_bounded_jwks.py", "test_tool_schema.py", "requirements.txt", "gregale-mcp.json", "gregale.yaml"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.language, func(t *testing.T) {
@@ -31,6 +31,20 @@ func TestCmdMCPInitMaterializesEachLanguage(t *testing.T) {
 			for _, file := range tc.files {
 				if _, err := os.Stat(filepath.Join(dest, file)); err != nil {
 					t.Errorf("missing generated file %s: %v", file, err)
+				}
+			}
+			// The plain starters carry no durable Task code; a Tasks stack
+			// starts from the runtime's -tasks starter.
+			absent := map[string][]string{
+				"node":   {"tasks.js", "task-store.js", "task-runtime.js", "tasks-release.js", "app-core.js"},
+				"go":     {"tasks.go", "task_execution.go", "task_lease.go", "tasks_off.go.tmpl"},
+				"python": {"task_execution.py", "task_metrics.py", "test_task_execution.py"},
+			}
+			{
+				for _, file := range absent[tc.language] {
+					if _, err := os.Stat(filepath.Join(dest, file)); !os.IsNotExist(err) {
+						t.Errorf("plain %s starter has %s: %v", tc.language, file, err)
+					}
 				}
 			}
 			if tc.language == "go" {

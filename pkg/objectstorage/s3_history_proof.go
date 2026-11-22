@@ -115,7 +115,7 @@ func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r O
 	// Preserve the safety latch even if a later HEAD or cursor is malformed.
 	page.VersionsObserved = len(out.DeleteMarkers) > 0
 	for _, v := range out.Versions {
-		id := aws.ToString(v.VersionId)
+		id := p.listedVersionID(aws.ToString(v.VersionId))
 		page.VersionsObserved = page.VersionsObserved || id != "" && id != "null"
 	}
 	if len(out.Versions)+len(out.DeleteMarkers)+len(out.CommonPrefixes) > api.ObjectUploadHistoryPageSize {
@@ -126,7 +126,7 @@ func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r O
 		if e != nil {
 			return page, e
 		}
-		id := aws.ToString(v.VersionId)
+		id := p.listedVersionID(aws.ToString(v.VersionId))
 		if key != r.Key || id == "null" {
 			continue
 		}
@@ -159,8 +159,13 @@ func (p *S3) ConfirmTrackedObjectHistory(ctx context.Context, bucket string, r O
 
 func historyResponseKey(key string, encoding types.EncodingType) (string, error) {
 	if encoding == types.EncodingTypeUrl {
+		// S3's encoding-type=url is form encoding: a space is "+" and a
+		// literal plus is "%2B" (AWS; OVH returned "a+b%2Bc" for "a b+c").
+		// PathUnescape kept "+" and listed "a b" as "a+b", so the history
+		// proof never matched a key with a space and a listing could not
+		// name the object to delete it (rc.367 journey, 2026-11-22).
 		var err error
-		key, err = url.PathUnescape(key)
+		key, err = url.QueryUnescape(key)
 		if err != nil {
 			return "", ErrUnavailable
 		}

@@ -31,7 +31,7 @@ func TestPg_FlagExperimentFunnelUnitsAndCuped(t *testing.T) {
 	if err != nil || x.MetricKind != flags.ExperimentMetricFunnel || !x.Cuped || len(x.MetricDefinition.Steps) != 2 || x.MetricDefinition.Window != "2h" {
 		t.Fatalf("CreateFlagExperiment = %+v, %v", x, err)
 	}
-	if x, err = s.StartFlagExperiment(ctx, f.env, "onboarding", x.Weights, start, 1); err != nil {
+	if x, err = s.StartFlagExperiment(ctx, f.env, "onboarding", x.Weights, [2]int{}, start, 1); err != nil {
 		t.Fatal(err)
 	}
 	f.exposure(a, "legacy", start.Add(10*time.Minute), 200, 10)

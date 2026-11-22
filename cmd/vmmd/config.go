@@ -18,6 +18,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/builderslots"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -691,6 +692,12 @@ func (c *Config) MetricsListener() (read, write, idle time.Duration, maxHeaderBy
 // defaults filled in. A missing file is not an error if defaults suffice;
 // in that case an empty config is returned.
 func LoadConfig(path string) (*Config, error) {
+	return loadConfig(path, os.ReadFile)
+}
+
+// Release checks parse the exact config bytes whose digest they verified.
+// The daemon keeps its existing file reader and all normalization/overrides.
+func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, error) {
 	// Size the node from the machine it is on, not from the single-box
 	// constants. The old defaults advertised 56,000 MB / 47,600 MB on every
 	// host regardless of hardware, so a 16 GiB compute node told schedd it
@@ -785,7 +792,7 @@ func LoadConfig(path string) (*Config, error) {
 		},
 	}
 	preparedNetworksSet := false
-	b, err := os.ReadFile(path)
+	b, err := readConfig(path)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			return nil, fmt.Errorf("vmmd: read %q: %w", path, err)
@@ -866,14 +873,18 @@ func LoadConfig(path string) (*Config, error) {
 	// reserve now that the role is known. Only fields still holding the
 	// single-box default are replaced: an explicit [compute_node] value in
 	// vmmd.toml, and the FAAS_COMPUTE_* overlay applied further down, both
-	// stay authoritative.
+	// stay authoritative. The reserve funds the node's provisioned reserved
+	// builder slots (FAAS_BUILDER_RESERVED_SLOTS, ADR-20261118154632
+	// amendment 1), as node_join's sizing does.
 	if c.Role == role.RoleComputeOnly {
-		computeSizing := api.DeriveNodeSizingForRole(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly)
+		builderReserved := builderslots.ReservedFromEnv(os.Getenv)
+		computeSizing := api.DeriveNodeSizingForRoleWithBuilders(hostMemTotalMB(), hostCPUs(), api.NodeShapeComputeOnly, builderReserved)
 		if c.ComputeNode.AdmissionCeilingMB == sizing.AdmissionCeilingMB {
 			c.ComputeNode.AdmissionCeilingMB = computeSizing.AdmissionCeilingMB
 		}
 		slog.Default().Info("vmmd: compute node sizing re-derived for role",
 			"role", string(c.Role),
+			"builder_reserved_slots", builderReserved,
 			"non_tenant_reserve_mb", computeSizing.NonTenantReserveMB,
 			"tenant_slice_max_mb", computeSizing.TenantSliceMaxMB,
 			"tenant_budget_mb", computeSizing.TenantBudgetMB,

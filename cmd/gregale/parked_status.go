@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -46,9 +47,27 @@ func parkedDeploymentID(app api.AppResponse) string {
 
 // parkedReleaseStatus is the release list status for a deployment that is
 // still the app's live release while the app is parked.
+// listedReleaseStatus is the STATUS column of a release row. A canary whose
+// rollout was aborted keeps status "live" with 0% traffic while its
+// predecessor serves again, and the list called it plain "live" (prod hunt
+// 2026-11-20, R10-8).
+func listedReleaseStatus(d api.DeploymentResponse) string {
+	if d.Status == "live" && d.RolloutState == api.DebugRolloutAborted && d.TrafficPercent == 0 {
+		return "aborted"
+	}
+	// A canary at 1% and the release it replaces at 99% both listed as plain
+	// "live", so the list could not say which one served (boa multi-service
+	// deploy, 2026-11-21). The share rides in the STATUS cell, as "parked"
+	// does, so the default table keeps its column layout for scripts.
+	if d.Status == "live" && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
+		return fmt.Sprintf("live/%d%%", d.TrafficPercent)
+	}
+	return d.Status
+}
+
 func parkedReleaseStatus(status string) string {
-	if status == "live" {
-		return "live/parked"
+	if status == "live" || strings.HasPrefix(status, "live/") {
+		return status + "/parked"
 	}
 	return status
 }

@@ -373,56 +373,71 @@ var routeExclude = map[string]bool{
 	"DELETE /v1/agent-runs/{id}":                                true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
+	"GET /v1/agent-tools/pipelines/{id}/events":                 true, // internal app/workload Agent progress
+	"GET /v1/agent-tools/pipelines/{id}":                        true, // internal app/workload Agent continuation receipt
+	"GET /v1/agent-tools/runs/{id}":                             true,
+	"GET /v1/agent-tools/runs/{id}/artifacts/{artifact...}":     true,
 
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
 	// + FAAS_ADMIN_EMAILS allowlist. Mirror the exclusion across
 	// BOTH this list AND cmd/apid/spec_compliance_test.go::routeExclude;
 	// the two lists must move together.
-	"GET /v1/sales/inquiries/challenge":            true, // website intake
-	"POST /v1/sales/inquiries":                     true,
-	"GET /v1/sales/inquiries":                      true, // private sales inbox
-	"PUT /v1/sales/inquiries/{inquiry}/assignment": true,
-	"PUT /v1/sales/inquiries/{inquiry}/close":      true,
-	"GET /v1/sales/reports":                        true, // private manager report
-	"GET /v1/sales/team":                           true, // private sales CRM
-	"GET /v1/sales/leads":                          true, // private sales CRM
-	"POST /v1/sales/leads":                         true, // private sales CRM
-	"PUT /v1/sales/leads/{lead}":                   true, // private sales CRM
-	"DELETE /v1/sales/leads/{lead}":                true, // private sales CRM
-	"GET /v1/sales/tasks":                          true, // private sales CRM
-	"POST /v1/sales/tasks":                         true, // private sales CRM
-	"PUT /v1/sales/tasks/{task}":                   true, // private sales CRM
-	"GET /v1/sales/me":                             true, // private session-only sales workspace
-	"POST /v1/sales/codes":                         true,
-	"PATCH /v1/sales/codes/{code}":                 true,
-	"PATCH /v1/sales/customers/{account}":          true,
-	"POST /v1/referrals/selection":                 true, // explicit pre-signup code selection, no customer data
-	"GET /v1/referrals/me":                         true, // private browser referral program
-	"POST /v1/referrals/codes":                     true,
-	"PATCH /v1/referrals/codes/{code}":             true,
-	"GET /v1/admin/obs/overview":                   true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/capacity":                   true, // operator-only capacity projection
-	"GET /v1/admin/obs/tenants":                    true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/360":           true, // operator-only tenant 360 projection
-	"GET /v1/admin/obs/lookup":                     true, // operator-only identifier lookup (ADR-20261112170000)
-	"GET /v1/admin/obs/attention":                  true, // operator-only customer attention signals (ADR-20261113123000)
-	"GET /v1/admin/obs/tenants/{id}":               true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/tenants/{id}/activity":      true, // operator-only tenant activity drill-down
-	"GET /v1/admin/obs/apps/{id}":                  true, // operator-only app workload drill-down
-	"GET /v1/admin/obs/nodes":                      true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/nodes/{name}/detail":        true, // operator-only node workload drill-down
-	"GET /v1/admin/obs/nodes/{name}/heartbeats":    true, // ADR-091 — operator-only
-	"GET /v1/admin/obs/anomalies":                  true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/rate-limits":                true, // ADR-091 — operator-only (PR #2)
-	"GET /v1/admin/obs/audit-log/search":           true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/events":                     true, // ADR-091 — operator-only (PR #3)
-	"GET /v1/admin/obs/traces/{trace_id}":          true, // operator-only exact trace correlation
-	"GET /v1/admin/obs/nodes/events":               true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
-	"GET /v1/admin/obs/nodes/wake-latency":         true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
-	"GET /v1/admin/obs/builder-heartbeats":         true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
-	"GET /v1/admin/obs/health":                     true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
-	"GET /v1/admin/obs/incidents":                  true, // operator-only bounded incident correlation inbox
+	"GET /v1/sales/inquiries/challenge":             true, // website intake
+	"POST /v1/sales/inquiries":                      true,
+	"GET /v1/sales/inquiries":                       true, // private sales inbox
+	"PUT /v1/sales/inquiries/{inquiry}/assignment":  true,
+	"PUT /v1/sales/inquiries/{inquiry}/close":       true,
+	"GET /v1/sales/reports":                         true, // private manager report
+	"GET /v1/sales/team":                            true, // private sales CRM
+	"GET /v1/sales/admin/team":                      true, // private sales owner admin
+	"POST /v1/sales/admin/team":                     true, // private sales owner admin
+	"PUT /v1/sales/admin/team/{member}":             true, // private sales owner admin
+	"GET /v1/sales/admin/team/{member}/agreements":  true, // private sales owner admin
+	"POST /v1/sales/admin/team/{member}/agreements": true, // private sales owner admin
+	"GET /v1/sales/customers/{account}/credit":      true, // private sales credit history
+	"PUT /v1/sales/customers/{account}/credit":      true, // private sales owner admin
+	"POST /v1/sales/customers/{account}/payouts":    true, // private sales owner admin
+	"GET /v1/sales/payouts":                         true, // private sales payout ledger
+	"POST /v1/sales/payouts/{payout}/void":          true, // private sales owner admin
+	"GET /v1/orgs/{slug}/referrals/checkout":        true, // browser-session salesperson code check
+	"GET /v1/sales/leads":                           true, // private sales CRM
+	"POST /v1/sales/leads":                          true, // private sales CRM
+	"PUT /v1/sales/leads/{lead}":                    true, // private sales CRM
+	"DELETE /v1/sales/leads/{lead}":                 true, // private sales CRM
+	"GET /v1/sales/tasks":                           true, // private sales CRM
+	"POST /v1/sales/tasks":                          true, // private sales CRM
+	"PUT /v1/sales/tasks/{task}":                    true, // private sales CRM
+	"GET /v1/sales/me":                              true, // private session-only sales workspace
+	"POST /v1/sales/codes":                          true,
+	"PATCH /v1/sales/codes/{code}":                  true,
+	"PATCH /v1/sales/customers/{account}":           true,
+	"POST /v1/referrals/selection":                  true, // explicit pre-signup code selection, no customer data
+	"GET /v1/referrals/me":                          true, // private browser referral program
+	"POST /v1/referrals/codes":                      true,
+	"PATCH /v1/referrals/codes/{code}":              true,
+	"GET /v1/admin/obs/overview":                    true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/capacity":                    true, // operator-only capacity projection
+	"GET /v1/admin/obs/tenants":                     true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/360":            true, // operator-only tenant 360 projection
+	"GET /v1/admin/obs/lookup":                      true, // operator-only identifier lookup (ADR-20261112170000)
+	"GET /v1/admin/obs/attention":                   true, // operator-only customer attention signals (ADR-20261113123000)
+	"GET /v1/admin/obs/tenants/{id}":                true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/tenants/{id}/activity":       true, // operator-only tenant activity drill-down
+	"GET /v1/admin/obs/apps/{id}":                   true, // operator-only app workload drill-down
+	"GET /v1/admin/obs/nodes":                       true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/nodes/{name}/detail":         true, // operator-only node workload drill-down
+	"GET /v1/admin/obs/nodes/{name}/heartbeats":     true, // ADR-091 — operator-only
+	"GET /v1/admin/obs/anomalies":                   true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/rate-limits":                 true, // ADR-091 — operator-only (PR #2)
+	"GET /v1/admin/obs/audit-log/search":            true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/events":                      true, // ADR-091 — operator-only (PR #3)
+	"GET /v1/admin/obs/traces/{trace_id}":           true, // operator-only exact trace correlation
+	"GET /v1/admin/obs/nodes/events":                true, // ADR-091 — operator-only SSE (PR #3; successor to /v1/compute-nodes/events)
+	"GET /v1/admin/obs/nodes/wake-latency":          true, // ADR-092 — operator-only per-node wake-latency quantiles (PR #4)
+	"GET /v1/admin/obs/builder-heartbeats":          true, // ADR-091 — operator-only (operator-side mega-PR Commit 7 / P5)
+	"GET /v1/admin/obs/health":                      true, // Obs-Meta + Trace-IDs Mega-PR / C7 — operator-only meta-obs health snapshot
+	"GET /v1/admin/obs/incidents":                   true, // operator-only bounded incident correlation inbox
 
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
@@ -1061,6 +1076,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/billing/budgets/{id}/revisions":                                   "ListFinancialBudgetRevisions",
 	"GET /v1/billing/budgets/{id}/channels":                                    "GetFinancialBudgetChannels",
 	"PUT /v1/billing/budgets/{id}/channels":                                    "SetFinancialBudgetChannels",
+	"POST /v1/execution-workflows/{workflow_id}/cancel":                        "CancelExecutionPipeline",
 	"POST /v1/execution-workflows":                                             "CreateManagedExecutionWorkflow",
 	"GET /v1/execution-workflows/{workflow_id}":                                "GetExecutionWorkflow",
 	"GET /v1/executions/capabilities":                                          "GetExecutionCapabilities",
@@ -1127,25 +1143,32 @@ var methodRouteMap = map[string]string{
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/overrides":         "CreateEnvironmentGitOpsOverride",
 	"DELETE /v1/projects/{slug}/environments/{environment}/gitops/overrides":       "RemoveEnvironmentGitOpsOverride",
 
-	"GET /v1/dev/bridges":                                                             "ListDevBridges",
-	"GET /v1/dev/bridges/{id}/activity":                                               "GetDevBridgeActivity",
-	"POST /v1/dev/bridges":                                                            "CreateDevBridge",
-	"GET /v1/dev/bridges/{id}":                                                        "GetDevBridge",
-	"DELETE /v1/dev/bridges/{id}":                                                     "RevokeDevBridge",
-	"POST /v1/dev/bridges/{id}/webhook-replays":                                       "ReplayDevBridgeWebhook",
-	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":                               "GetDevBridgeWebhookReplay",
-	"GET /v1/projects/{slug}/environments/{environment}/flags":                        "ProjectFlags",
-	"PUT /v1/projects/{slug}/environments/{environment}/flags":                        "PublishProjectFlags",
-	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":               "ProjectFlagVersions",
-	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":              "ProjectFlagLifecycle",
-	"GET /v1/projects/{slug}/environments/{environment}/experiments":                  "ListProjectFlagExperiments",
-	"POST /v1/projects/{slug}/environments/{environment}/experiments":                 "CreateProjectFlagExperiment",
-	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":            "GetProjectFlagExperiment",
-	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":         "DeleteProjectFlagExperiment",
-	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":     "StartProjectFlagExperiment",
-	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":      "StopProjectFlagExperiment",
-	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":      "ShipProjectFlagExperiment",
-	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results":    "ProjectFlagExperimentResults",
+	"GET /v1/dev/bridges":                                                          "ListDevBridges",
+	"GET /v1/dev/bridges/{id}/activity":                                            "GetDevBridgeActivity",
+	"POST /v1/dev/bridges":                                                         "CreateDevBridge",
+	"GET /v1/dev/bridges/{id}":                                                     "GetDevBridge",
+	"DELETE /v1/dev/bridges/{id}":                                                  "RevokeDevBridge",
+	"POST /v1/dev/bridges/{id}/webhook-replays":                                    "ReplayDevBridgeWebhook",
+	"GET /v1/dev/bridges/{id}/webhook-replays/{replay}":                            "GetDevBridgeWebhookReplay",
+	"GET /v1/projects/{slug}/environments/{environment}/flags":                     "ProjectFlags",
+	"PUT /v1/projects/{slug}/environments/{environment}/flags":                     "PublishProjectFlags",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/versions":            "ProjectFlagVersions",
+	"GET /v1/projects/{slug}/environments/{environment}/flags/lifecycle":           "ProjectFlagLifecycle",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments":               "ListProjectFlagExperiments",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments":              "CreateProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}":         "GetProjectFlagExperiment",
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiments/{key}":      "DeleteProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":  "StartProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":   "StopProjectFlagExperiment",
+	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":   "ShipProjectFlagExperiment",
+	"GET /v1/projects/{slug}/environments/{environment}/experiments/{key}/results": "ProjectFlagExperimentResults",
+	// ADR 20261119173702 §2: literal-hyphen paths follow their operationIds.
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-layers":            "ListProjectFlagExperimentLayers",
+	"POST /v1/projects/{slug}/environments/{environment}/experiment-layers":           "CreateProjectFlagExperimentLayer",
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}":   "DeleteProjectFlagExperimentLayer",
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout":           "GetProjectFlagExperimentHoldout",
+	"PUT /v1/projects/{slug}/environments/{environment}/experiment-holdout":           "SetProjectFlagExperimentHoldout",
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout/report":    "GetProjectFlagExperimentHoldoutReport",
 	"GET /v1/projects/{slug}/environments/{environment}/insights/events":              "ProjectInsightEvents",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/funnel":             "ProjectInsightFunnel",
 	"POST /v1/projects/{slug}/environments/{environment}/insights/retention":          "ProjectInsightRetention",
@@ -1645,6 +1668,31 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account":                                            "Whoami",
 	"GET /v1/account/health":                                     "GetAccountHealth",
 	"GET /v1/capabilities":                                       "GetCapabilities",
+	"POST /v2/executions":                                        "CreateExecution",
+	"POST /v2/execution-workflows":                               "CreateManagedExecutionWorkflow",
+	"POST /v1/execution-files":                                   "PrepareExecutionFile",
+	"GET /v1/execution-files/{id}":                               "GetExecutionFile",
+	"DELETE /v1/execution-files/{id}":                            "DeleteExecutionFile",
+	"PUT /v1/execution-files/{id}/content":                       "UploadExecutionFile",
+	"GET /v1/execution-files/{id}/content":                       "DownloadExecutionFile",
+	"POST /v1/execution-environments":                            "CreateExecutionEnvironment",
+	"GET /v1/execution-environments":                             "ListExecutionEnvironments",
+	"GET /v1/execution-environments/{id}":                        "GetExecutionEnvironment",
+	"DELETE /v1/execution-environments/{id}":                     "DeleteExecutionEnvironment",
+	"GET /v1/execution-pipelines/{id}/events":                    "ExecutionPipelineEvents",
+	"POST /v2/execution-pipelines/{id}/reruns":                   "RerunExecutionPipeline",
+	"GET /v1/execution-environments/{id}/events":                 "ExecutionEnvironmentEvents",
+	"GET /v1/run-controls/budgets/{kind}/{ref}":                  "GetRunBudget",
+	"PUT /v1/run-controls/budgets/{kind}/{ref}":                  "SetRunBudget",
+	"GET /v1/run-controls/bindings/{kind}/{id}":                  "GetRunAttributionBinding",
+	"PUT /v1/run-controls/bindings/{kind}/{id}":                  "SetRunAttributionBinding",
+	"DELETE /v1/run-controls/bindings/{kind}/{id}":               "DeleteRunAttributionBinding",
+	"GET /v1/run-history":                                        "ListRunHistory",
+	"POST /v1/run-tasks":                                         "PublishExecutionTask",
+	"GET /v1/run-tasks":                                          "ListExecutionTasks",
+	"GET /v1/run-tasks/{name}/versions/{version}":                "GetExecutionTask",
+	"DELETE /v1/run-tasks/{name}/versions/{version}":             "RetireExecutionTask",
+	"POST /v1/run-tasks/invoke":                                  "InvokeExecutionTask",
 	"POST /v1/executions":                                        "CreateExecution",
 	"POST /v1/domains/{domain}/retry":                            "RetryDomainVerification",
 	"GET /v1/executions":                                         "ListExecutions",
@@ -3075,6 +3123,11 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/edge-protection/attack-mode":    "GetAppEdgeAttackMode",
 	"PUT /v1/apps/{slug}/edge-protection/attack-mode":    "EnableAppEdgeAttackMode",
 	"DELETE /v1/apps/{slug}/edge-protection/attack-mode": "DisableAppEdgeAttackMode",
+
+	"POST /v1/execution-files/{id}/agent-grants":                                   "CreateAgentExecutionFileGrant",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}":                         "DeliverRunArtifact",
+	"GET /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}":               "GetRunArtifactDelivery",
+	"POST /v1/apps/{slug}/run-artifact-deliveries/{route}/{delivery}/download-url": "SignRunArtifactDelivery",
 }
 
 func main() {
@@ -3134,6 +3187,8 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
+	"StreamExecutionPipeline":              "GET /v1/execution-pipelines/{id}/events",
+	"WatchExecutionPipeline":               "GET /v1/execution-pipelines/{id}/events",
 	"CancelDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
 	"FinishDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",
 	"CancelToolInvocation":                 "POST /v1/tool-invocations/{id}/{action}",

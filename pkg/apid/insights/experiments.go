@@ -17,50 +17,64 @@ import (
 // 1 after its first exposure and each later step after the previous one,
 // all by exposure plus the window. A retention unit converts at its first
 // return event in (exposure + N·period, exposure + (N+1)·period].
+//
+// Subject units (ADR 20261119173702 §1) match analytics events by subject
+// hash, and also convert on a conversion metric: the metric event at or
+// after first exposure, with no deadline. The result is keyed by unit.
 func ExperimentConversions(ctx context.Context, store Store, x state.FlagExperiment, units []state.FlagExperimentUnitRef) (map[string]time.Time, error) {
 	out := map[string]time.Time{}
 	if len(units) == 0 {
 		return out, nil
 	}
+	kind := state.AnalyticsUnitCustomer
+	ref := func(u state.FlagExperimentUnitRef) state.AnalyticsUnitRef {
+		return state.AnalyticsUnitRef{CustomerID: u.CustomerID}
+	}
+	if x.SubjectUnits() {
+		kind = state.AnalyticsUnitSubject
+		ref = func(u state.FlagExperimentUnitRef) state.AnalyticsUnitRef {
+			return state.AnalyticsUnitRef{SubjectHash: u.SubjectHash}
+		}
+	}
+	// byKey maps an analytics unit key back to the experiment unit.
+	byKey := make(map[string]state.FlagExperimentUnitRef, len(units))
+	for _, u := range units {
+		byKey[ref(u).Key()] = u
+	}
 	def := x.MetricDefinition
 	horizon, start := def.Horizon(x.MetricKind), def.StartOffset(x.MetricKind)
+	if !flags.AnalyticsMetric(x.MetricKind) {
+		horizon = 100 * 365 * 24 * time.Hour
+	}
+	steps := []flags.MetricStep{{Event: x.MetricEvent}}
 	switch x.MetricKind {
 	case flags.ExperimentMetricRetention:
-		steps := make([]state.AnalyticsStep, 0, len(units))
-		for _, u := range units {
-			steps = append(steps, state.AnalyticsStep{Unit: state.AnalyticsUnitRef{CustomerID: u.CustomerID},
-				After: u.FirstExposedAt.Add(start), Deadline: u.FirstExposedAt.Add(horizon)})
+		steps = []flags.MetricStep{def.PrimaryEvent(x.MetricKind)}
+	case flags.ExperimentMetricFunnel:
+		steps = def.Steps
+	}
+	reached := map[string]time.Time{}
+	deadline := map[string]time.Time{}
+	for key, u := range byKey {
+		reached[key] = u.FirstExposedAt.Add(start)
+		deadline[key] = u.FirstExposedAt.Add(horizon)
+	}
+	for _, step := range steps {
+		in := make([]state.AnalyticsStep, 0, len(reached))
+		for key, after := range reached {
+			in = append(in, state.AnalyticsStep{Unit: ref(byKey[key]), After: after, Deadline: deadline[key]})
 		}
-		ret := def.PrimaryEvent(x.MetricKind)
-		found, err := store.AnalyticsNextSteps(ctx, state.AnalyticsMatch{EnvironmentID: x.EnvironmentID, Name: ret.Event, Properties: ret.Where},
-			state.AnalyticsUnitCustomer, steps)
+		if len(in) == 0 {
+			return out, nil
+		}
+		found, err := store.AnalyticsNextSteps(ctx, state.AnalyticsMatch{EnvironmentID: x.EnvironmentID, Name: step.Event, Properties: step.Where}, kind, in)
 		if err != nil {
 			return nil, err
 		}
-		return found, nil
-	case flags.ExperimentMetricFunnel:
-		deadline := map[string]time.Time{}
-		reached := map[string]time.Time{}
-		for _, u := range units {
-			deadline[u.CustomerID] = u.FirstExposedAt.Add(horizon)
-			reached[u.CustomerID] = u.FirstExposedAt
-		}
-		for _, s := range def.Steps {
-			steps := make([]state.AnalyticsStep, 0, len(reached))
-			for id, after := range reached {
-				steps = append(steps, state.AnalyticsStep{Unit: state.AnalyticsUnitRef{CustomerID: id}, After: after, Deadline: deadline[id]})
-			}
-			if len(steps) == 0 {
-				return out, nil
-			}
-			found, err := store.AnalyticsNextSteps(ctx, state.AnalyticsMatch{EnvironmentID: x.EnvironmentID, Name: s.Event, Properties: s.Where},
-				state.AnalyticsUnitCustomer, steps)
-			if err != nil {
-				return nil, err
-			}
-			reached = found
-		}
-		return reached, nil
+		reached = found
+	}
+	for key, at := range reached {
+		out[byKey[key].CustomerID] = at
 	}
 	return out, nil
 }

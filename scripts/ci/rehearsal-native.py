@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""ADR-20261018000100: native running-import journey; never enables rollout gates."""
+"""Native rehearsal acceptance and portable fixture validation."""
 import argparse
+from contextlib import ExitStack
 import fcntl
 import hashlib
 import json
@@ -13,17 +14,22 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+
+import rehearsal_hosted_task
 
 FIXTURE = "tests/scenario-acceptance/rehearsal-running-job"
 FILES = ("package.json", "package-lock.json", "server.mjs", "commands.mjs", "input.json",
          "fixture.sql", "gregale-test.yaml", "worker/package.json", "worker/package-lock.json",
          "worker/server.mjs", "worker/importer.mjs", "worker/revision.json")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
+SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 NATIVE_LOCK = Path("/var/lock/faas-builder-acceptance.lock")
+HOSTED_TASK_BUILD_ROOT = Path("/var/tmp")
 
 
 def require(condition, message):
@@ -105,7 +111,7 @@ def api_get(origin, path):
         return error.code, None  # Do not print tokens, API bodies or fixture credentials.
 
 
-def runner_configuration(repo):
+def runner_configuration(repo, hosted_task=False):
     require(os.environ.get("GREGALE_REHEARSAL_NATIVE_ACCEPTANCE") == "1", "set GREGALE_REHEARSAL_NATIVE_ACCEPTANCE=1 on the dedicated runner")
     require(platform.system() == "Linux" and platform.machine() == "x86_64" and os.geteuid() == 0,
             "requires root on dedicated native x86_64 Linux")
@@ -129,14 +135,28 @@ def runner_configuration(repo):
     require(status == 200 and isinstance(who, dict) and who.get("id") == account, "token does not identify the dedicated acceptance account")
     for tool in ("go", "git", "make", "ip", "nft", "firecracker", "jailer", "busybox", "mkfs.ext4", "losetup", "findmnt"):
         require(shutil.which(tool), "missing native acceptance tool: " + tool)
-    return {"platform_commit": installed, "api_origin": origin, "account_id": account, "native_runner": True}
+    identity = {"platform_commit": installed, "api_origin": origin, "account_id": account, "native_runner": True}
+    if hosted_task:
+        node = marker.get("node_id", "")
+        require(str(uuid.UUID(node)) == node and uuid.UUID(node).int != 0, "hosted Task enrollment must pin its local node")
+        identity["node_id"] = node
+    return identity
 
 
-def execute(argv, repo, log, timeout, expected=0):
+def execute(argv, repo, log, timeout, expected=0, *, receipt=None):
     # Only this process group is interrupted; let the CLI run its owner cleanup.
-    with log.open("xb") as output:
+    with ExitStack() as stack:
+        output = stack.enter_context(log.open("xb"))
+        options = {}
+        if receipt is not None:
+            # The parent owns the evidence directory. The child receives
+            # stdout as an open fd and runs with the deployed APID identity.
+            output, error_log = stack.enter_context(receipt.open("xb")), output
+            options = {"user": "faas-apid", "group": "faas", "extra_groups": []}
+        else:
+            error_log = subprocess.STDOUT
         child = subprocess.Popen([str(arg) for arg in argv], cwd=repo, stdout=output,
-                                 stderr=subprocess.STDOUT, start_new_session=True)
+                                 stderr=error_log, start_new_session=True, **options)
         try:
             code = child.wait(timeout=timeout)
         finally:
@@ -164,8 +184,56 @@ def verify_app_cleanup(origin, paths):
     return slugs
 
 
-def native_run(repo, out, journey="running-job"):
-    identity = runner_configuration(repo)
+def run_hosted_task(repo, out, intent, plan):
+    prepared = rehearsal_hosted_task.prepare(repo, out / "fixture")
+    write_json(out / "preparation.json", prepared)
+    sources, archives = prepared["source_sha256"], prepared["archive_sha256"]
+    pending = out / "hosted-task-receipt.pending"
+    # A root-owned directory holds only the executable. The child can
+    # traverse it without gaining access to private evidence files.
+    with tempfile.TemporaryDirectory(prefix="gregale-hosted-task-", dir=HOSTED_TASK_BUILD_ROOT) as scratch:
+        directory = Path(scratch)
+        runner = directory / "acceptance"
+        execute(["go", "build", "-mod=readonly", "-buildvcs=true", "-tags", "hosted_task_acceptance",
+                 "-o", runner, "./scripts/ci/hostedtaskacceptance"], repo, out / "build-hosted-task.log", 900)
+        directory.chmod(0o711)
+        runner.chmod(0o755)
+        execute([runner, "--intent", intent, "--plan", plan, "--web-source", sources["web"],
+                 "--worker-source", sources["worker"], "--web-archive", archives["web"], "--worker-archive", archives["worker"]],
+                Path("/"), out / "hosted-task.log", 1200, receipt=pending)
+    rehearsal_hosted_task.verify(out, pending)
+    return pending
+
+
+def run_scenario_journey(repo, out, identity, journal, journey):
+    execute(["go", "build", "-mod=readonly", "-buildvcs=true", "-o", out / "gregale", "./cmd/gregale"], repo, out / "build-cli.log", 600)
+    execute(["go", "build", "-mod=readonly", "-buildvcs=true", "-o", out / "verify", "./scripts/ci/rehearsalacceptance"], repo, out / "build-verifier.log", 600)
+    if journey == "running-job":
+        # Exercise the real VMM pause and guest resume hook as a prerequisite.
+        execute(["bash", "scripts/ci/rehearsal-suspend-resume-acceptance.sh"], repo, out / "native-pause.log", 600)
+        require("--- PASS: TestMetalRehearsalSuspendResume " in (out / "native-pause.log").read_text(), "native pause prerequisite skipped or did not execute")
+    pins = prepare_fixture(repo, out / "fixture", journey)
+    journal["fixture"] = pins
+    write_json(out / "qualification.json", journal)
+    reports = []
+    for case, candidate, code in (("control", pins["baseline"], 0), ("regression", pins["candidate"], 1)):
+        print("Running native rehearsal " + case, flush=True)
+        args = [out / "gregale", "test", "rehearse", "--repo", out / "fixture", "--base", pins["baseline"],
+                "--candidate", candidate, "--manifest", out / "fixture/gregale-test.yaml", "--scenario", "running-import",
+                "--engine", "real-vm", "--profile", "warm", "--repeat", "1", "--max-workload-minutes", "120"]
+        execute([*args, "--validate"], repo, out / (case + "-validate.log"), 60)
+        path = out / (case + ".json")
+        execute([*args, "--report", path, "--markdown", out / (case + ".md")], repo, out / (case + ".log"), 1500, code)
+        reports.append(path)
+    execute([out / "verify", "--control", reports[0], "--regression", reports[1], "--baseline", pins["baseline"],
+             "--candidate", pins["candidate"], "--account", identity["account_id"], "--journey", journey], repo, out / "verification.json", 60)
+    journal["deleted_workloads"] = verify_app_cleanup(identity["api_origin"], reports)
+
+
+def native_run(repo, out, journey="running-job", approval=None):
+    hosted_task = journey == "hosted-task"
+    require(not hosted_task or approval is not None, "hosted Task recovery requires an approved source intent and plan digest")
+    identity = runner_configuration(repo, hosted_task)
     journal = {"version": 1, "status": "failed", "scope": journey + "-journey", **identity}
     write_json(out / "qualification.json", journal)
     # Share the native builder acceptance lock; do not stop any existing fleet.
@@ -173,33 +241,17 @@ def native_run(repo, out, journey="running-job"):
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
             execute(["make", "leakcheck"], repo, out / "leak-before.log", 60)
-            execute(["go", "build", "-mod=readonly", "-buildvcs=true", "-o", out / "gregale", "./cmd/gregale"], repo, out / "build-cli.log", 600)
-            execute(["go", "build", "-mod=readonly", "-buildvcs=true", "-o", out / "verify", "./scripts/ci/rehearsalacceptance"], repo, out / "build-verifier.log", 600)
-            if journey == "running-job":
-                # Exercise the real VMM pause and guest resume hook as a prerequisite.
-                execute(["bash", "scripts/ci/rehearsal-suspend-resume-acceptance.sh"], repo, out / "native-pause.log", 600)
-                require("--- PASS: TestMetalRehearsalSuspendResume " in (out / "native-pause.log").read_text(), "native pause prerequisite skipped or did not execute")
-            pins = prepare_fixture(repo, out / "fixture", journey)
-            journal["fixture"] = pins
-            write_json(out / "qualification.json", journal)
-            reports = []
-            for case, candidate, code in (("control", pins["baseline"], 0), ("regression", pins["candidate"], 1)):
-                print("Running native rehearsal " + case, flush=True)
-                args = [out / "gregale", "test", "rehearse", "--repo", out / "fixture", "--base", pins["baseline"],
-                        "--candidate", candidate, "--manifest", out / "fixture/gregale-test.yaml", "--scenario", "running-import",
-                        "--engine", "real-vm", "--profile", "warm", "--repeat", "1", "--max-workload-minutes", "120"]
-                execute([*args, "--validate"], repo, out / (case + "-validate.log"), 60)
-                path = out / (case + ".json")
-                execute([*args, "--report", path, "--markdown", out / (case + ".md")], repo, out / (case + ".log"), 1500, code)
-                reports.append(path)
-            execute([out / "verify", "--control", reports[0], "--regression", reports[1], "--baseline", pins["baseline"],
-                     "--candidate", pins["candidate"], "--account", identity["account_id"], "--journey", journey], repo, out / "verification.json", 60)
-            journal["deleted_workloads"] = verify_app_cleanup(identity["api_origin"], reports)
-            require(runner_configuration(repo) == identity, "native platform identity changed during qualification")
-            journal["journey_evidence"] = "passed"
+            if hosted_task:
+                pending_receipt = run_hosted_task(repo, out, *approval)
+            else:
+                run_scenario_journey(repo, out, identity, journal, journey)
         finally:
             # No reaping before observation: leaks fail and remain available for investigation.
             execute(["make", "leakcheck"], repo, out / "leak-after.log", 60)
+        require(runner_configuration(repo, hosted_task) == identity, "native platform identity changed during qualification")
+        journal["journey_evidence"] = "passed"
+        if hosted_task:
+            os.replace(pending_receipt, out / "hosted-task-receipt.json")
         journal["artifacts"] = {p.name: file_digest(p) for p in out.iterdir()
                                 if p.is_file() and p.name != "qualification.json"}
         journal["status"] = "passed"
@@ -211,25 +263,46 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--check-runner", action="store_true")
-    parser.add_argument("--prepare-only", action="store_true", help="offline fixture preparation; never qualifies native support")
-    parser.add_argument("--journey", choices=("running-job", "postgres-recovery"), default="running-job")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--check-runner", action="store_true")
+    mode.add_argument("--prepare-only", action="store_true", help="offline fixture preparation; never qualifies native support")
+    mode.add_argument("--verify-hosted-task", type=Path, metavar="EVIDENCE_DIR",
+                      help="offline verification of a hosted Task receipt and its prepared archives")
+    parser.add_argument("--journey", choices=("running-job", "postgres-recovery", "hosted-task"), default="running-job")
+    parser.add_argument("--hosted-task-intent", help="approved hosted source intent ID")
+    parser.add_argument("--hosted-task-plan", help="approved hosted Task rehearsal plan SHA-256")
     args = parser.parse_args()
     repo = args.repo.resolve()
     os.umask(0o077)
     # Build the stamped source rather than an ambient workspace or Go overlay.
     os.environ["GOWORK"], os.environ["GOFLAGS"] = "off", ""
     if args.check_runner:
-        runner_configuration(repo)
+        runner_configuration(repo, args.journey == "hosted-task")
         return
+    if args.verify_hosted_task:
+        rehearsal_hosted_task.verify(args.verify_hosted_task)
+        print(json.dumps({"journey": "hosted-task", "receipt_verified": True, "native_qualified": False}))
+        return
+    approval = None
+    if args.journey == "hosted-task" and not args.prepare_only:
+        require(SHA256.fullmatch(args.hosted_task_intent or "") and SHA256.fullmatch(args.hosted_task_plan or ""),
+                "hosted Task recovery requires an approved source intent and plan digest")
+        approval = (args.hosted_task_intent, args.hosted_task_plan)
+    else:
+        require(args.hosted_task_intent is None and args.hosted_task_plan is None,
+                "hosted Task approval flags apply only to the native hosted-task journey")
     require(args.out is not None, "--out must name a new private evidence directory")
     out = args.out.absolute()
     out.mkdir(mode=0o700)  # Exclusive: do not overwrite or adopt an old run.
     if args.prepare_only:
-        pins = prepare_fixture(repo, out / "fixture", args.journey)
-        write_json(out / "preparation.json", {"version": 1, "status": "prepared", "journey": args.journey, "native_qualified": False, **pins})
+        if args.journey == "hosted-task":
+            prepared = rehearsal_hosted_task.prepare(repo, out / "fixture")
+        else:
+            pins = prepare_fixture(repo, out / "fixture", args.journey)
+            prepared = {"version": 1, "status": "prepared", "journey": args.journey, "native_qualified": False, **pins}
+        write_json(out / "preparation.json", prepared)
         return
-    native_run(repo, out, args.journey)
+    native_run(repo, out, args.journey, approval)
 
 
 if __name__ == "__main__":

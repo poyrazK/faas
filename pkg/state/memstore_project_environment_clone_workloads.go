@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -44,7 +45,11 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot})
+	sharedSecrets, err := m.cloneSharedSecretsLocked(accountID, projectID, op.SourceEnvironment)
+	if err != nil {
+		return nil, err
+	}
+	projectConfig, err := normalizeCloneProjectConfig(projectCloneProjectConfig{Hash: config.ConfigHash, Values: config.Values, FeatureFlags: &flagSnapshot, SharedSecrets: &sharedSecrets})
 	if err != nil {
 		return nil, err
 	}
@@ -85,10 +90,8 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		if _, pinned := m.releaseEnvironmentPins[source.ID]; pinned {
 			return nil, ErrReleaseConfigurationTransferUnsupported
 		}
-		if len(m.projectEnvironmentSecretsLocked(projectID, op.SourceEnvironment)) > 0 {
-			return nil, ErrProjectSecretCloneTransferUnsupported
-		}
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
+		snapshot.PublicBuildURLs = maps.Clone(m.publicBuildURLs[source.ID])
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{appID: scopes[appID]})
 		snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}
 		bindings, err := m.captureCloneBindingsLocked(accountID, appID, scopes[appID], *snapshot.Values)
@@ -136,6 +139,13 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		return nil, err
 	}
 	if err := m.requireCloneEventSubscriptionsCapturedLocked(projectID, op.SourceEnvironment, captured); err != nil {
+		return nil, err
+	}
+	notificationRecords := make([]projectCloneWorkloadRecord, 0, len(records))
+	for _, record := range records {
+		notificationRecords = append(notificationRecords, record)
+	}
+	if err := requireCloneNotificationDestinations(notificationRecords); err != nil {
 		return nil, err
 	}
 	var keys []string
@@ -228,5 +238,11 @@ func (m *MemStore) attachCloneDeploymentLocked(input projectEnvironmentCloneDepl
 	}
 	for name, signal := range record.snapshot.SidecarSignals {
 		m.sidecarSecretReloadSignals[deployment.ID+"\x00"+name] = signal
+	}
+	if len(record.snapshot.PublicBuildURLs) > 0 {
+		if m.publicBuildURLs == nil {
+			m.publicBuildURLs = map[string]map[string]string{}
+		}
+		m.publicBuildURLs[deployment.ID] = maps.Clone(record.snapshot.PublicBuildURLs)
 	}
 }

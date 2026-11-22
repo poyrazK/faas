@@ -7,8 +7,32 @@ to the configured path. Failed deliveries use the existing async retry and
 dead-letter lifecycle. An explicitly bound workflow callback is completed
 directly instead of creating an app invocation.
 
-Stripe is the first supported provider. Inbound webhooks are available on the
-Hobby, Pro, and Scale plans.
+Use an inbound webhook endpoint to receive Stripe webhooks or any other signed
+webhook. The providers are `stripe` and `generic`. Inbound webhooks are available on
+the Hobby, Pro, and Scale plans.
+
+## Generic provider
+
+A `generic` endpoint accepts any sender that signs its requests the Gregale
+way. Its `signing_secret` must be at least 32 bytes. Each request carries:
+
+- `X-Gregale-Event-ID`: the sender's unique event id (repeats are accepted
+  once and answered `"duplicate": true`)
+- `X-Gregale-Event-Type`: the event type, for example `order.paid`
+- `X-Gregale-Timestamp`: Unix seconds, within 5 minutes of Gregale's clock
+- `X-Gregale-Signature`: `sha256=` and the hex HMAC-SHA256, keyed with the
+  signing secret, of `timestamp + "\n" + event_id + "\n" + event_type + "\n"`
+  followed by the raw body
+
+```python
+mac = hmac.new(secret, f"{ts}\n{event_id}\n{event_type}\n".encode() + body, hashlib.sha256)
+headers["X-Gregale-Signature"] = "sha256=" + mac.hexdigest()
+```
+
+A function declares one in code with
+`webhooks: [{ name: "generic", provider: "generic", signingSecretEnv: "GENERIC_WEBHOOK_SECRET" }]`
+(`gregale add function NAME --trigger webhook` writes it); `gregale deploy`
+prints the endpoint URL once.
 
 ## Create an endpoint
 

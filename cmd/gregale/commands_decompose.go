@@ -872,28 +872,32 @@ var envImportReasonText = map[string]string{
 	"invalid":         "not importable",
 }
 
-// withProvidedEnvKeys drops keys a --secrets-file supplies from every
-// workload's unset and imported lists: the file's values go to every
-// selected workload, before any Compose value is imported.
-func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
+// withProvidedEnvKeys drops keys a --secrets-file supplies from each
+// workload's unset and imported lists: the file's values go to the selected
+// workloads that name them (owners), before any Compose value is imported.
+func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair, owners projectSecretOwners) api.PlanResponse {
 	if len(pairs) == 0 {
 		return plan
 	}
-	provided := make(map[string]bool, len(pairs))
-	for _, pair := range pairs {
-		provided[pair.Key] = true
-	}
-	notProvided := func(keys []string) []string {
-		var out []string
-		for _, key := range keys {
-			if !provided[key] {
-				out = append(out, key)
-			}
-		}
-		return out
-	}
 	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
 	for i := range workloads {
+		name := workloads[i].Name
+		notProvided := func(keys []string) []string {
+			var out []string
+			for _, key := range keys {
+				provided := false
+				for _, pair := range pairs {
+					if pair.Key == key && owners.targets(name, key) {
+						provided = true
+						break
+					}
+				}
+				if !provided {
+					out = append(out, key)
+				}
+			}
+			return out
+		}
 		workloads[i].UnsetEnvKeys = notProvided(workloads[i].UnsetEnvKeys)
 		workloads[i].ImportedEnvKeys = notProvided(workloads[i].ImportedEnvKeys)
 	}
@@ -907,10 +911,12 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 // confirmation prompt and existing callers.
 // write is indistinguishable from a malformed terminal and is intentionally
 // handled like the legacy renderer.
-//
-//nolint:errcheck // tabular printer writes to a typed io.Writer; a failed
 func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
-	plan = withFeatureHints(plan)
+	return printPreparedPlanText(w, withFeatureHints(plan), excludeSet, showAffected, explain)
+}
+
+//nolint:errcheck // terminal output is best effort.
+func printPreparedPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, showAffected, explain bool) int {
 	fmt.Fprintf(w, "Project: %s\n", plan.ProjectSlug)
 	if plan.Environment != "" {
 		fmt.Fprintf(w, "Environment: %s\n", plan.Environment)

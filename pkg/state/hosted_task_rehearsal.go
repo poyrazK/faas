@@ -36,6 +36,7 @@ type HostedTaskRehearsalResult struct {
 	Plan          api.HostedTaskRehearsalPlan
 	ClaimAcquired bool                    // private, returned only once, never serialized by the API
 	Run           *HostedTaskRehearsalRun // private reservation; a replay can read it
+	ReadyToClaim  bool                    // private; the supplied owner holds this unconsumed approval
 }
 
 // HostedTaskRehearsalRun is a reserved identity for the exact approved plan.
@@ -178,5 +179,8 @@ func (m *MemStore) ChangeHostedTaskRehearsal(ctx context.Context, account, id st
 		stamp := *plan.ClaimedAt
 		plan.ClaimedAt = &stamp
 	}
-	return HostedTaskRehearsalResult{Plan: plan, ClaimAcquired: acquired, Run: run}, nil
+	return HostedTaskRehearsalResult{
+		Plan: plan, ClaimAcquired: acquired, Run: run,
+		ReadyToClaim: plan.Status == tasktoolrehearsal.Approved && record.ApprovalKeyID == in.OwnerKeyID,
+	}, nil
 }

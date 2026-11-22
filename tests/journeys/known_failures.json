@@ -35,11 +35,6 @@
     "since": "2026-10-28"
   },
   {
-    "step": "TestObjectStorage/object_storage_enabled",
-    "bug": "object storage is still preview (GA row 108): gregale feature list reports object-storage disabled until s3_enabled is on and the capability is released to the e2e account, and the journey's other steps report blocked; remove once the owner turns it on",
-    "since": "2026-10-29"
-  },
-  {
     "step": "TestQueuePullLeases/queues_enabled",
     "bug": "queues and pull leases are still preview (GA row 99): gregale feature list reports them disabled until they are released to the e2e account, and the journey's other steps report blocked; remove once the owner releases them",
     "since": "2026-11-05"
@@ -78,5 +73,10 @@
     "step": "TestDebugger/regression_detected",
     "bug": "a platform cold-boot health check reaching the old release after the rollout makes the regression detector compare the two releases side by side, where the old one has no baseline for GET /, so a 24x slowdown is not reported (ADR-127 amendment 2026-11-14); known until that fix is released. Passes when no such request lands",
     "since": "2026-11-14"
+  },
+  {
+    "step": "TestFlagsAndExperiments/results_count_exposures_and_conversions",
+    "bug": "released apid starts an experiment's telemetry cursor at the start instant, but gateways stamp minute-collapsed request telemetry at the start of its minute, so exposures in the start minute (all of a short run) are never counted; fixed in PR #7736 (FlagExperimentStartCursor), drop once released",
+    "since": "2026-11-21"
   }
 ]

@@ -103,6 +103,9 @@ func (r *flagExperimentReconciler) runPass(ctx context.Context, now time.Time) {
 		if err := r.guard(xCtx, x, now); err != nil {
 			r.warn(ctx, "flag experiments: guardrail check failed", err, "experiment", x.ID)
 		}
+		if err := r.banditStep(xCtx, x, now); err != nil {
+			r.warn(ctx, "flag experiments: bandit step failed", err, "experiment", x.ID)
+		}
 		cancel()
 	}
 }
@@ -135,6 +138,11 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 	if earliest := now.AddDate(0, 0, -api.Plan(x.Plan).DebugTelemetryRetentionDays()); from.Before(earliest) {
 		from = earliest
 	}
+	if x.SubjectUnits() {
+		// Subject units come from SDK exposures, not request telemetry
+		// (ADR 20261119173702 §1); the cursor still bounds conversions.
+		from = until
+	}
 	for i := 0; i < flagExperimentWindowsPerPass && from.Before(until); i++ {
 		end := from.Add(flagExperimentWindow)
 		if end.After(until) {
@@ -152,7 +160,7 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 	if from.Before(x.TelemetryCursor) {
 		from = x.TelemetryCursor
 	}
-	if x.MetricKind == flags.ExperimentMetricMean {
+	if x.MetricKind == flags.ExperimentMetricMean || customMetric(x.MetricKind) {
 		if err := r.foldValues(ctx, &x, now, from); err != nil {
 			return err
 		}
@@ -167,7 +175,15 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 	if err != nil {
 		return err
 	}
+	if x.MetricKind == flags.ExperimentMetricPercentile {
+		// Bootstrap p-values are fixed-horizon: no running minimum.
+		return r.store.SaveFlagExperimentProgress(ctx, x.ID, from, x.MinPValues, x.MinCupedPValues)
+	}
 	cuped, err := loadFlagExperimentCuped(ctx, r.store, x, r.server.productAnalyticsOn(x.AccountID, x.Plan))
+	if err != nil {
+		return err
+	}
+	extras, err := loadFlagExperimentExtras(ctx, r.store, x)
 	if err != nil {
 		return err
 	}
@@ -180,7 +196,7 @@ func (r *flagExperimentReconciler) advance(ctx context.Context, x state.FlagExpe
 			m[variant] = c.PValue
 		}
 	}
-	for _, v := range flagExperimentResults(x, arms, cuped).Variants {
+	for _, v := range flagExperimentResultsFor(x, arms, cuped, extras).Variants {
 		if v.Unadjusted != nil {
 			// CUPED applied: Comparison is adjusted.
 			keepMin(minP, v.Variant, v.Unadjusted)

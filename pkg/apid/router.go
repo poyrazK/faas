@@ -47,6 +47,9 @@ import (
 // (issue #85 follow-up).
 const (
 	ApidRootV1          = "/v1"
+	ApidRootRunsV2      = "/v2/executions"
+	ApidRootWorkflowsV2 = "/v2/execution-workflows"
+	ApidRootPipelinesV2 = "/v2/execution-pipelines"
 	ApidRootDashboard   = "/dashboard"
 	ApidRootOAuthPrefix = "/oauth/"
 	ApidRootLogin       = "/login"
@@ -60,6 +63,11 @@ const (
 	ApidRootReadyz      = "/readyz"
 	ApidRootCliAuth     = "/cli-auth"
 	ApidRootDocs        = "/docs"
+	// Legal pages (pkg/legal). Sign-up links them, so they must answer on
+	// the platform hosts, not fall through to app routing.
+	ApidRootTerms         = "/terms"
+	ApidRootPrivacy       = "/privacy"
+	ApidRootAcceptableUse = "/acceptable-use"
 )
 
 // IsApidPath returns true when the inbound request path matches one
@@ -85,6 +93,9 @@ func IsApidPath(p string) bool {
 	// Anchored roots: each matched as exact + "/" subtree.
 	for _, root := range []string{
 		ApidRootV1,
+		ApidRootRunsV2,
+		ApidRootWorkflowsV2,
+		ApidRootPipelinesV2,
 		ApidRootDashboard,
 		ApidRootLogin,
 		ApidRootSignup,
@@ -95,6 +106,9 @@ func IsApidPath(p string) bool {
 		ApidRootStatus,
 		ApidRootCliAuth,
 		ApidRootDocs,
+		ApidRootTerms,
+		ApidRootPrivacy,
+		ApidRootAcceptableUse,
 	} {
 		if hasApidPrefix(p, root) {
 			return true

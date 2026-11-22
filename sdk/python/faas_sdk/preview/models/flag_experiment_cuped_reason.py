@@ -1,10 +1,13 @@
 from typing import Literal
 
-FlagExperimentCupedReason = Literal["no_pre_period_data", "no_pre_period_variance", "off", "pre_period_pending"]
+FlagExperimentCupedReason = Literal[
+    "no_pre_period_data", "no_pre_period_variance", "not_supported", "off", "pre_period_pending"
+]
 
 FLAG_EXPERIMENT_CUPED_REASON_VALUES: set[FlagExperimentCupedReason] = {
     "no_pre_period_data",
     "no_pre_period_variance",
+    "not_supported",
     "off",
     "pre_period_pending",
 }

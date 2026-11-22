@@ -23,7 +23,9 @@ type PromQL interface {
 
 // queries returns the good and total PromQL expressions for an SLO over a
 // range, evaluated at `at` (zero = now). Availability follows ADR-082:
-// 5xx responses are bad, 4xx and 3xx are outside the SLI. Latency counts
+// 5xx responses are bad, 4xx and 3xx are outside the SLI, except a 429 the
+// gateway answered for lack of app capacity, which is bad
+// (ADR-20261121190000). Latency counts
 // requests whose duration fell within the threshold bucket.
 //
 // Availability reads the request-duration series by status class, the
@@ -37,16 +39,22 @@ func queries(def state.SLO, rng string, at time.Time) (good, total string, err e
 	if strings.ContainsAny(def.AppID, "\"\n\\") {
 		return "", "", fmt.Errorf("slo: invalid app id")
 	}
-	sel := func(metric, matchers string) string {
-		expr := fmt.Sprintf(`sum(increase(%s{app=%q%s}[%s]`, metric, def.AppID, matchers, rng)
+	inc := func(metric, matchers string) string {
+		expr := fmt.Sprintf(`increase(%s{app=%q%s}[%s]`, metric, def.AppID, matchers, rng)
 		if !at.IsZero() {
 			expr += fmt.Sprintf(" @ %d", at.Unix())
 		}
-		return expr + ")) or vector(0)"
+		return expr + ")"
+	}
+	sel := func(metric, matchers string) string {
+		return "sum(" + inc(metric, matchers) + ") or vector(0)"
 	}
 	switch def.SLI {
 	case state.SLIAvailability:
-		return sel("gateway_request_duration_seconds_count", `,class="2xx"`), sel("gateway_request_duration_seconds_count", `,class=~"2xx|5xx"`), nil
+		// A 429 the gateway answered because the app had no capacity is a
+		// failed request too (Observe audit 2026-11-21, finding 8).
+		total = "sum(" + inc("gateway_request_duration_seconds_count", `,class=~"2xx|5xx"`) + " or " + inc("gateway_capacity_refusals_total", "") + ") or vector(0)"
+		return sel("gateway_request_duration_seconds_count", `,class="2xx"`), total, nil
 	case state.SLILatency:
 		le := strconv.FormatFloat(float64(def.LatencyThresholdMS)/1000, 'f', -1, 64)
 		return sel("gateway_request_duration_seconds_bucket", fmt.Sprintf(`,le=%q`, le)), sel("gateway_request_duration_seconds_count", ""), nil

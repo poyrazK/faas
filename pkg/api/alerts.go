@@ -111,6 +111,7 @@ var AllowedAlertRuleMetrics = []string{
 	AlertMetricRouteInsightsDetected,
 	AlertMetricRouteMonitorIncidents, AlertMetricRouteHealthHolds,
 	AlertMetricAIBudgetAlerts,
+	AlertMetricOOMKills,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -714,6 +715,9 @@ func IsRouteAlertMetric(metric string) bool {
 // window. Mirrors the alert_rules_route_alerts_chk constraint. AI budget
 // alerts share the same scope and windows and are checked here too.
 func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
+	if metric == AlertMetricOOMKills && appID == "" {
+		return ErrAlertRuleInvalid(metric + " alerts require an app")
+	}
 	if metric == AlertMetricAIBudgetAlerts {
 		return ValidateAIBudgetAlert(metric, windowSpec, appID)
 	}
@@ -735,6 +739,12 @@ func ValidateRouteAlert(metric, windowSpec, appID string) *Problem {
 // carry what the outbound.ai_budget.threshold webhook carried alone before
 // (ADR 20261027132936 amendment 2).
 const AlertMetricAIBudgetAlerts = "ai_budget_alerts"
+
+// AlertMetricOOMKills counts the app's instances killed for running out of
+// memory within the window: the kills `gregale debug status` lists. A crash
+// loop on a too-small plan was visible only there, with no alert a customer
+// could set (Observe audit 2026-11-21, finding 18). App-scoped.
+const AlertMetricOOMKills = "oom_kills"
 
 // AIBudgetAlertNotes caps how many crossings one notification lists.
 const AIBudgetAlertNotes = 5

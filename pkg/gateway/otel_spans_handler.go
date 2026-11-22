@@ -318,6 +318,7 @@ func extractTraceBatches(req *collectortracepb.ExportTraceServiceRequest) ([]tra
 	var batches []traceSpanBatch
 	index := make(map[string]int)
 	for _, rs := range req.GetResourceSpans() {
+		resource := spanResourceAttributes(rs.GetResource().GetAttributes())
 		for _, ss := range rs.GetScopeSpans() {
 			for _, span := range ss.GetSpans() {
 				if !validOTLPID(span.GetTraceId(), 16) || !validOTLPID(span.GetSpanId(), 8) {
@@ -333,7 +334,7 @@ func extractTraceBatches(req *collectortracepb.ExportTraceServiceRequest) ([]tra
 					index[traceID] = position
 					batches = append(batches, traceSpanBatch{traceID: traceID})
 				}
-				batches[position].spans = append(batches[position].spans, summarizeSpan(span))
+				batches[position].spans = append(batches[position].spans, summarizeResourceSpan(span, resource))
 			}
 		}
 	}
@@ -358,6 +359,12 @@ func validOTLPID(id []byte, length int) bool {
 // PR-C's prose synthesis can quote SQL without parsing the
 // attributes map.
 func summarizeSpan(sp *tracepb.Span) summarizedSpan {
+	return summarizeResourceSpan(sp, nil)
+}
+
+// summarizeResourceSpan is summarizeSpan for a span whose resource carried
+// the allowlisted attributes in resource (see spanResourceAttributes).
+func summarizeResourceSpan(sp *tracepb.Span, resource map[string]string) summarizedSpan {
 	start := sp.GetStartTimeUnixNano()
 	end := sp.GetEndTimeUnixNano()
 	var dur uint64
@@ -386,6 +393,7 @@ func summarizeSpan(sp *tracepb.Span) summarizedSpan {
 		Attributes:        attrs,
 		DBStatement:       extractDBStatement(attrs),
 		ErrorType:         errorType,
+		resource:          resource,
 	})
 }
 

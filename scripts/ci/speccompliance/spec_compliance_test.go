@@ -82,8 +82,9 @@ const (
 	applicationStandardMutationsFile = "application_standard_mutations.go"
 	standardAssignmentsFile          = "application_standard_assignments.go"
 	standardRolloutMutationsFile     = "application_standard_operation_mutations.go"
-	executionCapabilitiesFile        = "execution_capabilities.go"     // ADR-171 — Runs preflight capability DTOs
-	executionArtifactGrantsFile      = "execution_artifact_grants.go"  // ADR-171 — one-time cross-agent artifact capabilities
+	executionCapabilitiesFile        = "execution_capabilities.go"    // ADR-171 — Runs preflight capability DTOs
+	executionArtifactGrantsFile      = "execution_artifact_grants.go" // ADR-171 — one-time cross-agent artifact capabilities
+	executionPipelineFile            = "execution_pipelines.go"
 	executionWorkflowManagedFile     = "execution_workflow_managed.go" // ADR-171 — server-managed sequential workflow DTOs
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
@@ -124,6 +125,7 @@ var previewFields = map[string]map[string]bool{
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
+	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
 	"POST /v1/sales/templates":                                true,
 	"GET /v1/sales/templates/{template}":                      true,
@@ -528,6 +530,10 @@ var routeExclude = map[string]bool{
 	"POST /v1/agent-runs/{id}/approvals/{approval_id}":          true,
 	"GET /v1/agent-runs/{id}/outputs":                           true,
 	"GET /v1/agent-runs/{id}/outputs/files/{name...}":           true,
+	"GET /v1/agent-tools/pipelines/{id}/events":                 true, // internal app/workload Agent progress
+	"GET /v1/agent-tools/pipelines/{id}":                        true, // internal app/workload Agent continuation receipt
+	"GET /v1/agent-tools/runs/{id}":                             true,
+	"GET /v1/agent-tools/runs/{id}/artifacts/{artifact...}":     true,
 
 	"POST /v1/apps/{slug}/operation-schedules/{id}/cancel":                   true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
 	"POST /v1/platform-tenant-self/customer-operation-schedules":             true, // ADR-20261018161833 Operation schedules; gated by FAAS_OPERATION_SCHEDULES_ACCOUNTS until prod-tested
@@ -552,6 +558,9 @@ var routeExclude = map[string]bool{
 	"POST /v1/admin/obs/attention/{id}/dismiss":      true,
 	"POST /v1/admin/obs/attention/{id}/contact":      true,
 	"GET /v1/admin/obs/tenants/{id}/health":          true,
+	"GET /v1/admin/obs/instances":                    true, // operator fleet instance list (ADR-20261121161842)
+	"GET /v1/admin/obs/instances/{id}":               true,
+	"GET /v1/admin/obs/wake-latency":                 true, // operator wake-latency report (ADR-20261121200409)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -847,6 +856,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"RunHistoryFilter": true, // Go-only URL query options; selectors are declared on the route.
 	// ADR-20261117215858: a query result column, declared inline in the
 	// ManagedPostgresQueryResponse schema.
 	"ManagedPostgresQueryColumn":     true,
@@ -1100,7 +1110,17 @@ var dtoExclude = map[string]bool{
 	"ServiceCapacityProtection": true,
 	"ObsDeploymentRow":          true,
 	"ObsInstanceRow":            true,
-	"ObsInvocationRow":          true,
+	"ObsInstanceListResponse":   true, // ADR-20261121161842 operator fleet instance list
+	// ADR-20261121200409 operator wake-latency report.
+	"ObsWakeLatencyReport": true,
+	"ObsWakeTotals":        true,
+	"ObsWakeMethodStat":    true,
+	"ObsWakeNodeStat":      true,
+	"ObsWakePhaseStat":     true,
+	"ObsWakeReasonCount":   true,
+	"ObsWakeSample":        true,
+	"ObsWakeAppStat":       true,
+	"ObsInvocationRow":     true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,
@@ -1165,6 +1185,8 @@ var codeExclude = map[string]bool{
 // to a standalone Go struct: aliases, inline anonymous structs, or pure-
 // documentation shapes (such as error envelopes).
 var schemaSpecOnly = map[string]bool{
+	"RunBudgetKind":  true, // Closed route selector; Go clients use a string.
+	"RunBindingKind": true, // Closed route selector; Go clients use a string.
 	// Browser management envelopes are anonymous structs in
 	// handlers_github_accounts.go and middleware's named-CSRF decoder.
 	"GitHubAccountConnections":      true,
@@ -1202,6 +1224,7 @@ var schemaSpecOnly = map[string]bool{
 	"FlagRule": true, "FlagCondition": true, "FlagLifecycle": true, "FlagLifecycleReport": true, "FlagVariant": true, "ProgressiveRollout": true, "FeatureFlag": true, "FlagsConfig": true,
 	"FlagsBundle": true, "FeatureFlagVersion": true, "FlagEvent": true, "FlagEventsRequest": true, "FlagEventsResponse": true, "FlagExperimentCreateRequest": true, "FlagExperiment": true, "FlagExperimentList": true, "FlagExperimentArm": true, "FlagExperimentVariantResult": true, "FlagExperimentResults": true, "FlagExperimentGuardrail": true, "FlagExperimentGuardrailRequest": true, "FlagExperimentGuardrailSetting": true, "FlagExperimentGuardrailSettings": true, "FlagExperimentGuardrailVariant": true, "FlagExperimentGuardrailsRequest": true, "FlagExperimentLatency": true, "FlagExperimentRecommendation": true, "FlagExperimentShipRequest": true, "FlagExperimentShipResponse": true,
 	"InsightEventPoint": true, "InsightEventSeries": true, "InsightStepRequest": true, "InsightFunnelRequest": true, "InsightFunnelStep": true, "InsightFunnelBreakdown": true, "InsightFunnel": true, "InsightRetentionRequest": true, "InsightRetentionRow": true, "InsightRetention": true, "InsightRequestVariant": true, "InsightRequests": true, "InsightCohortRequest": true, "InsightCohort": true, "InsightCohortList": true, "FlagExperimentFunnel": true, "FlagExperimentRetention": true, "FlagExperimentCuped": true, "FlagExperimentComparison": true,
+	"FlagExperimentBandit": true, "FlagExperimentBanditArm": true, "FlagExperimentHoldout": true, "FlagExperimentHoldoutReport": true, "FlagExperimentLayer": true, "FlagExperimentLayerList": true, "FlagExperimentLayerRequest": true, "FlagExperimentLayerSlice": true, "FlagExperimentSegment": true, "FlagExposure": true, "FlagHoldout": true, "FlagLayer": true, "FlagRolloutMetric": true, "FlagRuleExperiment": true,
 	"FlagDecision": true, "FlagEvidence": true,
 	"UpdateFeatureFlagsRequest": true, "RollbackFeatureFlagsRequest": true,
 	"InspectFeatureFlagRequest": true, "FlagRolloutPromotionRequest": true, "FlagRolloutPromotion": true,
@@ -2066,7 +2089,18 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", openapiContractFile),
 		filepath.Join(root, "pkg", "api", executionsFile),
 		filepath.Join(root, "pkg", "api", executionWorkflowManagedFile),
+		filepath.Join(root, "pkg", "api", executionPipelineFile),
+		filepath.Join(root, "pkg", "api", "execution_pipeline_completion.go"),
+		filepath.Join(root, "pkg", "api", "execution_pipeline_progress.go"),
 		filepath.Join(root, "pkg", "api", executionCapabilitiesFile),
+		filepath.Join(root, "pkg", "api", "execution_files.go"),
+		filepath.Join(root, "pkg", "api", "agent_execution_files.go"),
+		filepath.Join(root, "pkg", "api", "execution_contracts.go"),
+		filepath.Join(root, "pkg", "api", "execution_tasks.go"),
+		filepath.Join(root, "pkg", "api", "run_controls.go"),
+		filepath.Join(root, "pkg", "api", "run_artifact_deliveries.go"),
+		filepath.Join(root, "pkg", "api", "execution_environments.go"),
+		filepath.Join(root, "pkg", "api", "execution_environment_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", executionArtifactGrantsFile),
 		filepath.Join(root, "pkg", "api", appTasksFile),
 		filepath.Join(root, "pkg", "api", imageRunsFile),

@@ -714,6 +714,12 @@ HTTP 409 Conflict · Debugging unavailable
 
 HTTP 429 Too Many Requests · Too many debugger sessions
 
+### `dev_postgres_database_url_secret`
+
+HTTP 409 Conflict · A database variable is already set in this developer environment
+
+See [`gregale dev`](gregale-dev.md).
+
 ### `dev_session_tearing_down`
 
 HTTP 409 Conflict · Developer environment is being removed
@@ -928,6 +934,12 @@ HTTP 409 Conflict · Environment work ownership conflict
 
 HTTP 409 Conflict · Stage policy collection unavailable
 
+### `event_envelope_too_large`
+
+HTTP 413 Request Entity Too Large · Event envelope too large
+
+See [Build stored workflows in Gregale](stored-workflow-authoring.md).
+
 ### `event_publish_batch_too_large`
 
 HTTP 413 Request Entity Too Large · Batch too large
@@ -939,6 +951,12 @@ See [Errors](errors.md).
 HTTP 503 Service Unavailable · Event not attempted
 
 See [Errors](errors.md).
+
+### `event_recovery_changed`
+
+HTTP 409 Conflict · Recovery plan changed
+
+See [Build stored workflows in Gregale](stored-workflow-authoring.md).
 
 ### `event_storage_capacity_exhausted`
 
@@ -1176,7 +1194,7 @@ HTTP 409 Conflict · Idempotency key conflict
 
 ### `idempotency_key_reused`
 
-HTTP 422 Unprocessable Entity · Idempotency-Key reused
+HTTP 422 Unprocessable Entity · Idempotency key reused; Idempotency-Key reused
 
 See [Errors](errors.md).
 
@@ -1942,11 +1960,209 @@ HTTP 409 Conflict · Organization slug in use
 
 See [Account and organization management](account.md).
 
+### `outbound_account_suspended`
+
+The account is suspended
+
+### `outbound_admission_unavailable`
+
+Outbound admission is temporarily unavailable
+
+### `outbound_app_not_attached`
+
+The app is not attached to this outbound integration
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_binding_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_budget_exhausted`
+
+Outbound integration budget is exhausted
+
+### `outbound_budget_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_circuit_breaker_open`
+
+Outbound provider is temporarily unavailable
+
+### `outbound_circuit_breaker_unavailable`
+
+Outbound circuit breaker is unavailable
+
+### `outbound_credential_key_limit`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_credential_seal_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_credential_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_execution_authorization_unavailable`
+
+Runs outbound authorization is unavailable
+
+### `outbound_execution_not_authorized`
+
+This Run is not authorized for the outbound integration; Runs access is unavailable for this outbound integration
+
+### `outbound_identity_unavailable`
+
+Outbound workload identity is unavailable; Runs workload identity is unavailable
+
+### `outbound_integration_disabled`
+
+Outbound integration is disabled
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_integration_limit`
+
+The response's `title` and `detail` describe the failure.
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_integration_not_found`
+
+Outbound integration not found
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_integration_unavailable`
+
+Outbound integration is unavailable
+
+### `outbound_internal_not_authorized`
+
+The gateway's own call cannot use this outbound integration
+
+### `outbound_method_not_allowed`
+
+AI prompts take POST requests; CONNECT is not supported; Feedback takes POST
+
+### `outbound_policy_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
 ### `outbound_probe_unavailable`
 
 The response's `title` and `detail` describe the failure.
 
 See [Errors](errors.md).
+
+### `outbound_provider_cooldown`
+
+Outbound provider requested a cooldown
+
+### `outbound_provider_cooldown_unavailable`
+
+Outbound provider cooldown state is unavailable
+
+### `outbound_provider_credential_unavailable`
+
+Outbound provider credential is unavailable
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_qualification_not_authorized`
+
+The qualification probe cannot use this outbound integration
+
+### `outbound_relay_not_supported`
+
+This outbound integration is not available through the app relay
+
+### `outbound_replay_not_authorized`
+
+The replay cannot use this outbound integration
+
+### `outbound_request_invalid`
+
+Outbound request could not be constructed
+
+### `outbound_request_too_large`
+
+Outbound request body exceeds the gateway limit; Workflow outbound body exceeds the limit
+
+### `outbound_request_unreadable`
+
+Outbound request body could not be read
+
+### `outbound_response_headers_too_large`
+
+Outbound provider response headers exceed the gateway limit
+
+### `outbound_response_sensitive`
+
+Workflow outbound response contains sensitive authorization data
+
+### `outbound_response_too_large`
+
+Outbound provider response exceeds the gateway limit; Workflow outbound response is incomplete or exceeds the limit
+
+### `outbound_retry_budget_exhausted`
+
+Outbound retry budget is exhausted
+
+### `outbound_route_not_allowed`
+
+Outbound method or path is not allowed
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_route_not_found`
+
+AI route not found
+
+### `outbound_route_requires_relay`
+
+AI prompts are available only through GREGALE_OUTBOUND_URL or an access token; AI routes are available only through GREGALE_OUTBOUND_URL or an access token
+
+### `outbound_route_unavailable`
+
+AI route is temporarily unavailable
+
+### `outbound_runs_binding_ineligible`
+
+The response's `title` and `detail` describe the failure.
+
+See [Outbound integrations](outbound-integrations.md).
+
+### `outbound_stage_not_allowed`
+
+Outbound integrations serve production deployments; a stage calls the provider with its own credentials
+
+### `outbound_target_invalid`
+
+Outbound integration target is invalid
+
+### `outbound_unauthorized`
+
+Outbound identity is ambiguous; Outbound token is invalid; Outbound workload identity is invalid
+
+### `outbound_upstream_unavailable`
+
+Outbound provider could not be reached
+
+### `outbound_usage_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `outbound_workflow_not_authorized`
+
+Workflow access is unavailable for this integration
+
+### `outbound_workflow_unavailable`
+
+Workflow outbound authorization is unavailable
 
 ### `overage_cap_above_max`
 
@@ -3028,6 +3244,22 @@ See [Progressive rollouts](rollouts.md#why-a-rollout-advanced-waits-or-stopped).
 
 HTTP 409 Conflict · Route health gate blocked
 
+### `run_artifact_destination_limit`
+
+HTTP 413 Request Entity Too Large · Artifact exceeds destination limit
+
+### `run_artifact_integrity`
+
+HTTP 422 Unprocessable Entity · Artifact could not be verified
+
+### `run_attribution_denied`
+
+HTTP 403 Forbidden · Run attribution refused
+
+### `run_control_revision_conflict`
+
+HTTP 409 Conflict · Run control changed
+
 ## S
 
 ### `safe_release_unavailable`
@@ -3271,6 +3503,32 @@ See [Static egress IP](static-egress-ip.md).
 ### `step_up_required`
 
 HTTP 403 Forbidden · Step-up required
+
+### `stored_workflow_events_unavailable`
+
+HTTP 409 Conflict · Custom events are not enabled
+
+See [Build stored workflows in Gregale](stored-workflow-authoring.md#start-on-an-event).
+
+### `stored_workflow_failure_policy_conflict`
+
+HTTP 409 Conflict · Stored workflow failure policy changed
+
+### `stored_workflow_invalid`
+
+HTTP 422 Unprocessable Entity · Invalid stored workflow
+
+### `stored_workflow_ownership_conflict`
+
+HTTP 409 Conflict · Confirm YAML ownership change
+
+### `stored_workflow_publish_check_required`
+
+HTTP 409 Conflict · Publishing checks required
+
+### `stored_workflow_version_conflict`
+
+HTTP 409 Conflict · Stored workflow changed; Suite target changed; Verification target changed
 
 ### `streaming_not_available`
 

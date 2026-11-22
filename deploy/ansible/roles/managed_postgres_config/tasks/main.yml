@@ -1,0 +1,209 @@
+---
+# managed_postgres_config — render apid's managed PostgreSQL provider registry
+# (FAAS_MANAGED_POSTGRES_CONFIG) from faas_managed_postgres_config. apid
+# refuses to start on a config it cannot load, so everything apid checks at
+# startup is checked here first, and a config that would strand existing
+# databases (a changed backend fingerprint) is refused before apid sees it.
+# Empty config: nothing is touched (see defaults).
+- name: managed_postgres_config — require a control-plane host
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_managed_postgres_config is mapping
+      - faas_managed_postgres_config_path is match('^/etc/faas/[A-Za-z0-9._-]+\.json$')
+    fail_msg: >-
+      managed_postgres_config runs on a control-plane (or single-box) host;
+      faas_managed_postgres_config must be a mapping (the registry's JSON
+      shape, deploy/managed-postgres.example.json) and
+      faas_managed_postgres_config_path a .json file under /etc/faas.
+  when: faas_managed_postgres_config | length > 0
+
+# EnvironmentFile= overrides Environment=, so a hand-set line in sealed.env
+# would silently win over the drop-in.
+- name: managed_postgres_config — look for a hand-set config path in sealed.env
+  ansible.builtin.command:
+    argv: [grep, -E, "^FAAS_MANAGED_POSTGRES_CONFIG=", /etc/faas/sealed.env]
+  register: faas_mpg_sealed_path
+  changed_when: false
+  failed_when: faas_mpg_sealed_path.rc > 1
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — refuse a different path left in sealed.env
+  ansible.builtin.assert:
+    that:
+      - faas_mpg_sealed_path.rc == 1 or faas_mpg_sealed_path.stdout_lines | map('regex_replace', '^FAAS_MANAGED_POSTGRES_CONFIG=[\"'']?([^\"'']*)[\"'']?$', '\\1') | list == [faas_managed_postgres_config_path]
+    fail_msg: >-
+      /etc/faas/sealed.env sets FAAS_MANAGED_POSTGRES_CONFIG
+      ({{ faas_mpg_sealed_path.stdout }}), which overrides the drop-in this
+      role installs. Remove that line (the role now owns the setting) and
+      converge again.
+  when: faas_managed_postgres_config | length > 0
+
+# Each backend's secret_env names a sealed.env variable apid reads at
+# startup. A Neon backend behind neond holds no key (ADR-20261112160000):
+# apid refuses to start with both, so its api-key variable must be absent.
+- name: managed_postgres_config — list the secret variables the backends need
+  ansible.builtin.set_fact:
+    faas_mpg_secret_checks: >-
+      {%- set out = [] -%}
+      {%- for backend in faas_managed_postgres_config.backends | default([]) -%}
+      {%- for name, env in (backend.secret_env | default({})).items() -%}
+      {%- set brokered = backend.driver | default('') == 'neon' and name == 'api-key' and (faas_neond_broker | default(false) | bool) -%}
+      {%- set _ = out.append({'backend': backend.id | default('?'), 'env': env, 'present': not brokered}) -%}
+      {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+  when: faas_managed_postgres_config | length > 0
+
+# GCP prod set the config path and the key file in a hand-made
+# zzzz-managed-postgres-canary.conf; a later-sorting drop-in would silently
+# win over what this role renders.
+- name: managed_postgres_config — look for another apid drop-in setting the config or key file
+  ansible.builtin.shell: |
+    set -o pipefail
+    for f in /etc/systemd/system/faas-apid.service.d/*.conf; do
+      [ -e "$f" ] && [ "$(basename "$f")" != zz-faas-managed-postgres.conf ] || continue
+      { grep -HE 'FAAS_MANAGED_POSTGRES_CONFIG=|managed-postgres/provider\.env' "$f" || true; } | sed -E 's/=.*/=…/'
+    done; true
+  args:
+    executable: /bin/bash
+  register: faas_mpg_foreign_settings
+  changed_when: false
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — refuse a drop-in that would override the role's
+  ansible.builtin.assert:
+    that:
+      - faas_mpg_foreign_settings.stdout | length == 0
+    fail_msg: >-
+      Another apid drop-in sets the managed PostgreSQL config or key file and
+      would override zz-faas-managed-postgres.conf:
+      {{ faas_mpg_foreign_settings.stdout_lines | join('; ') }}. Delete it and
+      converge again.
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — check the extra env files
+  ansible.builtin.assert:
+    that:
+      - faas_managed_postgres_env_files is sequence and faas_managed_postgres_env_files is not string
+      - faas_managed_postgres_env_files | reject('match', '^/etc/faas/secrets/[A-Za-z0-9._/-]+$') | list | length == 0
+    fail_msg: faas_managed_postgres_env_files must list files under /etc/faas/secrets.
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — stat the extra env files
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop: "{{ faas_managed_postgres_env_files }}"
+  register: faas_mpg_env_file_stat
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — require each extra env file (restore it from the cp-state bundle)
+  ansible.builtin.assert:
+    that:
+      - item.stat.exists and item.stat.isreg
+      - not (item.stat.roth | bool)
+    fail_msg: >-
+      {{ item.item }} is missing or world-readable. It holds a backend secret;
+      restore it from the control-plane state bundle
+      (docs/runbooks/ControlPlaneStateBackup.md) with mode 0600 or 0640.
+  loop: "{{ faas_mpg_env_file_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — check apid's env holds each backend secret (and no key neond brokers)
+  ansible.builtin.command:
+    argv: "{{ ['grep', '-c', '-E', '^(export )?' + item.env + '=.', '/etc/faas/sealed.env'] + faas_managed_postgres_env_files }}"
+  loop: "{{ faas_mpg_secret_checks }}"
+  loop_control:
+    label: "{{ item.backend }} {{ item.env }} {{ 'set' if item.present else 'absent (neond holds it)' }}"
+  register: faas_mpg_secret_present
+  changed_when: false
+  failed_when: (item.present and faas_mpg_secret_present.rc != 0) or (not item.present and faas_mpg_secret_present.rc != 1)
+  when: faas_managed_postgres_config | length > 0
+
+# The candidate holds no secrets (secret_env names variables), so a
+# world-readable scratch copy lets the check run as postgres, which reads the
+# catalog over the local socket.
+- name: managed_postgres_config — stage the candidate config
+  ansible.builtin.copy:
+    content: "{{ faas_managed_postgres_config | to_nice_json }}\n"
+    dest: /run/faas-managed-postgres-config.candidate.json
+    owner: root
+    group: root
+    mode: "0644"
+  changed_when: false
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — check the config and the catalog's placements
+  ansible.builtin.script:
+    cmd: >-
+      managed-postgres-config-check.py /run/faas-managed-postgres-config.candidate.json
+      {{ ('--catalog-dsn ' + (faas_managed_postgres_config_catalog_dsn | quote)) if (faas_managed_postgres_config_verify_catalog | bool) else '' }}
+    executable: python3
+  become: true
+  become_user: "{{ 'postgres' if (faas_managed_postgres_config_verify_catalog | bool) else 'root' }}"
+  changed_when: false
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — remove the candidate
+  ansible.builtin.file:
+    path: /run/faas-managed-postgres-config.candidate.json
+    state: absent
+  changed_when: false
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — install the config
+  ansible.builtin.copy:
+    content: "{{ faas_managed_postgres_config | to_nice_json }}\n"
+    dest: "{{ faas_managed_postgres_config_path }}"
+    owner: root
+    group: faas
+    mode: "0640"
+  when: faas_managed_postgres_config | length > 0
+  notify: restart faas-apid for managed postgres config
+
+- name: managed_postgres_config — create apid's drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_managed_postgres_config | length > 0
+
+- name: managed_postgres_config — point apid at the config
+  ansible.builtin.template:
+    src: zz-faas-managed-postgres.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-managed-postgres.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_managed_postgres_config | length > 0
+  notify: restart faas-apid for managed postgres config
+
+- name: managed_postgres_config — apply before later roles
+  ansible.builtin.meta: flush_handlers
+
+- name: managed_postgres_config — wait for apid after a restart
+  ansible.builtin.command:
+    argv: [systemctl, is-active, faas-apid.service]
+  register: faas_mpg_apid_active
+  changed_when: false
+  failed_when: false
+  until: faas_mpg_apid_active.stdout == 'active'
+  retries: 15
+  delay: 2
+  when: faas_managed_postgres_config | length > 0 and faas_mpg_apid_restarted | default(false) | bool
+
+- name: managed_postgres_config — report apid failing on the new config
+  ansible.builtin.fail:
+    msg: >-
+      apid is {{ faas_mpg_apid_active.stdout }} after loading
+      {{ faas_managed_postgres_config_path }}. Read `journalctl -u faas-apid`
+      for "apid managed postgres configuration"; restore the previous
+      faas_managed_postgres_config and converge again.
+  when:
+    - faas_managed_postgres_config | length > 0
+    - faas_mpg_apid_restarted | default(false) | bool
+    - faas_mpg_apid_active.stdout != 'active'

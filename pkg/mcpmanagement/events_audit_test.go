@@ -73,6 +73,9 @@ func (f *eventsFixture) serve(w http.ResponseWriter, r *http.Request) {
 		encode(api.FinancialBudgetResponse{ID: "b-notify", Revision: 3, Spec: financial.BudgetSpec{Name: "egress", Currency: "usd", Scope: financial.BudgetScope{Kind: "account"}, Meters: []string{"egress"}, Basis: "gross_usage", LimitMillicents: 100, NotifyMillicents: []int64{50}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: false}})
 	case path == "/v1/billing/budgets/b-strict":
 		encode(api.FinancialBudgetResponse{ID: "b-strict", Revision: 2, Spec: financial.BudgetSpec{Scope: financial.BudgetScope{Kind: "account"}, Mode: "strict", Action: "reject_traffic"}})
+	case path == "/v1/billing/forecast":
+		allocations := make([]financial.Allocation, 20000)
+		encode(api.FinancialForecastResponse{Currency: "usd", Meters: []api.FinancialMeterCosts{{Meter: "compute", Accrued: financial.ContractCosts{Meter: "compute", NetMillicents: 1200, Contracts: []financial.MeterCost{{NetMillicents: 1200, Allocations: allocations}}}}}})
 	case path == "/v1/billing/budgets/preview":
 		encode(api.FinancialBudgetPreviewResponse{})
 	case path == "/v1/billing/budgets" && r.Method == http.MethodPost:
@@ -191,5 +194,24 @@ func TestBudgetsNotifyOnly(t *testing.T) {
 	limited, _ := newEventsFixture(t, []string{api.ScopeUsageRead}, map[string]string{"alpha": "app-one"})
 	if _, err := limited.planBudgetChange(t.Context(), planBudgetArgs{Op: "create", Scope: "account", Name: "x", Currency: "usd", LimitMillicents: 1, Reason: "x"}); err == nil {
 		t.Fatal("account budget on a limited connection accepted")
+	}
+}
+
+// The forecast's per-usage allocations were over 300 KB on an ordinary
+// account, so gregale_get_spend_forecast always failed with
+// response_too_large. They are omitted and counted.
+func TestSpendForecastOmitsAllocations(t *testing.T) {
+	m, _ := newEventsFixture(t, []string{api.ScopeUsageRead}, nil)
+	out, err := m.getSpendForecast(t.Context(), forecastArgs{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(out)
+	if len(raw) > maxResultBytes/8 {
+		t.Fatalf("forecast is %d bytes", len(raw))
+	}
+	f := out.(spendForecast)
+	if f.AllocationsOmitted != 20000 || f.Meters[0].Accrued.NetMillicents != 1200 || f.Meters[0].Accrued.Contracts[0].Allocations != nil {
+		t.Fatalf("forecast = %+v", f)
 	}
 }

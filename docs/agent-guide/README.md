@@ -8,4 +8,5 @@ Run `gregale guide <task>` for one page.
   private-services   Private services and TCP ports
   secrets-and-env    Environment variables and secrets
   rollouts           Releases, rollouts and rollback
+  functions-and-queues Functions, queues and crons
   debug-a-failure    Debug a failed deploy or a failing app

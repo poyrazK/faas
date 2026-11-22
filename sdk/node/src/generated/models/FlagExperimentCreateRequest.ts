@@ -27,9 +27,9 @@ export type FlagExperimentCreateRequest = {
    */
   metric_event?: string;
   /**
-   * conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics.
+   * conversion (default) compares the share of exposed customers that sent the event; mean compares the mean event value per exposed customer; funnel and retention compare the share that completed the funnel or came back, and need product analytics; ratio compares the metric event's value sum over the denominator event's; percentile compares a percentile of per-customer values (fixed-horizon bootstrap).
    */
-  metric_kind?: 'conversion' | 'mean' | 'funnel' | 'retention';
+  metric_kind?: 'conversion' | 'mean' | 'funnel' | 'retention' | 'ratio' | 'percentile';
   funnel?: FlagExperimentFunnel;
   retention?: FlagExperimentRetention;
   /**
@@ -45,5 +45,29 @@ export type FlagExperimentCreateRequest = {
    * Start the experiment at once.
    */
   start?: boolean;
+  /**
+   * customer (default) or subject: end users of a rule with rollout_unit subject, counted from SDK exposures; subject experiments need product analytics, take a conversion, funnel or retention metric and have no guardrails.
+   */
+  unit?: 'customer' | 'subject';
+  /**
+   * Exclusive layer; the experiment holds traffic basis points of it while running.
+   */
+  layer?: string;
+  /**
+   * Basis points of the layer; required with layer.
+   */
+  traffic?: number;
+  /**
+   * fixed (default) or bandit: Thompson sampling re-weights the flag's variants hourly, keeping 10% per arm; needs a binary metric and the flag's only weighted rule.
+   */
+  allocation?: 'fixed' | 'bandit';
+  /**
+   * A ratio metric's denominator event.
+   */
+  denominator_event?: string;
+  /**
+   * A percentile metric's percentile.
+   */
+  percentile?: number;
 };
 

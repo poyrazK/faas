@@ -20,6 +20,8 @@ class ProjectWorkloadResponse:
     status: str
     deployment_status: str | Unset = UNSET
     rollout_state: str | Unset = UNSET
+    traffic_percent: int | Unset = UNSET
+    """The latest deployment's share of the service's traffic while it is live. Omitted when it serves none."""
     build_status: str | Unset = UNSET
     depends_on: list[str] | Unset = UNSET
     """The project services this one declares it calls (Compose depends_on), sorted. Omitted when none."""
@@ -35,6 +37,8 @@ class ProjectWorkloadResponse:
         deployment_status = self.deployment_status
 
         rollout_state = self.rollout_state
+
+        traffic_percent = self.traffic_percent
 
         build_status = self.build_status
 
@@ -55,6 +59,8 @@ class ProjectWorkloadResponse:
             field_dict["deployment_status"] = deployment_status
         if rollout_state is not UNSET:
             field_dict["rollout_state"] = rollout_state
+        if traffic_percent is not UNSET:
+            field_dict["traffic_percent"] = traffic_percent
         if build_status is not UNSET:
             field_dict["build_status"] = build_status
         if depends_on is not UNSET:
@@ -75,6 +81,8 @@ class ProjectWorkloadResponse:
 
         rollout_state = d.pop("rollout_state", UNSET)
 
+        traffic_percent = d.pop("traffic_percent", UNSET)
+
         build_status = d.pop("build_status", UNSET)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
@@ -85,6 +93,7 @@ class ProjectWorkloadResponse:
             status=status,
             deployment_status=deployment_status,
             rollout_state=rollout_state,
+            traffic_percent=traffic_percent,
             build_status=build_status,
             depends_on=depends_on,
         )

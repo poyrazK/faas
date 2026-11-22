@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { FlagCondition } from './FlagCondition.js';
+import type { FlagRuleExperiment } from './FlagRuleExperiment.js';
 import type { ProgressiveRollout } from './ProgressiveRollout.js';
 /**
  * Ordered targeting rule; customer/group and subject constraints combine with AND. Subject rules require a customer or group constraint. Subject IDs are opaque application IDs and are evaluated only after application authentication. Boolean flags require a boolean value; variant flags may omit value to use weighted assignment. Progressive rollout is limited to boolean true rules.
@@ -32,5 +33,6 @@ export type FlagRule = {
   attributes?: Array<FlagCondition>;
   progression?: ProgressiveRollout;
   value?: (boolean | string);
+  experiment?: FlagRuleExperiment;
 };
 

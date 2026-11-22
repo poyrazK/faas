@@ -1,0 +1,9 @@
+# group_vars/control_plane/release_commands.yml — release commands on the
+# control plane: apid admits deployments that declare one and this host's
+# schedd dispatches release tasks (control_plane_service role). Compute nodes
+# set the same switch in group_vars/compute_nodes/release_commands.yml.
+#
+# Production ran them from GCP hand drop-ins until the 2026-11 move to OVH
+# lost them; turned back on 2026-11-22 (owner), because managed PostgreSQL
+# migration credentials reach release tasks only.
+faas_release_commands: true

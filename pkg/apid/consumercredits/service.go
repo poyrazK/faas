@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -251,6 +252,19 @@ func validateSpendCapRequest(req api.PutAPIConsumerSpendCapRequest) *api.Problem
 	return nil
 }
 
+// spendCapCurrencyProblem refuses a cap in a currency other than the one the
+// consumer's or tenant's usage is priced in. A quote in another currency
+// cannot be compared, so such a cap was stored and then never capped
+// (cost-control review 2026-11-19, N9/N18). Without priced usage yet there
+// is nothing to compare, and the cap is kept.
+func spendCapCurrencyProblem(capCurrency, pricedCurrency string) *api.Problem {
+	if pricedCurrency == "" || strings.EqualFold(capCurrency, pricedCurrency) {
+		return nil
+	}
+	return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Spend cap currency mismatch",
+		fmt.Sprintf("usage is priced in %s, so a cap in %s could never be reached; set the cap in %s", pricedCurrency, capCurrency, pricedCurrency))
+}
+
 // PutSpendCap sets a consumer's monthly spend cap and checks it at once.
 func (s *Service) PutSpendCap(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	_, caps, ok := s.stores(w)
@@ -269,6 +283,14 @@ func (s *Service) PutSpendCap(w http.ResponseWriter, r *http.Request, acct state
 	if problem := validateSpendCapRequest(req); problem != nil {
 		api.WriteProblem(w, problem)
 		return
+	}
+	now := s.now()
+	monthStart := billing.MonthStart(now)
+	if quote, err := s.Host.QuoteConsumerUsage(r.Context(), acct.ID, app.ID, consumer.ID, monthStart, now.Truncate(time.Minute).Add(time.Minute)); err == nil {
+		if problem := spendCapCurrencyProblem(req.Currency, quote.Currency); problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
 	}
 	stored, err := caps.PutAPIConsumerSpendCap(r.Context(), state.APIConsumerSpendCap{ConsumerID: consumer.ID, AccountID: acct.ID,
 		AppID: app.ID, Currency: req.Currency, MonthlyCapMillicents: *req.MonthlyCapMillicents})
