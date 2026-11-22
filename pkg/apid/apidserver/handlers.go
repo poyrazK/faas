@@ -309,6 +309,24 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	// the org-scoped route stamps the workspace attribution that activity
 	// producers, app quota admission and timeline reads treat as canonical.
 	app.OrgID = orgID
+	if req.ProjectID != "" {
+		project, problem := s.projectForAppCreate(r.Context(), acct.ID, orgID, req.ProjectID)
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		app.ProjectID = project.ID
+		app.AccountID = project.AccountID
+		app.OrgID = project.OrgID
+		app.AddToProject = true
+		app.WorkloadName = app.Slug
+		switch app.Manifest.ExecutionMode {
+		case "worker":
+			app.WorkloadClass = state.WorkloadClassWorker
+		case "job":
+			app.WorkloadClass = state.WorkloadClassJob
+		}
+	}
 	// Stamp the resolved UUID (or nil) onto the App before the
 	// store layer sees it. The store writes the column verbatim
 	// — see pkg/state/pgstore.go::CreateAppIfUnderQuota +
@@ -337,6 +355,11 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, state.ServiceCapacityProblem(err))
 		case errors.As(err, &qe):
 			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
+		case errors.Is(err, state.ErrProjectAppManaged):
+			api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation, "Project manages its apps",
+				"Add the app through the project's repository or release workflow."))
+		case req.ProjectID != "" && errors.Is(err, state.ErrNotFound):
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Project not found", "Choose a project in this workspace."))
 		case errors.Is(err, state.ErrOrgAppAdmissionUnavailable):
 			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
 		case errors.Is(err, state.ErrConflict):

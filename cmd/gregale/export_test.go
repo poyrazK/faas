@@ -3015,3 +3015,8 @@ var AppGetURL = appGetURL
 
 // LatestWakeID picks the wake shown by `app wake-timeline APP`.
 var LatestWakeID = latestWakeID
+
+// WaitForDevPostgres exposes waitForDevPostgres.
+func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, timeout, poll time.Duration, get func(context.Context) (api.DevSessionResponse, error), waiting func(string)) (api.DevSessionResponse, error) {
+	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
+}

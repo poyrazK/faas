@@ -854,7 +854,11 @@ jobs:
 
   # Daemons must boot from production-rendered config with production
   # capabilities (issue #1529 S3). Same job and context name as the mega tier,
-  # so the existing required check keeps gating every pull request.
+  # so the existing required check keeps gating every pull request. Built
+  # without -race here: the race build was ~9 of the job's ~11 minutes on
+  # every pull request and main push, and a boot contract checks config and
+  # capabilities, not data races. The mega tier (ci.yml) still runs it with
+  # -race nightly.
   boot-contract:
     name: boot-contract (production config)
     runs-on: ubuntu-latest
@@ -916,7 +920,7 @@ jobs:
             -- env "PATH=$BOOT_CONTRACT_PATH" "HOME=$HOME" \
               "GOCACHE=$(go env GOCACHE)" "GOMODCACHE=$(go env GOMODCACHE)" "GOPATH=$(go env GOPATH)" \
               "GOTOOLCHAIN=${GOTOOLCHAIN:-local}" "DATABASE_URL=${DATABASE_URL:-}" "FAAS_SKIP_PG_TESTS=${FAAS_SKIP_PG_TESTS:-}" \
-            go test -race -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
+            go test -count=1 -timeout=12m -run '^TestBootContract_' ./cmd/e2e/...
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

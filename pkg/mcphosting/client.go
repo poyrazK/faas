@@ -460,6 +460,9 @@ func (c *Client) CallInteractive(ctx context.Context, tool Tool, args map[string
 // EnableTasks is true, a task handle may be returned directly; WaitForTask
 // additionally polls until completion. Neither option retries tools/call.
 func (c *Client) CallWithOptions(ctx context.Context, tool Tool, args map[string]any, options CallOptions) (Exchange, error) {
+	if options.DeferFormInput && options.TaskSubmissionKey == "" {
+		return Exchange{}, errors.New("deferred form input requires a keyed Task submission")
+	}
 	if options.TaskSubmissionKey != "" {
 		if err := validateTaskSubmissionKey(options.TaskSubmissionKey); err != nil {
 			return Exchange{}, err
@@ -501,7 +504,7 @@ func (c *Client) call(ctx context.Context, tool Tool, args map[string]any, optio
 			params["_meta"] = meta
 		}
 		capabilities := make(map[string]any)
-		if options.Responder != nil {
+		if options.Responder != nil || options.DeferFormInput {
 			capabilities["elicitation"] = map[string]any{"form": map[string]any{}}
 		}
 		if options.EnableTasks {

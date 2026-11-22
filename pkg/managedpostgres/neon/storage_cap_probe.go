@@ -16,10 +16,13 @@ var _ managedpostgres.StorageCapProber = (*Provider)(nil)
 
 // Storage pool probe timings. Neon reports a branch's logical size with a
 // lag, and a new limit takes a moment to reach the compute, so the probe
-// retries until the behaviour shows or its wait runs out.
+// retries until the behaviour shows or its wait runs out. Measured on
+// 2026-11-22 against the production backend: a fresh project reports no size
+// at first, and a ~20 MB write showed up in the branch's logical_size after
+// 451 s; the 5-minute wait failed every storage qualification that day.
 const (
-	storageCapProbeSizeWait  = 5 * time.Minute
-	storageCapProbeLimitWait = 2 * time.Minute
+	storageCapProbeSizeWait  = 20 * time.Minute
+	storageCapProbeLimitWait = 5 * time.Minute
 	storageCapProbeHold      = time.Minute
 	storageCapProbePoll      = 5 * time.Second
 	storageCapProbeRaise     = 1 << 30

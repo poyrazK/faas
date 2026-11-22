@@ -585,6 +585,8 @@ export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.j
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
+export type { ManagedPostgresOverage } from './models/ManagedPostgresOverage.js';
+export type { ManagedPostgresOverageRequest } from './models/ManagedPostgresOverageRequest.js';
 export type { ManagedPostgresQueryRequest } from './models/ManagedPostgresQueryRequest.js';
 export type { ManagedPostgresQueryResponse } from './models/ManagedPostgresQueryResponse.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
