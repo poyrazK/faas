@@ -542,11 +542,15 @@ jq -e --argjson expected "$ACTIVE_NODE_COUNT" \
 # finishes post-readiness verification. Probe the hello app's origin / route:
 # /healthz defaults to an edge answer and cannot prove workload continuity.
 # The final wait uses the shipped CLI, proving it does not return during the
-# temporary live state.
+# temporary live state. `--rollout fast` (5% then 50%, a minute each) keeps
+# both revisions serving through a canary, which is what the probes test,
+# without the adaptive ladder's 1-10-50% stages (259 s on rc.357, most of
+# acceptance); ADR-20261119090000.
 phase "redeploy with continuity probes"
 redeploy_queued="$workdir/redeploy-queued.json"
 FAAS_JSON=1 "$GREGALE_BIN" deploy \
 	--template hello-node --name "${slugs[0]}" --no-wait --yes --no-require-authn \
+	--rollout fast \
 	--reason production-release-redeploy-acceptance >"$redeploy_queued"
 redeploy_id="$(jq -er '.id' "$redeploy_queued")"
 redeploy_final="$workdir/redeploy-final.json"

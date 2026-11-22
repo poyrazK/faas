@@ -819,9 +819,21 @@ func installViaTarballWithVerifier(releasesRoot, gitSHA, tarballPath string, ver
 	// is embedded in the tarball's release-manifest.json member
 	// and the per-binary sha256 walk in Tarball.Verify uses the
 	// tarball bytes, not the bin dir.
-	manifestBytes, err := extractTarballMember(tbBody, "release-manifest.json")
+	// ADR-20261119090000: decompress once. Staging hashes every member and
+	// keeps the manifest; the verify and the publish below read the staged
+	// files instead of decompressing the tarball again (three passes of
+	// ~26 s each on a production compute node before).
+	if err := os.MkdirAll(releasesRoot, 0o755); err != nil {
+		return fmt.Errorf("releases root: %w", err)
+	}
+	staged, err := releaseinstall.StageTarball(tbBody, releasesRoot)
 	if err != nil {
-		return fmt.Errorf("extract manifest: %w", err)
+		return fmt.Errorf("stage tarball: %w", err)
+	}
+	defer func() { _ = staged.Close() }()
+	manifestBytes := staged.Manifest()
+	if manifestBytes == nil {
+		return fmt.Errorf("extract manifest: member %q not found in tarball", "release-manifest.json")
 	}
 	var m releaseinstall.Manifest
 	if err := json.Unmarshal(manifestBytes, &m); err != nil {
@@ -847,7 +859,7 @@ func installViaTarballWithVerifier(releasesRoot, gitSHA, tarballPath string, ver
 	// from PR-A commit 2 (and the line item closing issue #597).
 	// On a successful verify the cert identity is stamped onto
 	// tb.Manifest.Signature for audit trails.
-	if _, err := tb.Verify(context.Background(), verifier); err != nil {
+	if _, err := tb.VerifyStaged(context.Background(), verifier, staged); err != nil {
 		return fmt.Errorf("tarball verify: %w", err)
 	}
 	// Verify stamps the trusted CI identity onto the manifest. Persist that
@@ -858,7 +870,7 @@ func installViaTarballWithVerifier(releasesRoot, gitSHA, tarballPath string, ver
 	// 4. Extract the tarball into <releases-root>/<git-sha>/bin/.
 	// On success the on-disk bin tree matches the manifest's
 	// per-binary sha256.
-	if err := tb.Extract(releasesRoot); err != nil {
+	if err := tb.PublishStaged(releasesRoot, staged); err != nil {
 		return fmt.Errorf("tarball extract: %w", err)
 	}
 
