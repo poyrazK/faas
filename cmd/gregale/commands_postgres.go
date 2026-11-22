@@ -151,6 +151,10 @@ func cmdPostgresAttach(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "Attached %s to app %s as %s.\n", database.Name, app.Slug, binding.EnvironmentKey)
 		if bindingIsNew {
 			printPostgresBindingDelivery(osStdout, app.Slug, binding.EnvironmentKey, binding.Access)
+			// As `add postgres` does: a read_write app that ran CREATE TABLE
+			// at startup got only "permission denied for schema public"
+			// (prod hunt r25).
+			printAddPostgresMigrationHint(osStdout, database.Name, app.Slug, app.Type, binding.Scope, binding.Access)
 		}
 	}
 	return 0

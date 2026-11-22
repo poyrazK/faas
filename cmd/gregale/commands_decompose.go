@@ -1212,6 +1212,9 @@ func printPlanDetectionWarnings(w io.Writer, warnings []api.PlanDetectionWarning
 	}
 }
 
+// maxUnaffectedPlanRows is how many untouched apps a text plan lists by name.
+const maxUnaffectedPlanRows = 10
+
 // printAffectedText renders the ADR-124 blast-radius view: WillDeploy
 // + Skipped (operator-excluded) + Unaffected + Removed. Mirrors the
 // dashboard's two-table render so a CLI operator sees the same
@@ -1257,16 +1260,22 @@ func printAffectedText(w io.Writer, plan api.PlanResponse, excludedSlugs map[str
 		}
 	}
 	fmt.Fprintln(w, "\nUnaffected (apps in your account not touched by this commit):")
-	if len(una) == 0 {
+	switch {
+	case len(una) == 0:
 		fmt.Fprintln(w, "  (none)")
-	} else {
+	case len(una) > maxUnaffectedPlanRows:
+		// A 3-service project in an account of 69 apps printed 66 noop rows
+		// above the plan's own advice (prod hunt r26). The JSON plan keeps
+		// every row.
+		fmt.Fprintf(w, "  %d apps; none change. The JSON plan lists them: gregale --json deploy --dry-run\n", len(una))
+	default:
 		fmt.Fprintln(w, "  ACTION    SLUG                  APP ID")
 		for _, r := range una {
 			fmt.Fprintf(w, "  %-9s %-20s %s\n", r.Action, r.Slug, r.ID)
 		}
 	}
 	if len(plan.Removed) > 0 {
-		fmt.Fprintln(w, "\nRemoved (apps the apply path will SoftDeleteAppCascade):")
+		fmt.Fprintln(w, "\nRemoved (apps this deploy deletes):")
 		rmv := append([]string(nil), plan.Removed...)
 		sort.Strings(rmv)
 		for _, s := range rmv {

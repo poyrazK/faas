@@ -88,7 +88,7 @@ HTTP 409 Conflict · Cohort limit reached
 
 ### `api_key_expired`
 
-HTTP 401 Unauthorized · API key expired
+HTTP 401 Unauthorized · API key expired; Deploy token expired
 
 See [Authentication](auth.md#expiry-and-rotation).
 
@@ -100,7 +100,7 @@ See [Authentication](auth.md#api-keys).
 
 ### `api_key_revoked`
 
-HTTP 401 Unauthorized · API key revoked
+HTTP 401 Unauthorized · API key revoked; Deploy token revoked
 
 See [Authentication](auth.md#expiry-and-rotation).
 

@@ -332,14 +332,40 @@ func (h *Handler) ensureBaseExt4(
 // "did this base already stage?" check — re-fetching tens of
 // MB of layers on every daemon restart would be wasteful.
 func (h *Handler) writeBaseDigestSidecar(ctx context.Context, be storage.StorageBackend, digestKey, wantDigest, guestInitDigest, sourceRef string) error {
-	digestRC, err := openStringReader(baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef))
-	if err != nil {
-		return fmt.Errorf("imaged: open digest sidecar: %w", err)
-	}
-	if err := be.Put(ctx, digestKey, digestRC); err != nil {
+	value := baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef)
+	if err := putSharedBaseSidecar(ctx, be, digestKey, []byte(value)); err != nil {
 		return fmt.Errorf("imaged: write digest sidecar %q: %w", digestKey, err)
 	}
 	return nil
+}
+
+// sharedBaseSidecarConflictBackoff spaces the writes putSharedBaseSidecar
+// makes after a concurrent-write conflict.
+var sharedBaseSidecarConflictBackoff = []time.Duration{250 * time.Millisecond, time.Second}
+
+// putSharedBaseSidecar writes a small sidecar (digest, scan, content) of a
+// shared runtime base. Builds on several nodes stage one base at the same
+// time, and OVH refuses a write while another writer's conditional write of
+// the key is in flight (409 OperationAborted, storage.ErrWriteConflict): prod
+// hunts r26 and r27 each failed one app of a 3-service Compose deploy, on the
+// digest and then the scan sidecar. The refused attempt published nothing,
+// so it writes again after a short wait, at most twice.
+func putSharedBaseSidecar(ctx context.Context, be storage.StorageBackend, key string, body []byte) error {
+	err := be.Put(ctx, key, bytes.NewReader(body))
+	for _, wait := range sharedBaseSidecarConflictBackoff {
+		if !errors.Is(err, storage.ErrWriteConflict) {
+			return err
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		err = be.Put(ctx, key, bytes.NewReader(body))
+	}
+	return err
 }
 
 func baseDigestSidecarValue(configDigest string) string {
@@ -817,29 +843,6 @@ func (h *Handler) baseSkipDeclined(be storage.StorageBackend, baseKey, outImage,
 // and imaged's systemd unit can drop AmbientCapabilities=
 // entirely (ADR-075). imaged no longer needs CAP_SYS_ADMIN.
 
-// openStringReader returns an io.Reader for the supplied string. The
-// helper exists so the digest sidecar Put has a content source without
-// dragging in bytes.NewReader (which would also force a package-level
-// bytes import that's only used here).
-func openStringReader(s string) (io.Reader, error) {
-	return stringReader(s), nil
-}
-
-type stringReaderImpl struct {
-	s   string
-	off int
-}
-
-func stringReader(s string) io.Reader { return &stringReaderImpl{s: s} }
-func (r *stringReaderImpl) Read(p []byte) (int, error) {
-	if r.off >= len(r.s) {
-		return 0, io.EOF
-	}
-	n := copy(p, r.s[r.off:])
-	r.off += n
-	return n, nil
-}
-
 // writeScanSidecar runs a Grype scan of the staged base ext4 and
 // writes the per-severity finding counts to the scan sidecar
 // (issue #299). The sidecar is keyed by wire.ScanKeyForBaseKey so
@@ -919,7 +922,7 @@ func (h *Handler) writeScanSidecar(ctx context.Context, baseKey, digestKey, ref,
 		return fmt.Errorf("imaged: marshal scan sidecar: %w", err)
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
-	if err := be.Put(ctx, scanKey, bytes.NewReader(scanBlob)); err != nil {
+	if err := putSharedBaseSidecar(ctx, be, scanKey, scanBlob); err != nil {
 		return fmt.Errorf("imaged: write scan sidecar %q: %w", scanKey, err)
 	}
 	if err := markCachedBaseGeneration(be, baseKey, digestKey, ref); err != nil {

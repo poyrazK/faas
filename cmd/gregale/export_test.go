@@ -3007,6 +3007,15 @@ func RenderInspectFailureDetails(w io.Writer, slug string, failed api.Deployment
 // FormatObserved renders a measured alert value.
 var FormatObserved = formatObserved
 
+// PrintAffectedText renders a project plan's affected apps.
+var PrintAffectedText = printAffectedText
+
+// AppGetURL is the url row of `app get`.
+var AppGetURL = appGetURL
+
+// LatestWakeID picks the wake shown by `app wake-timeline APP`.
+var LatestWakeID = latestWakeID
+
 // SplitTargetSlug and RenderRouteSplit expose the route split suggestion
 // (ADR-20261121170000 amendment 1).
 var (
