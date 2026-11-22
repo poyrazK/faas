@@ -21,9 +21,9 @@ func TestMigrations_20261122205115324ShortScopes(t *testing.T) {
 	}
 	for _, name := range []string{
 		"deployments_scope_shape",
-		"deployment_route_policy_snapshots_scope_shape",
-		"runtime_instance_config_proofs_scope_check",
-		"runtime_environment_scaling_states_scope_check",
+		"deployment_route_policy_snapshots_scope_v2_check",
+		"runtime_instance_config_proofs_scope_v2_check",
+		"runtime_environment_scaling_states_scope_v2_check",
 	} {
 		var def string
 		if err := pool.QueryRow(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = $1`, name).Scan(&def); err != nil {
