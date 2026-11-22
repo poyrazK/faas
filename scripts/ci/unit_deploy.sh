@@ -184,8 +184,13 @@ cmd_stage() {
 # deployctl deploy applies the overlay's migrations first, so a failed
 # migration stops the script before any restart.
 cmd_script() {
-  local plan="$1" stage="$2" out="$3" release_id expect only commit release_dir files="" specs=""
+  local plan="$1" stage="$2" out="$3" release_id expect only commit release_dir files="" specs="" parallel
   release_id="$(plan_field "$plan" .release_id)"
+  # Parallel activation (cmd/deployctl/restart_waves.go). An environment
+  # variable: a deployctl from before it ignores it and restarts one at a
+  # time.
+  parallel="$(jq -er '.activation.parallel' "$repo_root/scripts/ci/release_units.json")"
+  [[ "$parallel" =~ ^([1-9]|1[0-6])$ ]] || die "release_units.json activation.parallel must be 1..16: $parallel"
   expect="$(plan_field "$plan" .expect_current)"
   only="$(jq -r '.only | join(",")' "$plan")"
   [[ "$release_id" =~ ^[0-9a-f]{40}$ && "$expect" =~ ^[0-9a-f]{40}$ ]] || die "plan release ids must be 40 hex: $release_id, $expect"
@@ -205,7 +210,7 @@ cmd_script() {
       commit="$(plan_field "$plan" .commit)"
       echo "${stage}/bin/deployctl unit-overlay --release-id ${release_id} --expect-current ${expect} --commit ${commit}${files}"
     fi
-    echo "${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
+    echo "DEPLOYCTL_RESTART_PARALLEL=${parallel} ${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
     echo "if [[ -n \"\${ROLLOUT_ACTIVATION_MARKER:-}\" ]]; then touch \"\$ROLLOUT_ACTIVATION_MARKER\"; fi"
     # A plan that only applies migrations restarts and verifies no unit.
     if [[ -n "$specs" ]]; then

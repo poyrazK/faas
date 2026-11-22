@@ -201,6 +201,21 @@ Budget, merge to new code serving on the control plane:
   fleet runner host keeps a second instance (`faas_runner_instances`)
   for another run's lanes, as it already needed for a preflight waiting
   on one.
+- **Parallel activation** (done). `deployctl deploy` restarted the
+  plan's daemons one at a time in `daemonunitspec.RestartOrder`. A unit
+  deploy now restarts them in waves: `daemonunitspec.RestartDepth` gives
+  each daemon one more than its deepest `Lifecycle.After` dependency, and
+  daemons of equal depth (no ordering path between them) restart
+  together through the same per-daemon path (preload, hand-off or
+  restart, readiness), at most `release_units.json` `activation.parallel`
+  (4) at once. The next wave starts only when every daemon of this one is
+  ready; a failure lets the rest of its wave finish, stops, and the
+  activation script rolls back as before. vmmd always restarts alone:
+  its `RuntimeDirectory=faas` re-creates `/run/faas` as root:root, which
+  deployctl repairs before the next daemon binds there. The cap reaches
+  deployctl as `DEPLOYCTL_RESTART_PARALLEL` on the deploy line only: a
+  deployctl from before this change ignores it, rollbacks and full
+  releases stay one at a time, and `activation.parallel: 1` turns it off.
 - **Rollback stays the same speed.** deployctl keeps the previous
   generation; a failed smoke check or a watch breach puts it back.
 
@@ -326,5 +341,6 @@ summary and annotations (stopping commit, reason, commits waiting).
 3. Build runner on the control plane (role kind, playbook, workflow switch:
    done); the owner bootstraps it and sets `UNIT_RELEASE_BUILD_RUNNER`;
    preflight beside the build (done).
-4. Parallel activation; smoke check in place of the pre-done SLO hold.
+4. Parallel activation (done); smoke check in place of the pre-done SLO
+   hold.
 5. Owner turns on automatic deploys.

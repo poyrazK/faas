@@ -90,6 +90,10 @@
     "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
+  "activation": {
+    "_comment": "Parallel activation (docs/adr/20261122170000-continuous-unit-lane.md): a unit deploy restarts daemons of equal Lifecycle.After depth together, at most `parallel` at once, vmmd alone (cmd/deployctl/restart_waves.go, through DEPLOYCTL_RESTART_PARALLEL). 1 restarts one at a time, as full releases and rollbacks do.",
+    "parallel": 4
+  },
   "gates": {
     "_comment": "SLO gate per host (scripts/ci/slo_gate.py --duration/--max-hold). The canary is the first host of a lane: the control plane in the control-plane lane, the designated compute node in the edge lane (the control plane when no compute node restarts a gateway). Every later host gets the follower gate, long enough to catch crash loops and immediate error spikes. scripts/ci/plan_edge_rollout.py checks these against the 30-minute budget (ADR-1650).",
     "canary": {"duration": "4m", "max_hold": "2m"},
