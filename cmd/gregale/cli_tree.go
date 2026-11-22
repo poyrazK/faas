@@ -205,6 +205,10 @@ var cliTreeAliases = []cliTreeAlias{
 	{"flag rule delete", "flags rule-rm"},
 	{"flag kill set", "flags kill"},
 	{"flag kill unset", "flags unkill"},
+	// ADR-20261122090000: edge routing.
+	{"flag edge set", "flags edge-set"},
+	{"flag edge delete", "flags edge-rm"},
+	{"flag edge list", "flags edge-list"},
 	{"flag stale list", "flags stale"},
 	{"flag experiment list", "flags experiments list"},
 	{"flag experiment create", "flags experiments create"},
