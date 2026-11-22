@@ -827,6 +827,15 @@
     group: root
     mode: "0644"
 
+- name: control_plane_service — set whether apid serves the public app-task API
+  notify: restart faas-apid
+  ansible.builtin.template:
+    src: zz-faas-app-task-api.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/zz-faas-app-task-api.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 - name: control_plane_service — set whether schedd dispatches release tasks
   notify: restart faas-schedd
   ansible.builtin.template:
