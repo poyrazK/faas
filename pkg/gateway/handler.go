@@ -6672,6 +6672,17 @@ haveApp:
 	triggerClass := ClassifyWakeTrigger(r)
 	smokeDeploymentID, deploymentSmoke := h.authorizedDeploymentSmokeTarget(r, app)
 	rec.deploymentSmoke = deploymentSmoke
+	// ADR-20261122220000: a request carrying a smoke token this gateway does
+	// not know (the challenge has not reached it yet, or expired) is refused
+	// like an unknown route probe. Serving it from the live deployment would
+	// send a verification contract's request, possibly a state-changing one,
+	// to the predecessor instead of the candidate. The verifier reads the
+	// unproven 503 as gateway-unavailable and retries.
+	if !deploymentSmoke && r.Header.Get(apihostingreceipt.PlatformSmokeTokenHeader) != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
+			"Deployment smoke not authorized", "the smoke challenge is unknown or expired on this gateway"))
+		return
+	}
 	workloadAdmissionScope := app.Scope
 	if app.PinnedDeploymentScope != "" {
 		workloadAdmissionScope = app.PinnedDeploymentScope
