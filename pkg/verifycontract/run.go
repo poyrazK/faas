@@ -122,6 +122,11 @@ func applyError(err error, ctx context.Context, result *CheckResult) {
 		if checkErr.Assertion {
 			result.Status = StatusFailed
 		}
+		// A tool that does not declare itself read-only is a mutating
+		// check: in production it is skipped, like a POST.
+		if checkErr.Code == CodeMCPToolNotReadOnly {
+			result.Status = StatusSkipped
+		}
 	case ctx.Err() != nil:
 		result.Status, result.Code = StatusError, CodeTimeout
 		result.Failures = []string{"verification budget ran out during this check"}
