@@ -100,6 +100,7 @@ const WorkReaper = workReaper
 var ErrBoom = &errBoom
 var ErrNoThawTicket = &errNoThawTicket
 var RouterCloseGrace = &routerCloseGrace
+var SandboxDrainCheckEvery = &sandboxDrainCheckEvery
 
 // Package-level funcs
 var AppTaskFailureStage = appTaskFailureStage

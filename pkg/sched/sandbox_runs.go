@@ -332,6 +332,10 @@ type SandboxHooks struct {
 	// (ADR-20261122132055 §3); the session runs on after either.
 	Forked      func(ctx context.Context, f SandboxForked) error
 	ForkRefused func(ctx context.Context, reason string) error
+	// Evacuate asks the session's owner to move it off its node
+	// (ADR-20261122132055 §7): the node is leaving the pool, or its vmmd is
+	// stopping. It runs at most once per reason.
+	Evacuate func(ctx context.Context, reason string) error
 	// VolumeBackup relays a backup of the session's volume taken while it
 	// runs (ADR-20261122132055 §4).
 	VolumeBackup func(ctx context.Context, b SandboxVolumeBackup) error
@@ -366,9 +370,11 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 	req := Request{Instance: SandboxInstanceID(a.SandboxID), Plan: a.Plan, RAMMB: a.RAMMB, VCPU: a.VCPU, CPUMillicores: a.CPUMillicores}
 	if a.Resume != nil && a.Resume.NodeID != "" {
 		// The capture's node has it in its cache; any node restores it from
-		// the shared store (ADR-20261122132055 §2).
+		// the shared store (ADR-20261122132055 §2). A draining node still
+		// holds a node-only capture while it uploads: the resume waits for
+		// the upload rather than cold-booting (§7).
 		req.PreferredNodeIDs = []string{a.Resume.NodeID}
-		if a.Resume.RequireNode && !r.poolNodeActive(ctx, a.Resume.NodeID) {
+		if a.Resume.RequireNode && !r.poolNodeActive(ctx, a.Resume.NodeID) && !r.poolNodeLeaving(ctx, a.Resume.NodeID) {
 			resume := *a.Resume
 			resume.RequireNode = false
 			a.Resume = &resume
@@ -423,7 +429,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		}
 		return nil
 	}
-	err = router.RunSandbox(ctx, placement.NodeID, spec, hooks, control)
+	err = r.runSandboxWatched(ctx, router, placement.NodeID, spec, hooks, control)
 	if spec.Snapshot != nil && method != "" && method != vmmdpb.WakeMethod_WAKE_RESTORE.String() {
 		r.dropSandboxSnapshot(shape, spec.Snapshot)
 	}
@@ -442,7 +448,7 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 // runResumedSandbox runs a session restored from its pause capture.
 func (r *AgentRunner) runResumedSandbox(ctx context.Context, router sandboxRouter, placement AgentRunPlacement, spec SandboxSpec,
 	hooks SandboxHooks, control <-chan SandboxControl) error {
-	if err := router.RunSandbox(ctx, placement.NodeID, spec, hooks, control); err != nil {
+	if err := r.runSandboxWatched(ctx, router, placement.NodeID, spec, hooks, control); err != nil {
 		return fmt.Errorf("sched: sandbox %s on node %s: %w", spec.SandboxID, placement.NodeID, err)
 	}
 	return nil
@@ -712,6 +718,10 @@ func receiveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandboxClient, ho
 			if hooks.ForkRefused != nil {
 				err = hooks.ForkRefused(ctx, event.GetForkRefused().GetReason())
 			}
+		case event.GetEvacuate() != nil:
+			if hooks.Evacuate != nil {
+				err = hooks.Evacuate(ctx, event.GetEvacuate().GetReason())
+			}
 		default:
 			return errors.New("sched: sandbox stream returned an empty event")
 		}
@@ -787,6 +797,13 @@ func sandboxTaskToProto(t *SandboxTask) *vmmdpb.RunSandboxTask {
 	}
 	return &vmmdpb.RunSandboxTask{Kind: t.Kind, Url: t.URL, MaxChars: int32(t.MaxChars), TimeoutMs: t.Timeout.Milliseconds(),
 		MaxOutputBytes: t.MaxOutputBytes}
+}
+
+// poolNodeLeaving reports whether nodeID is an agent-pool node that is
+// draining: it takes no new work but still runs and uploads what it holds.
+func (r *AgentRunner) poolNodeLeaving(ctx context.Context, nodeID string) bool {
+	n, ok := r.engine.breakerNode(ctx, nodeID)
+	return ok && (r.pool[n.ID] || r.pool[n.Name]) && sandboxNodeLeaving(n.Lifecycle)
 }
 
 // poolNodeActive reports whether nodeID is an active node of the agent pool.

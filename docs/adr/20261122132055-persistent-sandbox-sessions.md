@@ -210,7 +210,15 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Start.** A fork is claimable only once the shared store holds its whole capture and the volume backup (`uploaded_at`, set by the agentd sweep). It restores on any node as `Resume{fork}` with the source's vCPUs, and its volume restores from the source's backup (`volume_source_sandbox_id`). An ephemeral fork's volume is still recorded, so it is deleted when the fork ends.
 - **Lifetime of what forks share.** A capture, the backup it names and the source's volume row stay while a queued or starting fork names the capture, even after the source resumed or ended. Once none does, a fork capture is consumed (after a minute's grace) and the capture sweep deletes its objects. A fork whose source ended before it was captured fails with `fork_source_ended`.
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
-- **Not yet:** the reflink fast path for a fork on its source's node (every fork restores from the shared store today); the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook (§3); `sandbox_fork_seconds` and `sandbox_forks_total`; clients (step 10).
+- **Not yet (fork):** the reflink fast path for a fork on its source's node (every fork restores from the shared store today); the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook (§3); `sandbox_fork_seconds` and `sandbox_forks_total`; clients (step 10).
+
+### Step 7 as built (evacuation)
+
+- **One request, two senders.** A session is evacuated when schedd sees its agent-pool node leave (`draining`, `force_draining`, `maintenance`, `retired`; checked every 5 s from the node registry) or when its vmmd stops. Both send `evacuate{reason}` on the session's stream (`node_draining`, `vmmd_stopping`), at most once per sender.
+- **What agentd does.** A persistent session pauses at the next tick (after a fork in flight, never refused for being early), and its pause asks for its resume at once (`resume_requested_at`). An ephemeral session ends with `node_evacuated`.
+- **Where it resumes.** A capture only its node holds (durability `node`) keeps `require_node` while that node is draining: the resume waits, refused for capacity and tried again, until the upload makes it `remote` and it restores on another node. After a vmmd restart the node is still active, so the resume restores the node's copy there once vmmd serves again.
+- **vmmd stop.** Before it stops serving, vmmd sends `evacuate` to every live session and waits up to 75 s (inside systemd's default stop timeout) for their streams to end; sessions not moved by then are destroyed as before.
+- **Not yet:** a node drain does not wait for its sessions (drain completion counts app instances only); schedd and agentd restarts still end a session's VM (reattach); adoption of session VMs across a vmmd restart.
 
 ## Open questions
 
