@@ -313,6 +313,7 @@ var sharedTemplateCopies = map[string]map[string]string{
 		"subscriptions.go":               "mcp-go-tasks/subscriptions.go",
 		"tool_schema.go":                 "mcp-go-tasks/tool_schema.go",
 		"tool_schema_test.go":            "mcp-go-tasks/tool_schema_test.go",
+		"write_deadline_test.go":         "mcp-go-tasks/write_deadline_test.go",
 	},
 	"mcp-python": {
 		"auth.py":                       "mcp-python-tasks/auth.py",
