@@ -276,6 +276,9 @@ func (m *MemStore) AssignAPIConsumerPlan(_ context.Context, a APIConsumerPlanAss
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stageConsumerLocked(a.ConsumerID) {
+		return APIConsumerPlanAssignment{}, ErrAPIConsumerStageMonetization
+	}
 	if a.PlanID != "" {
 		plan, ok := m.apiConsumerPlans[a.PlanID]
 		if !ok || plan.AccountID != a.AccountID || plan.AppID != a.AppID {

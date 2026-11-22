@@ -81,20 +81,16 @@ func (s *PgStore) ListAPIConsumersInEnvironment(ctx context.Context, accountID, 
 	return out, rows.Err()
 }
 
-func (s *PgStore) ListConsumerKeysInEnvironment(ctx context.Context, accountID, appID, environment string) ([]ConsumerKey, error) {
-	if productionConsumerEnvironment(environment) {
-		return s.ListConsumerKeysForApp(ctx, accountID, appID)
-	}
-	environmentID, err := s.consumerEnvironmentIDDB(ctx, accountID, appID, environment)
-	if err != nil {
-		return nil, err
+func (s *PgStore) ListConsumerKeysForConsumer(ctx context.Context, accountID, consumerID string) ([]ConsumerKey, error) {
+	if accountID == "" || consumerID == "" {
+		return nil, ErrNotFound
 	}
 	rows, err := s.pool.Query(ctx,
 		`select `+consumerKeySelectCols+`
 		   from consumer_keys
-		  where account_id = $1::uuid and app_id = $2::uuid and environment_id = $3::uuid
+		  where account_id = $1::uuid and consumer_id = $2::uuid
 		  order by created_at desc, id desc`,
-		accountID, appID, environmentID)
+		accountID, consumerID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,6 +104,26 @@ func (s *PgStore) ListConsumerKeysInEnvironment(ctx context.Context, accountID, 
 		out = append(out, k)
 	}
 	return out, rows.Err()
+}
+
+// refuseStageConsumerMonetizationDB refuses a plan or trial for a stage's
+// consumer.
+func refuseStageConsumerMonetizationDB(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, accountID, consumerID string) error {
+	var stage bool
+	err := db.QueryRow(ctx, `select environment_id is not null from api_consumers where id = $1::uuid and account_id = $2::uuid`,
+		consumerID, accountID).Scan(&stage)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if stage {
+		return ErrAPIConsumerStageMonetization
+	}
+	return nil
 }
 
 // ConsumerKeyForEnvironment answers a stage host with the stage's keys when

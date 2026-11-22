@@ -26,6 +26,14 @@ type ConsumerAuthStore interface {
 	TouchConsumerKeyLastUsed(ctx context.Context, keyID string) error
 }
 
+// ConsumerAuthEnvironmentStore resolves a key for a request to one
+// environment's host: a stage that holds consumers of its own answers with
+// its keys only, and one with none with production's (ADR-20261104120000
+// amendment 2026-11-22).
+type ConsumerAuthEnvironmentStore interface {
+	ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerAuthKey, error)
+}
+
 // ConsumerAuthKey is the read-only key shape required by the gateway. Hash is
 // the SHA-256 of the complete plaintext credential; the plaintext never enters
 // this type or the request context.
@@ -195,7 +203,7 @@ func (h *Handler) enforceConsumerAuth(w http.ResponseWriter, r *http.Request, re
 	}
 	prefix := consumerKeyPrefixFromPlaintext(token)
 	keyAppID := app.ID
-	key, err := h.consumerAuthStore.ConsumerKeyByAppAndPrefix(r.Context(), app.AccountID, keyAppID, prefix)
+	key, err := h.lookupConsumerKey(r.Context(), app, prefix)
 	if errors.Is(err, ErrConsumerAuthNotFound) && app.IsPreview && app.ProductionAppID != "" {
 		// A preview keeps its production app's consumer-auth gate, so it
 		// accepts that app's consumers' keys; without them a required-mode
@@ -347,4 +355,16 @@ func consumerScopeAllows(scopes []string, method string) bool {
 		}
 	}
 	return false
+}
+
+// lookupConsumerKey reads the key for the request's environment: an
+// environment URL or scoped domain asks for that environment's keys, every
+// other host for production's.
+func (h *Handler) lookupConsumerKey(ctx context.Context, app App, prefix string) (ConsumerAuthKey, error) {
+	if app.PublicEnvironmentID != "" {
+		if environments, ok := h.consumerAuthStore.(ConsumerAuthEnvironmentStore); ok {
+			return environments.ConsumerKeyForEnvironment(ctx, app.AccountID, app.ID, app.PublicEnvironmentID, prefix)
+		}
+	}
+	return h.consumerAuthStore.ConsumerKeyByAppAndPrefix(ctx, app.AccountID, app.ID, prefix)
 }

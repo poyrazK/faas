@@ -124,6 +124,9 @@ func (s *PgStore) AssignAPIConsumerPlan(ctx context.Context, a APIConsumerPlanAs
 	if err := validateAPIConsumerPlanAssignment(a); err != nil {
 		return APIConsumerPlanAssignment{}, err
 	}
+	if err := refuseStageConsumerMonetizationDB(ctx, s.pool, a.AccountID, a.ConsumerID); err != nil {
+		return APIConsumerPlanAssignment{}, err
+	}
 	// Selecting from api_consumers scopes the consumer to the account and
 	// app; the composite plan foreign key scopes the plan to the same app.
 	out, err := scanAPIConsumerPlanAssignment(s.pool.QueryRow(ctx, `insert into api_consumer_plan_assignments

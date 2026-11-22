@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -20,13 +21,19 @@ import (
 type APIConsumerEnvironmentStore interface {
 	CreateAPIConsumerInEnvironment(ctx context.Context, accountID, appID, environment, externalRef, name string) (APIConsumer, error)
 	ListAPIConsumersInEnvironment(ctx context.Context, accountID, appID, environment string) ([]APIConsumer, error)
-	ListConsumerKeysInEnvironment(ctx context.Context, accountID, appID, environment string) ([]ConsumerKey, error)
+	// ListConsumerKeysForConsumer lists one consumer's keys, whichever
+	// environment it belongs to.
+	ListConsumerKeysForConsumer(ctx context.Context, accountID, consumerID string) ([]ConsumerKey, error)
 	// ConsumerKeyForEnvironment is the gateway's lookup for a request to an
 	// environment's host: a stage that holds consumers of its own answers
 	// with its keys only; one with none, and production, answer with
 	// production's.
 	ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerKey, error)
 }
+
+// ErrAPIConsumerStageMonetization refuses a plan or trial for a stage's
+// consumer: plans, trials and billing are production's.
+var ErrAPIConsumerStageMonetization = fmt.Errorf("%w: plans and trials apply to production consumers; a stage's consumers are not billed", ErrConflict)
 
 // productionConsumerEnvironment reports whether a slug names production.
 func productionConsumerEnvironment(environment string) bool {
@@ -99,19 +106,16 @@ func (m *MemStore) ListAPIConsumersInEnvironment(ctx context.Context, accountID,
 	return out, nil
 }
 
-func (m *MemStore) ListConsumerKeysInEnvironment(ctx context.Context, accountID, appID, environment string) ([]ConsumerKey, error) {
-	if productionConsumerEnvironment(environment) {
-		return m.ListConsumerKeysForApp(ctx, accountID, appID)
-	}
+func (m *MemStore) ListConsumerKeysForConsumer(_ context.Context, accountID, consumerID string) ([]ConsumerKey, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	environmentID, err := m.consumerEnvironmentIDLocked(accountID, appID, environment)
-	if err != nil {
-		return nil, err
+	c, ok := m.apiConsumers[consumerID]
+	if !ok || c.AccountID != accountID {
+		return nil, ErrNotFound
 	}
 	var out []ConsumerKey
 	for _, k := range m.consumerKeys {
-		if k.AccountID == accountID && k.AppID == appID && k.EnvironmentID == environmentID {
+		if k.AccountID == accountID && k.ConsumerID == consumerID {
 			out = append(out, k)
 		}
 	}
@@ -122,6 +126,12 @@ func (m *MemStore) ListConsumerKeysInEnvironment(ctx context.Context, accountID,
 		return out[i].CreatedAt.After(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+// stageConsumerLocked reports whether a consumer belongs to a stage.
+func (m *MemStore) stageConsumerLocked(consumerID string) bool {
+	c, ok := m.apiConsumers[consumerID]
+	return ok && c.EnvironmentID != ""
 }
 
 func (m *MemStore) ConsumerKeyForEnvironment(ctx context.Context, accountID, appID, environmentID, prefix string) (ConsumerKey, error) {

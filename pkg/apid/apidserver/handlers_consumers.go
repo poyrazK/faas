@@ -33,7 +33,41 @@ func consumerResponse(c state.APIConsumer) api.APIConsumerResponse {
 		ID: c.ID, AppID: c.AppID, ExternalRef: c.ExternalRef, Name: c.Name,
 		Status: string(c.Status), CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt,
 		RevokedAt: c.RevokedAt, ManagedByPlatformTenant: c.PlatformTenantManaged,
+		EnvironmentID: c.EnvironmentID,
 	}
+}
+
+// consumerEnvironment is the request's environment query parameter; empty
+// and "production" name production (ADR-20261104120000 amendment
+// 2026-11-22). A stage needs a store that keeps consumers per environment.
+func (s *server) consumerEnvironment(w http.ResponseWriter, r *http.Request) (string, state.APIConsumerEnvironmentStore, bool) {
+	environment := strings.TrimSpace(r.URL.Query().Get("environment"))
+	environments, ok := s.store.(state.APIConsumerEnvironmentStore)
+	if environment == "" || state.IsProductionScope(environment) {
+		return "", environments, true
+	}
+	if !ok {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotImplemented, api.CodeValidation, "Environments unavailable",
+			"this server does not keep API consumers per environment"))
+		return "", nil, false
+	}
+	return environment, environments, true
+}
+
+// listAPIConsumersIn lists production's consumers or a stage's.
+func (s *server) listAPIConsumersIn(r *http.Request, environments state.APIConsumerEnvironmentStore, accountID, appID, environment string) ([]state.APIConsumer, error) {
+	if environment == "" {
+		return s.store.ListAPIConsumersForApp(r.Context(), accountID, appID)
+	}
+	return environments.ListAPIConsumersInEnvironment(r.Context(), accountID, appID, environment)
+}
+
+// createAPIConsumerIn creates a production consumer or a stage's.
+func (s *server) createAPIConsumerIn(r *http.Request, environments state.APIConsumerEnvironmentStore, accountID, appID, environment string, req api.CreateAPIConsumerRequest) (state.APIConsumer, error) {
+	if environment == "" {
+		return s.store.CreateAPIConsumer(r.Context(), accountID, appID, req.ExternalRef, req.Name)
+	}
+	return environments.CreateAPIConsumerInEnvironment(r.Context(), accountID, appID, environment, req.ExternalRef, req.Name)
 }
 
 func consumerKeyResponse(k state.ConsumerKey, plaintext string) api.ConsumerKeyResponse {
@@ -53,7 +87,15 @@ func (s *server) listAPIConsumers(w http.ResponseWriter, r *http.Request, acct s
 	if !ok {
 		return
 	}
-	rows, err := s.store.ListAPIConsumersForApp(r.Context(), acct.ID, app.ID)
+	environment, environments, ok := s.consumerEnvironment(w, r)
+	if !ok {
+		return
+	}
+	rows, err := s.listAPIConsumersIn(r, environments, acct.ID, app.ID, environment)
+	if errors.Is(err, state.ErrNotFound) {
+		s.notFound(w, "no such environment")
+		return
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not list API consumers"))
 		return
@@ -70,6 +112,10 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 		return
 	}
 	app, ok := s.consumerApp(w, r, acct)
+	if !ok {
+		return
+	}
+	environment, environments, ok := s.consumerEnvironment(w, r)
 	if !ok {
 		return
 	}
@@ -91,13 +137,17 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
 		return
 	}
-	if req.TrialDays != 0 && !consumercontrols.ValidTrialDays(req.TrialDays) {
+	if req.TrialDays != 0 && (!consumercontrols.ValidTrialDays(req.TrialDays) || environment != "") {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
-			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d", state.MaxAPIConsumerTrialDays)))
+			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d, and only production consumers have trials", state.MaxAPIConsumerTrialDays)))
 		return
 	}
-	c, err := s.store.CreateAPIConsumer(r.Context(), acct.ID, app.ID, req.ExternalRef, req.Name)
+	c, err := s.createAPIConsumerIn(r, environments, acct.ID, app.ID, environment, req)
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such environment")
+			return
+		}
 		if errors.Is(err, state.ErrConflict) {
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Consumer already exists", "external_ref is already registered for this app"))
@@ -171,7 +221,12 @@ func (s *server) listConsumerKeys(w http.ResponseWriter, r *http.Request, acct s
 		s.notFound(w, "no such consumer")
 		return
 	}
-	rows, err := s.store.ListConsumerKeysForApp(r.Context(), acct.ID, app.ID)
+	var rows []state.ConsumerKey
+	if environments, ok := s.store.(state.APIConsumerEnvironmentStore); ok {
+		rows, err = environments.ListConsumerKeysForConsumer(r.Context(), acct.ID, c.ID)
+	} else {
+		rows, err = s.store.ListConsumerKeysForApp(r.Context(), acct.ID, app.ID)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("could not list consumer keys"))
 		return
