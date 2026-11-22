@@ -1,0 +1,9 @@
+# ADR-20261027090013 step 14: the code interpreter image. Compiled with
+# pip-compile --generate-hashes into requirements.txt.
+ipykernel
+jupyter_client
+matplotlib
+numpy
+pandas
+scipy
+scikit-learn

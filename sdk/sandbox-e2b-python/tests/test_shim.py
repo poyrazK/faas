@@ -65,6 +65,7 @@ class FakeGregale:
         self.background: Dict[str, Dict[str, Any]] = {}
         self.inputs: List[Dict[str, Any]] = []
         self.session_env: Optional[Dict[str, str]] = None
+        self.code: List[Dict[str, Any]] = []
 
     def view(self) -> Dict[str, Any]:
         v: Dict[str, Any] = {
@@ -169,6 +170,29 @@ class FakeGregale:
                 "stderr_offset": 0,
             })
         key = f"{method} {sub}"
+        if key == "POST /code":
+            req = json.loads(text)
+            self.code.append(req)
+            run = {
+                "results": [{"data": {"image/png": "iVBORw0KGgo=", "text/plain": "<Figure>"}}, {"data": {"text/plain": "42"}, "is_main_result": True}],
+                "logs": {"stdout": ["hi\n"], "stderr": []},
+                "execution_count": 2,
+            }
+            if "1/0" in req["code"]:
+                run["error"] = {"name": "ZeroDivisionError", "value": "division by zero", "traceback": "Traceback"}
+            if headers.get("Accept") == "text/event-stream":
+                final = dict(run, logs={"stdout": [], "stderr": []})
+                frames = 'event: stdout\ndata: "hi\\n"\n\n' + f"event: result\ndata: {json.dumps(final)}\n\n"
+                return FakeResponse(200, frames.encode(), "text/event-stream")
+            return js(200, run)
+        if key == "POST /code/contexts":
+            self.code.append({"create": json.loads(text)})
+            return js(201, {"id": "abc123", "language": "python", "cwd": "/workspace"})
+        if key == "GET /code/contexts":
+            return js(200, {"contexts": [{"id": "default", "language": "python", "cwd": "/workspace"}]})
+        if key in ("POST /code/contexts/abc123/restart", "DELETE /code/contexts/abc123"):
+            self.code.append({method: sub})
+            return js(200, {})
         if key == "PUT /env":
             self.session_env = json.loads(text)["env"]
             return js(200, {"names": sorted(self.session_env)})
@@ -336,6 +360,34 @@ class ShimTest(unittest.TestCase):
         term.wait(on_pty=seen.append)
         self.assertEqual(seen, [b"$ "])
         self.assertTrue(sbx.pty.kill(term.pid))
+
+    # adr: 20261027090013 step 14 — run_code answers results, logs, errors
+    # and the run's value, streams to handlers, and manages contexts.
+    def test_run_code_and_contexts(self) -> None:
+        sbx = Sandbox.create("code-interpreter", **self.opts)
+        self.assertEqual(self.fake.created, {"preset": "code-interpreter"})
+        run = sbx.run_code("x + 2")
+        self.assertEqual((run.text, run.execution_count, run.logs.stdout), ("42", 2, ["hi\n"]))
+        self.assertEqual(run.results[0].png, "iVBORw0KGgo=")
+        self.assertEqual(run.results[0].formats(), ["text", "png"])
+        seen: List[str] = []
+        failed = sbx.run_code(
+            "1/0",
+            on_stdout=lambda m: seen.append(f"out:{m.line}"),
+            on_result=lambda r: seen.append(f"result:{r.text}"),
+            on_error=lambda e: seen.append(f"error:{e.name}"),
+        )
+        self.assertEqual(failed.error.name, "ZeroDivisionError")
+        self.assertEqual(seen, ["out:hi\n", "result:<Figure>", "result:42", "error:ZeroDivisionError"])
+        ctx = sbx.create_code_context(cwd="/workspace/app")
+        sbx.run_code("y = 1", context=ctx, timeout=5)
+        self.assertEqual(self.fake.code[-1], {"code": "y = 1", "context": "abc123", "timeout_ms": 5000})
+        self.assertEqual([c.id for c in sbx.list_code_contexts()], ["default"])
+        sbx.restart_code_context(ctx)
+        sbx.remove_code_context("abc123")
+        self.assertEqual(self.fake.code[-2:], [{"POST": "/code/contexts/abc123/restart"}, {"DELETE": "/code/contexts/abc123"}])
+        with self.assertRaises(UnsupportedException):
+            sbx.run_code("1", envs={"A": "1"})
 
     def test_background_commands_take_stdin(self) -> None:
         sbx = Sandbox.create(**self.opts)

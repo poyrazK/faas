@@ -16,6 +16,48 @@
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c"
     },
     {
+      "dockerfile": "images/base-debian-parent.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/debian:13-slim",
+      "resolved_repo": "mirror.gcr.io/library/debian",
+      "resolved_tag": "13-slim",
+      "platform": "linux/amd64",
+      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392"
+    },
+    {
+      "dockerfile": "images/base-minimal.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
+      "resolved_repo": "mirror.gcr.io/library/busybox",
+      "resolved_tag": "1.37.0-musl",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS busybox"
+    },
+    {
+      "dockerfile": "images/base-minimal.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/debian:13-slim",
+      "resolved_repo": "mirror.gcr.io/library/debian",
+      "resolved_tag": "13-slim",
+      "platform": "linux/amd64",
+      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 AS build"
+    },
+    {
+      "dockerfile": "images/base-minimal.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
+      "resolved_repo": "mirror.gcr.io/library/busybox",
+      "resolved_tag": "1.37.0-musl",
+      "platform": "linux/amd64",
+      "multi_arch": true,
+      "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+    },
+    {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
       "alias": "mirror.gcr.io/library/alpine:3.22",
@@ -60,107 +102,6 @@
       "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.11@sha256:957952ae74dc010608717144399a59a2c6e82ea03d63be1c7ff6577c5a135f93 AS runc-build"
     },
     {
-      "dockerfile": "images/base-debian-parent.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/debian:13-slim",
-      "resolved_repo": "mirror.gcr.io/library/debian",
-      "resolved_tag": "13-slim",
-      "platform": "linux/amd64",
-      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392"
-    },
-    {
-      "dockerfile": "images/base-minimal.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
-      "resolved_repo": "mirror.gcr.io/library/busybox",
-      "resolved_tag": "1.37.0-musl",
-      "platform": "linux/amd64",
-      "multi_arch": true,
-      "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS busybox"
-    },
-    {
-      "dockerfile": "images/base-minimal.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/debian:13-slim",
-      "resolved_repo": "mirror.gcr.io/library/debian",
-      "resolved_tag": "13-slim",
-      "platform": "linux/amd64",
-      "digest": "sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:13-slim@sha256:7378260c0a098d27ac206225db5e7d92b8c7c84ea7afccc86eeb513756bbd392 AS build"
-    },
-    {
-      "dockerfile": "images/runner-node22.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/node:22-alpine",
-      "resolved_repo": "mirror.gcr.io/library/node",
-      "resolved_tag": "22-alpine",
-      "platform": "linux/amd64",
-      "digest": "sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c"
-    },
-    {
-      "dockerfile": "images/runner-python312.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/python:3.12-slim-trixie",
-      "resolved_repo": "mirror.gcr.io/library/python",
-      "resolved_tag": "3.12-slim-trixie",
-      "platform": "linux/amd64",
-      "digest": "sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-trixie@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177"
-    },
-    {
-      "dockerfile": "images/runner-go124.Dockerfile",
-      "instruction": "FROM",
-      "alias": "cgr.dev/chainguard/bash:latest",
-      "resolved_repo": "cgr.dev/chainguard/bash",
-      "resolved_tag": "latest",
-      "platform": "linux/amd64",
-      "digest": "sha256:e5528d697cd5fef7f52837bdc573fd4469782064fe19327bd9e83402eb0d7b0d",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:e5528d697cd5fef7f52837bdc573fd4469782064fe19327bd9e83402eb0d7b0d"
-    },
-    {
-      "dockerfile": "images/runner-go124-alpine.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.24-alpine",
-      "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.24-alpine",
-      "platform": "linux/amd64",
-      "digest": "sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a"
-    },
-    {
-      "dockerfile": "images/runner-node24.Dockerfile",
-      "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/node:24-trixie-slim",
-      "resolved_repo": "mirror.gcr.io/library/node",
-      "resolved_tag": "24-trixie-slim",
-      "platform": "linux/amd64",
-      "digest": "sha256:60587baa7c895cf438d44f691e4ac8248b36c13b26be77332f874bebb3a64201",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:24-trixie-slim@sha256:60587baa7c895cf438d44f691e4ac8248b36c13b26be77332f874bebb3a64201"
-    },
-    {
-      "dockerfile": "images/runner-python313.Dockerfile",
-      "instruction": "FROM",
-      "alias": "cgr.dev/chainguard/wolfi-base:latest",
-      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
-      "resolved_tag": "latest",
-      "platform": "linux/amd64",
-      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
-    },
-    {
-      "dockerfile": "images/execution-python-data-v1.Dockerfile",
-      "instruction": "FROM",
-      "alias": "cgr.dev/chainguard/wolfi-base:latest",
-      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
-      "resolved_tag": "latest",
-      "platform": "linux/amd64",
-      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
-    },
-    {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
       "alias": "mirror.gcr.io/library/golang:1.26.11",
@@ -203,7 +144,27 @@
       "pinned_in_dockerfile": "FROM postgres:16@sha256:b95b87e93ceb7594715d5c71fb6e09f6fc878851ab537735d617325eb9ba8b1b"
     },
     {
-      "dockerfile": "images/base-minimal.Dockerfile",
+      "dockerfile": "images/execution-python-data-v1.Dockerfile",
+      "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
+    },
+    {
+      "dockerfile": "images/runner-go124-alpine.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/golang:1.24-alpine",
+      "resolved_repo": "mirror.gcr.io/library/golang",
+      "resolved_tag": "1.24-alpine",
+      "platform": "linux/amd64",
+      "digest": "sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/golang:1.24-alpine@sha256:757779acac4af1b349a20f357c7296097b4a0b89da4ad0e370b339060077282a"
+    },
+    {
+      "dockerfile": "images/runner-go124-alpine.Dockerfile",
       "instruction": "FROM",
       "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
       "resolved_repo": "mirror.gcr.io/library/busybox",
@@ -212,6 +173,16 @@
       "multi_arch": true,
       "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+    },
+    {
+      "dockerfile": "images/runner-go124.Dockerfile",
+      "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/bash:latest",
+      "resolved_repo": "cgr.dev/chainguard/bash",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:e5528d697cd5fef7f52837bdc573fd4469782064fe19327bd9e83402eb0d7b0d",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:e5528d697cd5fef7f52837bdc573fd4469782064fe19327bd9e83402eb0d7b0d"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -225,15 +196,14 @@
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
     },
     {
-      "dockerfile": "images/runner-go124-alpine.Dockerfile",
+      "dockerfile": "images/runner-node22.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
-      "resolved_repo": "mirror.gcr.io/library/busybox",
-      "resolved_tag": "1.37.0-musl",
+      "alias": "mirror.gcr.io/library/node:22-alpine",
+      "resolved_repo": "mirror.gcr.io/library/node",
+      "resolved_tag": "22-alpine",
       "platform": "linux/amd64",
-      "multi_arch": true,
-      "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+      "digest": "sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:22-alpine@sha256:12f54cafa58d0e96554ae05871e29663ff7241836377dc9a7916449b8adb062c"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
@@ -249,6 +219,16 @@
     {
       "dockerfile": "images/runner-node24.Dockerfile",
       "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/node:24-trixie-slim",
+      "resolved_repo": "mirror.gcr.io/library/node",
+      "resolved_tag": "24-trixie-slim",
+      "platform": "linux/amd64",
+      "digest": "sha256:60587baa7c895cf438d44f691e4ac8248b36c13b26be77332f874bebb3a64201",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:24-trixie-slim@sha256:60587baa7c895cf438d44f691e4ac8248b36c13b26be77332f874bebb3a64201"
+    },
+    {
+      "dockerfile": "images/runner-node24.Dockerfile",
+      "instruction": "FROM",
       "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
       "resolved_repo": "mirror.gcr.io/library/busybox",
       "resolved_tag": "1.37.0-musl",
@@ -256,6 +236,16 @@
       "multi_arch": true,
       "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+    },
+    {
+      "dockerfile": "images/runner-python312.Dockerfile",
+      "instruction": "FROM",
+      "alias": "mirror.gcr.io/library/python:3.12-slim-trixie",
+      "resolved_repo": "mirror.gcr.io/library/python",
+      "resolved_tag": "3.12-slim-trixie",
+      "platform": "linux/amd64",
+      "digest": "sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-trixie@sha256:05a994d2344eb364cc186910f4fc8786a38215f39f00d0acc25bff33a08f4177"
     },
     {
       "dockerfile": "images/runner-python312.Dockerfile",
@@ -271,6 +261,16 @@
     {
       "dockerfile": "images/runner-python313.Dockerfile",
       "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
+    },
+    {
+      "dockerfile": "images/runner-python313.Dockerfile",
+      "instruction": "FROM",
       "alias": "mirror.gcr.io/library/busybox:1.37.0-musl",
       "resolved_repo": "mirror.gcr.io/library/busybox",
       "resolved_tag": "1.37.0-musl",
@@ -278,6 +278,16 @@
       "multi_arch": true,
       "digest": "sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478",
       "pinned_in_dockerfile": "FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:f6a95d611e0a8780fabdb2aec43e31275b2720dfefa3e41b16835bfc42454478 AS gregale-debug-tools"
+    },
+    {
+      "dockerfile": "images/sandbox-code-interpreter.Dockerfile",
+      "instruction": "FROM",
+      "alias": "cgr.dev/chainguard/wolfi-base:latest",
+      "resolved_repo": "cgr.dev/chainguard/wolfi-base",
+      "resolved_tag": "latest",
+      "platform": "linux/amd64",
+      "digest": "sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:6b818b54724b30d095379a7471d9a9b6428a51ff52be188676d1d6e5ea67a1e4"
     }
   ]
 }

@@ -21,6 +21,7 @@ await sbx.kill();
 - `getHost(port)` answers only for exposed ports: pass `ports` to `create`, or `await sandbox.exposePort(port)`.
 - Files inside `/workspace` use Gregale's files API; other paths go through commands and are capped at 256 KB.
 - The default network mode is `registries`; `allowInternetAccess: false` is `none`.
+- `Sandbox.create('code-interpreter')` boots the code interpreter: `runCode` runs Python in a Jupyter kernel and answers an `Execution` (results with `text`, `png`, `html`, …, logs, error, `executionCount`); `createCodeContext`, `listCodeContexts`, `restartCodeContext` and `removeCodeContext` manage kernels.
 - `Sandbox.create({ envs })` sets the envs in the session once it runs (`PUT …/env`, kept in the session's memory only), so `Sandbox.connect` from another process sees them; `sandbox.setEnvs(envs)` replaces them.
 - `pty.create` starts a login shell on a terminal as a background command; `sendInput`, `resize` and `kill` drive it, and `onData` receives its output, polled about every 200 ms. Background commands take input with `commands.sendStdin` and `closeStdin`; a foreground command takes none.
 - Unsupported calls (`files.watchDir`, `pause`, MCP) throw `UnsupportedError` naming the call and the alternative.

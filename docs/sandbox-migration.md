@@ -57,7 +57,8 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 | `pause`, `betaPause` | Not needed: idle sessions freeze on their own and resume on the next call |
 | `pty.create({ cols, rows, onData })`, `pty.sendInput`, `pty.resize`, `pty.kill` | The same. The terminal is a background command; `onData` receives its output, polled about every 200 ms rather than pushed. Its timeout defaults to 60 s within the plan's cap, and `timeoutMs: 0` means that default, not no limit |
 | `commands.run(cmd, { background: true, stdin: true })`, `commands.sendStdin(pid, data)`, `commands.closeStdin(pid)` | The same for background commands, which always take input. A foreground command takes none |
-| `files.watchDir`, `getMcpUrl`, Code Interpreter `runCode`, the Desktop SDK | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
+| Code Interpreter: `Sandbox.create('code-interpreter')`, `runCode(code, { language, context, onStdout, onStderr, onResult, onError, timeoutMs })`, `createCodeContext`, `listCodeContexts`, `restartCodeContext`, `removeCodeContext` | The same, from the one `@gregale/sandbox-e2b` package. Python only; each context is a Jupyter kernel. `runCode`'s `envs` is refused: set the session's with `setEnvs`. Results (`text`, `html`, `png`, `json`, …) and `onResult` come when the run ends, not as each output appears |
+| `files.watchDir`, `getMcpUrl`, the Desktop SDK | Not supported yet. Each throws `UnsupportedError` naming the call and what to use instead |
 
 **Other differences:**
 
