@@ -21,8 +21,9 @@ func cmdRealtime(args []string) int {
 		PrintUsage(os.Stderr, realtimeUsage(), "realtime")
 		return 1
 	}
-	if refuseRealtimePreviewVerb(osStderr, args[0]) {
-		return 1
+	if hiddenRealtimeVerb(args[0]) {
+		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "realtime", nestedCliCommand("realtime"), args[0])
 	}
 	switch args[0] {
 	case "push":

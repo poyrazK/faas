@@ -303,8 +303,8 @@ func cmdRealtimePublish(args []string) int {
 		PrintUsage(osStderr, realtimePublishUsage(), "realtime")
 		return 1
 	}
-	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && !realtimePreviewCLI() && !realtimePreviewServed("realtime-channels") {
-		return printErr("Could not publish realtime message", fmt.Errorf("--delivery retained is a realtime preview feature that is not enabled for this account; use --delivery live"))
+	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && !realtimePreviewCLI() {
+		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live"))
 	}
 	if *delivery != string(api.ManagedRealtimeDeliveryLive) && *delivery != string(api.ManagedRealtimeDeliveryRetained) {
 		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live or retained"))
