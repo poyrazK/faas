@@ -73,9 +73,10 @@ func Resolve(key string) Subject {
 		}
 	case "scans":
 		// Grype sidecars of platform bases (pkg/wire BaseScanKeyForArch,
-		// ScanKeyForBaseKey): scans/<base name>.scan.json.
-		if name, ok := strings.CutSuffix(rest, ".scan.json"); ok && name != "" && !strings.Contains(name, "/") &&
-			Resolve("base/"+name).Class == ClassPlatform {
+		// ScanKeyForBaseKey): scans/<base name>.scan.json, or
+		// scans/generations/<sha256>/<base name>.scan.json for a
+		// generation-addressed base (storagekey.BaseGeneration).
+		if name, ok := strings.CutSuffix(rest, ".scan.json"); ok && baseScanName(name) {
 			return Subject{Class: ClassPlatform}
 		}
 	case "sboms":
@@ -204,4 +205,18 @@ func canonicalUUID(s string) bool {
 		}
 	}
 	return true
+}
+
+// baseScanName reports whether name, from scans/<name>.scan.json, names a
+// platform base: a bare base file name, or generations/<sha256 hex>/<bare
+// base file name>.
+func baseScanName(name string) bool {
+	if gen, ok := strings.CutPrefix(name, "generations/"); ok {
+		sum, base, ok := strings.Cut(gen, "/")
+		if !ok || len(sum) != 64 || strings.Trim(sum, "0123456789abcdef") != "" {
+			return false
+		}
+		name = base
+	}
+	return name != "" && name != "." && name != ".." && !strings.Contains(name, "/")
 }
