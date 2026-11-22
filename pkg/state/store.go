@@ -4016,6 +4016,7 @@ type Store interface {
 	// dispatch. On won=false the deliveryID is empty (the caller
 	// stays silent and lets the cool-down carry on). On a missing
 	// rule row, returns ("", false, ErrNotFound).
+	// A payload whose environment differs from the current rule gets ErrConflict.
 	ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey string, payload []byte, observed float64, at time.Time) (deliveryID string, won bool, err error)
 	// SetAlertRuleState transitions a rule's cool-down state. Called by
 	// the evaluator on healthy ticks (firing→ok) and after a successful

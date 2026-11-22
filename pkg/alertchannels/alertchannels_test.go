@@ -72,6 +72,28 @@ func TestSlackAndEmailContent(t *testing.T) {
 	}
 }
 
+func TestScopedChannelPayloads(t *testing.T) {
+	msg := fire()
+	msg.EnvironmentScope = "staging"
+	trigger := PagerDutyPayload("k", msg)
+	payload := trigger["payload"].(map[string]any)
+	if payload["custom_details"].(map[string]any)["environment_scope"] != "staging" ||
+		!strings.Contains(payload["summary"].(string), "[staging]") {
+		t.Fatalf("PagerDuty fire lost the environment: %v", trigger)
+	}
+	for _, event := range []string{EventFire, EventResolve} {
+		msg.Event = event
+		subject, _ := EmailContent(msg)
+		if !strings.Contains(subject, "[staging]") || !strings.Contains(SlackPayload(msg)["text"].(string), "[staging]") {
+			t.Fatalf("%s lost the environment in Slack or email", event)
+		}
+	}
+	resolve := PagerDutyPayload("k", msg)
+	if resolve["event_action"] != "resolve" || resolve["dedup_key"] != trigger["dedup_key"] {
+		t.Fatalf("PagerDuty resolve could not match the scoped fire: %v", resolve)
+	}
+}
+
 // adr: 20261020161310 — notes (the route insights behind an alert) reach
 // every channel; a message without notes renders as before.
 func TestNotesReachEveryChannel(t *testing.T) {

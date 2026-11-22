@@ -17242,14 +17242,18 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 		return "", false, fmt.Errorf("state: lock alert rollback app: %w", err)
 	}
 
-	var exists bool
-	if err := tx.QueryRow(ctx,
-		`select true from alert_rules where id = $1`, ruleID,
-	).Scan(&exists); err != nil {
+	mode, err := sqlc.New().LockAlertRuleObservationMode(ctx, tx, mustPgUUID(ruleID))
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", false, ErrNotFound
 		}
 		return "", false, fmt.Errorf("state: claim alert fire lookup %s: %w", ruleID, err)
+	}
+	if mode.ObserveOnly {
+		return "", false, nil
+	}
+	if !alertFireMatchesScope(payload, mode.EnvironmentScope) {
+		return "", false, ErrConflict
 	}
 
 	// Insert pending delivery as the dedupe gate. UNIQUE on
@@ -17300,9 +17304,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
+	return s.setAlertRuleState(ctx, ruleID, to, at, nil)
+}
+
+func (s *PgStore) setAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time, confirmedAt *time.Time) (bool, error) {
 	var changed int
 	err := s.pool.QueryRow(ctx, setAlertRuleStateSQL,
-		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep).Scan(&changed)
+		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep, confirmedAt).Scan(&changed)
 	if err != nil {
 		return false, err
 	}
@@ -28240,6 +28248,8 @@ func mapErr(err error) error {
 			return err
 		case pgerrcode.CheckViolation:
 			switch pgErr.ConstraintName {
+			case "alert_rules_environment_scope_chk", "alert_rules_recovery_confirmation_chk":
+				return ErrInvalidArgument
 			case "release_secret_snapshot_owned", "release_secret_key_retired", "release_secret_version_immutable":
 				return ErrConflict
 			case "application_standards_pending":

@@ -28,6 +28,12 @@ func (s *PgStore) SetAlertRuleChannels(ctx context.Context, ruleID string, chann
 	if err != nil || !rule.Valid {
 		return ErrInvalidArgument
 	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		return setAlertRuleChannelsTx(ctx, tx, rule, channelIDs)
+	})
+}
+
+func setAlertRuleChannelsTx(ctx context.Context, tx pgx.Tx, rule pgtype.UUID, channelIDs []string) error {
 	ids := make([]pgtype.UUID, 0, len(channelIDs))
 	for _, id := range channelIDs {
 		key, err := alertPgUUID(id)
@@ -36,19 +42,17 @@ func (s *PgStore) SetAlertRuleChannels(ctx context.Context, ruleID string, chann
 		}
 		ids = append(ids, key)
 	}
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		q := sqlc.New()
-		if err := q.DeleteAlertRuleChannels(ctx, tx, rule); err != nil {
-			return fmt.Errorf("state: clear alert rule channels: %w", err)
-		}
-		if len(ids) == 0 {
-			return nil
-		}
-		if err := q.InsertAlertRuleChannels(ctx, tx, sqlc.InsertAlertRuleChannelsParams{ChannelIds: ids, RuleID: rule}); err != nil {
-			return fmt.Errorf("state: bind alert rule channels: %w", err)
-		}
+	q := sqlc.New()
+	if err := q.DeleteAlertRuleChannels(ctx, tx, rule); err != nil {
+		return fmt.Errorf("state: clear alert rule channels: %w", err)
+	}
+	if len(ids) == 0 {
 		return nil
-	})
+	}
+	if err := q.InsertAlertRuleChannels(ctx, tx, sqlc.InsertAlertRuleChannelsParams{ChannelIds: ids, RuleID: rule}); err != nil {
+		return fmt.Errorf("state: bind alert rule channels: %w", err)
+	}
+	return nil
 }
 
 // ListAlertRuleChannels returns a rule's channels in name order.
@@ -77,8 +81,13 @@ func (m *MemStore) SetAlertRuleChannels(_ context.Context, ruleID string, channe
 	if !ok {
 		return nil
 	}
+	m.storeAlertRuleChannelsLocked(ruleID, m.ownedAlertRuleChannelsLocked(rule.AccountID, channelIDs))
+	return nil
+}
+
+func (m *MemStore) ownedAlertRuleChannelsLocked(accountID string, channelIDs []string) []string {
 	owned := map[string]bool{}
-	for _, c := range m.notificationChannels[rule.AccountID] {
+	for _, c := range m.notificationChannels[accountID] {
 		owned[c.ID] = true
 	}
 	var kept []string
@@ -88,11 +97,14 @@ func (m *MemStore) SetAlertRuleChannels(_ context.Context, ruleID string, channe
 			owned[id] = false // dedupe
 		}
 	}
+	return kept
+}
+
+func (m *MemStore) storeAlertRuleChannelsLocked(ruleID string, kept []string) {
 	if m.alertRuleChannels == nil {
 		m.alertRuleChannels = map[string][]string{}
 	}
 	m.alertRuleChannels[ruleID] = kept
-	return nil
 }
 
 // ListAlertRuleChannels mirrors PgStore; a deleted channel drops out.

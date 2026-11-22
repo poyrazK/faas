@@ -222,7 +222,7 @@ type Evaluator struct {
 	// (ADR-20261029203000); RunOnce runs on one goroutine.
 	lastPurge time.Time
 
-	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
+	// anomaly shares ADR-744 baselines across rules in the current tick.
 	anomaly anomalyState
 }
 
@@ -461,6 +461,7 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, fmt.Errorf("alerts: list enabled: %w", err)
 	}
 	stats.Evaluated = len(rules)
+	e.anomaly.begin(now)
 
 	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
 		stats.add(account)
@@ -542,6 +543,10 @@ func (e *Evaluator) purgeDeletedRuleEpisodes(ctx context.Context, cutoff time.Ti
 // cancellation — every other failure is observation, not load-
 // bearing for the next tick.
 func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time.Time, stats *Stats) {
+	if rule.ObserveOnly {
+		e.evalObserveOnly(ctx, rule, now, stats)
+		return
+	}
 	var readiness []api.MCPReadinessMonitorStatus
 	if string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		ctx, readiness = e.withMCPReadiness(ctx, rule)
@@ -561,8 +566,77 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// Reading the value gets AlertObserveBudget (ADR-20261028101615); a
 	// read cut short is degraded like any other failed read.
 	octx, cancel := context.WithTimeout(ctx, api.AlertObserveBudget)
-	observed, comparisonResult, skipReason := e.observe(octx, rule)
+	var observed float64
+	var comparisonResult bool
+	var skipReason string
+	var baseline anomalyBaseline
+	isAnomaly := api.IsAnomalyAlertComparison(string(rule.Comparison))
+	var anomalyEvidence api.AlertAnomalyEvaluation
+	if isAnomaly {
+		result := e.observeAnomaly(octx, rule)
+		observed, comparisonResult, skipReason, baseline = result.value, result.fires, result.skip, result.baseline
+		anomalyEvidence = result.evidence
+	} else {
+		observed, comparisonResult, skipReason = e.observe(octx, rule)
+	}
 	cancel()
+	var recoveryStore state.AlertAnomalyRecoveryStore
+	if isAnomaly && rule.RecoveryConfirmationChecks == api.AnomalyReplayRecoveryChecks {
+		var ok bool
+		recoveryStore, ok = e.store.(state.AlertAnomalyRecoveryStore)
+		if !ok {
+			e.log.Warn("alerts: recovery confirmation storage unavailable", "rule", rule.ID)
+			return
+		}
+		if !comparisonResult && skipReason == "" && rule.State != state.AlertStateOk {
+			open := rule.State == state.AlertStateFiring
+			if !open {
+				var err error
+				open, err = recoveryStore.AlertRuleEpisodeOpen(ctx, rule.ID)
+				if err != nil {
+					e.log.Warn("alerts: read episode for recovery confirmation", "rule", rule.ID, "err", err)
+					return
+				}
+			}
+			if open {
+				anomalyEvidence = state.ConfirmAlertAnomalyRecovery(rule, anomalyEvidence)
+			}
+		}
+	}
+	var cooldownUntil time.Time
+	if isAnomaly && comparisonResult {
+		cooldownUntil = e.repeatNotificationCooldownUntil(ctx, rule, now)
+		if cooldownUntil.IsZero() {
+			anomalyEvidence = api.AlertAnomalyEvaluation{}
+		} else {
+			anomalyEvidence.Reason = api.AlertAnomalyNotificationCooldown
+			anomalyEvidence.NextNotificationEligibleAt = &cooldownUntil
+		}
+	}
+	anomalyRecorded := false
+	if store, ok := e.store.(state.AlertAnomalyEvaluationStore); isAnomaly && ok {
+		accepted, err := store.RecordAlertAnomalyEvaluation(ctx, rule, now, anomalyEvidence)
+		if err != nil {
+			e.log.Warn("alerts: record anomaly evaluation", "rule", rule.ID, "err", err)
+			if recoveryStore != nil {
+				return
+			}
+		} else if !accepted {
+			return // Superseded by a rule edit or a newer evaluation.
+		} else {
+			anomalyRecorded = true
+		}
+	}
+	if anomalyEvidence.Reason == api.AlertAnomalyRecoveryPending {
+		return
+	}
+	stampEvaluated := func() {
+		if !anomalyRecorded {
+			if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
+				e.log.Warn("alerts: stamp last_evaluated_at", "rule", rule.ID, "err", err)
+			}
+		}
+	}
 	if skipReason != "" {
 		switch skipReason {
 		case skipDegraded:
@@ -572,13 +646,17 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 			}
 			e.log.Warn("alerts: eval skipped degraded source",
 				"rule", rule.ID, "metric", string(rule.Metric))
-			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
-				e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+			if !anomalyRecorded {
+				if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateDegraded, now); err != nil {
+					e.log.Warn("alerts: set state degraded", "rule", rule.ID, "err", err)
+				}
 			}
 		case skipInsufficient, skipPaused:
 			stats.SkippedInsufficient++
-			if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
-				e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
+			if !anomalyRecorded {
+				if _, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateUnknown, now); err != nil {
+					e.log.Warn("alerts: set state unknown", "rule", rule.ID, "err", err)
+				}
 			}
 		case skipNoIdentity:
 			stats.SkippedNoIdentity++
@@ -588,10 +666,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		// Stamp last_evaluated_at so the dashboard's "evaluated N
 		// seconds ago" reads true even on a degraded tick. Failures
 		// are warn-logged; we never block the next rule.
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 
@@ -610,8 +685,15 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 		// one of those before recovering is announced too
 		// (ADR-20261104142830).
 		if rule.State != state.AlertStateOk {
-			wasFiring := e.episodeWasFiring(ctx, rule)
-			changed, err := e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
+			var changed, wasFiring bool
+			var err error
+			if anomalyEvidence.Reason == api.AlertAnomalyRecoveryConfirmed {
+				wasFiring = true
+				changed, err = recoveryStore.ResolveConfirmedAlertAnomaly(ctx, rule.ID, now)
+			} else {
+				wasFiring = e.episodeWasFiring(ctx, rule)
+				changed, err = e.store.SetAlertRuleState(ctx, rule.ID, state.AlertStateOk, now)
+			}
 			if err != nil {
 				e.log.Warn("alerts: set state ok", "rule", rule.ID, "err", err)
 			} else if changed && wasFiring {
@@ -629,10 +711,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				}
 			}
 		}
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 
@@ -655,17 +734,10 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// the first fire every later tick produced that same key and lost:
 	// each rule fired exactly once and then stayed silent — through a
 	// sustained breach past its cool-down and for every new incident.
-	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
-	if cooldown <= 0 {
-		cooldown = time.Minute // belt + braces; the schema defaults to >= 1
+	if !isAnomaly {
+		cooldownUntil = e.repeatNotificationCooldownUntil(ctx, rule, now)
 	}
-	// The cool-down limits repeat notices for one incident. A breach after
-	// the previous incident closed (the rule recovered to ok and its
-	// resolve went out) is a new incident and fires at once: gating it on
-	// the old fire's time hid a whole incident that started and ended inside
-	// the window, and the receiver then heard a second resolve for a fire it
-	// never got (ADR-20261110090000).
-	if !rule.LastFiredAt.IsZero() && now.Sub(rule.LastFiredAt) < cooldown && e.episodeWasFiring(ctx, rule) {
+	if !cooldownUntil.IsZero() {
 		// Still breaching inside the cool-down of the open incident: record
 		// the breach even though the cool-down withholds a delivery. That
 		// covers a degraded read that recovered, which otherwise read "ok"
@@ -675,10 +747,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 				e.log.Warn("alerts: restore firing state", "rule", rule.ID, "err", err)
 			}
 		}
-		if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-			e.log.Warn("alerts: stamp last_evaluated_at (cool-down)",
-				"rule", rule.ID, "err", err)
-		}
+		stampEvaluated()
 		return
 	}
 	var previousFire int64
@@ -690,10 +759,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	// Stamp last_evaluated_at up-front so a successful claim still
 	// records "evaluated N seconds ago" if the dispatch path then
 	// fails inside RecordAlertDelivery.
-	if err := e.store.SetAlertRuleLastEvaluated(ctx, rule.ID, now); err != nil {
-		e.log.Warn("alerts: stamp last_evaluated_at (fire)",
-			"rule", rule.ID, "err", err)
-	}
+	stampEvaluated()
 
 	// Marshal the webhook envelope ONCE so the dedupe row carries
 	// the same payload we'll hand to the dispatcher. ClaimAlertFire
@@ -707,7 +773,7 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	if convergence != nil {
 		paths.mcpConvergence = convergence
 	}
-	extra := e.anomalyPayload(rule, observed)
+	extra := baseline.payload(observed)
 	if lc, ok := e.readLogContext(ctx, rule, e.appSlug(ctx, rule.AppID), e.now()); ok {
 		if extra == nil {
 			extra = map[string]any{}
@@ -721,6 +787,9 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	}
 
 	deliveryID, won, err := e.store.ClaimAlertFire(ctx, rule.ID, idempotencyKey, payloadBytes, observed, now)
+	if errors.Is(err, state.ErrConflict) {
+		return // The rule's environment changed during this evaluation.
+	}
 	if err != nil {
 		// ErrNotFound is a TOCTOU race (rule deleted between
 		// ListEnabledAlertRules and the claim) — log + skip.
@@ -780,6 +849,21 @@ func (e *Evaluator) evalRule(ctx context.Context, rule state.AlertRule, now time
 	}
 	e.deliverAlert(ctx, rule, deliveryID, observed, payloadMap, now, stats)
 }
+
+// repeatNotificationCooldownUntil applies only while the same incident is open.
+// A breach after recovery can fire immediately (ADR-20261110090000).
+func (e *Evaluator) repeatNotificationCooldownUntil(ctx context.Context, rule state.AlertRule, now time.Time) time.Time {
+	cooldown := time.Duration(rule.CooldownMinutes) * time.Minute
+	if cooldown <= 0 {
+		cooldown = time.Minute // the schema defaults to at least one minute
+	}
+	until := rule.LastFiredAt.Add(cooldown).UTC()
+	if rule.LastFiredAt.IsZero() || !now.Before(until) || !e.episodeWasFiring(ctx, rule) {
+		return time.Time{}
+	}
+	return until
+}
+
 func (e *Evaluator) deliverAlert(ctx context.Context, rule state.AlertRule, deliveryID string, observed float64, payloadMap map[string]any, now time.Time, stats *Stats) {
 	// SAFE-RELEASES-B fan-out: when the rule's action column is
 	// anything other than the 'webhook' default (or empty), route
@@ -912,6 +996,9 @@ func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, ob
 	if reason != "" {
 		payload["reason"] = reason
 	}
+	if rule.EnvironmentScope != "" {
+		payload["environment_scope"] = rule.EnvironmentScope
+	}
 	evt := webhookout.Event{
 		ID:         uuid.NewString(),
 		OccurredAt: now,
@@ -946,7 +1033,7 @@ func (e *Evaluator) runAction(ctx context.Context, rule state.AlertRule, fireID 
 	action := rule.Action
 	// Empty string and the explicit 'webhook' default are the
 	// legacy path — ActionExecutor is not consulted.
-	if action == "" || action == state.AlertActionWebhook {
+	if action == "" || action == state.AlertActionWebhook || rule.EnvironmentScope != "" {
 		return
 	}
 	if api.IsEdgeSecurityAlertMetric(string(rule.Metric)) {
@@ -1047,9 +1134,6 @@ func (e *Evaluator) observe(ctx context.Context, rule state.AlertRule) (float64,
 	}
 	if api.IsMCPProtocolMetric(string(rule.Metric)) {
 		return e.observeMCPProtocol(ctx, rule)
-	}
-	if api.IsAnomalyAlertComparison(string(rule.Comparison)) {
-		return e.observeAnomaly(ctx, rule)
 	}
 	if api.IsMCPConnectionHealthMetric(string(rule.Metric)) {
 		return e.observeMCPConnectionHealth(ctx, rule)
@@ -1575,6 +1659,9 @@ func buildPayload(rule state.AlertRule, observed float64, paths investigationPat
 		"observed":   observed,
 		"window":     string(rule.WindowSpec),
 		"fired_at":   time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if rule.EnvironmentScope != "" {
+		m["environment_scope"] = rule.EnvironmentScope
 	}
 	if api.IsMCPProtocolMetric(string(rule.Metric)) {
 		m["app_id"] = rule.AppID

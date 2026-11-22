@@ -22189,23 +22189,88 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id,notify_resolved,custom_metric_labels,observe_only,observation_enabled,environment_scope,recovery_confirmation_checks)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb)
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id),sqlc.arg(notify_resolved),sqlc.narg(custom_metric_labels)::jsonb,sqlc.arg(observe_only),sqlc.arg(observation_enabled),sqlc.arg(environment_scope),sqlc.arg(recovery_confirmation_checks))
 RETURNING *;
+
+-- name: LockCustomerAlertRule :one
+SELECT * FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
 
 -- name: UpdateCustomerAlertRule :one
 UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,mcp_min_calls),
- mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+ mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=sqlc.arg(enabled),
  metric=coalesce(sqlc.narg(metric)::text,metric),comparison=coalesce(sqlc.narg(comparison)::text,comparison),
  threshold=coalesce(sqlc.narg(threshold)::double precision,threshold),window_spec=coalesce(sqlc.narg(window_spec)::text,window_spec),
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
  webhook_secret_sealed=coalesce(sqlc.narg(webhook_secret_sealed)::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce(sqlc.narg(cooldown_minutes)::integer,cooldown_minutes),
+ recovery_confirmation_checks=coalesce(sqlc.narg(recovery_confirmation_checks)::integer,recovery_confirmation_checks),
  post_deploy_rollback_window_seconds=coalesce(sqlc.narg(post_deploy_rollback_window_seconds)::integer,post_deploy_rollback_window_seconds),
- notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),updated_at=now()
+ notify_resolved=coalesce(sqlc.narg(notify_resolved)::boolean,notify_resolved),
+ state=CASE WHEN observe_only <> sqlc.arg(observe_only)::boolean THEN 'ok' ELSE state END,
+ observe_only=sqlc.arg(observe_only),observation_enabled=sqlc.arg(observation_enabled),
+ environment_scope=coalesce(sqlc.narg(environment_scope)::text,environment_scope),
+ observed_incidents=sqlc.narg(observed_incidents)::jsonb,
+ latest_anomaly_evaluation=NULL,updated_at=sqlc.arg(updated_at)
 WHERE id=sqlc.arg(id) RETURNING *;
+
+-- name: CloseLiveAlertEpisodeForObservation :exec
+WITH cancel_resolves AS (
+ DELETE FROM alert_channel_resolve_retries AS retry WHERE retry.rule_id=sqlc.arg(id)::uuid
+), cancel_stand_downs AS (
+ DELETE FROM alert_channel_stand_downs AS notice WHERE notice.rule_id=sqlc.arg(id)::uuid
+)
+UPDATE alert_episodes AS episode SET resolved_at=greatest(episode.opened_at,sqlc.arg(ended_at)::timestamptz)
+WHERE episode.rule_id=sqlc.arg(id) AND episode.resolved_at IS NULL;
+
+-- name: LockAlertRuleObservationMode :one
+SELECT observe_only, environment_scope FROM alert_rules WHERE id=sqlc.arg(id) FOR UPDATE;
+
+-- name: RecordCustomerAlertObservation :execrows
+WITH recorded AS (
+ UPDATE alert_rules SET last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ observed_incidents=sqlc.narg(incidents)::jsonb
+ WHERE id=sqlc.arg(id) AND observe_only AND observation_enabled
+ AND environment_scope=sqlc.arg(expected_environment_scope)
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz)
+ RETURNING id
+), expired AS (
+ DELETE FROM alert_observation_checks USING recorded
+ WHERE rule_id=recorded.id AND evaluated_at <= sqlc.arg(coverage_cutoff)::timestamptz
+)
+INSERT INTO alert_observation_checks(rule_id,evaluated_at,skip_reason)
+SELECT id,sqlc.arg(evaluated_at)::timestamptz,sqlc.arg(skip_reason)::text FROM recorded;
+
+-- name: ListCustomerAlertObservationCoverage :many
+SELECT checks.skip_reason, count(*) FILTER (WHERE checks.evaluated_at > sqlc.arg(coverage_cutoff)::timestamptz) AS checks_in_window,
+ max(checks.evaluated_at)::timestamptz AS last_checked_at
+FROM alert_observation_checks AS checks
+JOIN alert_rules AS rule ON rule.id=checks.rule_id
+WHERE rule.id=sqlc.arg(id) AND rule.observe_only
+ AND rule.updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND checks.evaluated_at <= sqlc.arg(as_of)::timestamptz
+GROUP BY checks.skip_reason ORDER BY checks.skip_reason;
+
+-- name: DeleteCustomerAlertObservationChecks :exec
+DELETE FROM alert_observation_checks WHERE rule_id=sqlc.arg(id);
+
+-- name: RecordCustomerAlertAnomalyEvaluation :execrows
+-- A skipped observation leaves any open alert episode alone.
+UPDATE alert_rules SET
+ last_evaluated_at=sqlc.arg(evaluated_at)::timestamptz,
+ latest_anomaly_evaluation=sqlc.narg(evidence)::jsonb,
+ updated_at=CASE WHEN state <> sqlc.narg(skipped_state)::text
+                 THEN greatest(updated_at,sqlc.arg(evaluated_at)::timestamptz) ELSE updated_at END,
+ state=coalesce(sqlc.narg(skipped_state)::text,state)
+WHERE id=sqlc.arg(id) AND enabled AND comparison IN ('above_baseline','below_baseline')
+ AND updated_at=sqlc.arg(expected_updated_at)::timestamptz
+ AND (recovery_confirmation_checks = 1 OR last_evaluated_at IS NOT DISTINCT FROM sqlc.narg(expected_last_evaluated_at)::timestamptz)
+ AND (last_evaluated_at IS NULL OR last_evaluated_at < sqlc.arg(evaluated_at)::timestamptz);
 
 -- name: ReadCustomerAlertRule :one
 SELECT * FROM alert_rules WHERE id=sqlc.arg(id);
@@ -22320,7 +22385,7 @@ DELETE FROM alert_deliveries d WHERE d.id IN (
 -- name: ListEnabledCustomerAlertRules :many
 -- A deleted app's rules wait out its restore grace without evaluating
 -- (ADR-20261029203000); account-wide rules have no app.
-SELECT * FROM alert_rules r WHERE r.enabled=true
+SELECT * FROM alert_rules r WHERE (r.enabled OR r.observation_enabled)
  AND NOT EXISTS (SELECT 1 FROM apps a WHERE a.id=r.app_id AND a.status='deleted')
  ORDER BY r.account_id;
 

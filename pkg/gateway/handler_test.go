@@ -1610,6 +1610,12 @@ func TestHandlerObserveRequestDuration(t *testing.T) {
 	if got := histogramCountFromBody(t, h.metrics, `app="app-1",class="2xx"`); got != 1 {
 		t.Errorf("request_duration{app-1,2xx} count = %d, want 1", got)
 	}
+	// adr: 744 covers the default scope used by anomaly rules for normal routes.
+	scoped := httptest.NewRecorder()
+	h.metrics.Handler().ServeHTTP(scoped, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(scoped.Body.String(), `gateway_environment_request_duration_seconds_count{app="app-1",class="2xx",scope="default"} 1`) {
+		t.Error("the normal app route did not record its default environment's duration")
+	}
 
 	// Cold success (parked app, fresh admit).
 	b := h.backend.(*fakeBackend)

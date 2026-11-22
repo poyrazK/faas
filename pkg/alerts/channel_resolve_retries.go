@@ -79,6 +79,9 @@ func (e *Evaluator) retryChannelResolves(ctx context.Context, now time.Time) (re
 			e.log.Warn("alerts: read rule for channel resolve retry", "rule", r.RuleID, "err", err)
 			continue
 		}
+		if rule.ObserveOnly {
+			continue
+		}
 		if now.Sub(r.ResolvedAt) > api.AlertChannelResolveRetryWindow {
 			e.abandonChannelResolve(ctx, retries, rule, r)
 			abandoned++

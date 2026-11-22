@@ -682,6 +682,12 @@ type AlertHistoricalRollbackClaim struct {
 	FireID       pgtype.UUID
 }
 
+type AlertObservationCheck struct {
+	RuleID      pgtype.UUID
+	EvaluatedAt pgtype.Timestamptz
+	SkipReason  string
+}
+
 type AlertPreset struct {
 	ID                     pgtype.UUID
 	Name                   string
@@ -741,6 +747,12 @@ type AlertRule struct {
 	CreatedByAccountID              pgtype.UUID
 	NotifyResolved                  bool
 	CustomMetricLabels              []byte
+	LatestAnomalyEvaluation         []byte
+	ObserveOnly                     bool
+	ObservationEnabled              bool
+	ObservedIncidents               []byte
+	EnvironmentScope                string
+	RecoveryConfirmationChecks      int32
 }
 
 type AlertRuleChannel struct {

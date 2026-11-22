@@ -35,7 +35,7 @@ var standDownNotes = map[string]string{
 // leaves the rule stranded and the next tick tries again.
 func (e *Evaluator) standDown(ctx context.Context, rule state.AlertRule, reason string, now time.Time, stats *Stats) {
 	// MCP readiness rules run their own incident lifecycle and notices.
-	if rule.State == state.AlertStateOk || string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
+	if rule.ObserveOnly || rule.State == state.AlertStateOk || string(rule.Metric) == api.MetricMCPReadinessUnhealthy {
 		return
 	}
 	wasFiring := e.episodeWasFiring(ctx, rule)

@@ -335,6 +335,7 @@
       "docs_url": "/docs/adr/744-anomaly-alerts",
       "operator_flag": "FAAS_ANOMALY_ALERTS_ENABLED",
       "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline",
+      "routes": ["=/v1/apps/{}/alerts/anomaly-preview"],
       "parent": "alerts"
     },
     {

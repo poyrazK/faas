@@ -20,6 +20,9 @@ from ..models.alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.alert_anomaly_evaluation import AlertAnomalyEvaluation
+    from ..models.alert_observation_coverage import AlertObservationCoverage
+    from ..models.alert_observed_incident import AlertObservedIncident
     from ..models.alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
 
 
@@ -61,6 +64,16 @@ class AlertRuleResponse:
     the rule's app back to its last live deployment. demote = pin the current canary step (no traffic advance).
     promote = short-circuit the canary ladder to 100%. Pre-auth target and MCP task, event consumer, and workflow
     metrics support webhook only."""
+    observe_only: bool | Unset = UNSET
+    """The rule records observations on the normal evaluation schedule."""
+    recovery_confirmation_checks: int | Unset = UNSET
+    """Consecutive healthy checks required to recover."""
+    environment_scope: str | Unset = UNSET
+    """Environment observed by this rule when scoped."""
+    observed_incidents: list[AlertObservedIncident] | Unset = UNSET
+    """Latest observation-only incidents, most recent first. Included in the individual rule response."""
+    observation_coverage: AlertObservationCoverage | Unset = UNSET
+    """Recorded live Observe only checks during the 24 hours before this response."""
     mcp_readiness_scope: str | Unset = UNSET
     """Immutable readiness environment selector. Omitted or empty means every environment; default selects only
     default. Valid only for mcp_readiness_unhealthy."""
@@ -100,6 +113,8 @@ class AlertRuleResponse:
     """Notification channels the rule delivers fires and resolves to."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
+    anomaly_evaluation: AlertAnomalyEvaluation | Unset = UNSET
+    """Why the latest anomaly evaluation did not trigger a fire."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -132,6 +147,23 @@ class AlertRuleResponse:
         created_at = self.created_at.isoformat()
 
         updated_at = self.updated_at.isoformat()
+
+        observe_only = self.observe_only
+
+        recovery_confirmation_checks = self.recovery_confirmation_checks
+
+        environment_scope = self.environment_scope
+
+        observed_incidents: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.observed_incidents, Unset):
+            observed_incidents = []
+            for observed_incidents_item_data in self.observed_incidents:
+                observed_incidents_item = observed_incidents_item_data.to_dict()
+                observed_incidents.append(observed_incidents_item)
+
+        observation_coverage: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.observation_coverage, Unset):
+            observation_coverage = self.observation_coverage.to_dict()
 
         mcp_readiness_scope = self.mcp_readiness_scope
 
@@ -186,6 +218,10 @@ class AlertRuleResponse:
         if not isinstance(self.last_evaluated_at, Unset):
             last_evaluated_at = self.last_evaluated_at.isoformat()
 
+        anomaly_evaluation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.anomaly_evaluation, Unset):
+            anomaly_evaluation = self.anomaly_evaluation.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -207,6 +243,16 @@ class AlertRuleResponse:
                 "updated_at": updated_at,
             }
         )
+        if observe_only is not UNSET:
+            field_dict["observe_only"] = observe_only
+        if recovery_confirmation_checks is not UNSET:
+            field_dict["recovery_confirmation_checks"] = recovery_confirmation_checks
+        if environment_scope is not UNSET:
+            field_dict["environment_scope"] = environment_scope
+        if observed_incidents is not UNSET:
+            field_dict["observed_incidents"] = observed_incidents
+        if observation_coverage is not UNSET:
+            field_dict["observation_coverage"] = observation_coverage
         if mcp_readiness_scope is not UNSET:
             field_dict["mcp_readiness_scope"] = mcp_readiness_scope
         if mcp_min_calls is not UNSET:
@@ -239,11 +285,16 @@ class AlertRuleResponse:
             field_dict["last_fired_at"] = last_fired_at
         if last_evaluated_at is not UNSET:
             field_dict["last_evaluated_at"] = last_evaluated_at
+        if anomaly_evaluation is not UNSET:
+            field_dict["anomaly_evaluation"] = anomaly_evaluation
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.alert_anomaly_evaluation import AlertAnomalyEvaluation
+        from ..models.alert_observation_coverage import AlertObservationCoverage
+        from ..models.alert_observed_incident import AlertObservedIncident
         from ..models.alert_rule_response_custom_metric_labels import AlertRuleResponseCustomMetricLabels
 
         d = dict(src_dict)
@@ -276,6 +327,28 @@ class AlertRuleResponse:
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        observe_only = d.pop("observe_only", UNSET)
+
+        recovery_confirmation_checks = d.pop("recovery_confirmation_checks", UNSET)
+
+        environment_scope = d.pop("environment_scope", UNSET)
+
+        _observed_incidents = d.pop("observed_incidents", UNSET)
+        observed_incidents: list[AlertObservedIncident] | Unset = UNSET
+        if _observed_incidents is not UNSET:
+            observed_incidents = []
+            for observed_incidents_item_data in _observed_incidents:
+                observed_incidents_item = AlertObservedIncident.from_dict(observed_incidents_item_data)
+
+                observed_incidents.append(observed_incidents_item)
+
+        _observation_coverage = d.pop("observation_coverage", UNSET)
+        observation_coverage: AlertObservationCoverage | Unset
+        if isinstance(_observation_coverage, Unset):
+            observation_coverage = UNSET
+        else:
+            observation_coverage = AlertObservationCoverage.from_dict(_observation_coverage)
 
         mcp_readiness_scope = d.pop("mcp_readiness_scope", UNSET)
 
@@ -356,6 +429,13 @@ class AlertRuleResponse:
         else:
             last_evaluated_at = datetime.datetime.fromisoformat(_last_evaluated_at)
 
+        _anomaly_evaluation = d.pop("anomaly_evaluation", UNSET)
+        anomaly_evaluation: AlertAnomalyEvaluation | Unset
+        if isinstance(_anomaly_evaluation, Unset):
+            anomaly_evaluation = UNSET
+        else:
+            anomaly_evaluation = AlertAnomalyEvaluation.from_dict(_anomaly_evaluation)
+
         alert_rule_response = cls(
             id=id,
             app_id=app_id,
@@ -372,6 +452,11 @@ class AlertRuleResponse:
             state=state,
             created_at=created_at,
             updated_at=updated_at,
+            observe_only=observe_only,
+            recovery_confirmation_checks=recovery_confirmation_checks,
+            environment_scope=environment_scope,
+            observed_incidents=observed_incidents,
+            observation_coverage=observation_coverage,
             mcp_readiness_scope=mcp_readiness_scope,
             mcp_min_calls=mcp_min_calls,
             mcp_for_minutes=mcp_for_minutes,
@@ -388,6 +473,7 @@ class AlertRuleResponse:
             channel_ids=channel_ids,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,
+            anomaly_evaluation=anomaly_evaluation,
         )
 
         alert_rule_response.additional_properties = d

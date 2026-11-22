@@ -2,12 +2,32 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AlertAnomalyEvaluation } from './AlertAnomalyEvaluation.js';
+import type { AlertObservationCoverage } from './AlertObservationCoverage.js';
+import type { AlertObservedIncident } from './AlertObservedIncident.js';
 /**
  * A customer-configurable alert rule. Carries the masked webhook
  * secret; the sealed ciphertext is server-side only.
  *
  */
 export type AlertRuleResponse = {
+  /**
+   * The rule records observations on the normal evaluation schedule.
+   */
+  observe_only?: boolean;
+  /**
+   * Consecutive healthy checks required to recover.
+   */
+  recovery_confirmation_checks?: number;
+  /**
+   * Environment observed by this rule when scoped.
+   */
+  environment_scope?: string;
+  /**
+   * Latest observation-only incidents, most recent first. Included in the individual rule response.
+   */
+  observed_incidents?: Array<AlertObservedIncident>;
+  observation_coverage?: AlertObservationCoverage;
   /**
    * Immutable readiness environment selector. Omitted or empty means every environment; default selects only default. Valid only for mcp_readiness_unhealthy.
    */
@@ -97,6 +117,7 @@ export type AlertRuleResponse = {
   state: 'ok' | 'firing' | 'degraded' | 'unknown';
   last_fired_at?: string;
   last_evaluated_at?: string;
+  anomaly_evaluation?: AlertAnomalyEvaluation;
   created_at: string;
   updated_at: string;
 };

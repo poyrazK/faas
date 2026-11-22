@@ -22,7 +22,9 @@ const setAlertRuleStateSQL = `
 		update alert_rules
 		   set state      = $2,
 		       updated_at = $3
-		 where id = $1 and state <> $2
+		 where id = $1 and state <> $2 and not observe_only
+		   and ($6::timestamptz is null or (enabled and last_evaluated_at = $6
+		        and latest_anomaly_evaluation->>'reason' = 'recovery_confirmed'))
 		returning id, account_id, state
 	), opened as (
 		insert into alert_episodes (id, rule_id, account_id, opened_at)

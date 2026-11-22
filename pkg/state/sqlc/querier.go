@@ -745,6 +745,7 @@ type Querier interface {
 	CloseCustomerOperationWorkflowAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CloseDatabaseUsage(ctx context.Context, db DBTX, arg CloseDatabaseUsageParams) (int64, error)
 	CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	CloseLiveAlertEpisodeForObservation(ctx context.Context, db DBTX, arg CloseLiveAlertEpisodeForObservationParams) error
 	CloseScenarioManagedWork(ctx context.Context, db DBTX, arg CloseScenarioManagedWorkParams) error
 	CloseScenarioRecorderAdmission(ctx context.Context, db DBTX, arg CloseScenarioRecorderAdmissionParams) error
 	CloseWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
@@ -1257,6 +1258,7 @@ type Querier interface {
 	DeleteCron(ctx context.Context, db DBTX, arg DeleteCronParams) error
 	DeleteCustomDomain(ctx context.Context, db DBTX, domain interface{}) error
 	DeleteCustomMetric(ctx context.Context, db DBTX, arg DeleteCustomMetricParams) error
+	DeleteCustomerAlertObservationChecks(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteCustomerAppSecret(ctx context.Context, db DBTX, arg DeleteCustomerAppSecretParams) (int64, error)
 	DeleteCustomerOperationDefinitionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationDefinitionsForOwnerParams) error
 	DeleteCustomerOperationExecutionsForOwner(ctx context.Context, db DBTX, arg DeleteCustomerOperationExecutionsForOwnerParams) error
@@ -4066,6 +4068,7 @@ type Querier interface {
 	ListCustomDomainTLSKnownHosts(ctx context.Context, db DBTX, arg ListCustomDomainTLSKnownHostsParams) ([]string, error)
 	ListCustomDomainsForActor(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListCustomDomainsForActorRow, error)
 	ListCustomMetrics(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListCustomMetricsRow, error)
+	ListCustomerAlertObservationCoverage(ctx context.Context, db DBTX, arg ListCustomerAlertObservationCoverageParams) ([]ListCustomerAlertObservationCoverageRow, error)
 	ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, arg ListCustomerAlertRulesByPresetParams) ([]AlertRule, error)
 	ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error)
 	ListCustomerOperationDefinitionsForDeployment(ctx context.Context, db DBTX, arg ListCustomerOperationDefinitionsForDeploymentParams) ([]ListCustomerOperationDefinitionsForDeploymentRow, error)
@@ -4708,6 +4711,7 @@ type Querier interface {
 	LockAlertRollback(ctx context.Context, db DBTX, fireID pgtype.UUID) ([]byte, error)
 	LockAlertRollbackFireApp(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]pgtype.UUID, error)
 	LockAlertRollbackRule(ctx context.Context, db DBTX, ruleID pgtype.UUID) (pgtype.UUID, error)
+	LockAlertRuleObservationMode(ctx context.Context, db DBTX, id pgtype.UUID) (LockAlertRuleObservationModeRow, error)
 	// App UPDATE triggers lock their parent account. Acquire it before the app
 	// row so account/app foreign-key writers cannot form a reverse lock cycle.
 	// The parent is a resource namespace (#4882), locked after any account row.
@@ -4807,6 +4811,7 @@ type Querier interface {
 	LockCustomDomainQuotaAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	LockCustomDomainTLSAdmissionClaim(ctx context.Context, db DBTX, domain string) (LockCustomDomainTLSAdmissionClaimRow, error)
 	LockCustomMetricAdmission(ctx context.Context, db DBTX, appID string) error
+	LockCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error)
 	LockCustomerOperationAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	LockCustomerOperationArtifactQuota(ctx context.Context, db DBTX, accountID string) error
 	LockCustomerOperationBackendExecution(ctx context.Context, db DBTX, executionID pgtype.UUID) (LockCustomerOperationBackendExecutionRow, error)
@@ -7352,6 +7357,9 @@ type Querier interface {
 	RecordCloneCheckpointWakeDispatch(ctx context.Context, db DBTX, arg RecordCloneCheckpointWakeDispatchParams) error
 	RecordClonePostgresMaintenance(ctx context.Context, db DBTX, arg RecordClonePostgresMaintenanceParams) (ManagedPostgresCheckpointMaintenance, error)
 	RecordCustomDomainVerificationCheck(ctx context.Context, db DBTX, arg RecordCustomDomainVerificationCheckParams) (int64, error)
+	// A skipped observation leaves any open alert episode alone.
+	RecordCustomerAlertAnomalyEvaluation(ctx context.Context, db DBTX, arg RecordCustomerAlertAnomalyEvaluationParams) (int64, error)
+	RecordCustomerAlertObservation(ctx context.Context, db DBTX, arg RecordCustomerAlertObservationParams) (int64, error)
 	RecordDataAPIRuntimeConnections(ctx context.Context, db DBTX, arg RecordDataAPIRuntimeConnectionsParams) (int64, error)
 	RecordDatabaseVMBackup(ctx context.Context, db DBTX, arg RecordDatabaseVMBackupParams) (int64, error)
 	RecordDatabaseVMRestore(ctx context.Context, db DBTX, arg RecordDatabaseVMRestoreParams) (int64, error)

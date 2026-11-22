@@ -160,6 +160,7 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	msg := alertchannels.Message{
 		Event: event, RuleName: rule.Name, Metric: string(rule.Metric), Comparison: string(rule.Comparison),
 		Threshold: rule.Threshold, Observed: observed, Window: string(rule.WindowSpec), OccurredAt: now, DedupKey: rule.ID,
+		EnvironmentScope: rule.EnvironmentScope,
 	}
 	if rule.AppID == "" {
 		return msg

@@ -101,7 +101,8 @@ func (e *Evaluator) retryChannelFires(ctx context.Context, now time.Time) (retri
 			return retried
 		}
 		rule, err := e.store.AlertRuleByID(ctx, r.ruleID)
-		if err != nil || !rule.Enabled || rule.State != state.AlertStateFiring {
+		if err != nil || !rule.Enabled || rule.ObserveOnly || rule.State != state.AlertStateFiring ||
+			!rule.LastFiredAt.Truncate(time.Microsecond).Equal(r.firedAt.Truncate(time.Microsecond)) {
 			continue
 		}
 		cooldown := max(time.Duration(rule.CooldownMinutes)*time.Minute, time.Minute)

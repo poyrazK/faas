@@ -57,6 +57,9 @@ func PagerDutyPayload(routingKey string, msg Message) map[string]any {
 	if len(msg.Notes) > 0 {
 		details["notes"] = msg.Notes
 	}
+	if msg.EnvironmentScope != "" {
+		details["environment_scope"] = msg.EnvironmentScope
+	}
 	out["payload"] = map[string]any{
 		"summary":        truncate(Headline(msg)+" — "+Detail(msg), 1024),
 		"source":         source,

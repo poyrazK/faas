@@ -60,8 +60,8 @@ func TelemetryDegradedReason(err error) string {
 // hot path. Pair with IsDegradedSource for the idiomatic check.
 const SourceDegraded = "degraded:"
 
-// SourceInsufficientPrefix marks a valid query with too few selected login
-// failures to judge target-signal coverage. It is distinct from an outage.
+// SourceInsufficientPrefix marks a valid query with too few samples to
+// evaluate an alert.
 const SourceInsufficientPrefix = "insufficient: "
 
 // IsInsufficientSource reports whether a valid metric query lacks enough
@@ -117,7 +117,7 @@ func PercentRatioQuery(numerator, denominator string) string {
 // telemetry: production-us hunt #4 found `gregale canary simulate` and
 // `gregale metrics` reporting such an app as "degraded".
 func ErrorRatePctQuery(appID, rng string) string {
-	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(FailedRequestsQuery("rate", appID, rng), EligibleRequestsQuery("rate", appID, rng)))
+	return requestSeriesForScope(appID, "").errorRate(rng)
 }
 
 // FailedRequestsQuery sums an app's failed requests over rng with fn (rate or
@@ -127,13 +127,13 @@ func ErrorRatePctQuery(appID, rng string) string {
 // SLOs and outage alerts green while an app refused its traffic (Observe audit
 // 2026-11-21, finding 8; ADR-20261121190000).
 func FailedRequestsQuery(fn, appID, rng string) string {
-	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class="5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
+	return requestSeriesForScope(appID, "").requestsWithRefusals(fn, rng, failedRequestClass)
 }
 
 // EligibleRequestsQuery sums the requests an app's error rate is measured
 // over: 2xx, 5xx and capacity refusals. Client-caused 3xx/4xx stay outside.
 func EligibleRequestsQuery(fn, appID, rng string) string {
-	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class=~"2xx|5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
+	return requestSeriesForScope(appID, "").requestsWithRefusals(fn, rng, eligibleRequestClasses)
 }
 
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.
@@ -151,36 +151,40 @@ func HistogramQuantileMSQuery(quantile float64, buckets, count string) string {
 // failures remain degraded so the rule can expose that its own source is
 // unavailable.
 func FetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string) (float64, string) {
-	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, 0)
+	if problem := validateAlertMetricInput(fetcher, appID, rng); problem != "" {
+		return 0, problem
+	}
+	query, normalize := alertMetricQuery(appID, rng, metric)
+	if query == "" {
+		return 0, SourceDegradedPrefix + "unsupported alert metric"
+	}
+	value, err := fetcher.QueryScalar(ctx, query)
+	if err != nil {
+		return 0, alertMetricQueryFailure(log, appID, metric, err)
+	}
+	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
+		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
+	}
+	return normalize(value), SourcePrometheus
 }
 
-// FetchAlertMetricDaysAgo evaluates the same alert metric over the same
-// window, shifted back daysAgo whole days with PromQL offset. It feeds the
-// same-time-of-day baselines of ADR-744; daysAgo must be 1..AnomalyBaselineDays.
-func FetchAlertMetricDaysAgo(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
-	if daysAgo < 1 || daysAgo > api.AnomalyBaselineDays {
-		return 0, SourceDegradedPrefix + "invalid baseline offset"
-	}
-	return fetchAlertMetric(ctx, fetcher, log, appID, rng, metric, daysAgo)
-}
-
-func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng, metric string, daysAgo int) (float64, string) {
-	if log == nil {
-		log = slog.Default()
-	}
+func validateAlertMetricInput(fetcher PromQL, appID, rng string) string {
 	if fetcher == nil {
-		return 0, SourceDegradedPrefix + "prometheus not configured"
+		return SourceDegradedPrefix + "prometheus not configured"
 	}
 	if c, ok := fetcher.(*promql.Client); ok && c == nil {
-		return 0, SourceDegradedPrefix + "prometheus not configured"
+		return SourceDegradedPrefix + "prometheus not configured"
 	}
 	if strings.ContainsAny(appID, "\"\n\\") {
-		return 0, SourceDegradedPrefix + "invalid app id"
+		return SourceDegradedPrefix + "invalid app id"
 	}
 	if !IsValidRange(rng) {
-		return 0, SourceDegradedPrefix + "invalid range"
+		return SourceDegradedPrefix + "invalid range"
 	}
+	return ""
+}
 
+func alertMetricQuery(appID, rng, metric string) (string, func(float64) float64) {
 	var query string
 	var normalize = SafeFloat
 	switch metric {
@@ -192,10 +196,7 @@ func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		normalize = SafePercent
 	case "latency_p50_ms", "latency_p95_ms", "latency_p99_ms":
 		quantile := map[string]float64{"latency_p50_ms": .50, "latency_p95_ms": .95, "latency_p99_ms": .99}[metric]
-		query = HistogramQuantileMSQuery(
-			quantile,
-			fmt.Sprintf(`sum by (le) (rate(gateway_request_duration_seconds_bucket{app=%q,class="2xx"}[%s]))`, appID, rng),
-			fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="2xx"}[%s]))`, appID, rng))
+		query = requestSeriesForScope(appID, "").latency(rng, quantile)
 	case "cold_start_pct":
 		query = fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
 			fmt.Sprintf(`sum(rate(gateway_cold_boot_total{app=%q}[%s]))`, appID, rng),
@@ -249,25 +250,19 @@ func fetchAlertMetric(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 		query = fmt.Sprintf(`max((((%s) or on(policy) (0 * (%s))) / (%s) * 100) and on(policy) ((%s) >= %d)) or vector(-1)`, bad, total, total, total, PreAuthTargetSignalMinFailures)
 		normalize = SafePercent
 	default:
-		return 0, SourceDegradedPrefix + "unsupported alert metric"
+		return "", nil
 	}
-	if daysAgo > 0 {
-		// Every range selector above is "[<rng>]"; shifting each one keeps
-		// numerator and denominator on the same past window.
-		query = strings.ReplaceAll(query, "["+rng+"]", fmt.Sprintf("[%s] offset %dd", rng, daysAgo))
-	}
+	return query, normalize
+}
 
-	value, err := fetcher.QueryScalar(ctx, query)
-	if err != nil {
-		msg := strings.ReplaceAll(err.Error(), "\r", "")
-		msg = strings.ReplaceAll(msg, "\n", "")
-		log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
-		return 0, SourceDegradedPrefix + TelemetryDegradedReason(err)
+func alertMetricQueryFailure(log *slog.Logger, appID, metric string, err error) string {
+	if log == nil {
+		log = slog.Default()
 	}
-	if metric == "pre_auth_target_signal_gap_pct" && value < 0 {
-		return 0, SourceInsufficientPrefix + "fewer than 20 selected failures on every observed route"
-	}
-	return normalize(value), SourcePrometheus
+	msg := strings.ReplaceAll(err.Error(), "\r", "")
+	msg = strings.ReplaceAll(msg, "\n", "")
+	log.Warn("appmetrics: alert metric query failed", "metric", metric, "app_id", appID, "err", msg)
+	return SourceDegradedPrefix + TelemetryDegradedReason(err)
 }
 
 // Fetch runs the per-app PromQL queries and assembles an

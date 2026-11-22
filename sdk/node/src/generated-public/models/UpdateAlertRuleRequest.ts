@@ -7,6 +7,18 @@
  */
 export type UpdateAlertRuleRequest = {
   /**
+   * Switch an app-scoped baseline rule between observing and notifying.
+   */
+  observe_only?: boolean;
+  /**
+   * Change the number of consecutive healthy checks required to recover. Two checks require an app-scoped baseline comparison.
+   */
+  recovery_confirmation_checks?: number;
+  /**
+   * Change the environment of an anomaly rule in Observe only mode. Set to the empty string to clear the scope. Omit to keep the saved scope when enabling notifications.
+   */
+  environment_scope?: string;
+  /**
    * Immutable environment selector. If supplied it must equal the current value; create a new rule to select another environment.
    */
   mcp_readiness_scope?: string;
