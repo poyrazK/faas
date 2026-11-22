@@ -25,14 +25,14 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces                     = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor                       = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL                    = "domain_doctor_ttl_seconds"
+	runtimeConfigTenantSurfaces  = "tenant_surfaces_enabled"
+	runtimeConfigDomainDoctor    = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL = "domain_doctor_ttl_seconds"
 	// runtimeConfigStatusExcludedAccounts lists the internal accounts (test,
 	// probe, release-acceptance) whose deployments the public status page's
 	// deployment-success indicator leaves out (prod 2026-11-22: two internal
 	// accounts alone met the two-tenant breach rule).
-	runtimeConfigStatusExcludedAccounts = "status_excluded_account_ids"
+	runtimeConfigStatusExcludedAccounts             = "status_excluded_account_ids"
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"

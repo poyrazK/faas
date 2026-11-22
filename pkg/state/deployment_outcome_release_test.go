@@ -17,7 +17,7 @@ func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 	now := time.Now()
 	m.mu.Lock()
 	m.apps["app-1"] = App{ID: "app-1", AccountID: "acct-1"}
-	for i, exit := range []*int{intPtr(1), intPtr(3), nil, intPtr(127)} {
+	for i, exit := range []*int{exitCode(1), exitCode(3), nil, exitCode(127)} {
 		id := []string{"d-exit1", "d-exit3", "d-timeout", "d-notfound"}[i]
 		m.putDeploymentLocked(id, Deployment{ID: id, AppID: "app-1", Status: DeployFailed, ErrorCode: api.CodeReleaseCommandFailed, CreatedAt: now})
 		m.appTasks["t-"+id] = AppTask{ID: "t-" + id, AppID: "app-1", DeploymentID: id, Kind: AppTaskKindRelease, Status: AppTaskFailed, ExitCode: exit}
@@ -32,3 +32,5 @@ func TestDeploymentOutcomesAttributeReleaseCommandExit(t *testing.T) {
 		t.Fatalf("outcomes = %+v, want only the exit-127 release as a platform failure", counts)
 	}
 }
+
+func exitCode(v int) *int { return &v }
