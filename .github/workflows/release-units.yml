@@ -75,7 +75,12 @@ permissions:
 jobs:
   build:
     name: Build and sign changed control-plane units
-    runs-on: ubuntu-22.04
+    # A persistent build runner keeps the clone and the Go build cache warm
+    # (the build-runner bootstrap playbook, ADR-20261122170000): set
+    # UNIT_RELEASE_BUILD_RUNNER to its labels as a JSON array. It runs only
+    # this job, only for main, and holds no production credentials. Unset,
+    # the build runs on a GitHub-hosted runner and restores its caches.
+    runs-on: ${{ vars.UNIT_RELEASE_BUILD_RUNNER != '' && fromJSON(vars.UNIT_RELEASE_BUILD_RUNNER) || 'ubuntu-22.04' }}
     # The first run over a new base also builds the base's candidates
     # (about as long as the head build); later runs restore its digests.
     timeout-minutes: 35
@@ -91,7 +96,16 @@ jobs:
       base_sha: ${{ steps.base.outputs.sha }}
       release_sha: ${{ steps.detect.outputs.release_sha }}
       build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
+      self_hosted: ${{ runner.environment == 'self-hosted' }}
     steps:
+      # The persistent build runner compiles main only: a dispatch on any
+      # other ref goes to a GitHub-hosted runner by unsetting the variable.
+      - name: Refuse other refs on the build runner
+        if: runner.environment == 'self-hosted' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::the persistent build runner builds main only, not ${GITHUB_REF}" >&2
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit versions walk first-parent history back to the base tag:
@@ -127,9 +141,11 @@ jobs:
       # 2026-10-21. The release build cache holds the release recipe's
       # compile results, one entry per base release, written once by the
       # warm-build-cache job below, off the deploy path. A run over a new
-      # base starts from the newest entry.
+      # base starts from the newest entry. The persistent build runner keeps
+      # its own cache and restores none.
       - name: Restore the release build cache
         id: build-cache
+        if: runner.environment == 'github-hosted'
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -143,10 +159,10 @@ jobs:
       # the light tier's cache on main, for its modules. Same paths as
       # ci-light saves, or the entry does not match.
       - id: cache-date
-        if: steps.build-cache.outputs.cache-matched-key == ''
+        if: runner.environment == 'github-hosted' && steps.build-cache.outputs.cache-matched-key == ''
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go module cache
-        if: steps.build-cache.outputs.cache-matched-key == ''
+        if: runner.environment == 'github-hosted' && steps.build-cache.outputs.cache-matched-key == ''
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -315,7 +331,10 @@ jobs:
   warm-build-cache:
     name: Warm the release build cache
     needs: [build]
-    if: needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != ''
+    # The persistent build runner's own cache needs no warming.
+    if: >-
+      needs.build.outputs.build_cache_hit != 'true' && needs.build.outputs.base_sha != '' &&
+      needs.build.outputs.self_hosted != 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 40
     # A cache it fails to write costs the next build time, not a deploy.

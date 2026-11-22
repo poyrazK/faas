@@ -135,9 +135,32 @@ Budget, merge to new code serving on the control plane:
   unit's environment (`FAAS_UNIT_VERSION`) from the release manifest, and
   `pkg/wire` reads it at start. The release binary is then the neutral
   build, so one build gives both the code digest and the shipped bytes.
-- **Build runner.** Main pushes only, never pull requests, so nothing a
-  PR controls runs where release binaries are built. It holds no
-  production credentials; the fleet runner deploys as today.
+- **Build runner, on the control plane** (owner, 2026-11-22: "if there is
+  no security problem, we can use cp"). `deploy/ansible/build_runner.yml`
+  installs a second runner on the control plane through the
+  `github_actions_runner` role with `faas_runner_kind: build`:
+  - **Only main's code.** The build job runs on pushes to main and owner
+    dispatches, and refuses any other ref on this runner. No
+    pull_request workflow names a self-hosted label, and fork pull
+    requests need approval for every run (`approval_policy:
+    all_external_contributors`). The code it compiles is the code this
+    host runs as its daemons; `go build` executes none of it.
+  - **Not the deployment runner.** Its own user (`faas-builder`), home,
+    install root and unit; no production secrets, no access to the
+    deployment runner's home (where deploy keys live between jobs), no
+    private fleet endpoints. The role refuses a build runner with a fleet
+    label and a deployment runner without exactly one, so neither takes
+    the other's jobs.
+  - **Below the services.** CPU weight 10 and `CPUQuota=400%` (4 of the
+    Ryzen 5600X's 12 threads), IO weight 10, `MemoryHigh=6G`,
+    `MemoryMax=8G`, `GOMAXPROCS=4` (which also bounds `go build -p`),
+    `ProtectSystem=strict`.
+  - **Switched by a variable.** `UNIT_RELEASE_BUILD_RUNNER` (its labels as
+    JSON) moves the build job to it; unset, the job runs on a
+    GitHub-hosted runner with the restored caches, as before. The runner
+    bootstrap and its role are operator paths no release runs, so they are
+    `inert` in the deploy classes (the deployment runner's playbook stays
+    `blocking`: a release workflow names it).
 - **Rollback stays the same speed.** deployctl keeps the previous
   generation; a failed smoke check or a watch breach puts it back.
 
@@ -182,8 +205,9 @@ summary and annotations (stopping commit, reason, commits waiting).
   merge queues only to organization-owned repositories (ADR
   20261020214632). A binary a PR's workflow built runs PR-controlled code
   before main signs it.
-- **Building on the control plane's runner.** Release builds would take
-  CPU from apid on the host that serves the API.
+- **Building on the existing deployment runner.** Its user keeps deploy
+  keys in its home between jobs; a separate, capped build runner keeps
+  compiles away from them and from the CPU PostgreSQL and apid need.
 - **Automatic full releases when the lane stalls.** The owner keeps full
   releases manual.
 
@@ -194,6 +218,8 @@ summary and annotations (stopping commit, reason, commits waiting).
    tests.
 2. Version stamp out of the binary (deployctl, `pkg/wire`, the unit
    release build), one build for selection and release.
-3. Dedicated build runner; preflight beside the build.
+3. Build runner on the control plane (role kind, playbook, workflow switch:
+   done); the owner bootstraps it and sets `UNIT_RELEASE_BUILD_RUNNER`;
+   preflight beside the build.
 4. Parallel activation; smoke check in place of the pre-done SLO hold.
 5. Owner turns on automatic deploys.

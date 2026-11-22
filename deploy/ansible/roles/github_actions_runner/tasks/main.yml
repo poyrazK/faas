@@ -14,7 +14,15 @@
       - faas_runner_repo is match('^[^/]+/[^/]+$')
       - faas_runner_name is match('^[A-Za-z0-9._-]+$')
       - faas_runner_labels is sequence
-      - faas_runner_labels | select('match', '^faas-fleet(-[a-z0-9]+)?$') | list | length == 1
+      - faas_runner_kind | default('deploy') != 'deploy' or faas_runner_labels | select('match', '^faas-fleet(-[a-z0-9]+)?$') | list | length == 1
+      # A build runner (docs/adr/20261122170000-continuous-unit-lane.md)
+      # carries one build label and never a fleet label: it holds no
+      # production credentials and must never take a deploy job.
+      - faas_runner_kind | default('deploy') in ['deploy', 'build']
+      - >-
+        faas_runner_kind | default('deploy') != 'build' or
+        (faas_runner_labels | select('match', '^faas-build(-[a-z0-9]+)?$') | list | length == 1 and
+         faas_runner_labels | select('match', '^faas-fleet') | list | length == 0)
       - faas_runner_sha256 is match('^[0-9a-f]{64}$')
     fail_msg: >-
       The deployment runner requires a Debian-family Linux host with systemd,
