@@ -238,7 +238,7 @@ func postgresSQLQueryText(positional []string, file string, stdin io.Reader) (st
 		}
 		raw = data
 	case file != "":
-		f, err := os.Open(file) //nolint:gosec // G304: the caller names the query file.
+		f, err := openCustomerFile(file)
 		if err != nil {
 			return "", err
 		}
@@ -323,7 +323,7 @@ func runPostgresSQLOverConfig(ctx context.Context, config *pgx.ConnConfig, query
 		return nil, fmt.Errorf("connect: %w", redactPostgresConnectError(err))
 	}
 	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer closeCancel()
 		_ = conn.Close(closeCtx)
 	}()

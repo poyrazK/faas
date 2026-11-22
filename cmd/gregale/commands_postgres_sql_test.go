@@ -151,7 +151,7 @@ func TestPostgresSQLErrorHints(t *testing.T) {
 		}
 	}
 	other := errors.New("boom")
-	if main.PostgresSQLError(other, false, time.Second) != other {
+	if got := main.PostgresSQLError(other, false, time.Second); !errors.Is(got, other) || got.Error() != other.Error() {
 		t.Fatal("unrelated error rewritten")
 	}
 }
