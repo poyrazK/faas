@@ -3563,7 +3563,19 @@ message RunSandboxRequest {
     // runs one at a time and answers each with action_done. An older vmmd
     // ignores it; agentd sends one only after booted.actions.
     RunSandboxAction action = 6;
+    // pause captures a persistent session and ends its VM
+    // (ADR-20261122132055 §2): vmmd answers paused and ends the stream, or
+    // pause_refused and keeps the VM. An older vmmd ignores it; agentd sends
+    // one only for a persistent session.
+    RunSandboxPause pause = 7;
   }
+}
+
+// RunSandboxPause names the capture: vmmd keeps it under
+// storagekey.SandboxSessionSnapshotNamespace(account) with capture_id, a
+// UUID agentd chose.
+message RunSandboxPause {
+  string capture_id = 1;
 }
 
 message RunSandboxStart {
@@ -3625,6 +3637,12 @@ message RunSandboxStart {
   // ADR-20261117091026 §4). schedd sets it when its own caller asked, since
   // an older reader ends a session on a frame it does not know.
   bool web_domain_log = 22;
+  // session_capture marks snapshot as the session's own pause capture
+  // (ADR-20261122132055 §2), not a warm snapshot: its key is under the
+  // account's session namespace, it was taken after the session's commands
+  // ran, so a restore runs none, and no workspace_key goes with it. A failed
+  // restore still cold-boots (ADR-005) and booted says so.
+  bool session_capture = 23;
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -3747,7 +3765,24 @@ message RunSandboxEvent {
     // the last such frame (ADR-20261117091026 §4): each grant once per
     // registrable domain, each refusal once per name and reason.
     RunSandboxWebDomains web_domains = 11;
+    // paused answers pause: the capture is published and the VM is gone; the
+    // stream ends after it (ADR-20261122132055 §2).
+    RunSandboxPaused paused = 12;
+    // pause_refused answers a pause vmmd did not take: a call was in flight,
+    // or the capture failed before the guest was touched. The VM keeps
+    // running.
+    RunSandboxPauseRefused pause_refused = 13;
   }
+}
+
+message RunSandboxPaused {
+  AgentRunSnapshot snapshot = 1;
+  int64 vmstate_bytes = 2;
+  int64 pause_ms = 3;
+}
+
+message RunSandboxPauseRefused {
+  string reason = 1;
 }
 
 message RunSandboxWebDomains {

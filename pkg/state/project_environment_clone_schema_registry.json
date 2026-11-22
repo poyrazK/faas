@@ -18555,6 +18555,24 @@
     "kind": "operational"
   },
   {
+    "table": "sandbox_session_captures",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "created_at",
+      "fc_version",
+      "id",
+      "mem_bytes",
+      "node_id",
+      "session_id",
+      "state",
+      "storage_key",
+      "vmstate_bytes",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sandbox_egress_policies",
     "columns": [
       "account_id",

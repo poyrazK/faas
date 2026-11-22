@@ -61666,6 +61666,34 @@ COMMENT ON TABLE public.sandbox_ports IS 'ADR-20261027090013 §11 exposed sandbo
 
 
 --
+-- Name: sandbox_session_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.sandbox_session_captures (
+    id uuid NOT NULL,
+    session_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    node_id text NOT NULL,
+    storage_key text NOT NULL,
+    vmstate_storage_key text NOT NULL,
+    fc_version text NOT NULL,
+    mem_bytes bigint NOT NULL,
+    vmstate_bytes bigint DEFAULT 0 NOT NULL,
+    state text DEFAULT 'live'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT sandbox_session_captures_check CHECK (((state = 'consumed'::text) = (consumed_at IS NOT NULL))),
+    CONSTRAINT sandbox_session_captures_fc_version_check CHECK ((fc_version <> ''::text)),
+    CONSTRAINT sandbox_session_captures_mem_bytes_check CHECK ((mem_bytes > 0)),
+    CONSTRAINT sandbox_session_captures_node_id_check CHECK ((node_id <> ''::text)),
+    CONSTRAINT sandbox_session_captures_state_check CHECK ((state = ANY (ARRAY['live'::text, 'consumed'::text]))),
+    CONSTRAINT sandbox_session_captures_storage_key_check CHECK ((storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/mem'::text)),
+    CONSTRAINT sandbox_session_captures_vmstate_bytes_check CHECK ((vmstate_bytes >= 0)),
+    CONSTRAINT sandbox_session_captures_vmstate_storage_key_check CHECK ((vmstate_storage_key ~~ 'snap/sandbox-session-%/captures/%/v2/vmstate'::text))
+);
+
+
+--
 -- Name: sandbox_session_domains; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -78395,6 +78423,14 @@ ALTER TABLE ONLY public.sandbox_ports
 
 
 --
+-- Name: sandbox_session_captures sandbox_session_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: sandbox_session_domains sandbox_session_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -90664,6 +90700,20 @@ CREATE INDEX sandbox_actions_screenshots_idx ON public.sandbox_actions USING btr
 --
 
 CREATE INDEX sandbox_actions_undelivered_idx ON public.sandbox_actions USING btree (finished_at) WHERE ((state = 'done'::text) AND (delivered_at IS NULL));
+
+
+--
+-- Name: sandbox_session_captures_consumed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX sandbox_session_captures_consumed ON public.sandbox_session_captures USING btree (consumed_at) WHERE (state = 'consumed'::text);
+
+
+--
+-- Name: sandbox_session_captures_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX sandbox_session_captures_live ON public.sandbox_session_captures USING btree (session_id) WHERE (state = 'live'::text);
 
 
 --
@@ -116085,6 +116135,22 @@ ALTER TABLE ONLY public.sandbox_ports
 
 ALTER TABLE ONLY public.sandbox_ports
     ADD CONSTRAINT sandbox_ports_sandbox_id_fkey FOREIGN KEY (sandbox_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_captures sandbox_session_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sandbox_session_captures sandbox_session_captures_session_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.sandbox_session_captures
+    ADD CONSTRAINT sandbox_session_captures_session_id_fkey FOREIGN KEY (session_id) REFERENCES public.sandbox_sessions(id) ON DELETE CASCADE;
 
 
 --

@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storagekey"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // SandboxVMMAPI is the sandbox session capability. *fcvm.Manager implements
@@ -62,14 +63,18 @@ const (
 // ID; done closes when the stream's server loop ends.
 type sandboxActivity struct {
 	sandboxID string
+	accountID string
 	plan      api.Plan
 
 	mu        sync.Mutex
 	inFlight  int
 	lastEnded time.Time
 	dirty     bool
-	thawMu    sync.Mutex
-	thawed    chan struct{}
+	// pausing refuses new calls while a pause captures the VM
+	// (ADR-20261122132055 §2).
+	pausing bool
+	thawMu  sync.Mutex
+	thawed  chan struct{}
 
 	outbox chan *vmmdpb.RunSandboxEvent
 	// webLog is set when the caller asked for the domain log
@@ -94,6 +99,35 @@ func (a *sandboxActivity) begin() {
 	a.mu.Lock()
 	a.inFlight++
 	a.dirty = true
+	a.mu.Unlock()
+}
+
+// tryBegin begins a call unless a pause is capturing the VM.
+func (a *sandboxActivity) tryBegin() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pausing {
+		return false
+	}
+	a.inFlight++
+	a.dirty = true
+	return true
+}
+
+// beginPause fences new calls for a pause, unless one is in flight.
+func (a *sandboxActivity) beginPause() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.inFlight > 0 || a.pausing {
+		return false
+	}
+	a.pausing = true
+	return true
+}
+
+func (a *sandboxActivity) endPause() {
+	a.mu.Lock()
+	a.pausing = false
 	a.mu.Unlock()
 }
 
@@ -180,6 +214,7 @@ func (s *Server) RunSandbox(stream vmmdpb.Vmmd_RunSandboxServer) error {
 		}
 	}
 	act := newSandboxActivity(wake.SandboxID, wake.Plan)
+	act.accountID = wake.AccountID
 	if meter, ok := s.vmm.(sandboxMeter); ok {
 		act.usage = meter.MeterSandbox(wake.Instance)
 	}
@@ -266,6 +301,30 @@ func (s *Server) serveSandbox(ctx context.Context, stream vmmdpb.Vmmd_RunSandbox
 				return nil
 			case msg.GetFreeze() != nil:
 				ev = s.freezeSandbox(ctx, instance)
+			case msg.GetPause() != nil:
+				paused, refused, err := s.pauseSandbox(ctx, instance, act, msg.GetPause())
+				if err != nil {
+					return err
+				}
+				if refused != nil {
+					ev = refused
+					break
+				}
+				// The VM is gone: its last records, then paused, end the
+				// stream (ADR-20261122132055 §2).
+				if err := s.sendSandboxWebDomains(stream, instance, act); err != nil {
+					return err
+				}
+				if act.usage != nil {
+					stopped = true
+					u := act.usage.Stop()
+					final := sandboxUsageEvent(&u)
+					final.GetUsage().Final = true
+					if err := stream.Send(final); err != nil {
+						return err
+					}
+				}
+				return stream.Send(paused)
 			case msg.GetPersistGrant() != nil:
 				act.persists.deliver(msg.GetPersistGrant().GetRequestId(), msg)
 			case msg.GetPersistRecorded() != nil:
@@ -344,6 +403,51 @@ func (s *Server) freezeSandbox(ctx context.Context, instance string) *vmmdpb.Run
 		return refused("failed")
 	}
 	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Frozen{Frozen: &vmmdpb.RunSandboxFrozen{}}}
+}
+
+// sandboxPauser captures a persistent session's VM and destroys it
+// (ADR-20261122132055 §2); *fcvm.Manager implements it.
+type sandboxPauser interface {
+	PauseSandbox(ctx context.Context, p fcvm.SandboxPause) (*fcvm.Snapshot, fcvm.SnapshotInfo, bool, error)
+}
+
+// pauseSandbox captures the session VM. It answers paused, or refused when
+// the VM keeps running: a call in flight, a thaw or capture that failed
+// before the guest was touched. An error is a VM lost to a failed capture,
+// which ends the stream as a lost VM does.
+func (s *Server) pauseSandbox(ctx context.Context, instance string, act *sandboxActivity, p *vmmdpb.RunSandboxPause) (paused, refused *vmmdpb.RunSandboxEvent, err error) {
+	refuse := func(reason string) (*vmmdpb.RunSandboxEvent, *vmmdpb.RunSandboxEvent, error) {
+		return nil, &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_PauseRefused{PauseRefused: &vmmdpb.RunSandboxPauseRefused{Reason: reason}}}, nil
+	}
+	pauser, ok := s.vmm.(sandboxPauser)
+	if !ok {
+		return refuse("unsupported")
+	}
+	if id, err := uuid.Parse(p.GetCaptureId()); err != nil || id.String() != p.GetCaptureId() {
+		return refuse("invalid")
+	}
+	if !act.beginPause() {
+		return refuse("busy")
+	}
+	defer act.endPause()
+	if err := s.thawSandbox(ctx, instance, act); err != nil {
+		s.log.Warn("sandbox: thaw before a pause failed", "instance", instance, "err", err)
+		return refuse("failed")
+	}
+	started := time.Now()
+	snap, info, kept, err := pauser.PauseSandbox(ctx, fcvm.SandboxPause{Instance: instance, SandboxID: act.sandboxID,
+		AccountID: act.accountID, CaptureID: p.GetCaptureId()})
+	if err != nil {
+		s.log.Warn("sandbox: pause failed", "instance", instance, "vm_kept", kept, "err", err)
+		if kept {
+			return refuse("failed")
+		}
+		return nil, nil, status.Error(codes.Aborted, "sandbox pause failed: the session's VM ended while it was being captured")
+	}
+	return &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Paused{Paused: &vmmdpb.RunSandboxPaused{
+		Snapshot: &vmmdpb.AgentRunSnapshot{StorageKey: snap.StorageKey, VmstateStorageKey: snap.VMStateStorageKey,
+			FcVersion: snap.FCVersion, MemBytes: snap.MemBytes},
+		VmstateBytes: info.VMStateBytes, PauseMs: time.Since(started).Milliseconds()}}}, nil, nil
 }
 
 // thawSandbox thaws a frozen session VM in place before a call. A freeze in
@@ -425,6 +529,27 @@ func sandboxStartFromProto(start *vmmdpb.RunSandboxStart) (fcvm.SandboxWakeReque
 		return fcvm.SandboxWakeRequest{}, invalid("quiet_pause_after_ms is out of range")
 	}
 	wake.QuietPauseAfter = time.Duration(ms) * time.Millisecond
+	if start.GetSessionCapture() {
+		// A pause capture (ADR-20261122132055 §2) restores only into a session
+		// of its own account, and carries the session's workspace itself.
+		snap := start.GetSnapshot()
+		switch {
+		case snap == nil:
+			return fcvm.SandboxWakeRequest{}, invalid("session_capture needs the capture's snapshot")
+		case start.GetWorkspaceKey() != "":
+			return fcvm.SandboxWakeRequest{}, invalid("a session capture carries its workspace; workspace_key goes only with a new session")
+		case start.GetTask() != nil:
+			return fcvm.SandboxWakeRequest{}, invalid("a sandbox task is never paused")
+		case !storagekey.IsSandboxSessionSnapshotKey(snap.GetStorageKey(), wake.AccountID) ||
+			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
+			snap.GetFcVersion() == "" || snap.GetMemBytes() < 1:
+			return fcvm.SandboxWakeRequest{}, invalid("snapshot must be a pause capture of this session's account, with its keys, version and size")
+		}
+		wake.Snapshot = &fcvm.Snapshot{StorageKey: snap.GetStorageKey(), VMStateStorageKey: snap.GetVmstateStorageKey(),
+			FCVersion: snap.GetFcVersion(), MemBytes: snap.GetMemBytes(), Networkless: wake.Network == api.SandboxNetworkNone}
+		wake.SessionCapture = true
+		return wake, nil
+	}
 	if snap := start.GetSnapshot(); snap != nil {
 		if !storagekey.IsSandboxSnapshotKey(snap.GetStorageKey(), wake.AccountID, wake.ImageKey != "") ||
 			snap.GetVmstateStorageKey() != state.SnapshotVMStateKey(state.Snapshot{StorageKey: snap.GetStorageKey()}) ||
@@ -663,10 +788,12 @@ func (s *Server) sandboxActionEnd(ctx context.Context, runner sandboxTaskRunner,
 	}
 	act.actionMu.Lock()
 	defer act.actionMu.Unlock()
+	if !act.tryBegin() {
+		return actionDone(a.GetActionId(), "the session is pausing")
+	}
+	defer func() { act.end(time.Now()) }()
 	s.beginActivity(wake.Instance)
 	defer s.endActivity(wake.Instance)
-	act.begin()
-	defer func() { act.end(time.Now()) }()
 	if err := s.thawSandbox(ctx, wake.Instance, act); err != nil {
 		s.log.Warn("sandbox: thaw before an action failed", "instance", wake.Instance, "err", err)
 		return actionDone(a.GetActionId(), "the session could not be thawed")
