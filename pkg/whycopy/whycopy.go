@@ -311,6 +311,33 @@ var catalog = map[string]Render{
 		Why:   "the readiness stage boots the VM and polls /healthz on the plan's readiness timeout (default 35s). The VM reached the snapshot boot but the application inside did not become ready in time — distinct from CodeAppStartupTimeout which is the wake-side counterpart",
 		Fix:   "• check `gregale logs <slug>` for the boot sequence inside the guest\n• defer heavy init work until after /healthz starts listening\n• if your app genuinely needs more time, raise `startup_deadline_s` in gregale.yaml (or `--startup-deadline-s` on deploy)",
 	},
+	// Deploy failure codes that reached customers with no why/fix (deploy-path
+	// probe 2026-11-21, R4-3: 15, 5, 3 and 6 prod failures in 30 days).
+	api.CodeDeploymentVerificationUnavailable: {
+		Hint: "Gregale could not start your new release to check it; your current release keeps serving",
+		Why:  "the platform check that boots the new release once before it takes traffic could not get a slot or a node in time, usually because the app's instances were all busy or a node was being replaced; nothing in your code was tested",
+		Fix:  "• deploy again; the previous release is still serving\n• if it repeats, check `gregale app health <slug> --explain` for instances held at the app's concurrency limit\n• include the deployment id in a support report if a third attempt fails",
+	},
+	api.CodeReleaseCommandFailed: {
+		Hint: "your release command exited non-zero or timed out; the previous release keeps serving",
+		Why:  "the deployment's release_command (often a database migration) ran before the new release took traffic and did not succeed; its output is in the release log",
+		Fix:  "• read its output: `gregale release logs <id> --app <slug>`\n• fix the command or the migration, then deploy again\n• keep migrations compatible with the previous release, which serves while the command runs",
+	},
+	api.CodeDeploymentSmokeFailed: {
+		Hint: "your new release started but did not answer its first request correctly",
+		Why:  "before taking traffic Gregale sends the new release one request on its health path; the app answered with an error or closed the connection, so the release was not promoted",
+		Fix:  "• check `gregale logs <slug> --since 30m` for the error the request hit\n• make sure the health path answers 2xx without external dependencies being slow\n• set hosting.health in gregale.yaml if your app serves health elsewhere",
+	},
+	api.CodeImageNotFound: {
+		Hint: "the container image you asked for could not be pulled",
+		Why:  "the registry answered that the image or tag does not exist, or it is private and Gregale had no credentials for it",
+		Fix:  "• check the image name and tag (`docker pull <image>` locally)\n• for a private registry, add its credentials: `gregale registry set --app <slug> --registry <host> --user <user> --password-stdin`\n• pin a digest (`image@sha256:…`) to avoid a moved tag",
+	},
+	api.CodeApplicationStandardsPending: {
+		Hint: "your organization's application standards are still being applied to this app",
+		Why:  "the organization requires standards (such as security settings) on every app, and this app's enrollment had not finished when the deploy started",
+		Fix:  "• wait a minute and deploy again\n• if it persists, check `gregale app get <slug>` for the standards status, or ask your organization admin",
+	},
 }
 
 // Decorate copies the catalog row for code onto p, returning p for
