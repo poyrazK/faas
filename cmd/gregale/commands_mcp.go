@@ -440,7 +440,7 @@ func cmdMCPRemote(command string, args []string) int {
 			return nil
 		})
 	}
-	if command == "call" || command == "task-get" || command == "task-wait" {
+	if command == "call" || command == "task-get" || command == "task-wait" || command == "task-cancel" {
 		fs.Func("task-receipt", "private Task submission receipt file", func(value string) error {
 			if value == "" {
 				return errors.New("task receipt path is required")
@@ -532,13 +532,13 @@ func cmdMCPRemote(command string, args []string) int {
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
 	}
-	if (command == "task-get" || command == "task-cancel") && ((*taskID == "" && !keyed) || *legacy) {
-		return printErr("Invalid MCP task flags", errors.New("modern task-get and task-cancel require --task-id"))
+	if command == "task-get" && ((*taskID == "" && !keyed) || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("modern task-get requires --task-id or a keyed Task selector"))
 	}
-	if command == "task-wait" {
+	if command == "task-wait" || command == "task-cancel" {
 		hasTaskID, hasReceipt := *taskID != "", taskReceiptPath != ""
 		if *legacy || hasTaskID == hasReceipt {
-			return printErr("Invalid MCP task flags", errors.New("modern task-wait requires exactly one of --task-id or --task-receipt"))
+			return printErr("Invalid MCP task flags", fmt.Errorf("modern %s requires exactly one of --task-id or --task-receipt", command))
 		}
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
@@ -605,6 +605,9 @@ func cmdMCPRemote(command string, args []string) int {
 		if err != nil {
 			return printErr("MCP Task input review", err)
 		}
+	}
+	if command == "task-cancel" && submissionKey != "" {
+		return runMCPTaskReceiptCancel(ctx, c, submissionKey)
 	}
 	if command == "task-wait" && submissionKey != "" {
 		recovered, exchange, err := c.GetTaskBySubmissionKey(ctx, submissionKey)
@@ -755,7 +758,7 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		if _, err := c.CancelTask(ctx, taskID); err != nil {
 			return printErr("MCP task cancel", err)
 		}
-		return jsonOut(writeJSON(map[string]any{"task_id": taskID, "cancellation_requested": true}))
+		return mcpTaskCancellationRequested(taskID)
 	}
 	tools, discovery, err := c.Tools(ctx)
 	if err != nil {

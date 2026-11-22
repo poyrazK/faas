@@ -85,6 +85,16 @@ func (e *TaskInputUpdateUnconfirmedError) Error() string {
 
 func (e *TaskInputUpdateUnconfirmedError) Unwrap() error { return e.cause }
 
+// TaskCancellationUnconfirmedError means the cancellation request may have
+// reached the server without a reliable acknowledgement. Its cause retains the original error.
+type TaskCancellationUnconfirmedError struct {
+	cause error
+}
+
+func (e *TaskCancellationUnconfirmedError) Error() string { return e.cause.Error() }
+
+func (e *TaskCancellationUnconfirmedError) Unwrap() error { return e.cause }
+
 // PollDelay returns the bounded delay before reading this task again.
 func (t Task) PollDelay() time.Duration {
 	if t.PollInterval == nil {
@@ -223,13 +233,16 @@ func (c *Client) CancelTask(ctx context.Context, taskID string) (Exchange, error
 	}
 	x, err := c.taskRequest(ctx, "tasks/cancel", taskID, nil)
 	if err != nil {
+		if taskResponseUncertain(x.HTTPStatus, err) {
+			return x, &TaskCancellationUnconfirmedError{cause: err}
+		}
 		return x, err
 	}
 	var result struct {
 		ResultType string `json:"resultType"`
 	}
 	if err := json.Unmarshal(x.Result, &result); err != nil || result.ResultType != "complete" {
-		return x, errors.New("MCP task cancellation returned an invalid acknowledgement")
+		return x, &TaskCancellationUnconfirmedError{cause: errors.New("MCP task cancellation returned an invalid acknowledgement")}
 	}
 	return x, nil
 }

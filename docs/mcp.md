@@ -5710,6 +5710,21 @@ gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN 
   --task-receipt ./weekly-task.json
 ```
 
+To request cooperative cancellation from a fresh process, pass the same
+receipt and the caller's current credential:
+
+```sh
+gregale mcp client cancel --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+Use either `--task-receipt` or `--task-id`. A cancellation acknowledgement
+sets `cancellation_requested` to true. If the Task is already terminal,
+the receipt command returns its metadata. If time remains after an ambiguous
+cancellation reply, it reads the same receipt once. A terminal status is
+reported as observed. Exit code 3 with `retry_status` means the outcome is still unclear.
+Check the same receipt before deciding whether to request cancellation again.
+
 Use `--defer-form-input` on a keyed submission to let a Task request approval
 after the submitting process exits. Keep this opt-in on matching retries.
 The receipt contains the same submission key and endpoint fingerprint.

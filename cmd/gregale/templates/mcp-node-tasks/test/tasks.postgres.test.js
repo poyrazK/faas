@@ -2255,13 +2255,15 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, timeout } of [
+for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
+  { title: 'receipt cancel recovers cancellation committed before the reply was lost', useReceipt: true, deferredForm: true, cancelReplyFault: 'after', timeout: 35_000 },
+  { title: 'receipt cancel reports pending state without repeating a lost cancellation', useReceipt: true, deferredForm: true, cancelReplyFault: 'before', timeout: 35_000 },
 ]) test(title, {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
   timeout,
@@ -2305,17 +2307,22 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, tim
   const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
     result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
   let dropFirstReply = true, committedID, proxyError, submittingCLI;
-  let pendingFormReplyFault = formReplyFault;
+  let pendingFormReplyFault = formReplyFault, pendingCancelReplyFault = cancelReplyFault;
   const requests = [];
   const server = createServer((req, res) => {
+    // The relay commits the request through the real handler. Count only
+    // cancellation requests sent by the CLI when checking for repeats.
+    if (req.headers['x-gregale-test-cancel-relay'] === '1') return api.app(req, res);
     const method = req.headers['mcp-method'];
     requests.push(method);
     const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
     const dropFormReply = method === 'tasks/update' && pendingFormReplyFault;
-    if (!dropSubmission && !dropFormReply) return api.app(req, res);
+    const dropCancelReply = method === 'tasks/cancel' && pendingCancelReplyFault;
+    if (!dropSubmission && !dropFormReply && !dropCancelReply) return api.app(req, res);
     if (dropSubmission) dropFirstReply = false;
     if (dropFormReply) pendingFormReplyFault = undefined;
-    if (dropFormReply === 'before') {
+    if (dropCancelReply) pendingCancelReplyFault = undefined;
+    if (dropFormReply === 'before' || dropCancelReply === 'before') {
       req.destroy();
       return;
     }
@@ -2335,11 +2342,16 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, tim
           version: 1, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
         });
       }
+      const headers = dropCancelReply ? { ...req.headers, 'x-gregale-test-cancel-relay': '1' } : req.headers;
       const reply = await fetch(endpoint, {
-        method: 'POST', headers: req.headers, body, signal: AbortSignal.timeout(5000),
+        method: 'POST', headers, body, signal: AbortSignal.timeout(5000),
       });
       assert.equal(reply.status, 200);
       await reply.arrayBuffer();
+      if (dropCancelReply === 'after') {
+        assert.deepEqual(await rows(), [{ task_id: committedID, status: 'cancelled', attempt_count: 1, has_result: false }]);
+        return;
+      }
       if (dropFormReply === 'after') {
         const persisted = await rows();
         assert.equal(persisted.length, 1);
@@ -2403,6 +2415,40 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, tim
       assert.ok(Number.isFinite(Date.parse(snapshot.lastUpdatedAt)));
       assert.deepEqual(snapshot, { taskId: committedID, status: 'input_required', lastUpdatedAt: snapshot.lastUpdatedAt,
         nextAction: 'provide_input' });
+      if (cancelReplyFault) {
+        const beforeInvalid = requests.length;
+        assert.equal(await cli('cancel', owner, 1, [...selector, '--url', `${endpoint}/other`]), '');
+        assert.equal(await cli('cancel', owner, 1, [...selector, '--task-id', committedID]), '');
+        assert.equal(requests.length, beforeInvalid);
+        for (const credential of [foreign, ownerWithoutTool]) {
+          const beforeDenied = requests.length;
+          assert.equal(await cli('cancel', credential, 1, selector), '');
+          assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
+        }
+        const beforeLostReply = requests.length;
+        const dropped = JSON.parse(await cli('cancel', owner, cancelReplyFault === 'before' ? 3 : 0, selector));
+        assert.ifError(proxyError);
+        assert.deepEqual(requests.slice(beforeLostReply),
+          ['server/discover', 'gregale/tasks/lookup', 'tasks/cancel', 'gregale/tasks/lookup']);
+        assert.equal(requests.filter(method => method === 'tasks/cancel').length, 1);
+        if (cancelReplyFault === 'before') {
+          assert.deepEqual(dropped, { ...snapshot, nextAction: 'retry_status' });
+          assert.deepEqual(await rows(), [{ task_id: committedID, status: 'input_required', attempt_count: 1, has_result: false }]);
+          const requested = JSON.parse(await cli('cancel', owner, 0, selector));
+          assert.deepEqual(requested, { task_id: committedID, cancellation_requested: true });
+        } else {
+          assert.deepEqual(dropped, { taskId: committedID, status: 'cancelled', lastUpdatedAt: dropped.lastUpdatedAt, nextAction: 'none' });
+          assert.ok(Number.isFinite(Date.parse(dropped.lastUpdatedAt)));
+        }
+        const beforeTerminal = requests.length;
+        const terminal = JSON.parse(await cli('cancel', owner, 0, selector));
+        assert.equal(terminal.taskId, committedID);
+        assert.equal(terminal.status, 'cancelled');
+        assert.deepEqual(requests.slice(beforeTerminal), ['server/discover', 'gregale/tasks/lookup']);
+        assert.equal(requests.filter(method => method === 'tasks/cancel').length, cancelReplyFault === 'before' ? 2 : 1);
+        assert.deepEqual(await rows(), [{ task_id: committedID, status: 'cancelled', attempt_count: 1, has_result: false }]);
+        return;
+      }
       if (reviewedInput) {
         const file = join(clientDir, 'reviewed-input.json');
         const exportArgs = [...selector, '--write-input-template', file];

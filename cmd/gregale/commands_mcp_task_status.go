@@ -50,6 +50,54 @@ func mcpTaskSnapshot(task mcphosting.Task) mcpTaskStatusMetadata {
 	return status
 }
 
+func runMCPTaskReceiptCancel(ctx context.Context, client *mcphosting.Client, submissionKey string) int {
+	task, exchange, err := client.GetTaskBySubmissionKey(ctx, submissionKey)
+	if err != nil {
+		return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
+	}
+	if mcpTaskTerminal(task.Status) {
+		return jsonOut(writeJSON(mcpTaskSnapshot(task)))
+	}
+	if _, err := client.CancelTask(ctx, task.TaskID); err != nil {
+		var unconfirmed *mcphosting.TaskCancellationUnconfirmedError
+		if errors.As(err, &unconfirmed) {
+			return mcpTaskReconcileCancellation(ctx, client, submissionKey, task.TaskID)
+		}
+		return printErr("MCP task cancel", err)
+	}
+	return mcpTaskCancellationRequested(task.TaskID)
+}
+
+func mcpTaskReconcileCancellation(ctx context.Context, client *mcphosting.Client, submissionKey, taskID string) int {
+	if err := ctx.Err(); err != nil {
+		return mcpTaskMetadataReadFailure(taskID, 0, err)
+	}
+	current, exchange, err := client.GetTaskBySubmissionKey(ctx, submissionKey)
+	if err != nil {
+		return mcpTaskMetadataReadFailure(taskID, exchange.HTTPStatus, err)
+	}
+	if current.TaskID != taskID {
+		return printErr("MCP task cancel", errors.New("task receipt lookup returned a different Task"))
+	}
+	snapshot := mcpTaskSnapshot(current)
+	if mcpTaskTerminal(current.Status) {
+		return jsonOut(writeJSON(snapshot))
+	}
+	snapshot.NextAction = "retry_status"
+	if code := jsonOut(writeJSON(snapshot)); code != 0 {
+		return code
+	}
+	return exitCodeForStatus(http.StatusServiceUnavailable)
+}
+
+func mcpTaskTerminal(status string) bool {
+	return status == "completed" || status == "failed" || status == "cancelled"
+}
+
+func mcpTaskCancellationRequested(taskID string) int {
+	return jsonOut(writeJSON(map[string]any{"task_id": taskID, "cancellation_requested": true}))
+}
+
 func mcpTaskInputUpdateStatus(update *mcphosting.TaskInputUpdateUnconfirmedError) int {
 	if update.Task.Status == "" {
 		return mcpTaskRetryStatus(update.Task.TaskID, update)
