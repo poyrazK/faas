@@ -136,6 +136,10 @@ jobs:
     uses: ./.github/workflows/data-api.yml
     permissions:
       contents: read
+  data-pipelines:
+    uses: ./.github/workflows/data-pipelines.yml
+    permissions:
+      contents: read
   durable-entity-developer-workflow:
     uses: ./.github/workflows/durable-entity-developer-workflow.yml
     permissions:

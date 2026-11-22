@@ -566,6 +566,19 @@ func isSourceCodeFile(name string) bool {
 	return strings.HasSuffix(name, ".js") || strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".py") || strings.HasSuffix(name, ".go")
 }
 
+// isTestSourceFile reports test code by the Go, Node and Python conventions.
+func isTestSourceFile(name string) bool {
+	name = filepath.ToSlash(name)
+	base := filepath.Base(name)
+	for _, dir := range strings.Split(filepath.Dir(name), "/") {
+		if dir == "test" || dir == "tests" || dir == "__tests__" {
+			return true
+		}
+	}
+	return strings.HasSuffix(base, "_test.go") || strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py") ||
+		strings.Contains(base, ".test.") || strings.Contains(base, ".spec.")
+}
+
 // Source inference reads conventional project layouts, so the walk is bounded:
 // it stops at the file limit, below sourceWalkMaxDepth directory levels, and
 // after sourceWalkMaxDirs directories. An unbounded walk made `gregale doctor`
@@ -681,8 +694,14 @@ func loopbackWarnings(fsys fs.FS) []Warning {
 	var warnings []Warning
 	files := collectSourceFiles(fsys, 256, isSourceCodeFile)
 	for _, path := range files {
+		// Tests never serve traffic, and a source that also names 0.0.0.0
+		// chooses its bind address (the MCP starters bind loopback only
+		// off-platform); warning on either was noise on our own starters.
+		if isTestSourceFile(path) {
+			continue
+		}
 		body := readFile(fsys, path)
-		if strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost") {
+		if (strings.Contains(body, "127.0.0.1") || strings.Contains(body, "localhost")) && !strings.Contains(body, "0.0.0.0") {
 			warnings = append(warnings, Warning{Code: "loopback_bind_possible", Message: "The source references localhost or 127.0.0.1; bind to 0.0.0.0 for public API traffic.", Sources: []string{path}})
 		}
 	}

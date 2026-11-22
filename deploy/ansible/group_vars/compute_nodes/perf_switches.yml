@@ -47,9 +47,22 @@
 # succeed. Cost: the builder slot is held for the deferred run (5-25 s here),
 # a little longer than an inline export.
 #
+# builderd_layer_zstd (ADR-20261028084018): builder VMs export the OCI image
+# and the dependency cache with zstd instead of gzip; imaged and rootfs read
+# both (step 1 of the ADR, released everywhere). Trial 2026-11-21 on OVH
+# bhs-2/bhs-3 (release 8e9583e487, with deferred cache export on), same heavy
+# Node app (Next, AWS SDK, Prisma, sharp), a dependency changed per build:
+#   build in VM 39.7-44.1 s gzip -> 32.2-35.1 s zstd; image export
+#   11.2-12.5 -> 3.8-4.5 s; deferred cache save (builder slot held)
+#   21.8-25.3 -> 11.6-13.1 s; imaged layer phase 51-55 -> 37-44 s; deploy
+#   wall 146-165 -> 112-136 s. Dependency caches 245 -> 224 MB per build.
+# No builderd, imaged or vmmd warnings; the zstd-built app served. Before
+# rolling imaged back past ADR step 1 on a node, turn this off there.
+#
 # false renders 0, so turning one off takes effect at the next daemon start.
 schedd_async_wake_finalize: true
 imaged_app_layer_reuse: true
 builderd_shared_platform_blobs: true
 builderd_buildkit_seed: true
 builderd_defer_cache_export: true
+builderd_layer_zstd: true

@@ -1080,6 +1080,9 @@ type Handler struct {
 	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
 	// penalty box per account (ADR-20261023113721); nil enforces them all.
 	edgeFeatureFlags *platformflags.Set
+	// instanceRoutes counts route activity per instance-minute for
+	// route resource peaks (ADR-20261121170000); nil when not wired.
+	instanceRoutes *instanceRouteMinutes
 	// trafficFenceFlags is the revocation fence kill switch; nil enforces it.
 	trafficFenceFlags *platformflags.Set
 	gate              *WakeGate
@@ -8495,7 +8498,9 @@ haveApp:
 		// via evts.Platform so the session-level accounting
 		// doesn't double-count.
 		h.observe(r, rec.status, app.ID, string(app.Plan), cold, target)
-		h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
+		if !isRouteProbe(r.Context()) {
+			h.recordUsageRequest(target, cold && wakeMethod == WakeMethodColdBoot)
+		}
 		return
 	}
 	// Keep the original target immutable: wake metrics, streaming hooks and
@@ -8632,7 +8637,13 @@ haveApp:
 	h.recordPreAuthFailedResponse(r, rec.status)
 	h.recordPreAuthTargetResponse(r, rec, app)
 	h.observe(r, rec.status, app.ID, string(app.Plan), cold, completionTarget)
-	h.recordUsageRequest(completionTarget, cold && wakeMethod == WakeMethodColdBoot)
+	// A route probe (canary or protection-baseline health check) is the
+	// platform's request, not the customer's: it is not a customer request,
+	// cold boot or response byte in usage_minutes (ADR-20261121231500).
+	probe := isRouteProbe(r.Context())
+	if !probe {
+		h.recordUsageRequest(completionTarget, cold && wakeMethod == WakeMethodColdBoot)
+	}
 	// PR-B residual capture. On the streaming path the per-flush
 	// deltas already attributed every byte that hit the wire; the
 	// one outstanding delta is the trailing slice between the
@@ -8654,7 +8665,9 @@ haveApp:
 	// wire (it short-circuited on the upstream reject) — billing
 	// bytes that didn't egress would be wrong on both ends of the
 	// financial model. nil-safe for unit tests.
-	h.recordEgress(rec, completionTarget, app)
+	if !probe {
+		h.recordEgress(rec, completionTarget, app)
+	}
 	// A request that found no routable target went through wake admission:
 	// it admitted a wake (cold, with the scheduler's method) or joined one
 	// already in flight. The latter is cold on the pinned path but admitted
@@ -8999,6 +9012,9 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			if h.requestTelemetry != nil {
 				h.requestTelemetry.RecordFromObserve(row)
+			}
+			if !row.PlatformRefusal && !row.DeploymentPinned {
+				h.countInstanceRoute(acctUUID, appUUID, plan, row.InstanceID, row.Route, row.Method, row.ReceivedAt, elapsed)
 			}
 		}
 	}

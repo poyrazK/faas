@@ -49,7 +49,7 @@ func cmdPipelineWatch(args []string) int {
 }
 func cmdPipelineRerun(args []string) int {
 	if len(args) != 3 && len(args) != 5 || len(args) == 5 && args[3] != "--repeat-steps" {
-		return printErr("Invalid arguments", fmt.Errorf("usage: gregale sandbox workflow rerun <pipeline-id> <new-workflow-id> <original-manifest.json> [--repeat-steps a,b] [--json]"))
+		return printErr("Invalid arguments", fmt.Errorf("usage: gregale sandbox workflow retry <pipeline-id> <new-workflow-id> <original-manifest.json> [--repeat-steps a,b] [--json]"))
 	}
 	file, err := openWorkflowPlanFile(args[2])
 	if err != nil {

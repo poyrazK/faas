@@ -426,6 +426,29 @@ func cmdMCPRemote(command string, args []string) int {
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
+	var deferFormInput bool
+	if command == "call" {
+		fs.BoolVar(&deferFormInput, "defer-form-input", false, "allow a keyed Task to request forms for a later wait")
+	}
+	var submissionKey, taskReceiptPath string
+	if command == "call" || command == "task-get" {
+		fs.Func("task-submission-key", "saved UUIDv7 for a keyed Task submission or status lookup", func(value string) error {
+			if value == "" {
+				return errors.New("task submission key must be a lowercase UUIDv7")
+			}
+			submissionKey = value
+			return nil
+		})
+	}
+	if command == "call" || command == "task-get" || command == "task-wait" {
+		fs.Func("task-receipt", "private Task submission receipt file", func(value string) error {
+			if value == "" {
+				return errors.New("task receipt path is required")
+			}
+			taskReceiptPath = value
+			return nil
+		})
+	}
 	waitForTask := fs.Bool("wait", false, "wait for a task result and request cancellation if this command times out (call only; implies --tasks)")
 	cancelOnTimeout := fs.Bool("cancel-on-timeout", false, "request task cancellation if a resumed wait times out (task-wait only)")
 	tool := fs.String("tool", "", "tool to call")
@@ -435,7 +458,11 @@ func cmdMCPRemote(command string, args []string) int {
 	name := fs.String("name", "gregale", "connection name (config)")
 	uri := fs.String("uri", "", "resource URI to read (resource-read only)")
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
-	taskID := fs.String("task-id", "", "opaque task ID (task-get or task-cancel)")
+	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
+	var metadataOnly bool
+	if command == "task-get" {
+		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
+	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
 	// (production-us hunt #5, H5-3).
@@ -462,14 +489,33 @@ func cmdMCPRemote(command string, args []string) int {
 	if (*enableTasks || *waitForTask) && (command != "call" || *legacy) {
 		return printErr("Invalid MCP Tasks flags", errors.New("MCP Tasks support is available only for modern mcp call"))
 	}
+	if submissionKey != "" && taskReceiptPath != "" {
+		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
+	}
+	keyed := submissionKey != "" || taskReceiptPath != ""
+	if deferFormInput && !keyed {
+		return printErr("Invalid MCP task flags", errors.New("--defer-form-input requires --task-receipt or --task-submission-key"))
+	}
+	if command == "call" && keyed && (!*enableTasks || *waitForTask || inputMode) {
+		return printErr("Invalid MCP Tasks flags", errors.New("--task-receipt and --task-submission-key require a handle-only call with --tasks"))
+	}
+	if command == "task-get" && keyed && (!metadataOnly || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only and accepts one Task selector"))
+	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
 	}
 	if *taskID != "" && command != "task-get" && command != "task-wait" && command != "task-cancel" {
 		return printErr("Invalid MCP task flags", errors.New("--task-id is supported only by mcp task-get, mcp task-wait and mcp task-cancel"))
 	}
-	if (command == "task-get" || command == "task-wait" || command == "task-cancel") && (*taskID == "" || *legacy) {
-		return printErr("Invalid MCP task flags", errors.New("modern task-get, task-wait and task-cancel require --task-id"))
+	if (command == "task-get" || command == "task-cancel") && ((*taskID == "" && !keyed) || *legacy) {
+		return printErr("Invalid MCP task flags", errors.New("modern task-get and task-cancel require --task-id"))
+	}
+	if command == "task-wait" {
+		hasTaskID, hasReceipt := *taskID != "", taskReceiptPath != ""
+		if *legacy || hasTaskID == hasReceipt {
+			return printErr("Invalid MCP task flags", errors.New("modern task-wait requires exactly one of --task-id or --task-receipt"))
+		}
 	}
 	if *interactive && (nonInteractive || !mcpInputIsTerminal(osStdin)) {
 		return printErr("MCP interactive input", errors.New("--interactive requires terminal stdin; use --input-responses-file for non-interactive calls"))
@@ -511,6 +557,18 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("MCP endpoint", err)
 	}
 	c.HTTP.Timeout = timeoutValue
+	if taskReceiptPath != "" && token == "" {
+		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
+	}
+	if taskReceiptPath != "" && command != "call" {
+		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)
+		if err != nil {
+			return printErr("MCP Task receipt", err)
+		}
+	}
+	if metadataOnly {
+		return runMCPTaskMetadataStatus(ctx, c, *taskID, submissionKey)
+	}
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)
@@ -542,10 +600,14 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "prompt-get" && *promptName == "" {
 		return printErr("MCP prompt get", errors.New("--prompt is required"))
 	}
-	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, responder, *enableTasks || *waitForTask, *waitForTask, *cancelOnTimeout)
+	options := mcphosting.CallOptions{
+		Responder: responder, EnableTasks: *enableTasks || *waitForTask, WaitForTask: *waitForTask,
+		CancelOnTimeout: *waitForTask, TaskSubmissionKey: submissionKey, DeferFormInput: deferFormInput,
+	}
+	return runMCPRemoteWithOptions(ctx, command, c, *legacy, *tool, *streamTool, *name, *uri, *promptName, *taskID, arguments, options, *cancelOnTimeout, taskReceiptPath)
 }
 
-func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, respond mcphosting.InputResponder, enableTasks, waitForTask, cancelOnTimeout bool) int {
+func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.Client, legacy bool, tool, streamTool, name, uri, promptName, taskID string, args map[string]any, options mcphosting.CallOptions, cancelOnTimeout bool, taskReceiptPath string) int {
 	if command == "config" {
 		return jsonOut(writeJSON(mcphosting.ConnectionConfig(name, c.Endpoint)))
 	}
@@ -618,8 +680,15 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		}
 		return jsonOut(writeJSON(task))
 	case "task-wait":
+		if options.TaskSubmissionKey != "" {
+			recovered, exchange, err := c.GetTaskBySubmissionKey(ctx, options.TaskSubmissionKey)
+			if err != nil {
+				return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
+			}
+			taskID = recovered.TaskID
+		}
 		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
-			Responder: respond, CancelOnTimeout: cancelOnTimeout,
+			Responder: options.Responder, CancelOnTimeout: cancelOnTimeout,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
@@ -657,13 +726,17 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		if candidate.Name != tool {
 			continue
 		}
-		var x mcphosting.Exchange
-		x, err = c.CallWithOptions(ctx, candidate, args, mcphosting.CallOptions{
-			Progress: true, Responder: respond, EnableTasks: enableTasks, WaitForTask: waitForTask, CancelOnTimeout: waitForTask,
-			OnTask: func(task mcphosting.Task) {
-				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
-			},
-		})
+		if taskReceiptPath != "" {
+			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint)
+			if err != nil {
+				return printErr("Save MCP Task receipt", err)
+			}
+		}
+		options.Progress = true
+		options.OnTask = func(task mcphosting.Task) {
+			_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
+		}
+		x, err := c.CallWithOptions(ctx, candidate, args, options)
 		if x.Result != nil {
 			if code := jsonOut(writeJSON(x)); code != 0 {
 				return code

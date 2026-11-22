@@ -2267,13 +2267,14 @@ func (q *Queries) ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg A
 
 const applyGatewayUsageEvent = `-- name: ApplyGatewayUsageEvent :execrows
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count
 `
 
@@ -2283,8 +2284,12 @@ type ApplyGatewayUsageEventParams struct {
 	Column3 int32
 	Column4 int64
 	Column5 int32
+	Column6 int64
 }
 
+// $6 is the frame's billed egress: its response bytes when meterd counts
+// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+// public responses do not cross the instance veth), otherwise 0.
 func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error) {
 	result, err := db.Exec(ctx, applyGatewayUsageEvent,
 		arg.ID,
@@ -2292,6 +2297,7 @@ func (q *Queries) ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg Apply
 		arg.Column3,
 		arg.Column4,
 		arg.Column5,
+		arg.Column6,
 	)
 	if err != nil {
 		return 0, err
@@ -3706,6 +3712,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= $3::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds
@@ -26555,7 +26564,7 @@ func (q *Queries) GetApplicationStandardAssignmentInventory(ctx context.Context,
 const getApplicationStandardConsumerRoster = `-- name: GetApplicationStandardConsumerRoster :one
 WITH read_clock AS MATERIALIZED (SELECT clock_timestamp() AS read_at),
  app_scope AS MATERIALIZED (
- SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
+ SELECT a.id, a.account_id, a.slug, a.type, a.runtime, a.ram_mb, a.idle_timeout_s, a.max_concurrency, a.status, a.created_at, a.manifest, a.github_install_id, a.github_repo_full_name, a.github_production_branch, a.min_instances, a.egress_allowlist, a.autoscale_target_rps, a.autoscale_target_cpu_pct, a.github_install_binding_id, a.github_install_account_id, a.github_install_linked_at, a.project_id, a.root_dir, a.workload_name, a.workload_class, a.start_command, a.streaming_enabled, a.scaling_policy, a.last_scale_out_at, a.last_scale_in_at, a.require_signed, a.node_id, a.reassigned_at, a.org_id, a.migrated_at, a.warm_snapshot_enabled, a.warm_snapshot_min_requests, a.warm_snapshot_min_ms, a.eviction_priority, a.require_authn, a.public_auth_mode, a.public_auth_basic, a.websocket_enabled, a.auth_default_flipped_at, a.overflow_node, a.route_metrics_enabled, a.preview_of_slug, a.preview_pr_number, a.preview_pr_state, a.preview_expires_at, a.cors_default_enabled, a.cors_default_origins, a.maintenance_mode, a.public_auth_ip_allowlist, a.static_egress_ip, a.static_egress_ip_set_at, a.preview_destroy_commented_at, a.app_protocol, a.cpu_millicores, a.last_deploy_failed_email_at, a.deleted_at, a.delete_grace_until, a.consumer_auth_mode, a.only_declared_routes, a.declared_routes, a.purge_claimed_at, a.visibility, a.retry_policy, a.warm_pool_size, a.security_policy, a.egress_allowlist_revision, a.scaling_policy_revision, a.app_cpu_policy_revision, a.request_rate_limit_rps, a.request_rate_limit_burst, a.github_owner_id, a.github_repo_id, a.park_transition_id, a.wake_transition_id, a.egress_ports, a.platform_tenant_required, a.managed_postgres_admission_cutover_id, a.managed_postgres_admission_fenced_at, a.service_address_index, a.deployment_policy_revision, a.deployment_policy_owner, a.deployment_policy_fingerprint, a.deployment_cron_revision, a.deployment_cron_owner, a.deployment_cron_fingerprint, a.deployment_cron_before, a.deployment_mail_revision, a.labels, a.github_production_trigger, a.github_preview_enabled, a.scaling_revision, a.sandbox_template, a.owner_home_node_id,e.desired_revision,e.persisted_revision,e.effective_hash,e.state AS enrollment_state
  FROM apps a LEFT JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=$1::uuid AND a.org_id=$2::uuid AND a.status<>'deleted'
  ), live AS MATERIALIZED (
@@ -71810,6 +71819,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) AS active_observed,
@@ -71817,6 +71832,12 @@ o AS (
       WHERE s.mutated_at < s.quiet_after AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.observed_at LIMIT 1) END AS quiet_observed,
@@ -71825,6 +71846,12 @@ o AS (
       AND NOT (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=s.bucket_id AND v.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_bucket_object_lock lk WHERE lk.bucket_id=s.bucket_id AND lk.state<>'ready')
       OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations rc WHERE rc.bucket_id=s.bucket_id AND rc.state IN ('waiting','scanning'))
+      OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=s.bucket_id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+        AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=s.bucket_id AND vu.inventory_scope='all_versions')
+        OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=s.bucket_id AND recovery_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=s.bucket_id AND versions_observed)
+        OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=s.bucket_id AND completion_versions_observed)
+        OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=s.bucket_id AND versions_required)))
       OR (s.observed_at > now() - $3::bigint * interval '1 second' AND EXISTS(SELECT 1 FROM object_storage_inventory_scans i WHERE i.bucket_id=s.bucket_id
         AND i.pages > 0 AND i.started_at > s.observed_at AND i.progress_at <= now() AND i.progress_at >= now() - $6::bigint * interval '1 second')))
       ORDER BY s.active_since LIMIT 1) END AS activated,
@@ -71857,8 +71884,9 @@ type ObjectInventoryBacklogRow struct {
 // ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 // counts what ObjectInventoriesDue would hand out now (same rule).
 // oldest_age_seconds is the oldest observation admission still holds to the
-// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-// (with an observation), or whose listing advanced within progress_window on
+// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+// or whose all-version refresh waits for a live multipart session (with an
+// observation), or whose listing advanced within progress_window on
 // an observation under scan_max_age, stays fresh on an older one and does not
 // count (objectBucketInventoryStale). A bucket never observed counts from its
 // creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -77191,7 +77219,13 @@ COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
 s.accrued_through AS gateway_storage_through,
 i.started_at AS scan_started_at, i.progress_at AS scan_progress_at, i.listed_bytes AS scan_bytes, i.listed_keys AS scan_keys, i.pages AS scan_pages, i.complete AS scan_complete,
 (EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=b.id AND v.state<>'ready') OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=b.id AND l.state<>'ready')
- OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning')))::boolean AS inventory_held,
+ OR EXISTS(SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=b.id AND c.state IN ('waiting','scanning'))
+ OR (EXISTS(SELECT 1 FROM object_storage_multipart_uploads mu WHERE mu.bucket_id=b.id AND mu.state IN ('initiating','active','completing','completing_conditional','aborting'))
+   AND (EXISTS(SELECT 1 FROM object_storage_bucket_usage vu WHERE vu.bucket_id=b.id AND vu.inventory_scope='all_versions')
+   OR EXISTS(SELECT 1 FROM object_upload_completions WHERE bucket_id=b.id AND recovery_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=b.id AND versions_observed)
+   OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=b.id AND completion_versions_observed)
+   OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=b.id AND versions_required))))::boolean AS inventory_held,
 a.mutated_at, a.active_since, object_inventory_quiet_mode()::text AS inventory_quiet_mode
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_inventory_scans i ON i.bucket_id = b.id
@@ -77263,6 +77297,9 @@ type ObjectUsageBucketsRow struct {
 // narrows by their indexes without changing the result. The subject function
 // alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 // every bucket on the platform, under the account lock of every object write.
+// inventory_held also covers an all-version-path bucket with a live multipart
+// session: its refresh cannot start until the session ends (ADR-533/540), and
+// its tracked reservations keep capacity conservative meanwhile.
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
 	rows, err := db.Query(ctx, objectUsageBuckets, arg.PeriodStart, arg.AccountID)
 	if err != nil {
@@ -96944,8 +96981,10 @@ func (q *Queries) RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBT
 }
 
 const reassignOrphanedAppOwner = `-- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=$1::uuid, reassigned_at=now()
-WHERE id=$2::uuid AND node_id=$3::uuid
+UPDATE apps SET node_id=$1::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=$1::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, $2::uuid) END
+WHERE id=$3::uuid AND node_id=$2::uuid
   AND status IN ('active', 'evicted_cold')
   AND ($4::integer < 0 OR reassigned_at IS NULL
        OR reassigned_at < now() - make_interval(secs => $4::integer))
@@ -96953,16 +96992,19 @@ WHERE id=$2::uuid AND node_id=$3::uuid
 
 type ReassignOrphanedAppOwnerParams struct {
 	ToNodeID        pgtype.UUID
-	AppID           pgtype.UUID
 	FromNodeID      pgtype.UUID
+	AppID           pgtype.UUID
 	CooldownSeconds int32
 }
 
+// ADR-20261121203000: a displacement remembers the node the app came from
+// (its home), keeps an older home across a chain of drains, and clears it
+// when the app lands back on its home.
 func (q *Queries) ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error) {
 	result, err := db.Exec(ctx, reassignOrphanedAppOwner,
 		arg.ToNodeID,
-		arg.AppID,
 		arg.FromNodeID,
+		arg.AppID,
 		arg.CooldownSeconds,
 	)
 	if err != nil {

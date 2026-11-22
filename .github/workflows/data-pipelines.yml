@@ -2,6 +2,10 @@ name: Data pipeline acceptance
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    # Only this suite's own code. Shared hot paths (cmd/gregale/**,
+    # migrations/**, Makefile, pkg/api/limits.go, sqlc.yaml, the control-plane
+    # Ansible role) triggered 25 of 30 sampled runs on pull requests that did
+    # not touch pipelines; ci.yml runs this suite nightly and on dispatch.
     paths:
       - 'pkg/datapipeline/**'
       - 'pkg/connectioncapacity/**'
@@ -20,24 +24,26 @@ on:
       - 'pkg/dashboard/data_pipeline_*'
       - 'pkg/dashboard/templates/data_pipeline_*.html'
       - 'pkg/apid/apidserver/dashboard_data_pipelines*'
-      - 'pkg/api/limits.go'
-      - 'cmd/gregale/**'
-      - 'migrations/**'
+      - 'cmd/gregale/commands_pipeline*'
+      - 'cmd/gregale/commands_run_pipelines*'
+      - 'cmd/gregale/commands_data_api_connection_budget*'
+      - 'cmd/gregale/templates/data-api/**'
       - 'deploy/systemd/faas-apid-data-pipeline-worker.service'
       - 'deploy/systemd/faas-apid-data-pipeline-alert-worker.service'
       - 'pkg/commit/connection.go'
-      - 'deploy/ansible/roles/control_plane_service/**'
       - 'scripts/test-data-pipeline.sh'
-      - 'sqlc.yaml'
-      - 'Makefile'
       - 'tests/data-pipelines/**'
       - '.github/workflows/data-pipelines.yml'
+  # Nightly and on dispatch: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
+  group: data-pipelines-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   native-postgres:
     runs-on: ubuntu-latest

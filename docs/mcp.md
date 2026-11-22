@@ -86,8 +86,10 @@ returns `approval_required`, the bridge keeps the original plan, staged source
 and upload checkpoint through the deadline in `approval.expires_at`. The review
 page shows that same deadline. After approval, retry the same plan ID. The
 bridge rechecks the app and its release state and commits the original upload.
-A changed app or release requires a new plan. The temporary staged files live
-on the current bridge process's host and are cleared on bridge restart.
+A changed app or release requires a new plan. The encrypted journal restores
+approval-bound plans for the same connection after a restart using the same
+bridge upload directory. One-time upload URLs and source for plans that
+have yet to reach commit approval expire with the process.
 
 Uploads may contain only regular files and directories. Links, devices and
 anything named `.git` are refused.
@@ -120,10 +122,11 @@ of those tools are listed.
 
 The key reaches every app in its account. Agent keys expire after 90 days by
 default; rotate them like any key. Revoking the key ends the agent's access at
-its next request. The hosted journal preserves completed receipts and resumable release plans
-for the same key across bridge restarts. Pending upload files are temporary;
-after a restart, inspect deployments and resources before uploading or planning
-again. `gregale_get_plan` recovers an unexpired receipt without repeating a write.
+its next request. The hosted journal preserves completed receipts and resumable
+release plans for the same key across bridge restarts. A pending resumable
+upload commit approval keeps its staged source through the original review
+deadline. `gregale_get_plan` recovers an unexpired plan or receipt without
+repeating a write.
 
 Hosted agent-key connections use the `core` catalog unless the client sends a
 `Gregale-MCP-Toolsets` header on every MCP request. Select a comma-separated
@@ -4144,8 +4147,8 @@ and its `plan_id`.
 - **Crons.** The plan reports `duplicate_of` if the app already has a cron
   with the same schedule and path.
 
-Object storage and managed PostgreSQL are preview capabilities; when one is
-off for the account, apply returns the API's error. Jobs and `gregale run`
+Object storage and managed PostgreSQL are released per account during their
+rollout; when one is off for the account, apply returns the API's error. Jobs and `gregale run`
 stay in the CLI.
 
 ## Configure, inspect and recover
@@ -4936,11 +4939,12 @@ Choose another starter language with `gregale mcp server init --language go --pa
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
 
-The Node starter answers every tool call in its response and carries no durable
-Task code. For Node tools that return durable MCP Task handles, start from
-`gregale init --template mcp-node-tasks --path ./my-mcp` (Tasks off until you
-bind PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
-observer projects. Native Task releases need the Tasks starter's
+The Node, Go and Python starters answer every tool call in their response and
+carry no durable Task code. For tools that return durable MCP Task handles,
+start from `gregale init --template mcp-node-tasks` (or `mcp-go-tasks`,
+`mcp-python-tasks`) with `--path ./my-mcp` (Tasks off until you bind
+PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Node Tasks starter's
 `tasks-release.js`.
 
 In another terminal:
@@ -5597,6 +5601,26 @@ gregale mcp client read --url https://mcp.example.com/mcp --uri task://tasks/TAS
 gregale mcp client watch --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
 ```
 
+Use `--metadata-only` for a status snapshot suitable for agent context.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --task-id TASK_ID --metadata-only
+```
+
+The command reads the saved handle once using the same MCP endpoint and
+caller credential. It emits JSON with the Task ID, state, last update,
+`nextAction`, and a polling delay in milliseconds when available. The snapshot
+is limited to those fields.
+
+- `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
+- `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
+- `read_result` means the Task completed. Use the default `client status` output to read its result.
+- `none` means the Task failed or was cancelled.
+- `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
+
+An access denial or missing Task returns an error without a snapshot. Status
+checks leave the Task untouched.
+
 With Tasks enabled, `task://tasks/{taskId}` exposes the caller-visible task
 status and result as a resource in all three starters. Reading it requires both
 ownership of the task and permission for its originating tool, plus the
@@ -5621,6 +5645,91 @@ calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
+
+The `mcp-node-tasks` and `mcp-go-tasks` PostgreSQL starters support retrying a
+lost submission reply on an authenticated endpoint. Before starting the updated starter, run
+`npm run tasks:migrate` for Node or `go run . tasks-migrate apply` for Go with
+the migration binding. Generate and save a lowercase UUIDv7 before the first call.
+
+The `mcp-python-tasks` starter supports the same receipt and lookup flow. Apply
+its updated schema with the Python Task schema command from the starter README,
+then restart the web or combined process to advertise the extensions.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-submission-key "$TASK_SUBMISSION_KEY"
+```
+
+If the reply is lost, repeat the command with the same key, tool, arguments and
+caller within one minute of the key's UUIDv7 timestamp. A matching retry returns
+the original Task handle. A different request or caller is rejected. The
+server uses its PostgreSQL clock and rejects expired or future-dated keys.
+After the window closes, reconcile the original request before submitting again
+with a fresh key. Check or wait for the result using the returned Task ID.
+
+The CLI requires the server to advertise the `io.gregale/task-submission`
+extension. Keyed submission deduplicates Task creation within this window.
+Worker execution retains its existing at-least-once contract. See
+[ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
+
+After the submission window closes, use the saved key to find the original
+Task while it is still retained. This read checks Task ownership and current
+tool access and returns only metadata. Use the returned Task ID for `client wait`
+or an explicit result read.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-submission-key "$TASK_SUBMISSION_KEY" --metadata-only
+```
+
+For a process that may restart, use a new private receipt file in place of a
+manually saved key. The CLI saves it before sending the Task submission.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --metadata-only
+```
+
+The receipt contains the submission key and a fingerprint of the resolved
+endpoint. Use the same endpoint and provide the original caller's credential
+when reading it. Use a new receipt path for each new submission. An existing
+receipt remains available for status lookup after a lost reply or CLI exit.
+
+To wait for the result directly from a receipt, use the same endpoint and
+provide the caller's current credential. This resolves the original Task even
+after the one-minute submission window, for as long as the Task is retained
+and the caller has tool access. Use `--cancel-on-timeout` to request cancellation
+if the wait times out after resolving the Task.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+Use `--defer-form-input` on a keyed submission to let a Task request approval
+after the submitting process exits. Keep this opt-in on matching retries.
+The receipt contains the same submission key and endpoint fingerprint.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8,"request_approval":true}' \
+  --tasks --task-receipt ./approval-task.json --defer-form-input
+```
+
+When the receipt's metadata reports `provide_input`, a process with the
+caller's current credential can resume the Task. Use `--interactive` to review
+the form and answer from a terminal, or supply the authorized answers in a
+JSON file keyed by request ID. For the example report, a file containing
+`{"approval":{"action":"accept","content":{"approved":true}}}` approves generation.
+
+```sh
+gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --input-responses-file ./responses.json
+```
 
 ## MCP catalog snapshots
 

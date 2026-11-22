@@ -686,6 +686,22 @@ func cmdDev(args []string) int {
 			return err
 		})
 	}
+	if session.Postgres != nil {
+		waited, waitErr := waitForDevPostgres(ctx, session, devPostgresReadyWait, devPostgresReadyPoll, func(ctx context.Context) (api.DevSessionResponse, error) {
+			return client.GetDevSession(ctx, project, workspaceID)
+		}, func(name string) {
+			if !jsonOutput {
+				PrintProgress(osStdout, "Waiting for PostgreSQL %s before the first sync", name)
+			}
+		})
+		if waitErr != nil {
+			return printErr("Developer PostgreSQL is not ready", waitErr)
+		}
+		session.Postgres = waited.Postgres
+		if session.Postgres != nil && session.Postgres.BindingState != "ready" {
+			PrintWarn(osStderr, "PostgreSQL %s is still %s; a release command that runs before it is ready fails, and the next sync retries it", session.Postgres.Name, session.Postgres.BindingState)
+		}
+	}
 	stopRuntimeLogs := func() {}
 	defer func() { stopRuntimeLogs() }()
 	runtimeLogsStarted := false

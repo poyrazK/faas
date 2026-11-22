@@ -711,7 +711,7 @@ reuse preserves installed dependencies; data and runtime mutations remain local
 to the individual Run.
 
 ```sh
-gregale run environments build --runtime python313 \
+gregale sandbox environment publish --runtime python313 \
   --requirements requirements.lock --wait --json
 
 gregale run --runtime python313 --environment ENVIRONMENT_UUID \
@@ -726,7 +726,7 @@ Dependencies live in an explicit import path; package startup hooks are not run.
 For npm, pass the dependency manifest and a matching lockfile v3:
 
 ```sh
-gregale run environments build --runtime node24 \
+gregale sandbox environment publish --runtime node24 \
   --package-json package.json --package-lock package-lock.json --wait --json
 ```
 
@@ -790,7 +790,7 @@ separate qualification gates.
 ### System package environments
 
 Environment recipes may add `system_packages` containing up to 32 exact Wolfi
-`NAME=VERSION-rN` pins. Use `gregale run environments build --runtime python313
+`NAME=VERSION-rN` pins. Use `gregale sandbox environment publish --runtime python313
 --system-package poppler-utils=26.08.0-r0 --wait` with a compatible installer.
 Repeat the flag for additional packages. A packages-only recipe needs no Python
 requirements or npm manifest. Existing locked language dependencies may also be

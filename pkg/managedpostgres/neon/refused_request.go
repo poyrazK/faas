@@ -2,6 +2,7 @@ package neon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -40,7 +41,24 @@ func refusedRequestError(method, path string, status int, payload []byte) error 
 	if alreadyDeletedRefusal(method, status, body.Message) {
 		class = managedpostgres.ErrNotFound
 	}
-	return &managedpostgres.OperatorReason{Err: class, Reason: reason, Quiet: true}
+	refused := &managedpostgres.OperatorReason{Err: class, Reason: reason, Quiet: true}
+	if status == http.StatusLocked {
+		return projectBusyError{refused}
+	}
+	return refused
+}
+
+// projectBusyError marks Neon's 423: "project already has running
+// conflicting operations, scheduling of new ones is prohibited". It wraps
+// the refusal, so callers still see ErrUnavailable and the operator reason;
+// a caller whose change is idempotent can wait for the project and retry.
+type projectBusyError struct{ error }
+
+func (e projectBusyError) Unwrap() error { return e.error }
+
+func projectBusy(err error) bool {
+	var busy projectBusyError
+	return errors.As(err, &busy)
 }
 
 // alreadyDeletedRefusal reports Neon refusing a DELETE because the resource

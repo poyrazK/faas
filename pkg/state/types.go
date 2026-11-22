@@ -1566,6 +1566,9 @@ type App struct {
 	// project's hard delete (Phase 5) orphans the app rather than
 	// cascading it.
 	ProjectID string
+	// AddToProject asks the create path to validate a direct project addition
+	// under the same lock as the insert. It is never persisted on an App.
+	AddToProject bool `json:"-"`
 	// RootDir is the build context relative to the repo root
 	// ("" = repo root). Defaults to '' so standalone apps keep the
 	// pre-projects deploy contract bit-for-bit.
@@ -2924,6 +2927,8 @@ type Deployment struct {
 	// explicitly requested zero. It is persisted for activation semantics but
 	// remains internal; TrafficPercent is the customer-visible value.
 	TrafficPercentExplicit bool `json:"-"`
+	// ServingEndedAt records when this revision last stopped receiving traffic.
+	ServingEndedAt *time.Time `json:"-"`
 	// Scan columns (issue #464 / ADR-055 / PR-3). Per-deploy grype
 	// scan result, status, and scanned_at. Mirror the deployments
 	// table columns added by migrations/00135. The pgstore reads

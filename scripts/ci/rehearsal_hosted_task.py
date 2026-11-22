@@ -181,7 +181,7 @@ def observation(receipt, phase):
     return observed
 
 
-def verify(directory):
+def verify(directory, receipt_path=None):
     prepared = read_document(directory / "preparation.json")
     fixture = directory / "fixture"
     expected_preparation = preparation(fixture, include_sources=False)
@@ -193,7 +193,7 @@ def verify(directory):
         expected_preparation["source_sha256"] = {role: source_digest(fixture / (role + ".tar.gz")) for role in ROLES}
     if json_bytes(prepared) != json_bytes(expected_preparation):
         raise ValueError("prepared fixture and archive digests disagree")
-    receipt = read_document(directory / "hosted-task-receipt.json")
+    receipt = read_document(receipt_path or directory / "hosted-task-receipt.json")
     run_id = identity(receipt.get("run_id"), "run ID")
     task_id = identity(receipt.get("task_id"), "submitted Task ID")
     initial, recovered = (observation(receipt, phase) for phase in ("initial", "recovered"))

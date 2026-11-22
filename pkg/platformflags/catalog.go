@@ -99,6 +99,11 @@ const (
 	// them. Off, the gateway serves requests unchanged.
 	EdgeFlags = "edge_flags"
 
+	// RouteResourcePeaks keeps each app instance's per-minute memory and CPU
+	// and its route activity, and serves which routes the app's peaks come
+	// from (ADR-20261121170000).
+	RouteResourcePeaks = "route_resource_peaks"
+
 	// Edge rule features released by platform flags (ADR-20261023113721).
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
@@ -533,6 +538,17 @@ var catalog = []Spec{
 		ADR:         "ADR-20261019102657",
 		Consumers:   []string{"apid"},
 		LegacyEnv:   []string{"FAAS_REALTIME_PREVIEW_ACCOUNTS"},
+	},
+	{
+		Key:        RouteResourcePeaks,
+		Capability: "route-resource-peaks",
+		Label:      "Route resource peaks",
+		Description: "Keep each app instance's per-minute memory and CPU and the routes it served in the same minutes, and serve which routes " +
+			"the app's memory and CPU peaks come from. Off, gateways count nothing, apid drops the minutes compute nodes send and the read route refuses.",
+		ADR:        "ADR-20261121170000",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-06-30",
 	},
 	{
 		Key:   TrafficRevocationFence,

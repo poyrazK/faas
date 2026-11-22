@@ -1,11 +1,10 @@
 # Qualify production monitoring delivery
 
 Use the manual `monitoring-qualification` GitHub Actions workflow to exercise
-the deployed Alertmanager page/warn routes and retain test-bound operator
+the deployed Alertmanager notification routes and retain test-bound operator
 receipt attestations. The default **prepare** operation reads receiver intent.
-**Exercise sends real page and warn notifications**, including configured
-emergency-priority phone notifications. The workflow is implemented but has
-not been run against production as part of this change.
+**Exercise sends real notifications**, including configured emergency-priority
+phone notifications.
 
 ## Prerequisites
 
@@ -16,6 +15,10 @@ scope, MFA and allowlist policy for the loopback notification-health API.
 The control plane needs Python 3, current receiver-health support, and converged
 receiver inventory/collector roles. Token values and provider secret files
 never enter artifacts or command arguments.
+
+`production-us` runs on the `faas-fleet-us` runners to reach the control plane
+over the fleet network. The job verifies SSH against `COMPUTE_KNOWN_HOSTS`
+and removes its temporary SSH files when the operation step exits.
 
 Review [notification delivery](notification-delivery.md),
 [post-deployment monitoring](post-deployment-monitoring.md), and
@@ -33,7 +36,7 @@ Dispatch `monitoring-qualification` with `mode=prepare` and the target
 
 `report.json` identifies the fleet, active-release pointer, expected
 receiver/integration groups and their inventory digest. Page and heartbeat
-roles must be present; warn is included when expected. Every receipt check
+roles must be present. Warn and delivery escalation appear when configured. Every receipt check
 starts unknown, including quiet receivers with no prior success observation.
 Missing, stale, duplicate, unexpected or inconsistent intent stops preparation.
 The procedure reads deployment intent, not receiver addresses or secret files.
@@ -43,16 +46,16 @@ workflow runs are red and still upload evidence. That status cannot qualify
 monitoring as successful. Review the report reason to distinguish expected
 pending receipts from an unavailable inventory or failed operation.
 
-## 2. Exercise production page and warn routes
+## 2. Exercise production notification routes
 
 Dispatch the workflow again with `mode=exercise` for the same fleet. Each run
 attempt has a new test ID such as `mq-123456789-1`. Alert names and summaries
 contain that ID. Check the new exercise artifact, not a prepare artifact.
 
 The helper rechecks current release and receiver intent before sending one
-page and, when expected, one warn alert through the existing Alertmanager
-route tree. Distinct test families prevent page-over-warn inhibition and avoid
-joining ordinary warn digests. It waits 90 seconds and explicitly resolves the
+page, plus a warn alert and a separate PagerDuty test if those receivers
+are expected. Distinct test families and groups isolate the exercise from
+ordinary digests and incidents. It waits 90 seconds and explicitly resolves the
 same label sets. Alerts have a fixed 15-minute lifetime even if the runner dies.
 Cleanup is attempted after an uncertain POST, HTTP/SSH failure or handled
 cancellation. A hard kill can prevent cleanup; inspect the report and let the
@@ -65,6 +68,13 @@ Custom deployed timing can differ. Accepted alert submissions or increasing
 transport counters do not establish either receipt. Record each actual
 firing and recovery observation with its matching test ID. Silences and normal
 inhibition remain in effect; missing delivery stays unverified or failed.
+When qualifying the diagnostic layout, confirm the firing page includes
+`First check` and that its dashboard link opens Notification Receiver Failures.
+
+The delivery escalation test normally fires after 10 seconds and recovers
+at the next one-minute group interval. Use the separate
+[escalation procedure](escalation.md#enable-delivery-escalation-for-a-fleet)
+to verify that an unacknowledged incident reaches the secondary after five minutes.
 
 This directly exercises Alertmanager and its production adapters. It does not
 test Prometheus rule evaluation. Use the existing isolated local drill for

@@ -4137,6 +4137,18 @@ const (
 	OwnerBalanceMovesPerTick     = 5
 	OwnerBalanceInterval         = time.Minute
 	OwnerBalanceMinIdle          = 24 * time.Hour
+	// Return home (ADR-20261121203000). A drain or a dead node displaces
+	// apps onto a peer; a rolling release displaces every node's apps in
+	// turn, so the last node to stay up ended up owning all of them
+	// (production 2026-11-21: 91 apps and 60.9 GB on bhs-2, none on bhs-3).
+	// A displacement does not count as a move for OwnerBalanceMinIdle, and
+	// once the home node is active again the control plane returns parked
+	// displaced apps to it, at most OwnerReturnHomeMovesPerTick every
+	// OwnerBalanceInterval. An app displaced longer than
+	// OwnerReturnHomeWindow ago has settled where it is and is left to the
+	// balance.
+	OwnerReturnHomeMovesPerTick = 20
+	OwnerReturnHomeWindow       = 6 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4262,10 +4274,12 @@ const (
 const ProjectWorkloadDefaultRAMMB = 128
 
 // StandaloneAppDefaultMaxRAMMB caps the RAM a standalone app gets when it is
-// created without ram_mb, a resource profile or vcpu (ADR-20261029234500).
-// Below the cap the default stays the plan's RAM; a Scale app starts at
-// 1024 MB instead of 2048 MB and can still be raised to the plan's RAM.
-const StandaloneAppDefaultMaxRAMMB = 1024
+// created without ram_mb, a resource profile or vcpu (ADR-20261029234500,
+// lowered to 512 MB by ADR-20261122180000). Below the cap the default stays
+// the plan's RAM: Free starts at 256 MB, every other plan at 512 MB, and an
+// app can still be raised to the plan's RAM. Apps are billed at their RAM, so
+// an agent that deploys without a size must not get a large instance.
+const StandaloneAppDefaultMaxRAMMB = 512
 
 // StandaloneAppDefaultRAMMB is the RAM of a standalone app created without a
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.

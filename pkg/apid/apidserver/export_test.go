@@ -2694,3 +2694,8 @@ func (s *server) RuntimeBuildAdmissionForTest() *operatorobs.RuntimeBuildAdmissi
 
 // OwnDomainHolderHint explains a domain conflict held by the caller's app.
 var OwnDomainHolderHint = ownDomainHolderHint
+
+// DevPostgresBindingsState exposes devPostgresBindingsState.
+func DevPostgresBindingsState(states []managedpostgres.BindingState) string {
+	return devPostgresBindingsState(states)
+}

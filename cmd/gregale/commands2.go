@@ -3015,6 +3015,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
 		if nameErr != nil {
+			// A plain `gregale deploy` of a Compose project links the checkout
+			// to the project only (linkCheckoutAfterProjectDeploy). The next
+			// plain deploy found that link, asked for one app and failed
+			// "has multiple or no workloads" on every run after the first
+			// (deploy-path probe 2026-11-21, R6-1). A project-only link with
+			// no --name means the project: deploy it as the first run did.
+			if !projectRequested && linkedProjectOnly(contextDir) {
+				return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
+			}
 			return printErr("Could not read local project context", nameErr)
 		}
 	}
@@ -4680,6 +4689,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		// cancellation does not cancel the remote deployment.
 		if code := recordQueued(dep); code != 0 {
 			return code
+		}
+		if ann.ReleaseAt != "" && dep.ScheduledRelease == nil {
+			// Recover the schedule independently because a replay can return a
+			// release that already started. Older servers could also return
+			// an accepted deployment whose schedule was never written.
+			scheduled, err := client.GetDeploymentSchedule(ctx, dep.ID)
+			if err != nil {
+				return submissionFailed("Could not confirm the release schedule", dep, err, deployKey)
+			}
+			dep.ScheduledRelease = &scheduled
 		}
 		issueMaps, sourceMapErr := publishDeployIssueSourceMaps(ctx, client, slug, dep, sourceSHA256, sourceRoot, preparedIssueSourceMaps)
 		if sourceMapErr != nil {

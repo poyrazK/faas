@@ -325,6 +325,8 @@ func RetentionOnceRequestAnalyticsMinutes(ctx context.Context, db retentionExece
 		{"hourly rollup", retentionRequestAnalyticsHoursBatchSQL},
 		{"rollup gap", retentionRequestAnalyticsRollupGapsBatchSQL},
 		{"rollup batch ledger", retentionRequestAnalyticsRollupBatchesBatchSQL},
+		{"instance resource minute", retentionInstanceResourceMinutesBatchSQL},
+		{"instance route minute", retentionInstanceRouteMinutesBatchSQL},
 	} {
 		n, err := retentionBatches(ctx, db, sweep.sql)
 		total += n
@@ -346,6 +348,26 @@ const retentionRequestAnalyticsRollupBatchesBatchSQL = `DELETE FROM public.reque
                                                             ORDER BY applied_at
                                                             LIMIT $1
                                                         )`
+
+// retentionInstanceResourceMinutesBatchSQL and
+// retentionInstanceRouteMinutesBatchSQL sweep route resource peaks' minutes
+// past 14 days (ADR-20261121170000; api.RouteResourceRetention). Neither
+// table is partitioned, so ctid is unique.
+const retentionInstanceResourceMinutesBatchSQL = `DELETE FROM public.instance_resource_minutes
+                                                  WHERE ctid IN (
+                                                      SELECT ctid FROM public.instance_resource_minutes
+                                                      WHERE minute < now() - interval '14 days'
+                                                      ORDER BY minute
+                                                      LIMIT $1
+                                                  )`
+
+const retentionInstanceRouteMinutesBatchSQL = `DELETE FROM public.instance_route_minutes
+                                               WHERE ctid IN (
+                                                   SELECT ctid FROM public.instance_route_minutes
+                                                   WHERE minute < now() - interval '14 days'
+                                                   ORDER BY minute
+                                                   LIMIT $1
+                                               )`
 
 // retentionRequestAnalyticsRollupGapsBatchSQL sweeps lost-rollup markers
 // past the longest telemetry retention (Scale's 14 days), which no analytics

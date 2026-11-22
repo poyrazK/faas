@@ -76,8 +76,9 @@ The original job remains failed even if notification submission succeeds.
 
 `notification_submitted_alertmanager` and `notification_submitted_fallback`
 mean only that the submission returned success, not that the operator received
-it. Missing fallback configuration reports `fallback_unconfigured`; transport
-errors or non-2xx responses (including redirects) report
+it. Missing fallback configuration reports `fallback_unconfigured`. An
+invalid HTTPS URL reports `fallback_url_invalid`. Transport errors or
+non-2xx responses (including redirects) report
 `fallback_submission_failed`. Raw webhook URLs, errors and responses are not
 printed. Both submission paths still require the existing delivery qualification.
 

@@ -1700,6 +1700,7 @@ CREATE TABLE public.apps (
     github_preview_enabled boolean,
     scaling_revision bigint DEFAULT 1 NOT NULL,
     sandbox_template boolean DEFAULT false NOT NULL,
+    owner_home_node_id uuid,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -44736,6 +44737,75 @@ CREATE TABLE public.instance_quiet_pauses (
 
 
 --
+-- Name: instance_resource_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_resource_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    samples integer NOT NULL,
+    mem_start_mb integer NOT NULL,
+    mem_peak_mb integer NOT NULL,
+    mem_end_mb integer NOT NULL,
+    mem_limit_mb integer NOT NULL,
+    cpu_ms bigint NOT NULL,
+    cpu_peak_millicores integer NOT NULL,
+    cpu_limit_millicores integer NOT NULL,
+    CONSTRAINT instance_resource_minutes_check CHECK ((mem_peak_mb >= mem_start_mb)),
+    CONSTRAINT instance_resource_minutes_check1 CHECK (((mem_end_mb >= 0) AND (mem_end_mb <= mem_peak_mb))),
+    CONSTRAINT instance_resource_minutes_cpu_limit_millicores_check CHECK ((cpu_limit_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_ms_check CHECK ((cpu_ms >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_peak_millicores_check CHECK ((cpu_peak_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_resource_minutes_mem_limit_mb_check CHECK ((mem_limit_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_mem_start_mb_check CHECK ((mem_start_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_resource_minutes_samples_check CHECK ((samples >= 1))
+);
+
+
+--
+-- Name: TABLE instance_resource_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_resource_minutes IS 'Per-instance app cgroup memory and CPU per minute; written by apid from vmmd, swept by meterd (ADR-20261121170000).';
+
+
+--
+-- Name: instance_route_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_route_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    account_id uuid NOT NULL,
+    requests bigint NOT NULL,
+    busy_ms bigint NOT NULL,
+    max_latency_ms integer NOT NULL,
+    CONSTRAINT instance_route_minutes_busy_ms_check CHECK ((busy_ms >= 0)),
+    CONSTRAINT instance_route_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_route_minutes_max_latency_ms_check CHECK ((max_latency_ms >= 0)),
+    CONSTRAINT instance_route_minutes_method_check CHECK ((octet_length(method) <= 16)),
+    CONSTRAINT instance_route_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_route_minutes_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT instance_route_minutes_route_check CHECK (((octet_length(route) >= 1) AND (octet_length(route) <= 256)))
+);
+
+
+--
+-- Name: TABLE instance_route_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_route_minutes IS 'Per-instance route activity per minute; written by apid from gateways, swept by meterd (ADR-20261121170000).';
+
+
+--
 -- Name: instance_snapshot_recovery; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -50117,6 +50187,7 @@ CREATE TABLE public.meter_network_checkpoints (
     internal_tx_valid boolean DEFAULT false NOT NULL,
     internal_tx_pending bigint DEFAULT 0 NOT NULL,
     service_reply_pending bigint DEFAULT 0 NOT NULL,
+    node_id text DEFAULT ''::text NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -70280,6 +70351,22 @@ ALTER TABLE ONLY public.instance_quiet_pauses
 
 
 --
+-- Name: instance_resource_minutes instance_resource_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_resource_minutes
+    ADD CONSTRAINT instance_resource_minutes_pkey PRIMARY KEY (app_id, minute, instance_id);
+
+
+--
+-- Name: instance_route_minutes instance_route_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_route_minutes
+    ADD CONSTRAINT instance_route_minutes_pkey PRIMARY KEY (app_id, minute, instance_id, route, method);
+
+
+--
 -- Name: instance_runtime_config_receipts instance_runtime_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -83931,6 +84018,20 @@ CREATE INDEX instance_quiet_pauses_started_at ON public.instance_quiet_pauses US
 
 
 --
+-- Name: instance_resource_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_resource_minutes_minute_idx ON public.instance_resource_minutes USING btree (minute);
+
+
+--
+-- Name: instance_route_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_route_minutes_minute_idx ON public.instance_route_minutes USING btree (minute);
+
+
+--
 -- Name: instances_app_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86287,6 +86388,13 @@ CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_
 --
 
 CREATE INDEX object_storage_inventory_scans_open ON public.object_storage_inventory_scans USING btree (started_at) WHERE ((pages > 0) AND (NOT complete));
+
+
+--
+-- Name: object_storage_multipart_completion_versions_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_multipart_completion_versions_idx ON public.object_storage_multipart_uploads USING btree (bucket_id) WHERE completion_versions_observed;
 
 
 --
@@ -100984,6 +101092,14 @@ ALTER TABLE ONLY public.apps
 
 ALTER TABLE ONLY public.apps
     ADD CONSTRAINT apps_overflow_node_fkey FOREIGN KEY (overflow_node) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
+-- Name: apps apps_owner_home_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_owner_home_node_id_fkey FOREIGN KEY (owner_home_node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
 
 
 --

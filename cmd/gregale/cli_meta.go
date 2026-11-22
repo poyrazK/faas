@@ -402,6 +402,7 @@ func appScaleCLIFlags() []cliFlag {
 		{Name: "size", Short: "RAM/CPU resource size", Value: "SIZE", ClosedSet: []string{"micro", "small", "medium", "large", "xlarge"}},
 		{Name: "profile", Short: "deprecated: use --size", Value: "SIZE"},
 		{Name: "ram", Short: "RAM in MB", Value: "MB"},
+		{Name: "suggest", Short: "suggest moving a heavy route to its own app, from route resource peaks", Bool: true, Capability: "route-resource-peaks"},
 		{Name: "cpu-millicores", Short: "cap CPU at 250 or 500 millicores; 1000 (the default) leaves it uncapped", Value: "250|500|1000", ClosedSet: []string{"250", "500", "1000"}},
 		{Name: "max-concurrency", Short: "maximum instances (replicas) the app scales to", Value: "N"},
 		{Name: "concurrency-overflow", Short: "saturated concurrency behavior", Value: "POLICY", ClosedSet: []string{"queue", "drop"}},
@@ -542,7 +543,9 @@ var templateNames13 = []string{
 	"mcp-node",
 	"mcp-node-tasks",
 	"mcp-go",
+	"mcp-go-tasks",
 	"mcp-python",
+	"mcp-python-tasks",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
@@ -734,7 +737,7 @@ var cliCommands = []cliCommand{
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
 				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
-				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix (preview)", Value: "KEYS/"},
+				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix", Value: "KEYS/"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog", Examples: []string{
@@ -772,7 +775,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets: encryption, versioning and lifecycle",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets, objects, signed URLs and uploads",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"<app>"}},
 			{Name: "delete", Short: "Delete an empty bucket (including retained versions)", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
@@ -5512,6 +5515,16 @@ var cliCommands = []cliCommand{
 			{Name: "since", Short: "lookback window", Value: "WINDOW"},
 			{Name: "until", Short: "exclusive RFC3339 end", Value: "TIMESTAMP"},
 			{Name: "by", Short: "grouping dimension", Value: "DIMENSION", ClosedSet: []string{"route", "country", "referrer_host", "ua_family", "status", "consumer_id"}},
+			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
+		},
+		Positionals: []string{"[<slug>]"},
+	},
+	{
+		Name:    "route-resources",
+		DocSlug: "analytics",
+		Short:   "Show which routes an app's memory and CPU peaks come from",
+		Flags: []cliFlag{
+			{Name: "since", Short: "lookback window, at most 336h", Value: "WINDOW"},
 			{Name: "range", Short: "lookback window; same as --since (gregale metric --range)", Value: "WINDOW"},
 		},
 		Positionals: []string{"[<slug>]"},

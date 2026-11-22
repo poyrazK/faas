@@ -2818,7 +2818,7 @@ func compareAndSetAppStatus(ctx context.Context, store state.Store, appID string
 func (e *Engine) AdmitInstance(ctx context.Context, appID, deploymentID, scope, trigger string) (WakeResult, error) {
 	res, err := e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	if e.parkForCapacity(ctx, appID, trigger, err) ||
-		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID)) {
+		(err == nil && res.AtCapacity && e.parkZeroTrafficSibling(ctx, appID, deploymentID, trigger == TriggerDeploymentSmoke)) {
 		res, err = e.admitInstance(ctx, appID, deploymentID, scope, trigger)
 	}
 	return res, err
@@ -7499,9 +7499,17 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 		// into deploy_failed. Prime retryability still keys off the original
 		// cause returned by Prime, so this customer-facing classification does
 		// not change retry behavior.
+		// Name the budget the prime actually had: an app with a raised
+		// startup_deadline_s gets more than the plain cold-boot budget, and
+		// the message used to print 35 s regardless (deploy-path probe
+		// 2026-11-21, R3-2).
+		var startupDeadlineS int32
+		if app, appErr := e.store.AppByID(markCtx, dep.AppID); appErr == nil {
+			startupDeadlineS = int32(min(app.Manifest.StartupDeadlineS, 1<<31-1)) //nolint:gosec // clamped to int32
+		}
 		problem = api.NewProblem(422, api.CodeStageSnapshotPrepareTimeout,
 			"snapshot prime exceeded the scheduler deadline",
-			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.budgetFor(state.StateColdBooting)))
+			fmt.Sprintf("startup_phase=scheduler_timeout: snapshot prime exceeded the %s cold-boot RPC budget", e.primeColdBootBudget(startupDeadlineS)))
 		code = problem.Code
 	}
 	var observed any
@@ -9174,10 +9182,16 @@ func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, al
 			"err", err)
 	}
 	// A transient capture error keeps the prime's retry (dispatchPrime);
-	// any other platform capture failure activates without a snapshot.
+	// any other platform capture failure activates without a snapshot,
+	// except a managed cache's handoff, which fails so the running cache
+	// keeps serving (isManagedCacheHandoff).
 	if err != nil && outcome == wire.InitSnapshotOutcomeSnapshotFailed && !retryableSnapshotPrimeError(err) &&
 		!allowReuse && state.HasSnapshotPrimeAttempt(ctx) {
-		return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		if !e.isManagedCacheHandoff(ctx, ins.DeploymentID) {
+			return e.activatePrimeWithoutSnapshot(ctx, ins, app, now, err)
+		}
+		e.log.Warn("sched: managed cache handoff prime capture failed; failing the handoff so the running cache keeps serving",
+			"instance", ins.ID, "app", ins.AppID, "deployment", ins.DeploymentID, "err", err)
 	}
 	if err != nil {
 		// Snapshot failed (disk?) — free RAM and land in STOPPED; next wake

@@ -1,6 +1,7 @@
 # ADR-20261028084018 · Source builds export zstd layers
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-21, owner, after the OVH trial below); on
+  through `builderd_layer_zstd` in `perf_switches.yml`.
 - **Date:** 2026-10-28
 - **Amends:** the source-build artifact handoff from builderd to imaged
   (spec §4.5). Registry images, the shared base pipeline and the scanners are
@@ -79,3 +80,21 @@ builds, imaged's `layer_ms`, and the dependency-cache size on disk.
 - Customers' images do not change: imaged still produces an ext4 layer.
 - Not covered: pre-seeding the Railpack frontend and base image into the
   builder (about 10 s per build), and accepting zstd from registries.
+
+## Trial 2026-11-21
+
+OVH bhs-2/bhs-3, release 8e9583e487, deferred cache export already on. One
+heavy Node app (Next, AWS SDK, Prisma, sharp; 153 KB lockfile), a dependency
+changed before every build, three builds each way.
+
+| Per build | gzip | zstd |
+|---|---|---|
+| Build in VM | 39.7-44.1 s | 32.2-35.1 s |
+| Image export | 11.2-12.5 s | 3.8-4.5 s |
+| Deferred cache save (builder slot held) | 21.8-25.3 s | 11.6-13.1 s |
+| imaged layer phase (`total_ms`) | 51.4-55.2 s | 36.5-44.2 s |
+| Deploy wall time | 146-165 s | 112-136 s |
+| Dependency cache on disk | 245 MB | 224 MB |
+
+No builderd, imaged or vmmd warnings, and the zstd-built app served.
+
