@@ -1,0 +1,28 @@
+# ADR-20261121213156: Recover a Task handle after a lost submission reply
+
+Date: 2026-11-21
+Status: Accepted
+
+## Context
+
+An MCP client can reconnect to a durable Task once it has the Task ID. A
+connection can also fail after the database commits the Task and before the
+client receives that ID. An agent needs a way to repeat the submission safely.
+
+## Decision
+
+- The Node/PostgreSQL starter advertises `io.gregale/task-submission` on
+  authenticated modern endpoints after it detects the additive Task migration.
+  The client supplies a saved UUIDv7 as `io.gregale/task-submission-key` in the
+  `tools/call` metadata. The keyed `Mcp-Method` marker makes older starter
+  replicas reject a mismatched method header. The gateway and guest authorize
+  the JSON-RPC body as a tool call. A supporting guest normalizes the marker
+  before SDK dispatch.
+- The existing PostgreSQL admission transaction commits the key and Task
+  together. A partial unique index scopes keys to the Task namespace. A replay
+  requires the original authenticated caller, tool, validated arguments and
+  input capabilities. The existing encrypted arguments provide the comparison.
+- PostgreSQL accepts keys for one minute from their UUIDv7 timestamp. The
+  minimum Task lifetime covers that whole window, so normal Task cleanup can
+  remove the key with the Task. A replay preserves the original task ID and
+  deadline. Worker retries retain their at-least-once execution contract.

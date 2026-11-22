@@ -13092,7 +13092,12 @@ WHERE id IN (sqlc.arg(from_node_id)::uuid, sqlc.arg(to_node_id)::uuid)
 ORDER BY id FOR SHARE;
 
 -- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+-- ADR-20261121203000: a displacement remembers the node the app came from
+-- (its home), keeps an older home across a chain of drains, and clears it
+-- when the app lands back on its home.
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=sqlc.arg(to_node_id)::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, sqlc.arg(from_node_id)::uuid) END
 WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
   AND status IN ('active', 'evicted_cold')
   AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL

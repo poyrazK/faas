@@ -10,9 +10,12 @@ run_id="${GITHUB_RUN_ID:-local}" attempt="${GITHUB_RUN_ATTEMPT:-1}"
 baseline="${ROLLOUT_BASELINE_SAMPLE_COUNT:-3}"
 [[ "$run_id" =~ ^[A-Za-z0-9_-]+$ && "$attempt" =~ ^[0-9]+$ && "$baseline" =~ ^[0-9]+$ ]] || exit 2
 # The canary app gate needs an app that is always deployed. rc.305's baseline
-# got 404 from the deleted gregale-api-demo, so the gate gave no signal. The
-# ROLLOUT_APP_PROBE_URL repository or environment variable retargets it.
-app_probe_url="${ROLLOUT_APP_PROBE_URL:-https://e2e-probe.gregale.dev/}"
+# got 404 from the deleted gregale-api-demo, and rc.366-369's from e2e-probe,
+# which did not survive the OVH cutover and the move to gregale.app, so the
+# gate gave no signal. The platform serving probe is the app the post-deploy
+# monitoring gate already requires to serve. The ROLLOUT_APP_PROBE_URL
+# repository or environment variable retargets it.
+app_probe_url="${ROLLOUT_APP_PROBE_URL:-https://serving-probe.gregale.app/}"
 if ! [[ "$app_probe_url" =~ ^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._/-]*)?$ ]]; then
   echo "ROLLOUT_APP_PROBE_URL must be an https URL without a query, got '$app_probe_url'" >&2
   exit 2

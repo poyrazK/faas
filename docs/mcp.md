@@ -4939,11 +4939,12 @@ Choose another starter language with `gregale mcp server init --language go --pa
 Both templates use the same zero-traffic `gregale mcp server deploy` verification and
 promotion flow.
 
-The Node starter answers every tool call in its response and carries no durable
-Task code. For Node tools that return durable MCP Task handles, start from
-`gregale init --template mcp-node-tasks --path ./my-mcp` (Tasks off until you
-bind PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
-observer projects. Native Task releases need the Tasks starter's
+The Node, Go and Python starters answer every tool call in their response and
+carry no durable Task code. For tools that return durable MCP Task handles,
+start from `gregale init --template mcp-node-tasks` (or `mcp-go-tasks`,
+`mcp-python-tasks`) with `--path ./my-mcp` (Tasks off until you bind
+PostgreSQL), or add `--tasks --name <prefix>` below for the web, worker and
+observer projects. Native Task releases need the Node Tasks starter's
 `tasks-release.js`.
 
 In another terminal:
@@ -5600,6 +5601,26 @@ gregale mcp client read --url https://mcp.example.com/mcp --uri task://tasks/TAS
 gregale mcp client watch --url https://mcp.example.com/mcp --uri task://tasks/TASK_ID
 ```
 
+Use `--metadata-only` for a status snapshot suitable for agent context.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --task-id TASK_ID --metadata-only
+```
+
+The command reads the saved handle once using the same MCP endpoint and
+caller credential. It emits JSON with the Task ID, state, last update,
+`nextAction`, and a polling delay in milliseconds when available. The snapshot
+is limited to those fields.
+
+- `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
+- `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
+- `read_result` means the Task completed. Use the default `client status` output to read its result.
+- `none` means the Task failed or was cancelled.
+- `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
+
+An access denial or missing Task returns an error without a snapshot. Status
+checks leave the Task untouched.
+
 With Tasks enabled, `task://tasks/{taskId}` exposes the caller-visible task
 status and result as a resource in all three starters. Reading it requires both
 ownership of the task and permission for its originating tool, plus the
@@ -5624,6 +5645,28 @@ calls keep their existing behavior. Task IDs are opaque and must be saved by
 the caller if they need to resume waiting after a CLI restart.
 `task-wait` resumes waiting on a saved handle after a restart; it accepts the same
 `--interactive` or `--input-responses-file` options for supported form requests.
+
+The Node/PostgreSQL starter supports retrying a lost submission reply on an
+authenticated endpoint. Run the updated `tasks:migrate` before starting the
+updated starter. Generate and save a lowercase UUIDv7 before the first call.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-submission-key "$TASK_SUBMISSION_KEY"
+```
+
+If the reply is lost, repeat the command with the same key, tool, arguments and
+caller within one minute of the key's UUIDv7 timestamp. A matching retry returns
+the original Task handle. A different request or caller is rejected. The
+server uses its PostgreSQL clock and rejects expired or future-dated keys.
+After the window closes, reconcile the original request before submitting again
+with a fresh key. Check or wait for the result using the returned Task ID.
+
+The CLI requires the server to advertise the `io.gregale/task-submission`
+extension. Keyed submission deduplicates Task creation within this window.
+Worker execution retains its existing at-least-once contract. See
+[ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
 
 ## MCP catalog snapshots
 

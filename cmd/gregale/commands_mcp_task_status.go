@@ -1,0 +1,72 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"math"
+	"net/http"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/mcphosting"
+)
+
+type mcpTaskStatusMetadata struct {
+	TaskID         string `json:"taskId"`
+	Status         string `json:"status"`
+	LastUpdatedAt  string `json:"lastUpdatedAt,omitempty"`
+	PollIntervalMS int64  `json:"pollIntervalMs,omitempty"`
+	NextAction     string `json:"nextAction"`
+}
+
+func runMCPTaskMetadataStatus(ctx context.Context, client *mcphosting.Client, taskID string) int {
+	task, exchange, err := client.GetTask(ctx, taskID)
+	if err != nil {
+		return mcpTaskMetadataReadFailure(taskID, exchange.HTTPStatus, err)
+	}
+	status := mcpTaskStatusMetadata{
+		TaskID: task.TaskID, Status: task.Status, LastUpdatedAt: task.LastUpdatedAt, NextAction: "none",
+	}
+	switch task.Status {
+	case "working":
+		status.NextAction = "poll_status"
+		status.PollIntervalMS = task.PollDelay().Milliseconds()
+	case "input_required":
+		status.NextAction = "provide_input"
+	case "completed":
+		status.NextAction = "read_result"
+	}
+	return jsonOut(writeJSON(status))
+}
+
+func mcpTaskMetadataReadFailure(taskID string, httpStatus int, err error) int {
+	if errors.Is(err, context.Canceled) {
+		return printErr("MCP task status", context.Canceled)
+	}
+	// The discovery exchange is inside GetTask and can fail before a task
+	// request. Its sanitized API error still carries the HTTP status.
+	var upstream *api.APIError
+	if errors.As(err, &upstream) {
+		httpStatus = upstream.Problem.Status
+	}
+	if httpStatus == http.StatusRequestTimeout || httpStatus == http.StatusTooManyRequests ||
+		httpStatus >= http.StatusInternalServerError || httpStatus == 0 && isTransportError(err) {
+		status := mcpTaskStatusMetadata{TaskID: taskID, Status: "unknown", NextAction: "retry_status"}
+		if upstream != nil && upstream.Problem.RetryAfterSeconds != nil {
+			seconds := *upstream.Problem.RetryAfterSeconds
+			if seconds >= 0 && seconds <= math.MaxInt64/int64(time.Second/time.Millisecond) {
+				status.PollIntervalMS = seconds * int64(time.Second/time.Millisecond)
+			}
+		}
+		if code := jsonOut(writeJSON(status)); code != 0 {
+			return code
+		}
+		return exitCodeForStatus(http.StatusServiceUnavailable)
+	}
+	if upstream != nil {
+		// The MCP transport constructs this from the HTTP status and keeps
+		// response bodies and authentication challenges out of the error.
+		return printErr("MCP task status", upstream)
+	}
+	return printErr("MCP task status", errors.New("the server did not confirm the requested Task status"))
+}

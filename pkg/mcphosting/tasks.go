@@ -41,6 +41,8 @@ type CallOptions struct {
 	Responder   InputResponder
 	EnableTasks bool
 	WaitForTask bool
+	// TaskSubmissionKey is a caller-retained UUIDv7 for a handle-only Task call.
+	TaskSubmissionKey string
 	// CancelOnTimeout requests cooperative cancellation when the wait ends
 	// because its context expires or is cancelled. It is opt-in so a resumed
 	// wait can stop observing without stopping durable work.
@@ -62,6 +64,15 @@ type Task struct {
 	InputRequests map[string]TaskInputRequest `json:"inputRequests,omitempty"`
 	Result        json.RawMessage             `json:"result,omitempty"`
 	Error         json.RawMessage             `json:"error,omitempty"`
+}
+
+// PollDelay returns the bounded delay before reading this task again.
+func (t Task) PollDelay() time.Duration {
+	if t.PollInterval == nil {
+		return defaultTaskPollInterval
+	}
+	milliseconds := min(max(*t.PollInterval, minTaskPollInterval.Milliseconds()), maxTaskPollInterval.Milliseconds())
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 // TaskInputRequest is a server-to-client request surfaced while a task waits
@@ -675,14 +686,7 @@ func (c *Client) waitForTaskWithReconcileInterval(ctx context.Context, tool stri
 				return task, err
 			}
 		}
-		wait := defaultTaskPollInterval
-		if task.PollInterval != nil {
-			wait = time.Duration(*task.PollInterval) * time.Millisecond
-		}
-		if wait < minTaskPollInterval {
-			wait = minTaskPollInterval
-		}
-		if err := waitForTaskPoll(ctx, wait); err != nil {
+		if err := waitForTaskPoll(ctx, task.PollDelay()); err != nil {
 			return task, fmt.Errorf("wait for MCP task ended: %w", err)
 		}
 		updated, _, err := c.GetTask(ctx, task.TaskID)

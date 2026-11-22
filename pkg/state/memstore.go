@@ -593,6 +593,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
@@ -6959,6 +6960,7 @@ func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
+	delete(m.appOwnerHome, appID)
 }
 
 // ListLiveInstancesOnNode mirrors
