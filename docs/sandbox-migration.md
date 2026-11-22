@@ -46,7 +46,7 @@ Gregale sandbox sessions are Firecracker microVMs with a `/workspace`, root insi
 
 | E2B call | On Gregale |
 |---|---|
-| `Sandbox.create({ template, timeoutMs, envs, metadata })` | `template` is a preset (`base` means the default preset) or the name of a template you built with `gregale sandbox template publish`; `timeoutMs` is the idle time before the session freezes; `envs` go with every command; `metadata` become labels |
+| `Sandbox.create({ template, timeoutMs, envs, metadata })` | `template` is a preset (`base` means the default preset) or the name of a template you built with `gregale sandbox template publish`; `timeoutMs` is the idle time before the session freezes; `envs` are set in the session once it runs, so `Sandbox.connect` from another process sees them too, and a command's own `envs` win over them; `metadata` become labels. `sandbox.setEnvs(envs)` (Gregale only) replaces them later |
 | `Sandbox.connect(id)`, `Sandbox.list()`, `Sandbox.kill(id)` | The same. `connect` mints a fresh session token with your API key |
 | `sandbox.setTimeout(ms)`, `sandbox.kill()`, `sandbox.isRunning()`, `sandbox.getInfo()` | The same |
 | `commands.run(cmd, { background, cwd, envs, user, timeoutMs, onStdout, onStderr })` | The same. `user: 'root'` runs as root; with callbacks the output streams; a non-zero exit throws `CommandExitError` |

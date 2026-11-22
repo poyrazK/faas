@@ -69,6 +69,7 @@ func (h *Handler) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/sandboxes/{id}/exec/{handle}", h.execOutput)
 	mux.HandleFunc("DELETE /v1/sandboxes/{id}/exec/{handle}", h.execKill)
 	mux.HandleFunc("POST /v1/sandboxes/{id}/exec/{handle}/input", h.execInput)
+	mux.HandleFunc("PUT /v1/sandboxes/{id}/env", h.sessionEnv)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files", h.fileRead)
 	mux.HandleFunc("PUT /v1/sandboxes/{id}/files", h.fileWrite)
 	mux.HandleFunc("GET /v1/sandboxes/{id}/files:list", h.fileList)

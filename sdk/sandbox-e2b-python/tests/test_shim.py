@@ -64,6 +64,7 @@ class FakeGregale:
         self.ports: List[Dict[str, Any]] = []
         self.background: Dict[str, Dict[str, Any]] = {}
         self.inputs: List[Dict[str, Any]] = []
+        self.session_env: Optional[Dict[str, str]] = None
 
     def view(self) -> Dict[str, Any]:
         v: Dict[str, Any] = {
@@ -168,6 +169,9 @@ class FakeGregale:
                 "stderr_offset": 0,
             })
         key = f"{method} {sub}"
+        if key == "PUT /env":
+            self.session_env = json.loads(text)["env"]
+            return js(200, {"names": sorted(self.session_env)})
         if key == "GET /files":
             return FakeResponse(200, self.files[rel], "application/octet-stream") if rel in self.files else js(404, {"code": "sandbox_entry_not_found", "status": 404})
         if key == "PUT /files":
@@ -210,8 +214,11 @@ class ShimTest(unittest.TestCase):
         self.assertEqual(sbx.preview_token(3000), "sbxp1.tok")
         with self.assertRaisesRegex(UnsupportedException, r"expose_port\(5173\)"):
             sbx.get_host(5173)
+        # The envs are set in the session, so a command carries none of its own.
+        self.assertEqual(self.fake.session_env, {"CI": "1"})
         sbx.commands.run("env")
-        self.assertEqual(self.fake.execs[-1]["env"], {"CI": "1"})
+        self.assertNotIn("env", self.fake.execs[-1])
+        self.assertEqual(sbx.set_envs({"B": "2", "A": "1"}), ["A", "B"])
         custom = Sandbox("my-template", **self.opts)
         self.assertEqual(custom.sandbox_id, ID)
         self.assertEqual(self.fake.created, {"template": "my-template"})

@@ -72,7 +72,12 @@ const (
 	// or resizes its terminal (ADR-20261027090013 step 12). The request
 	// carries the bytes, so a caller that cannot hold a stream open, such as
 	// an HTTP client, can drive a terminal command between output polls.
-	OpExecInput      = "exec_input"
+	OpExecInput = "exec_input"
+	// OpSessionEnv replaces the session's environment (ADR-20261027090013
+	// step 13): variables every later command gets, under its own request's
+	// env. guest-init keeps them in memory only; the result names them and
+	// never carries their values.
+	OpSessionEnv     = "session_env"
 	OpFileRead       = "file_read"
 	OpFileWrite      = "file_write"
 	OpFileList       = "file_list"
@@ -224,6 +229,8 @@ func (r Request) Validate() error {
 		err = firstError(validHandle(r.Handle), validSignal(r.Signal))
 	case OpExecInput:
 		err = firstError(validHandle(r.Handle), r.validateInput())
+	case OpSessionEnv:
+		err = validEnv(r.Env)
 	case OpFileRead:
 		err = firstError(validPath("path", r.Path), bounded("max_bytes", r.MaxBytes, MaxWriteBytes))
 	case OpFileWrite:
@@ -250,6 +257,19 @@ func (r Request) Validate() error {
 	}
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrInvalidRequest, err)
+	}
+	return nil
+}
+
+// validEnv checks a command's or the session's environment.
+func validEnv(env map[string]string) error {
+	if len(env) > MaxEnvEntries {
+		return fmt.Errorf("env takes at most %d entries", MaxEnvEntries)
+	}
+	for k, v := range env {
+		if !envNameRE.MatchString(k) || len(v) > MaxEnvValueBytes || strings.IndexByte(v, 0) >= 0 {
+			return fmt.Errorf("env %q is not a valid variable", k)
+		}
 	}
 	return nil
 }
@@ -291,13 +311,8 @@ func (r Request) validateExec() error {
 			return fmt.Errorf("argv must be at most %d bytes of UTF-8 without NUL", MaxCommandBytes)
 		}
 	}
-	if len(r.Env) > MaxEnvEntries {
-		return fmt.Errorf("env takes at most %d entries", MaxEnvEntries)
-	}
-	for k, v := range r.Env {
-		if !envNameRE.MatchString(k) || len(v) > MaxEnvValueBytes || strings.IndexByte(v, 0) >= 0 {
-			return fmt.Errorf("env %q is not a valid variable", k)
-		}
+	if err := validEnv(r.Env); err != nil {
+		return err
 	}
 	if len(r.Workdir) > MaxPathBytes || strings.IndexByte(r.Workdir, 0) >= 0 {
 		return errors.New("workdir is too long or holds NUL")
@@ -401,6 +416,11 @@ func firstError(errs ...error) error {
 
 // ExecResult ends a command run in the foreground, or names a background
 // one by its Handle.
+// SessionEnvResult answers session_env: the names now set, sorted.
+type SessionEnvResult struct {
+	Names []string `json:"names"`
+}
+
 type ExecResult struct {
 	Handle          string `json:"handle,omitempty"`
 	ExitCode        int    `json:"exit_code"`

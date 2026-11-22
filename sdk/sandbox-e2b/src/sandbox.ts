@@ -23,7 +23,10 @@ export type SandboxOpts = ConnectionOpts & {
   template?: string;
   /** Labels on the session. */
   metadata?: Record<string, string>;
-  /** Environment for every command in the session. */
+  /**
+   * Environment for every command in the session. It is set in the session
+   * (PUT …/env) once it runs, so a later Sandbox.connect sees it too.
+   */
   envs?: Record<string, string>;
   /** Idle time before the session freezes, in ms (Gregale: idle_timeout_s). */
   timeoutMs?: number;
@@ -162,10 +165,11 @@ export class Sandbox {
     } catch (err) {
       throw toSandboxError(err, 'Sandbox.create');
     }
-    const conn = new Connection({ api, sandboxId: view.id, envs: opts.envs, readyTimeoutMs: opts.readyTimeoutMs });
+    const conn = new Connection({ api, sandboxId: view.id, readyTimeoutMs: opts.readyTimeoutMs });
     const sandbox = new this(conn, opts.portVisibility) as InstanceType<S>;
     try {
       await conn.waitReady({ signal: opts.signal });
+      if (opts.envs && Object.keys(opts.envs).length > 0) await sandbox.setEnvs(opts.envs, { signal: opts.signal });
       for (const port of opts.ports ?? []) await sandbox.exposePort(port);
     } catch (err) {
       await sandbox.kill().catch(() => undefined);
@@ -224,6 +228,16 @@ export class Sandbox {
   /** Changes the idle time before the session freezes. */
   async setTimeout(timeoutMs: number): Promise<void> {
     await this.#conn.control('PATCH', '', { json: { idle_timeout_s: Math.ceil(timeoutMs / 1000) } });
+  }
+
+  /**
+   * Gregale only: replaces the session's environment, which every later
+   * command gets under its own envs. It is kept in the session's memory, not
+   * stored; an empty object clears it. Answers the names now set.
+   */
+  async setEnvs(envs: Record<string, string>, opts: { signal?: AbortSignal } = {}): Promise<string[]> {
+    const res = await this.#conn.json<{ names: string[] }>('PUT', '/env', { json: { env: envs }, signal: opts.signal });
+    return res.names;
   }
 
   /** Closes the session; its VM and workspace go with it. False when it was gone. */

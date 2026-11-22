@@ -125,6 +125,8 @@ func (f *fakeVmmd) guest(_ context.Context, req sandboxproto.Request, call *sand
 		return struct{}{}, nil
 	case sandboxproto.OpExecInput:
 		return sandboxproto.Command{Handle: req.Handle, Running: true, TTY: true}, nil
+	case sandboxproto.OpSessionEnv:
+		return sandboxproto.SessionEnvResult{Names: []string{"TOKEN"}}, nil
 	case sandboxproto.OpArchiveExtract:
 		n, err := call.ReadUpload(io.Discard, 1<<20)
 		if err != nil {
@@ -323,6 +325,26 @@ func TestBackgroundTerminalAndInput(t *testing.T) {
 	}
 	if len(f.vmmd.requests()) != 2 {
 		t.Fatal("a refused input reached the node")
+	}
+}
+
+// adr: 20261027090013 step 13 — the session's environment goes to the
+// guest as session_env, and a bad name never reaches the node.
+func TestSessionEnv(t *testing.T) {
+	f := newFixture(t)
+	rec := f.do(t, http.MethodPut, "/v1/sandboxes/sbx-1/env", f.token(t, placed()), strings.NewReader(`{"env":{"TOKEN":"s3cret"}}`))
+	if rec.Code != http.StatusOK || rec.Body.String() != `{"names":["TOKEN"]}` {
+		t.Fatalf("status = %d, body %s", rec.Code, rec.Body)
+	}
+	if req := f.vmmd.requests()[0]; req.Op != sandboxproto.OpSessionEnv || req.Env["TOKEN"] != "s3cret" {
+		t.Fatalf("guest request = %+v", req)
+	}
+	rec = f.do(t, http.MethodPut, "/v1/sandboxes/sbx-1/env", f.token(t, placed()), strings.NewReader(`{"env":{"1BAD":"x"}}`))
+	if rec.Code != http.StatusBadRequest || len(f.vmmd.requests()) != 1 {
+		t.Fatalf("a bad name: status = %d, body %s", rec.Code, rec.Body)
+	}
+	if !api.IsSandboxDataPath("/v1/sandboxes/sbx-1/env") {
+		t.Fatal("the env route is not a data-plane path")
 	}
 }
 

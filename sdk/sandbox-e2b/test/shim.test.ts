@@ -34,6 +34,7 @@ class FakeGregale {
   ports: Record<string, unknown>[] = [];
   background = new Map<string, { out: string; polls: number; finishAfter: number; exit: number; killed?: boolean }>();
   inputs: { handle: string; data?: string; eof?: boolean; rows?: number; cols?: number }[] = [];
+  sessionEnv?: Record<string, string>;
 
   fetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
     const url = new URL(String(input));
@@ -125,6 +126,9 @@ class FakeGregale {
       });
     }
     switch (`${method} ${sub}`) {
+      case 'PUT /env':
+        this.sessionEnv = JSON.parse(text).env;
+        return json(200, { names: Object.keys(this.sessionEnv ?? {}).sort() });
       case 'GET /files': {
         const f = this.files.get(rel);
         return f ? new Response(f) : json(404, { code: 'sandbox_entry_not_found', status: 404 });
@@ -185,8 +189,11 @@ test('Sandbox.create maps E2B options and waits for the VM', async () => {
   assert.equal(sbx.getHost(3000), `3000-${ID}.preview.test`);
   assert.equal(sbx.previewToken(3000), 'sbxp1.tok');
   assert.throws(() => sbx.getHost(5173), (err) => err instanceof UnsupportedError && /exposePort\(5173\)/.test(err.message));
+  // The envs are set in the session, so a command carries none of its own.
+  assert.deepEqual(fake.sessionEnv, { CI: '1' });
   await sbx.commands.run('env');
-  assert.deepEqual(fake.execs.at(-1)?.env, { CI: '1' });
+  assert.equal(fake.execs.at(-1)?.env, undefined);
+  assert.deepEqual(await sbx.setEnvs({ B: '2', A: '1' }), ['A', 'B']);
   const custom = await Sandbox.create('my-template', opts);
   assert.equal(custom.sandboxId, ID);
   assert.deepEqual(fake.created, { template: 'my-template' });

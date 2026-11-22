@@ -189,9 +189,12 @@ class Sandbox:
             )
         except ApiError as err:
             raise to_sandbox_error(err, "Sandbox.create") from err
-        self._attach(Connection(api, view["id"], envs, ready_timeout))
+        self._attach(Connection(api, view["id"], None, ready_timeout))
         try:
             self._conn.wait_ready()
+            # The envs are set in the session, so a later connect sees them.
+            if envs:
+                self.set_envs(envs)
             for port in ports or []:
                 self.expose_port(port)
         except BaseException:
@@ -296,6 +299,15 @@ class Sandbox:
         cls(_conn=Connection(_ApiOpts(**opts).api(), sandbox_id))._set_timeout(timeout)
 
     set_timeout = _ClassOrInstance(_set_timeout, _set_timeout_by_id)
+
+    def set_envs(self, envs: Dict[str, str], request_timeout: Optional[float] = None) -> List[str]:
+        """Gregale only: replaces the session's environment.
+
+        Every later command gets it under its own envs. It is kept in the
+        session's memory, not stored; an empty dict clears it. Returns the
+        names now set.
+        """
+        return list(self._conn.json("PUT", "/env", json_body={"env": envs}, timeout=request_timeout)["names"])
 
     def is_running(self) -> bool:
         try:

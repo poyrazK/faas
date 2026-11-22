@@ -227,6 +227,26 @@ func (h *Handler) execInput(w http.ResponseWriter, r *http.Request) {
 		CloseInput: body.EOF, Rows: body.Rows, Cols: body.Cols})
 }
 
+// sessionEnvBody is PUT /v1/sandboxes/{id}/env.
+type sessionEnvBody struct {
+	Env map[string]string `json:"env"`
+}
+
+// sessionEnv replaces the session's environment, which every later command
+// gets under its own env (ADR-20261027090013 step 13). The guest keeps it in
+// memory only; the answer names the variables and never echoes values.
+func (h *Handler) sessionEnv(w http.ResponseWriter, r *http.Request) {
+	c, ok := h.claims(w, r)
+	if !ok {
+		return
+	}
+	var body sessionEnvBody
+	if !httpkit.DecodeJSONLimit(w, r, &body, inputRequestMaxBytes) {
+		return
+	}
+	h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpSessionEnv, Env: body.Env})
+}
+
 func (h *Handler) execKill(w http.ResponseWriter, r *http.Request) {
 	if c, ok := h.claims(w, r); ok {
 		h.run(w, r, c, sandboxproto.Request{Op: sandboxproto.OpExecKill, Handle: r.PathValue("handle"), Signal: r.URL.Query().Get("signal")})
