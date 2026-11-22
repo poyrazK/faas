@@ -15464,8 +15464,16 @@ type RunSandboxStart struct {
 	// is, for a fork (ADR-20261122132055 §3): the fork's volume starts as the
 	// source's at the fork's capture. Empty: the session's own.
 	VolumeSourceSandboxId string `protobuf:"bytes,27,opt,name=volume_source_sandbox_id,json=volumeSourceSandboxId,proto3" json:"volume_source_sandbox_id,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// detachable keeps the VM running for SandboxReattachGraceSec when the
+	// stream ends without close or pause (ADR-20261122132055 §7); a start
+	// with reattach on the same instance takes it over. An older vmmd
+	// destroys the VM as before.
+	Detachable bool `protobuf:"varint,28,opt,name=detachable,proto3" json:"detachable,omitempty"`
+	// reattach takes over a detached VM of this instance and session instead
+	// of booting one; vmmd answers NotFound when it has none.
+	Reattach      bool `protobuf:"varint,29,opt,name=reattach,proto3" json:"reattach,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *RunSandboxStart) Reset() {
@@ -15685,6 +15693,20 @@ func (x *RunSandboxStart) GetVolumeSourceSandboxId() string {
 		return x.VolumeSourceSandboxId
 	}
 	return ""
+}
+
+func (x *RunSandboxStart) GetDetachable() bool {
+	if x != nil {
+		return x.Detachable
+	}
+	return false
+}
+
+func (x *RunSandboxStart) GetReattach() bool {
+	if x != nil {
+		return x.Reattach
+	}
+	return false
 }
 
 // RunSandboxAction is one browser action on a live session
@@ -17252,7 +17274,9 @@ type RunSandboxBooted struct {
 	// egress_policy is set by a vmmd that enforces a session's domain policy
 	// (ADR-20261117091026 §3); agentd closes a session with a policy that
 	// boots without it.
-	EgressPolicy  bool `protobuf:"varint,4,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
+	EgressPolicy bool `protobuf:"varint,4,opt,name=egress_policy,json=egressPolicy,proto3" json:"egress_policy,omitempty"`
+	// reattached: a start with reattach took over the running VM.
+	Reattached    bool `protobuf:"varint,5,opt,name=reattached,proto3" json:"reattached,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -17311,6 +17335,13 @@ func (x *RunSandboxBooted) GetActions() bool {
 func (x *RunSandboxBooted) GetEgressPolicy() bool {
 	if x != nil {
 		return x.EgressPolicy
+	}
+	return false
+}
+
+func (x *RunSandboxBooted) GetReattached() bool {
+	if x != nil {
+		return x.Reattached
 	}
 	return false
 }
@@ -24924,7 +24955,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"capture_id\x18\x01 \x01(\tR\tcaptureId\"0\n" +
 	"\x0fRunSandboxPause\x12\x1d\n" +
 	"\n" +
-	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xfd\a\n" +
+	"capture_id\x18\x01 \x01(\tR\tcaptureId\"\xb9\b\n" +
 	"\x0fRunSandboxStart\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x1d\n" +
 	"\n" +
@@ -24958,7 +24989,11 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\tvolume_gb\x18\x18 \x01(\x05R\bvolumeGb\x12(\n" +
 	"\x10volume_backup_id\x18\x19 \x01(\tR\x0evolumeBackupId\x129\n" +
 	"\x19volume_backup_interval_ms\x18\x1a \x01(\x03R\x16volumeBackupIntervalMs\x127\n" +
-	"\x18volume_source_sandbox_id\x18\x1b \x01(\tR\x15volumeSourceSandboxId\"\xc9\x02\n" +
+	"\x18volume_source_sandbox_id\x18\x1b \x01(\tR\x15volumeSourceSandboxId\x12\x1e\n" +
+	"\n" +
+	"detachable\x18\x1c \x01(\bR\n" +
+	"detachable\x12\x1a\n" +
+	"\breattach\x18\x1d \x01(\bR\breattach\"\xc9\x02\n" +
 	"\x10RunSandboxAction\x12\x1b\n" +
 	"\taction_id\x18\x01 \x01(\tR\bactionId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x10\n" +
@@ -25083,12 +25118,15 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x18\n" +
 	"\arefused\x18\x02 \x01(\tR\arefused\x12\x1c\n" +
 	"\n" +
-	"at_unix_ms\x18\x03 \x01(\x03R\batUnixMs\"\xa3\x01\n" +
+	"at_unix_ms\x18\x03 \x01(\x03R\batUnixMs\"\xc3\x01\n" +
 	"\x10RunSandboxBooted\x127\n" +
 	"\x06method\x18\x01 \x01(\x0e2\x1f.onebox.faas.vmmd.v1.WakeMethodR\x06method\x12\x17\n" +
 	"\aboot_ms\x18\x02 \x01(\x03R\x06bootMs\x12\x18\n" +
 	"\aactions\x18\x03 \x01(\bR\aactions\x12#\n" +
-	"\regress_policy\x18\x04 \x01(\bR\fegressPolicy\"r\n" +
+	"\regress_policy\x18\x04 \x01(\bR\fegressPolicy\x12\x1e\n" +
+	"\n" +
+	"reattached\x18\x05 \x01(\bR\n" +
+	"reattached\"r\n" +
 	"\x12RunSandboxActivity\x12&\n" +
 	"\x0fcalls_in_flight\x18\x01 \x01(\x05R\rcallsInFlight\x124\n" +
 	"\x17last_call_ended_unix_ms\x18\x02 \x01(\x03R\x13lastCallEndedUnixMs\"\x12\n" +

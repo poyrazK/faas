@@ -62,6 +62,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		Persistent: start.GetPersistent(),
 		Volume: sched.SandboxVolume{GB: int(start.GetVolumeGb()), BackupID: start.GetVolumeBackupId(),
 			BackupEvery: time.Duration(start.GetVolumeBackupIntervalMs()) * time.Millisecond, SourceSandboxID: start.GetVolumeSourceSandboxId()}}
+	if r := start.GetReattach(); r != nil {
+		admission.Reattach = &sched.SandboxReattach{NodeID: r.GetNodeId(), Instance: r.GetInstance()}
+	}
 	if r := start.GetResume(); r != nil {
 		admission.Resume = &sched.SandboxResume{NodeID: r.GetNodeId(), RequireNode: r.GetRequireNode(), Fork: r.GetFork(), Snapshot: sched.AgentRunSnapshot{StorageKey: r.GetStorageKey(),
 			VMStateStorageKey: r.GetVmstateStorageKey(), FCVersion: r.GetFcVersion(), MemBytes: r.GetMemBytes()}}
@@ -91,7 +94,7 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 	hooks := sched.SandboxHooks{
 		Booted: func(_ context.Context, b sched.SandboxBooted) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: b.Method,
-				BootMs: b.BootMs, Actions: b.Actions, EgressPolicy: b.EgressPolicy}}})
+				BootMs: b.BootMs, Actions: b.Actions, EgressPolicy: b.EgressPolicy, Reattached: b.Reattached}}})
 		},
 		Activity: func(_ context.Context, a sched.SandboxActivity) error {
 			ev := &scheddpb.SandboxRunActivity{CallsInFlight: int32(a.CallsInFlight)}

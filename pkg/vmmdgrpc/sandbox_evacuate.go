@@ -33,6 +33,10 @@ func (s *Server) EvacuateSandboxes(ctx context.Context, wait time.Duration, log 
 	asked := 0
 	s.sandboxRuns.Range(func(_, v any) bool {
 		act := v.(*sandboxActivity)
+		if act.detached.Load() {
+			// No owner listens; the stop ends it.
+			return true
+		}
 		ev := &vmmdpb.RunSandboxEvent{Frame: &vmmdpb.RunSandboxEvent_Evacuate{Evacuate: &vmmdpb.RunSandboxEvacuate{Reason: sandboxEvacuateVMStopping}}}
 		go func() {
 			select {
@@ -75,6 +79,11 @@ func (s *Server) EvacuateSandboxes(ctx context.Context, wait time.Duration, log 
 // liveSandboxes counts the session streams this vmmd serves.
 func (s *Server) liveSandboxes() int {
 	n := 0
-	s.sandboxRuns.Range(func(_, _ any) bool { n++; return true })
+	s.sandboxRuns.Range(func(_, v any) bool {
+		if !v.(*sandboxActivity).detached.Load() {
+			n++
+		}
+		return true
+	})
 	return n
 }

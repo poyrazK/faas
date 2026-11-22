@@ -341,6 +341,49 @@ func (q *Queries) ClaimAgentDeliveries(ctx context.Context, db DBTX, arg ClaimAg
 	return items, nil
 }
 
+const claimDetachedSandboxSession = `-- name: ClaimDetachedSandboxSession :one
+UPDATE sandbox_sessions SET lease_token=$1::text, lease_owner=$2::text,
+  lease_expires_at=now()+make_interval(secs=>$3::double precision), updated_at=now()
+ WHERE id=(SELECT d.id FROM sandbox_sessions d
+   WHERE d.kind='persistent' AND d.state IN ('ready','frozen') AND d.node_id IS NOT NULL AND d.instance_id IS NOT NULL
+     AND d.lease_expires_at < now() AND d.lease_expires_at > now()-make_interval(secs=>$4::double precision)
+   ORDER BY d.lease_expires_at LIMIT 1 FOR UPDATE SKIP LOCKED)
+RETURNING id::text AS id, state, coalesce(node_id, '')::text AS node_id, coalesce(instance_id, '')::text AS instance_id
+`
+
+type ClaimDetachedSandboxSessionParams struct {
+	LeaseToken   string
+	LeaseOwner   string
+	TtlSeconds   float64
+	GraceSeconds float64
+}
+
+type ClaimDetachedSandboxSessionRow struct {
+	ID         string
+	State      string
+	NodeID     string
+	InstanceID string
+}
+
+// A running persistent session whose replica stopped renewing, within the
+// reattach grace: a replica takes it over and reattaches to its VM.
+func (q *Queries) ClaimDetachedSandboxSession(ctx context.Context, db DBTX, arg ClaimDetachedSandboxSessionParams) (ClaimDetachedSandboxSessionRow, error) {
+	row := db.QueryRow(ctx, claimDetachedSandboxSession,
+		arg.LeaseToken,
+		arg.LeaseOwner,
+		arg.TtlSeconds,
+		arg.GraceSeconds,
+	)
+	var i ClaimDetachedSandboxSessionRow
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.NodeID,
+		&i.InstanceID,
+	)
+	return i, err
+}
+
 const clearSandboxScreenshot = `-- name: ClearSandboxScreenshot :exec
 UPDATE sandbox_actions SET screenshot_key = NULL WHERE id = $1::text::uuid
 `
@@ -862,12 +905,16 @@ const failExpiredLiveSandboxSessions = `-- name: FailExpiredLiveSandboxSessions 
 UPDATE sandbox_sessions SET state='failed', outcome_code='lease_lost',
   outcome_message='agentd lost the session; its VM ended with it', lease_token=NULL, lease_expires_at=NULL, closed_at=now(), updated_at=now()
  WHERE state IN ('ready','frozen','pausing') AND lease_expires_at < now()
+   AND NOT (kind='persistent' AND state IN ('ready','frozen') AND node_id IS NOT NULL
+     AND lease_expires_at > now()-make_interval(secs=>$1::double precision))
 `
 
 // A live session whose replica stopped renewing has lost its VM with the
-// replica's stream; it is never booted again.
-func (q *Queries) FailExpiredLiveSandboxSessions(ctx context.Context, db DBTX) (int64, error) {
-	result, err := db.Exec(ctx, failExpiredLiveSandboxSessions)
+// replica's stream; it is never booted again. A running persistent
+// session's VM waits on its node for a reattach until grace_seconds past
+// its lease (ADR-20261122132055 §7).
+func (q *Queries) FailExpiredLiveSandboxSessions(ctx context.Context, db DBTX, graceSeconds float64) (int64, error) {
+	result, err := db.Exec(ctx, failExpiredLiveSandboxSessions, graceSeconds)
 	if err != nil {
 		return 0, err
 	}

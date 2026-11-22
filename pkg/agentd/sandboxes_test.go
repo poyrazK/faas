@@ -80,6 +80,10 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 	case "no-workspace":
 		return status.Error(codes.DataLoss, "the workspace could not be unpacked")
 	}
+	if start.GetReattach() != nil && script == "lose-vm-gone" {
+		// The VM did not outlive its stream (ADR-20261122132055 §7).
+		return status.Error(codes.NotFound, "no running VM of the session")
+	}
 	node := "agents-1"
 	if script == "elsewhere" {
 		node = "agents-2"
@@ -96,7 +100,7 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 		method = "WAKE_RESTORE"
 	}
 	if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Booted{Booted: &scheddpb.AgentRunBooted{Method: method, BootMs: 700,
-		Actions: script == "actions", EgressPolicy: script == "egress"}}}); err != nil {
+		Actions: script == "actions", EgressPolicy: script == "egress", Reattached: start.GetReattach() != nil}}}); err != nil {
 		return err
 	}
 	// vmmd's usage of the session VM, cumulative (step 11).
@@ -131,7 +135,7 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			return err
 		}
 	}
-	if script == "lose-vm" {
+	if (script == "lose-vm" || script == "lose-vm-gone") && start.GetReattach() == nil {
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")
 	}
