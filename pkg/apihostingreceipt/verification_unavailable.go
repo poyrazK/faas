@@ -27,6 +27,12 @@ type VerificationUnavailableError struct {
 func (e *VerificationUnavailableError) Error() string {
 	switch e.Code {
 	case SmokeErrorTransportUnavailable:
+		// The bounded class, never the cause text: prod 2026-11-22 (rc.367)
+		// failed every candidate for six minutes because the verifier's
+		// origin had no DNS record, and nothing said so.
+		if class := transportFailureClass(e.Cause); class != "" {
+			return "candidate verification transport is temporarily unavailable (" + class + ")"
+		}
 		return "candidate verification transport is temporarily unavailable"
 	case SmokeErrorGatewayUnavailable:
 		if e.StatusCode != 0 {

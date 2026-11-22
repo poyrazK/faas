@@ -1,0 +1,89 @@
+# .github/workflows/unit-rollback-drill.yml — weekly proof that an automatic
+# unit rollback can still happen (docs/adr/20261122170000-continuous-unit-
+# lane.md, "Rollback drill").
+#
+# Read-only: it changes nothing in production. scripts/ci/rollback_drill.py
+# checks that the active release, deployctl's activation history and the
+# release a rollback restores are in place, that the watch record's
+# known-good release is still installed, that the host-config record exists
+# (a breach converges the roles back to it), that Prometheus answers, and
+# that the deploy-freeze label exists. A failed check opens an issue.
+
+name: unit-rollback-drill
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: "GitHub environment holding the target fleet's secrets"
+        required: false
+        default: production-us
+        type: choice
+        options:
+          - production
+          - production-us
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: unit-rollback-drill
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    name: Check an automatic rollback can happen
+    if: github.repository == 'poyrazK/faas'
+    environment: ${{ inputs.deploy_environment || 'production-us' }}
+    runs-on: ${{ fromJSON((inputs.deploy_environment || 'production-us') == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    timeout-minutes: 10
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+    steps:
+      # A directory of its own: a sparse checkout in the default workspace
+      # of this self-hosted runner leaves core.sparseCheckout set.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: drill-src
+          sparse-checkout: scripts/ci
+          sparse-checkout-cone-mode: false
+
+      - name: Set up SSH
+        env:
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          keys="$RUNNER_TEMP/drill-ssh"
+          install -d -m 0700 "$keys"
+          printf '%s\n' "${{ env.CP_SSH_KEY }}" > "$keys/cp-key"
+          chmod 0600 "$keys/cp-key"
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          : > "$keys/known_hosts"
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> "$keys/known_hosts"
+            fi
+          done <<<"$scanned"
+          [[ -s "$keys/known_hosts" ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          {
+            echo "UNIT_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_SSH_KEY=$keys/cp-key"
+            echo "UNIT_SSH_KNOWN_HOSTS=$keys/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Run the rollback drill
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 drill-src/scripts/ci/rollback_drill.py
