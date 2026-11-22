@@ -176,6 +176,48 @@ Budget, merge to new code serving on the control plane:
 - **Rollback stays the same speed.** deployctl keeps the previous
   generation; a failed smoke check or a watch breach puts it back.
 
+### 3a. Safety: a unit release must not break production (owner, 2026-11-22)
+
+No pipeline can promise a release never breaks production. The goal is
+that a broken release rarely gets through, and is rolled back within
+minutes, touching little, when one does. Existing rails (ADR
+20261020214632): signed releases from main only, expand-only migrations
+and N±1 checks, the preflight, pre-traffic checks on the two-generation
+hand-off, the per-host SLO gate (canary 4 min, followers 90 s), and the
+30 min watch that rolls every host back and freezes deploys. Added here:
+
+- **Tested as shipped** (owner chose "run shipped tests"). There is no
+  merge queue, so a squash merge can land a tree no CI run saw. Before a
+  release is built, `scripts/ci/tested_tree.py` checks the released
+  commit: if its pull request's final head held main's previous commit,
+  has the same tree, and passed ci-light, CI tested exactly what ships.
+  Otherwise the build job runs the tests ci-light would select
+  (`affected_packages.py` test set and the large packages' related tests)
+  for what CI did not see together (the other pull requests that landed
+  meanwhile, and the commit's own change), limited to packages the shipped
+  daemons build from, at the released commit. The release is built only
+  when they pass. These tests get no database URL (on the control plane
+  it would be production's), so PostgreSQL-backed tests skip there; main's
+  light run and the watch still cover them.
+- **Blast cap** (owner chose it). A release carries at most 5 first-parent
+  commits beyond the commit production last took through every lane
+  (`scripts/ci/last_deployed.py`, from the release markers; the full
+  release when there is none). The rest goes in the next run: a merge, or
+  a 10-minute schedule that runs only with automatic deploys on. A commit
+  production already took is not built again.
+- **Config rollback** (owner chose it; next change). The watch's rollback
+  puts binaries back but not host configuration a lane converged. It will
+  re-converge the roles of the known-good release's commit.
+- **Critical smoke checks** (owner chose them; next change). Before a
+  deploy counts as done, synthetic journeys run against the new version
+  (sign in, deploy, wake and invoke, metering, billing preview), and a
+  failure rolls back at once: the SLO gate sees errors and latency, not a
+  wrong answer served with a 200.
+- **Rollback drill** (owner chose it; next change). A weekly scheduled run
+  proves an automatic rollback and freeze still happen.
+- Not chosen: forcing risky paths (billing, metering, auth, limits, the
+  scheduler state machine) behind flags.
+
 ### 4. Automatic deploys
 
 After §1 and §2 merge, the owner sets `UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT`

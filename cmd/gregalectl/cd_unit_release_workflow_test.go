@@ -508,7 +508,7 @@ func TestUnitDeployWaitsForAdmission(t *testing.T) {
 	for _, required := range []string{
 		"needs: [build]",
 		"needs.build.outputs.eligible == 'true'",
-		"(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
+		"(inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))",
 		"issues: read",
 		"go: ${{ steps.preflight.outputs.go }}",
 		"python3 preflight-src/scripts/ci/deploy_preflight.py --wait 40m --interval 60s",
@@ -610,14 +610,14 @@ func TestUnitDeploysAreWatchedAndPauseAfterARollback(t *testing.T) {
 func TestUnitReleaseBuildIsSupersededOnlyByARunDeployingToTheSamePlace(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	build := jobBlock(t, release, "build")
-	const group = "group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}"
+	const group = "group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}"
 	if !strings.Contains(build, group) {
 		t.Fatalf("the build job's concurrency group must be keyed by the deploy target; want %q", group)
 	}
 	if strings.Contains(build, "group: release-units-build\n") {
 		t.Error("a single build group lets a build-only push cancel a dispatched deploy")
 	}
-	if !strings.Contains(release, "(inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))") {
+	if !strings.Contains(release, "(inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))") {
 		t.Error("the preflight's deploy condition changed; key the build group the same way")
 	}
 }

@@ -62,6 +62,13 @@ PREFLIGHT_JOB = "Check production can take a deploy"
 # release-units' build job uploads an empty artifact named this plus the
 # released commit, so a later run can find the runs that released it.
 RELEASE_MARKER = "unit-release-sha-"
+
+
+def lanes_passed(jobs: list[dict]) -> bool:
+    """Whether a release-units run finished every lane it ran (control
+    plane, edge) green: at least one ran, none was skipped-over by failure."""
+    lanes = [j for j in jobs if j["name"].startswith(LANE_JOB_PREFIXES) and j.get("conclusion") != "skipped"]
+    return bool(lanes) and all(j.get("status") == "completed" and j.get("conclusion") == "success" for j in lanes)
 ACTIVE_RUN_STATUSES = ("in_progress", "queued", "waiting")
 ACTIVE_JOB_STATUSES = ("in_progress", "queued", "waiting", "pending", "requested")
 
@@ -158,9 +165,7 @@ class Preflight:
         on its own: a person decides that (ADR 20261020214632)."""
         arts = self.gh.get("actions/artifacts", {"name": RELEASE_MARKER + self.sha, "per_page": 100})
         for run_id in sorted({a.get("workflow_run", {}).get("id") for a in arts.get("artifacts", [])} - {None, self.run_id}):
-            lanes = [j for j in self.jobs(run_id) if j["name"].startswith(LANE_JOB_PREFIXES)
-                     and j.get("conclusion") != "skipped"]
-            if lanes and all(j.get("status") == "completed" and j.get("conclusion") == "success" for j in lanes):
+            if lanes_passed(self.jobs(run_id)):
                 return Verdict("current", STAND_DOWN, f"run {run_id} already deployed the unit release of "
                                f"{self.sha[:12]}: every lane it ran passed")
         return Verdict("current", OK, f"no earlier run deployed {self.sha[:12]} through every lane")

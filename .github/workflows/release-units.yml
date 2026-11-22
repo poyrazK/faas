@@ -55,6 +55,12 @@ on:
     paths-ignore:
       - "docs/**"
       - "**/*.md"
+  # A release is capped at a few commits beyond what production last took
+  # cleanly (docs/adr/20261122170000-continuous-unit-lane.md, "Blast cap");
+  # this picks up the rest when no new merge arrives. It deploys only with
+  # automatic deploys on, and releases nothing when production is current.
+  schedule:
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       base:
@@ -71,6 +77,7 @@ permissions:
   contents: read
   id-token: write
   actions: read
+  pull-requests: read
 
 jobs:
   build:
@@ -81,12 +88,14 @@ jobs:
     # this job, only for main, and holds no production credentials. Unset,
     # the build runs on a GitHub-hosted runner and restores its caches.
     runs-on: ${{ vars.UNIT_RELEASE_BUILD_RUNNER != '' && fromJSON(vars.UNIT_RELEASE_BUILD_RUNNER) || 'ubuntu-22.04' }}
+    # The schedule only continues automatic deploys.
+    if: github.event_name != 'schedule' || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''
     # The first run over a new base also builds the base's candidates
     # (about as long as the head build); later runs restore its digests.
     timeout-minutes: 35
     concurrency:
       # Keyed by the deploy target, as the preflight's `if:` decides it.
-      group: release-units-build-${{ inputs.deploy_environment || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
+      group: release-units-build-${{ inputs.deploy_environment || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) || 'build-only' }}
       cancel-in-progress: true
     outputs:
       eligible: ${{ steps.detect.outputs.eligible }}
@@ -188,8 +197,11 @@ jobs:
         id: detect
         env:
           BASE: ${{ steps.base.outputs.ref }}
+          BASE_SHA: ${{ steps.base.outputs.sha }}
           CODE_CACHE: ${{ runner.temp }}/unit-base-code.json
           OUT_DIR: ${{ runner.temp }}/gregale-units
+          GH_TOKEN: ${{ github.token }}
+          BLAST_CAP: "5"
         run: |
           set -euo pipefail
           mkdir -p "$OUT_DIR"
@@ -213,7 +225,36 @@ jobs:
           if [[ -n "$stall" ]]; then
             echo "::warning::unit lane stalled behind ${stall}; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for a full release" >&2
           fi
-          if [[ -z "$target" ]]; then
+          # Blast cap ("Blast cap" in the ADR): at most BLAST_CAP first-parent
+          # commits beyond the commit production last took through every
+          # lane (last_deployed.py; the full release when none or when that
+          # commit predates it). Nothing is released when production already
+          # runs the selected commit; a capped release leaves the rest to the
+          # next run (a merge, or the 10-minute schedule).
+          capped="" current=""
+          if [[ -n "$target" ]]; then
+            from="$BASE_SHA"
+            last="$(python3 "$tools/last_deployed.py")"
+            if [[ -n "$last" ]] && git merge-base --is-ancestor "$BASE_SHA" "$last" 2>/dev/null \
+                && git merge-base --is-ancestor "$last" "$target" 2>/dev/null; then
+              from="$last"
+            fi
+            if [[ "$from" == "$target" ]]; then
+              current="$target" target=""
+            else
+              behind="$(git rev-list --first-parent --count "$from..$target")"
+              if (( behind > BLAST_CAP )); then
+                target="$(git rev-list --first-parent --reverse "$from..$target" | sed -n "${BLAST_CAP}p")"
+                capped="$behind commits beyond ${from:0:12}; releasing the first $BLAST_CAP, up to ${target:0:12}"
+                echo "::notice::blast cap: $capped" >&2
+              fi
+            fi
+          fi
+          if [[ -n "$current" ]]; then
+            jq --arg c "$current" '.eligible = false | .lanes |= map_values(.eligible = false)
+              | .reasons = ["production already took \($c[0:12]) through every lane"]' \
+              "$OUT_DIR/report-main.json" > "$OUT_DIR/report.json"
+          elif [[ -z "$target" ]]; then
             cp "$OUT_DIR/report-main.json" "$OUT_DIR/report.json"
           else
             if [[ "$target" != "$(git rev-parse HEAD)" ]]; then
@@ -242,6 +283,14 @@ jobs:
             echo
             if [[ -n "$stall" ]]; then
               echo "**Lane stalled** at \`${stall}\`. Main is at \`${GITHUB_SHA:0:12}\`; $(jq -r .lane_prefix.behind "$OUT_DIR/report-main.json") commits wait for the next full release. The lane never skips or splits a commit."
+              echo
+            fi
+            if [[ -n "$capped" ]]; then
+              echo "**Blast cap:** ${capped}. The next run releases the rest."
+              echo
+            fi
+            if [[ -n "$current" ]]; then
+              echo "Production already took \`${current:0:12}\` through every lane: nothing to release."
               echo
             fi
             echo "| binary | lane | unit version | code since base |"
@@ -280,6 +329,50 @@ jobs:
         with:
           path: ${{ runner.temp }}/unit-base-code.json
           key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
+
+      # Tested as shipped (docs/adr/20261122170000-continuous-unit-lane.md):
+      # without a merge queue a squash merge can land a tree no CI run saw.
+      # When the released commit's pull request held main's previous commit
+      # and ci-light passed on that exact tree, nothing more runs. Otherwise
+      # the tests ci-light would select for what CI did not see together
+      # run here, at the released commit, limited to packages the shipped
+      # daemons build from; the release is built only when they pass. No
+      # database URL reaches them: on the control plane it would be
+      # production's.
+      - name: Test the shipped tree
+        if: steps.detect.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.detect.outputs.release_sha }}
+          REPORT: ${{ runner.temp }}/gregale-units/report.json
+          PLAN: ${{ runner.temp }}/gregale-units/tested-tree.json
+        run: |
+          set -euo pipefail
+          unset DATABASE_URL SPLIT_DATABASE_URL PGHOST PGPASSWORD PGUSER PGDATABASE
+          export FAAS_SKIP_PG_TESTS=1
+          shipped="$(jq -r '[.lanes[] | select(.eligible) | .changed[]] | unique | join(",")' "$REPORT")"
+          python3 "$RUNNER_TEMP/unit-tools/tested_tree.py" --commit "$RELEASE_SHA" --daemons "$shipped" --output "$PLAN"
+          {
+            echo
+            echo "**Tested as shipped:** $(jq -r '"\(.verdict): \(.reason)"' "$PLAN")"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$(jq -r .verdict "$PLAN")" == tested ]] && exit 0
+          status=0
+          mapfile -t pkgs < <(jq -r '.packages[]' "$PLAN")
+          if (( ${#pkgs[@]} )); then
+            echo "testing at ${RELEASE_SHA:0:12}: ${pkgs[*]}"
+            go test -count=1 -timeout=10m "${pkgs[@]}" || status=1
+          fi
+          while IFS=$'\t' read -r pkg run; do
+            [[ -n "$pkg" ]] || continue
+            echo "testing related tests of $pkg"
+            go test -count=1 -timeout=8m -run "$run" "$pkg" || status=1
+          done < <(jq -r '.selective[] | .package as $p | .runs[] | "\($p)\t\(.)"' "$PLAN")
+          if (( status )); then
+            echo "::error::the shipped tree fails tests CI never ran on it together; not releasing ${RELEASE_SHA:0:12}" >&2
+            echo "**Not released:** the shipped tree fails its tests (see the log)." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
 
       - name: Build unit binaries
         if: steps.detect.outputs.eligible == 'true'
@@ -416,7 +509,7 @@ jobs:
     needs: [build]
     if: >-
       needs.build.outputs.eligible == 'true' &&
-      (inputs.deploy_environment != '' || (github.event_name == 'push' && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
+      (inputs.deploy_environment != '' || ((github.event_name == 'push' || github.event_name == 'schedule') && vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT != ''))
     environment: ${{ inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT }}
     runs-on: ${{ fromJSON((inputs.deploy_environment || vars.UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT) == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
     timeout-minutes: 50
