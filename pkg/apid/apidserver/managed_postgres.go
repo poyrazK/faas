@@ -165,6 +165,9 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 	production := managedpostgres.ProductionEnvironmentActive(getenv)
 	if production {
 		logManagedPostgresProductionReadiness(registry, getenv, metrics, log)
+		// A live policy (managed_postgres_policy) can change the approval
+		// or the switches readiness reads: report again on each one.
+		registry.OnPolicyChange(func() { logManagedPostgresProductionReadiness(registry, getenv, metrics, log) })
 	}
 	provisioningGate := func() bool {
 		enabled := baseProvisioningGate()
@@ -203,8 +206,8 @@ func loadManagedPostgres(ctx context.Context, pool *pgxpool.Pool, getenv func(st
 				return 0, managedpostgres.ErrQuotaExceeded
 			}
 			limit := limits.DatabasesMax
-			if registry.MaxDatabasesPerAccount < limit {
-				limit = registry.MaxDatabasesPerAccount
+			if registry.MaxDatabasesPerAccount() < limit {
+				limit = registry.MaxDatabasesPerAccount()
 			}
 			return limit, nil
 		},
@@ -416,12 +419,19 @@ func hostCredentialIdentities() []*age.X25519Identity {
 // warning (bug hunt H88). The notice goes through the internal mail
 // producer outbox behind its own opt-in.
 func managedPostgresCapNoticeReady(getenv func(string) string) error {
-	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) {
+	if internalmail.ManagedPostgresCapOutboxEnabled(getenv) || managedPostgresCapNoticeWaived(getenv) {
 		return nil
 	}
 	return fmt.Errorf("%s=on suspends databases at their ceiling, and customers are warned only by the cap notice email: "+
-		"set %s=1 with the internal mail producer outbox enabled, or keep enforcement at shadow",
-		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv)
+		"set %s=1 with the internal mail producer outbox enabled, set %s=1 to enforce without the email, or keep enforcement at shadow",
+		managedpostgres.CapEnforcementEnv, internalmail.ManagedPostgresCapOutboxEnableEnv, managedpostgres.CapNoticeWaiverEnv)
+}
+
+// managedPostgresCapNoticeWaived reports that the owner waived the cap notice
+// email (ADR-20261025094915 amendment 2026-11-22): enforcement runs although
+// no email can be sent. Only an exact 1 counts. A working notice path wins.
+func managedPostgresCapNoticeWaived(getenv func(string) string) bool {
+	return getenv(managedpostgres.CapNoticeWaiverEnv) == "1" && !internalmail.ManagedPostgresCapOutboxEnabled(getenv)
 }
 
 // managedPostgresPlanExcessDeleteReady refuses deleting databases past their
@@ -479,6 +489,10 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	if mode == managedpostgres.CapEnforcementOn {
 		if err := managedPostgresCapNoticeReady(getenv); err != nil {
 			return nil, err
+		}
+		if managedPostgresCapNoticeWaived(getenv) {
+			log.Warn("managed postgres compute caps are enforced without the cap notice email: a database reaching its ceiling is held without warning",
+				"waiver", managedpostgres.CapNoticeWaiverEnv)
 		}
 		qualification, err := managedpostgres.LoadComputeCapQualification(getenv(managedpostgres.CapQualificationPathEnv))
 		if err != nil {

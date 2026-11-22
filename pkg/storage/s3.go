@@ -335,6 +335,23 @@ func normalizeS3Error(err error) error {
 	return err
 }
 
+// ErrWriteConflict reports that the object store refused a write because
+// another writer was publishing the same key at that moment: HTTP 409 on
+// PutObject or CompleteMultipartUpload (OVH answers a concurrent complete of
+// one key this way). This attempt published nothing, so a caller that still
+// holds the bytes may publish them again.
+var ErrWriteConflict = errors.New("storage: concurrent write conflict")
+
+// s3WriteConflict marks a refused write as ErrWriteConflict when the store
+// answered HTTP 409, and returns other errors unchanged.
+func s3WriteConflict(err error) error {
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) && status.HTTPStatusCode() == http.StatusConflict {
+		return fmt.Errorf("%w: %w", ErrWriteConflict, err)
+	}
+	return err
+}
+
 func contentMD5(p []byte) *string {
 	sum := md5.Sum(p) // #nosec G401 -- S3 Content-MD5 protocol checksum.
 	return aws.String(base64.StdEncoding.EncodeToString(sum[:]))
@@ -360,7 +377,7 @@ func (s *awsS3ArtifactStore) Put(ctx context.Context, bucket, key string, body i
 			ContentType:   aws.String(gcsContentType),
 			Metadata:      metadata,
 		})
-		return normalizeS3Error(putErr)
+		return s3WriteConflict(normalizeS3Error(putErr))
 	}
 
 	created, err := s.client.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{
@@ -416,7 +433,7 @@ func (s *awsS3ArtifactStore) Put(ctx context.Context, bucket, key string, body i
 		UploadId:        uploadID,
 		MultipartUpload: &types.CompletedMultipartUpload{Parts: parts},
 	}); err != nil {
-		return abort(normalizeS3Error(err))
+		return abort(s3WriteConflict(normalizeS3Error(err)))
 	}
 	return nil
 }

@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`bucket`](#bucket) | Manage object storage buckets |
 | [`export`](#export) | Verify and compare saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
@@ -102,7 +103,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory (required unless --agents, which defaults to .) |  |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy, or the app --agents deploys (default: the linked app, else the directory name) |  |
@@ -131,6 +132,10 @@ Source defaults to committed HEAD when origin exists; otherwise local files. Use
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
+Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+
+Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+
 | Flag | Meaning | |
 |---|---|---|
 | `--atomic` | publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project |  |
@@ -158,7 +163,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-go-tasks` · `mcp-python` · `mcp-python-tasks` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
 | `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
@@ -870,6 +875,26 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
 | `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--wait-timeout <DURATION>` | readiness timeout |  |
+
+### add bucket
+
+Provision or attach object storage and inject sealed S3 settings
+
+`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
+| `--scope <SCOPE>` | environment scope (alias for --env) |  |
+| `--region <REGION>` | object-storage region |  |
+| `--public` | serve objects publicly from the app host |  |
+| `--serve-at <PATH>` | public mount path |  |
+| `--permission <MODE>` | compute binding permission | one of `read` · `write` · `read_write` |
+| `--label <LABEL>` | bucket-scoped compute credential label |  |
+| `--prefix <PREFIX>` | injected storage secret prefix |  |
+| `--key-prefix <KEYS/>` | limit the binding to object keys under this prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add ai
@@ -2480,7 +2505,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|object-storage|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2731,6 +2756,54 @@ gregale app binding check my-api --max-verification-age 10m --json
 gregale app binding check my-api --scope production
 gregale app binding check my-api --release v12 --release-policy --wait --json
 gregale app binding check my-api --release v12 --max-verification-age 10m --json
+```
+
+#### app binding object-storage
+
+Manage app-to-bucket compute bindings
+
+`gregale app binding object-storage <list|rotate|revoke>`
+
+##### app binding object-storage list
+
+List safe binding metadata
+
+`gregale app binding object-storage list <app> <bucket>`
+
+Examples:
+
+```sh
+gregale app binding object-storage list my-api assets
+```
+
+##### app binding object-storage rotate
+
+Rotate a binding credential and optionally wait for retirement
+
+`gregale app binding object-storage rotate [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket> <binding-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
+
+Examples:
+
+```sh
+gregale app binding object-storage rotate my-api assets BINDING_ID --wait
+```
+
+##### app binding object-storage revoke
+
+Revoke a binding credential
+
+`gregale app binding object-storage revoke <app> <bucket> <binding-id>`
+
+Examples:
+
+```sh
+gregale app binding object-storage revoke my-api assets BINDING_ID
 ```
 
 #### app binding verify
@@ -4924,6 +4997,258 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
 
 
+## bucket
+
+Manage object storage buckets
+
+`gregale bucket [<subcommand>]`
+
+### bucket multipart
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket multipart get
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket multipart get <app> <bucket-id> <upload-id>`
+
+#### bucket multipart cancel
+
+Abort an unfinished multipart session, freeing the bucket it holds
+
+`gregale bucket multipart cancel <app> <bucket-id> <upload-id>`
+
+#### bucket multipart list
+
+List multipart sessions
+
+`gregale bucket multipart list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket multipart parts
+
+List uploaded multipart parts
+
+`gregale bucket multipart parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket deletion
+
+Create or inspect durable object deletions
+
+#### bucket deletion create
+
+Delete current data or an owned version; retry with the same UUID
+
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
+
+#### bucket deletion get
+
+Show a persisted deletion receipt
+
+`gregale bucket deletion get <app> <bucket-id> <request-id>`
+
+### bucket inventory
+
+Start, inspect or cancel a fenced capacity inventory
+
+#### bucket inventory get
+
+Show reconciliation progress and reclaimed capacity
+
+`gregale bucket inventory get <app> <bucket-id> <job-id>`
+
+#### bucket inventory start
+
+Pause writes and request capacity reconciliation
+
+`gregale bucket inventory start <app> <bucket-id>`
+
+#### bucket inventory cancel
+
+Cancel reconciliation and resume writes
+
+`gregale bucket inventory cancel <app> <bucket-id> <job-id>`
+
+### bucket copy-source
+
+Manage copy-only owned source grants
+
+#### bucket copy-source list
+
+List source grants for a destination credential
+
+`gregale bucket copy-source list <app> <bucket-id> <credential-id>`
+
+#### bucket copy-source grant
+
+Allow copying an owned source bucket or prefix
+
+`gregale bucket copy-source grant <app> <bucket-id> <credential-id> <source-bucket-id> [prefix]`
+
+#### bucket copy-source revoke
+
+Prevent new copy dispatch from a source
+
+`gregale bucket copy-source revoke <app> <bucket-id> <credential-id> <source-bucket-id>`
+
+### bucket usage
+
+Account object storage observations, safety policy and billing state
+
+### bucket list
+
+List an app&#39;s object-storage buckets and their IDs
+
+`gregale bucket list <app>`
+
+### bucket delete
+
+Delete an empty bucket (including retained versions)
+
+`gregale bucket delete [--yes] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+### bucket upload
+
+Upload a file with resumable multipart transfers
+
+`gregale bucket upload [--content-type <TYPE>] [--if-match <ETAG>] [--if-none-match <*>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--if-match <ETAG>` | replace a matching object (single PUT only) |  |
+| `--if-none-match <*>` | create only if absent (single PUT only) |  |
+| `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket sign
+
+Mint a short-lived signed URL to download or upload one object
+
+`gregale bucket sign [--method <METHOD>] [--expires <DURATION>] [--size-bytes <N>] [--content-type <TYPE>] <app> <bucket-id> <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--method <METHOD>` | GET to download (default), PUT to upload | one of `GET` · `PUT` |
+| `--expires <DURATION>` | URL lifetime, at most 15m (default 5m) |  |
+| `--size-bytes <N>` | exact upload size; required with --method PUT |  |
+| `--content-type <TYPE>` | upload content type |  |
+
+Examples:
+
+```sh
+gregale bucket sign my-api 4f2c… v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api 4f2c… avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+Send the URL with exactly the printed headers and no Gregale credentials; it needs no S3 SDK.
+
+A PUT URL writes once, and each URL reserves storage when issued, so do not retry signing automatically.
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--version-id <VERSION>] [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--version-id <VERSION>` | download this owned immutable version |  |
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket writes
+
+Inspect tracked writes and await recovery
+
+#### bucket writes list
+
+List pending writes or recent completed and failed receipts
+
+`gregale bucket writes list [--status <STATUS>] [--limit <N>] [--cursor <TOKEN>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | pending (default), completed, failed or all |  |
+| `--limit <N>` | page size (default 50, maximum 100) |  |
+| `--cursor <TOKEN>` | next page cursor |  |
+
+#### bucket writes status
+
+Read a tracked write receipt
+
+`gregale bucket writes status <app> <bucket-id> <receipt-id>`
+
+#### bucket writes wait
+
+Poll until completed or failed; pending timeout retains the receipt
+
+`gregale bucket writes wait [--timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket-id> <receipt-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum wait (default 5m) |  |
+| `--poll-interval <DURATION>` | time between reads (default 5s, minimum 1s) |  |
+
+### bucket tags
+
+Read, replace or clear tags on current or selected data
+
+#### bucket tags get
+
+Read object tags
+
+`gregale bucket tags get <app> <bucket-id> <key> [version-id|null]`
+
+#### bucket tags set
+
+Replace the complete tag set
+
+`gregale bucket tags set <app> <bucket-id> <key> <URL-encoded-tags> [version-id|null]`
+
+#### bucket tags clear
+
+Remove all object tags
+
+`gregale bucket tags clear <app> <bucket-id> <key> [version-id|null]`
+
+### bucket notifications
+
+Manage bucket event notifications
+
+#### bucket notifications get
+
+Read notification rules
+
+`gregale bucket notifications get <app> <bucket-id>`
+
+#### bucket notifications set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket notifications set <app> <bucket-id> <JSON-file|->`
+
+#### bucket notifications clear
+
+Remove notification rules
+
+`gregale bucket notifications clear <app> <bucket-id>`
+
+
 ## export
 
 Verify and compare saved JSON Lines exports offline
@@ -5883,6 +6208,859 @@ Manage durable workflows
 
 `gregale workflow [<subcommand>]`
 
+### workflow stored
+
+Build, monitor and control stored workflows
+
+Examples:
+
+```sh
+gregale workflow stored init --list
+gregale workflow stored check --app billing --scenarios scenarios.yaml
+gregale workflow stored diff --app billing --name approval-flow
+gregale workflow stored init --template scheduled-report --path reports
+gregale workflow stored runs --app billing --name approval-flow --status failed
+gregale workflow stored diagnose --app billing --name approval-flow --run RUN_ID
+gregale workflow stored recovery-preview --app billing --name approval-flow --since 2026-10-01T00:00:00Z --until 2026-10-02T00:00:00Z
+gregale workflow stored recover --app billing --name approval-flow --run RUN_ID:COUNT --idempotency-key recovery-batch-1
+gregale workflow stored list --app billing
+gregale workflow stored get --app billing --name paid-invoice
+gregale workflow stored health --app billing --name paid-invoice
+gregale workflow stored pause --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored resume --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored revisions list --app billing --name paid-invoice
+gregale workflow stored revisions show --app billing --name paid-invoice --revision 42
+gregale workflow stored validate --app billing --file stored_workflow.yaml
+gregale workflow stored simulate --app billing --file stored_workflow.yaml --input-file sample.json
+gregale workflow stored apply --app billing --file stored_workflow.yaml --expected-version 0
+gregale workflow stored publish --app billing --name paid-invoice --expected-version VERSION
+gregale workflow stored restore --app billing --name paid-invoice --revision 42 --expected-version VERSION
+gregale workflow stored delete --app billing --name paid-invoice --expected-version VERSION --yes
+```
+
+VERSION is the &#34;version&#34; returned by the previous write (or shown by get/list). Versions come from one counter shared by every stored workflow in the app, so a new draft saved with --expected-version 0 usually returns a version greater than 1.
+
+Revision numbers in `revisions list` (&#34;revision&#34;, also &#34;version&#34;) are what --revision takes. Resume restores the published trigger.enabled; it does not enable a definition with trigger.enabled: false.
+
+#### workflow stored recovery
+
+health · suppress · create · cancel · run · evidence
+
+`gregale workflow stored recovery <health|suppress|create|cancel|run|evidence>`
+
+##### workflow stored recovery health
+
+Inspect recovery execution attention and explicit action hints
+
+`gregale workflow stored recovery health --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+##### workflow stored recovery suppress
+
+Stop one queued automatic retry
+
+`gregale workflow stored recovery suppress --app <SLUG> --review <UUID> --action <UUID> --policy-version <N> --reason <TEXT>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | review ID | required |
+| `--action <UUID>` | queued action ID | required |
+| `--policy-version <N>` | observed policy version | required |
+| `--reason <TEXT>` | why the retry is stopped | required |
+
+##### workflow stored recovery create
+
+Submit a reviewed stored workflow run plan as a durable server job
+
+`gregale workflow stored recovery create --plan <PATH> [--rate <N>] [--execution-deadline <DURATION>] [--execution-stall <DURATION>] [--reason <TEXT>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed run plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--execution-deadline <DURATION>` | advisory execution deadline (zero disables) |  |
+| `--execution-stall <DURATION>` | no-progress warning threshold (default 15m) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+| `--dry-run` | with --job: review recovery failures and save an explicit retry plan (with it: --app, --position, --plan-out, --key) |  |
+
+##### workflow stored recovery cancel
+
+Review or cancel one admitted recovery generation
+
+`gregale workflow stored recovery cancel --app <SLUG> --job <UUID> --position <N> --resume-count <N> --reason <TEXT> --yes [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--job <UUID>` | native recovery job | required |
+| `--position <N>` | frozen item position | required |
+| `--resume-count <N>` | reviewed admitted generation | required |
+| `--reason <TEXT>` | operator reason | required |
+| `--yes` | confirm exact generation cancellation | required |
+| `--dry-run` | show the recovery generation it would cancel |  |
+
+##### workflow stored recovery run
+
+Execute a saved recovery plan with a durable per-attempt journal
+
+`gregale workflow stored recovery run --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed recovery plan file | required |
+| `--journal <PATH>` | new journal file for this execution | required |
+
+##### workflow stored recovery evidence
+
+Diagnose or repair verified automatic retry evidence
+
+`gregale workflow stored recovery evidence --app <SLUG> --review <UUID> --action <UUID> [--parent] [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | automatic retry review | required |
+| `--action <UUID>` | automatic retry action | required |
+| `--parent` | inspect or repair pending retry parent evidence |  |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+#### workflow stored failure
+
+list · policy · resume
+
+`gregale workflow stored failure <list|policy|resume>`
+
+##### workflow stored failure list
+
+List captured initial workflow failures
+
+`gregale workflow stored failure list --app <SLUG> [--name <NAME>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | workflow filter |  |
+| `--cursor <CURSOR>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size (at most 100) |  |
+
+##### workflow stored failure policy
+
+Inspect failure pauses and history, or configure monitoring
+
+`gregale workflow stored failure policy --app <SLUG> --name <NAME> [--enabled <BOOL>] [--expected-version <N>] [--failure-threshold <N>] [--min-completed-runs <N>] [--window-seconds <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--enabled <BOOL>` | enable or disable monitoring; required when configuring |  |
+| `--expected-version <N>` | current failure policy version; required when configuring |  |
+| `--failure-threshold <N>` | terminal failures needed to pause (1..10000, default 3) |  |
+| `--min-completed-runs <N>` | minimum completed outcomes (1..10000, default 5) |  |
+| `--window-seconds <N>` | observation window (60..86400, default 300) |  |
+
+Also previews a resume.
+
+##### workflow stored failure resume
+
+Preview retained work and explicitly clear a failure pause
+
+`gregale workflow stored failure resume --app <SLUG> --name <NAME> --expected-generation <N> [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-generation <N>` | current failure pause generation | required |
+| `--dry-run` | preview the failure and save a reviewed first recovery plan (with it: --failure, --policy, --plan-out, --key) |  |
+
+#### workflow stored policy
+
+Inspect or set required server publishing checks
+
+`gregale workflow stored policy <publish>`
+
+##### workflow stored policy publish
+
+Inspect or set required server publishing checks
+
+`gregale workflow stored policy publish --app <SLUG> [--mode <MODE>] [--expected-version <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--mode <MODE>` | set publishing requirement (admin scope) | one of `optional` · `scenarios` · `coverage` |
+| `--expected-version <N>` | current policy version (required when setting mode) |  |
+
+#### workflow stored event
+
+Execute a reviewed event plan with fresh receipt checks and a journal
+
+`gregale workflow stored event <recover>`
+
+##### workflow stored event recover
+
+Execute a reviewed event plan with fresh receipt checks and a journal
+
+`gregale workflow stored event recover --plan <PATH> --journal <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--journal <PATH>` | new execution journal | required |
+
+#### workflow stored event-recovery
+
+Submit a reviewed stored workflow event plan as a durable server job
+
+`gregale workflow stored event-recovery <start>`
+
+##### workflow stored event-recovery start
+
+Submit a reviewed stored workflow event plan as a durable server job
+
+`gregale workflow stored event-recovery start --plan <PATH> [--rate <N>] [--reason <TEXT>] [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | reviewed event plan | required |
+| `--rate <N>` | maximum recoveries per second (1..100) |  |
+| `--reason <TEXT>` | optional operator reason |  |
+| `--dry-run` | save the selected routing actions for review (with it: --app, --name, --source, --event, --idempotency-key, --out) |  |
+
+#### workflow stored failure-recovery
+
+review · evidence · list
+
+`gregale workflow stored failure-recovery <review|evidence|list>`
+
+##### workflow stored failure-recovery review
+
+Prepare, inspect, submit or cancel a durable first recovery review
+
+`gregale workflow stored failure-recovery review --app <SLUG> [--failure <UUID>] [--expected-policy-version <N>] [--review <UUID>] [--decision <DECISION>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--failure <UUID>` | captured initial failure |  |
+| `--expected-policy-version <N>` | saved policy version |  |
+| `--review <UUID>` | durable review |  |
+| `--decision <DECISION>` | submit or cancel |  |
+| `--reason <TEXT>` | operator reason |  |
+
+##### workflow stored failure-recovery evidence
+
+Diagnose or repair verified initial recovery evidence
+
+`gregale workflow stored failure-recovery evidence --app <SLUG> --review <UUID> [--repair] [--request-id <UUID>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | initial recovery review | required |
+| `--repair` | save a verified terminal outcome |  |
+| `--request-id <UUID>` | stable repair request identifier |  |
+| `--reason <TEXT>` | operator repair reason |  |
+
+##### workflow stored failure-recovery list
+
+List retained durable first recovery reviews
+
+`gregale workflow stored failure-recovery list --app <SLUG> [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--cursor <UUID>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size |  |
+
+#### workflow stored recovery-policy
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy <evaluate|history|get|set>`
+
+##### workflow stored recovery-policy evaluate
+
+Compare a proposed recovery policy with recent history
+
+`gregale workflow stored recovery-policy evaluate --app <SLUG> --file <PATH> [--workflow <NAME>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | proposed policy JSON with expected_version | required |
+| `--workflow <NAME>` | only sample this workflow |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+##### workflow stored recovery-policy history
+
+Inspect policy decisions and export prepared plans
+
+`gregale workflow stored recovery-policy history --app <SLUG> [--review <UUID>] [--plan-out <PATH>] [--cursor <UUID>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--review <UUID>` | retained review |  |
+| `--plan-out <PATH>` | export selected prepared plan |  |
+| `--cursor <UUID>` | review pagination cursor (also --after) |  |
+| `--limit <N>` | page limit |  |
+
+##### workflow stored recovery-policy get
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy get --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+##### workflow stored recovery-policy set
+
+Inspect, preview or update recovery policy
+
+`gregale workflow stored recovery-policy set --app <SLUG> [--file <PATH>] [--preview] [--queue] [--control <pause|resume>] [--reason <TEXT>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | policy JSON with expected_version |  |
+| `--preview` | preview --file without changing policy |  |
+| `--queue` | inspect automatic retry queue |  |
+| `--control <pause|resume>` | control automatic execution |  |
+| `--reason <TEXT>` | operator control reason |  |
+
+#### workflow stored recovery-response
+
+apply · status · check
+
+`gregale workflow stored recovery-response <apply|status|check>`
+
+##### workflow stored recovery-response apply
+
+Apply saved actions with durable receipts
+
+`gregale workflow stored recovery-response apply --plan <PATH> --yes [--dry-run]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+| `--yes` | confirm reviewed actions | required |
+| `--dry-run` | save the cancellation and retry actions for review (with it, 8 more flags: see gregale workflow stored recovery-response apply --dry-run --help) |  |
+
+##### workflow stored recovery-response status
+
+Reconcile retained action receipts and execution outcomes
+
+`gregale workflow stored recovery-response status --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+##### workflow stored recovery-response check
+
+Recheck saved actions without applying
+
+`gregale workflow stored recovery-response check --plan <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan <PATH>` | saved response plan | required |
+
+#### workflow stored live
+
+Start, observe and check saved cases against real execution
+
+`gregale workflow stored live <check|run|list|start|get|wait>`
+
+##### workflow stored live check
+
+Require passing suite evidence for a candidate target
+
+`gregale workflow stored live check --app <SLUG> --name <NAME> [--policy <FILE>] [--baseline <UUID>] [--baseline-name <NAME>] --candidate <UUID> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--policy <FILE>` | versioned required-case coverage policy JSON |  |
+| `--baseline <UUID>` | retained baseline suite UUID; exclusive with baseline-name |  |
+| `--baseline-name <NAME>` | resolve a named baseline; exclusive with baseline |  |
+| `--candidate <UUID>` | distinct retained candidate suite UUID | required |
+| `--expected-version <N>` | expected candidate saved stored workflow version | required |
+| `--expected-published-version <N>` | expected candidate published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate live default deployment UUID | required |
+
+Read-only.
+
+##### workflow stored live run
+
+Run selected live cases sequentially with resumable private progress
+
+`gregale workflow stored live run [--app <SLUG>] [--name <NAME>] [--case <NAME>] [--expected-version <N>] [--expected-published-version <N>] [--expected-deployment-id <UUID>] [--idempotency-key <KEY>] [--journal <PATH>] [--resume <PATH>] [--share] --confirm-real-actions [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug for a new suite |  |
+| `--name <NAME>` | stored workflow name for a new suite |  |
+| `--case <NAME>` | explicit case selection; repeat in execution order, at most 32 |  |
+| `--expected-version <N>` | saved stored workflow version for a new suite |  |
+| `--expected-published-version <N>` | published revision for a new suite |  |
+| `--expected-deployment-id <UUID>` | live default deployment UUID for a new suite |  |
+| `--idempotency-key <KEY>` | stable suite key for a new suite |  |
+| `--journal <PATH>` | new private progress file; required for a new suite |  |
+| `--resume <PATH>` | continue the original selection from this suite journal |  |
+| `--share` | save a new suite in shared dashboard history; persisted for resume |  |
+| `--confirm-real-actions` | confirm execution of remaining selected cases | required |
+| `--timeout <DURATION>` | total invocation deadline (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+##### workflow stored live list
+
+Read current target IDs and recent live verifications
+
+`gregale workflow stored live list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+##### workflow stored live start
+
+Explicitly start one saved case against real handlers
+
+`gregale workflow stored live start --app <SLUG> --name <NAME> --case <NAME> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --idempotency-key <KEY> --confirm-real-actions [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--case <NAME>` | saved case with live expectations | required |
+| `--expected-version <N>` | current saved stored workflow version | required |
+| `--expected-published-version <N>` | published stored workflow revision | required |
+| `--expected-deployment-id <UUID>` | live default deployment UUID | required |
+| `--idempotency-key <KEY>` | stable key; retry only with the original start flags | required |
+| `--confirm-real-actions` | confirm this case can perform real actions | required |
+| `--wait` | wait and require a current passing assertion verdict |  |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+##### workflow stored live get
+
+Read one verification without requiring a verdict
+
+`gregale workflow stored live get --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+
+##### workflow stored live wait
+
+Observe a run, check assertions and require a passing verdict
+
+`gregale workflow stored live wait --app <SLUG> --name <NAME> --run <UUID> [--timeout <DURATION>] [--poll-interval <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | existing live verification run UUID | required |
+| `--timeout <DURATION>` | maximum wait (default 5m, up to 1h) |  |
+| `--poll-interval <DURATION>` | poll interval (default 3s, 1s to 1m) |  |
+
+#### workflow stored baseline
+
+Manage named baselines and inspect audit history
+
+`gregale workflow stored baseline <retire|list|get|history|promote>`
+
+##### workflow stored baseline retire
+
+Permanently retire a baseline with audit history
+
+`gregale workflow stored baseline retire --app <SLUG> --name <NAME> --baseline-name <NAME> --retirement-id <UUID> --expected-revision <N> --confirm-retirement`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--retirement-id <UUID>` | stable retirement UUID; preserve for retries | required |
+| `--expected-revision <N>` | current positive baseline revision | required |
+| `--confirm-retirement` | confirm permanent retirement; release slot and evidence pin | required |
+
+Protected by revision checks.
+
+##### workflow stored baseline list
+
+Find active baselines and read retained evidence health
+
+`gregale workflow stored baseline list --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+Never executes anything.
+
+##### workflow stored baseline get
+
+Read the current immutable promotion receipt
+
+`gregale workflow stored baseline get --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### workflow stored baseline history
+
+Read up to 100 recent promotions
+
+`gregale workflow stored baseline history --app <SLUG> --name <NAME> --baseline-name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+
+##### workflow stored baseline promote
+
+Promote passing evidence to a baseline with revision checks
+
+`gregale workflow stored baseline promote --app <SLUG> --name <NAME> --baseline-name <NAME> --suite <UUID> --promotion-id <UUID> --expected-revision <N> --expected-version <N> --expected-published-version <N> --expected-deployment-id <UUID> --policy <FILE>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--baseline-name <NAME>` | named release track, such as production | required |
+| `--suite <UUID>` | passing retained suite UUID | required |
+| `--promotion-id <UUID>` | stable promotion UUID; preserve for retries | required |
+| `--expected-revision <N>` | current baseline revision; explicit 0 creates | required |
+| `--expected-version <N>` | expected candidate saved version | required |
+| `--expected-published-version <N>` | expected published revision | required |
+| `--expected-deployment-id <UUID>` | expected candidate deployment UUID | required |
+| `--policy <FILE>` | version 2 coverage and age policy JSON | required |
+
+Never executes workflows.
+
+#### workflow stored diff
+
+Compare draft and published definition fields without exposing values
+
+`gregale workflow stored diff --app <SLUG> --name <NAME>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+
+#### workflow stored check
+
+Check simulation scenarios and expected step outcomes
+
+`gregale workflow stored check --app <SLUG> --scenarios <PATH> [--require-coverage] [--suggest] [--suggest-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--scenarios <PATH>` | scenario suite YAML or JSON file | required |
+| `--require-coverage` | fail on unexcluded coverage hints |  |
+| `--suggest` | write coverage scenario starters to a new file |  |
+| `--suggest-out <PATH>` | new suggestion file (requires --suggest; defaults beside the suite) |  |
+
+#### workflow stored init
+
+Create a local stored workflow starter with simulation samples
+
+`gregale workflow stored init [--template <NAME>] [--path <DIR>] [--list]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--template <NAME>` | stored workflow starter name |  |
+| `--path <DIR>` | new directory (defaults to starter name) |  |
+| `--list` | list starters without creating files |  |
+
+#### workflow stored list
+
+List stored workflow versions and ownership for an app
+
+`gregale workflow stored list --app <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+
+#### workflow stored get
+
+Inspect stored workflow state or export a definition
+
+`gregale workflow stored get --app <SLUG> --name <NAME> [--definition-out <PATH>] [--published]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--definition-out <PATH>` | export the selected definition as JSON to a new file |  |
+| `--published` | export the published definition instead of the draft |  |
+
+#### workflow stored runs
+
+List run history for one stored workflow
+
+`gregale workflow stored runs --app <SLUG> --name <NAME> [--status <STATUS>] [--limit <N>] [--offset <N>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--status <STATUS>` | pending, running, awaiting_event, succeeded, failed or dead |  |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | page offset |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 creation-time start |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 creation-time end |  |
+
+#### workflow stored diagnose
+
+Diagnose a run belonging to the selected stored workflow
+
+`gregale workflow stored diagnose --app <SLUG> --name <NAME> --run <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID>` | workflow run UUID | required |
+
+#### workflow stored history
+
+Inspect retained recovery automation history
+
+`gregale workflow stored history --app <SLUG> [--workflow <NAME>] [--run <UUID>] [--policy-version <N>] [--created-after <RFC3339>] [--created-before <RFC3339>] [--cursor <CURSOR>] [--limit <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | native workflow filter |  |
+| `--run <UUID>` | native run filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--created-after <RFC3339>` | inclusive start |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+| `--cursor <CURSOR>` | next page cursor (also --after) |  |
+| `--limit <N>` | page size (default 25, max 100) |  |
+
+#### workflow stored health
+
+Inspect app recovery health or named stored workflow run reliability
+
+`gregale workflow stored health [--stall-after-seconds <SECONDS>] --app <SLUG> [--name <NAME>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--stall-after-seconds <SECONDS>` | app recovery evaluation threshold (default 300) |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name |  |
+| `--created-after <RFC3339>` | inclusive RFC3339 window start (max 30 days) |  |
+| `--created-before <RFC3339>` | inclusive RFC3339 window end |  |
+
+#### workflow stored report
+
+Summarize workflow recovery outcomes over a time window
+
+`gregale workflow stored report --app <SLUG> [--workflow <NAME>] [--policy-version <N>] [--since <DURATION>] [--created-after <RFC3339>] [--created-before <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--workflow <NAME>` | workflow name filter |  |
+| `--policy-version <N>` | policy version filter |  |
+| `--since <DURATION>` | lookback, at most 30 days (default 7d) |  |
+| `--created-after <RFC3339>` | inclusive start; excludes --since |  |
+| `--created-before <RFC3339>` | inclusive end |  |
+
+#### workflow stored recover
+
+Resume selected failed runs with per-run generation checks
+
+`gregale workflow stored recover [--plan-out <PATH>] --app <SLUG> --name <NAME> --run <UUID:COUNT> --idempotency-key <KEY>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--plan-out <PATH>` | save reviewed selection to a new plan file without resuming |  |
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--run <UUID:COUNT>` | run UUID and original expected resume count; repeatable, at most 25 | required |
+| `--idempotency-key <KEY>` | stable batch key; reuse for interrupted retries | required |
+
+Reports each run&#39;s outcome.
+
+#### workflow stored pause
+
+Stop future scheduled and event-triggered admissions
+
+`gregale workflow stored pause --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+
+#### workflow stored resume
+
+Resume automatic scheduled and event-triggered admissions
+
+`gregale workflow stored resume --app <SLUG> --name <NAME> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+
+#### workflow stored revisions
+
+Inspect immutable published snapshots
+
+`gregale workflow stored revisions <list|show>`
+
+##### workflow stored revisions list
+
+List published revisions for a stored workflow
+
+`gregale workflow stored revisions list --app <SLUG> --name <NAME> [--limit <N>] [--offset <N>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--limit <N>` | page size (1..100, default 50) |  |
+| `--offset <N>` | number of revisions to skip |  |
+
+##### workflow stored revisions show
+
+Inspect a revision or export its definition
+
+`gregale workflow stored revisions show --app <SLUG> --name <NAME> --revision <N> [--definition-out <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--revision <N>` | published revision number | required |
+| `--definition-out <PATH>` | export the definition as JSON to a new file |  |
+
+#### workflow stored restore
+
+Restore a published revision as a draft
+
+`gregale workflow stored restore --app <SLUG> --name <NAME> --revision <N> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--revision <N>` | published revision number to restore | required |
+| `--expected-version <N>` | current version; use 0 if deleted | required |
+
+#### workflow stored delete
+
+Delete a stored workflow using its current version
+
+`gregale workflow stored delete --app <SLUG> --name <NAME> --expected-version <N> --yes [--restore-manifest]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current stored workflow version | required |
+| `--yes` | required explicit confirmation of stored workflow deletion | required |
+| `--restore-manifest` | allow the current YAML definition to own this stored workflow again |  |
+
+#### workflow stored validate
+
+Validate a stored workflow definition without saving it
+
+`gregale workflow stored validate --app <SLUG> --file <PATH>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+
+#### workflow stored simulate
+
+Trace a stored workflow with sample input and mocked outputs
+
+`gregale workflow stored simulate --app <SLUG> --file <PATH> [--input-file-id <PATH=FILE_UUID>] [--input-file <PATH>] [--mock-outputs-file <PATH>] [--mock-item-outputs-file <PATH>] [--mock-attempts-file <PATH>] [--mock-item-attempts-file <PATH>] [--require-complete]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--input-file-id <PATH=FILE_UUID>` | retained data file below context.input_dir (repeatable) |  |
+| `--input-file <PATH>` | sample workflow input JSON file |  |
+| `--mock-outputs-file <PATH>` | JSON object of action outputs keyed by step name |  |
+| `--mock-item-outputs-file <PATH>` | JSON object of for_each output arrays keyed by step name |  |
+| `--mock-attempts-file <PATH>` | JSON object of ordered attempt outcomes keyed by step name |  |
+| `--mock-item-attempts-file <PATH>` | JSON object mapping loops and zero-based item indexes to attempt outcomes |  |
+| `--require-complete` | fail if mocks leave steps unresolved |  |
+
+Does not run steps.
+
+#### workflow stored apply
+
+Save a stored workflow definition as a draft
+
+`gregale workflow stored apply --app <SLUG> --file <PATH> --expected-version <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--file <PATH>` | YAML or JSON definition file | required |
+| `--expected-version <N>` | current version; use 0 for a new draft | required |
+
+#### workflow stored publish
+
+Publish the current stored workflow draft
+
+`gregale workflow stored publish --app <SLUG> --name <NAME> --expected-version <N> [--take-over-manifest] [--scenarios <PATH>] [--require-coverage]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug | required |
+| `--name <NAME>` | stored workflow name | required |
+| `--expected-version <N>` | current version of the draft | required |
+| `--take-over-manifest` | explicitly take over YAML ownership |  |
+| `--scenarios <PATH>` | check scenarios against the saved draft before publishing |  |
+| `--require-coverage` | require coverage before publishing (requires --scenarios) |  |
+
 ### workflow recover
 
 Recover a saved Workflow run: observe or read diagnostics
@@ -6384,7 +7562,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
+| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` · `execution.finished` · `execution.budget.threshold` · `execution.pipeline.finished` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -6405,7 +7583,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
+| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` · `execution.finished` · `execution.budget.threshold` · `execution.pipeline.finished` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
@@ -6811,7 +7989,7 @@ Add an alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -6882,7 +8060,7 @@ Update one alert rule
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--name <NAME>` | rule name (3..120 chars) |  |
 | `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
-| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -7344,6 +8522,65 @@ Revoke a pending invitation
 | `--org <SLUG>` | organization slug | required |
 | `--invitation <ID>` | invitation ID | required |
 
+### org key
+
+Manage org API keys
+
+#### org key list
+
+List org API keys
+
+`gregale org key list --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key create
+
+Create an org API key; the plaintext is shown once
+
+`gregale org key create --org <SLUG> [--label <TEXT>] [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | key label (same as the positional label; kept for scripts) |  |
+| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
+| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
+
+#### org key get
+
+Show one org API key
+
+`gregale org key get --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key delete
+
+Revoke an org API key
+
+`gregale org key delete --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key rotate
+
+Rotate an org API key; the new plaintext is shown once
+
+`gregale org key rotate --org <SLUG> [--label <TEXT>] <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | new label (empty keeps the current one) |  |
+
 ### org members
 
 Manage org members
@@ -7461,65 +8698,6 @@ Delete one org
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the confirmation prompt (aliases: -q, --quiet) |  |
-
-### org keys
-
-Manage org API keys
-
-#### org keys list
-
-List org API keys
-
-`gregale org keys list --org <SLUG>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys add
-
-Create an org API key; the plaintext is shown once
-
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | key label | required |
-| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
-| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
-| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
-
-#### org keys info
-
-Show one org API key
-
-`gregale org keys info --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rm
-
-Revoke an org API key
-
-`gregale org keys rm --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rotate
-
-Rotate an org API key; the new plaintext is shown once
-
-`gregale org keys rotate --org <SLUG> [--label <TEXT>] <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | new label (empty keeps the current one) |  |
 
 ### org leave
 

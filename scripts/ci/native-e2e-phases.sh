@@ -51,7 +51,7 @@ native_e2e_phase_files() {
     # one everything below depends on.
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go source_start_pin_metal_test.go binary_function_metal_test.go \
       dockerfile_healthcheck_metal_test.go deferred_cache_export_metal_test.go buildkit_seed_metal_test.go \
-      elastic_builder_slots_metal_test.go ;;
+      elastic_builder_slots_metal_test.go reserved_builder_slots_metal_test.go ;;
     # Deploy and safe-release paths: image, canary progression, healthcheck,
     # rollback, port override and secrets.
     deploy) printf '%s\n' \
@@ -269,7 +269,7 @@ native_e2e_assert_phase_partition() {
 # its selected tests are blocking independently of the full matrix's phases.
 # customer-http-operations-only derives every ordinary HTTP Operations scenario
 # (ADR-521); it is the native gate before a customer preview cohort opens.
-NATIVE_E2E_LANES=(smoke containers app-task-interactive-only exclusive-operations-only managed-operation-only managed-redis-only storage-grants-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
+NATIVE_E2E_LANES=(smoke containers app-task-interactive-only dev-loop-only exclusive-operations-only managed-operation-only managed-redis-only storage-grants-only customer-job-operations-only customer-workflow-operations-only customer-http-operations-only project-worker-release-only project-progressive-release-only project-progressive-http-only project-concurrent-release-only project-rollback-retention-only project-release-secrets-only project-migration-contract-only project-migration-sql-only project-environment-promotion-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -317,6 +317,13 @@ native_e2e_lane_tests() {
       # to guest-init's app-task path that need metal without the whole
       # deploy phase.
       grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/app_task_interactive_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    dev-loop-only)
+      # `gregale dev` (ADR-740 live patches, ADR-1170 watch mode), for
+      # changes to guest-init's developer paths without the whole deploy
+      # phase.
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/dev_loop_metal_test.go" "${root}/cmd/e2e/dev_watch_metal_test.go" |
         sed -E 's/^func //; s/\($//' | sort -u
       ;;
     financial-system)

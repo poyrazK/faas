@@ -25,7 +25,7 @@ func TestStorageGrowthHonorsSpendAdmission(t *testing.T) {
 				svc.admit = func(context.Context, string) error { checks++; return want }
 			} else {
 				svc.store = &storageGrowthFleetStore{store}
-				svc.registry.fleet = FleetPolicy{MaxMonthlyCostMillicents: 1}
+				svc.registry.mutatePolicy(func(e *effectivePolicy) { e.fleet = FleetPolicy{MaxMonthlyCostMillicents: 1} })
 				want = ErrFleetPaused
 			}
 			// Establish that this same source really is behind the spend guard.

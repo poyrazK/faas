@@ -516,6 +516,8 @@ if [[ -n "${phase}" ]]; then
     # the host's real builder base before the first deploy (~80 s); 15m
     # killed it mid-deploy on gregale-internal-test-1 (2026-11-17).
     app-task-interactive-only) phase_timeout=45m ;;
+    # Two builder-VM builds per test (the watch test coalesces a third).
+    dev-loop-only) phase_timeout=60m ;;
     twonode) phase_timeout=25m ;;
     *) phase_timeout=15m ;;
   esac

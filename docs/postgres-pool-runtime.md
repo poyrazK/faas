@@ -28,7 +28,7 @@ and direct synchronous Python reloads run on the caller's thread.
 Where Gregale has released it to your account, a deployment carries
 `GREGALE_POSTGRES_POOL_MAX`: how many database connections one instance can
 use, which is its per-instance concurrency (`scaling_policy.per_instance_concurrency`,
-else the plan's `concurrency_per_vm`) capped at 10 (ADR-20261104141122). The
+else 80) capped at 10 (ADR-20261104141122). The
 whole app then opens at most `(max_concurrency + 1) × GREGALE_POSTGRES_POOL_MAX`
 connections, the extra instance being the one a rollout may run beside the
 serving release. The value is set when the deployment is built, so a changed

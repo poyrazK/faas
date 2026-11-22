@@ -186,8 +186,10 @@ type EnqueueParams struct {
 	ImageCommand        []string
 	FullRootfsAllowAuto bool
 	SourcePath          string
-	SourceBytes         int64
-	SourceRoot          string
+	// ExpectedSourceSHA256 pins privately reviewed bytes before publish.
+	ExpectedSourceSHA256 string
+	SourceBytes          int64
+	SourceRoot           string
 	// DockerfilePath is the explicit Dockerfile selected inside SourceRoot.
 	// It is captured in the deployment's immutable inferred profile.
 	DockerfilePath string
@@ -431,6 +433,9 @@ func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) 
 	if p.SourcePath == "" {
 		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: SourcePath is required")
 	}
+	if p.ExpectedSourceSHA256 != "" && (p.OperationID == "" || p.RetryOf != "" || p.ImageRef != "") {
+		return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source requires a source operation")
+	}
 	if len(p.ReleaseCommand) > 0 || p.ReleaseCommandShell {
 		resolved, problem := (api.CreateAppTaskRequest{
 			Command:      p.ReleaseCommand,
@@ -527,6 +532,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 			if existing.AppID != p.AppID || existing.Kind != p.Kind || workflowScope(existing.Scope) != workflowScope(p.Scope) {
 				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: workflow deployment identity changed")
 			}
+			if p.ExpectedSourceSHA256 != "" && existing.SourceSHA256 != p.ExpectedSourceSHA256 {
+				return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
+			}
 			build, buildErr := reader.BuildByID(ctx, buildID)
 			if buildErr == nil {
 				if build.DeploymentID != existing.ID {
@@ -560,6 +568,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		sourceSHA256, err = hashSourceFile(p.SourcePath)
 		if err != nil {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: source integrity: %w", err)
+		}
+		if p.ExpectedSourceSHA256 != "" && sourceSHA256 != p.ExpectedSourceSHA256 {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
 		}
 		profileStart := time.Now()
 		profile, profileErr := frameworkprofile.AnalyzeTarballAtRoot(p.SourcePath, p.SourceRoot)
@@ -752,6 +763,9 @@ func enqueueWithSourceStorage(ctx context.Context, store Store, notif Notifier, 
 		}
 		if d.AppID != p.AppID {
 			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: deployment id collision %s", deploymentID)
+		}
+		if p.ExpectedSourceSHA256 != "" && d.SourceSHA256 != p.ExpectedSourceSHA256 {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: reviewed source checksum changed")
 		}
 		// The original create already performed any supersede transition.
 		// Do not emit a false supersede notification for the recovered row.

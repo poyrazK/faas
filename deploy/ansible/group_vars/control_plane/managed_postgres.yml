@@ -1,0 +1,47 @@
+# group_vars/control_plane/managed_postgres.yml — production's managed
+# PostgreSQL provider registry (managed_postgres_config role).
+#
+# Only what needs a restart lives here: the backend (its settings are every
+# database's placement fingerprint) and whether usage metering runs. The
+# operator policy — provisioning switch, per-account limit, fleet, usage
+# ceilings and rates, production approval — is hot runtime config:
+#   gregalectl config show -key managed_postgres_policy
+# (ADR-20261121120000). Its values override the file's.
+#
+# Recreated 2026-11-21 after the GCP -> OVH move lost the hand-installed
+# file. The backend is GCP prod's, rebuilt from its recorded placement
+# fingerprint:
+#   neon-production-canary 655e8757f0ff5826fa340ba1ac142129797ec9d882ef605f60db84b134ffd49c
+# (snapbox-db's; the role refuses any change that would strand a database).
+faas_managed_postgres_config:
+  default_region: us-east-2
+  defaults: {us-east-2: neon-production-canary}
+  # Closed unless managed_postgres_policy opens it.
+  provisioning_enabled: false
+  health: {enabled: true, interval_seconds: 60, stale_after_seconds: 300}
+  usage:
+    enabled: true
+    collection_interval_seconds: 300
+    window_seconds: 3600
+    stale_after_seconds: 10800
+    # Metering on needs monthly ceilings to load. These are the strictest
+    # fallback; managed_postgres_policy sets the real ones.
+    max_monthly_cost_millicents: 1
+    max_monthly_compute_unit_seconds: 1
+    max_monthly_storage_byte_seconds: 1
+    max_monthly_egress_bytes: 1
+  backends:
+    - id: neon-production-canary
+      driver: neon
+      region: us-east-2
+      namespace: org-sparkling-mode-74377673       # Neon org "Gregale" (Launch plan)
+      settings:
+        region_id: aws-us-east-2
+        database_name: gregale
+        max_storage_bytes: "107374182400"
+        max_restore_window_seconds: "604800"
+      secret_env: {api-key: FAAS_NEON_API_KEY}
+
+# The Neon key lives here on prod (in the cp-state bundle), not in sealed.env.
+faas_managed_postgres_env_files:
+  - /etc/faas/secrets/managed-postgres/provider.env

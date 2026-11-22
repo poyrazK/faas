@@ -44,7 +44,7 @@ func TestUsageTablesShowAppSlugs(t *testing.T) {
 		case "/v1/apps":
 			_, _ = w.Write([]byte(`[{"id":"11111111-1111-4111-8111-111111111111","slug":"h3-rollout","type":"app"}]`))
 		case "/v1/usage/daily":
-			_, _ = w.Write([]byte(`{"items":[{"app_id":"11111111-1111-4111-8111-111111111111","day":"2026-10-04","mb_seconds":3600000,"requests":7},{"app_id":"22222222-2222-4222-8222-222222222222","day":"2026-10-04","mb_seconds":0,"requests":1}]}`))
+			_, _ = w.Write([]byte(`{"items":[{"app_id":"11111111-1111-4111-8111-111111111111","day":"2026-10-04","mb_seconds":3686400,"requests":7},{"app_id":"22222222-2222-4222-8222-222222222222","day":"2026-10-04","mb_seconds":0,"requests":1}]}`))
 		case "/v1/usage/storage":
 			_, _ = w.Write([]byte(`{"items":[{"app_id":"11111111-1111-4111-8111-111111111111","day":"2026-10-04","snapshot_bytes":1048576,"layer_bytes":0}]}`))
 		default:

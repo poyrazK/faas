@@ -52,3 +52,93 @@ Failure cleanup also removes the app-local credentials and tombstones the
 workloads. A restarted executor can clean the same account and run without
 recovering archives or credentials. Claim replay never allocates resources
 or takes ownership of an existing run.
+
+## Candidate builds and guest migration
+
+The private runner checks for the reviewed Node starter's migration entry
+before spending the approval. It submits the worker archive to the normal
+isolated builder under the migration workload's identity and pins
+`node tasks-migrate.js apply` as its contained release command. That workload
+can run the release command and is ineligible for priming an ordinary app VM.
+The starter receives the reserved queue namespace, the disposable schema
+owner URL and newly generated Task keys. The exact archive and all three
+build identities are tied to the original run, and every deployment sets
+traffic explicitly to zero.
+
+The runner verifies the successful, retired guest command receipt against
+the exact run, deployment, command and build artifact. It then retires the
+migration deployment and removes its credentials. Once PostgreSQL grants
+the restricted web, worker and observer logins, it submits the reviewed web
+and worker archives with independent runtime credentials. The two runtime
+builds must succeed before the runner returns their deployment identities.
+Build and migration completion leave runtime protocol and Task smoke
+evidence to the next stage.
+
+The reserved workload lease bounds the operation. Abort cleanup and the
+existing preview teardown recover the owned spool and source objects and
+app-local ephemeral credentials. The existing fixture teardown drops the
+disposable database and roles. An approval replay never resumes an
+interrupted build or migration.
+
+Roll out the imaged and scheduler prime fences before connecting a caller to
+the private runner. These owners must agree that the migration workload may
+execute its release task without starting an ordinary app VM.
+
+## Native worker recovery
+
+The enrolled acceptance caller pins the independently prepared web and
+worker fixtures before claiming the owner-approved run. The worker fixture
+pauses attempt one at its logged checkpoint before entering the report
+handler. The observer matches that log to a live PostgreSQL lease without
+exporting its token, then rechecks the lease before requesting interruption.
+
+The local scheduler socket accepts only a fresh observation for the exact
+reserved run, contained worker, zero-traffic deployment, node, instance
+and wake. The scheduler checks that vmmd observes the resident worker and
+moves the instance out of RUNNING before requesting hard teardown. A lost
+or failed teardown suspends the proof and leaves the run to cleanup.
+A confirmed teardown retires the instance and uses the ordinary worker
+reconciler to restore capacity.
+
+Recovery requires another live lease for the same Task on a distinct
+worker VM, the fixed report through the pinned private MCP connection,
+and one completed result in the reserved PostgreSQL namespace. The
+observer reads counts and the attempt number through its restricted login.
+The report is private to the harness. Native acceptance additionally
+requires running the journey on the enrolled KVM host.
+
+### Operator acceptance command
+
+A dedicated single-box acceptance host enrolls its compute node UUID as
+`node_id` in the existing root-owned
+`/etc/faas/rehearsal-acceptance-host.json` alongside the dedicated account and
+API origin. The enrolled node must resolve to the local schedd and vmmd
+Unix sockets. The platform stamp and clean checkout must match.
+
+Prepare the trusted fixture from that checkout with
+`scripts/ci/rehearsal-native.py --journey hosted-task --prepare-only --out DIR`.
+Use those sources in the normal hosted source review and binding checks,
+then approve a fresh rehearsal plan through the existing owner workflow.
+On the enrolled host, use the same personal administrator in `FAAS_TOKEN`
+and the dedicated HTTPS API origin in `FAAS_API`. Supply the deployed APID
+credential and fixture environment. Paths to the account-domain identity,
+credential lookup policy, runtime recipient and value-fingerprint key
+must be readable by the `faas-apid` service identity. The child uses the
+existing rehearsal admission switches and dedicated PostgreSQL fixture
+configuration. Use a new evidence directory outside the checkout.
+
+```sh
+GREGALE_REHEARSAL_NATIVE_ACCEPTANCE=1 scripts/ci/rehearsal-native.py \
+  --journey hosted-task --out "$evidence_dir" \
+  --hosted-task-intent "$intent_id" --hosted-task-plan "$plan_sha256"
+```
+
+The root wrapper takes the shared native acceptance lock and runs host
+leak checks. It invokes a tagged one-shot child under the APID service
+identity with the four prepared SHA-256 pins. The child authenticates the
+same owner, opens the configured stores, and calls the existing private
+runner. It reads the PostgreSQL catalog, workload and secret rows, and
+source storage after cleanup. The wrapper validates the receipt while it
+is pending, repeats the host identity check and publishes success only
+after the final leak check. A partial run leaves private evidence and
+logs. Its consumed approval cannot be replayed.

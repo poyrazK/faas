@@ -353,6 +353,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.recoverMCPTaskPromotions(ctx)
 	l.reconcileStaleDeployments(ctx)
 	if l.handler != nil {
+		if err := l.handler.MaterializeExecutionEnvironments(ctx); err != nil {
+			l.log.Warn("imaged: Run environment reconciliation failed")
+		}
 		if err := l.handler.MaterializePendingJobs(ctx); err != nil {
 			l.log.Warn("imaged: reconcile pending job images", "err", err)
 		}
@@ -388,6 +391,9 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.recoverMCPTaskPromotions(ctx)
 		case <-jobMaterializationTicker.C:
 			if l.handler != nil {
+				if err := l.handler.MaterializeExecutionEnvironments(ctx); err != nil {
+					l.log.Warn("imaged: Run environment reconciliation failed")
+				}
 				if err := l.handler.MaterializePendingJobs(ctx); err != nil {
 					l.log.Warn("imaged: reconcile pending job images", "err", err)
 				}
@@ -917,6 +923,12 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 	known := make(map[string]struct{}, len(knownIDs)+len(captureIDs))
 	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
+	}
+	// Platform Run templates have no application deployment. Their own
+	// catalog-aware collector owns the reserved namespace.
+	known[uuid.Nil.String()] = struct{}{}
+	if err := l.CollectExecutionTemplateOrphans(ctx, now); err != nil {
+		l.log.Warn("imaged: execution template orphan collection", "err", err)
 	}
 	cutoff := now.Add(-localSnapshotOrphanGrace)
 	l.retireNativeRuntimeSnapshotOrphans(ctx, known, cutoff)

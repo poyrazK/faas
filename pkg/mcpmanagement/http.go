@@ -44,6 +44,10 @@ type HTTPOptions struct {
 	AllowTaskInspection        bool
 	// Toolsets limits the tools every grant lists; nil lists all.
 	Toolsets []string
+	// MaxListedTools caps each grant's listed catalog (Options.MaxListedTools).
+	MaxListedTools int
+	// HideUnavailableCapabilities is Options.HideUnavailableCapabilities.
+	HideUnavailableCapabilities bool
 	// Onboarding is browser (default) or the explicit api-key fallback.
 	Onboarding  string
 	StateStore  *StateStore
@@ -182,7 +186,7 @@ func NewHTTPService(opts HTTPOptions) (*RemoteService, error) {
 	}
 	r := &remoteServer{opts: opts, origin: origin, issuer: issuer, host: u.Host, clients: map[string]*oauthClient{}, requests: map[string]*authorizationRequest{}, codes: map[string]*authorizationCode{}, grants: map[string]*oauthGrant{}, access: map[string]*oauthGrant{}, refresh: map[string]*oauthGrant{}, usedRefresh: map[string]*oauthGrant{}, keyConns: map[string]*keyConnection{}, docs: newDocsLibrary(docsSiteURL, nil)}
 	if opts.Hosted && opts.UploadDir != "" {
-		if r.uploads, err = newUploadStore(opts.UploadDir, opts.ResourceURL); err != nil {
+		if r.uploads, err = openUploadStore(opts.UploadDir, opts.ResourceURL, opts.StateStore); err != nil {
 			return nil, err
 		}
 	}

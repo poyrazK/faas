@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -250,13 +251,15 @@ func (f *hostedTaskAcceptance) seedBindings(t *testing.T, dsns [4]string) {
 
 func (f *hostedTaskAcceptance) connect(t *testing.T, protocol string) (*mcp.ClientSession, *httptest.Server) {
 	t.Helper()
+	uploadDir := t.TempDir()
+	mustHostedTaskAcceptance(t, os.Chmod(uploadDir, 0o755))
 	bridge := httptest.NewUnstartedServer(nil)
 	resource := "https://" + bridge.Listener.Addr().String() + "/mcp"
 	handler, err := mcpmanagement.NewHTTPHandler(mcpmanagement.HTTPOptions{
 		APIBase: f.apidURL, ResourceURL: resource,
 		RedirectURIs: []string{"http://127.0.0.1/callback"}, Hosted: true, AgentKeys: true,
 		AgentKeyToolsetSelection: true, Toolsets: []string{mcpmanagement.ToolsetBuildTools},
-		AllowWrites: true, AllowToolPublishing: true, UploadDir: t.TempDir(),
+		AllowWrites: true, AllowToolPublishing: true, UploadDir: uploadDir,
 		CLIRunner: func(string) mcpmanagement.LocalCLI {
 			return func(context.Context, []string, []byte) (mcpmanagement.LocalCLIResult, error) {
 				f.cliCalls.Add(1)
@@ -267,6 +270,11 @@ func (f *hostedTaskAcceptance) connect(t *testing.T, protocol string) (*mcp.Clie
 	if err != nil {
 		bridge.Close()
 		t.Fatal(err)
+	}
+	info, err := os.Stat(uploadDir)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		bridge.Close()
+		t.Fatalf("bridge did not make the upload directory private: %v, %v", info, err)
 	}
 	bridge.Config.Handler = handler
 	bridge.StartTLS()

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,7 +18,7 @@ func (p *Prepared) BindRuntime(ctx context.Context) error {
 	}
 	bind, stop := context.WithDeadline(ctx, p.expiresAt)
 	defer stop()
-	if err := p.bindRuntime(bind); err != nil {
+	if err := p.bindRuntime(bind, nil, nil); err != nil {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
 		return errors.Join(err, p.cleanup(cleanup))
@@ -24,7 +26,7 @@ func (p *Prepared) BindRuntime(ctx context.Context) error {
 	return nil
 }
 
-func (p *Prepared) bindRuntime(ctx context.Context) error {
+func (p *Prepared) bindRuntime(ctx context.Context, env *runnerEnvironment, observer *pgruntime.TaskObservation) error {
 	for _, role := range workloads {
 		if role.name == Migration {
 			continue
@@ -49,7 +51,13 @@ func (p *Prepared) bindRuntime(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("bind rehearsal %s credential: %w", role.name, err)
 		}
-		if err := p.provisioner.PersistDatabaseURL(ctx, p.account, app, connection); err != nil {
+		if observer != nil && role.name == Observer {
+			*observer, err = p.provisioner.Postgres.TaskObservations(ctx, p.account.ID, member.RunID, app.ID, connection)
+			if err != nil {
+				return fmt.Errorf("open contained Task observer: %w", err)
+			}
+		}
+		if err := p.persistConnection(ctx, app, role.name, connection, env); err != nil {
 			return fmt.Errorf("persist rehearsal %s credential", role.name)
 		}
 	}
@@ -114,9 +122,34 @@ func (p *Prepared) deleteApp(ctx context.Context, name string) error {
 			return err
 		}
 	}
-	err = store.DeleteAppSecret(ctx, p.account.ID, app.ID, databaseKey)
-	if errors.Is(err, state.ErrNotFound) {
-		return nil
+	return p.removeCredentials(ctx, app.ID)
+}
+
+func (p *Prepared) removeCredentials(ctx context.Context, appID string) error {
+	store := p.provisioner.Store
+	secrets, err := store.ListAppSecretsInScope(ctx, p.account.ID, appID, api.DefaultEnvScope)
+	if err != nil {
+		return err
 	}
-	return err
+	var errs []error
+	for _, secret := range secrets {
+		if secret.Key != databaseKey && secret.SecretClass != api.SecretClassEphemeral {
+			continue
+		}
+		if err := store.DeleteAppSecret(ctx, p.account.ID, appID, secret.Key); err != nil && !errors.Is(err, state.ErrNotFound) {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (p *Prepared) persistConnection(ctx context.Context, app state.App, role, connection string, env *runnerEnvironment) error {
+	if env == nil {
+		return p.provisioner.PersistDatabaseURL(ctx, p.account, app, connection)
+	}
+	values := env.roles[role]
+	key := env.databaseKeys[role]
+	values[key] = connection
+	defer delete(values, key)
+	return p.provisioner.PersistEnvironment(ctx, p.account, app, values)
 }

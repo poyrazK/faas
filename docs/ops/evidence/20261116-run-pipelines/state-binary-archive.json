@@ -1,0 +1,9 @@
+{
+  "sha256": "aadd40a683e0e7deab3a5fcca1fda8153f0f4c20eb08303bbab4328931430bbe",
+  "size_bytes": 283567777,
+  "archive_sha256": "d8228f976e6b0d0cccceb5cede7d412d9ff4d24e63a12e124819f3dfda393671",
+  "archive_size_bytes": 84099622,
+  "source_mode": 493,
+  "pg_fixture_mode": 448,
+  "go_cache_touched": false
+}

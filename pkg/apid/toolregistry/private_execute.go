@@ -22,6 +22,7 @@ import (
 )
 
 type PrivateExecutionOptions struct {
+	TaskRehearsalRunner        *taskrehearsal.Runner
 	TaskRehearsalProvisioner   *taskrehearsal.Provisioner
 	RehearsalPlanEnabled       bool
 	BindingVerificationEnabled bool

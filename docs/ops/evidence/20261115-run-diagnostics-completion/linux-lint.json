@@ -1,0 +1,15 @@
+{
+  "complete": true,
+  "exit_code": 0,
+  "functional_qualification_source_manifest_sha256": "be07b967aa22ce8d5205c1087e1eaeab3c122ad8ed8b8de63d831a5b80bd2b6d",
+  "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+  "packages": [
+    "pkg/builderd",
+    "pkg/imaged",
+    "pkg/vmmdgrpc",
+    "pkg/e2etest/runlifecycle"
+  ],
+  "patch_sha256": "5987ae66ba9c083bdc61c7f9df0cf2827c262155c6f957a9d3a2e0bb6e3370bd",
+  "scope": "Linux amd64, metal tag, changed code in selected packages",
+  "source_manifest_sha256": "1d03d70d01c6a6385454dee5b8695f79087255a0fc6e7b78dd434073bb545640"
+}

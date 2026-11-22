@@ -5,7 +5,10 @@ Customer buckets live in their own Public Cloud project,
 from the platform buckets in `../object-storage-policies/`
 (ADR-20261029174627: one project per backend, quota 100 buckets by
 default, 1,000 after a support request). The provider registry names the
-backend `ovh-bhs-prod-v1` and caps it with `max_buckets`.
+backend `ovh-bhs-prod-v1`, caps it with `max_buckets`, and sets
+`"versioning": "unsupported"`: OVH returns a version ID for every object,
+even in an unversioned bucket, and the adapter must read those as the
+`"null"` version or no object can be deleted (ADR-20261121150000).
 
 | User | Policy | Used by | Env names in `provider.env` |
 |---|---|---|---|

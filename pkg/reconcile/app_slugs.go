@@ -110,7 +110,7 @@ func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposc
 			out[i].AppSlug = SuggestedAppSlug(projectSlug, out[i].Name)
 			continue
 		}
-		free, err := bareAppSlugFree(ctx, lookup, out[i].Name, accountSlugs, accountID)
+		free, err := bareAppSlugFree(ctx, lookup, out[i].Name, accountSlugs, accountID, projectID)
 		if err != nil {
 			return nil, err
 		}
@@ -121,7 +121,7 @@ func AllocateAppSlugs(ctx context.Context, lookup SlugLookup, workloads []reposc
 	return out, nil
 }
 
-func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accountSlugs map[string]state.App, accountID string) (bool, error) {
+func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accountSlugs map[string]state.App, accountID, projectID string) (bool, error) {
 	if !api.ValidAppSlug(name) || api.IsReservedAppSlug(name) {
 		return false, nil
 	}
@@ -133,5 +133,9 @@ func bareAppSlugFree(ctx context.Context, lookup SlugLookup, name string, accoun
 		}
 		holder, held = app, err == nil
 	}
-	return !held || holder.AccountID == accountID && holder.Status == state.AppDeleted, nil
+	// Only this project's own deleted member is kept for a restore; restoring
+	// an app deleted from another project (or from none) brings it back
+	// outside this project, so the plan blocked on a name it could never use
+	// (prod hunt 2026-11-21: a new project's "web" held by an old app).
+	return !held || holder.AccountID == accountID && holder.Status == state.AppDeleted && projectID != "" && holder.ProjectID == projectID, nil
 }

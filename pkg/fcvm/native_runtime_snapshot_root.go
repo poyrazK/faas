@@ -57,12 +57,31 @@ func nativeRuntimeSnapshotObject(key string) (memory, captures string, ok bool) 
 		return "", "", false
 	}
 	keys := nativeRuntimeCaptureKeys(memory)
-	if runtimeadmission.CheckSnapshotCaptureKeys(deployment.String(), keys.Memory, keys.VMState, keys.Drive) != nil ||
+	// The nil UUID is reserved for payload-free platform Run templates. It
+	// confers storage/retirement scope only; runtime admission continues to
+	// reject nil deployment identities and grants no restore authority here.
+	platform := false
+	if len(parts) == 6 && parts[0] == "snap" && parts[1] == uuid.Nil.String() && parts[2] == "captures" && parts[4] == "v2" && parts[5] == "mem" {
+		capture, err := uuid.Parse(parts[3])
+		platform = err == nil && capture != uuid.Nil && capture.String() == parts[3]
+	}
+	if !platform && runtimeadmission.CheckSnapshotCaptureKeys(deployment.String(), keys.Memory, keys.VMState, keys.Drive) != nil ||
 		!canonicalNativeHelperID(nativeRuntimeCaptureID(memory)) ||
 		key != keys.Memory && key != keys.VMState && key != keys.Drive && key != keys.Backing {
 		return "", "", false
 	}
 	return memory, path.Dir(path.Dir(path.Dir(memory))), true
+}
+
+// Only the reserved, canonical platform memory key can name a Run template.
+// This is separate from runtime admission, which continues to refuse nil deployments.
+func executionTemplateMemoryKey(key string) bool {
+	parts := strings.Split(key, "/")
+	if len(parts) != 6 || parts[0] != "snap" || parts[1] != uuid.Nil.String() || parts[2] != "captures" || parts[4] != "v2" || parts[5] != "mem" {
+		return false
+	}
+	id, err := uuid.Parse(parts[3])
+	return err == nil && id != uuid.Nil && id.String() == parts[3]
 }
 
 // nativeRuntimeSnapshotStore returns the native tree when it holds key, and

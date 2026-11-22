@@ -216,6 +216,10 @@ type Manifest struct {
 	// renderer hands its source directory to every control-plane and
 	// compute host, so the roles install the JWKS and the signing key.
 	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
+
+	// OutboundRelay turns on the ADR-989 app outbound relay
+	// (outbound_relay.go). Absent keeps GREGALE_OUTBOUND_URL closed in apps.
+	OutboundRelay OutboundRelay `yaml:"outbound_relay,omitempty"`
 }
 
 // ObjectStorage is the s3-gatewayd deployment contract for the control plane.
@@ -588,6 +592,12 @@ type Host struct {
 	// sent to it, including SSH. The DNS-only records point at it. Unused
 	// elsewhere.
 	EntryIPv4 string `yaml:"entry_ipv4,omitempty"`
+	// BuilderReservedSlots is how many guaranteed builder slots a compute
+	// host runs (ADR-20261118154632 amendment 1): node_join sizes its
+	// faas-cp-build.slice, faas-cp.slice and tenant fence for them and hands
+	// builderd and vmmd the count as FAAS_BUILDER_RESERVED_SLOTS. 0 (unset)
+	// is one, today's slot. compute-only hosts only.
+	BuilderReservedSlots int `yaml:"builder_reserved_slots,omitempty"`
 }
 
 // EntryAddress is the host's public entry address under public_edge.front:
@@ -688,9 +698,11 @@ type DaemonConfig struct {
 	// FrozenTierEarlyFreezeAfterS is schedd's
 	// frozen_tier_early_freeze_after_s (ADR-20261021215353): freeze a quiet
 	// between_requests instance this many seconds after its last request.
-	// Omitted renders nothing, which keeps schedd's default (0, off); 0
-	// turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
+	// Omitted renders nothing, which keeps schedd's default
+	// (api.FrozenEarlyFreezeDefaultSeconds, 15 s, whenever the frozen tier is
+	// on); 0 turns it off explicitly, otherwise api.FrozenEarlyFreezeMinSeconds-
 	// api.FrozenEarlyFreezeMaxSeconds. It needs schedd's frozen tier on.
+	// Compute schedds receive it as a drop-in via gregalectl's hot-path vars.
 	FrozenTierEarlyFreezeAfterS *int `yaml:"frozen_tier_early_freeze_after_s,omitempty"`
 
 	// GatewaySynthTarget is schedd's optional remote gatewayd-internal
@@ -1553,6 +1565,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Fleet.validate()...)
 	errs = append(errs, m.validateDynamicCompute()...)
 	errs = append(errs, m.validateFleetEndpoints()...)
+	errs = append(errs, m.validateBuilderReservedSlots()...)
 	errs = append(errs, m.Daemons.validate()...)
 	errs = append(errs, m.Overlay.validate()...)
 	errs = append(errs, m.SSH.validate()...)
@@ -1657,6 +1670,27 @@ func ServiceTCPURL(role, raw string) (string, error) {
 		return "", err
 	}
 	return "tcp://" + net.JoinHostPort(name, strconv.Itoa(port)), nil
+}
+
+// validateBuilderReservedSlots bounds each host's builder_reserved_slots to
+// api.BuilderReservedSlotsMin..Max and keeps it to compute-only hosts, the
+// only ones that run builderd.
+func (m *Manifest) validateBuilderReservedSlots() Errors {
+	var errs Errors
+	for i, h := range m.Fleet.Hosts {
+		if h.BuilderReservedSlots == 0 {
+			continue
+		}
+		path := fmt.Sprintf("fleet.hosts[%d].builder_reserved_slots", i)
+		if h.Role != "compute-only" {
+			errs = append(errs, Error{path, "applies only to a compute-only host, which runs builderd"})
+			continue
+		}
+		if h.BuilderReservedSlots < api.BuilderReservedSlotsMin || h.BuilderReservedSlots > api.BuilderReservedSlotsMax {
+			errs = append(errs, Error{path, fmt.Sprintf("must be %d–%d (ADR-20261118154632 amendment 1)", api.BuilderReservedSlotsMin, api.BuilderReservedSlotsMax)})
+		}
+	}
+	return errs
 }
 
 func (m *Manifest) validateFleetEndpoints() Errors {

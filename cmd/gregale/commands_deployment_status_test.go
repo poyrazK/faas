@@ -60,7 +60,7 @@ func TestReleaseWaitFor(t *testing.T) {
 	}{
 		{"holds", api.Condition{Status: "True", Reason: "rolled_out", Message: "done"}, []string{"--for", "RolledOut"}, 0, ""},
 		{"aborted rollout is terminal", api.Condition{Status: "False", Reason: "rollout_aborted", Message: "stopped", Terminal: true}, []string{"--for", "RolledOut"}, 1, "rollout_aborted"},
-		{"not with --rollout", api.Condition{Status: "True"}, []string{"--for", "RolledOut", "--rollout"}, 1, "--rollout is --for RolledOut"},
+		{"not with --rollout", api.Condition{Status: "True"}, []string{"--for", "RolledOut", "--rollout"}, 1, "--for cannot be combined with --rollout"},
 		{"app conditions are not release conditions", api.Condition{Status: "True"}, []string{"--for", "Degraded"}, 1, "deployment conditions are Ready, Progressing, RolledOut"},
 	}
 	for _, tc := range tests {

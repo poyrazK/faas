@@ -40,7 +40,7 @@ func (s *server) managedPostgresReleased(ctx context.Context, accountID string) 
 // provisioning is closed, and records the approval's end for the expiry
 // alerts. Reasons are stable codes; no secret reaches the log.
 func logManagedPostgresProductionReadiness(registry *managedpostgres.Registry, getenv func(string) string, metrics *managedpostgres.Metrics, log *slog.Logger) {
-	approval := managedpostgres.LoadProductionApproval(getenv)
+	approval := registry.ProductionApproval(managedpostgres.LoadProductionApproval(getenv))
 	metrics.SetProductionApprovalUntil(approval.Until)
 	readiness := registry.ProductionReadiness(approval, time.Now().UTC())
 	if log == nil {

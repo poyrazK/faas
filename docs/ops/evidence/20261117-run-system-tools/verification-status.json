@@ -1,0 +1,53 @@
+{
+  "current_openapi_errors": 97,
+  "baseline_openapi_errors": 97,
+  "new_error_locations": [],
+  "scope": "system_packages field",
+  "production_activation": false,
+  "functional_vm_pdf_qualification": "blocked_builder_free_disk_guard_additional_cache_approval_pending",
+  "native_production_runtime_eligibility": false,
+  "node_cache_eviction": {
+    "manifest_sha256": "865992d0413d3e4dee918fbf9fcac4df059fe90c968b5bee86b42eec34bf83ef",
+    "deleted": 1498,
+    "skipped": 0,
+    "bytes_freed": 8590014892
+  },
+  "linux_compile": "passed_metal_race_typecheck",
+  "retry_after_requested_wait": {
+    "time_utc": "2026-11-17T19:33:01Z",
+    "available_memory_kib": 14513256,
+    "scratch_free_gib_before_eviction": 5.1,
+    "acceptance_lock": "available"
+  },
+  "linux_lint": "passed_focused_production_cgo0",
+  "scratch_free_gib_latest_observed": 24,
+  "queue_source_delta": {
+    "archive_sha256": "128e2cbee3e819e9eac60bff81cb64042c93bf2932d1cd3a1221eabe873312c4",
+    "source_manifest_sha256": "25922853215dd0bbf1aa81e7e844063a4a128f3aeda60313fa8960175c9acace",
+    "bytes": 2711891,
+    "files": [
+      "scripts/ci/run-run-lifecycle-acceptance.sh"
+    ]
+  },
+  "first_vm_attempt": {
+    "failed_before_scenarios": true,
+    "reason": "existing ownership journal requires native_process_recovery",
+    "leakcheck_before": 0,
+    "leakcheck_after": 0
+  },
+  "native_profile_source_delta": {
+    "archive_sha256": "036f3402634736238568e382ab4aa4cde98429e4aef7f4d52dd57cab43540ad1",
+    "source_manifest_sha256": "ef3f4c90c6925a5bca8200299261ecf93b28709f52047f6c52b30af4c19f2645",
+    "bytes": 2711920,
+    "files": [
+      "scripts/ci/run-run-lifecycle-acceptance.sh"
+    ]
+  },
+  "second_vm_attempt": {
+    "recipe_and_reuse": "passed",
+    "build": "refused_by_20_gib_guard",
+    "available_bytes": 12125839360,
+    "required_bytes": 21474836480,
+    "leakcheck_after": 0
+  }
+}

@@ -18,7 +18,9 @@ faas_cp_state_backup_recipients:
 # The Alertmanager receiver files live outside /etc/faas, so the default list
 # misses them, and a control plane rebuilt without them fails its converge
 # (alertmanager role). These are production's paths (am_slack_webhook_url_file,
-# am_heartbeat_url_file); a path the host lacks is skipped.
+# am_heartbeat_url_file, am_smtp_password_file); a path the host lacks is skipped.
 faas_cp_state_extra_files:
   - /etc/alertmanager/secrets/slack-webhook-url
   - /etc/alertmanager/secrets/heartbeat-url
+  - /etc/alertmanager/secrets/smtp-password
+  - /etc/alertmanager/secrets/delivery-pagerduty-key

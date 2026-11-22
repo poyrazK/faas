@@ -117,6 +117,9 @@ func UnitSchedd() daemonunit.Unit {
 			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
 			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
+			// ADR-489: run stored workflow integration steps through
+			// outboundd (beta, 2026-11-21); outboundd sets the same switch.
+			{Key: "FAAS_WORKFLOW_OUTBOUND_ENABLED", Value: "1"},
 			// ADR-1189: fire the prewarm intents the API accepts (ADR-160);
 			// without the drain they would stay pending.
 			{Key: "FAAS_PREWARM_ENABLED", Value: "1"},

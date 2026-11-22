@@ -53,12 +53,15 @@ func (e *PrivateExecutor) loadHostedTaskSource(ctx context.Context, account, id 
 }
 
 func (e *PrivateExecutor) hostedBindingPolicy(ctx context.Context, account, id string) (tasktoolbinding.Policy, error) {
-	var p tasktoolbinding.Policy
 	source, err := e.loadHostedTaskSource(ctx, account, id)
 	if err != nil {
-		return p, err
+		return tasktoolbinding.Policy{}, err
 	}
-	sources := source.entries
+	return reviewedHostedBindingPolicy(source.entries)
+}
+
+func reviewedHostedBindingPolicy(sources map[string][]api.HostedTaskSourceEntry) (tasktoolbinding.Policy, error) {
+	var p tasktoolbinding.Policy
 	web, err := sourcecheck.SourceConfig(sources["web"], false)
 	if err != nil {
 		return p, state.ErrConflict

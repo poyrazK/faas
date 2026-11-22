@@ -1,0 +1,93 @@
+[
+  {
+    "attempt": 1,
+    "controls_witness": {
+      "active": 0,
+      "attribution": true,
+      "budget_refusals": 2,
+      "history": true,
+      "inbox_records": 1,
+      "invocations": 1,
+      "reserved_mb_ms": 0,
+      "runs": 1,
+      "used_mb_ms": 86592
+    },
+    "functional_pass": true,
+    "note": "Passing initial journey before behavior-preserving clock-argument cleanup, validator readability rewrite, contract-test addition, formatting and qualification documentation.",
+    "process_exits": {
+      "controls": 0,
+      "leakcheck_after": 0,
+      "leakcheck_before": 0
+    },
+    "sha256": {
+      "controls.jsonl": "8425ba16fa2f6b0ca30ebcb78ea0b6e27be54fe74ea66e2274cea159bd9a4eb8",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "a9b0599cbcf7466a4f6c088dc4f94bb783558b6089b3edf8b25a044bc305ebce"
+    },
+    "source": {
+      "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+      "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+      "go_version": "go version go1.26.11 linux/amd64",
+      "source_files": 55535,
+      "source_manifest_sha256": "0fac111285fd9f8351180c4035ea2b6d99c1091c406679774acd33ed789dfa29"
+    }
+  },
+  {
+    "attempt": 2,
+    "cause": "Operator fixture placement introduced a symlink in the private snapshot-root path. vmmd correctly rejected it with ELOOP before its socket became ready. No customer Run was admitted. Retried with a real staging directory; no runtime guard was changed.",
+    "functional_pass": false,
+    "process_exits": {
+      "controls": 1,
+      "leakcheck_after": 0,
+      "leakcheck_before": 0
+    },
+    "sha256": {
+      "controls.jsonl": "fda75def384a4ece073dbf7487ae7a0a89a496ba4124c28273b00a6cb6b52b7f",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "83575b7ef2d6d3ed4b374101758fa7bf184d65a3d8ddb4244ae76a94dac3b203"
+    },
+    "source": {
+      "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+      "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+      "go_version": "go version go1.26.11 linux/amd64",
+      "source_files": 55536,
+      "source_manifest_sha256": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522"
+    }
+  },
+  {
+    "attempt": 3,
+    "controls_witness": {
+      "active": 0,
+      "attribution": true,
+      "budget_refusals": 2,
+      "history": true,
+      "inbox_records": 1,
+      "invocations": 1,
+      "reserved_mb_ms": 0,
+      "runs": 1,
+      "used_mb_ms": 89760
+    },
+    "functional_pass": true,
+    "note": "Final exact source with a real staging directory after all five serial Linux lint groups passed.",
+    "process_exits": {
+      "controls": 0,
+      "leakcheck_after": 0,
+      "leakcheck_before": 0
+    },
+    "sha256": {
+      "controls.jsonl": "1cb14c13b4c894205b640626fc364051876e45ab8fe3bce0314455a251ecf1b5",
+      "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+      "process-exits.json": "a9b0599cbcf7466a4f6c088dc4f94bb783558b6089b3edf8b25a044bc305ebce"
+    },
+    "source": {
+      "base_snapshot_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+      "go_sha256": "95499375c24b610cdc9e3684cec920174ec4c4f3f66d35b4332107f0f7d3d27d",
+      "go_version": "go version go1.26.11 linux/amd64",
+      "source_files": 55536,
+      "source_manifest_sha256": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522"
+    }
+  }
+]

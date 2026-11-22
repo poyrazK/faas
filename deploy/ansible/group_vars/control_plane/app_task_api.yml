@@ -1,0 +1,6 @@
+# group_vars/control_plane/app_task_api.yml — the public app-task API
+# (ADR-230: app tasks, `gregale app exec`, binding verification probes) on
+# production's apid. Turned on 2026-11-22 (owner): the app_tasks platform flag
+# already offered it to every account while apid answered not_implemented.
+# Dispatch comes from release_commands.yml (schedd's FAAS_APP_TASK_DISPATCH).
+faas_app_task_api: true

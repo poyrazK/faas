@@ -1,0 +1,5 @@
+[Service]
+# ADR-20261121210517: true bills the response bytes gatewayd-internal forwards
+# from an instance as app egress, for compute nodes whose public responses
+# never cross the instance veth (no public forwarding, ADR-1749).
+Environment=FAAS_GATEWAY_RESPONSE_EGRESS={{ meterd_gateway_response_egress | bool | lower }}

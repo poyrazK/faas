@@ -35,11 +35,12 @@ func TestMCPPrivateOnboardingEachRuntime(t *testing.T) {
 			if config.Auth.Mode != "external-oauth" || config.Auth.Resource != "https://mcp.example.com/mcp" || strings.Join(config.Auth.Scopes, ",") != "mcp:tools,mcp:read" {
 				t.Fatalf("private config: %+v", config.Auth)
 			}
-			if config.Auth.ToolScopes["build_report"] == nil || config.Auth.ResourceScopes["customer://records/{recordId}"] == nil || config.Auth.PromptScopes["summarize"] == nil {
+			if config.Auth.ToolScopes["add"] == nil || config.Auth.ResourceScopes["customer://records/{recordId}"] == nil || config.Auth.PromptScopes["summarize"] == nil {
 				t.Fatal("lost explicit catalog allowlists")
 			}
-			if config.Tasks == nil || *config.Tasks.Enabled {
-				t.Fatal("Tasks unexpectedly enabled")
+			// The plain starters have no Tasks block; Tasks stacks use -tasks.
+			if config.Tasks != nil {
+				t.Fatalf("Tasks unexpectedly enabled or declared: %+v", config.Tasks)
 			}
 			if !strings.Contains(out.String(), "--token-env MCP_ACCESS_TOKEN") || strings.Contains(out.String(), "uses public access") {
 				t.Fatalf("incorrect next steps: %s", out.String())

@@ -336,7 +336,7 @@ RULES = [
     (r"crash-snapshot|crashsnapshot", "Crash snapshots"),
     (r"fork", "Production forks"),
     (r"mcp", "MCP hosting"),
-    (r"execution|disposable|image-run|interactive-run", "Disposable isolated runs"),
+    (r"execution|disposable|image-run|interactive-run|run-artifact-deliver|run-(tasks|controls|history)|gregale-run-roadmap|^run(env|file|filestore|task)$", "Disposable isolated runs"),
     (r"companion|sidecar|extension", "Application companions"),
     (r"reserved-concurrency|eviction-priority", "Reserved concurrency"),
     (r"warm-pool|warm-snapshot|warmpool", "Warm pool"),
@@ -402,6 +402,9 @@ PRIORITY_RULES = [
     (r"^ai-(content-policy|request-replay)$", "AI gateway"),
     (r"^security-headers$", "Edge rules (incl"),
     (r"^signed-urls$", "Object storage"),
+    # ADR-20261121230052: these object-storage sub-features stay preview while
+    # the rest of object storage is GA, so they have their own inventory row.
+    (r"^(object-versioning|object-protection|object-lifecycle|bucket-encryption|bucket-cors|bucket-access-grants)$", "Bucket versioning, Object Lock"),
     (r"^test$|^scenario-tests$|^scenario-(test|object|postgres)", "Scenario tests"),
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
     (r"stored-workflow-test", "Stored workflows:"),

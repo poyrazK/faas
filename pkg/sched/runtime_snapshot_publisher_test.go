@@ -25,7 +25,7 @@ func publisherTestIdentity() sched.RuntimeSnapshotIdentity {
 		BaseImageDigest:     strings.Repeat("c", 64),
 		MemoryMB:            128,
 		EphemeralDiskMB:     64,
-		FormatVersion:       sched.CurrentRuntimeSnapshotFormatVersion,
+		FormatVersion:       1,
 	}
 }
 
@@ -77,7 +77,7 @@ func TestRuntimeSnapshotPublisherPublishesVerifiedPair(t *testing.T) {
 		Shape:        api.ExecutionSnapshotShape{Runtime: api.ExecutionRuntimeNode22, MemoryMB: 128, EphemeralDiskMB: 64},
 		Architecture: "amd64",
 		KernelDigest: strings.Repeat("a", 64), GuestExecutorDigest: strings.Repeat("b", 64),
-		BaseImageDigest: strings.Repeat("c", 64), FormatVersion: sched.CurrentRuntimeSnapshotFormatVersion,
+		BaseImageDigest: strings.Repeat("c", 64), FormatVersion: 1,
 	})
 	if err != nil || plan.Mode != sched.RuntimeSnapshotRestore || plan.Snapshot == nil {
 		t.Fatalf("catalog plan = %#v, err=%v", plan, err)

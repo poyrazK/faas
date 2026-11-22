@@ -16,15 +16,16 @@ import (
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/tasktoolrehearsal"
 )
 
 const (
-	Migration = "migration"
+	Migration = tasktoolrehearsal.MigrationWorkload
 	Web       = "web"
 	Worker    = "worker"
 	Observer  = "observer"
 
-	leaseDuration  = 15 * time.Minute
+	leaseDuration  = tasktoolrehearsal.WorkloadLease
 	cleanupTimeout = 30 * time.Second
 	databaseKey    = "DATABASE_URL"
 	// This platform-owned marker provides an initial capture on an otherwise
@@ -50,6 +51,7 @@ type Store interface {
 	RegisterScenarioTestMembers(context.Context, string, string, []state.ScenarioTestMember) error
 	ScenarioTestMemberByApp(context.Context, string) (state.ScenarioTestMember, error)
 	DeleteAppSecret(context.Context, string, string, string) error
+	ListAppSecretsInScope(context.Context, string, string, string) ([]state.AppSecret, error)
 	SetPreviewPrState(context.Context, string, string) (state.App, error)
 	SoftDeleteAppCascade(context.Context, string) (state.App, error)
 }
@@ -62,6 +64,7 @@ type Provisioner struct {
 	Postgres           *pgruntime.Service
 	BuildApp           func(state.Account, api.CreateAppRequest, api.Limits) (state.App, *api.Problem)
 	PersistDatabaseURL func(context.Context, state.Account, state.App, string) error
+	PersistEnvironment func(context.Context, state.Account, state.App, map[string]string) error
 }
 
 // Prepared is an in-process handoff to the contained release runner. Lost
@@ -77,7 +80,7 @@ type Prepared struct {
 func (p *Prepared) Namespace() string { return "rehearsal-" + p.run.String() }
 
 func (p *Prepared) AppID(name string) string {
-	return uuid.NewSHA1(p.run, []byte("hosted-task-rehearsal-v1:"+name)).String()
+	return tasktoolrehearsal.WorkloadID(p.run, name)
 }
 
 func (p *Prepared) scenarioID() string {
@@ -101,6 +104,10 @@ func (p *Prepared) owns(app state.App, name string) bool {
 // Provision is for the holder of a newly acquired private claim. App and
 // fixture leases are bounded by the persisted reservation time.
 func (p *Provisioner) Provision(ctx context.Context, account state.Account, run state.HostedTaskRehearsalRun) (*Prepared, error) {
+	return p.provisionRun(ctx, account, run, nil)
+}
+
+func (p *Provisioner) provisionRun(ctx context.Context, account state.Account, run state.HostedTaskRehearsalRun, env *runnerEnvironment) (*Prepared, error) {
 	if !p.AdmissionEnabled {
 		return nil, state.ErrConflict
 	}
@@ -115,7 +122,7 @@ func (p *Provisioner) Provision(ctx context.Context, account state.Account, run 
 	target.expiresAt = run.ReservedAt.Add(leaseDuration)
 	setup, cancel := context.WithDeadline(ctx, run.ApprovalExpiresAt)
 	defer cancel()
-	if err := target.provision(setup); err != nil {
+	if err := target.provision(setup, env); err != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer stop()
 		return nil, errors.Join(err, target.cleanup(cleanup))
@@ -132,10 +139,10 @@ func (p *Provisioner) target(account state.Account, runID string) (*Prepared, er
 	return &Prepared{provisioner: p, account: account, run: id}, nil
 }
 
-func (p *Prepared) provision(ctx context.Context) error {
+func (p *Prepared) provision(ctx context.Context, env *runnerEnvironment) error {
 	store := p.provisioner.Store
 	limits, ok := api.LimitsFor(p.account.Plan)
-	if !ok || p.provisioner.BuildApp == nil || p.provisioner.PersistDatabaseURL == nil {
+	if !ok || p.provisioner.BuildApp == nil || (env == nil && p.provisioner.PersistDatabaseURL == nil) || (env != nil && p.provisioner.PersistEnvironment == nil) {
 		return state.ErrInvalidArgument
 	}
 	members, err := p.members()
@@ -181,7 +188,7 @@ func (p *Prepared) provision(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("provision rehearsal database: %w", err)
 	}
-	if err := p.provisioner.PersistDatabaseURL(ctx, p.account, migration, connection); err != nil {
+	if err := p.persistConnection(ctx, migration, Migration, connection, env); err != nil {
 		return errors.New("persist rehearsal migration credential")
 	}
 	return ctx.Err()

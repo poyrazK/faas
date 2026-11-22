@@ -386,6 +386,133 @@ type ObsInvocationRow struct {
 	LastError   string     `json:"last_error,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// InstanceID is the instance that ran the invocation, once one claimed it.
+	InstanceID string `json:"instance_id,omitempty"`
+}
+
+// ObsInstanceListResponse answers GET /v1/admin/obs/instances
+// (ADR-20261121161842): resident instances across every compute node, most
+// recently used first. UnavailableNodes names nodes whose instances could not
+// be read; Truncated means more instances matched than Limit.
+type ObsInstanceListResponse struct {
+	Items            []ObsInstanceRow `json:"items"`
+	Limit            int              `json:"limit"`
+	Truncated        bool             `json:"truncated"`
+	UnavailableNodes []string         `json:"unavailable_nodes,omitempty"`
+}
+
+// ObsWakeLatencyReport is GET /v1/admin/obs/wake-latency (ADR-20261121200409):
+// the fleet's wakes over a window, read from the wake.* events. A wake's
+// duration is schedd's boot window, wake.boot_completed started_at ->
+// completed_at; a thaw's is wake.thaw_breakdown total_ms. Platform snapshot
+// refresh boots are counted apart and left out of every other figure.
+// Truncated names the event kinds whose rows hit the per-kind read cap, so
+// the figures cover only the newest part of the window.
+type ObsWakeLatencyReport struct {
+	Window         string               `json:"window"`
+	Since          time.Time            `json:"since"`
+	AsOf           time.Time            `json:"as_of"`
+	TargetMS       int64                `json:"target_ms"`
+	Truncated      []string             `json:"truncated,omitempty"`
+	Totals         ObsWakeTotals        `json:"totals"`
+	Methods        []ObsWakeMethodStat  `json:"methods"`
+	Nodes          []ObsWakeNodeStat    `json:"nodes"`
+	Phases         []ObsWakePhaseStat   `json:"phases"`
+	ColdReasons    []ObsWakeReasonCount `json:"cold_reasons"`
+	FailureReasons []ObsWakeReasonCount `json:"failure_reasons"`
+	Slowest        []ObsWakeSample      `json:"slowest"`
+	ColdBootApps   []ObsWakeAppStat     `json:"cold_boot_apps"`
+}
+
+// ObsWakeTotals counts the window's wakes. Fallbacks are restores vmmd ran as
+// cold boots; RestoresOverTarget are restores slower than TargetMS.
+type ObsWakeTotals struct {
+	Wakes              int `json:"wakes"`
+	Restores           int `json:"restores"`
+	ColdBoots          int `json:"cold_boots"`
+	Thaws              int `json:"thaws"`
+	Failures           int `json:"failures"`
+	Fallbacks          int `json:"fallbacks"`
+	RestoresOverTarget int `json:"restores_over_target"`
+	PlatformRefreshes  int `json:"platform_refreshes"`
+}
+
+// ObsWakeMethodStat is one wake method's duration quantiles.
+type ObsWakeMethodStat struct {
+	Method     string `json:"method"`
+	Count      int    `json:"count"`
+	P50MS      int64  `json:"p50_ms"`
+	P95MS      int64  `json:"p95_ms"`
+	P99MS      int64  `json:"p99_ms"`
+	MaxMS      int64  `json:"max_ms"`
+	OverTarget int    `json:"over_target"`
+}
+
+// ObsWakeNodeStat is one node's wakes; NodeName is empty for a node apid no
+// longer knows.
+type ObsWakeNodeStat struct {
+	NodeID             string `json:"node_id"`
+	NodeName           string `json:"node_name,omitempty"`
+	Restores           int    `json:"restores"`
+	ColdBoots          int    `json:"cold_boots"`
+	Thaws              int    `json:"thaws"`
+	Failures           int    `json:"failures"`
+	Fallbacks          int    `json:"fallbacks"`
+	RestoreP50MS       int64  `json:"restore_p50_ms"`
+	RestoreP95MS       int64  `json:"restore_p95_ms"`
+	RestoresOverTarget int    `json:"restores_over_target"`
+}
+
+// ObsWakePhaseStat is one vmmd (restore, cold_boot) or schedd (thaw) phase
+// across the window's breakdown events, slowest p95 first.
+type ObsWakePhaseStat struct {
+	Method  string `json:"method"`
+	Phase   string `json:"phase"`
+	Samples int    `json:"samples"`
+	P50MS   int64  `json:"p50_ms"`
+	P95MS   int64  `json:"p95_ms"`
+	MaxMS   int64  `json:"max_ms"`
+}
+
+// ObsWakeReasonCount is how often one closed reason code occurred.
+type ObsWakeReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
+}
+
+// ObsWakeSample is one completed wake, for the slowest-wakes list. SlowPhase
+// is its breakdown's longest phase, when vmmd reported one.
+type ObsWakeSample struct {
+	WakeID         string    `json:"wake_id"`
+	InstanceID     string    `json:"instance_id,omitempty"`
+	AppID          string    `json:"app_id"`
+	AppSlug        string    `json:"app_slug,omitempty"`
+	AccountID      string    `json:"account_id,omitempty"`
+	NodeID         string    `json:"node_id,omitempty"`
+	NodeName       string    `json:"node_name,omitempty"`
+	Method         string    `json:"method"`
+	Tier           string    `json:"tier,omitempty"`
+	Trigger        string    `json:"trigger,omitempty"`
+	ColdReason     string    `json:"cold_reason,omitempty"`
+	FallbackReason string    `json:"fallback_reason,omitempty"`
+	DurationMS     int64     `json:"duration_ms"`
+	CompletedAt    time.Time `json:"completed_at"`
+	SlowPhase      string    `json:"slow_phase,omitempty"`
+	SlowPhaseMS    int64     `json:"slow_phase_ms,omitempty"`
+}
+
+// ObsWakeAppStat is one app that cold booted in the window, most cold boots
+// first: the apps whose wakes keep missing a snapshot.
+type ObsWakeAppStat struct {
+	AppID         string `json:"app_id"`
+	AppSlug       string `json:"app_slug,omitempty"`
+	AccountID     string `json:"account_id,omitempty"`
+	Wakes         int    `json:"wakes"`
+	Restores      int    `json:"restores"`
+	ColdBoots     int    `json:"cold_boots"`
+	Fallbacks     int    `json:"fallbacks"`
+	TopColdReason string `json:"top_cold_reason,omitempty"`
+	P95MS         int64  `json:"p95_ms"`
 }
 
 // ObsAuditActivityRow is the safe metadata-only projection of audit_log.

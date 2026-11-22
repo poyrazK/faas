@@ -151,7 +151,10 @@ func nodeIntentSpecFor(action string) (nodeIntentSpec, error) {
 }
 
 func (s *server) nodeIntentPreflight(r *http.Request, node state.ComputeNode, spec nodeIntentSpec, forced bool) (api.ObsNodeOperationPreflight, error) {
-	instances, err := s.store.ListInstancesOnNodeID(r.Context(), node.ID)
+	// The apps and tenants a node operation affects are those with a VM on
+	// the node now. The node's full history named every app that ever ran
+	// there, and this loop read each one.
+	instances, err := s.store.ListResidentInstancesOnNodeID(r.Context(), node.ID)
 	if err != nil {
 		return api.ObsNodeOperationPreflight{}, err
 	}

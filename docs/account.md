@@ -232,10 +232,10 @@ Owners and admins create keys that belong to the organization rather than to
 a person:
 
 ```bash
-gregale org keys add --org acme --label ci-deploy --scopes deploy:write
-gregale org keys list --org acme
-gregale org keys rotate --org acme KEY_ID
-gregale org keys rm --org acme KEY_ID
+gregale org key create ci-deploy --org acme --scopes deploy:write
+gregale org key list --org acme
+gregale org key rotate --org acme KEY_ID
+gregale org key delete --org acme KEY_ID
 ```
 
 Creating one emails the owner. Scopes, lifetime and rotation work as for

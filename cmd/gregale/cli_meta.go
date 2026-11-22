@@ -540,8 +540,11 @@ var templateNames13 = []string{
 	"secret-reload-node",
 	"customer-platform",
 	"mcp-node",
+	"mcp-node-tasks",
 	"mcp-go",
+	"mcp-go-tasks",
 	"mcp-python",
+	"mcp-python-tasks",
 	"customer-operation-export",
 	"customer-operation-job-export",
 	"customer-operation-workflow-export",
@@ -733,7 +736,7 @@ var cliCommands = []cliCommand{
 				{Name: "permission", Short: "compute binding permission", Value: "MODE", ClosedSet: []string{"read", "write", "read_write"}},
 				{Name: "label", Short: "bucket-scoped compute credential label", Value: "LABEL"},
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
-				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix (preview)", Value: "KEYS/"},
+				{Name: "key-prefix", Short: "limit the binding to object keys under this prefix", Value: "KEYS/"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog", Examples: []string{
@@ -771,7 +774,7 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets: encryption, versioning and lifecycle",
+		Name: "bucket", DocSlug: "object-storage", Short: "Manage object storage buckets, objects, signed URLs and uploads",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List an app's object-storage buckets and their IDs", Positionals: []string{"<app>"}},
 			{Name: "delete", Short: "Delete an empty bucket (including retained versions)", Positionals: []string{"<app>", "<bucket-id>"}, Flags: []cliFlag{{Name: "yes", Short: "skip the typed confirmation (alias: --quiet)"}}},
@@ -2797,7 +2800,8 @@ var cliCommands = []cliCommand{
 			{Name: "restore", Short: "Restore a published revision as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "revision", Short: "published revision number to restore", Req: true, Value: "N"}, {Name: "expected-version", Short: "current version; use 0 if deleted", Req: true, Value: "N"}}},
 			{Name: "delete", Short: "Delete a stored workflow using its current version", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current stored workflow version", Req: true, Value: "N"}, {Name: "yes", Short: "required explicit confirmation of stored workflow deletion", Req: true, Bool: true}, {Name: "restore-manifest", Short: "allow the current YAML definition to own this stored workflow again"}}},
 			{Name: "validate", Short: "Validate a stored workflow definition without saving it", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}}},
-			{Name: "simulate", Short: "Trace a stored workflow with sample input and mocked outputs", Notes: []string{"Does not run steps."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
+			{Name: "simulate", Short: "Trace a stored workflow with sample input and mocked outputs", Notes: []string{"Does not run steps."}, Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "input-file-id", Short: "retained data file below context.input_dir (repeatable)", Value: "PATH=FILE_UUID"},
+				{Name: "input-file", Short: "sample workflow input JSON file", Value: "PATH"}, {Name: "mock-outputs-file", Short: "JSON object of action outputs keyed by step name", Value: "PATH"}, {Name: "mock-item-outputs-file", Short: "JSON object of for_each output arrays keyed by step name", Value: "PATH"}, {Name: "mock-attempts-file", Short: "JSON object of ordered attempt outcomes keyed by step name", Value: "PATH"}, {Name: "mock-item-attempts-file", Short: "JSON object mapping loops and zero-based item indexes to attempt outcomes", Value: "PATH"}, {Name: "require-complete", Short: "fail if mocks leave steps unresolved"}}},
 			{Name: "apply", Short: "Save a stored workflow definition as a draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "file", Short: "YAML or JSON definition file", Req: true, Value: "PATH"}, {Name: "expected-version", Short: "current version; use 0 for a new draft", Req: true, Value: "N"}}},
 			{Name: "publish-policy", Short: "Inspect or set required server publishing checks", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "mode", Short: "set publishing requirement (admin scope)", Value: "MODE", ClosedSet: []string{"optional", "scenarios", "coverage"}}, {Name: "expected-version", Short: "current policy version (required when setting mode)", Value: "N"}}},
 			{Name: "publish", Short: "Publish the current stored workflow draft", Flags: []cliFlag{{Name: "app", Short: "app slug", Req: true, Value: "SLUG"}, {Name: "name", Short: "stored workflow name", Req: true, Value: "NAME"}, {Name: "expected-version", Short: "current version of the draft", Req: true, Value: "N"}, {Name: "take-over-manifest", Short: "explicitly take over YAML ownership"}, {Name: "scenarios", Short: "check scenarios against the saved draft before publishing", Value: "PATH"}, {Name: "require-coverage", Short: "require coverage before publishing (requires --scenarios)"}}},
@@ -3102,6 +3106,10 @@ var cliCommands = []cliCommand{
 		HelpNotes: []string{
 			"Source defaults to committed HEAD when origin exists; otherwise local files. Use --source=worktree to include local changes.",
 			resourceProfileHelpNote,
+			// One line each: compact help stays within 30 lines, so the
+			// project and rollout flags are named here, not listed.
+			"Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.",
+			"Retry a project's failed workloads: gregale release attempt retry SESSION_ID",
 		},
 		Subcommands: []cliSub{deploymentCheckCommand(), {Name: "resolve-contract", Short: "Record checks and a verified roll-forward after failed cleanup", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "replacement-attempt", Short: "verified corrected deployment attempt", Value: "ID"}, {Name: "task-id", Short: "inspected original cleanup task", Value: "ID"}, {Name: "generation", Short: "inspected cleanup generation", Value: "N"}, {Name: "request-id", Short: "reuse after a lost recovery response", Value: "ID"}, {Name: "evidence-hash", Short: "SHA256 of private SQL/execution evidence", Value: "SHA256"}, {Name: "database-state-checked", Short: "attest database inspection/repair", Bool: true}, {Name: "execution-quiescent", Short: "attest original cleanup execution has stopped", Bool: true}}}, {Name: "contract", Short: "Run planned schema cleanup after retained versions and work drain", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this contract identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "status", Short: "Inspect an atomic project attempt and available recovery actions", Positionals: []string{"ATTEMPT_ID"}}, {Name: "abort", Short: "Stop a progressive rollout and request guarded baseline restoration", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "recover", Short: "Retry baseline health verification for a blocked progressive deploy", Positionals: []string{"ATTEMPT_ID"}, Flags: []cliFlag{{Name: "request-id", Short: "reuse this control identity after an ambiguous response", Value: "ID"}, {Name: "generation", Short: "require this inspected checkpoint generation", Value: "N"}}}, {Name: "retry", Short: "Rebuild confirmed failed workloads from a saved project deploy", Positionals: []string{"SESSION_ID"}, Examples: []string{"gregale release attempt retry SESSION_ID --path . --source=worktree --yes", "gregale release attempt retry SESSION_ID --tarball source.tar.gz --yes"}, Flags: []cliFlag{
 			{Name: "tarball", Short: "source archive to rebuild", Value: "PATH"},
@@ -4841,7 +4849,7 @@ var cliCommands = []cliCommand{
 				{Name: "wait", Short: "wait for the same durable clone operation to finish"},
 				{Name: "timeout", Value: "SECONDS", Short: "maximum local wait time"},
 			}},
-			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons and event subscriptions the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
+			{Name: "resume-automation", Short: "Enable the automation a full clone copied paused into a stage", Notes: []string{"Enables the crons, event subscriptions and bucket notifications the clone copied paused.", "Only ones the source ran are enabled; ones the source had disabled, or changed since, stay as they are.", "Refused, changing nothing, when the enabled event subscriptions would pass the plan's cap."}, Positionals: []string{"<stage>"}, Examples: []string{"gregale env resume-automation staging --project shop"}, Flags: []cliFlag{
 				{Name: "project", Value: "SLUG", Short: "project slug (defaults to linked project)"},
 			}},
 			{Name: "pull", Short: "Pull sealed-secret keys to a .env skeleton (values blank)", Examples: []string{"gregale env pull --app my-api", "gregale env pull --app my-api --env staging", "gregale env pull --app my-api --dry-run --json"}, Flags: []cliFlag{
@@ -4955,6 +4963,7 @@ var cliCommands = []cliCommand{
 			"gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version",
 		},
 		Flags: []cliFlag{
+			{Name: "customer-ref", Short: "customer attribution; bindings determine narrow caller identity", Value: "REF"},
 			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD; the image can also be the first positional argument", Value: "REF"},
 			{Name: "interactive", Short: "with --image, attach stdin and relay the session until the command exits (-i)"},
 			{Name: "tty", Short: "with --image --interactive, give the command a terminal (-t; -it for both)"},
@@ -4972,6 +4981,9 @@ var cliCommands = []cliCommand{
 			{Name: "detach", Short: "with --image, queue the run and print its id without waiting (-d); otherwise output streams live"},
 			{Name: "workflow-id", Short: "caller-generated workflow grouping id", Value: "ID"},
 			{Name: "step-label", Short: "short label for this step within --workflow-id", Value: "LABEL"},
+			{Name: "idempotency-key", Short: "with source Runs, stable key for retrying the same submission", Value: "KEY"},
+			{Name: "execution-class", Short: "standard or extended (up to five minutes)", Value: "CLASS", ClosedSet: []string{"standard", "extended"}},
+			{Name: "environment", Short: "immutable ready dependency environment ID", Value: "UUID"},
 			{Name: "profile", Short: "preinstalled dependencies (data requires python313)", Value: "P", ClosedSet: []string{"standard", "python-data-v1"}},
 			{Name: "runtime", Short: "runtime (node22|node24|python312|python313)", Value: "R", ClosedSet: []string{"node22", "node24", "python312", "python313"}},
 			{Name: "source", Short: "inline source code", Value: "CODE"},
@@ -4982,6 +4994,11 @@ var cliCommands = []cliCommand{
 			{Name: "cpu-millicores", Short: "CPU limit", Value: "N"},
 			{Name: "ephemeral-disk-mb", Short: "ephemeral scratch size", Value: "N"},
 			{Name: "max-output-bytes", Short: "combined output cap", Value: "N"},
+			{Name: "input-file", Short: "data file below context.input_dir (repeatable)", Value: "PATH=LOCAL_FILE"},
+			{Name: "artifact-storage", Short: "inline or stored output files", Value: "MODE"},
+			{Name: "max-artifact-bytes", Short: "stored output byte budget", Value: "BYTES"},
+			{Name: "input-schema", Short: "input JSON Schema file", Value: "PATH"},
+			{Name: "result-schema", Short: "result JSON Schema file", Value: "PATH"},
 			{Name: "output-file", Short: "output file below context.output_dir to export (repeatable)", Value: "PATH"},
 			{Name: "output-dir", Short: "save artifacts locally; implies --wait", Value: "DIR"},
 			{Name: "wait", Short: "wait for terminal result"},
@@ -4989,6 +5006,13 @@ var cliCommands = []cliCommand{
 			{Name: "poll-interval", Short: "status polling interval with --wait", Value: "D"},
 			{Name: "wait-timeout", Short: "maximum client wait duration", Value: "D"},
 		},
+		Subcommands: []cliSub{runDeliveriesCLISubcommand(), runControlsCLISubcommand(), runHistoryCLISubcommand(), runTasksCLISubcommand(), {Name: "environments", Short: "Build and manage immutable dependency environments", Subcommands: []cliSub{
+			{Name: "build", Short: "Build pinned dependencies in an isolated builder VM", Flags: []cliFlag{{Name: "runtime", Value: "RUNTIME"}, {Name: "requirements", Value: "PATH"}, {Name: "package-json", Value: "PATH"}, {Name: "package-lock", Value: "PATH"}, {Name: "system-package", Value: "NAME=VERSION-rN", Short: "exact Wolfi package pin; repeatable"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
+			{Name: "list", Short: "List retained environments"},
+			{Name: "get", Short: "Read an environment receipt", Positionals: []string{"<id>"}},
+			{Name: "logs", Short: "Read or follow retained build diagnostics", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "after", Value: "SEQUENCE"}, {Name: "follow", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
+			{Name: "delete", Short: "Retire an environment after its active Runs finish", Positionals: []string{"<id>"}},
+		}}},
 	},
 	{
 		Name:    "runs",
@@ -5003,6 +5027,8 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "capabilities", Short: "Show which runtimes isolated runs can use on your plan"},
 			{Name: "workflow", Short: "Show workflow status or manage an agent-owned Runs plan", Positionals: []string{"<workflow-id>"}, Subcommands: []cliSub{
+				{Name: "watch", Short: "Watch durable pipeline progress without cancelling work", Positionals: []string{"<pipeline-id>"}, Flags: []cliFlag{{Name: "after", Short: "resume after this durable event sequence (default 0)", Value: "CURSOR"}}},
+				{Name: "rerun", Short: "Create an explicit rerun of failed branches", Positionals: []string{"<pipeline-id>", "<new-workflow-id>", "<original-manifest.json>"}, Flags: []cliFlag{{Name: "repeat-steps", Short: "acknowledge every previously started affected step", Value: "LABELS"}}},
 				{Name: "run", Short: "Run, resume, or preview a disposable Runs plan", Flags: []cliFlag{
 					{Name: "manifest", Short: "JSON workflow plan file", Req: true, Value: "PLAN.json"},
 					{Name: "managed", Short: "continue a bounded Run DAG on the control plane after this client exits"},
@@ -5618,9 +5644,9 @@ var cliCommands = []cliCommand{
 			}},
 			{Name: "keys", Short: "Manage org API keys", Subcommands: []cliSub{
 				{Name: "list", Short: "List org API keys", Flags: []cliFlag{orgSlugFlag}},
-				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Flags: []cliFlag{
+				{Name: "add", Short: "Create an org API key; the plaintext is shown once", Positionals: []string{"<label>"}, Flags: []cliFlag{
 					orgSlugFlag,
-					{Name: "label", Short: "key label", Value: "TEXT", Req: true},
+					{Name: "label", Short: "key label (same as the positional label; kept for scripts)", Value: "TEXT"},
 					{Name: "scopes", Short: "comma-separated scopes (default admin)", Value: "SCOPES"},
 					{Name: "projects", Short: "limit an agent key to these projects (comma-separated slugs)", Value: "SLUG,..."},
 					{Name: "approvals", Short: "kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all)", Value: "LIST"},
@@ -6820,6 +6846,7 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "action", Short: "recover action", ClosedSet: []string{"advance", "promote", "abort"}, Req: true},
 			{Name: "reason", Short: "operator-supplied reason (logged to deployment_audit)", Value: "text"},
+			{Name: "expected-step", Short: "observed canary step; refuse if the canary moved (advance, promote)", Value: "N"},
 			{Name: "deployment", Short: "exact deployment for abort", Value: "ID|vN"},
 			{Name: "expected-predecessor", Short: "exact retained predecessor to restore (requires --deployment)", Value: "ID|vN"},
 		},

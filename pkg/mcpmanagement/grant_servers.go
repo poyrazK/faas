@@ -16,7 +16,7 @@ const idleServerTTL = 10 * time.Minute
 
 // grantOptions are the per-connection server options consent approved.
 func (r *remoteServer) grantOptions(g *oauthGrant, apps map[string]string, environments *EnvironmentConsent) Options {
-	return Options{AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && slices.Contains(g.scopes, scopePrivateInvoke), AllowToolPublishing: r.opts.AllowToolPublishing && slices.Contains(g.scopes, scopePublish) && len(g.projects) == 0, AllowToolInvocation: r.opts.AllowToolInvocation && slices.Contains(g.scopes, scopeInvoke), Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, LogsAPIBase: r.opts.LogsAPIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: effectiveToolsets(g.toolsets, r.opts.Toolsets), Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.accountID, g.client.Token()), uploads: r.uploads, docs: r.docs, Org: g.org}
+	return Options{AllowPrivateToolInvocation: r.opts.AllowPrivateToolInvocation && slices.Contains(g.scopes, scopePrivateInvoke), AllowToolPublishing: r.opts.AllowToolPublishing && slices.Contains(g.scopes, scopePublish) && len(g.projects) == 0, AllowToolInvocation: r.opts.AllowToolInvocation && slices.Contains(g.scopes, scopeInvoke), Lifecycle: r.opts.Lifecycle, Telemetry: r.opts.Telemetry, auditLogger: r.opts.AuditLogger, accountID: g.accountID, grantID: g.id, AllowedApps: apps, Environments: environments, planStore: r.opts.StateStore, planNamespace: g.id, Profile: "oauth", APIBase: r.opts.APIBase, LogsAPIBase: r.opts.LogsAPIBase, Version: r.opts.Version, Timeout: r.opts.Timeout, Token: g.client.Token(), AllowWrites: r.opts.AllowWrites && slices.Contains(g.scopes, scopeWrite), Toolsets: effectiveToolsets(g.toolsets, r.opts.Toolsets), MaxListedTools: r.opts.MaxListedTools, HideUnavailableCapabilities: r.opts.HideUnavailableCapabilities, Capabilities: g.capabilities, LocalCLI: r.grantCLI(g.accountID, g.client.Token()), uploads: r.uploads, docs: r.docs, Org: g.org}
 }
 
 // serverLocked returns an approved connection's MCP server, building it from
@@ -134,7 +134,7 @@ func (m *management) idle(now time.Time) bool {
 			return false
 		}
 	}
-	if m.memoryPlansLive(now) {
+	if m.opts.planStore == nil && m.memoryPlansLive(now) {
 		m.mu.Unlock()
 		return false
 	}

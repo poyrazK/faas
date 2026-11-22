@@ -108,7 +108,7 @@ func TestEnvelopeAndDecodeBounds(t *testing.T) {
 	if err := (Envelope{Version: CurrentVersion, Source: "return true", Input: nil}).Validate(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("missing input error = %v", err)
 	}
-	if err := (Envelope{Version: CurrentVersion + 1, Source: "return true", Input: json.RawMessage("null")}).Validate(); !errors.Is(err, ErrInvalid) {
+	if err := (Envelope{Version: EnvironmentVersion + 1, Source: "return true", Input: json.RawMessage("null")}).Validate(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("version error = %v", err)
 	}
 

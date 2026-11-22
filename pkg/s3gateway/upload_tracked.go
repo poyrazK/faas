@@ -55,7 +55,9 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 	client := *h.client
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	response, err := objectstorageactivity.ExecuteUpload(ctx, h.store, req.bucket, c, func(context.Context) (*http.Response, error) {
-		return client.Do(upstream)
+		response, err := client.Do(upstream)
+		objectstorage.NormalizeProviderResponse(req.provider, response)
+		return response, err
 	})
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)

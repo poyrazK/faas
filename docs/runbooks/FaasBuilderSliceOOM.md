@@ -3,9 +3,12 @@
 ## Symptom
 
 `FaasBuilderSliceOOMKill` means the parent `faas-cp-build.slice` OOM-kill
-counter increased while builderd owned its single admitted build slot.
-Builderd records the customer-visible terminal result as `build_oom` and logs
-the correlated build ID, deployment ID, node, and Firecracker instance.
+counter increased while one build was the slice's only builder. Builderd
+records the customer-visible terminal result as `build_oom` and logs the
+correlated build ID, deployment ID, node, and Firecracker instance. On a node
+provisioned with more than one reserved slot (`builder_reserved_slots`,
+ADR-20261118154632 amendment 1), a build that shared the slice is not blamed
+for the counter; its own Firecracker exit status (137) still reports its OOM.
 
 ## Check
 
@@ -18,8 +21,12 @@ the correlated build ID, deployment ID, node, and Firecracker instance.
 
 ## Recover
 
-1. Keep builder admission at one VM while the parent `MemoryMax` is 5 GiB.
-   Drain the node before changing that fence or the per-builder memory budget.
+1. Check that the slice's `MemoryMax` and `CPUQuota` match the node's
+   `builder_reserved_slots` (`gregalectl compute-nodes sizing
+   --builder-reserved-slots N --json` prints the expected values; node_join
+   writes them as `faas-cp-build.slice.d/90-builder-slots.conf`). Drain the
+   node before changing that fence, the reserved count, or the per-builder
+   memory budget.
 2. Retry the customer build only after memory pressure is back below the
    parent limit and no staging operation is sharing the builder slice.
 

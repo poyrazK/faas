@@ -30,7 +30,7 @@ ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 ReadOnlyPaths=/etc/faas
-ReadWritePaths=/srv/fc/builder /srv/fc/base /var/log/faas /var/spool/faas /var/lib/faas/cache /var/cache/faas/builds
+ReadWritePaths=/srv/fc/builder /srv/fc/base -/srv/fc/run-environments /var/log/faas /var/spool/faas /var/lib/faas/cache /var/cache/faas/builds
 
 [Install]
 WantedBy=multi-user.target

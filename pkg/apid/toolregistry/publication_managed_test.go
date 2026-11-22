@@ -258,6 +258,24 @@ func TestManagedPublicationRevocationDuringRefresh(t *testing.T) {
 				want = "failed"
 			}
 			p.Wait(t, want)
+			if !connection {
+				// The approval can be revoked before the OAuth refresh finishes.
+				// Closing the executor at that point cancels the in-flight refresh.
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					c, err := p.Owner.GetToolOAuthConnection(t.Context(), m.Connection.ID)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if c.State == "ready" && c.Generation == 1 {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatalf("refresh did not settle after approval revocation: state=%s generation=%d", c.State, c.Generation)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
 			p.Base.PrivateExecutor.Close()
 			if p.Calls.Load() != 0 || m.Exchanges.Load() != 1 {
 				t.Fatal("revocation permitted a later fixture dispatch")

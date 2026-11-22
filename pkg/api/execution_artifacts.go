@@ -9,6 +9,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/onebox-faas/faas/pkg/runfile"
 )
 
 // ValidateExecutionOutputFiles accepts a bounded, unique list of normalized
@@ -38,6 +40,12 @@ func ValidateExecutionArtifacts(artifacts []ExecutionArtifact) error {
 	names := make([]string, len(artifacts))
 	for i, artifact := range artifacts {
 		names[i] = artifact.Name
+		if artifact.FileID != "" {
+			if !runfile.ValidID(artifact.FileID) || len(artifact.Content) != 0 || artifact.SizeBytes < 0 || int64(artifact.SizeBytes) > ExecutionFileHardMaxBytes || !runfile.ValidDigest(artifact.SHA256) {
+				return fmt.Errorf("stored artifact metadata is invalid")
+			}
+			continue
+		}
 		digest := sha256.Sum256(artifact.Content)
 		if artifact.Content == nil || artifact.SizeBytes != len(artifact.Content) || artifact.SHA256 != "sha256:"+hex.EncodeToString(digest[:]) {
 			return fmt.Errorf("artifact size or checksum is invalid")
@@ -62,7 +70,11 @@ func CloneExecutionArtifacts(artifacts []ExecutionArtifact) []ExecutionArtifact 
 	}
 	cloned := append([]ExecutionArtifact{}, artifacts...)
 	for i := range cloned {
-		cloned[i].Content = append([]byte{}, cloned[i].Content...)
+		if cloned[i].FileID == "" {
+			cloned[i].Content = append([]byte{}, cloned[i].Content...)
+		} else {
+			cloned[i].Content = nil
+		}
 	}
 	return cloned
 }

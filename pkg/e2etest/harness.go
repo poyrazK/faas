@@ -2680,9 +2680,15 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// settle keeps this from racing a healthy daemon that has not yet
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
+	h.RequireDaemonsAlive(t)
+}
 
+// RequireDaemonsAlive fails a waiter promptly when one of its daemons exits.
+// Deliberate harness kills are excluded; teardown remains the sole reaper.
+func (h *Harness) RequireDaemonsAlive(t *testing.T) {
+	t.Helper()
 	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
-		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
+		t.Fatalf("e2etest: %s exited; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
 	}
@@ -2692,14 +2698,14 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 // whatever it managed to write. Split from requireDaemonsAlive so the decision
 // is testable without a *testing.T to fail.
 //
-// Signal(0) rather than Wait: it asks the kernel whether the pid is still
-// deliverable without reaping, so stop()'s Wait stays the only one.
+// Probe without reaping, so stop()'s Wait stays the only one. Signal(0) alone
+// accepts an unreaped zombie on Linux, where WNOWAIT is also required.
 func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
 	for _, p := range procs {
 		if p == nil || p.Process == nil {
 			continue
 		}
-		if err := p.Process.Signal(syscall.Signal(0)); err == nil {
+		if !daemonProcessExited(p.Process) {
 			continue
 		}
 		out := ""
@@ -3666,6 +3672,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
+	imagedStart := time.Now()
 	imagedCmd := startProc(t, bin, "imaged", env)
 	h.procs = append(h.procs, imagedCmd)
 	// imaged is not ready when its process is up. It stages the builder
@@ -3678,7 +3685,6 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// subscription itself, not the process. Restaging a base whose guest init
 	// changed takes close to three minutes on a two-vCPU shared host, so the
 	// wait leaves headroom beyond that.
-	imagedStart := time.Now()
 	// A test that stages a large base at startup (the agent base is about
 	// 1 GB, scanned by Grype) can allow imaged longer.
 	ready := 10 * time.Minute

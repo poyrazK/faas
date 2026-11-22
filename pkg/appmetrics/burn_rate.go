@@ -51,19 +51,13 @@ func FetchSLOBurnRate(ctx context.Context, fetcher PromQL, log *slog.Logger, app
 	// The class-based duration series exist from an app's first request, so
 	// rate() sees its first 5xx (ADR-20261110090000).
 	errorBudget := 1 - APIAvailabilitySLO
-	shortQ := fmt.Sprintf(
-		`(sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s])) / sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) / %g and sum(increase(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) >= %d) or vector(0)`,
-		appID, SLOBurnRateShortWindow, appID, SLOBurnRateShortWindow, errorBudget,
-		appID, SLOBurnRateShortWindow, SLOBurnRateMinRequests)
+	shortQ := burnRateQuery(appID, SLOBurnRateShortWindow, errorBudget)
 	short, err := fetcher.QueryScalar(ctx, shortQ)
 	if err != nil {
 		return degradedBurnRateFromErr(0, err, log, SLOBurnRateShortWindow)
 	}
 
-	longQ := fmt.Sprintf(
-		`(sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s])) / sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) / %g and sum(increase(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s])) >= %d) or vector(0)`,
-		appID, SLOBurnRateLongWindow, appID, SLOBurnRateLongWindow, errorBudget,
-		appID, SLOBurnRateLongWindow, SLOBurnRateMinRequests)
+	longQ := burnRateQuery(appID, SLOBurnRateLongWindow, errorBudget)
 	long, err := fetcher.QueryScalar(ctx, longQ)
 	if err != nil {
 		return degradedBurnRateFromErr(0, err, log, SLOBurnRateLongWindow)
@@ -82,4 +76,13 @@ func degradedBurnRateFromErr(value float64, err error, log *slog.Logger, window 
 	msg = strings.ReplaceAll(msg, "\n", "")
 	log.Warn("appmetrics: SLO burn-rate query failed", "window", window, "err", msg)
 	return value, SourceDegradedPrefix + TelemetryDegradedReason(err)
+}
+
+// burnRateQuery is the availability burn over window: failed requests (5xx
+// and capacity refusals) over eligible ones, divided by the error budget, once
+// the window holds SLOBurnRateMinRequests eligible requests.
+func burnRateQuery(appID, window string, errorBudget float64) string {
+	return fmt.Sprintf(`(%s / %s / %g and %s >= %d) or vector(0)`,
+		FailedRequestsQuery("rate", appID, window), EligibleRequestsQuery("rate", appID, window), errorBudget,
+		EligibleRequestsQuery("increase", appID, window), SLOBurnRateMinRequests)
 }

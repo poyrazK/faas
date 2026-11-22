@@ -2932,6 +2932,10 @@ groups:
         annotations:
           summary: "Prometheus dropped alerts before Alertmanager delivery"
           description: "Prometheus has dropped one or more notifications during the last 10m. The page path is losing alerts before Alertmanager receives them; check Alertmanager reachability, the notifier queue, and Prometheus logs immediately."
+          first_action: "Check the Prometheus notifier queue and Alertmanager readiness from the control plane."
+          customer_impact: "Operator alerts were dropped before delivery. Customer impact is unknown."
+          failure_stage: "Prometheus notification queue"
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPrometheusAlertingPathDegraded.md"
 
       - alert: FaasPrometheusNotificationQueueBacklog
@@ -2961,6 +2965,10 @@ groups:
         annotations:
           summary: "Alertmanager notification delivery is failing"
           description: "Alertmanager has recorded failed notifications during the last 10m. One or more configured page or ticket integrations may be unreachable; inspect the integration label, receiver configuration, and provider response before assuming pages are delivered."
+          first_action: "Open Notification Receiver Failures and check the failing integration in the Alertmanager journal."
+          customer_impact: "Operator pages or warnings may be delayed or lost. Customer impact is unknown."
+          failure_stage: 'Alertmanager delivery ({{ if $labels.integration }}{{ $labels.integration }}{{ else }}unknown integration{{ end }})'
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAlertmanagerDeliveryDegraded.md"
 
       - alert: FaasAlertmanagerConfigReloadFailed
@@ -3544,7 +3552,7 @@ groups:
           family: build_queue
         annotations:
           summary: "Build queue p95 wait > 5m"
-          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to one VM under the 5 GiB parent slice; check whether arrival rate exceeds that safe drain rate."
+          description: "Builds are queueing > 300s at p95. Builder admission is intentionally limited to each node's reserved builder slots (builder_reserved_slots), the builders its build slice is sized for; check whether arrival rate exceeds that safe drain rate."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuilderSliceOOMKill
@@ -3557,7 +3565,7 @@ groups:
           public_status: internal
         annotations:
           summary: "The builder parent cgroup OOM-killed an active build"
-          description: "builderd attributed a new faas-cp-build.slice oom_kill to the active build. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
+          description: "builderd attributed a new faas-cp-build.slice oom_kill to the build that was the slice's only builder. The build is persisted as build_oom; use the correlated builderd log to identify build, deployment, node, and VM instance."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuilderSliceOOM.md"
 
       # Elastic builder slots (ADR-20261118154632): a node that keeps giving
@@ -3722,6 +3730,10 @@ groups:
         annotations:
           summary: "API availability is consuming its monthly error budget rapidly"
           description: "The platform-produced 5xx rate exceeded both the 14.4x one-hour and 6x six-hour burn-rate thresholds for the 99.5% monthly availability budget. Investigate the customer-facing failure path and keep the rolling SLO alert in context."
+          first_action: "Open API Availability and compare the onset with recent deploys. Check gateway errors for the affected routes and nodes."
+          customer_impact: "Platform-generated 5xx accounted for {{ $value | humanizePercentage }} of eligible requests over the last hour."
+          failure_stage: "Request serving before the guest returned a response"
+          dashboard_path: '/d/faas-fleet-m8?viewPanel=11&from=now-2h&to=now'
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasApiAvailabilityLow.md"
 
       - alert: FaasBuildSuccessLow
@@ -5821,7 +5833,7 @@ groups:
           public_status: internal
         annotations:
           summary: "builderd build queue > 50 queued builds for 10m"
-          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to one microVM under the 5 GiB parent cgroup, sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
+          description: "The fleet-total queued-builds gauge `faas_build_queue_depth` has exceeded 50 for 10m. With builderd limited to each node's reserved builder slots (builder_reserved_slots), sustained depth > 50 means builds are arriving faster than the safe drain rate. Triage: `gregalectl builds list --status=queued` for in-flight builds and `/v1/admin/obs/builder-heartbeats` for liveness, then recover per the runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
       - alert: FaasBuildQueueTelemetryUnavailable
@@ -10604,6 +10616,40 @@ groups:
         annotations:
           summary: "Alert notifications to a channel kind are failing platform-wide"
           description: "meterd could not unseal a channel's credentials, or every Slack, PagerDuty or email delivery failed for 30 minutes (at least three attempts, none delivered). One customer's broken destination does not fire this while others deliver; a platform failure such as the unseal key, the mail relay or egress does."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # ADR-20261115194000: platform alert emails tell an account its app is
+      # down, its check is failing, its SLO is burning or its cron was paused.
+      # A notice that ran out of attempts was failing silently (Observe audit
+      # 2026-11-21, finding 14).
+      - alert: FaasPlatformAlertEmailsFailing
+        expr: |
+          sum by (job, instance, kind) (increase(meterd_platform_alert_notices_total{outcome="failed"}[1h])) > 0
+        labels:
+          severity: warn
+          component: meterd
+          family: customer_observability
+          public_status: internal
+        annotations:
+          summary: "Platform alert emails ({{ $labels.kind }}) gave up without being delivered"
+          description: "meterd exhausted its attempts on at least one platform alert notice in the last hour. The account was not told its app is failing, its check is failing, its SLO is burning or its cron was paused."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
+      # Guest spans (vmmd -> apid) write into request_telemetry.spans_summary
+      # through apid's spans writer. FaasDebugTelemetryIngestStalled covers
+      # only the public OTLP path on gatewayd-public.
+      - alert: FaasGuestSpansWritesFailing
+        expr: |
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="db_error"}[10m])) > 0
+          unless on (job, instance)
+          sum by (job, instance) (rate(apid_otel_spans_writes_total{outcome="inserted"}[10m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: debug_telemetry
+          public_status: internal
+        annotations:
+          summary: "apid's spans writer has failed every write for 15 minutes"
+          description: "Guest and OTLP spans reach apid but every UPDATE of request_telemetry.spans_summary fails (db_error) and none succeeded. Traces, span evidence and dependency breakdowns go dark for every traced app."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCustomerObservability.md"
       # ADR-20261028101615: accounts are evaluated in parallel with a tick
       # budget each, so a slow tick means many accounts are slow at once, and

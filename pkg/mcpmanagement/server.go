@@ -72,6 +72,13 @@ type Options struct {
 	Capabilities []string
 	// Toolsets limits the listed tools; nil defaults to core. All is explicit.
 	Toolsets []string
+	// MaxListedTools caps the listed catalog. Above it the server lists core
+	// tools and gregale_find_tools, which adds matching tools on request
+	// (ADR-20261121140000). Zero lists every selected tool.
+	MaxListedTools int
+	// HideUnavailableCapabilities reads GET /v1/capabilities once and leaves
+	// out tools whose capability is hidden or disabled for the account.
+	HideUnavailableCapabilities bool
 	// Org is the slug of the shared organization a hosted connection acts
 	// in; its apps come from the organization (ADR-20261101225122).
 	Org       string
@@ -102,6 +109,7 @@ type management struct {
 	lifecycle        *Lifecycle
 	toolWrites       map[string]bool
 	toolNames        map[string]bool
+	catalog          toolCatalog
 	admission        *requestAdmission
 	resourceServer   *mcp.Server
 	subscriptions    *resourceSubscriptions
@@ -219,6 +227,12 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if err := m.restoreEnvironmentPlans(); err != nil {
 		return nil, nil, err
 	}
+	if err := m.restoreUploadApprovals(); err != nil {
+		return nil, nil, err
+	}
+	if err := m.restoreMemoryPlans(); err != nil {
+		return nil, nil, err
+	}
 	if err := m.restoreActionHistory(); err != nil {
 		return nil, nil, err
 	}
@@ -284,6 +298,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerToolRegistry(s, m)
 	registerToolInvocations(s, m)
 	registerAgentApprovals(s, m)
+	m.publishCatalog(s)
 	return s, m, nil
 }
 
@@ -298,89 +313,94 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	m.toolNames[name] = true
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
-	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}},
-		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
-			if !m.toolListedForContext(ctx, name) {
-				return m.toolError(invalid("tool_not_available", "tool is outside the selected catalog")), nil, nil
-			}
-			timeout := managementToolTimeout(name, m.opts.Timeout)
-			ctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			// Tools that ask the user something (SEP-2322 input requests) read the call.
-			ctx = context.WithValue(ctx, toolRequestKey{}, req)
-			if err := m.authorizeToolArgs(ctx, args, !readOnly); err != nil {
+	handler := toolHandler(m, name, readOnly, handle)
+	tool := &mcp.Tool{Name: name, Description: description, OutputSchema: registeredToolOutputSchema(name), Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: toolIdempotent(name, readOnly)}}
+	m.queueTool(name, description, func() { mcp.AddTool(s, tool, handler) })
+}
+
+func toolHandler[In any](m *management, name string, readOnly bool, handle func(context.Context, In) (any, error)) mcp.ToolHandlerFor[In, any] {
+	return func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
+		if !m.toolListedForContext(ctx, name) {
+			return m.toolError(invalid("tool_not_available", "tool is outside the selected catalog")), nil, nil
+		}
+		timeout := managementToolTimeout(name, m.opts.Timeout)
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		// Tools that ask the user something (SEP-2322 input requests) read the call.
+		ctx = context.WithValue(ctx, toolRequestKey{}, req)
+		if err := m.authorizeToolArgs(ctx, args, !readOnly); err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		if name == "gregale_watch_rollout" {
+			var err error
+			ctx, err = m.withWatchProgress(ctx, req, args)
+			if err != nil {
 				return m.selectedToolError(ctx, name, args, err), nil, nil
 			}
+		}
+		if !readOnly {
+			ctx = m.withPlanReason(ctx, args)
+		}
+		output, err := handle(ctx, args)
+		if pending, ok := output.(*needsInput); ok && err == nil {
+			return &mcp.CallToolResult{InputRequests: pending.requests, RequestState: pending.state}, nil, nil
+		}
+		if !readOnly && m.opts.auditLogger != nil {
+			m.opts.auditLogger.InfoContext(ctx, "management MCP mutation", "event", "mcp.tool", "tool", name, "grant_id", m.opts.grantID, "account_id", m.opts.accountID, "succeeded", err == nil)
+		}
+		if err != nil {
 			if name == "gregale_watch_rollout" {
-				var err error
-				ctx, err = m.withWatchProgress(ctx, req, args)
-				if err != nil {
-					return m.selectedToolError(ctx, name, args, err), nil, nil
+				if errors.Is(err, context.Canceled) {
+					err = invalid("cancelled", "Rollout observation cancelled; deployment continues")
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					err = invalid("timeout", "Rollout observation timed out; inspect the same deployment ID")
 				}
 			}
-			if !readOnly {
-				ctx = m.withPlanReason(ctx, args)
-			}
-			output, err := handle(ctx, args)
-			if pending, ok := output.(*needsInput); ok && err == nil {
-				return &mcp.CallToolResult{InputRequests: pending.requests, RequestState: pending.state}, nil, nil
-			}
-			if !readOnly && m.opts.auditLogger != nil {
-				m.opts.auditLogger.InfoContext(ctx, "management MCP mutation", "event", "mcp.tool", "tool", name, "grant_id", m.opts.grantID, "account_id", m.opts.accountID, "succeeded", err == nil)
-			}
-			if err != nil {
-				if name == "gregale_watch_rollout" {
-					if errors.Is(err, context.Canceled) {
-						err = invalid("cancelled", "Rollout observation cancelled; deployment continues")
-					}
-					if errors.Is(err, context.DeadlineExceeded) {
-						err = invalid("timeout", "Rollout observation timed out; inspect the same deployment ID")
-					}
-				}
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		// A slug can be deleted and recreated while an inspection is in
+		// flight. Withhold its result unless it still names the consented
+		// app. Release writes also pin immutable app IDs in their plans.
+		if readOnly {
+			if err := m.authorizeArgs(ctx, args); err != nil {
 				return m.selectedToolError(ctx, name, args, err), nil, nil
 			}
-			// A slug can be deleted and recreated while an inspection is in
-			// flight. Withhold its result unless it still names the consented
-			// app. Release writes also pin immutable app IDs in their plans.
-			if readOnly {
-				if err := m.authorizeArgs(ctx, args); err != nil {
-					return m.selectedToolError(ctx, name, args, err), nil, nil
-				}
-			}
-			if guarded, ok := output.(*guardedRead); ok {
-				if err := guarded.check(ctx); err != nil {
-					return m.selectedToolError(ctx, name, args, err), nil, nil
-				}
-				output = guarded.value
-			}
-			output, err = m.safeOutput(output)
-			if err != nil {
+		}
+		if guarded, ok := output.(*guardedRead); ok {
+			if err := guarded.check(ctx); err != nil {
 				return m.selectedToolError(ctx, name, args, err), nil, nil
 			}
-			data := output.(json.RawMessage)
-			data, err = bindToolPlanID(name, args, data)
-			if err != nil {
-				return m.selectedToolError(ctx, name, args, err), nil, nil
-			}
-			data, err = m.addToolVerification(name, args, data)
-			if err != nil {
-				return m.selectedToolError(ctx, name, args, err), nil, nil
-			}
-			data, err = addToolPagination(name, data)
-			if err != nil {
-				return m.selectedToolError(ctx, name, args, err), nil, nil
-			}
-			data, err = m.selectedRecoveryOutput(ctx, data)
-			if err != nil {
-				return m.selectedToolError(ctx, name, args, err), nil, nil
-			}
-			if err := validateToolEnvelope(name, data); err != nil {
-				return m.selectedToolError(ctx, name, args, err), nil, nil
-			}
-			// SDK output-default application round-trips through float64.
-			// Retain exact integer evidence and matching text/structured JSON.
-			return &mcp.CallToolResult{StructuredContent: data, Content: []mcp.Content{&mcp.TextContent{Text: string(data)}}}, nil, nil
-		})
+			output = guarded.value
+		}
+		output, err = m.safeOutput(output)
+		if err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		data := output.(json.RawMessage)
+		data, err = bindToolPlanID(name, args, data)
+		if err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		data, err = m.addToolVerification(name, args, data)
+		if err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		data, err = addToolPagination(name, data)
+		if err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		data, err = m.selectedRecoveryOutput(ctx, data)
+		if err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		if err := validateToolEnvelope(name, data); err != nil {
+			return m.selectedToolError(ctx, name, args, err), nil, nil
+		}
+		// SDK output-default application round-trips through float64.
+		// Retain exact integer evidence and matching text/structured JSON.
+		return &mcp.CallToolResult{StructuredContent: data, Content: []mcp.Content{&mcp.TextContent{Text: string(data)}}}, nil, nil
+	}
 }
 
 // ToolError retains stable API codes without returning an entire Problem,
@@ -433,6 +453,14 @@ var credentialPattern = regexp.MustCompile(`(?i)\b(?:fp_(?:live|test|oidc)_|gmcp
 func (m *management) clean(s string) string {
 	if m.opts.Token != "" {
 		s = strings.ReplaceAll(s, m.opts.Token, "[REDACTED]")
+	}
+	// A hosted bridge reaches apid on loopback and stages uploads on its
+	// state disk; neither means anything to the agent (ADR-20261121140000).
+	if public := m.publicAPIBase(); public != m.opts.APIBase && m.opts.APIBase != "" {
+		s = strings.ReplaceAll(s, m.opts.APIBase, public)
+	}
+	if m.opts.uploads != nil && m.opts.uploads.root != "" {
+		s = strings.ReplaceAll(s, m.opts.uploads.root, "[hosted-upload]")
 	}
 	return credentialPattern.ReplaceAllString(safetext.Clean(s), "[REDACTED]")
 }
