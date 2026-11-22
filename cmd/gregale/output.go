@@ -318,6 +318,17 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 		return 1
 	}
 	command = visibleSubcommands(path, command)
+	if tree, noun, ok := treeChoices(path); ok {
+		if typedNoun == noun {
+			// The verbs `<noun> --help` lists, which run under the noun typed.
+			command.Subcommands = tree.Subcommands
+		} else if _, treeVerb := findCliSubcommand(tree.Subcommands, got); treeVerb {
+			// A tree verb after today's noun (`alerts get`) runs only under
+			// the tree noun.
+			_, _ = fmt.Fprintf(w, "  Did you mean 'gregale %s %s'?\n", noun, got)
+			return 1
+		}
+	}
 	if suggestion, ok := suggestSubcommand(got, command); ok {
 		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
 		return 1
@@ -326,6 +337,28 @@ func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got 
 		printSubcommandChoices(w, path, command, got)
 	}
 	return 1
+}
+
+// treeChoices returns the tree noun whose command is today's command path,
+// with its verbs as `<noun> --help` lists them. On prod rc.369 `cron
+// history` listed next, add, info, rm while `cron --help` lists create, get,
+// delete (ADR-20261026145832).
+func treeChoices(path string) (cliCommand, string, bool) {
+	if strings.Contains(path, " ") {
+		return cliCommand{}, "", false
+	}
+	for _, noun := range cliTreeNouns {
+		if cliTreeNounCommand(noun.Name) != path || !cliTreeReshapes(noun.Name) || !cliTreeListsNoun(noun.Name) {
+			continue
+		}
+		tree, ok := newCliTreeDiscovery().treeCommand(noun)
+		if !ok {
+			return cliCommand{}, "", false
+		}
+		tree = visibleSubcommands(noun.Name, tree)
+		return tree, noun.Name, len(tree.Subcommands) > 0
+	}
+	return cliCommand{}, "", false
 }
 
 // visibleSubcommands drops the subcommands whose capability is hidden for
@@ -452,6 +485,11 @@ func printUsageWithCLI(w io.Writer, usage, topic string, advice *cliFlagDiagnost
 // flag errors name the command the user typed (`release gate delete`, not
 // `release-gates rm`).
 var treeUsageFrom, treeUsageTo string
+
+// typedNoun is the first word the current run() was typed with, before the
+// tree rewrite: `cron` or today's `crons`. Unknown-subcommand choices list
+// the verbs that run under it (treeChoices).
+var typedNoun string
 
 // spellUsageForTree spells today's command path in text as the typed tree
 // path.
