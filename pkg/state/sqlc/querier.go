@@ -553,6 +553,9 @@ type Querier interface {
 	// Leases due active switches. SKIP LOCKED keeps two apid workers from
 	// waiting on each other's claim.
 	ClaimDueReleaseDatabaseSwitches(ctx context.Context, db DBTX, arg ClaimDueReleaseDatabaseSwitchesParams) ([]ReleaseDatabaseSwitch, error)
+	// Leases saved insights whose digest or alert check is due, oldest first,
+	// with the account's plan and the environment's project.
+	ClaimDueSavedInsights(ctx context.Context, db DBTX, arg ClaimDueSavedInsightsParams) ([]ClaimDueSavedInsightsRow, error)
 	// The scheduler's fair dispatcher handles both native and Operations runs.
 	// The legacy-only claim above remains available to callers that must preserve
 	// the old ownership boundary.
@@ -1059,6 +1062,9 @@ type Querier interface {
 	// One automatic freeze per rolled-back deployment; a retried rollback reuses it.
 	CreateRollbackReleaseFreeze(ctx context.Context, db DBTX, arg CreateRollbackReleaseFreezeParams) (int64, error)
 	CreateRoutePolicyRule(ctx context.Context, db DBTX, arg CreateRoutePolicyRuleParams) error
+	// Saved insights (ADR-20261122190000).
+	// Creates a saved insight while the environment holds fewer than max_insights.
+	CreateSavedInsight(ctx context.Context, db DBTX, arg CreateSavedInsightParams) (SavedInsight, error)
 	CreateServiceBindingSmokeTask(ctx context.Context, db DBTX, arg CreateServiceBindingSmokeTaskParams) (AppTask, error)
 	// IAM-3 (ADR-039, issue #187 + #244 merged). One row per dashboard login.
 	// Caller has already generated the uuid (the envelope seal needs the same
@@ -1344,6 +1350,7 @@ type Querier interface {
 	DeleteQuietPausesBefore(ctx context.Context, db DBTX, arg DeleteQuietPausesBeforeParams) (int64, error)
 	DeleteReadinessSubscription(ctx context.Context, db DBTX, arg DeleteReadinessSubscriptionParams) (int64, error)
 	DeleteRoutePriorities(ctx context.Context, db DBTX, arg DeleteRoutePrioritiesParams) error
+	DeleteSavedInsight(ctx context.Context, db DBTX, arg DeleteSavedInsightParams) (int64, error)
 	DeleteStaticEgressProvisioningSource(ctx context.Context, db DBTX, sourceID string) error
 	DeleteStoredWorkflow(ctx context.Context, db DBTX, arg DeleteStoredWorkflowParams) error
 	DeleteStoredWorkflowLiveSuites(ctx context.Context, db DBTX, arg DeleteStoredWorkflowLiveSuitesParams) error
@@ -2729,6 +2736,7 @@ type Querier interface {
 	GetRuntimeUpgradeOperation(ctx context.Context, db DBTX, id pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeOperationForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (RuntimeUpgradeOperation, error)
 	GetRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg GetRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	GetSavedInsight(ctx context.Context, db DBTX, arg GetSavedInsightParams) (SavedInsight, error)
 	GetScheduledRelease(ctx context.Context, db DBTX, id pgtype.UUID) (GetScheduledReleaseRow, error)
 	GetScopedDeploymentRegistryVerificationByID(ctx context.Context, db DBTX, arg GetScopedDeploymentRegistryVerificationByIDParams) (DeploymentRegistryVerification, error)
 	// Service wake-ahead (ADR-977). apid owns the setting; gatewayd-internal reads
@@ -4571,6 +4579,7 @@ type Querier interface {
 	ListRuntimeUpgradeGatewayDrainRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayDrainRepairAppsParams) ([]string, error)
 	ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DBTX, arg ListRuntimeUpgradeGatewayRepairAppsParams) ([]string, error)
 	ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error)
+	ListSavedInsights(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]SavedInsight, error)
 	// Pending schedules first, soonest first; then the rest, newest first.
 	ListScheduledReleases(ctx context.Context, db DBTX, arg ListScheduledReleasesParams) ([]ListScheduledReleasesRow, error)
 	// Pending schedules whose only remaining approvals-capable channel is this
@@ -7610,6 +7619,7 @@ type Querier interface {
 	// was created if it never served. Any started task counts: a failed migration
 	// may still have committed changes.
 	ReleaseRunsCrossedBy(ctx context.Context, db DBTX, arg ReleaseRunsCrossedByParams) ([]ReleaseRunsCrossedByRow, error)
+	ReleaseSavedInsightLease(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ReleaseUnownedNotification(ctx context.Context, db DBTX, arg ReleaseUnownedNotificationParams) (int64, error)
 	ReleaseWorkerCandidateOwner(ctx context.Context, db DBTX, arg ReleaseWorkerCandidateOwnerParams) (ReleaseWorkerCandidateOwnerRow, error)
 	RememberDetachedEnvironmentJobOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
@@ -8277,6 +8287,9 @@ type Querier interface {
 	// Observation only: suite/definition changes advance version through SaveStoredWorkflow.
 	SaveStoredWorkflowTestReport(ctx context.Context, db DBTX, arg SaveStoredWorkflowTestReportParams) (int64, error)
 	SaveWebhookWorkflowBinding(ctx context.Context, db DBTX, arg SaveWebhookWorkflowBindingParams) (WorkflowWebhookBinding, error)
+	// The account's notification channels a saved insight sends to; a deleted
+	// channel is skipped.
+	SavedInsightChannels(ctx context.Context, db DBTX, arg SavedInsightChannelsParams) ([]NotificationChannel, error)
 	// A contained member cannot reach real managed PostgreSQL or object storage;
 	// refuse it at enrollment instead of failing later (ADR-20261019180000).
 	ScenarioActionAppHasManagedBindings(ctx context.Context, db DBTX, appID string) (bool, error)
@@ -8528,6 +8541,9 @@ type Querier interface {
 	SetWorkflowScheduleOccurrenceReplay(ctx context.Context, db DBTX, arg SetWorkflowScheduleOccurrenceReplayParams) (int64, error)
 	SettleCustomerOperationWorkflow(ctx context.Context, db DBTX, arg SettleCustomerOperationWorkflowParams) (int64, error)
 	SettleEventSubscriptionIntent(ctx context.Context, db DBTX, arg SettleEventSubscriptionIntentParams) error
+	// Records a run's outcome and releases the lease. A definition changed
+	// since the claim (updated_at) keeps its new schedule.
+	SettleSavedInsight(ctx context.Context, db DBTX, arg SettleSavedInsightParams) error
 	SettleSpendCapNotice(ctx context.Context, db DBTX, arg SettleSpendCapNoticeParams) (pgtype.UUID, error)
 	SettleWorkflowCallOp(ctx context.Context, db DBTX, arg SettleWorkflowCallOpParams) (int64, error)
 	ShareProjectBindingVerificationRun(ctx context.Context, db DBTX, arg ShareProjectBindingVerificationRunParams) (ProjectBindingVerificationRun, error)
@@ -8868,6 +8884,9 @@ type Querier interface {
 	UpdatePromotionHealthResult(ctx context.Context, db DBTX, arg UpdatePromotionHealthResultParams) error
 	UpdateReadinessNotification(ctx context.Context, db DBTX, arg UpdateReadinessNotificationParams) (int64, error)
 	UpdateRoutePolicyRuleAction(ctx context.Context, db DBTX, arg UpdateRoutePolicyRuleActionParams) (int64, error)
+	// Replaces a saved insight's definition and schedule. A changed alert
+	// starts from ok again.
+	UpdateSavedInsight(ctx context.Context, db DBTX, arg UpdateSavedInsightParams) (SavedInsight, error)
 	// ADR-127 PR-D: writer for spans_summary jsonb. The gatewayd-public
 	// OTLP/HTTP handler coalesces incoming batches for the same trace_id
 	// in-process (pkg/gateway/spans_accumulator.go) and flushes the

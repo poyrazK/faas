@@ -91,6 +91,14 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/projects/{slug}/environments/{environment}/insights/requests":                                authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/insights/funnel":                                 authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/insights/retention":                              authz.OrgActionReadProject,
+	// Saved insights (ADR-20261122190000) are shared with project readers;
+	// saving one deploys like a cohort.
+	"GET /v1/projects/{slug}/environments/{environment}/insights/saved":                                   authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                             authz.OrgActionReadProject,
+	"GET /v1/projects/{slug}/environments/{environment}/insights/saved/{key}/run":                         authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/insights/saved":                                  authz.OrgActionDeployProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                             authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/insights/saved/{key}":                          authz.OrgActionDeployProject,
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts":                                          authz.OrgActionReadProject,
 	"GET /v1/projects/{slug}/environments/{environment}/cohorts/{key}":                                    authz.OrgActionReadProject,
 	"POST /v1/projects/{slug}/environments/{environment}/cohorts":                                         authz.OrgActionDeployProject,

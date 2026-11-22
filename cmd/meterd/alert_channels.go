@@ -9,6 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/agentapprovalnotify"
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/mail"
+	"github.com/onebox-faas/faas/pkg/savedinsightnotify"
 )
 
 // meterdChannelMailer adapts meterd's mail transport to alertchannels.
@@ -87,4 +88,30 @@ func startAgentApprovalNotifications(ctx context.Context, store any, m mail.Send
 		Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
 	}
 	go n.Run(ctx)
+}
+
+// startSavedInsights runs saved insights' digests and threshold alerts
+// (ADR-20261122190000) for accounts that still have saved insights and
+// product analytics.
+func startSavedInsights(ctx context.Context, store any, channels savedinsightnotify.ChannelSender, release *observeRelease, dashboardURL string, reg prometheus.Registerer, log *slog.Logger) {
+	runStore, ok := store.(savedinsightnotify.Store)
+	if !ok {
+		log.Info("meterd: saved insights off", "store", ok)
+		return
+	}
+	c := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "meterd_saved_insight_runs_total",
+		Help: "Scheduled saved insight runs by outcome: ok, failed (the query failed; the alert goes unknown) or not_released (the account no longer has saved insights). ADR-20261122190000.",
+	}, []string{"outcome"})
+	for _, o := range []string{"ok", "failed", "not_released"} {
+		c.WithLabelValues(o).Add(0)
+	}
+	if reg != nil {
+		reg.MustRegister(c)
+	}
+	r := &savedinsightnotify.Runner{
+		Store: runStore, Channels: channels, DashboardBaseURL: dashboardURL, Log: log,
+		Released: release.savedInsights, Outcome: func(outcome string) { c.WithLabelValues(outcome).Inc() },
+	}
+	go r.Run(ctx)
 }

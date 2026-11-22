@@ -644,6 +644,7 @@ type MemStore struct {
 	apiConsumerOverdueHolds              map[string]APIConsumerOverdueHold         // ADR-1315, by consumer
 	platformTenants                      map[string]PlatformTenant
 	flagEvents                           *memFlagEvents // ADR 20261115163113, lazily made
+	savedInsights                        map[string]*memSavedInsightRow // ADR-20261122190000, by ID, lazily made
 	platformTenantReconciliationReceipts map[string]api.PlatformTenantReconciliationReceiptResponse
 	platformTenantOffboardingReceipts    map[string]api.PlatformTenantOffboardingReceiptResponse
 	platformTenantAccessTokens           map[string]PlatformTenantAccessToken

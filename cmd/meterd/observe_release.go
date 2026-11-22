@@ -141,6 +141,21 @@ func (r *observeRelease) SLO(ctx context.Context, def state.SLO) bool {
 	return r.allows("custom-slos", subject)
 }
 
+// savedInsights reports whether a saved insight still runs: its account is
+// live and has saved insights (whose parent is product analytics). A failed
+// read keeps it running, like alerts.
+func (r *observeRelease) savedInsights(ctx context.Context, si state.SavedInsight) bool {
+	owner, err := r.owner(ctx, si.AccountID, "")
+	switch {
+	case err != nil:
+		return true
+	case !owner.live:
+		return false
+	}
+	subject := platformflags.Subject{AccountID: si.AccountID, Plan: string(owner.plan)}
+	return r.allows("saved-insights", subject) && r.allows("product-analytics", subject)
+}
+
 // allows decides a capability's flag for subject. A hand-written flag no
 // operator has written yet falls back, in apid, to an environment gate meterd
 // cannot read; apid already checked it when the rule or check was created, so
