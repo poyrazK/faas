@@ -27,8 +27,20 @@ func TestSnapshotHealthStores(t *testing.T) {
 				CreateSnapshot(context.Context, state.Snapshot) (state.Snapshot, error)
 				MarkSnapshotStale(context.Context, string) error
 			} = state.NewMemStore()
+			// The Postgres store creates a deployment pending with no layer;
+			// the test puts it live with its rootfs the way imaged and the
+			// activation would. The memory store keeps the fields as given.
+			publish := func(state.Deployment) {}
 			if backend == "postgres" {
-				s = state.NewPgStore(pgtest.OpenMigrated(t))
+				pool := pgtest.OpenMigrated(t)
+				s = state.NewPgStore(pool)
+				publish = func(d state.Deployment) {
+					t.Helper()
+					if _, err := pool.Exec(ctx, `UPDATE deployments SET status = 'live', rootfs_key = $2, rootfs_bytes = $3 WHERE id = $1`,
+						d.ID, d.RootfsKey, d.RootfsBytes); err != nil {
+						t.Fatal(err)
+					}
+				}
 			}
 			acct, err := s.CreateAccount(ctx, "snapshot-health@example.test", api.PlanPro)
 			if err != nil {
@@ -46,6 +58,8 @@ func TestSnapshotHealthStores(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				d.RootfsKey, d.RootfsBytes = rootfsKey, layer
+				publish(d)
 				return d
 			}
 			snapshot := func(d state.Deployment, stored, mem, disk int64) state.Snapshot {
