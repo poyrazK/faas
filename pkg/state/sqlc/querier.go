@@ -5603,8 +5603,9 @@ type Querier interface {
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).
 	// oldest_age_seconds is the oldest observation admission still holds to the
-	// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-	// (with an observation), or whose listing advanced within progress_window on
+	// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+	// or whose all-version refresh waits for a live multipart session (with an
+	// observation), or whose listing advanced within progress_window on
 	// an observation under scan_max_age, stays fresh on an older one and does not
 	// count (objectBucketInventoryStale). A bucket never observed counts from its
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -5841,6 +5842,9 @@ type Querier interface {
 	// narrows by their indexes without changing the result. The subject function
 	// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 	// every bucket on the platform, under the account lock of every object write.
+	// inventory_held also covers an all-version-path bucket with a live multipart
+	// session: its refresh cannot start until the session ends (ADR-533/540), and
+	// its tracked reservations keep capacity conservative meanwhile.
 	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
