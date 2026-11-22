@@ -19,7 +19,6 @@ package builderd
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,8 +31,7 @@ import (
 func validSidecar() (body, identity, baseDigest string) {
 	baseDigest = "sha256:" + strings.Repeat("a", sha256.Size*2)
 	body = baseDigest + "\nfaas-base-layout-v3\nguest-init-sha256=" + strings.Repeat("b", sha256.Size*2)
-	sum := sha256.Sum256([]byte(body))
-	return body, "sha256:" + hex.EncodeToString(sum[:]), baseDigest
+	return body, builderIdentity(baseDigest, "faas-base-layout-v3"), baseDigest
 }
 
 // cacheShapedBase mimics the OCI read-through cache: the base blob sits at a
