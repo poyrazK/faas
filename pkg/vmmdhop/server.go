@@ -378,16 +378,37 @@ func (s *Server) serveConn(parent context.Context, raw net.Conn) {
 		}
 		_ = conn.SetReadDeadline(time.Time{})
 		if !hc.exchange(ctx, method, md) {
+			if ctx.Err() == nil {
+				hc.lingerClose()
+			}
 			return
 		}
 	}
 }
 
+// lingerDelay is how long a connection that ends with request bytes unread
+// keeps discarding them before it closes.
+const lingerDelay = 500 * time.Millisecond
+
+// lingerClose discards what the client is still sending before the
+// connection closes. Closing a socket with unread data sends a TCP reset,
+// which can destroy the response the client has not read yet (the handler
+// answered without reading the whole body); gRPC delivers that response, and
+// net/http's server lingers the same way. The client closes the connection
+// once it reads the final status, which ends the wait early.
+func (c *serverConn) lingerClose() {
+	_ = c.conn.SetReadDeadline(time.Now().Add(lingerDelay))
+	_, _ = io.Copy(io.Discard, c.r)
+}
+
 // goAway tells the client this connection ends without reading anything more.
 func (c *serverConn) goAway() {
 	_ = c.conn.SetWriteDeadline(time.Now().Add(time.Second))
-	if writeFrame(c.w, frameGoAway, nil) == nil {
-		_ = c.w.Flush()
+	if writeFrame(c.w, frameGoAway, nil) == nil && c.w.Flush() == nil {
+		// Let a client that already sent an exchange finish writing it, so
+		// its sends do not fail on a reset before it reads the GOAWAY and
+		// resends; it closes the connection when it does.
+		c.lingerClose()
 	}
 }
 

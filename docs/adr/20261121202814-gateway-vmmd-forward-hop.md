@@ -71,7 +71,13 @@ measured on prod before the next.
    A client that sent an exchange on that connection before the GOAWAY
    arrived resends it on a new connection (`retried`), up to 256 KiB of
    request; beyond that, or after a failed send, the call fails Unavailable,
-   as a gRPC stream refused by a GOAWAY does.
+   as a gRPC stream refused by a GOAWAY does. A connection that ends with
+   request bytes unread (after a GOAWAY, or a handler that answered without
+   reading the whole body) discards them for up to 500 ms before closing,
+   as net/http's server does, so a TCP reset does not destroy the response
+   the client has not read yet. The gateway reads responses while a send is
+   blocked, so an app that answers before reading its upload cannot
+   deadlock the call; cancelling closes the connection, which ends any send.
 5. **Cancellation.** The gateway cancels by closing the connection. vmmd
    reads the connection for as long as the handler runs, and cancels the
    handler's context when it ends early.
@@ -79,20 +85,25 @@ measured on prod before the next.
    (a vmmd without the switch, or before this release), the gateway uses
    gRPC for that node and retries the hop after a minute. A dial or handshake
    that fails otherwise (2 second limit) keeps the node on gRPC for 5
-   seconds, so calls do not each pay a failed dial. Fallback happens before
+   seconds, so calls do not each pay a failed dial. The hop pins the vmmd
+   leaf to the node name the gRPC dial was bound to, so building it adds no
+   lookup to the node's dial. Fallback happens before
    any request byte is sent, so it never duplicates a request.
 7. **Switches.** vmmd: `FAAS_VMMD_FORWARD_HOP=1` installs the ALPN demux.
    gatewayd-internal: `FAAS_GATEWAY_VMMD_FORWARD_HOP=1` makes it offer the
    hop. Both default off. With vmmd's off nothing on its listener changes.
 8. **Metrics.** `gateway_vmmd_forward_hop_total{result}` (`hop`, `fallback`,
-   `dial_error`, `retried`) on the gateway; `vmmd_forward_hop_conns_total{result}`
+   `dial_error`, `retried`) on the gateway, counting every call, including
+   those turned to gRPC while a node is held there; `vmmd_forward_hop_conns_total{result}`
    on vmmd. Hop exchanges do not appear in otelgrpc's `rpc.server.*` metrics
    on vmmd; the gateway-side forward metrics and traces (spans keep the full
    method name) cover them. The A/B compares those.
 9. **Shutdown.** vmmd stops the hop with its gRPC server: a graceful stop
    drains the hop and waits for its exchanges, a hard stop ends them, and
-   the service is closed only after either. The ALPN router retries
-   temporary accept errors (EMFILE) as grpc-go does.
+   the service is closed only after either, including when the gRPC server
+   fails. The ALPN router starts with the gRPC server's first Accept, so the
+   hop serves nothing before gRPC does, and retries temporary accept errors
+   (EMFILE) as grpc-go does.
 
 ### Phase 2: binary HTTP to the stream bridge
 
@@ -128,7 +139,8 @@ a test that runs before the switches can be turned on.
    caller, so a refused certificate cannot make vmmd buffer messages. Tests: a gateway certificate is served; schedd's is allowed
    as the policy allows it; builderd's and imaged's are refused; a connection
    without a client certificate fails the handshake.
-3. **Same limits, strict framing.** A message is at most 4 MiB (gRPC's
+3. **Same limits, strict framing.** The limits live in `pkg/api/limits.go`
+   (`VmmdForwardHop*`). A message is at most 4 MiB (gRPC's
    default receive limit on both ends); the preamble's metadata is at most
    64 KiB; an unknown frame type, a bad length or a malformed message closes
    the connection. The ClientHello peek and the hop handshake have a
