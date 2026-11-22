@@ -47,6 +47,7 @@ const (
 	RequestTelemetry_RecordRequestIDJournal_FullMethodName      = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
 	RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournalBatch"
 	RequestTelemetry_AddRequestAnalyticsRollups_FullMethodName  = "/onebox.faas.apid.v1.RequestTelemetry/AddRequestAnalyticsRollups"
+	RequestTelemetry_AddInstanceRouteMinutes_FullMethodName     = "/onebox.faas.apid.v1.RequestTelemetry/AddInstanceRouteMinutes"
 )
 
 // RequestTelemetryClient is the client API for RequestTelemetry service.
@@ -95,6 +96,11 @@ type RequestTelemetryClient interface {
 	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
 	// counts them as before.
 	AddRequestAnalyticsRollups(ctx context.Context, in *AddRequestAnalyticsRollupsRequest, opts ...grpc.CallOption) (*AddRequestAnalyticsRollupsResponse, error)
+	// AddInstanceRouteMinutes stores each instance's route activity per
+	// minute (ADR-20261121170000), counted by the gateway for apps with the
+	// route_resource_peaks flag. Best-effort: the gateway sends a batch once
+	// and does not resend it, so a lost answer never counts twice.
+	AddInstanceRouteMinutes(ctx context.Context, in *AddInstanceRouteMinutesRequest, opts ...grpc.CallOption) (*AddInstanceRouteMinutesResponse, error)
 }
 
 type requestTelemetryClient struct {
@@ -168,6 +174,16 @@ func (c *requestTelemetryClient) AddRequestAnalyticsRollups(ctx context.Context,
 	return out, nil
 }
 
+func (c *requestTelemetryClient) AddInstanceRouteMinutes(ctx context.Context, in *AddInstanceRouteMinutesRequest, opts ...grpc.CallOption) (*AddInstanceRouteMinutesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AddInstanceRouteMinutesResponse)
+	err := c.cc.Invoke(ctx, RequestTelemetry_AddInstanceRouteMinutes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RequestTelemetryServer is the server API for RequestTelemetry service.
 // All implementations must embed UnimplementedRequestTelemetryServer
 // for forward compatibility.
@@ -214,6 +230,11 @@ type RequestTelemetryServer interface {
 	// whose apid answers Unimplemented leaves its raw rows uncounted, so apid
 	// counts them as before.
 	AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error)
+	// AddInstanceRouteMinutes stores each instance's route activity per
+	// minute (ADR-20261121170000), counted by the gateway for apps with the
+	// route_resource_peaks flag. Best-effort: the gateway sends a batch once
+	// and does not resend it, so a lost answer never counts twice.
+	AddInstanceRouteMinutes(context.Context, *AddInstanceRouteMinutesRequest) (*AddInstanceRouteMinutesResponse, error)
 	mustEmbedUnimplementedRequestTelemetryServer()
 }
 
@@ -241,6 +262,9 @@ func (UnimplementedRequestTelemetryServer) RecordRequestIDJournalBatch(context.C
 }
 func (UnimplementedRequestTelemetryServer) AddRequestAnalyticsRollups(context.Context, *AddRequestAnalyticsRollupsRequest) (*AddRequestAnalyticsRollupsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AddRequestAnalyticsRollups not implemented")
+}
+func (UnimplementedRequestTelemetryServer) AddInstanceRouteMinutes(context.Context, *AddInstanceRouteMinutesRequest) (*AddInstanceRouteMinutesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AddInstanceRouteMinutes not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -360,6 +384,24 @@ func _RequestTelemetry_AddRequestAnalyticsRollups_Handler(srv interface{}, ctx c
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RequestTelemetry_AddInstanceRouteMinutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AddInstanceRouteMinutesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).AddInstanceRouteMinutes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_AddInstanceRouteMinutes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).AddInstanceRouteMinutes(ctx, req.(*AddInstanceRouteMinutesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RequestTelemetry_ServiceDesc is the grpc.ServiceDesc for RequestTelemetry service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -386,6 +428,10 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AddRequestAnalyticsRollups",
 			Handler:    _RequestTelemetry_AddRequestAnalyticsRollups_Handler,
+		},
+		{
+			MethodName: "AddInstanceRouteMinutes",
+			Handler:    _RequestTelemetry_AddInstanceRouteMinutes_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

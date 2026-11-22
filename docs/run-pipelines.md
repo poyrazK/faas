@@ -244,7 +244,7 @@ recompiles the exact task versions and checks their immutable pins. Original
 source/input plans remain erased after terminalization.
 
 ```sh
-gregale sandbox workflow rerun PARENT_PIPELINE_ID report-recovery original.json \
+gregale sandbox workflow retry PARENT_PIPELINE_ID report-recovery original.json \
   --repeat-steps render --json
 ```
 

@@ -334,7 +334,7 @@ func TestCreateAppSuccess(t *testing.T) {
 	}
 	var out api.AppResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
-	if want := api.MustLimitsFor(api.PlanPro).RAMMB; out.RAMMB != want { // Pro default
+	if want := api.StandaloneAppDefaultRAMMB(api.MustLimitsFor(api.PlanPro)); out.RAMMB != want { // Pro default
 		t.Errorf("ram default = %d, want %d", out.RAMMB, want)
 	}
 	if out.URL != "https://my-api.gregale.dev" {

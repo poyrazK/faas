@@ -9,8 +9,14 @@
 -- +goose Up
 -- +goose StatementBegin
 SET lock_timeout = '5s';
-ALTER TABLE storage_grant_audit ADD CONSTRAINT storage_grant_audit_subject_class_v2_check
-    CHECK (subject_class IN ('deployment', 'sandbox_account', 'job', 'build', 'build_output', 'platform')) NOT VALID;
+DO $migration$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'storage_grant_audit'::regclass AND conname = 'storage_grant_audit_subject_class_v2_check') THEN
+        ALTER TABLE storage_grant_audit ADD CONSTRAINT storage_grant_audit_subject_class_v2_check
+            CHECK (subject_class IN ('deployment', 'sandbox_account', 'job', 'build', 'build_output', 'platform')) NOT VALID;
+    END IF;
+END;
+$migration$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE storage_grant_audit VALIDATE CONSTRAINT storage_grant_audit_subject_class_v2_check;
@@ -23,8 +29,14 @@ RESET lock_timeout;
 -- +goose Down
 -- +goose StatementBegin
 SET lock_timeout = '5s';
-ALTER TABLE storage_grant_audit ADD CONSTRAINT storage_grant_audit_subject_class_check
-    CHECK (subject_class IN ('deployment', 'sandbox_account', 'job', 'build')) NOT VALID;
+DO $migration$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'storage_grant_audit'::regclass AND conname = 'storage_grant_audit_subject_class_check') THEN
+        ALTER TABLE storage_grant_audit ADD CONSTRAINT storage_grant_audit_subject_class_check
+            CHECK (subject_class IN ('deployment', 'sandbox_account', 'job', 'build')) NOT VALID;
+    END IF;
+END;
+$migration$;
 -- +goose StatementEnd
 -- +goose StatementBegin
 ALTER TABLE storage_grant_audit DROP CONSTRAINT IF EXISTS storage_grant_audit_subject_class_v2_check;

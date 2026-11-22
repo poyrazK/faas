@@ -2133,7 +2133,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 		if len(buckets) != 0 {
-			api.WriteProblem(w, api.NewProblem(409, "app_has_buckets", "Conflict", "Delete this app's object storage buckets before deleting the app."))
+			api.WriteProblem(w, appHasBucketsProblem(app.Slug, buckets))
 			return
 		}
 	}

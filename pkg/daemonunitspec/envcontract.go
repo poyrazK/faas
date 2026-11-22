@@ -1020,6 +1020,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_RETENTION_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-847 synthetic route probes; unset disables probes"},
+	{Name: "FAAS_ROUTE_RESOURCE_PEAKS", Owners: []string{"gatewayd-internal", "vmmd"}, Source: EnvSourceDefault, Note: "`0` stops vmmd sending guest resource minutes and the gateway sending per-instance route minutes to apid (ADR-20261121170000); whether an app's minutes are kept is the route_resource_peaks platform flag"},
 	{Name: "FAAS_RUNTIME_KIND", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_RUNTIME_LOG_EVENTS_ENABLED", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Default: "0", Note: "ADR-20261018083536 slice B: explicit 1 forwards guest warn/error lines, within a per-app minute budget, to apid's log ledger over the guest-trace apid target; apid accepts them only while FAAS_LOG_SEARCH_ENABLED=1"},
 	{Name: "FAAS_RUNTIME_SECRET_BINDING", Owners: []string{"apid"}, Source: EnvSourceDropin, Default: "off", Note: "ADR-20261023173624; off or account. account binds each new runtime secret envelope to its account so vmmd opens it only for that account; enable only after every vmmd checks bindings (seal_domains role)"},

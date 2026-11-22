@@ -97,7 +97,10 @@ func (s *PgStore) GetDeployToken(ctx context.Context, accountID, appID, tokenID 
 }
 
 func (s *PgStore) RevokeDeployToken(ctx context.Context, accountID, appID, tokenID string) (DeployToken, error) {
-	if accountID == "" || appID == "" || tokenID == "" {
+	// A token ID that is not a UUID (an 8-character prefix copied from the
+	// list) names no token; sent as a uuid parameter it failed the query and
+	// the handler answered 503 "briefly at capacity" (prod hunt r26).
+	if accountID == "" || appID == "" || !isUUIDString(tokenID) {
 		return DeployToken{}, ErrNotFound
 	}
 	return scanDeployToken(s.pool.QueryRow(ctx,
@@ -111,6 +114,9 @@ func (s *PgStore) RevokeDeployToken(ctx context.Context, accountID, appID, token
 func (s *PgStore) RotateDeployToken(ctx context.Context, accountID, appID, tokenID string, hash []byte, label string, expiresAt time.Time, graceWindow time.Duration) (DeployToken, DeployToken, error) {
 	if len(hash) != 32 || !expiresAt.After(time.Now()) {
 		return DeployToken{}, DeployToken{}, errors.New("pgstore: invalid rotated deploy token")
+	}
+	if !isUUIDString(tokenID) {
+		return DeployToken{}, DeployToken{}, ErrNotFound
 	}
 	hash = storedCredential(credTagDeployToken, hash)
 	tx, err := s.pool.Begin(ctx)

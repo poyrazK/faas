@@ -2292,6 +2292,25 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	} {
 		dtos[schema] = financialDTOs[name]
 	}
+	// ADR-20261121170000: the route resource peaks response embeds
+	// routeresources.Report and names its attribution and split types.
+	routePeakDTOs, err := scanDTOs([]string{
+		filepath.Join(root, "pkg", "api", "route_resources.go"),
+		filepath.Join(root, "pkg", "routeresources", "analyze.go"),
+		filepath.Join(root, "pkg", "routeresources", "split.go"),
+	})
+	if err != nil {
+		t.Fatalf("scan route resource DTOs: %v", err)
+	}
+	routePeaksResponse := map[string]bool{}
+	for _, name := range []string{"RouteResourcesResponse", "Report"} {
+		for field := range routePeakDTOs[name] {
+			routePeaksResponse[field] = true
+		}
+	}
+	dtos["RouteResourcesResponse"] = routePeaksResponse
+	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
+	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})
 	if err != nil {
 		t.Fatalf("scan rehearsal object DTOs: %v", err)

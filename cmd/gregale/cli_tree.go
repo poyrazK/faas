@@ -162,6 +162,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding", "bindings"},
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
+	// Gregale Run preview commands (#7747) under tree names.
+	{"sandbox customer budget", "run controls customer"},
+	{"sandbox task budget", "run controls task"},
+	{"sandbox binding controls", "run controls binding"},
+	{"sandbox delivery sign", "run deliveries download-url"},
+	{"sandbox environment publish", "run environments build"},
+	{"sandbox task call", "run tasks invoke"},
+	{"sandbox workflow retry", "runs workflow rerun"},
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
@@ -335,6 +343,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Observe.
 	{"metric requests", "analytics"},
+	{"metric resources", "route-resources"},
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},
@@ -958,6 +967,13 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	// `app show APP` is the spelling most nouns use for reading one thing;
+	// it answered "unexpected positional argument" (prod hunt r26). Only
+	// with an explicit target, so a bare `app show` still reads an app
+	// named "show".
+	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		verb = "get"
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}
