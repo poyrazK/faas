@@ -115,6 +115,8 @@ func (b *PGBackend) FlagKillsHeader(ctx context.Context, deploymentID string) st
 func (b *PGBackend) InvalidateFlagKills() {
 	if b != nil {
 		b.flagKills.InvalidateAll()
+		// Edge routes come from the same configuration (ADR-20261122090000).
+		b.edgeFlags.InvalidateAll()
 	}
 }
 
