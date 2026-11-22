@@ -34,6 +34,36 @@ class DecideTest(unittest.TestCase):
         self.assertIn("did not hold main's previous commit", got["reason"])
         self.assertEqual(got["paths"], ["pkg/apid/a.go", "pkg/meter/m.go"])
 
+    def test_green_head_under_a_moved_main_tests_only_the_interaction(self):
+        got = decide(ancestor=False, trees={T: "tree2", H: "tree1"})
+        self.assertEqual(got["interaction"], {"own": ["pkg/apid/a.go"], "others": ["pkg/meter/m.go"]})
+        self.assertIn("both its change and the merges since affect", got["reason"])
+
+    def test_head_ci_did_not_pass_on_tests_every_affected_package(self):
+        got = decide(ancestor=False, trees={T: "tree2", H: "tree1"}, light=False)
+        self.assertNotIn("interaction", got)
+        self.assertEqual(got["paths"], ["pkg/apid/a.go", "pkg/meter/m.go"])
+
+    def test_select_takes_packages_both_sides_affect(self):
+        graph = {"pkg/apid/a.go": ["./pkg/apid", "./cmd/apid"], "pkg/meter/m.go": ["./pkg/meter", "./cmd/apid"],
+                 "pkg/wire/w.go": ["./pkg/wire", "./pkg/apid", "./pkg/meter", "./cmd/apid"]}
+
+        def affected(paths, kind):
+            return sorted({p for path in paths for p in graph[path]})
+        cases = [
+            ("disjoint changes meet in a shared dependent",
+             {"interaction": {"own": ["pkg/apid/a.go"], "others": ["pkg/meter/m.go"]}}, ["./cmd/apid"]),
+            ("a file both sides changed keeps all its packages",
+             {"interaction": {"own": ["pkg/wire/w.go"], "others": ["pkg/wire/w.go"]}}, graph["pkg/wire/w.go"]),
+            ("no other merge: nothing CI did not see",
+             {"interaction": {"own": ["pkg/apid/a.go"], "others": []}}, []),
+            ("without interaction every affected package",
+             {"paths": ["pkg/apid/a.go", "pkg/meter/m.go"]}, ["./cmd/apid", "./pkg/apid", "./pkg/meter"]),
+        ]
+        for name, plan, want in cases:
+            with self.subTest(name):
+                self.assertEqual(tt.select(plan, "test", affected=affected), sorted(want))
+
     def test_same_ancestry_but_other_tree_runs(self):
         got = decide(trees={T: "tree2", H: "tree1"})
         self.assertEqual(got["verdict"], "run")
