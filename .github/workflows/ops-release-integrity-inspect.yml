@@ -1,0 +1,58 @@
+name: ops-release-integrity-inspect
+# Read-only: prints why `gregalectl release verify` fails on one production
+# compute node (FaasReleaseIntegrityFailed). Compute SSH is open only from the
+# fleet runner on the control plane, so this is the operator's way in.
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: "Compute node to inspect"
+        required: true
+        type: choice
+        options:
+          - bhs-2
+          - bhs-3
+permissions:
+  contents: read
+concurrency:
+  group: production-us-platform-rollout
+  cancel-in-progress: false
+jobs:
+  inspect:
+    name: Read release integrity failures on ${{ inputs.node }}
+    if: github.repository == 'poyrazK/faas' && github.ref == 'refs/heads/main'
+    environment: production-us
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: integrity-inspect-src
+          persist-credentials: false
+          sparse-checkout: scripts/ops/inspect_release_integrity.sh
+          sparse-checkout-cone-mode: false
+      - name: Inspect the node's release integrity check
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          NODE: ${{ inputs.node }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$COMPUTE_SSH_KEY"
+          case "$NODE" in
+            bhs-2) pinned='SHA256:iqOzBAS7ewNswvawLkqTnXkjJalQ968PCPGuqvi35Jo' ;;
+            bhs-3) pinned='SHA256:/I39vLRzzLGSQohnatPFNzLJV1l2oxYuaYFi5ETnjG4' ;;
+            *) echo "unknown node $NODE" >&2; exit 2 ;;
+          esac
+          host="$NODE.gregale.dev"
+          umask 077
+          scratch="$(mktemp -d "$RUNNER_TEMP/integrity-inspect.XXXXXXXX")"
+          trap 'rm -rf -- "$scratch"' EXIT
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$scratch/key"
+          ssh-keyscan -T 10 -t ed25519 "$host" > "$scratch/known-hosts" 2>/dev/null
+          fingerprint="$(ssh-keygen -lf "$scratch/known-hosts" -E sha256 | awk '{print $2}' | sort -u)"
+          test "$fingerprint" = "$pinned"
+          ssh -i "$scratch/key" -o BatchMode=yes -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$scratch/known-hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=2 \
+            "root@$host" bash -s < integrity-inspect-src/scripts/ops/inspect_release_integrity.sh
