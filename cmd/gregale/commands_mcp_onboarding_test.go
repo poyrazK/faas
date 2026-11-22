@@ -260,7 +260,9 @@ func TestMCPTaskStackMaterializesValidRoles(t *testing.T) {
 					t.Fatalf("guide lacks %q", attach)
 				}
 			}
-			webFirst := bytes.Index(guide, []byte("--path ./web --name reports-web")) < bytes.Index(guide, []byte("deploy --path ./worker --name reports-worker"))
+			// The --create-only reservations list web first for every runtime;
+			// compare the real deploys.
+			webFirst := bytes.Index(guide, []byte("deploy --path ./web --name reports-web")) < bytes.Index(guide, []byte("deploy --path ./worker --name reports-worker"))
 			if webFirst != (runtime != "go") {
 				t.Fatalf("%s guide deploys web first = %v", runtime, webFirst)
 			}
