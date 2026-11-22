@@ -74,8 +74,8 @@ func Replay(ctx context.Context, serving, candidate *Client, options ReplayOptio
 	if err != nil {
 		return ReplayReport{Problems: []string{"candidate catalog: " + err.Error()}}
 	}
-	beforeContract, err1 := NewCatalogContract("serving", before)
-	afterContract, err2 := NewCatalogContract("candidate", after)
+	beforeContract, err1 := NewCatalogContract(serving.Version, before)
+	afterContract, err2 := NewCatalogContract(candidate.Version, after)
 	if err1 != nil || err2 != nil {
 		return ReplayReport{Problems: []string{fmt.Sprintf("catalog contract: %v %v", err1, err2)}}
 	}
