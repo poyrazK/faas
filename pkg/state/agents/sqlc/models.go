@@ -358,6 +358,14 @@ type SandboxSession struct {
 	TaskMaxChars        pgtype.Int4
 	TaskExitCode        pgtype.Int4
 	TaskOutput          []byte
+	Vcpu                pgtype.Int2
+	VolumeGb            pgtype.Int4
+	PauseRequestedAt    pgtype.Timestamptz
+	ResumeRequestedAt   pgtype.Timestamptz
+	PausedAt            pgtype.Timestamptz
+	Durability          pgtype.Text
+	ResumedCold         bool
+	ForkedFrom          pgtype.UUID
 }
 
 type SandboxSessionDomain struct {

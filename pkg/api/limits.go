@@ -12088,6 +12088,35 @@ var (
 	SandboxSnapshotPendingSec = 3600
 	// SandboxPersistTimeoutSec bounds one workspace:persist call.
 	SandboxPersistTimeoutSec = 1800
+
+	// Persistent sessions (ADR-20261122132055 §6; proposed values, confirmed
+	// with the storage price). SandboxPersistentMax bounds an account's
+	// persistent sessions, paused or not. A running persistent session pauses
+	// after SandboxPersistentIdlePauseSec without calls, or once it has run
+	// SandboxPersistentRunMaxSec; a paused one expires after
+	// SandboxPausedRetentionDays. A call to a paused session waits up to
+	// SandboxResumeWaitSec for its resume.
+	SandboxPersistentMax          = [4]int{0, 2, 10, 50}
+	SandboxPersistentIdlePauseSec = [4]int{0, 300, 600, 1800}
+	SandboxPersistentRunMaxSec    = [4]int{0, 86_400, 259_200, 604_800}
+	SandboxPausedRetentionDays    = [4]int{0, 7, 30, 90}
+	SandboxResumeWaitSec          = 30
+	// SandboxForkMax bounds the forks one request makes (§3).
+	SandboxForkMax = [4]int{0, 1, 10, 100}
+	// SandboxVolumeMaxGB bounds a persistent session's workspace volume, and
+	// SandboxVolumeDefaultGB is its size when create names none (§4). A
+	// running volume is backed up every SandboxVolumeBackupSec.
+	SandboxVolumeMaxGB     = [4]int{0, 10, 50, 200}
+	SandboxVolumeDefaultGB = 10
+	SandboxVolumeBackupSec = 600
+	// SandboxPersistentRAMMBMax and SandboxPersistentVCPUMax are a persistent
+	// session's largest shape (§5); larger ones (32 GB, 16 vCPU) are by
+	// contract.
+	SandboxPersistentRAMMBMax = [4]int{0, 2048, 8192, 16_384}
+	SandboxPersistentVCPUMax  = [4]int{0, 2, 4, 8}
+	// SandboxPausedBytesFreePerAccount is the stored bytes of paused sessions
+	// (captures and volume backups) an account keeps free each month (§8).
+	SandboxPausedBytesFreePerAccount = [4]int64{0, 5 << 30, 25 << 30, 100 << 30}
 	// SandboxExposedPortsMax, SandboxPreviewRequestsPerSec and
 	// SandboxPublicPreview govern preview URLs (§11): ports per session,
 	// requests per second per session, and whether a port may be public.

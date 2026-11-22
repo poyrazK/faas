@@ -257,7 +257,15 @@ CREATE TABLE sandbox_sessions (
  task_url text,
  task_max_chars integer,
  task_exit_code integer,
- task_output bytea
+ task_output bytea,
+ vcpu smallint,
+ volume_gb integer,
+ pause_requested_at timestamptz,
+ resume_requested_at timestamptz,
+ paused_at timestamptz,
+ durability text,
+ resumed_cold boolean NOT NULL DEFAULT false,
+ forked_from uuid
 );
 CREATE TABLE agent_sandbox_task_calls (
  sandbox_id uuid PRIMARY KEY,

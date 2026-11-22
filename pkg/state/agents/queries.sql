@@ -488,20 +488,30 @@ SELECT count(*)::integer FROM sandbox_sessions WHERE account_id=sqlc.arg(account
 
 -- name: InsertSandboxSession :one
 INSERT INTO sandbox_sessions (account_id,tenant_id,kind,preset,ram_mb,network_mode,idle_timeout_sec,expires_at,labels,workspace_snapshot_id,
-  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny)
+  image_ref,image_job_id,template_id,browser,task_kind,task_url,task_max_chars,egress_allow,egress_deny,vcpu,volume_gb)
 VALUES (sqlc.arg(account_id)::text::uuid,sqlc.narg(tenant_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(preset)::text,
   sqlc.arg(ram_mb)::integer,sqlc.arg(network_mode)::text,sqlc.arg(idle_timeout_sec)::integer,sqlc.arg(expires_at)::timestamptz,
   sqlc.arg(labels)::jsonb,sqlc.narg(workspace_snapshot_id)::text::uuid,sqlc.narg(image_ref)::text,sqlc.narg(image_job_id)::text::uuid,
   sqlc.narg(template_id)::text::uuid,sqlc.arg(browser)::boolean,sqlc.narg(task_kind)::text,sqlc.narg(task_url)::text,
-  sqlc.narg(task_max_chars)::integer,sqlc.narg(egress_allow)::text[],sqlc.narg(egress_deny)::text[])
+  sqlc.narg(task_max_chars)::integer,sqlc.narg(egress_allow)::text[],sqlc.narg(egress_deny)::text[],
+  sqlc.narg(vcpu)::smallint,sqlc.narg(volume_gb)::integer)
 RETURNING id::text AS id;
+
+-- name: CountPersistentSandboxSessions :one
+-- An account's persistent sessions that have not ended, paused or not
+-- (SandboxPersistentMax, ADR-20261122132055 §6).
+SELECT count(*)::bigint FROM sandbox_sessions
+ WHERE account_id=sqlc.arg(account_id)::text::uuid AND kind='persistent'
+ AND state IN ('queued','starting','ready','frozen','pausing','paused','resuming');
 
 -- name: GetSandboxSession :one
 SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '')::text AS tenant_id,kind,preset,ram_mb,network_mode,state,
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
-  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
+  coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
  FROM sandbox_sessions WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid;
 
 -- name: ListSandboxSessions :many
@@ -510,7 +520,9 @@ SELECT id::text AS id,account_id::text AS account_id,coalesce(tenant_id::text, '
   idle_timeout_sec,expires_at,labels,outcome_code,outcome_message,close_requested_at,last_activity_at,created_at,updated_at,closed_at,
   coalesce(node_id, '')::text AS node_id,coalesce(instance_id, '')::text AS instance_id,
   coalesce(workspace_snapshot_id::text, '')::text AS workspace_snapshot_id, coalesce(image_ref, '')::text AS image_ref, browser,
-  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny
+  coalesce(egress_allow, '{}')::text[] AS egress_allow, coalesce(egress_deny, '{}')::text[] AS egress_deny,
+  coalesce(vcpu, 0)::integer AS vcpu, coalesce(volume_gb, 0)::integer AS volume_gb, pause_requested_at, resume_requested_at,
+  paused_at, coalesce(durability, '')::text AS durability, resumed_cold, coalesce(forked_from::text, '')::text AS forked_from
  FROM sandbox_sessions
  WHERE account_id=sqlc.arg(account_id)::text::uuid
  AND (sqlc.narg(state)::text IS NULL OR state=sqlc.narg(state)::text)
@@ -533,7 +545,20 @@ UPDATE sandbox_sessions SET state='closed', outcome_code='closed', closed_at=now
 -- the VM down and closes it.
 UPDATE sandbox_sessions SET close_requested_at=coalesce(close_requested_at, now()), updated_at=now()
  WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
- AND state IN ('starting','ready','frozen');
+ AND state IN ('starting','ready','frozen','pausing','paused','resuming');
+
+-- name: RequestSandboxSessionPause :execrows
+-- A running persistent session's pause is agentd's: apid records the
+-- request (ADR-20261122132055 §1). A pause cancels a pending resume.
+UPDATE sandbox_sessions SET pause_requested_at=coalesce(pause_requested_at, now()), resume_requested_at=NULL, updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND kind='persistent' AND state IN ('ready','frozen') AND close_requested_at IS NULL;
+
+-- name: RequestSandboxSessionResume :execrows
+-- A paused (or pausing) persistent session's resume is agentd's too.
+UPDATE sandbox_sessions SET resume_requested_at=coalesce(resume_requested_at, now()), updated_at=now()
+ WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
+ AND kind='persistent' AND state IN ('pausing','paused') AND close_requested_at IS NULL;
 
 -- name: ListClaimableSandboxSessions :many
 -- Oldest first; rows another replica holds are skipped, not waited on.
