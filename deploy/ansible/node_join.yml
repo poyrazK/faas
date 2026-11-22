@@ -1499,6 +1499,38 @@
         path: /etc/systemd/system/faas-schedd.service.d/70-faas-quiet-pause-ledger.conf
         state: absent
 
+    # Release commands (group_vars/compute_nodes/release_commands.yml): this
+    # node's schedd dispatches release tasks and imaged runs them. Hand
+    # drop-ins with the same names until 2026-11-22; lost in the GCP -> OVH
+    # move, which made managed PostgreSQL migrations impossible.
+    - name: Install schedd's release task dispatch switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-schedd.service.d/zz-faas-release-phase.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_APP_TASK_DISPATCH={{ '1' if (faas_release_commands | default(false) | bool) else '0' }}
+
+    - name: Create imaged's drop-in directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/faas-imaged.service.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Install imaged's release phase switch
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-imaged.service.d/zz-faas-release-phase.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_RELEASE_PHASE_ENABLED={{ '1' if (faas_release_commands | default(false) | bool) else '0' }}
+
     # ADR-20261109170000: refuse v1 layer signatures, which do not name their
     # storage key and can be replayed onto another app's layer. Only true once
     # `gregalectl artifact resign` has converted every stored layer.
