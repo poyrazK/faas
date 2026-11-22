@@ -2315,7 +2315,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
-  { title: 'receipt respond submits reviewed input and returns a snapshot after restart', useReceipt: true, deferredForm: true, respondOnce: true, timeout: 45_000 },
+  { title: 'receipt watch hands off to reviewed approval and resumes to the original result', useReceipt: true, deferredForm: true, respondOnce: true, timeout: 45_000 },
   { title: 'receipt respond verifies a form reply lost after commit', useReceipt: true, deferredForm: true, respondOnce: true, formReplyFault: 'after', timeout: 45_000 },
   { title: 'receipt respond reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, respondOnce: true, formReplyFault: 'before', timeout: 45_000 },
   { title: 'receipt cancel recovers cancellation committed before the reply was lost', useReceipt: true, deferredForm: true, cancelReplyFault: 'after', timeout: 35_000 },
@@ -2352,9 +2352,23 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
     return `${stamp.slice(0, 8)}-${stamp.slice(8)}-7${randomUUID().slice(15)}`;
   };
   const report = 'Original private report';
-  const handlers = deferredForm ? mcpTaskHandlers : {
+  const watchGates = respondOnce && !formReplyFault ? Array.from({ length: 2 }, () => Promise.withResolvers()) : [];
+  let executions = 0;
+  let subscriptions = 0;
+  const buildReport = mcpTaskHandlers.build_report;
+  let handlers = deferredForm ? mcpTaskHandlers : {
     build_report: { version: '1', async execute() { return { content: [{ type: 'text', text: report }] }; } },
   };
+  if (watchGates.length) {
+    handlers = { ...handlers, build_report: { ...buildReport, async execute(args, context) {
+      if (args.report === 'original') {
+        // Pause the initial execution and its replay until each watch subscribes.
+        const gate = watchGates[executions++];
+        if (gate) await gate.promise;
+      }
+      return buildReport.execute(args, context);
+    } } };
+  }
   const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, handlers });
   await runtime.start();
   const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
@@ -2371,6 +2385,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
     if (req.headers['x-gregale-test-task-relay'] === '1') return api.app(req, res);
     const method = req.headers['mcp-method'];
     requests.push(method);
+    if (method === 'subscriptions/listen' && watchGates.length) watchGates[subscriptions++]?.resolve();
     const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
     const dropFormReply = method === 'tasks/update' && pendingFormReplyFault;
     const dropCancelReply = method === 'tasks/cancel' && pendingCancelReplyFault;
@@ -2450,8 +2465,9 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
       '--arguments', JSON.stringify({ report: value, steps: 1 }),
     ]);
     const receiptArgs = deferredForm ? { report: 'original', steps: 1, request_approval: true } : { report: 'original', steps: 1 };
-    const receiptCall = ['--tool', 'build_report', '--tasks', '--task-receipt', receiptPath,
-      '--arguments', JSON.stringify(receiptArgs), ...(deferredForm ? ['--defer-form-input'] : [])];
+    const receiptCallFor = (path, args) => ['--tool', 'build_report', '--tasks', '--task-receipt', path,
+      '--arguments', JSON.stringify(args), ...(deferredForm ? ['--defer-form-input'] : [])];
+    const receiptCall = receiptCallFor(receiptPath, receiptArgs);
     if (useReceipt) {
       const pending = startCLI('call', owner, receiptCall);
       submittingCLI = pending.child;
@@ -2463,12 +2479,36 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
     assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
     const lookup = (credential, code) => cli('status', credential, code, [...selector, '--metadata-only']);
+    async function watch(status, nextAction) {
+      await eventually(async () => (await rows()).some(row => row.task_id === committedID && row.status === 'running'),
+        'worker did not reach the watch gate');
+      const beforeWatch = requests.length;
+      const output = await cli('watch', owner, 0, selector);
+      assert.deepEqual(requests.slice(beforeWatch), ['server/discover', 'gregale/tasks/lookup', 'subscriptions/listen', 'gregale/tasks/lookup']);
+      const [first, last, ...extra] = output.trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(extra, []);
+      for (const event of [first, last]) assert.ok(Number.isFinite(Date.parse(event.lastUpdatedAt)));
+      assert.deepEqual(first, { taskId: committedID, status: 'working', lastUpdatedAt: first.lastUpdatedAt,
+        nextAction: 'poll_status', pollIntervalMs: 500 });
+      assert.deepEqual(last, { taskId: committedID, status, lastUpdatedAt: last.lastUpdatedAt, nextAction });
+      return last;
+    }
     if (deferredForm) {
+      let watchedForm;
+      if (watchGates.length) {
+        for (const credential of [foreign, ownerWithoutTool]) {
+          const beforeDenied = requests.length;
+          assert.equal(await cli('watch', credential, 1, selector), '');
+          assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
+        }
+        watchedForm = await watch('input_required', 'provide_input');
+      }
       await eventually(async () => (await rows())[0]?.status === 'input_required', 'worker did not persist the form request');
       const snapshot = JSON.parse(await lookup(owner, 0));
       assert.ok(Number.isFinite(Date.parse(snapshot.lastUpdatedAt)));
       assert.deepEqual(snapshot, { taskId: committedID, status: 'input_required', lastUpdatedAt: snapshot.lastUpdatedAt,
         nextAction: 'provide_input' });
+      if (watchedForm) assert.deepEqual(snapshot, watchedForm);
       if (cancelReplyFault) {
         const beforeInvalid = requests.length;
         assert.equal(await cli('cancel', owner, 1, [...selector, '--url', `${endpoint}/other`]), '');
@@ -2537,7 +2577,8 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
         assert.equal(await readFile(file, 'utf8'), filled);
 
         const otherReceipt = join(clientDir, 'other-task.json');
-        const second = JSON.parse(await cli('call', owner, 0, receiptCall.map(value => value === receiptPath ? otherReceipt : value)));
+        const otherArgs = watchGates.length ? { ...receiptArgs, report: 'separate report' } : receiptArgs;
+        const second = JSON.parse(await cli('call', owner, 0, receiptCallFor(otherReceipt, otherArgs)));
         const otherID = second.result.taskId;
         assert.notEqual(otherID, committedID);
         await eventually(async () => (await rows()).some(row => row.task_id === otherID && row.status === 'input_required'),
@@ -2593,8 +2634,13 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
           assert.ok(['working', 'completed'].includes(observed.status));
           const next = observed.status === 'working' ? { nextAction: 'poll_status', pollIntervalMs: 500 } : { nextAction: 'read_result' };
           assert.deepEqual(observed, { taskId: committedID, status: observed.status, lastUpdatedAt: observed.lastUpdatedAt, ...next });
-          await eventually(async () => (await rows()).some(row => row.task_id === committedID && row.status === 'completed'),
-            'Task did not complete after the reviewed response');
+          if (watchGates.length) {
+            assert.equal(observed.status, 'working');
+            await watch('completed', 'read_result');
+          } else {
+            await eventually(async () => (await rows()).some(row => row.task_id === committedID && row.status === 'completed'),
+              'Task did not complete after the reviewed response');
+          }
           const beforeReplay = requests.length;
           const terminal = JSON.parse(await cli(verb, owner, 0, respondArgs));
           assert.deepEqual(terminal, { taskId: committedID, status: 'completed', lastUpdatedAt: terminal.lastUpdatedAt, nextAction: 'read_result' });
@@ -2716,6 +2762,7 @@ for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, res
       assert.equal(await cli('wait', owner, 1, selector), '');
     }
   } finally {
+    for (const gate of watchGates) gate.resolve();
     api.closeTaskSubscriptions();
     await new Promise(resolveClose => { server.close(resolveClose); server.closeAllConnections(); });
     await api.handler.close();

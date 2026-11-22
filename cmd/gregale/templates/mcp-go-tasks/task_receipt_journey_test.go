@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func TestTaskReceiptResumesReviewedInput(t *testing.T) {
 	testTaskReceiptJourney(t, "wait")
 }
 
-func TestTaskReceiptRespondsAndCancelsAfterLostReplies(t *testing.T) {
+func TestTaskReceiptWatchesApprovalAndRecoversLostReplies(t *testing.T) {
 	testTaskReceiptJourney(t, "respond")
 }
 
@@ -62,7 +63,11 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 	t.Setenv("MCP_TASK_NAMESPACE", fixture.namespace)
 	t.Setenv("MCP_TASK_OWNER_KEY", strings.Repeat("x", 32))
 	config := mcpConfig{Endpoint: "/mcp", Tasks: json.RawMessage(`{"enabled":true,"poll_interval_ms":500}`)}
-	runtime, err := startMCPTaskRuntime(config, "combined")
+	var watchGates []chan struct{}
+	if reviewedVerb == "respond" {
+		watchGates = []chan struct{}{make(chan struct{}), make(chan struct{})}
+	}
+	runtime, err := startReceiptJourneyRuntime(config, watchGates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +88,7 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 	}
 	dropped := make(chan droppedReply, 1)
 	var intercepted, changePrompt atomic.Bool
-	var updates, changedReads, droppedMutations atomic.Int32
+	var updates, changedReads, droppedMutations, subscriptions atomic.Int32
 	var requestsMu sync.Mutex
 	var requests []string
 	takeRequests := func() []string {
@@ -108,6 +113,12 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 		}
 		if method == "tasks/update" {
 			updates.Add(1)
+		}
+		if method == "subscriptions/listen" && len(watchGates) > 0 {
+			// The CLI has read a working snapshot before opening a stream.
+			if index := int(subscriptions.Add(1)) - 1; index < len(watchGates) {
+				close(watchGates[index])
+			}
 		}
 		if reviewedVerb == "respond" && (method == "tasks/update" || method == "tasks/cancel") {
 			reply := httptest.NewRecorder()
@@ -186,9 +197,12 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 
 	cli := func(verb, token string, wantCode int, args ...string) []byte {
 		t.Helper()
-		invocation := append([]string{"mcp", "client", verb, "--url", endpoint,
-			"--token-env", "GREGALE_JOURNEY_TOKEN", "--timeout", "6s", "--json"}, args...)
-		cmd := exec.CommandContext(ctx, binary, invocation...)
+		invocation := []string{"mcp", "client", verb, "--url", endpoint,
+			"--token-env", "GREGALE_JOURNEY_TOKEN", "--json"}
+		if verb != "watch" {
+			invocation = append(invocation, "--timeout", "6s")
+		}
+		cmd := exec.CommandContext(ctx, binary, append(invocation, args...)...)
 		cmd.Dir = clientDir
 		cmd.Env = []string{"XDG_CONFIG_HOME=" + clientDir, "GREGALE_JOURNEY_TOKEN=" + token}
 		var stderr bytes.Buffer
@@ -217,7 +231,11 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 	submitArgs := func(path string) []string {
 		args := []string{"--tool", "build_report", "--tasks", "--task-receipt", path, "--arguments"}
 		if reviewedVerb != "" {
-			return append(args, formArgs, "--defer-form-input")
+			arguments := formArgs
+			if len(watchGates) > 0 && path != receiptPath {
+				arguments = strings.Replace(arguments, "receipt journey", "separate report", 1)
+			}
+			return append(args, arguments, "--defer-form-input")
 		}
 		return append(args, originalArgs)
 	}
@@ -293,11 +311,38 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 			}
 			return status
 		}
+		watch := func(status, action string) statusSnapshot {
+			t.Helper()
+			waitForStatus(committed.id, "running")
+			lines := bytes.Split(bytes.TrimSpace(cli("watch", owner, 0, "--task-receipt", receiptPath)), []byte("\n"))
+			assertRequests("server/discover", "gregale/tasks/lookup", "subscriptions/listen", "gregale/tasks/lookup")
+			if len(lines) != 2 {
+				t.Fatalf("watch returned %d snapshots, want 2", len(lines))
+			}
+			first, last := readSnapshot(lines[0]), readSnapshot(lines[1])
+			if first.TaskID != committed.id || first.Status != "working" || first.NextAction != "poll_status" || first.PollIntervalMS <= 0 ||
+				last.TaskID != committed.id || last.Status != status || last.NextAction != action || last.PollIntervalMS != 0 {
+				t.Fatalf("unexpected Task watch snapshots: %+v, %+v", first, last)
+			}
+			return last
+		}
+		var watchedForm statusSnapshot
+		if len(watchGates) > 0 {
+			takeRequests()
+			for _, credential := range []string{foreign, reduced} {
+				cli("watch", credential, 1, "--task-receipt", receiptPath)
+				assertRequests("server/discover", "gregale/tasks/lookup")
+			}
+			watchedForm = watch("input_required", "provide_input")
+		}
 		waitForStatus(committed.id, "input_required")
 		templatePath := filepath.Join(clientDir, "reviewed-input.json")
 		snapshot := readSnapshot(cli("status", owner, 0, "--task-receipt", receiptPath, "--write-input-template", templatePath))
 		if snapshot.TaskID != committed.id || snapshot.Status != "input_required" || snapshot.NextAction != "provide_input" {
 			t.Fatalf("receipt did not recover the original pending form: %+v", snapshot)
+		}
+		if len(watchGates) > 0 && snapshot != watchedForm {
+			t.Fatalf("exported form metadata differs from watch: %+v, %+v", snapshot, watchedForm)
 		}
 		info, err := os.Lstat(templatePath)
 		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
@@ -390,12 +435,10 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 			takeRequests()
 			observed := readSnapshot(answer(owner, 0, receiptPath))
 			assertRequests("server/discover", "gregale/tasks/lookup", "tasks/get", "tasks/update", "tasks/get")
-			if observed.TaskID != committed.id ||
-				!(observed.Status == "working" && observed.NextAction == "poll_status" ||
-					observed.Status == "completed" && observed.NextAction == "read_result") {
+			if observed.TaskID != committed.id || observed.Status != "working" || observed.NextAction != "poll_status" {
 				t.Fatalf("unexpected status after the lost update reply: %+v", observed)
 			}
-			waitForStatus(committed.id, "completed")
+			watch("completed", "read_result")
 			for _, credential := range []string{foreign, reduced} {
 				cli("status", credential, 1, "--task-receipt", receiptPath, "--read-result")
 				assertRequests("server/discover", "gregale/tasks/lookup")
@@ -497,6 +540,40 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 		t.Fatal(err)
 	}
 	lookup(owner, 1)
+}
+
+// Hold the original executor before its form and again before its replay so
+// each watch opens a subscription while the Task is still working.
+func startReceiptJourneyRuntime(config mcpConfig, gates []chan struct{}) (*mcpTaskRuntime, error) {
+	if len(gates) == 0 {
+		return startMCPTaskRuntime(config, "combined")
+	}
+	mcpTaskHandlers.Lock()
+	original := mcpTaskHandlers.entries["build_report"]
+	handler := original
+	handler.executors = maps.Clone(original.executors)
+	execute := handler.executors[handler.definition.Version]
+	var executions atomic.Int32
+	handler.executors[handler.definition.Version] = func(ctx context.Context, args map[string]any, task *MCPTaskExecutionContext) (map[string]any, error) {
+		if args["report"] == "receipt journey" {
+			if index := int(executions.Add(1)) - 1; index < len(gates) {
+				select {
+				case <-gates[index]:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+		}
+		return execute(ctx, args, task)
+	}
+	mcpTaskHandlers.entries["build_report"] = handler
+	mcpTaskHandlers.Unlock()
+	defer func() {
+		mcpTaskHandlers.Lock()
+		mcpTaskHandlers.entries["build_report"] = original
+		mcpTaskHandlers.Unlock()
+	}()
+	return startMCPTaskRuntime(config, "combined")
 }
 
 func taskReceiptJourneyAuth(t *testing.T) (*authenticator, func(string, string) string) {

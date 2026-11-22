@@ -1,6 +1,7 @@
 """Exercise lost HTTP replies across fresh Gregale CLI processes and PostgreSQL."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -22,6 +23,7 @@ from psycopg.conninfo import make_conninfo
 
 from auth import AuthContext, Authenticator
 from server import DrainingHTTPServer, MCPHandler
+import tasks
 from tasks import DurableTaskRuntime, check_task_schema, check_task_submission_index, migrate_task_schema
 import test_task_execution
 
@@ -88,7 +90,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
     def test_reviewed_input_resumes_only_the_original_task(self):
         self.run_receipt_journey(reviewed_verb="wait")
 
-    def test_receipt_responds_and_cancels_after_lost_replies(self):
+    def test_receipt_watches_approval_and_recovers_lost_replies(self):
         self.run_receipt_journey(reviewed_verb="respond")
 
     def run_receipt_journey(self, reviewed_verb=None):
@@ -100,9 +102,33 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         environment = {"DATABASE_URL": make_conninfo(fixture.pool.conninfo),
                        "MCP_TASK_OWNER_KEY": test_task_execution.OWNER_KEY.decode(),
                        "MCP_TASK_NAMESPACE": fixture.namespace}
-        with patch.dict(os.environ, environment):
+        watch_gates = [threading.Event(), threading.Event()] if reviewed_verb == "respond" else []
+        with ExitStack() as startup:
+            startup.enter_context(patch.dict(os.environ, environment))
+            if watch_gates:
+                snapshot = tasks._snapshot_task_handlers
+                execution_gates = iter(watch_gates)
+
+                def gated_handlers():
+                    handlers = snapshot()
+                    entry = handlers["build_report"]
+                    execute = entry["executors"][entry["version"]]
+
+                    def gated_report(arguments, context):
+                        if arguments["report"] == "receipt journey":
+                            gate = next(execution_gates, None)
+                            if gate is not None and not gate.wait(15):
+                                raise AssertionError("receipt watch did not subscribe before the worker deadline")
+                        return execute(arguments, context)
+
+                    entry["executors"][entry["version"]] = gated_report
+                    return handlers
+
+                startup.enter_context(patch.object(tasks, "_snapshot_task_handlers", side_effect=gated_handlers))
             runtime = DurableTaskRuntime(config, role="combined")
         self.addCleanup(runtime.close)
+        for gate in watch_gates:
+            self.addCleanup(gate.set)
 
         private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
         key = {**jwt.algorithms.RSAAlgorithm.to_jwk(private.public_key(), as_dict=True), "kid": "journey"}
@@ -128,6 +154,7 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         updates = []
         requests = []
         dropped_mutations = []
+        subscription_gates = iter(watch_gates)
 
         def assert_requests(*expected):
             self.assertEqual(requests, list(expected))
@@ -140,6 +167,11 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                     requests.append(method)
                 if method == "tasks/update":
                     updates.append(True)
+                if method == "subscriptions/listen":
+                    gate = next(subscription_gates, None)
+                    if gate is not None:
+                        # The CLI has already obtained a working snapshot.
+                        gate.set()
                 super().do_POST()
 
             def drop_reply(self):
@@ -184,13 +216,16 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         endpoint = f"http://127.0.0.1:{http.server_port}/mcp"
 
         def cli(verb, token, code, *args):
+            timeout_args = () if verb == "watch" else ("--timeout", "6s")
             result = subprocess.run([os.environ["MCP_TASKS_TEST_GREGALE"], "mcp", "client", verb, "--url", endpoint,
-                                     "--token-env", "GREGALE_JOURNEY_TOKEN", "--timeout", "6s", "--json", *args],
+                                     "--token-env", "GREGALE_JOURNEY_TOKEN", *timeout_args, "--json", *args],
                                     cwd=client_dir, env={"XDG_CONFIG_HOME": str(client_dir), "GREGALE_JOURNEY_TOKEN": token},
                                     capture_output=True, text=True, timeout=10)
             self.assertTrue(token not in result.stdout and token not in result.stderr, "CLI leaked its bearer token")
             self.assertEqual(result.returncode, code, result.stderr)
             if code == 0:
+                if verb == "watch":
+                    return [json.loads(line) for line in result.stdout.splitlines()]
                 return json.loads(result.stdout)
             self.assertEqual(result.stdout, "")
 
@@ -200,7 +235,10 @@ class TaskReceiptJourneyTests(unittest.TestCase):
         def submit_args(path):
             args = ("--tool", "build_report", "--tasks", "--task-receipt", str(path), "--arguments")
             if reviewed_verb:
-                return (*args, form_args, "--defer-form-input")
+                arguments = form_args
+                if watch_gates and path != receipt_path:
+                    arguments = arguments.replace("receipt journey", "separate report", 1)
+                return (*args, arguments, "--defer-form-input")
             return (*args, original_args)
 
         cli("call", owner, 3, *submit_args(receipt_path))
@@ -230,12 +268,35 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                     time.sleep(0.05)
                 self.fail(f"Task did not reach {status}")
 
+            selector = ("--task-receipt", str(receipt_path))
+
+            def watch(status, action):
+                wait_for_status(task_id, "running")
+                snapshots = cli("watch", owner, 0, *selector)
+                assert_requests("server/discover", "gregale/tasks/lookup", "subscriptions/listen", "gregale/tasks/lookup")
+                self.assertEqual(len(snapshots), 2)
+                first, last = snapshots
+                self.assertEqual(first, {"taskId": task_id, "status": "working", "lastUpdatedAt": first["lastUpdatedAt"],
+                                         "nextAction": "poll_status", "pollIntervalMs": 500})
+                self.assertEqual(last, {"taskId": task_id, "status": status, "lastUpdatedAt": last["lastUpdatedAt"],
+                                        "nextAction": action})
+                return last
+
+            if watch_gates:
+                requests.clear()
+                for credential in (foreign, reduced):
+                    cli("watch", credential, 1, *selector)
+                    assert_requests("server/discover", "gregale/tasks/lookup")
+                watched_form = watch("input_required", "provide_input")
+
             wait_for_status(task_id, "input_required")
             template_path = client_dir / "reviewed-input.json"
             snapshot = cli("status", owner, 0, "--task-receipt", str(receipt_path),
                            "--write-input-template", str(template_path))
             self.assertEqual((snapshot["taskId"], snapshot["status"], snapshot["nextAction"]),
                              (task_id, "input_required", "provide_input"))
+            if watch_gates:
+                self.assertEqual(snapshot, watched_form)
             info = template_path.lstat()
             self.assertTrue(stat.S_ISREG(info.st_mode))
             self.assertEqual(stat.S_IMODE(info.st_mode), 0o600)
@@ -286,14 +347,10 @@ class TaskReceiptJourneyTests(unittest.TestCase):
                 observed = answer(owner, 0)
                 assert_requests("server/discover", "gregale/tasks/lookup", "tasks/get", "tasks/update", "tasks/get")
                 self.assertEqual(observed["taskId"], task_id)
-                self.assertIn((observed["status"], observed["nextAction"]),
-                              {("working", "poll_status"), ("completed", "read_result")})
-                metadata = {"taskId", "status", "lastUpdatedAt", "nextAction"}
-                if observed["status"] == "working":
-                    metadata.add("pollIntervalMs")
-                self.assertEqual(set(observed), metadata)
+                self.assertEqual((observed["status"], observed["nextAction"]), ("working", "poll_status"))
+                self.assertEqual(set(observed), {"taskId", "status", "lastUpdatedAt", "nextAction", "pollIntervalMs"})
 
-                wait_for_status(task_id, "completed")
+                watch("completed", "read_result")
                 read_args = ("--task-receipt", str(receipt_path), "--read-result")
                 for credential in (foreign, reduced):
                     cli("status", credential, 1, *read_args)
