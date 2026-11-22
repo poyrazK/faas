@@ -470,6 +470,9 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 	if query == "" {
 		return "", false
 	}
+	if nested, ok := nestedVerbSuggestion(query, completion); ok {
+		return nested, true
+	}
 	bestName := ""
 	bestDist := maxDist + 1
 	tied := false
@@ -509,6 +512,41 @@ func suggestCommandFrom(query string, completion, discoverable []cliCommand) (st
 		return "", false
 	}
 	return bestName, true
+}
+
+// nestedVerbSuggestion names the one tree command whose verb the query
+// names, singular or plural: `gregale budget` suggested `bucket` (distance
+// 2) while budgets live under `billing budgets` (prod hunt r25). A verb most
+// nouns share (list, get, status) names no single command and is skipped, as
+// is a query within one edit of a top-level command, which is a typo of it.
+func nestedVerbSuggestion(query string, completion []cliCommand) (string, bool) {
+	query = strings.ToLower(query)
+	if commonVerbWord(query) || cliTreeStandardVerb(query) != query {
+		return "", false
+	}
+	for _, c := range completion {
+		if editDistance(query, c.Name) <= 1 {
+			return "", false
+		}
+	}
+	found := ""
+	for _, c := range completion {
+		for _, sub := range c.Subcommands {
+			name := strings.ToLower(sub.Name)
+			if name != query && name != query+"s" && name+"s" != query {
+				continue
+			}
+			if commonVerbWord(name) || cliTreeStandardVerb(name) != name {
+				continue
+			}
+			path := c.Name + " " + sub.Name
+			if found != "" && found != path {
+				return "", false
+			}
+			found = path
+		}
+	}
+	return found, found != ""
 }
 
 // cliTreeEarlierNouns maps each earlier top-level noun that is no longer a

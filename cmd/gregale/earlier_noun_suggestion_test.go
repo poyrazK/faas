@@ -14,6 +14,10 @@ func TestUnknownCommandSuggestsTreeNounForEarlierNounTypo(t *testing.T) {
 		{"secret", "did you mean 'gregale env'?"},
 		{"log", "did you mean 'gregale logs'?"},
 		{"domian", "did you mean 'gregale domain'?"},
+		// Prod hunt r25: budgets live under billing; `budget` suggested
+		// `bucket` (edit distance 2).
+		{"budget", "did you mean 'gregale billing budgets'?"},
+		{"budgets", "did you mean 'gregale billing budgets'?"},
 	} {
 		code, _, stderr := runCLI(t, tc.typed)
 		if code == 0 {
