@@ -207,11 +207,14 @@ type Config struct {
 	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
 	// StreamBridgeGOMAXPROCS and StreamBridgeGOGC set GOMAXPROCS and GOGC
 	// for the stream bridges vmmd starts from now on, one per instance.
-	// 0 keeps Go's default (one P per host CPU, GOGC=100). A bridge relays a
-	// single VM capped at one core, and Go's scheduler was 26–33% of the
-	// request path's daemon profiles on 2026-10-25, so a node A/B measures
-	// these before they get defaults. FAAS_STREAM_BRIDGE_GOMAXPROCS and
-	// FAAS_STREAM_BRIDGE_GOGC override TOML.
+	// A bridge relays a single VM capped at one core, so the defaults are
+	// GOMAXPROCS=2 and GOGC=400: with Go's own (one P per host CPU,
+	// GOGC=100) a bridge spent 18% of its CPU in GC on a ~16 MB heap and
+	// its idle Ps spun stealing work from the gateways on the same node.
+	// The bhs-3 A/B on 2026-11-21 (steady 1000 rps to one app) cut the
+	// bridge from 1.57 to 0.53 ms of CPU a request and the request path
+	// on that node by about a third. 0 keeps Go's default.
+	// FAAS_STREAM_BRIDGE_GOMAXPROCS and FAAS_STREAM_BRIDGE_GOGC override TOML.
 	StreamBridgeGOMAXPROCS int `toml:"stream_bridge_gomaxprocs"`
 	StreamBridgeGOGC       int `toml:"stream_bridge_gogc"`
 	// LocalDataSocket serves this node's gatewayd-internal on
@@ -750,6 +753,9 @@ func loadConfig(path string, readConfig func(string) ([]byte, error)) (*Config, 
 		QuietPause:           true,
 		InvokeHookBackoff:    true,
 		BridgeStreamHeadroom: true,
+		// Stream bridge Go runtime (see StreamBridgeGOMAXPROCS).
+		StreamBridgeGOMAXPROCS: 2,
+		StreamBridgeGOGC:       400,
 		// KernelPath is the deprecated host-path default; main.go
 		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml

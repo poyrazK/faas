@@ -1117,8 +1117,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_STORAGE_ROOT` | builderd, imaged, vmmd, shared | `default` |  |  | `` |  |
 | `FAAS_STORAGE_SNAPSHOT_COMPRESSION` | shared | `envfile` |  |  | `` | remote snapshot-memory encoding; default none; enable zstd only after every compute node runs a compatible reader (ADR-165) |
 | `FAAS_STORAGE_SPARSE_EXTENTS` | shared | `envfile` |  |  | `` | GCS writers store compressed drives, rootfs images and snapshot memory as data extents only; default off; enable only after every node runs a compatible reader (ADR-1135) |
-| `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  |  | `` | optional integer: GOGC for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gogc in vmmd.toml) |
-| `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  |  | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; 0 or unset keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
+| `FAAS_STREAM_BRIDGE_GOGC` | vmmd | `default` |  | 400 | `` | optional integer: GOGC for the stream bridges vmmd starts; unset uses 400 (2026-11-21 A/B), 0 keeps Go's default (stream_bridge_gogc in vmmd.toml) |
+| `FAAS_STREAM_BRIDGE_GOMAXPROCS` | vmmd | `default` |  | 2 | `` | optional integer: GOMAXPROCS for the stream bridges vmmd starts; unset uses 2 (2026-11-21 A/B), 0 keeps Go's default (stream_bridge_gomaxprocs in vmmd.toml) |
 | `FAAS_STREAM_BRIDGE_PERSISTENT` | shared | `default` |  |  | `` |  |
 | `FAAS_STREAM_BRIDGE_VERSION` | shared | `default` |  |  | `` | v1 is ignored since bug hunt B23; roll back by installing the previous bridge binary, see docs/ops/h2c-rollback.md |
 | `FAAS_STRIPE_INTERVAL` | meterd | `default` |  |  | `` |  |
