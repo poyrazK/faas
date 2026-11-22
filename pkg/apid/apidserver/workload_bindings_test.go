@@ -98,7 +98,7 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 	}
 
 	// Off by default: the token is refused, API keys are unaffected.
-	if code, _ := send("assetforge-worker", "transforms", token); code != http.StatusUnauthorized {
+	if code, _ := send("assetforge-worker", "transforms", token); code != http.StatusNotFound {
 		t.Fatalf("flag off: %d", code)
 	}
 	if code, p := send("assetforge-worker", "transforms", nil); code != http.StatusCreated {
@@ -117,6 +117,11 @@ func TestBindingTokensFollowUsesGrants(t *testing.T) {
 	// "worker" names the service of the caller's own project only.
 	if code, p := send("elsewhere-worker", "transforms", token); code != http.StatusForbidden || p.Code != apidserver.CodeBindingNotGranted {
 		t.Fatalf("other project's worker: %d %+v", code, p)
+	}
+	stage := e.Do(t, http.MethodPost, "/v1/apps/assetforge-worker/queues/send",
+		api.QueueSendRequest{QueueName: "transforms", Environment: "staging", Payload: json.RawMessage(`{}`)}, token)
+	if stage.Code == http.StatusCreated || stage.Code == http.StatusOK {
+		t.Fatalf("binding send to a stage queue: %d %s", stage.Code, stage.Body)
 	}
 	if code, _ := send("assetforge-web", "", token); code != http.StatusForbidden {
 		t.Fatalf("self queue without a grant: %d", code)

@@ -84,6 +84,14 @@ func (s *server) bindingRoute(kind capgrant.Kind, resource bindingResource, keye
 	}
 }
 
+// bindingRoutesDisabled answers a binding token while cross_app_bindings is
+// off as a route that does not exist: a 401 would count against the shared
+// per-IP auth-failure limiter, and SDKs on one node retrying a credential
+// fetch would lock that node's other tenants out of apid.
+func bindingRoutesDisabled() *api.Problem {
+	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such API route")
+}
+
 func bindingUnauthorized(detail string) *api.Problem {
 	return api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required",
 		"a live gregale:bindings workload token from a production instance is required: "+detail)
@@ -117,7 +125,7 @@ func (s *server) authorizeBindingCall(r *http.Request, kind capgrant.Kind, resou
 		}
 	}
 	if !s.platformFlagFor(platformflags.CrossAppBindings, appFlagSubject(targetAcct, target)) {
-		return bindingCall{}, state.Account{}, bindingUnauthorized("binding tokens are not enabled for this account")
+		return bindingCall{}, state.Account{}, bindingRoutesDisabled()
 	}
 
 	call := bindingCall{
@@ -225,10 +233,16 @@ func bindingNotGranted(caller state.App, kind capgrant.Kind, target state.App, r
 
 // bindingQueueAllowed is the queue-name check for send routes, which read the
 // name from the body: nil for API-key calls and granted binding calls.
-func bindingQueueAllowed(r *http.Request, queue string) *api.Problem {
+func bindingQueueAllowed(r *http.Request, queue, environment string) *api.Problem {
 	call, ok := bindingCallFrom(r.Context())
 	if !ok {
 		return nil
+	}
+	// Grants and binding tokens are production-only, so a binding call may
+	// not pick a stage queue binding through the body's environment.
+	if environment != "" && !state.ProductionDeploymentScope(environment) {
+		return api.NewProblem(http.StatusForbidden, CodeBindingNotGranted, "Binding not granted",
+			fmt.Sprintf("binding tokens send only to production queues; environment %q is not granted", environment))
 	}
 	return call.permits(capgrant.KindQueues, queue, true)
 }

@@ -4,12 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/object"
-	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -19,100 +17,62 @@ import (
 // (ADR-20261122191423 slice 2): a live production instance trades its
 // gregale:bindings token for a one-hour S3 credential on a bucket its app's
 // `uses:` grants. The guest's loopback credential endpoint calls it and hands
-// the answer to AWS SDKs unchanged.
+// the answer to AWS SDKs unchanged. Grant resolution and issuing live in
+// pkg/apid/object; this is the route's wiring.
 func (s *server) workloadObjectCredentials() http.Handler {
 	return middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			caller, instanceID, acct, problem := s.verifyBindingCaller(r)
-			if problem == nil && !s.platformFlagFor(platformflags.CrossAppBindings, appFlagSubject(acct, caller)) {
-				problem = bindingUnauthorized("binding tokens are not enabled for this account")
-			}
-			var req api.ObjectWorkloadCredentialRequest
-			if problem == nil && !decodeJSONLimit(w, r, &req, 4096) {
-				return
-			}
-			var grant capgrant.BucketGrant
-			if problem == nil {
-				grant, problem = workloadBucketGrant(caller, req.Bucket)
-			}
-			var bucket state.ObjectBucket
-			if problem == nil {
-				bucket, problem = s.workloadGrantBucket(r, acct, caller, grant)
-			}
 			if problem != nil {
 				api.WriteProblem(w, problem)
 				return
 			}
-			resp, err := s.object.IssueWorkloadCredential(r.Context(), acct, caller, instanceID, bucket, grant.Access, grant.Prefix, time.Now())
-			if err != nil {
-				api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
-					"could not issue a workload credential; retry shortly"))
+			if !s.platformFlagFor(platformflags.CrossAppBindings, appFlagSubject(acct, caller)) || !s.capabilityAllowedFor(r, acct) {
+				writeMissingRoute(w, r)
 				return
 			}
-			writeJSON(w, http.StatusOK, resp)
+			s.requireAPIRequestBudget(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+				s.issueWorkloadObjectCredential(w, r, acct, caller, instanceID)
+			})(w, r, acct)
 		}))
 }
 
-// workloadBucketGrant picks the caller's grant for bucket, or its only bucket
-// grant when bucket is empty.
-func workloadBucketGrant(caller state.App, bucket string) (capgrant.BucketGrant, *api.Problem) {
-	var grants []capgrant.BucketGrant
-	if caller.Manifest.Uses != nil {
-		grants = caller.Manifest.Uses.Normalized().Buckets
+func (s *server) issueWorkloadObjectCredential(w http.ResponseWriter, r *http.Request, acct state.Account, caller state.App, instanceID string) {
+	var req api.ObjectWorkloadCredentialRequest
+	if !decodeJSONLimit(w, r, &req, 4096) {
+		return
 	}
-	if bucket == "" && len(grants) == 1 {
-		return grants[0], nil
-	}
-	if bucket == "" && len(grants) > 1 {
-		return capgrant.BucketGrant{}, api.ErrValidation(fmt.Sprintf("app %q holds %d bucket grants; name the bucket", caller.Slug, len(grants)))
-	}
-	for _, grant := range grants {
-		if strings.EqualFold(grant.Bucket, bucket) {
-			return grant, nil
+	grant, bucket, err := s.object.ResolveWorkloadGrant(r.Context(), acct, caller, req.Bucket)
+	if err == nil {
+		var resp api.ObjectWorkloadCredentialResponse
+		if resp, err = s.object.IssueWorkloadCredential(r.Context(), acct, caller, instanceID, bucket, grant.Access, grant.Prefix, time.Now()); err == nil {
+			writeJSON(w, http.StatusOK, resp)
+			return
 		}
 	}
-	return capgrant.BucketGrant{}, bindingNotGranted(caller, capgrant.KindBuckets, caller, bucket)
+	api.WriteProblem(w, workloadCredentialProblem(caller, req.Bucket, grant.App, err))
 }
 
-// workloadGrantBucket resolves the grant's owner app (self, a service of the
-// caller's project, or an app slug of the same resource account) and its
-// production bucket.
-func (s *server) workloadGrantBucket(r *http.Request, acct state.Account, caller state.App, grant capgrant.BucketGrant) (state.ObjectBucket, *api.Problem) {
-	missing := api.NewProblem(http.StatusNotFound, "workload_bucket_not_found", "Granted bucket not found",
-		fmt.Sprintf("app %q grants bucket %q of %q, which does not exist or is not ready in production", caller.Slug, grant.Bucket, grant.App))
-	owner, ok := s.workloadGrantOwner(r, acct, caller, grant.App)
-	if !ok {
-		return state.ObjectBucket{}, missing
+func workloadCredentialProblem(caller state.App, bucket, owner string, err error) *api.Problem {
+	service := caller.WorkloadName
+	if service == "" {
+		service = caller.Slug
 	}
-	bucket, err := s.object.WorkloadBucket(r.Context(), acct, owner, grant.Bucket)
-	if errors.Is(err, object.ErrWorkloadBucketNotFound) {
-		return state.ObjectBucket{}, missing
+	switch {
+	case errors.Is(err, object.ErrWorkloadBucketAmbiguous):
+		return api.ErrValidation(fmt.Sprintf("app %q holds several bucket grants; name the bucket (?bucket= on the credential endpoint)", caller.Slug))
+	case errors.Is(err, object.ErrWorkloadBucketNotGranted):
+		return api.NewProblem(http.StatusForbidden, CodeBindingNotGranted, "Binding not granted",
+			fmt.Sprintf("app %q does not declare bucket %q; add it to project.services.%s.uses.buckets (with the app that owns it) in gregale.yaml and run `gregale project apply`", caller.Slug, bucket, service))
+	case errors.Is(err, object.ErrWorkloadBucketNotFound):
+		return api.NewProblem(http.StatusNotFound, "workload_bucket_not_found", "Granted bucket not found",
+			fmt.Sprintf("app %q grants a bucket of %q that does not exist or is not ready in production", caller.Slug, owner))
+	case errors.Is(err, object.ErrWorkloadCredentialLimit):
+		return api.NewProblem(http.StatusTooManyRequests, "workload_credential_limit", "Too many workload credentials",
+			fmt.Sprintf("this instance already holds %d unexpired credentials for the bucket; reuse one until it nears expiry", object.MaxLiveWorkloadCredentials))
+	default:
+		return api.NewProblem(http.StatusServiceUnavailable, "object_storage_unavailable", "Object storage unavailable",
+			"could not issue a workload credential; retry shortly")
 	}
-	if err != nil {
-		return state.ObjectBucket{}, api.ErrInternal("could not load the bucket; retry shortly")
-	}
-	return bucket, nil
-}
-
-func (s *server) workloadGrantOwner(r *http.Request, acct state.Account, caller state.App, name string) (state.App, bool) {
-	ctx := r.Context()
-	if name == capgrant.Self {
-		return caller, true
-	}
-	if caller.ProjectID != "" {
-		if apps, err := s.store.AppsForProject(ctx, caller.AccountID, caller.ProjectID); err == nil {
-			for _, app := range apps {
-				if strings.EqualFold(app.WorkloadName, name) && app.Status != state.AppDeleted {
-					return app, true
-				}
-			}
-		}
-	}
-	app, err := s.store.AppBySlug(ctx, name)
-	if err != nil || app.Status == state.AppDeleted {
-		return state.App{}, false
-	}
-	owner, err := state.AppResourceAccount(ctx, s.store, app)
-	return app, err == nil && owner.ID == acct.ID
 }

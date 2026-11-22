@@ -30866,3 +30866,7 @@ WHERE id IN (
     ORDER BY expires_at
     LIMIT sqlc.arg(batch_limit)::int
 );
+
+-- name: ObjectWorkloadCredentialCountLive :one
+SELECT count(*)::int FROM object_storage_workload_credentials
+WHERE instance_id = sqlc.arg(instance_id) AND bucket_id = sqlc.arg(bucket_id) AND expires_at > now();

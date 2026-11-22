@@ -49,7 +49,7 @@ func startWorkloadIdentityProxy(log *slog.Logger) error {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(workloadIdentityTokenPath, workloadIdentityTokenHandler)
-	mux.Handle(workloadObjectCredentialsPath, newWorkloadObjectCredentials(fetchWorkloadIdentity, http.DefaultClient, time.Now))
+	mux.Handle(workloadObjectCredentialsPath, newWorkloadObjectCredentials(fetchWorkloadIdentity, nil, time.Now, restoreGeneration.current))
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second}
 	go func() {
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {

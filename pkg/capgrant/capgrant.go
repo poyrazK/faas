@@ -123,6 +123,11 @@ func (u Uses) Normalized() Uses {
 			g.App = Self
 		}
 		g.Prefix = strings.TrimSpace(g.Prefix)
+		// The gateway matches a raw key prefix, so "rooms" would also allow
+		// "rooms-archive/": a prefix always names a folder.
+		if g.Prefix != "" && !strings.HasSuffix(g.Prefix, "/") {
+			g.Prefix += "/"
+		}
 		g.Access = strings.ToLower(strings.TrimSpace(g.Access))
 		if g.Access == "" {
 			g.Access = AccessReadWrite

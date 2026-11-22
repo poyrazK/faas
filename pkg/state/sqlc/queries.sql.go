@@ -77994,6 +77994,23 @@ func (q *Queries) ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectV
 	return err
 }
 
+const objectWorkloadCredentialCountLive = `-- name: ObjectWorkloadCredentialCountLive :one
+SELECT count(*)::int FROM object_storage_workload_credentials
+WHERE instance_id = $1 AND bucket_id = $2 AND expires_at > now()
+`
+
+type ObjectWorkloadCredentialCountLiveParams struct {
+	InstanceID string
+	BucketID   pgtype.UUID
+}
+
+func (q *Queries) ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialCountLiveParams) (int32, error) {
+	row := db.QueryRow(ctx, objectWorkloadCredentialCountLive, arg.InstanceID, arg.BucketID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const objectWorkloadCredentialDeleteExpired = `-- name: ObjectWorkloadCredentialDeleteExpired :execrows
 DELETE FROM object_storage_workload_credentials
 WHERE id IN (

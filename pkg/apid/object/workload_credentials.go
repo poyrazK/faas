@@ -3,12 +3,14 @@ package object
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/capgrant"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/s3gateway"
 	"github.com/onebox-faas/faas/pkg/secretbox"
@@ -20,12 +22,78 @@ import (
 // before Expiration, as AWS SDKs do for container credentials.
 const WorkloadCredentialTTL = time.Hour
 
-// ErrWorkloadBucketNotFound is a granted bucket that does not exist (or is
-// not ready) in its owner app's production scope.
-var ErrWorkloadBucketNotFound = errors.New("object: granted bucket not found")
+// MaxLiveWorkloadCredentials caps one instance's unexpired credentials for one
+// bucket. guest-init caches each for ~55 minutes, so a well-behaved instance
+// holds one or two; the cap bounds rows a looping workload can create.
+const MaxLiveWorkloadCredentials = 8
 
-// WorkloadBucket finds the production bucket named name owned by owner.
-func (s *Service) WorkloadBucket(ctx context.Context, acct state.Account, owner state.App, name string) (state.ObjectBucket, error) {
+var (
+	// ErrWorkloadBucketNotFound is a granted bucket that does not exist (or
+	// is not ready) in its owner app's production scope.
+	ErrWorkloadBucketNotFound = errors.New("object: granted bucket not found")
+	// ErrWorkloadBucketNotGranted is a bucket the caller's uses: does not name.
+	ErrWorkloadBucketNotGranted = errors.New("object: bucket not granted")
+	// ErrWorkloadBucketAmbiguous is a request without a bucket from an app
+	// holding several bucket grants.
+	ErrWorkloadBucketAmbiguous = errors.New("object: several bucket grants; name the bucket")
+	// ErrWorkloadCredentialLimit is an instance at MaxLiveWorkloadCredentials.
+	ErrWorkloadCredentialLimit = errors.New("object: too many live workload credentials")
+)
+
+// ResolveWorkloadGrant picks caller's grant for bucket (or its only bucket
+// grant when bucket is empty), resolves the grant's owner app (self, a
+// service of the caller's project, or an app slug of acct) and returns the
+// owner's production bucket.
+func (s *Service) ResolveWorkloadGrant(ctx context.Context, acct state.Account, caller state.App, bucket string) (capgrant.BucketGrant, state.ObjectBucket, error) {
+	var grants []capgrant.BucketGrant
+	if caller.Manifest.Uses != nil {
+		grants = caller.Manifest.Uses.Normalized().Buckets
+	}
+	var grant capgrant.BucketGrant
+	switch {
+	case bucket == "" && len(grants) == 1:
+		grant = grants[0]
+	case bucket == "" && len(grants) > 1:
+		return capgrant.BucketGrant{}, state.ObjectBucket{}, ErrWorkloadBucketAmbiguous
+	default:
+		i := slices.IndexFunc(grants, func(g capgrant.BucketGrant) bool { return strings.EqualFold(g.Bucket, bucket) })
+		if i < 0 {
+			return capgrant.BucketGrant{}, state.ObjectBucket{}, ErrWorkloadBucketNotGranted
+		}
+		grant = grants[i]
+	}
+	owner, ok := s.workloadGrantOwner(ctx, acct, caller, grant.App)
+	if !ok {
+		return grant, state.ObjectBucket{}, ErrWorkloadBucketNotFound
+	}
+	found, err := s.workloadBucket(ctx, acct, owner, grant.Bucket)
+	return grant, found, err
+}
+
+func (s *Service) workloadGrantOwner(ctx context.Context, acct state.Account, caller state.App, name string) (state.App, bool) {
+	if name == capgrant.Self {
+		return caller, true
+	}
+	store := s.Host.Store()
+	if caller.ProjectID != "" {
+		if apps, err := store.AppsForProject(ctx, caller.AccountID, caller.ProjectID); err == nil {
+			for _, app := range apps {
+				if strings.EqualFold(app.WorkloadName, name) && app.Status != state.AppDeleted {
+					return app, true
+				}
+			}
+		}
+	}
+	app, err := store.AppBySlug(ctx, name)
+	if err != nil || app.Status == state.AppDeleted {
+		return state.App{}, false
+	}
+	owner, err := state.AppResourceAccount(ctx, store, app)
+	return app, err == nil && owner.ID == acct.ID
+}
+
+// workloadBucket finds the production bucket named name owned by owner.
+func (s *Service) workloadBucket(ctx context.Context, acct state.Account, owner state.App, name string) (state.ObjectBucket, error) {
 	store, ok := s.Host.Store().(state.ObjectBucketStore)
 	if !ok {
 		return state.ObjectBucket{}, objectstorage.ErrUnavailable
@@ -50,6 +118,13 @@ func (s *Service) IssueWorkloadCredential(ctx context.Context, acct state.Accoun
 	store, ok := s.Host.Store().(state.ObjectWorkloadCredentialStore)
 	if !ok || !s.ObjectStorageEnabled() || !s.ObjectStorageSecretSealReady() {
 		return api.ObjectWorkloadCredentialResponse{}, objectstorage.ErrUnavailable
+	}
+	live, err := store.CountLiveObjectWorkloadCredentials(ctx, instanceID, bucket.ID)
+	if err != nil {
+		return api.ObjectWorkloadCredentialResponse{}, objectstorage.ErrUnavailable
+	}
+	if live >= MaxLiveWorkloadCredentials {
+		return api.ObjectWorkloadCredentialResponse{}, ErrWorkloadCredentialLimit
 	}
 	recipients, kid, err := s.Host.StorageCredentialRecipients()
 	if err != nil {

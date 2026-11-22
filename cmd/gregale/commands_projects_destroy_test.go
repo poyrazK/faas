@@ -126,6 +126,16 @@ func TestProjectDestroyRefusedBucketKeepsItsAppAndTheProject(t *testing.T) {
 	}
 }
 
+// A refused bucket keeps the web app, so the database it is bound to stays
+// too, though the plan had chosen to delete it.
+func TestProjectDestroyKeepsDatabaseOfAKeptApp(t *testing.T) {
+	f := &destroyFake{bucket: http.StatusConflict}
+	runDestroy(t, f, "assetforge", "--yes", "--include-data")
+	if slices.Contains(f.deletes(), "DELETE /v1/postgres/databases/db-main") {
+		t.Fatalf("database of a kept app deleted: %v", f.deletes())
+	}
+}
+
 func TestProjectDestroyDryRunChangesNothing(t *testing.T) {
 	f := &destroyFake{}
 	if code := runDestroy(t, f, "assetforge", "--dry-run", "--include-data"); code != 0 {

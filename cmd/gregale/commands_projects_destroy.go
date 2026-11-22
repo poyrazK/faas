@@ -42,6 +42,8 @@ type projectDestroyApp struct {
 	Delete   bool     `json:"delete"`
 	KeepNote string   `json:"keep_reason,omitempty"`
 	bucketID map[string]string
+	// databases are the names of the databases the app is bound to.
+	databases []string
 }
 
 type projectDestroyDB struct {
@@ -126,6 +128,7 @@ func planProjectDestroy(ctx context.Context, client projectDestroyClient, slug s
 		}
 		for _, binding := range bindings.Items {
 			boundDatabases[binding.Database] = true
+			app.databases = append(app.databases, binding.Database)
 		}
 		plan.Apps = append(plan.Apps, app)
 	}
@@ -196,8 +199,21 @@ func executeProjectDestroy(ctx context.Context, client projectDestroyClient, pla
 		}
 		out.Deleted = append(out.Deleted, "app "+app.Slug)
 	}
+	// A database an app that survived still uses is kept, whatever the plan
+	// decided before the deletes ran.
+	inUse := map[string]string{}
+	for _, app := range plan.Apps {
+		if !app.Delete {
+			for _, name := range app.databases {
+				inUse[name] = app.Slug
+			}
+		}
+	}
 	for i := range plan.Databases {
 		db := &plan.Databases[i]
+		if db.Delete && inUse[db.Name] != "" {
+			db.Delete, db.KeepNote = false, "app "+inUse[db.Name]+" was kept and still uses it"
+		}
 		if !db.Delete {
 			continue
 		}

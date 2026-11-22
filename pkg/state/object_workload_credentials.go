@@ -46,6 +46,9 @@ type ObjectWorkloadCredential struct {
 type ObjectWorkloadCredentialStore interface {
 	CreateObjectWorkloadCredential(context.Context, ObjectWorkloadCredential) error
 	DeleteExpiredObjectWorkloadCredentials(ctx context.Context, before time.Time, limit int) (int64, error)
+	// CountLiveObjectWorkloadCredentials counts one instance's unexpired
+	// credentials for one bucket, so apid can cap how many it holds.
+	CountLiveObjectWorkloadCredentials(ctx context.Context, instanceID, bucketID string) (int, error)
 }
 
 func validObjectWorkloadCredential(c ObjectWorkloadCredential) bool {
@@ -96,6 +99,14 @@ func (s *PgStore) DeleteExpiredObjectWorkloadCredentials(ctx context.Context, be
 	n, err := sqlc.New().ObjectWorkloadCredentialDeleteExpired(ctx, s.pool, sqlc.ObjectWorkloadCredentialDeleteExpiredParams{
 		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, BatchLimit: int32(limit)})
 	return n, mapErr(err)
+}
+
+func (s *PgStore) CountLiveObjectWorkloadCredentials(ctx context.Context, instanceID, bucketID string) (int, error) {
+	if !validUUID(bucketID) {
+		return 0, ErrInvalidArgument
+	}
+	n, err := sqlc.New().ObjectWorkloadCredentialCountLive(ctx, s.pool, sqlc.ObjectWorkloadCredentialCountLiveParams{InstanceID: instanceID, BucketID: mustPgUUID(bucketID)})
+	return int(n), mapErr(err)
 }
 
 func (s *PgStore) resolveObjectWorkloadCredential(ctx context.Context, accessKeyID string) (ObjectS3Credential, ObjectBucket, error) {
@@ -151,6 +162,19 @@ func (m *MemStore) DeleteExpiredObjectWorkloadCredentials(_ context.Context, bef
 		}
 		if !c.ExpiresAt.After(before) {
 			delete(m.objectWorkloadCredentials, id)
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (m *MemStore) CountLiveObjectWorkloadCredentials(_ context.Context, instanceID, bucketID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := time.Now()
+	n := 0
+	for _, c := range m.objectWorkloadCredentials {
+		if c.InstanceID == instanceID && c.BucketID == bucketID && c.ExpiresAt.After(now) {
 			n++
 		}
 	}

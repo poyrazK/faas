@@ -21,6 +21,9 @@ func TestNormalizedDefaultsAndValidate(t *testing.T) {
 	if err := u.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	if got := (Uses{Buckets: []BucketGrant{{Bucket: "b", Prefix: "rooms"}}}).Normalized().Buckets[0].Prefix; got != "rooms/" {
+		t.Fatalf("prefix without slash = %q, want rooms/", got)
+	}
 }
 
 func TestValidateRefuses(t *testing.T) {

@@ -35,7 +35,8 @@ func TestWorkloadObjectCredentialsCachesUntilNearExpiry(t *testing.T) {
 		audiences = append(audiences, audience)
 		return workloadIdentityGuestResponse{AccessToken: "eyJ.binding.token"}, nil
 	}
-	creds := newWorkloadObjectCredentials(identity, client, func() time.Time { return now })
+	gen := uint64(0)
+	creds := newWorkloadObjectCredentials(identity, client, func() time.Time { return now }, func() uint64 { return gen })
 
 	get := func(query string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
@@ -57,6 +58,12 @@ func TestWorkloadObjectCredentialsCachesUntilNearExpiry(t *testing.T) {
 	get("?bucket=assets")
 	if issued != 2 {
 		t.Fatalf("credential near expiry not refreshed: %d", issued)
+	}
+	// A restored snapshot must not serve the snapshotting instance's key.
+	gen++
+	get("?bucket=assets")
+	if issued != 3 {
+		t.Fatalf("credential cached across a restore: %d", issued)
 	}
 }
 
@@ -84,7 +91,7 @@ func TestWorkloadObjectCredentialsRefusals(t *testing.T) {
 		"method not GET": {ok, http.MethodPost, http.StatusMethodNotAllowed},
 	} {
 		rec := httptest.NewRecorder()
-		newWorkloadObjectCredentials(tc.identity, client, time.Now).ServeHTTP(rec, httptest.NewRequest(tc.method, workloadObjectCredentialsPath, nil))
+		newWorkloadObjectCredentials(tc.identity, client, time.Now, func() uint64 { return 0 }).ServeHTTP(rec, httptest.NewRequest(tc.method, workloadObjectCredentialsPath, nil))
 		if rec.Code != tc.want {
 			t.Errorf("%s: %d, want %d", name, rec.Code, tc.want)
 		}

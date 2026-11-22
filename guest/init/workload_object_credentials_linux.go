@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -53,13 +56,21 @@ func currentWorkloadAPIURL() string {
 
 type identityFetcher func(audience string) (workloadIdentityGuestResponse, error)
 
-type workloadObjectCredentials struct {
-	identity identityFetcher
-	client   *http.Client
-	now      func() time.Time
+// workloadObjectCredentialsTimeout bounds one exchange with apid, so a hung
+// connection fails the request instead of stalling the SDK.
+const workloadObjectCredentialsTimeout = 10 * time.Second
 
-	mu    sync.Mutex
-	cache map[string]cachedObjectCredential
+type workloadObjectCredentials struct {
+	identity   identityFetcher
+	client     *http.Client
+	now        func() time.Time
+	generation func() uint64
+
+	// mu guards cache and gen only; fetches run outside it, one per bucket.
+	mu     sync.Mutex
+	cache  map[string]cachedObjectCredential
+	gen    uint64
+	flight singleflight.Group
 }
 
 type cachedObjectCredential struct {
@@ -67,8 +78,23 @@ type cachedObjectCredential struct {
 	expiration time.Time
 }
 
-func newWorkloadObjectCredentials(identity identityFetcher, client *http.Client, now func() time.Time) *workloadObjectCredentials {
-	return &workloadObjectCredentials{identity: identity, client: client, now: now, cache: map[string]cachedObjectCredential{}}
+type objectCredentialResult struct {
+	body   []byte
+	status int
+	code   string
+}
+
+// newWorkloadObjectCredentials serves credentials through client (nil: a
+// dedicated client with workloadObjectCredentialsTimeout). generation is the
+// guest's restore generation: a restored snapshot drops cached credentials,
+// which belong to the instance that took the snapshot, and the client's
+// pooled connections, which did not survive the restore.
+func newWorkloadObjectCredentials(identity identityFetcher, client *http.Client, now func() time.Time, generation func() uint64) *workloadObjectCredentials {
+	if client == nil {
+		client = &http.Client{Timeout: workloadObjectCredentialsTimeout, Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	}
+	return &workloadObjectCredentials{identity: identity, client: client, now: now, generation: generation,
+		cache: map[string]cachedObjectCredential{}, gen: generation()}
 }
 
 func (c *workloadObjectCredentials) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,18 +107,46 @@ func (c *workloadObjectCredentials) ServeHTTP(w http.ResponseWriter, r *http.Req
 		writeIdentityGuestError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	if body, ok := c.cached(bucket); ok {
+		writeObjectCredential(w, body)
+		return
+	}
+	v, _, _ := c.flight.Do(bucket, func() (any, error) {
+		if body, ok := c.cached(bucket); ok {
+			return objectCredentialResult{body: body}, nil
+		}
+		body, status, code := c.fetch(r, bucket)
+		return objectCredentialResult{body: body, status: status, code: code}, nil
+	})
+	result := v.(objectCredentialResult)
+	if result.code != "" {
+		writeIdentityGuestError(w, result.status, result.code)
+		return
+	}
+	writeObjectCredential(w, result.body)
+}
+
+// cached returns bucket's credential while it is valid for more than the
+// refresh margin. A restore since the last call empties the cache first.
+func (c *workloadObjectCredentials) cached(bucket string) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if cached, ok := c.cache[bucket]; ok && c.now().Add(workloadObjectCredentialsMargin).Before(cached.expiration) {
-		writeObjectCredential(w, cached.body)
-		return
+	if gen := c.generation(); gen != c.gen {
+		c.gen = gen
+		c.cache = map[string]cachedObjectCredential{}
+		c.client.CloseIdleConnections()
 	}
-	body, status, code := c.fetch(r, bucket)
-	if code != "" {
-		writeIdentityGuestError(w, status, code)
-		return
+	cached, ok := c.cache[bucket]
+	if !ok || !c.now().Add(workloadObjectCredentialsMargin).Before(cached.expiration) {
+		return nil, false
 	}
-	writeObjectCredential(w, body)
+	return cached.body, true
+}
+
+func (c *workloadObjectCredentials) store(bucket string, body []byte, expiration time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cache[bucket] = cachedObjectCredential{body: body, expiration: expiration}
 }
 
 // fetch exchanges a bindings token for a credential at apid.
@@ -102,7 +156,7 @@ func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) ([]byt
 		return nil, http.StatusServiceUnavailable, "identity_unavailable"
 	}
 	reqBody, _ := json.Marshal(api.ObjectWorkloadCredentialRequest{Bucket: bucket})
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, currentWorkloadAPIURL()+"/v1/workload/object-storage/credentials", bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(context.WithoutCancel(r.Context()), http.MethodPost, currentWorkloadAPIURL()+"/v1/workload/object-storage/credentials", bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
 	}
@@ -127,7 +181,7 @@ func (c *workloadObjectCredentials) fetch(r *http.Request, bucket string) ([]byt
 	if json.Unmarshal(body, &parsed) != nil || parsed.AccessKeyID == "" || parsed.SecretAccessKey == "" || parsed.Expiration.IsZero() {
 		return nil, http.StatusServiceUnavailable, "credentials_unavailable"
 	}
-	c.cache[bucket] = cachedObjectCredential{body: body, expiration: parsed.Expiration}
+	c.store(bucket, body, parsed.Expiration)
 	return body, 0, ""
 }
 

@@ -87,7 +87,7 @@ func TestWorkloadObjectCredentialsFollowBucketGrants(t *testing.T) {
 		return rec.Code, resp, problem
 	}
 
-	if code, _, _ := issue(""); code != http.StatusUnauthorized {
+	if code, _, _ := issue(""); code != http.StatusNotFound {
 		t.Fatalf("flag off: %d", code)
 	}
 	(*e.S()).EnablePlatformFlagForAll(platformflags.CrossAppBindings)

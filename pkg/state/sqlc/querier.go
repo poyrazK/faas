@@ -5884,6 +5884,7 @@ type Querier interface {
 	ObjectVersioningGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectVersioningGetRow, error)
 	ObjectVersioningNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	ObjectVersioningSave(ctx context.Context, db DBTX, arg ObjectVersioningSaveParams) error
+	ObjectWorkloadCredentialCountLive(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialCountLiveParams) (int32, error)
 	ObjectWorkloadCredentialDeleteExpired(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialDeleteExpiredParams) (int64, error)
 	// ADR-20261122191423 slice 2: short-lived workload S3 credentials.
 	ObjectWorkloadCredentialInsert(ctx context.Context, db DBTX, arg ObjectWorkloadCredentialInsertParams) error
