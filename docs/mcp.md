@@ -5651,6 +5651,10 @@ lost submission reply on an authenticated endpoint. Before starting the updated 
 `npm run tasks:migrate` for Node or `go run . tasks-migrate apply` for Go with
 the migration binding. Generate and save a lowercase UUIDv7 before the first call.
 
+The `mcp-python-tasks` starter supports the same receipt and lookup flow. Apply
+its updated schema with the Python Task schema command from the starter README,
+then restart the web or combined process to advertise the extensions.
+
 ```sh
 gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
   --tool build_report --arguments '{"report":"weekly","steps":8}' \

@@ -2,6 +2,18 @@
 import base64
 import binascii
 import math
+import re
+
+TASK_SUBMISSION_EXTENSION = "io.gregale/task-submission"
+TASK_SUBMISSION_LOOKUP_EXTENSION = "io.gregale/task-submission-lookup"
+TASK_SUBMISSION_KEY_META = "io.gregale/task-submission-key"
+TASK_SUBMISSION_METHOD = "gregale/tasks/submit"
+TASK_SUBMISSION_LOOKUP_METHOD = "gregale/tasks/lookup"
+TASK_SUBMISSION_KEY_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
+
+
+def valid_task_submission_key(value):
+    return isinstance(value, str) and TASK_SUBMISSION_KEY_PATTERN.fullmatch(value) is not None
 
 
 def validate_mcp_headers(headers, message, protocol, catalog):
@@ -12,9 +24,18 @@ def validate_mcp_headers(headers, message, protocol, catalog):
     version_key = "io.modelcontextprotocol/protocolVersion"
     if version_key in meta and meta[version_key] != protocol:
         return False
-    if "id" not in message or protocol != "2026-07-28" or (not headers.get("MCP-Protocol-Version") and version_key not in meta):
+    method_headers = headers.get_all("MCP-Method", [])
+    expected_method = message["method"]
+    if TASK_SUBMISSION_KEY_META in meta or TASK_SUBMISSION_METHOD in method_headers:
+        # Explicit versioning makes the different method header fail closed on older replicas.
+        if (not valid_task_submission_key(meta.get(TASK_SUBMISSION_KEY_META)) or expected_method != "tools/call"
+                or "id" not in message or protocol != "2026-07-28"
+                or headers.get_all("MCP-Protocol-Version", []) != [protocol]):
+            return False
+        expected_method = TASK_SUBMISSION_METHOD
+    elif "id" not in message or protocol != "2026-07-28" or (not headers.get("MCP-Protocol-Version") and version_key not in meta):
         return True
-    if headers.get_all("MCP-Method", []) != [message["method"]]:
+    if method_headers != [expected_method]:
         return False
     key = {"tools/call": "name", "prompts/get": "name", "resources/read": "uri"}.get(message["method"])
     if key and (not isinstance(params.get(key), str) or not params[key] or len(headers.get_all("MCP-Name", [])) != 1 or _decode_header(headers.get("MCP-Name", "")) != params[key]):
