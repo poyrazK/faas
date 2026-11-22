@@ -1,7 +1,8 @@
 # ADR-20261122194324: MCP gateway auth modes, per-tool insight, replay and parked input waits
 
 - Status: Proposed (dark behind the `mcp_gateway_auth` and `mcp_tool_insights`
-  platform flags; `gregale mcp server replay` is a client-only preview command)
+  platform flags; `gregale mcp server auth` and `replay` are hidden preview
+  commands)
 - Date: 2026-11-22
 - Related: ADR-120 (consumer keys), ADR-953 (consumer plans), ADR-104
   (per-consumer throttles), ADR-1190 (Gregale Auth), ADR-1237/1238 (MCP access
@@ -84,15 +85,17 @@ drop a JWT rule whose `jwks_url` is not `https://`.)
 - The app's consumer auth mode must be `optional` or `required`; `gregale mcp
   auth enable` checks this before it writes the rule.
 
-**`oauth-proxy`.** Callers sign in through a Gregale Auth app. The source names
-the Auth app by its canonical origin in `auth.issuer`
-(`https://<auth app>/auth/v1`); the CLI derives `jwks_url` and writes an
-ordinary JWT MCP policy with audience = the MCP resource and `ES256`. The
-metadata document points clients at the Auth app, which already does dynamic
-registration and PKCE and binds the token audience to the resource. Version 1
-is endpoint-level: Auth client tokens carry no `scope` claim, so `oauth-proxy`
-refuses non-empty endpoint, tool, resource and prompt scopes until Auth issues
-one. Audience binding is the authorization.
+**`oauth-proxy`.** Callers sign in through a Gregale Auth app. `gregale mcp
+server init --auth-app` already points `external-oauth` at an Auth app, where
+the server verifies tokens itself. `oauth-proxy` moves that check to the
+gateway: the source names the Auth issuer (`https://<auth app>/auth/v1`), the
+CLI derives `jwks_url` and writes an ordinary JWT MCP policy with audience =
+the MCP resource and `ES256`. The metadata document points clients at the Auth
+app, which already does dynamic registration and PKCE and binds the token
+audience to the resource. Auth tokens carry only OpenID scopes (`openid`,
+`email`, `profile`, `phone`), so endpoint scopes must come from that set and
+per-tool, resource and prompt scopes are refused: audience binding is the
+authorization.
 
 `gregale mcp auth enable --mode api-key|oauth-proxy [--auth-app SLUG]` writes
 the source change, applies the gateway policy and prints the next commands
@@ -115,21 +118,30 @@ call counts are part of section 3.
 
 ### 3. Per-tool insight
 
-- **Tool names.** The collector accepts any tool name matching
-  `^[A-Za-z0-9_.:/-]{1,64}$` and keeps the first 32 distinct names per app per
-  retention window; later ones are `other`. This bounds series per app the way
-  the app table already bounds apps. The names are self-reported by the app,
-  so an app can only mislabel its own series.
-- **Argument mismatches.** Starters report a new outcome, `invalid_params`,
-  when a `tools/call` fails JSON-RPC `-32602` or schema validation. It counts
-  as an error and is also shown on its own.
-- **Cost per tool.** apid estimates it at read time. The app's billed GB-hours
-  over the hour (plan RAM + 8 MB per running second, the billing rule) are
-  split across tools by their share of execution seconds, then priced at the
-  plan's overage rate, in integer millicents. This is labeled an estimate:
-  concurrent calls share one VM, and idle time before parking goes to no tool.
-- Served on the dashboard MCP performance view, `gregale mcp server
-  performance`, and the management MCP, behind `mcp_tool_insights`.
+This supersedes the fixed tool vocabulary of ADR-20261017191502 and
+ADR-20261017191506 ("arbitrary custom tools intentionally share `other`").
+
+- **Tool names.** A starter labels a `tools/call` with the tool's name only
+  when the tool is registered in its own catalog; any other name is `other`,
+  so a caller cannot choose labels. Registered names are the owner's and are
+  public in `tools/list`. The collector accepts names matching
+  `^[A-Za-z0-9_.:/-]{1,64}$` and keeps an app's first 16 distinct names per
+  retention window; later ones are `other`. Each name adds about 45 series
+  (outcomes and two histograms), so 16 bounds an app at roughly 18 tool labels.
+- **Argument mismatches.** Starters report a new outcome, `invalid_params`, for
+  a `tools/call` whose arguments fail the tool's input schema: the Go and
+  Python starters' schema validator error, the Node MCP SDK's "Input validation
+  error" tool error, or JSON-RPC `-32602` on `tools/call`. Built-in sample
+  tools that validate in their handlers still report `tool_error`. It counts as
+  an error and is also shown on its own. Other methods never report it (the
+  SDK also answers a missing resource with `-32602`).
+- **Compute per tool.** apid estimates it at read time: the tool's execution
+  seconds at the app's billed memory (plan RAM + 8 MB), priced at the overage
+  rate (`OverageMillicentsPerGBHour`) in integer millicents, before included
+  GB-hours. Calls that overlap on one instance share its memory, so it is an
+  upper bound; idle time before parking goes to no tool.
+- Served on the dashboard MCP performance table behind `mcp_tool_insights`.
+  Calls, errors and latency per named tool need no flag.
 
 ### 4. Replay before promote
 
@@ -176,7 +188,12 @@ Not built in this change. The design direction, for a follow-up ADR:
   policy against an empty key set and answers 401: closed, not open. Release
   gatewayd-internal before turning on `mcp_gateway_auth`, or `api-key` servers
   refuse every caller.
-- Per-tool series grow from 6 to at most 33 tool labels per app.
+- Per-tool series grow from 6 to at most 18 tool labels per app.
+- The CLI keeps `mcp server auth` and `mcp server replay` out of help,
+  completions and dispatch unless `FAAS_MCP_GATEWAY_PREVIEW_ENABLED` is set,
+  like other dark-launched commands.
+- Tool publication (platform-invoked tools) stays `open` or `external-oauth`;
+  apid refuses the new modes there.
 
 ## Rejected
 

@@ -251,6 +251,9 @@ func (c Config) Validate() error {
 	return c.Auth.validate(c.Endpoint)
 }
 
+// OAuthProxyScopes are the scopes a Gregale Auth OAuth server issues.
+var OAuthProxyScopes = map[string]bool{"openid": true, "email": true, "profile": true, "phone": true}
+
 // OAuthProxyJWKSURL is the key set of a Gregale Auth issuer
 // (https://<auth app>/auth/v1).
 func OAuthProxyJWKSURL(issuer string) string {
@@ -305,13 +308,18 @@ func (a AuthConfig) validate(endpoint string) error {
 	}
 	switch a.Mode {
 	case AuthOAuthProxy:
-		// Gregale Auth client tokens are audience-bound to the resource but
-		// carry no scope claim yet, so scopes would refuse every caller.
+		// Gregale Auth client tokens are audience-bound to the resource and
+		// carry only OpenID scopes, so per-entry scopes cannot gate tools.
 		if issuer, _ := url.Parse(a.Issuer); issuer.Path != "/auth/v1" {
 			return fmt.Errorf("oauth-proxy auth.issuer must be a Gregale Auth issuer, https://<auth app>/auth/v1")
 		}
-		if len(a.Scopes) > 0 {
-			return fmt.Errorf("oauth-proxy does not support scopes yet; access is bound to the resource")
+		if len(a.Scopes) == 0 {
+			return fmt.Errorf("oauth-proxy requires at least one scope, such as openid")
+		}
+		for _, scope := range a.Scopes {
+			if !OAuthProxyScopes[scope] {
+				return fmt.Errorf("oauth-proxy scope %q: Gregale Auth issues only the openid, email, profile and phone scopes", scope)
+			}
 		}
 		return nil
 	case AuthAPIKey:

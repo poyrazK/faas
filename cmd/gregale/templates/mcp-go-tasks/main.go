@@ -491,7 +491,7 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 		params.Arguments = map[string]any{}
 	}
 	if entry.inputSchema != nil && entry.inputSchema.Validate(params.Arguments) != nil {
-		writeToolError(w, id, "tool arguments do not match inputSchema")
+		writeToolError(w, id, toolArgumentsMismatch)
 		return
 	}
 	canCreateTask := tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities)

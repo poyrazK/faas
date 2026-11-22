@@ -20,6 +20,7 @@ import threading
 import time
 from urllib.parse import urlsplit
 
+import protocol_telemetry
 from protocol_telemetry import ProtocolObservation, start_protocol_heartbeat
 
 from auth import AuthConfigurationError, AuthFailure, Authenticator
@@ -270,6 +271,7 @@ PROMPTS = [
 ]
 
 MCP_CATALOG = RuntimeCatalog()
+protocol_telemetry.tool_known = lambda name: MCP_CATALOG.get("tool", name) is not None
 for _definition in TOOLS:
     MCP_CATALOG.seed("tool", _definition)
 for _definition in RESOURCES + RESOURCE_TEMPLATES:
@@ -625,7 +627,7 @@ def call_tool(request_id, params, authenticator, granted_scopes, protocol=CURREN
         try:
             validator.validate(arguments)
         except Exception:
-            return tool_error(request_id, "tool arguments do not match inputSchema")
+            return tool_error(request_id, protocol_telemetry.TOOL_ARGUMENTS_MISMATCH)
     metadata = params.get("_meta", {})
     keyed = isinstance(metadata, dict) and TASK_SUBMISSION_KEY_META in metadata
     client_capabilities = metadata.get(CLIENT_CAPABILITIES_META_KEY, {}) if isinstance(metadata, dict) else {}

@@ -74,6 +74,15 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
+	case "auth", "replay":
+		if !mcpGatewayPreviewCLI() {
+			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
+			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
+		}
+		if args[0] == "auth" {
+			return cmdMCPAuth(args[1:])
+		}
+		return cmdMCPReplay(args[1:])
 	case "tasks":
 		return cmdMCPTasks(args[1:])
 	case "lock":

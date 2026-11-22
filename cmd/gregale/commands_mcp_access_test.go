@@ -22,7 +22,7 @@ func accessTestConfig() mcphosting.Config {
 }
 
 func accessTestRule(cfg mcphosting.Config) api.EdgeRuleResponse {
-	action, _ := json.Marshal(main.McpExpectedGatewayAction(cfg, []string{"RS256", "ES256"}))
+	action, _ := json.Marshal(main.McpExpectedGatewayAction(cfg, []string{"RS256", "ES256"}, ""))
 	return api.EdgeRuleResponse{ID: "managed", AppID: "app-id", MatchHost: "my-mcp.example", MatchPath: "/**", Kind: "jwt", Enabled: true, Mode: "enforce", Action: action}
 }
 

@@ -1,4 +1,4 @@
-import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel } from './protocol-telemetry.js';
+import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel, labelTool } from './protocol-telemetry.js';
 import { performance } from 'node:perf_hooks';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -271,6 +271,7 @@ export function createApp(suppliedConfig, { keyResolver, log = console.log, task
         return entry.handler(args, ctx, { authInfo, config, taskRuntime });
       };
       const definition = taskCall ? { ...entry.definition, outputSchema: undefined } : entry.definition;
+      labelTool(entry.name);
       const tool = server.registerTool(entry.name, definition, auth.toolPolicy.guard(entry.name, observe(entry.name, callback)));
       if (!auth.toolPolicy.canAccess(entry.name, authInfo)) tool.disable();
     }
