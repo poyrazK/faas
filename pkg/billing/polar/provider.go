@@ -1170,10 +1170,15 @@ func (p *Provider) ReconcileUsage(ctx context.Context, acct state.Account, start
 }
 
 type refundResponse struct {
-	ID       string `json:"id"`
-	Amount   int64  `json:"amount"`
-	Currency string `json:"currency"`
-	Status   string `json:"status"`
+	ID     string `json:"id"`
+	Amount int64  `json:"amount"`
+	// TaxAmount is the tax Polar refunds on top of Amount. Invoices are
+	// tax-inclusive, so the recorded refund is Amount + TaxAmount: the
+	// same figure the refund.* webhook records for this refund ID (a
+	// mismatch there is a RecordInvoiceRefund conflict).
+	TaxAmount int64  `json:"tax_amount"`
+	Currency  string `json:"currency"`
+	Status    string `json:"status"`
 }
 
 // refundMetadataKey is the Polar refund metadata field that carries the
@@ -1256,10 +1261,14 @@ func (r refundResponse) result(chargeID string, amountCents int64) (*billing.Ref
 	if r.Amount < 0 || (r.Amount > 0 && r.Amount != amountCents) {
 		return nil, fmt.Errorf("polar: refund order=%s returned amount %d, requested %d", chargeID, r.Amount, amountCents)
 	}
+	if r.TaxAmount < 0 {
+		return nil, fmt.Errorf("polar: refund order=%s returned tax amount %d", chargeID, r.TaxAmount)
+	}
 	amount := r.Amount
 	if amount <= 0 {
 		amount = amountCents
 	}
+	amount += r.TaxAmount
 	return &billing.RefundResult{
 		ProviderRefundID: r.ID,
 		ChargeID:         chargeID,

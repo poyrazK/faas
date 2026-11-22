@@ -225,6 +225,25 @@ func TestRefund_ClientRejectionSkipsRecoveryLookup(t *testing.T) {
 	}
 }
 
+// TestRefund_RecordsTaxInclusiveAmount: Polar refunds tax on top of the
+// requested (pre-tax) amount; the result is tax-inclusive so it matches
+// the tax-inclusive invoice and the refund.* webhook for the same ID.
+func TestRefund_RecordsTaxInclusiveAmount(t *testing.T) {
+	f := &refundServer{postBody: `{"id":"refund-new","amount":833,"tax_amount":167,"currency":"usd","status":"succeeded"}`}
+	p, closeFn := newRefundProvider(t, f)
+	defer closeFn()
+	res, err := p.Refund(context.Background(), "order-1", 833)
+	if err != nil {
+		t.Fatalf("Refund: %v", err)
+	}
+	if res.AmountCents != 1000 {
+		t.Fatalf("AmountCents = %d, want 1000 (833 + 167 tax)", res.AmountCents)
+	}
+	if got, _ := f.lastPost["amount"].(float64); got != 833 {
+		t.Fatalf("posted amount = %v, want the requested 833", f.lastPost["amount"])
+	}
+}
+
 // TestRefund_DefaultKeyIsOrderAndAmount: without a context key the
 // marker is derived from (order, amount) so a bare retry still dedupes.
 func TestRefund_DefaultKeyIsOrderAndAmount(t *testing.T) {
