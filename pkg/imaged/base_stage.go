@@ -331,15 +331,29 @@ func (h *Handler) ensureBaseExt4(
 // (ADR-053). The sidecar is the source of truth for the
 // "did this base already stage?" check — re-fetching tens of
 // MB of layers on every daemon restart would be wasteful.
+// writeBaseDigestSidecar publishes the base's digest sidecar. When the store
+// refuses the write because another writer was publishing the same key at that
+// moment (two builds staging one runtime base: prod hunt r26 failed a project
+// deploy with OVH 409 OperationAborted), it writes once more: the refused
+// attempt left nothing behind and the value is the same bytes either way.
 func (h *Handler) writeBaseDigestSidecar(ctx context.Context, be storage.StorageBackend, digestKey, wantDigest, guestInitDigest, sourceRef string) error {
-	digestRC, err := openStringReader(baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef))
-	if err != nil {
-		return fmt.Errorf("imaged: open digest sidecar: %w", err)
+	value := baseDigestSidecarValueWithSource(wantDigest, guestInitDigest, sourceRef)
+	err := putStringOnce(ctx, be, digestKey, value)
+	if errors.Is(err, storage.ErrWriteConflict) {
+		err = putStringOnce(ctx, be, digestKey, value)
 	}
-	if err := be.Put(ctx, digestKey, digestRC); err != nil {
+	if err != nil {
 		return fmt.Errorf("imaged: write digest sidecar %q: %w", digestKey, err)
 	}
 	return nil
+}
+
+func putStringOnce(ctx context.Context, be storage.StorageBackend, key, value string) error {
+	r, err := openStringReader(value)
+	if err != nil {
+		return fmt.Errorf("imaged: open digest sidecar: %w", err)
+	}
+	return be.Put(ctx, key, r)
 }
 
 func baseDigestSidecarValue(configDigest string) string {
