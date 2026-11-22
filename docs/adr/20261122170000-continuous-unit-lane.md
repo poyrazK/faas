@@ -138,12 +138,21 @@ Budget, merge to new code serving on the control plane:
 | hold before "done" | 247 s | ~45 s | a synthetic smoke check; the 30 min watch with automatic rollback is unchanged |
 | **total** | **~20 min** | **~2.5–3.5 min** | |
 
-- **Version out of the binary.** Release builds stop stamping
-  `unit-<commit>` into `pkg/wire.Version` (informational only: metrics
-  label, version endpoints). deployctl writes the unit version into the
-  unit's environment (`FAAS_UNIT_VERSION`) from the release manifest, and
-  `pkg/wire` reads it at start. The release binary is then the neutral
-  build, so one build gives both the code digest and the shipped bytes.
+- **One build** (done; replaces "version out of the binary", which needed
+  deployctl and daemon changes). Code builds now stamp `pkg/wire.Version`
+  with `unit-` and 40 zeros and `pkg/wire.GitSHA` with 40 zeros, as long
+  as a unit release's stamps, and unit release builds blank the Go build
+  ID as code builds do. A release binary with its two stamps replaced is
+  then the code build byte for byte (verified on meterd and apid through
+  `make build-release-unit`, file digests equal). The build job builds
+  the carried units once (`build-unit-release.sh` with `UNITS_BIN_DIR`,
+  `UNITS_BUILD_ONLY`), `affected_units.py --code-from` measures those
+  binaries, and packaging reuses them: the second build of every carried
+  unit is gone. A binary without its stamp falls back to selection by
+  closure (restarts more, never fewer). One-time cost: the new neutral
+  stamp changes every recorded code digest, so the first unit release
+  after this restarts every unit it carries, and the base digest cache
+  rebuilds once.
 - **Build runner, on the control plane** (owner, 2026-11-22: "if there is
   no security problem, we can use cp"). `deploy/ansible/build_runner.yml`
   installs a second runner on the control plane through the

@@ -391,6 +391,21 @@ class CodeSelectionTest(unittest.TestCase):
         rep = au.analyze([("c1", ["pkg/state/store.go", "migrations/00002_add.sql"])], CLOSURES, CONFIG, EXISTS)
         self.assertEqual(au.code_candidates(rep), [])
 
+    def test_prebuilt_release_binaries_are_measured_and_only_missing_ones_build(self):
+        with tempfile.TemporaryDirectory() as d:
+            pathlib.Path(d, "apid").write_bytes(b"x")
+            calls = []
+            orig = au.binary_code.normalised_digests
+            au.binary_code.normalised_digests = lambda path, stamps, workdir=None: (
+                calls.append((os.path.basename(path), stamps)) or ("f", "c"))
+            try:
+                found, missing = au.prebuilt_digests(["apid", "meterd"], d, lambda n: [(n.encode(), b"x")])
+            finally:
+                au.binary_code.normalised_digests = orig
+        self.assertEqual(found, {"apid": ("f", "c")})
+        self.assertEqual(missing, ["meterd"])
+        self.assertEqual(calls, [("apid", [(b"apid", b"x")])])
+
     def test_code_cache_round_trip_and_mismatch(self):
         path = os.path.join(tempfile.mkdtemp(), "cache.json")
         self.addCleanup(shutil.rmtree, os.path.dirname(path))
