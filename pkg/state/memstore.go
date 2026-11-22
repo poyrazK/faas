@@ -7823,7 +7823,54 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 			m.crons[cronID] = anchorCronSchedule(cron, restored, time.Now())
 		}
 	}
+	m.returnDeletedAppCanaryTrafficLocked(id)
 	return a, nil
+}
+
+// returnDeletedAppCanaryTrafficLocked mirrors restoreAppTx: a canary aborted
+// because its app was deleted hands its share to the live release with the
+// most traffic in its scope (ties: newest, then id).
+func (m *MemStore) returnDeletedAppCanaryTrafficLocked(appID string) {
+	stuck := map[string]bool{}
+	for depID, d := range m.deployments {
+		if d.AppID == appID && d.Status == DeployLive && d.RolloutState == "aborted" &&
+			d.RolloutAbortedReason == RolloutAbortedAppDeleted && d.TrafficPercent > 0 {
+			stuck[depID] = true
+		}
+	}
+	ids := make([]string, 0, len(stuck))
+	for depID := range stuck {
+		ids = append(ids, depID)
+	}
+	sort.Strings(ids)
+	for _, depID := range ids {
+		d := m.deployments[depID]
+		heir := ""
+		for otherID, o := range m.deployments {
+			if stuck[otherID] || o.AppID != appID || o.Status != DeployLive ||
+				normalizedDeploymentScope(o.Scope) != normalizedDeploymentScope(d.Scope) {
+				continue
+			}
+			if heir == "" {
+				heir = otherID
+				continue
+			}
+			h := m.deployments[heir]
+			if o.TrafficPercent > h.TrafficPercent ||
+				(o.TrafficPercent == h.TrafficPercent && (o.CreatedAt.After(h.CreatedAt) ||
+					(o.CreatedAt.Equal(h.CreatedAt) && otherID < heir))) {
+				heir = otherID
+			}
+		}
+		if heir == "" {
+			continue
+		}
+		h := m.deployments[heir]
+		h.TrafficPercent += d.TrafficPercent
+		d.TrafficPercent = 0
+		m.putDeploymentLocked(heir, h)
+		m.putDeploymentLocked(depID, d)
+	}
 }
 
 func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {

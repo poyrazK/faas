@@ -1981,14 +1981,18 @@ with inserted as (
 select exists(select 1 from inserted) as inserted;
 
 -- name: ApplyGatewayUsageEvent :execrows
+-- $6 is the frame's billed egress: its response bytes when meterd counts
+-- gateway responses as app egress (ADR-20261121210517, compute nodes whose
+-- public responses do not cross the instance veth), otherwise 0.
 insert into usage_minutes (account_id, app_id, instance_id, minute, mb_seconds, requests, cpu_usec, tx_bytes, net_tx_bytes, net_rx_bytes, cold_boot_count, tail_seconds)
-select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, 0, 0, $5::int, 0
+select a.account_id, i.app_id, i.id, $2::timestamptz, 0, $3::int, 0, $4::bigint, $6::bigint, 0, $5::int, 0
   from instances i
   join apps a on a.id = i.app_id
  where i.id = $1
 on conflict (instance_id, minute) do update
    set requests        = usage_minutes.requests        + EXCLUDED.requests,
        tx_bytes        = usage_minutes.tx_bytes        + EXCLUDED.tx_bytes,
+       net_tx_bytes    = usage_minutes.net_tx_bytes    + EXCLUDED.net_tx_bytes,
        cold_boot_count = usage_minutes.cold_boot_count + EXCLUDED.cold_boot_count;
 
 -- name: ApplyGatewayEdgeUsageEvent :execrows

@@ -264,12 +264,11 @@ type Sampler struct {
 	// review R8-2) subtracts each instance's internal egress from
 	// usage_minutes.net_tx_bytes. Off by default.
 	internalEgressUnbilled bool
-	// publicResponseEgress adds the gateway's response bytes for an
-	// instance to its billed egress (ADR-20261122090000). The gateway
-	// bridges public requests into the netns over tap0, so on a host without
-	// public forwarding their responses never cross the veth that
-	// net_tx_bytes counts.
-	publicResponseEgress bool
+	// gatewayResponseEgress ([meter] gateway_response_egress,
+	// ADR-20261121210517) adds the gateway response bytes drained from the
+	// in-memory stream to billed egress. Persisted gateway frames are billed
+	// by the store instead (AppendGatewayUsageEvent).
+	gatewayResponseEgress bool
 }
 
 // cpuBaseline is the per-instance baseline the sampler retains
@@ -526,12 +525,11 @@ func (s *Sampler) WithInternalEgressUnbilled(on bool) *Sampler {
 	return s
 }
 
-// WithPublicResponseEgress makes billed egress (net_tx_bytes) include the
-// response bytes the gateway delivered for each instance
-// (ADR-20261122090000). Leave it off on hosts with public forwarding, whose
-// bridges already route responses through the veth.
-func (s *Sampler) WithPublicResponseEgress(on bool) *Sampler {
-	s.publicResponseEgress = on
+// WithGatewayResponseEgress bills the gateway response bytes drained from the
+// in-memory gateway stream as app egress (ADR-20261121210517), for compute
+// nodes whose public responses never cross the instance veth.
+func (s *Sampler) WithGatewayResponseEgress(on bool) *Sampler {
+	s.gatewayResponseEgress = on
 	return s
 }
 
@@ -1332,17 +1330,19 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 	if usage.NetworkCumulative {
 		netTx, netRx = 0, 0
 	}
-	var publicTx int64
-	if s.publicResponseEgress && row.TXBytes > 0 {
-		publicTx = row.TXBytes
+	// Gateway response bytes billed as egress (ADR-20261121210517) are
+	// written with the minute, before the interface delta.
+	var gatewayEgress int64
+	if s.gatewayResponseEgress && row.TXBytes > 0 {
+		gatewayEgress = row.TXBytes
 	}
 	if err := s.store.AppendUsage(ctx, row.AccountID, row.AppID, row.InstanceID, row.Minute,
-		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx+publicTx, netRx,
+		row.MBSeconds, requests, row.CPUUsec, row.TXBytes, netTx+gatewayEgress, netRx,
 		row.ColdBootCount, row.TailSeconds); err != nil {
 		return err
 	}
 	if !usage.NetworkCumulative {
-		row.NetTxBytes = netTx + publicTx
+		row.NetTxBytes = netTx + gatewayEgress
 		return nil
 	}
 	if usage.NetTXBytes > math.MaxInt64 || usage.NetRXBytes > math.MaxInt64 {
@@ -1363,7 +1363,7 @@ func (s *Sampler) appendRolledRow(ctx context.Context, row *RolledRow, requests 
 		return fmt.Errorf("meter: checkpoint network usage for instance %s: %w", row.InstanceID, err)
 	}
 	deltaTx, deltaRx = deltaTx+sourceTx, deltaRx+sourceRx
-	row.NetTxBytes = deltaTx + publicTx
+	row.NetTxBytes = deltaTx + gatewayEgress
 	row.NetRxBytes = deltaRx
 	return nil
 }

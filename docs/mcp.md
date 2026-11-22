@@ -5668,6 +5668,16 @@ extension. Keyed submission deduplicates Task creation within this window.
 Worker execution retains its existing at-least-once contract. See
 [ADR-20261121213156](adr/20261121213156-keyed-mcp-task-submission.md).
 
+After the submission window closes, use the saved key to find the original
+Task while it is still retained. This read checks Task ownership and current
+tool access and returns only metadata. Use the returned Task ID for `client wait`
+or an explicit result read.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-submission-key "$TASK_SUBMISSION_KEY" --metadata-only
+```
+
 ## MCP catalog snapshots
 
 Capture caller-visible definitions before changing a server:

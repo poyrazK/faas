@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -124,6 +126,38 @@ func (c *Client) GetTask(ctx context.Context, taskID string) (Task, Exchange, er
 		return Task{}, x, err
 	}
 	return task, x, nil
+}
+
+// GetTaskBySubmissionKey reads metadata for a retained Task using its saved key.
+func (c *Client) GetTaskBySubmissionKey(ctx context.Context, key string) (Task, Exchange, error) {
+	if err := validateTaskSubmissionKey(key); err != nil {
+		return Task{}, Exchange{}, err
+	}
+	if c.Token == "" {
+		return Task{}, Exchange{}, errors.New("MCP Task submission lookup requires a client token")
+	}
+	if err := c.requireTasksCapability(ctx); err != nil {
+		return Task{}, Exchange{}, err
+	}
+	if !c.Capabilities.HasExtension("io.gregale/task-submission-lookup") {
+		return Task{}, Exchange{}, errors.New("MCP server does not advertise Task submission lookup")
+	}
+	x, err := c.request(ctx, "gregale/tasks/lookup", map[string]any{"submissionKey": key}, nil, false)
+	body := x.Result
+	x.Result = nil
+	if err != nil {
+		return Task{}, x, err
+	}
+	task, err := decodeTaskSnapshot(body, "complete", "", true)
+	return task, x, err
+}
+
+func validateTaskSubmissionKey(value string) error {
+	key, err := uuid.Parse(value)
+	if err != nil || key.Version() != 7 || key.Variant() != uuid.RFC4122 || key.String() != value {
+		return errors.New("MCP Task submission key must be a lowercase UUIDv7")
+	}
+	return nil
 }
 
 // WaitTask resumes polling for a task created by an earlier call. It uses the
@@ -489,6 +523,10 @@ func (c *Client) taskRequest(ctx context.Context, method, taskID string, extra m
 }
 
 func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error) {
+	return decodeTaskSnapshot(body, wantType, expectedID, false)
+}
+
+func decodeTaskSnapshot(body json.RawMessage, wantType, expectedID string, metadataOnly bool) (Task, error) {
 	var task Task
 	if err := json.Unmarshal(body, &task); err != nil {
 		return Task{}, fmt.Errorf("decode MCP task: %w", err)
@@ -496,6 +534,14 @@ func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error)
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(body, &fields); err != nil {
 		return Task{}, fmt.Errorf("decode MCP task: %w", err)
+	}
+	if metadataOnly {
+		for field := range fields {
+			switch strings.ToLower(field) {
+			case "result", "error", "inputrequests", "statusmessage":
+				return Task{}, errors.New("MCP Task lookup included a payload field")
+			}
+		}
 	}
 	if task.ResultType != wantType {
 		return Task{}, fmt.Errorf("MCP task resultType must be %q", wantType)
@@ -531,15 +577,15 @@ func decodeTask(body json.RawMessage, wantType, expectedID string) (Task, error)
 	switch task.Status {
 	case "working", "cancelled":
 	case "input_required":
-		if len(task.InputRequests) == 0 || len(task.InputRequests) > maxInteractiveInputRequests {
+		if !metadataOnly && (len(task.InputRequests) == 0 || len(task.InputRequests) > maxInteractiveInputRequests) {
 			return Task{}, errors.New("MCP task contains an invalid input request set")
 		}
 	case "completed":
-		if !isJSONObject(task.Result) {
+		if !metadataOnly && !isJSONObject(task.Result) {
 			return Task{}, errors.New("completed MCP task is missing its object result")
 		}
 	case "failed":
-		if !isJSONObject(task.Error) {
+		if !metadataOnly && !isJSONObject(task.Error) {
 			return Task{}, errors.New("failed MCP task is missing its object error")
 		}
 	default:
