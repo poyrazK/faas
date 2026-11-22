@@ -6,6 +6,7 @@ package binhop
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -40,6 +41,11 @@ const defaultUserAgent = "Go-http-client/1.1"
 // Transport sends one request at a time over each connection to its peer
 // and keeps idle connections for reuse.
 type Transport struct {
+	// userAgent is sent when a request has none; gzip asks for gzip and
+	// decodes it as net/http's clients do (WithHTTP2ClientDefaults).
+	userAgent string
+	gzip      bool
+
 	idleTimeout    time.Duration
 	maxHeaderBytes int
 	maxIdle        int
@@ -58,7 +64,53 @@ func NewTransport(idleTimeout time.Duration, maxHeaderBytes, maxIdle int) *Trans
 	if maxIdle <= 0 {
 		maxIdle = DefaultMaxIdle
 	}
-	return &Transport{idleTimeout: idleTimeout, maxHeaderBytes: maxHeaderBytes, maxIdle: maxIdle}
+	return &Transport{userAgent: defaultUserAgent, idleTimeout: idleTimeout, maxHeaderBytes: maxHeaderBytes, maxIdle: maxIdle}
+}
+
+// requestsGzip reports whether t asks for gzip on req's behalf: as net/http,
+// only when req names no encoding or range of its own and is not HEAD.
+func (t *Transport) requestsGzip(req *http.Request) bool {
+	return t.gzip && req.Method != http.MethodHead && req.Header.Get("Accept-Encoding") == "" && req.Header.Get("Range") == ""
+}
+
+// gzipBody decodes a gzip response body on its first read.
+type gzipBody struct {
+	src io.ReadCloser
+	zr  *gzip.Reader
+	err error
+}
+
+func (g *gzipBody) Read(p []byte) (int, error) {
+	if g.err != nil {
+		return 0, g.err
+	}
+	if g.zr == nil {
+		zr, err := gzip.NewReader(g.src)
+		if err != nil {
+			g.err = err
+			return 0, err
+		}
+		g.zr = zr
+	}
+	return g.zr.Read(p)
+}
+
+func (g *gzipBody) Close() error { return g.src.Close() }
+
+// http2UserAgent is what golang.org/x/net/http2's client sends when a
+// request has no User-Agent.
+const http2UserAgent = "Go-http-client/2.0"
+
+// WithHTTP2ClientDefaults makes t add to a request what an x/net/http2
+// client would, so a peer that used to be reached over h2c sees the same
+// request: a User-Agent of Go-http-client/2.0 when there is none, and
+// Accept-Encoding: gzip when the request has no Accept-Encoding or Range and
+// is not HEAD, in which case a gzip response is decoded before the caller
+// sees it, with Content-Encoding and Content-Length removed. It returns t.
+func (t *Transport) WithHTTP2ClientDefaults() *Transport {
+	t.userAgent = http2UserAgent
+	t.gzip = true
+	return t
 }
 
 type hopClientConn struct {
@@ -194,7 +246,7 @@ func (t *Transport) send(cc *hopClientConn, req *http.Request, noContent bool) (
 		Scheme:    "http",
 		Authority: req.Host,
 		Path:      req.URL.RequestURI(),
-		Header:    hopRequestHeader(req, noContent),
+		Header:    t.requestHeader(req, noContent),
 		NoContent: noContent,
 	}
 	if head.Authority == "" {
@@ -264,6 +316,15 @@ func (t *Transport) send(cc *hopClientConn, req *http.Request, noContent bool) (
 		}
 		body.cr.Reset(cc.br)
 		resp.Body = body
+		if t.requestsGzip(req) && strings.EqualFold(header.Get("Content-Encoding"), "gzip") && bodyAllowedForStatus(status) {
+			// As net/http's clients do for the gzip they asked for: the
+			// caller reads the decoded content, of unknown length.
+			resp.Body = &gzipBody{src: body}
+			header.Del("Content-Encoding")
+			header.Del("Content-Length")
+			resp.ContentLength = -1
+			resp.Uncompressed = true
+		}
 		// A failed head write still returns the server's early answer
 		// (resp.Close is set), as net/http does.
 		return resp, nil //nolint:nilerr // headErr is answered by the early response above.
@@ -272,10 +333,11 @@ func (t *Transport) send(cc *hopClientConn, req *http.Request, noContent bool) (
 
 // hopRequestHeader is the header to send: the request's own, with the
 // fields net/http's client would add.
-func hopRequestHeader(req *http.Request, noContent bool) http.Header {
+func (t *Transport) requestHeader(req *http.Request, noContent bool) http.Header {
 	_, hasUA := req.Header["User-Agent"]
+	askGzip := t.requestsGzip(req)
 	needLength := !noContent && req.ContentLength > 0 && req.Header.Get("Content-Length") == ""
-	if hasUA && !needLength && len(req.Trailer) == 0 {
+	if hasUA && !needLength && !askGzip && len(req.Trailer) == 0 {
 		return req.Header
 	}
 	h := req.Header.Clone()
@@ -283,7 +345,10 @@ func hopRequestHeader(req *http.Request, noContent bool) http.Header {
 		h = http.Header{}
 	}
 	if !hasUA {
-		h.Set("User-Agent", defaultUserAgent)
+		h.Set("User-Agent", t.userAgent)
+	}
+	if askGzip {
+		h.Set("Accept-Encoding", "gzip")
 	}
 	if needLength {
 		h.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))

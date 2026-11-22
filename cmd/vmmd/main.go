@@ -2209,6 +2209,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithDivergedInstances(divergedInstances).
 		WithInvokeHookBackoff(cfg.InvokeHookBackoff).
 		WithBridgeStreamHeadroom(cfg.BridgeStreamHeadroom).
+		// ADR-20261122140000: off unless FAAS_VMMD_BRIDGE_BINARY_HTTP.
+		WithBridgeBinaryHTTP(cfg.BridgeBinaryHTTP).
 		WithStreamBridgeGoRuntime(cfg.StreamBridgeGOMAXPROCS, cfg.StreamBridgeGOGC).
 		// ADR-20261027090010 §1: agent runs stay off unless this node opts in.
 		WithAgentRuns(strings.TrimSpace(os.Getenv("FAAS_VMMD_AGENT_RUNS")) == "1").

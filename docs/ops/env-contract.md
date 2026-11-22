@@ -119,6 +119,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BILLING_PROVIDER` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_BILLING_USAGE_SOURCE` | meterd | `default` |  |  | `` | overrides [meter] billing_usage_source (off\|ledger_shadow\|ledger, default ledger_shadow; ADR-20261107105126) |
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
+| `FAAS_BRIDGE_BINARY_HTTP` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set to 1 by vmmd when bridge_binary_http is on and the bridge frames HTTP/1.1: the bridge also serves binary HTTP on its socket, told apart from h2c and sessions by the first byte (ADR-20261122140000) |
 | `FAAS_BRIDGE_DROP_TO_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc) |
 | `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
 | `FAAS_BRIDGE_GUEST_HEADROOM` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set to 1 by vmmd when bridge_stream_headroom is on: the bridge keeps one idle guest connection per accepted stream (100) and dials the guest with a 5 s timeout (ADR-20261026120000) |
@@ -1199,6 +1200,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_VMMD_APID_CLIENT_TLS_CA_PATH` | vmmd | `dropin` |  |  | `` | split-box guest trace exports (ADR-958); vmmd_service 99-faas-spans-writer.conf |
 | `FAAS_VMMD_APID_CLIENT_TLS_CERT_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
 | `FAAS_VMMD_APID_CLIENT_TLS_KEY_PATH` | vmmd | `dropin` |  |  | `` | node-identity vmmd/apid-client leaf (ADR-958) |
+| `FAAS_VMMD_BRIDGE_BINARY_HTTP` | vmmd | `default` |  |  | `` | optional boolean switch: vmmd sends HTTP/1.1 apps' requests to the stream bridges it starts from now on in binary HTTP instead of h2c (ADR-20261122140000); bridges adopted from a predecessor keep h2c; default off (bridge_binary_http in vmmd.toml) |
 | `FAAS_VMMD_BUILD_REGISTRY_MIRROR` | vmmd | `dropin` |  | off | `` | ADR-20261110210000 slice 3j-3: off gives a builder VM a Docker config with its app's registry passwords, opened with the build identity; secretd serves the builder those registries as a mirror on its vsock, pulled through secretd's RegistryFetch by build id, and opens no password on the node. Needs FAAS_SECRETD_TARGET and FAAS_SECRETD_TLS_{CERT,KEY,CA}_PATH. Set by vmmd_service (faas_vmmd_build_registry_mirror); read at start |
 | `FAAS_VMMD_CONFIG` | vmmd | `default` |  |  | `` |  |
 | `FAAS_VMMD_DATABASE_ROUTE_ENABLED` | vmmd | `dropin` |  |  | `` | ADR-1027 lets app VMs reach managed PostgreSQL through the node's database route; set from the manifest's managed_postgres.app_route |

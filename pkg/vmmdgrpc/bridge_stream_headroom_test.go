@@ -8,6 +8,8 @@ import (
 	"slices"
 	"testing"
 
+	"golang.org/x/net/http2"
+
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 )
 
@@ -29,7 +31,11 @@ func TestBridgeStreamHeadroom(t *testing.T) {
 			if err := m.connectEntry(entry); err != nil {
 				t.Fatal(err)
 			}
-			if got := entry.transport.StrictMaxConcurrentStreams; got != tc.wantStrict {
+			h2, ok := entry.transport.(*http2.Transport)
+			if !ok {
+				t.Fatalf("transport %T, want h2c", entry.transport)
+			}
+			if got := h2.StrictMaxConcurrentStreams; got != tc.wantStrict {
 				t.Errorf("StrictMaxConcurrentStreams = %v, want %v", got, tc.wantStrict)
 			}
 			env := m.bridgeEnv(&vmmdpb.ForwardHTTPRequestInit{Instance: "i-1"}, nil)

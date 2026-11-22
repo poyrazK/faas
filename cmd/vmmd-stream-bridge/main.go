@@ -123,6 +123,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/binhop"
 	"github.com/onebox-faas/faas/pkg/bridgecompletion"
 	"github.com/onebox-faas/faas/pkg/bridgeproc"
 	"github.com/onebox-faas/faas/pkg/instancebridge"
@@ -215,7 +216,7 @@ func main() {
 	// without truncating an in-flight stream.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
-	srv, guestPool := buildServerWithGuestPool(guestIP, uint16(port), deadline)
+	srv, handler, guestPool := buildServerAndHandler(guestIP, uint16(port), deadline)
 	if currentBridgeFramingFrom(os.Getenv("FAAS_BRIDGE_PROTOCOL")) == framingH2C {
 		go func() {
 			prewarmCtx, prewarmCancel := context.WithTimeout(ctx, guestH2CPrewarmTimeout)
@@ -229,6 +230,14 @@ func main() {
 	// Raw, TCP and UDP sessions share the socket (connection-survival ADR
 	// §2, P1b): each starts with a hello, HTTP connections never do.
 	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest})
+	// ADR-20261122140000: with vmmd's binary HTTP switch on, the same
+	// handler is also served in binary HTTP, told apart by its first byte.
+	var binary interface{ Shutdown(context.Context) error }
+	if binaryHTTPEnabled() {
+		var hop *binhop.Server
+		httpLn, hop = serveBinaryHTTP(httpLn, handler)
+		binary = hop
+	}
 	errc := make(chan error, 1)
 	go func() {
 		err := srv.Serve(httpLn)
@@ -243,7 +252,15 @@ func main() {
 	case <-ctx.Done():
 		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutCancel()
+		binaryDone := make(chan struct{})
+		go func() {
+			defer close(binaryDone)
+			if binary != nil {
+				_ = binary.Shutdown(shutCtx)
+			}
+		}()
 		_ = srv.Shutdown(shutCtx)
+		<-binaryDone
 		<-errc
 	case err := <-errc:
 		if err != nil {
@@ -316,7 +333,17 @@ func buildServer(guestIP string, guestPort uint16, deadline time.Time) *http.Ser
 }
 
 func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Time) (*http.Server, *guestTransportPool) {
+	srv, _, guestPool := buildServerAndHandler(guestIP, guestPort, deadline)
+	return srv, guestPool
+}
+
+// buildServerAndHandler also returns the handler the h2c server wraps, so
+// the binary HTTP server (binary_http.go) serves the very same one: one
+// guest pool and one completion state per bridge, whichever framing vmmd
+// uses.
+func buildServerAndHandler(guestIP string, guestPort uint16, deadline time.Time) (*http.Server, http.Handler, *guestTransportPool) {
 	guestPool := newGuestTransportPool(guestIP)
+	handler := newHandlerWithPool(guestIP, guestPort, deadline, guestPool)
 	srv := &http.Server{
 		//nolint:staticcheck // ADR-127 §D2 (Layer 9) — the inner Handler is wrapped with
 		// h2c.NewHandler so the listener negotiates H2C prior-knowledge
@@ -328,7 +355,7 @@ func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Ti
 		// wrapped handler. See the import-block comment for the same
 		// rationale; once stdlib exposes a Protocols.Get indirection,
 		// both annotations can be removed in lockstep.
-		Handler: h2c.NewHandler(newHandlerWithPool(guestIP, guestPort, deadline, guestPool), &http2.Server{
+		Handler: h2c.NewHandler(handler, &http2.Server{
 			MaxConcurrentStreams: h2cMaxConcurrentStreams, // 100
 			MaxReadFrameSize:     h2cMaxReadFrameSize,     // 1 MiB
 			// MaxHeaderListSize is a client-side SETTINGS capability
@@ -349,7 +376,7 @@ func buildServerWithGuestPool(guestIP string, guestPort uint16, deadline time.Ti
 		// ReadTimeout is intentionally UNSET. stdlib's ReadTimeout caps the ENTIRE request lifetime (headers + body), not just the headers; a 30s cap would regress slow H1 uploads (Hobby+ plans allow up to 100 MB streaming body) and any H2C request whose body takes >30s. The ReadHeaderTimeout above is the Slowloris defence; the per-request ctx deadline bounds the in-flight request lifetime. WriteTimeout is also UNSET — streaming (SSE / long-poll / H2 DATA frames past the deadline) is the supported shape for both H1 and H2C paths.
 	}
 	srv.RegisterOnShutdown(guestPool.closeIdleConnections)
-	return srv, guestPool
+	return srv, handler, guestPool
 }
 
 // newHandler builds the H2C handler that proxies requests to the guest at
