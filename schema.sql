@@ -50118,6 +50118,7 @@ CREATE TABLE public.meter_network_checkpoints (
     internal_tx_valid boolean DEFAULT false NOT NULL,
     internal_tx_pending bigint DEFAULT 0 NOT NULL,
     service_reply_pending bigint DEFAULT 0 NOT NULL,
+    node_id text DEFAULT ''::text NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -86288,6 +86289,13 @@ CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_
 --
 
 CREATE INDEX object_storage_inventory_scans_open ON public.object_storage_inventory_scans USING btree (started_at) WHERE ((pages > 0) AND (NOT complete));
+
+
+--
+-- Name: object_storage_multipart_completion_versions_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_multipart_completion_versions_idx ON public.object_storage_multipart_uploads USING btree (bucket_id) WHERE completion_versions_observed;
 
 
 --

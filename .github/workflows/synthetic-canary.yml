@@ -46,6 +46,10 @@ on:
           Leave off for a manual investigation run you do not want to page for.
         type: boolean
         default: true
+      test_fallback:
+        description: "Send a labeled test to the independent webhook without SSH or a production deployment."
+        type: boolean
+        default: false
 
 concurrency:
   # Canaries must not overlap each other: two runs would race on fleet
@@ -61,25 +65,54 @@ permissions:
 jobs:
   canary:
     name: Production deploy canary
-    runs-on: ubuntu-latest
-    environment: production
+    if: github.event_name == 'schedule' || !inputs.test_fallback
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    environment: production-us
     timeout-minutes: 45
     env:
+      CANARY_FLEET: production-us
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
-      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
-      COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check scheduled delivery configuration
+        id: delivery_configuration
+        if: github.event_name == 'schedule'
+        env:
+          CANARY_HEARTBEAT_URL: ${{ secrets.CANARY_HEARTBEAT_URL }}
+          CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in CANARY_HEARTBEAT_URL CANARY_FALLBACK_WEBHOOK_URL; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::production-us canary requires $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Allocate private canary state
+        run: |
+          set -euo pipefail
+          umask 077
+          work_dir="$(mktemp -d "$RUNNER_TEMP/deploy-canary.XXXXXX")"
+          printf 'CANARY_WORK_DIR=%s\n' "$work_dir" >> "$GITHUB_ENV"
 
       - name: Set up control-plane SSH
         timeout-minutes: 1
-        run: bash scripts/ops/canary_ssh.sh setup
+        env:
+          CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: RUNNER_TEMP="$CANARY_WORK_DIR" bash scripts/ops/canary_ssh.sh setup
 
       - name: Resolve the live release and fleet size
         run: |
           set -euo pipefail
+          export RUNNER_TEMP="$CANARY_WORK_DIR"
           # The canary asks about the release that is SERVING, not about a
           # candidate. Read it off the host's current pointer rather than from
           # this checkout, which is only here to carry the script.
@@ -103,10 +136,11 @@ jobs:
         id: probe
         run: |
           set -euo pipefail
+          export RUNNER_TEMP="$CANARY_WORK_DIR"
           # Originates from the control plane for the same reason cd-platform
-          # does: Cloudflare blocks GitHub-hosted egress to the public host.
+          # does: a full acceptance run needs the active fleet's network.
           bash scripts/ops/canary_ssh.sh run \
-            "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
+            "env RELEASE_SHA='${ACTIVE_RELEASE}' RUN_ID='${GITHUB_RUN_ID}' RUN_ATTEMPT='${GITHUB_RUN_ATTEMPT}' ACTIVE_NODE_COUNT='${ACTIVE_NODE_COUNT}' bash -s" \
             < deploy/scripts/production-release-acceptance.sh \
             2>&1 | tee "$RUNNER_TEMP/canary.log"
 
@@ -121,10 +155,35 @@ jobs:
         run: python3 scripts/ops/canary_heartbeat.py
 
       - name: Page on canary failure
-        if: failure() && (github.event_name == 'schedule' || inputs.page_on_failure)
+        if: failure() && steps.delivery_configuration.outcome != 'failure' && (github.event_name == 'schedule' || inputs.page_on_failure)
         timeout-minutes: 3
         env:
           CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
           CANARY_HEARTBEAT_OUTCOME: ${{ steps.heartbeat.outcome }}
           CANARY_PROBE_OUTCOME: ${{ steps.probe.outcome }}
-        run: bash scripts/ops/canary_failure.sh
+        run: RUNNER_TEMP="${CANARY_WORK_DIR:-$RUNNER_TEMP}" bash scripts/ops/canary_failure.sh
+
+      - name: Remove private canary state
+        if: always()
+        run: |
+          set -euo pipefail
+          if [[ "${CANARY_WORK_DIR:-}" == "$RUNNER_TEMP"/deploy-canary.?????? ]]; then
+            rm -rf -- "$CANARY_WORK_DIR"
+          fi
+
+  fallback:
+    name: Test independent canary fallback
+    if: github.event_name == 'workflow_dispatch' && inputs.test_fallback
+    runs-on: [self-hosted, linux, faas-fleet-us]
+    environment: production-us
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Send a labeled fallback test
+        env:
+          CANARY_FLEET: production-us
+          CANARY_FALLBACK_WEBHOOK_URL: ${{ secrets.CANARY_FALLBACK_WEBHOOK_URL }}
+        run: bash scripts/ops/canary_failure.sh --test-fallback

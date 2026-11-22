@@ -66,6 +66,13 @@ func TestAdminRefund_HappyPathForwardsIdempotencyAndAudits(t *testing.T) {
 			_, _ = io.WriteString(w, `{"items":[],"pagination":{"total_count":0,"max_page":1}}`)
 			return
 		}
+		// The adapter reads the order's net/tax split to turn the
+		// tax-inclusive request into Polar's pre-tax refund amount.
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/orders/order-1" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"order-1"}`)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/refunds" {
 			t.Errorf("provider request = %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)

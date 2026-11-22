@@ -13,7 +13,9 @@ on:
       - 'cmd/gregale/templates/mcp-node/**'
       - 'cmd/gregale/templates/mcp-node-tasks/**'
       - 'cmd/gregale/templates/mcp-go/**'
+      - 'cmd/gregale/templates/mcp-go-tasks/**'
       - 'cmd/gregale/templates/mcp-python/**'
+      - 'cmd/gregale/templates/mcp-python-tasks/**'
       - 'pkg/mcphosting/**'
       - 'pkg/mcpmanagement/**'
       - 'pkg/apid/toolregistry/**'
@@ -394,18 +396,25 @@ jobs:
           "$RUNNER_TEMP/gregale" mcp init --path "$RUNNER_TEMP/mcp-node-plain"
           "$RUNNER_TEMP/gregale" mcp init --runtime go --path "$RUNNER_TEMP/mcp-go"
           "$RUNNER_TEMP/gregale" mcp init --runtime python --path "$RUNNER_TEMP/mcp-python"
+          "$RUNNER_TEMP/gregale" init --template mcp-go-tasks --path "$RUNNER_TEMP/mcp-go-tasks"
+          "$RUNNER_TEMP/gregale" init --template mcp-python-tasks --path "$RUNNER_TEMP/mcp-python-tasks"
           python3 -m venv "$RUNNER_TEMP/mcp-python-venv"
-          "$RUNNER_TEMP/mcp-python-venv/bin/python" -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/mcp-python/requirements.txt"
+          # The Tasks starter's requirements are a superset of the plain one's.
+          "$RUNNER_TEMP/mcp-python-venv/bin/python" -m pip install --disable-pip-version-check -r "$RUNNER_TEMP/mcp-python-tasks/requirements.txt"
           cd "$RUNNER_TEMP/mcp-go"
           go test ./...
+          cd "$RUNNER_TEMP/mcp-go-tasks"
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" go test ./...
           cd "$RUNNER_TEMP/mcp-python"
           "$RUNNER_TEMP/mcp-python-venv/bin/python" -m unittest discover -s . -p 'test_*.py'
+          cd "$RUNNER_TEMP/mcp-python-tasks"
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" "$RUNNER_TEMP/mcp-python-venv/bin/python" -m unittest discover -s . -p 'test_*.py'
           cd "$RUNNER_TEMP/mcp-node-plain"
           npm ci --ignore-scripts
           npm test
           cd "$RUNNER_TEMP/mcp-starter"
           npm ci --ignore-scripts
-          MCP_TASKS_TEST_DATABASE_URL='postgres://mcp:mcp-ci-only@127.0.0.1:5432/mcp' MCP_TASKS_REQUIRE_POSTGRES=1 npm test
+          MCP_TASKS_TEST_GREGALE="$RUNNER_TEMP/gregale" npm test
       - name: Generate and qualify public OpenAPI tools
         run: |
           "$RUNNER_TEMP/gregale" mcp server import --spec pkg/mcpopenapi/testdata/reports.json --path "$RUNNER_TEMP/mcp-api-tools" --server-url https://api.example.com/v1 --operations getReport,createReport

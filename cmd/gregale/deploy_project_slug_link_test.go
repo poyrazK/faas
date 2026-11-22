@@ -21,7 +21,8 @@ func TestDeployProjectSlugWithProjectOnlyLink(t *testing.T) {
 	for _, args := range [][]string{
 		{"deploy", "--project", "--project-slug", "boa", "--dry-run"},
 		{"deploy", "--project-slug", "boa", "--only", "gateway", "--dry-run"},
-		// Prod hunt r26: a plain deploy auto-detects the Compose project.
+		// R6-1 (deploy-path probe 2026-11-21): a plain redeploy of the Compose
+		// project the first plain deploy linked.
 		{"deploy", "--dry-run"},
 	} {
 		t.Run(strings.Join(args[1:], " "), func(t *testing.T) {

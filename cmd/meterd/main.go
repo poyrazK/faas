@@ -88,11 +88,14 @@ import (
 // on the box's local unix socket (ADR-015), so the cost is
 // negligible vs. the 1-minute sampler cadence.
 type scheddCPUAdapter struct {
-	parker  parkInstanceParker
-	now     func() time.Time
-	mu      sync.Mutex
-	rows    map[string]scheddgrpc.InstanceStatsRow
-	fetched time.Time
+	parker parkInstanceParker
+	now    func() time.Time
+	mu     sync.Mutex
+	rows   map[string]scheddgrpc.InstanceStatsRow
+	// sourceFinal is the departed source-node row of each instance that
+	// live-migrated (sourceFinalStatsRows).
+	sourceFinal map[string]scheddgrpc.InstanceStatsRow
+	fetched     time.Time
 }
 
 const scheddCPUAdapterTTL = 30 * time.Second
@@ -187,8 +190,10 @@ func (a *scheddCPUAdapter) refreshContext(ctx context.Context) {
 		return
 	}
 	m := preferLiveStatsRows(rows)
+	final := sourceFinalStatsRows(rows, m)
 	a.mu.Lock()
 	a.rows = m
+	a.sourceFinal = final
 	a.fetched = a.now()
 	a.mu.Unlock()
 }
@@ -252,6 +257,17 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 	// durable per-instance checkpoint in the same transaction that appends the
 	// derived delta to usage_minutes; keeping a second in-memory baseline here
 	// would lose the interval spanning a meterd restart.
+	out := statsRowUsage(row)
+	if final, ok := a.cpu.sourceFinal[instanceID]; ok && (final.TxValid == 0 || final.RxValid == 0) {
+		source := statsRowUsage(final)
+		out.SourceFinal = &source
+	}
+	return out, true
+}
+
+// statsRowUsage is a stats row's cumulative network reading, tagged with the
+// node that produced it (ADR-20261122090000).
+func statsRowUsage(row scheddgrpc.InstanceStatsRow) meter.UsageDeltas {
 	return meter.UsageDeltas{
 		NetTXBytes:        row.NetTxBytes,
 		NetRXBytes:        row.NetRxBytes,
@@ -260,7 +276,9 @@ func (a *scheddEgressAdapter) ReadUsageDeltas(instanceID string) (meter.UsageDel
 		NetRXValid:        row.RxValid == 0,
 		InternalTXBytes:   row.InternalTxBytes,
 		InternalTXValid:   row.InternalTxValid,
-	}, true
+		NetworkNode:       row.NodeID,
+		NetworkDeparted:   row.Departed,
+	}
 }
 
 // gatewayEgressAdapter (ADR-046, step 8; PR-2 = stream consumer)
@@ -605,15 +623,10 @@ func (a *egressAggregator) ReadUsageDeltas(instanceID string) (meter.UsageDeltas
 	var out meter.UsageDeltas
 	var okSchedd, okGw bool
 	if a.schedd != nil {
-		var schedd meter.UsageDeltas
-		schedd, okSchedd = a.schedd.ReadUsageDeltas(instanceID)
-		out.NetTXBytes = schedd.NetTXBytes
-		out.NetRXBytes = schedd.NetRXBytes
-		out.NetworkCumulative = schedd.NetworkCumulative
-		out.NetTXValid = schedd.NetTXValid
-		out.NetRXValid = schedd.NetRXValid
-		out.InternalTXBytes = schedd.InternalTXBytes
-		out.InternalTXValid = schedd.InternalTXValid
+		// The network reading is the schedd adapter's whole, including its
+		// node and a migration's source-node reading (ADR-20261122090000);
+		// the gateway fields below fill the rest.
+		out, okSchedd = a.schedd.ReadUsageDeltas(instanceID)
 	}
 	if a.gw != nil {
 		var gateway meter.UsageDeltas
@@ -1162,7 +1175,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		fleetEgress := &fleetGatewayEgressAdapter{
 			nodes: store, store: store, tlsCfg: gwEgressTLS, dialFn: dialGatewayEgressStream,
 			now: deps.now, log: log, metrics: egressMetrics,
-			active: make(map[string]*fleetEgressEntry),
+			gatewayResponseEgress: mc.GatewayResponseEgress,
+			active:                make(map[string]*fleetEgressEntry),
+		}
+		if mc.GatewayResponseEgress {
+			log.Info("meterd: gateway response bytes are billed as app egress (ADR-20261121210517)")
 		}
 		gwEgress = fleetEgress
 		go fleetEgress.Run(ctx)

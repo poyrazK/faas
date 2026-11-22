@@ -34,6 +34,10 @@ func TestRefundLookupPaginationFailsClosed(t *testing.T) {
 					_, _ = io.WriteString(w, `{"id":"new-refund","amount":500}`)
 					return
 				}
+				if r.URL.Path == "/v1/orders/order-1" {
+					_, _ = io.WriteString(w, `{"id":"order-1"}`)
+					return
+				}
 				request := gets.Add(1)
 				page, err := strconv.Atoi(r.URL.Query().Get("page"))
 				if err != nil || page != int(request) {
@@ -124,6 +128,10 @@ func TestRefundRecoveryLookupBudgetNeverRetriesWrite(t *testing.T) {
 		if r.Method == http.MethodPost {
 			posts.Add(1)
 			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		if r.URL.Path == "/v1/orders/order-1" {
+			_, _ = io.WriteString(w, `{"id":"order-1"}`)
 			return
 		}
 		gets.Add(1)

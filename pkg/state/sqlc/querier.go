@@ -282,6 +282,9 @@ type Querier interface {
 	// count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
 	// under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
 	ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayEdgeUsageEventParams) (int64, error)
+	// $6 is the frame's billed egress: its response bytes when meterd counts
+	// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+	// public responses do not cross the instance veth), otherwise 0.
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
 	// Change only the debugger workflow state for one app-scoped observation.
@@ -5600,8 +5603,9 @@ type Querier interface {
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).
 	// oldest_age_seconds is the oldest observation admission still holds to the
-	// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-	// (with an observation), or whose listing advanced within progress_window on
+	// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+	// or whose all-version refresh waits for a live multipart session (with an
+	// observation), or whose listing advanced within progress_window on
 	// an observation under scan_max_age, stays fresh on an older one and does not
 	// count (objectBucketInventoryStale). A bucket never observed counts from its
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -5838,6 +5842,9 @@ type Querier interface {
 	// narrows by their indexes without changing the result. The subject function
 	// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 	// every bucket on the platform, under the account lock of every object write.
+	// inventory_held also covers an all-version-path bucket with a live multipart
+	// session: its refresh cannot start until the session ends (ADR-533/540), and
+	// its tracked reservations keep capacity conservative meanwhile.
 	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error

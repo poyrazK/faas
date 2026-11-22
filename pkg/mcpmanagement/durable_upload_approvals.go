@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -32,11 +33,8 @@ type storedUploadApproval struct {
 func (u *uploadStore) openDirectories() error {
 	plans := filepath.Join(u.root, "plans")
 	for _, dir := range []string{u.root, plans} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("create upload directory: %w", err)
-		}
-		if !privateUploadDirectory(dir) {
-			return errors.New("upload directory and its plans directory must be private directories")
+		if err := prepareUploadDirectory(dir); err != nil {
+			return fmt.Errorf("prepare private upload directory: %w", err)
 		}
 	}
 	if err := u.restoreDirectories(plans); err != nil {
@@ -52,6 +50,30 @@ func (u *uploadStore) openDirectories() error {
 		_, keep := u.dirs[dir]
 		return keep
 	})
+}
+
+// Prepare operator-supplied directories before reading staged plans. Use a
+// descriptor for chmod so it cannot follow a symlink substituted for the path.
+func prepareUploadDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("upload path must be a directory")
+	}
+	if info.Mode().Perm() == 0o700 {
+		return nil
+	}
+	dir, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_DIRECTORY, 0) //nolint:forbidigo // operator-configured directory, opened without following links
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Chmod(0o700)
 }
 
 func clearUploadDirectory(dir string, keep func(string) bool) error {

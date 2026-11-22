@@ -5081,8 +5081,37 @@ func restoreAppTx(ctx context.Context, tx pgx.Tx, id string, limits api.Limits) 
 	if _, err := tx.Exec(ctx, `update crons set suspended_reason = '' where app_id = $1 and suspended_reason = $2`, id, CronSuspendedAppDeleted); err != nil {
 		return App{}, fmt.Errorf("state: restore app crons: %w", err)
 	}
+	// safedeploy closes a canary whose app was deleted by stamping it
+	// aborted; the deleted app had no traffic to hand back, so the row kept
+	// its share. After a restore that split served the aborted candidate
+	// forever (prod 2026-11-21: 50/50, 10% and 1% splits since 11-15). Its
+	// share goes to the release with the most traffic in its scope, in one
+	// statement so the scope still sums to 100.
+	if _, err := tx.Exec(ctx, `
+		with stuck as (
+			select d.id, d.scope, d.traffic_percent from deployments d
+			 where d.app_id = $1 and d.status = 'live' and d.rollout_state = 'aborted'
+			   and d.rollout_aborted_reason = $2 and d.traffic_percent > 0
+		), heir as (
+			select distinct on (s.id) s.id as stuck_id, o.id as heir_id, s.traffic_percent as moved
+			  from stuck s
+			  join deployments o on o.app_id = $1 and o.scope = s.scope and o.status = 'live'
+			   and o.id not in (select id from stuck)
+			 order by s.id, o.traffic_percent desc, o.created_at desc, o.id
+		)
+		update deployments d
+		   set traffic_percent = case when d.id in (select stuck_id from heir) then 0
+		       else d.traffic_percent + (select coalesce(sum(moved), 0) from heir where heir_id = d.id)::int end
+		 where d.id in (select stuck_id from heir) or d.id in (select heir_id from heir)`,
+		id, RolloutAbortedAppDeleted); err != nil {
+		return App{}, fmt.Errorf("state: restore app return aborted canary traffic: %w", err)
+	}
 	return a, nil
 }
+
+// RolloutAbortedAppDeleted is the rollout_aborted_reason safedeploy stamps on
+// a canary whose app was deleted mid-rollout.
+const RolloutAbortedAppDeleted = "app deleted during rollout"
 
 // ListDeletedApps returns app tombstones for the app grace sweeper.
 func (s *PgStore) ListDeletedApps(ctx context.Context) ([]App, error) {
@@ -22965,8 +22994,11 @@ func (s *PgStore) AppendUsage(ctx context.Context, accountID, appID, instanceID 
 
 // AppendGatewayUsageEvent durably deduplicates one replayable gateway frame
 // and applies its counters in the same transaction. The caller may ACK the
-// frame only after this method returns nil.
-func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32) error {
+// frame only after this method returns nil. billedEgress also adds the
+// frame's response bytes to net_tx_bytes, the billed app egress
+// (ADR-20261121210517): meterd sets it while compute nodes deliver public
+// responses outside the instance veth that net_tx_bytes otherwise counts.
+func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, instanceID string, minute time.Time, requests, txBytes int64, coldBoots int32, billedEgress bool) error {
 	if requests < 0 || requests > math.MaxInt32 || txBytes < 0 || coldBoots < 0 {
 		return fmt.Errorf("state: invalid gateway usage counters")
 	}
@@ -23002,6 +23034,7 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 			Column3: int32(requests),
 			Column4: txBytes,
 			Column5: coldBoots,
+			Column6: gatewayBilledEgress(txBytes, billedEgress),
 		})
 		if applyErr != nil {
 			return applyErr
@@ -23013,13 +23046,29 @@ func (s *PgStore) AppendGatewayUsageEvent(ctx context.Context, nodeID, eventID, 
 	return tx.Commit(ctx)
 }
 
+// gatewayBilledEgress is the net_tx_bytes a gateway usage frame adds.
+func gatewayBilledEgress(txBytes int64, billed bool) int64 {
+	if !billed {
+		return 0
+	}
+	return txBytes
+}
+
 // AppendNetworkUsageObservation converts vmmd's cumulative host-interface
 // counters to additive usage deltas. The checkpoint row is locked and advanced
 // in the same transaction as usage_minutes, which makes retry after a meterd
 // crash exactly-once for every observed cumulative value.
 func (s *PgStore) AppendNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
-	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	tx, rx, _, err := s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
 	return tx, rx, err
+}
+
+// AppendNodeNetworkUsageObservation implements NodeNetworkObserver.
+func (s *PgStore) AppendNodeNetworkUsageObservation(ctx context.Context, _, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+	if internal != nil && *internal < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, reading, netTxCumulative, netTxValid, netRxCumulative, netRxValid, internal)
 }
 
 // AppendNetworkUsageObservationExcludingInternal implements
@@ -23028,14 +23077,14 @@ func (s *PgStore) AppendNetworkUsageObservationExcludingInternal(ctx context.Con
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
-	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+	return s.appendNetworkUsageObservation(ctx, appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
 }
 
 // appendNetworkUsageObservation is AppendNetworkUsageObservation; with a
 // non-nil internal reading the egress it adds leaves out the internal bytes
 // (billing review R8-2). Financial usage evidence is append-only, so billed
 // egress is reduced before it is written, never after.
-func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -23059,15 +23108,27 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 	var previousTx, previousRx, previousInternal, internalPending int64
 	var previousTxValid, previousRxValid, previousInternalValid bool
+	var checkpointNode string
 	err = tx.QueryRow(ctx,
 		`select net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid,
-		        internal_tx_bytes, internal_tx_valid, internal_tx_pending
+		        internal_tx_bytes, internal_tx_valid, internal_tx_pending, node_id
 		   from meter_network_checkpoints
 		  where instance_id = $1
 		  for update`, instanceID).Scan(&previousTx, &previousRx, &previousTxValid, &previousRxValid,
-		&previousInternal, &previousInternalValid, &internalPending)
+		&previousInternal, &previousInternalValid, &internalPending, &checkpointNode)
 	if err != nil {
 		return 0, 0, 0, err
+	}
+	// ADR-20261122090000: a departed reading from a node the checkpoint
+	// already left was applied before the switch; a live reading from another
+	// node is a new counter, all of it new usage.
+	skip, fresh, node := networkReadingStep(checkpointNode, reading)
+	if skip {
+		return 0, 0, 0, tx.Commit(ctx)
+	}
+	if fresh {
+		previousTxValid, previousRxValid, previousInternalValid = false, false, false
+		internalPending = 0
 	}
 
 	// vmmd's cumulative cache already excludes the raw kernel baseline. A
@@ -23121,16 +23182,17 @@ func (s *PgStore) appendNetworkUsageObservation(ctx context.Context, appID, inst
 	}
 
 	_, err = tx.Exec(ctx,
-		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at)
-		 values ($1, $2, $3, $4, $5, $6, now())
+		`insert into meter_network_checkpoints (instance_id, net_tx_bytes, net_rx_bytes, net_tx_valid, net_rx_valid, observed_at, updated_at, node_id)
+		 values ($1, $2, $3, $4, $5, $6, now(), $7)
 		 on conflict (instance_id) do update
 		   set net_tx_bytes = excluded.net_tx_bytes,
 		       net_rx_bytes = excluded.net_rx_bytes,
 		       net_tx_valid = excluded.net_tx_valid,
 		       net_rx_valid = excluded.net_rx_valid,
 		       observed_at = excluded.observed_at,
+		       node_id = excluded.node_id,
 		       updated_at = now()`,
-		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC())
+		instanceID, nextTx, nextRx, nextTxValid, nextRxValid, minute.UTC(), node)
 	if err != nil {
 		return 0, 0, 0, err
 	}

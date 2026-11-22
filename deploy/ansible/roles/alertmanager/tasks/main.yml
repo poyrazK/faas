@@ -134,6 +134,7 @@
     - "{{ am_discord_warn_webhook_url_file }}"
     - "{{ am_slack_warn_webhook_url_file }}"
     - "{{ am_heartbeat_url_file }}"
+    - "{{ am_delivery_pagerduty_key_file | trim }}"
   failed_when:
     - not am_dev_mode | bool
     - item | length > 0
@@ -189,6 +190,15 @@
       Use am_dev_mode=true only for a deliberately silent bootstrap/CI host.
   when: not am_dev_mode | bool
   no_log: true
+
+- name: alertmanager — name the fleet for delivery escalation
+  ansible.builtin.assert:
+    that:
+      - am_fleet_name | default('') | trim is match('^[a-z0-9][a-z0-9-]{0,62}$')
+    fail_msg: Set am_fleet_name to the fleet identifier before enabling PagerDuty delivery escalation.
+  when:
+    - not am_dev_mode | bool
+    - am_delivery_pagerduty_key_file | trim | length > 0
 
 - name: alertmanager — render config
   ansible.builtin.template:

@@ -3014,16 +3014,16 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if slug == "" {
 		var nameErr error
 		slug, nameErr = linkedDefaultAppName(contextDir)
-		// A plain `gregale deploy` of a Compose project becomes a project
-		// deploy below (multiServiceSource), but the project-only link the
-		// first deploy wrote was refused here first, so every later plain
-		// deploy or --dry-run failed (prod hunt r26).
-		if nameErr != nil && !projectRequested && multiServiceSource(contextDir) != "" {
-			if project, err := linkedProjectSlug(contextDir); err == nil && project != "" {
-				slug, nameErr = projectDeployPlaceholderSlug(contextDir, project), nil
-			}
-		}
 		if nameErr != nil {
+			// A plain `gregale deploy` of a Compose project links the checkout
+			// to the project only (linkCheckoutAfterProjectDeploy). The next
+			// plain deploy found that link, asked for one app and failed
+			// "has multiple or no workloads" on every run after the first
+			// (deploy-path probe 2026-11-21, R6-1). A project-only link with
+			// no --name means the project: deploy it as the first run did.
+			if !projectRequested && linkedProjectOnly(contextDir) {
+				return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
+			}
 			return printErr("Could not read local project context", nameErr)
 		}
 	}
