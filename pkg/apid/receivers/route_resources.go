@@ -200,6 +200,7 @@ func (g *GuestSpansIngester) ingestResourceMinutes(ctx context.Context, req *api
 			own, err := g.binding.owns(ctx, guestBindingKey{node: node, account: p.GetAccountId(), app: p.GetAppId(),
 				deployment: p.GetDeploymentId(), instance: p.GetInstanceId()})
 			if err != nil {
+				//nolint:nilerr // the outcome tells vmmd the batch was not taken; it drops it without backing the app off
 				return &apidpb.IngestInstanceResourceMinutesResponse{Outcome: guestSpansUnavailable}, nil
 			}
 			if !own {

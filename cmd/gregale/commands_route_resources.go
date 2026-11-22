@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/routeresources"
 )
 
-const routeResourcesCmdUsage = "usage: gregale metric route-resources [<slug>] [--since 24h]"
+const routeResourcesCmdUsage = "usage: gregale metric resources [<slug>] [--since 24h]"
 
 // cmdRouteResources prints which routes an app's memory and CPU peaks come
 // from (ADR-20261121170000).
@@ -134,7 +134,7 @@ func cmdAppScaleSuggest(slug string, args []string) int {
 	}
 	if response.Split == nil {
 		_, _ = fmt.Fprintf(osStdout, "No split suggested for %s over the last %s: no route holds most of its memory peaks while running in few minutes.\n", slug, *since)
-		_, _ = fmt.Fprintf(osStdout, "Peaks: %d memory, p95 %d MB of %d MB. Details: gregale metric route-resources %s --since %s\n",
+		_, _ = fmt.Fprintf(osStdout, "Peaks: %d memory, p95 %d MB of %d MB. Details: gregale metric resources %s --since %s\n",
 			response.HighMemoryMinutes, response.MemPeakP95MB, response.MemLimitMB, slug, *since)
 		return 0
 	}
