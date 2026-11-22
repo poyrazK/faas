@@ -1684,6 +1684,7 @@ export type { MCPTaskCompatibilityReportRequest } from './models/MCPTaskCompatib
 export type { MCPTaskCompatibilityReportResponse } from './models/MCPTaskCompatibilityReportResponse.js';
 export type { MCPTaskHandlerCompatibility } from './models/MCPTaskHandlerCompatibility.js';
 export type { MCPTaskHandlerDeploymentWorkers } from './models/MCPTaskHandlerDeploymentWorkers.js';
+export type { MCPToolLimit } from './models/MCPToolLimit.js';
 export type { MemberListResponse } from './models/MemberListResponse.js';
 export type { MFAConfirmRequest } from './models/MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './models/MFAConfirmResponse.js';
