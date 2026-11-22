@@ -6422,7 +6422,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	requestCtx, requestSpan := pkgtrace.StartSpan(parentCtx, "gateway.request",
 		attribute.String("http.method", r.Method))
 	requestAttrs := collectSpanAttributes(requestSpan)
-	requestCtx = WithEdgeRuleRequestHeaders(requestCtx, r.Header)
+	// One immutable snapshot of the inbound headers serves both the selector
+	// context and the condition match context below; neither modifies it, and
+	// nothing between here and NewEdgeRuleMatchContext writes r.Header.
+	inboundHeaders := r.Header.Clone()
+	requestCtx = withEdgeRuleRequestHeaderSnapshot(requestCtx, inboundHeaders)
 	requestCtx = WithEdgeRuleMethodOverride(requestCtx, r)
 	// ADR-962: the snapshot rule conditions read. The client IP is only the
 	// single trusted forwarded hop; country is looked up lazily.
@@ -6431,7 +6435,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// runs, so every IP-based gate and the headers stamped for the app read
 	// it rather than whatever a kind=headers rule left in X-Forwarded-For.
 	requestCtx = withTrustedClientIP(requestCtx, trustedIP, trustedIPOK)
-	matchCtx := NewEdgeRuleMatchContext(r, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
+	matchCtx := newEdgeRuleMatchContextWithHeaders(r, inboundHeaders, trustedIP, h.edgeRuleCountryLookup(), h.edgeRuleHits)
 	matchCtx.SetASNLookup(h.edgeRuleASNLookup())
 	matchCtx.SetBotVerifier(requestCtx, h.botVerifier)
 	requestCtx = WithEdgeRuleMatchContext(requestCtx, matchCtx)
