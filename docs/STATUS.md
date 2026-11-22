@@ -7,7 +7,7 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
-## Object storage GA on OVH — 2026-11-21 (not released)
+## Object storage GA on OVH — 2026-11-21 (released v0.1.18-rc.368)
 
 [ADR-20261121230052](adr/20261121230052-object-storage-ga.md) moves
 `object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`,
@@ -18,14 +18,25 @@ because the OVH backend is `"versioning": "unsupported"`
 and `bucket-access-grants` also stay `preview`: they are not qualified on OVH.
 `/docs/object-storage` is published.
 
-The OVH launch blockers found on 2026-11-21 are fixed by #7762 and #7792. The
-six flags keep their stored `default: false` (owner and release-acceptance
+The OVH launch blockers found on 2026-11-21 are fixed by #7762 and #7792.
+`TestObjectStorage` against production on rc.367 found three more, all on
+OVH: keys with spaces listed under the wrong name (#7818, listing keys are
+form-encoded), and every gateway copy answered 409 because OVH refuses
+copy-source conditions with 501 (#7819, ADR-20261121150000 amendment 3).
+The six flags keep their stored `default: false` (owner and release-acceptance
 accounts only), so the release opens nothing.
 
-Open evidence:
-- `tests/journeys/object_storage_test.go::TestObjectStorage` has not run
-  against production with this release. Record its result here. The flag
-  defaults turn `true`, per key, only after it passes (ADR rollout step 4).
+Evidence:
+- `tests/journeys/object_storage_test.go::TestObjectStorage` passed against
+  production on v0.1.18-rc.368 (2026-11-22, release-acceptance account,
+  `--tier full --apps-domain gregale.app`): 19 passed, 0 failed, 0 skipped.
+  A raw probe of every launch capability on a fresh bucket (S3 put/get/range,
+  paged and delimited listing, copy, conditional put, CRC32/SHA256 checksums,
+  multipart create/complete/abort, high-level 12 MB copy, signed URL PUT/GET,
+  API multipart, compute binding create/rotate/delete, usage, credential
+  revoke) passed the same day.
+- Remaining step: the owner turns the flag defaults `true` with a step-up
+  (ADR rollout step 4, `object_storage` last).
 
 ## Data API investigation fixes — 2026-11-12 (branch, not released)
 
