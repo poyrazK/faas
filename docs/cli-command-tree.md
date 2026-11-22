@@ -129,6 +129,7 @@ touch them. The tables below map each earlier name.
 | `gregale projects` | `gregale project` |
 | `gregale ps` | `gregale app instances` |
 | `gregale release-gates` | `gregale release gate` |
+| `gregale route-resources` | `gregale metric resources` |
 | `gregale routes` | `gregale api route` |
 | `gregale runs` | `gregale sandbox` |
 | `gregale sandbox-templates` | `gregale sandbox template` |
