@@ -257,6 +257,7 @@ func prepareAppTaskCommand(req apptaskproto.Request, manifest api.AppManifest, s
 	// release command logged mise's "failed create_dir_all:
 	// /.local/state/mise/tracked-configs: Permission denied" (SB-10).
 	env = StampDefaultHomeEnv(env, workloadHome(credential.Uid, credential.Gid))
+	env = StampMiseCacheEnv(env)
 	env = StampWorkloadIdentityEnv(env)
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
