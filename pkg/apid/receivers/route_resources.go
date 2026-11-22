@@ -42,6 +42,14 @@ func NewRouteResources(store state.RouteResourceStore, released func(platformfla
 
 func (rr *RouteResources) applyRequestTelemetry(r *requestTelemetryReceiver) { r.routeResources = rr }
 
+// releasedFor decides the flag by account and plan only. The gateway, which
+// counts the route half, knows no organization: an org-aware decision here
+// could keep one half and drop the other (code review 2026-11-22).
+func (rr *RouteResources) releasedFor(subject platformflags.Subject) bool {
+	subject.OrgID = ""
+	return rr.released(subject)
+}
+
 // routeResourceMinuteOK accepts minutes a little in the future (clock
 // skew) and up to the retention back.
 func (rr *RouteResources) minuteOK(unix int64) (time.Time, bool) {
@@ -78,7 +86,12 @@ func (r *requestTelemetryReceiver) AddInstanceRouteMinutes(ctx context.Context, 
 			continue
 		}
 		plan, err := r.plans.forApp(ctx, row.AccountID, row.AppID)
-		if err != nil || !rr.released(plan.Flag) {
+		if err != nil {
+			// A failed lookup is not "flag off": the gateway drops this
+			// batch and keeps counting.
+			return nil, status.Errorf(codes.Unavailable, "route minutes: plan lookup: %v", err)
+		}
+		if !rr.releasedFor(plan.Flag) {
 			out.Disabled++
 			continue
 		}
@@ -172,7 +185,13 @@ func (g *GuestSpansIngester) ingestResourceMinutes(ctx context.Context, req *api
 			continue
 		}
 		plan, err := g.plans.forApp(ctx, row.AccountID, row.AppID)
-		if err != nil || !rr.released(plan.Flag) {
+		if err != nil {
+			// A failed lookup is not "flag off": answer unavailable so vmmd
+			// drops this batch without backing the app off.
+			g.log.Warn("resource minutes: plan lookup failed", "app_id", p.GetAppId(), "err", err)
+			return &apidpb.IngestInstanceResourceMinutesResponse{Outcome: guestSpansUnavailable, DisabledAppIds: out.DisabledAppIds}, nil
+		}
+		if !rr.releasedFor(plan.Flag) {
 			disabled[p.GetAppId()] = true
 			out.DisabledAppIds = append(out.DisabledAppIds, p.GetAppId())
 			continue

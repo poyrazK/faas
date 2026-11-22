@@ -28,14 +28,14 @@ func TestSplitTargetSlug(t *testing.T) {
 func TestRenderRouteSplitPrintsCommands(t *testing.T) {
 	var out bytes.Buffer
 	main.RenderRouteSplit(&out, "shop", "shop.gregale.dev", &routeresources.Split{
-		Route: "POST /v1/exports/{id}", PathGlob: "/v1/exports/*", RouteRAMMB: 1920, CurrentRAMMB: 2048, MainRAMMB: 256,
-		Reason: "POST /v1/exports/{id} was in flight for 100% of the app's 6 memory peaks",
+		Route: "POST /v1/exports/{id}", Method: "POST", PathGlob: "/v1/exports/*", RouteRAMMB: 1920, CurrentRAMMB: 2048, MainRAMMB: 256,
+		Reason: "POST /v1/exports/{id} was in flight for 6 of the app's 6 memory peaks (100%)",
 	})
 	got := out.String()
 	order := []string{
 		"gregale deploy --name shop-exports",
 		"gregale app scale shop-exports --plan --ram 1920",
-		"gregale edge rule create --app shop --kind route --match-host shop.gregale.dev --match-path '/v1/exports/*' --route-target-slug shop-exports --enabled",
+		"gregale edge rule create --app shop --kind route --match-host shop.gregale.dev --match-path '/v1/exports/*' --match-method POST --route-target-slug shop-exports --enabled",
 		"gregale app scale shop --plan --ram 256",
 	}
 	last := -1

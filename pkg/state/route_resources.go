@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onebox-faas/faas/pkg/routeresources"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // InstanceResourceMinuteRow is one instance-minute of app cgroup usage with
@@ -47,35 +49,20 @@ func (s *PgStore) AddInstanceResourceMinutes(ctx context.Context, rows []Instanc
 		return nil
 	}
 	n := len(rows)
-	apps, accounts, deployments := make([]uuid.UUID, n), make([]uuid.UUID, n), make([]uuid.UUID, n)
-	instances, minutes := make([]string, n), make([]time.Time, n)
-	samples, start, peak, end, limit := make([]int32, n), make([]int32, n), make([]int32, n), make([]int32, n), make([]int32, n)
-	cpu, cpuPeak, cpuLimit := make([]int64, n), make([]int32, n), make([]int32, n)
-	for i, r := range rows {
-		apps[i], accounts[i], deployments[i] = r.AppID, r.AccountID, r.DeploymentID
-		instances[i], minutes[i] = r.InstanceID, r.Minute.UTC().Truncate(time.Minute)
-		samples[i], start[i], peak[i], end[i], limit[i] = int32(r.Samples), int32(r.MemStartMB), int32(r.MemPeakMB), int32(r.MemEndMB), int32(r.MemLimitMB)
-		cpu[i], cpuPeak[i], cpuLimit[i] = r.CPUMS, int32(r.CPUPeakMillicores), int32(r.CPULimitMillicores)
+	p := sqlc.AddInstanceResourceMinutesParams{
+		AppIds: make([]pgtype.UUID, n), InstanceIds: make([]string, n), Minutes: make([]pgtype.Timestamptz, n),
+		AccountIds: make([]pgtype.UUID, n), DeploymentIds: make([]pgtype.UUID, n), Samples: make([]int32, n),
+		MemStartMb: make([]int32, n), MemPeakMb: make([]int32, n), MemEndMb: make([]int32, n), MemLimitMb: make([]int32, n),
+		CpuMs: make([]int64, n), CpuPeakMillicores: make([]int32, n), CpuLimitMillicores: make([]int32, n),
 	}
-	// Rows of one batch never share a key: vmmd sends each
-	// instance-minute once per batch.
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO instance_resource_minutes AS t
-			(app_id, instance_id, minute, account_id, deployment_id, samples,
-			 mem_start_mb, mem_peak_mb, mem_end_mb, mem_limit_mb,
-			 cpu_ms, cpu_peak_millicores, cpu_limit_millicores)
-		SELECT * FROM unnest($1::uuid[], $2::text[], $3::timestamptz[], $4::uuid[], $5::uuid[], $6::int[],
-			$7::int[], $8::int[], $9::int[], $10::int[], $11::bigint[], $12::int[], $13::int[])
-		ON CONFLICT (app_id, minute, instance_id) DO UPDATE SET
-			samples = t.samples + EXCLUDED.samples,
-			mem_peak_mb = GREATEST(t.mem_peak_mb, EXCLUDED.mem_peak_mb),
-			mem_end_mb = LEAST(EXCLUDED.mem_end_mb, GREATEST(t.mem_peak_mb, EXCLUDED.mem_peak_mb)),
-			mem_limit_mb = GREATEST(t.mem_limit_mb, EXCLUDED.mem_limit_mb),
-			cpu_ms = t.cpu_ms + EXCLUDED.cpu_ms,
-			cpu_peak_millicores = GREATEST(t.cpu_peak_millicores, EXCLUDED.cpu_peak_millicores),
-			cpu_limit_millicores = GREATEST(t.cpu_limit_millicores, EXCLUDED.cpu_limit_millicores)`,
-		apps, instances, minutes, accounts, deployments, samples, start, peak, end, limit, cpu, cpuPeak, cpuLimit)
-	if err != nil {
+	for i, r := range rows {
+		p.AppIds[i], p.AccountIds[i], p.DeploymentIds[i] = routeResourceUUID(r.AppID), routeResourceUUID(r.AccountID), routeResourceUUID(r.DeploymentID)
+		p.InstanceIds[i], p.Minutes[i] = r.InstanceID, pgTimestamptzUTC(r.Minute.Truncate(time.Minute))
+		p.Samples[i], p.MemStartMb[i], p.MemPeakMb[i] = int32(r.Samples), int32(r.MemStartMB), int32(r.MemPeakMB)
+		p.MemEndMb[i], p.MemLimitMb[i] = int32(r.MemEndMB), int32(r.MemLimitMB)
+		p.CpuMs[i], p.CpuPeakMillicores[i], p.CpuLimitMillicores[i] = r.CPUMS, int32(r.CPUPeakMillicores), int32(r.CPULimitMillicores)
+	}
+	if err := sqlc.New().AddInstanceResourceMinutes(ctx, s.pool, p); err != nil {
 		return fmt.Errorf("state: add instance resource minutes: %w", err)
 	}
 	return nil
@@ -86,84 +73,56 @@ func (s *PgStore) AddInstanceRouteMinutes(ctx context.Context, rows []InstanceRo
 		return nil
 	}
 	n := len(rows)
-	apps, accounts := make([]uuid.UUID, n), make([]uuid.UUID, n)
-	instances, minutes, routes, methods := make([]string, n), make([]time.Time, n), make([]string, n), make([]string, n)
-	requests, busy, maxLatency := make([]int64, n), make([]int64, n), make([]int32, n)
-	for i, r := range rows {
-		apps[i], accounts[i] = r.AppID, r.AccountID
-		instances[i], minutes[i], routes[i], methods[i] = r.InstanceID, r.Minute.UTC().Truncate(time.Minute), r.Route, r.Method
-		requests[i], busy[i], maxLatency[i] = r.Requests, r.BusyMS, int32(r.MaxLatencyMS)
+	p := sqlc.AddInstanceRouteMinutesParams{
+		AppIds: make([]pgtype.UUID, n), InstanceIds: make([]string, n), Minutes: make([]pgtype.Timestamptz, n),
+		Routes: make([]string, n), Methods: make([]string, n), AccountIds: make([]pgtype.UUID, n),
+		Requests: make([]int64, n), BusyMs: make([]int64, n), MaxLatencyMs: make([]int32, n),
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO instance_route_minutes AS t
-			(app_id, instance_id, minute, route, method, account_id, requests, busy_ms, max_latency_ms)
-		SELECT * FROM unnest($1::uuid[], $2::text[], $3::timestamptz[], $4::text[], $5::text[], $6::uuid[],
-			$7::bigint[], $8::bigint[], $9::int[])
-		ON CONFLICT (app_id, minute, instance_id, route, method) DO UPDATE SET
-			requests = t.requests + EXCLUDED.requests,
-			busy_ms = t.busy_ms + EXCLUDED.busy_ms,
-			max_latency_ms = GREATEST(t.max_latency_ms, EXCLUDED.max_latency_ms)`,
-		apps, instances, minutes, routes, methods, accounts, requests, busy, maxLatency)
-	if err != nil {
+	for i, r := range rows {
+		p.AppIds[i], p.AccountIds[i] = routeResourceUUID(r.AppID), routeResourceUUID(r.AccountID)
+		p.InstanceIds[i], p.Minutes[i] = r.InstanceID, pgTimestamptzUTC(r.Minute.Truncate(time.Minute))
+		p.Routes[i], p.Methods[i] = r.Route, r.Method
+		p.Requests[i], p.BusyMs[i], p.MaxLatencyMs[i] = r.Requests, r.BusyMS, int32(r.MaxLatencyMS)
+	}
+	if err := sqlc.New().AddInstanceRouteMinutes(ctx, s.pool, p); err != nil {
 		return fmt.Errorf("state: add instance route minutes: %w", err)
 	}
 	return nil
 }
 
 func (s *PgStore) InstanceResourceMinutes(ctx context.Context, appID uuid.UUID, from, to time.Time, limit int) ([]routeresources.InstanceMinute, bool, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT instance_id, minute, samples, mem_start_mb, mem_peak_mb, mem_end_mb, mem_limit_mb,
-		       cpu_ms, cpu_peak_millicores, cpu_limit_millicores
-		FROM instance_resource_minutes
-		WHERE app_id = $1 AND minute >= $2 AND minute < $3
-		ORDER BY minute DESC, instance_id
-		LIMIT $4`, appID, from, to, limit+1)
+	rows, err := sqlc.New().ListInstanceResourceMinutes(ctx, s.pool, sqlc.ListInstanceResourceMinutesParams{
+		AppID: routeResourceUUID(appID), FromMinute: pgTimestamptzUTC(from), ToMinute: pgTimestamptzUTC(to), RowLimit: int32(limit + 1),
+	})
 	if err != nil {
 		return nil, false, fmt.Errorf("state: read instance resource minutes: %w", err)
 	}
-	defer rows.Close()
-	var out []routeresources.InstanceMinute
-	for rows.Next() {
-		m := routeresources.InstanceMinute{AppID: appID}
-		if err := rows.Scan(&m.InstanceID, &m.Minute, &m.Samples, &m.MemStartMB, &m.MemPeakMB, &m.MemEndMB, &m.MemLimitMB,
-			&m.CPUMS, &m.CPUPeakMillicores, &m.CPULimitMillicores); err != nil {
-			return nil, false, fmt.Errorf("state: scan instance resource minute: %w", err)
-		}
-		out = append(out, m)
+	out := make([]routeresources.InstanceMinute, 0, min(len(rows), limit))
+	for _, r := range rows[:min(len(rows), limit)] {
+		out = append(out, routeresources.InstanceMinute{
+			AppID: appID, InstanceID: r.InstanceID, Minute: r.Minute.Time, Samples: int(r.Samples),
+			MemStartMB: int(r.MemStartMb), MemPeakMB: int(r.MemPeakMb), MemEndMB: int(r.MemEndMb), MemLimitMB: int(r.MemLimitMb),
+			CPUMS: r.CpuMs, CPUPeakMillicores: int(r.CpuPeakMillicores), CPULimitMillicores: int(r.CpuLimitMillicores),
+		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("state: read instance resource minutes: %w", err)
-	}
-	if len(out) > limit {
-		return out[:limit], true, nil
-	}
-	return out, false, nil
+	return out, len(rows) > limit, nil
 }
 
 func (s *PgStore) InstanceRouteMinutes(ctx context.Context, appID uuid.UUID, from, to time.Time, limit int) ([]routeresources.RouteMinute, bool, error) {
-	rows, err := s.pool.Query(ctx, `
-		SELECT instance_id, minute, route, method, requests, busy_ms, max_latency_ms
-		FROM instance_route_minutes
-		WHERE app_id = $1 AND minute >= $2 AND minute < $3
-		ORDER BY minute DESC, instance_id, route, method
-		LIMIT $4`, appID, from, to, limit+1)
+	rows, err := sqlc.New().ListInstanceRouteMinutes(ctx, s.pool, sqlc.ListInstanceRouteMinutesParams{
+		AppID: routeResourceUUID(appID), FromMinute: pgTimestamptzUTC(from), ToMinute: pgTimestamptzUTC(to), RowLimit: int32(limit + 1),
+	})
 	if err != nil {
 		return nil, false, fmt.Errorf("state: read instance route minutes: %w", err)
 	}
-	defer rows.Close()
-	var out []routeresources.RouteMinute
-	for rows.Next() {
-		m := routeresources.RouteMinute{AppID: appID}
-		if err := rows.Scan(&m.InstanceID, &m.Minute, &m.Route, &m.Method, &m.Requests, &m.BusyMS, &m.MaxLatencyMS); err != nil {
-			return nil, false, fmt.Errorf("state: scan instance route minute: %w", err)
-		}
-		out = append(out, m)
+	out := make([]routeresources.RouteMinute, 0, min(len(rows), limit))
+	for _, r := range rows[:min(len(rows), limit)] {
+		out = append(out, routeresources.RouteMinute{
+			AppID: appID, InstanceID: r.InstanceID, Minute: r.Minute.Time, Route: r.Route, Method: r.Method,
+			Requests: r.Requests, BusyMS: r.BusyMs, MaxLatencyMS: int(r.MaxLatencyMs),
+		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("state: read instance route minutes: %w", err)
-	}
-	if len(out) > limit {
-		return out[:limit], true, nil
-	}
-	return out, false, nil
+	return out, len(rows) > limit, nil
 }
+
+func routeResourceUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }

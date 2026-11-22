@@ -104,8 +104,8 @@ func SuggestSplit(rep Report, currentRAMMB, planMaxRAMMB int, opts SplitOptions)
 		if planMaxRAMMB > 0 && s.RouteRAMMB > planMaxRAMMB {
 			s.RouteRAMOverPlan = true
 		}
-		s.Reason = fmt.Sprintf("%s was in flight for %.0f%% of the app's %d memory peaks but ran in only %.0f%% of minutes; "+
-			"without it the app peaks near %d MB", r.Route, r.HighMemoryShare*100, r.HighMemoryMinutes, r.PresenceShare*100, mainNeed)
+		s.Reason = fmt.Sprintf("%s was in flight for %d of the app's %d memory peaks (%.0f%%) but ran in only %.0f%% of minutes; "+
+			"without it the app peaks near %d MB", r.Route, r.HighMemoryMinutes, rep.HighMemoryMinutes, r.HighMemoryShare*100, r.PresenceShare*100, mainNeed)
 		return s
 	}
 	return nil

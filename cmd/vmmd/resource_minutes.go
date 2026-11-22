@@ -77,7 +77,12 @@ type resourceMinutes struct {
 	mu       sync.Mutex
 	pending  map[resourceMinuteKey]*apidpb.InstanceResourceMinute
 	disabled map[string]time.Time // app id → forward again after
-	dropped  int64
+	// dropped counts minutes lost to the pending bound and undelivered
+	// rows counts rows of batches apid did not take; flush reports both
+	// at Warn at most once a minute.
+	dropped     int64
+	undelivered int64
+	lastWarn    time.Time
 }
 
 func newResourceMinutes(resolve func(string) (resourceIdentity, bool), client resourceMinutesClient, log *slog.Logger) *resourceMinutes {
@@ -164,6 +169,9 @@ func (m *resourceMinutes) flush(ctx context.Context, all bool) {
 		resp, err := m.client.IngestInstanceResourceMinutes(callCtx, &apidpb.IngestInstanceResourceMinutesRequest{Minutes: batch})
 		cancel()
 		if err != nil {
+			m.mu.Lock()
+			m.undelivered += int64(n)
+			m.mu.Unlock()
 			m.log.Debug("resource minutes not delivered; dropped", "rows", n, "err", err)
 			continue
 		}
@@ -176,6 +184,23 @@ func (m *resourceMinutes) flush(ctx context.Context, all bool) {
 			m.mu.Unlock()
 		}
 	}
+	m.warnLosses()
+}
+
+// warnLosses reports lost minutes at Warn, at most once a minute, so a
+// node whose apid is away for a while shows up without flooding the log.
+func (m *resourceMinutes) warnLosses() {
+	now := m.now()
+	m.mu.Lock()
+	dropped, undelivered := m.dropped, m.undelivered
+	if (dropped == 0 && undelivered == 0) || now.Sub(m.lastWarn) < time.Minute {
+		m.mu.Unlock()
+		return
+	}
+	m.dropped, m.undelivered, m.lastWarn = 0, 0, now
+	m.mu.Unlock()
+	m.log.Warn("route resource peaks: resource minutes lost",
+		"dropped_buffer_full", dropped, "undelivered", undelivered, "pending_bound", api.RouteResourcePendingRowsMax)
 }
 
 // run flushes every RouteResourceFlushInterval until ctx ends, then sends
@@ -199,7 +224,7 @@ func (m *resourceMinutes) run(ctx context.Context) {
 // WithResourceSlots routes type=0x0C resource slots to minutes
 // (ADR-20261121170000). Without it the slots are parsed and dropped.
 func (r *FrameworkReadyReceiver) WithResourceSlots(m *resourceMinutes) *FrameworkReadyReceiver {
-	r.resourceSlots = m
+	r.resourceSlots.Store(m)
 	return r
 }
 

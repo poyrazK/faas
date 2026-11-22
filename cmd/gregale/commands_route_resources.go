@@ -163,8 +163,14 @@ func renderRouteSplit(w io.Writer, slug, host string, s *routeresources.Split) {
 	_, _ = fmt.Fprintln(w, "  2. Size it for the route:")
 	_, _ = fmt.Fprintf(w, "     gregale app scale %s --plan --ram %d\n", target, s.RouteRAMMB)
 	_, _ = fmt.Fprintln(w, "  3. Send the route to it:")
-	_, _ = fmt.Fprintf(w, "     gregale edge rule create --app %s --kind route --match-host %s --match-path '%s' --route-target-slug %s --enabled\n",
-		slug, host, s.PathGlob, target)
+	method := ""
+	if s.Method != "" {
+		// Only the method the peaks came with moves; the path's other
+		// methods stay on the app.
+		method = " --match-method " + s.Method
+	}
+	_, _ = fmt.Fprintf(w, "     gregale edge rule create --app %s --kind route --match-host %s --match-path '%s'%s --route-target-slug %s --enabled\n",
+		slug, host, s.PathGlob, method, target)
 	_, _ = fmt.Fprintln(w, "  4. Size the app down once the rule is live:")
 	_, _ = fmt.Fprintf(w, "     gregale app scale %s --plan --ram %d\n", slug, s.MainRAMMB)
 }

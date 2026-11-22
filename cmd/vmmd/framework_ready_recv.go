@@ -47,6 +47,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -181,7 +182,7 @@ type FrameworkReadyReceiver struct {
 	eventPublisher                      GuestEventPublisher
 	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
-	resourceSlots                       *resourceMinutes
+	resourceSlots                       atomic.Pointer[resourceMinutes]
 }
 
 // GuestEventPublisher is the host-side persistence seam for the in-guest
@@ -270,8 +271,8 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 	case parseFWReadyKindDisk:
 		r.dispatchDiskUsage(instance, msg.Disk)
 	case parseFWReadyKindResourceSlot:
-		if r.resourceSlots != nil {
-			r.resourceSlots.observe(instance, msg.ResourceSlot, time.Now())
+		if slots := r.resourceSlots.Load(); slots != nil {
+			slots.observe(instance, msg.ResourceSlot, time.Now())
 		}
 	case parseFWReadyKindEventPublish:
 		r.dispatchEventPublish(instance, msg.EventPublish)

@@ -106,6 +106,11 @@ type Querier interface {
 	// left out of results.
 	// The arrays are parallel: the select list unnests them in step.
 	AddFlagExperimentUnits(ctx context.Context, db DBTX, arg AddFlagExperimentUnitsParams) error
+	// Route resource peaks (ADR-20261121170000).
+	// The arrays are parallel. Rows of one batch never share a key: vmmd
+	// sends each instance-minute once per batch.
+	AddInstanceResourceMinutes(ctx context.Context, db DBTX, arg AddInstanceResourceMinutesParams) error
+	AddInstanceRouteMinutes(ctx context.Context, db DBTX, arg AddInstanceRouteMinutesParams) error
 	// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
 	// the same shape as AddRequestAnalyticsMinutes.
 	AddRequestAnalyticsHours(ctx context.Context, db DBTX, arg AddRequestAnalyticsHoursParams) error
@@ -4297,6 +4302,8 @@ type Querier interface {
 	// to its build log there. The spool sweeper never removes either while the
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
+	ListInstanceResourceMinutes(ctx context.Context, db DBTX, arg ListInstanceResourceMinutesParams) ([]ListInstanceResourceMinutesRow, error)
+	ListInstanceRouteMinutes(ctx context.Context, db DBTX, arg ListInstanceRouteMinutesParams) ([]ListInstanceRouteMinutesRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	// The app's pending and dispatching rows per source from the backlog
 	// counters (ADR-20261022105723), so `queue status` shows async invocations,
