@@ -35,6 +35,11 @@ case "${runtime_image}" in
   runner-go124-alpine)
     required=(etc/passwd lib/ld-musl-x86_64.so.1)
     ;;
+  sandbox-code-interpreter)
+    # ADR-20261027090013 step 14: Python with Jupyter, and the driver
+    # guest-init starts on the first code call.
+    required=(etc/passwd usr/local/bin/python3 opt/gregale/code-interpreter/driver.py workspace)
+    ;;
   agent-base)
     # ADR-20261027090010 §2: the preset harnesses, their catalog, and the tools agents
     # expect in a checkout.
@@ -124,7 +129,7 @@ if [[ "${runtime_image}" == base-minimal ]]; then
     exit 1
   fi
 fi
-if [[ "${runtime_image}" == runner-python313 || "${runtime_image}" == execution-python-data-v1 ]]; then
+if [[ "${runtime_image}" == runner-python313 || "${runtime_image}" == execution-python-data-v1 || "${runtime_image}" == sandbox-code-interpreter ]]; then
   python_minor=$(docker run --rm --platform "${expected_platform}" \
     --entrypoint /usr/local/bin/python3 "${image_ref}" \
     -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -154,6 +159,19 @@ assert float(numpy.mean([1, 3])) == 2
 report = json.loads(pathlib.Path("/usr/share/faas/execution-profile-build.json").read_text())
 assert report["installed_bytes"] > 0
 print(json.dumps(report))
+'
+fi
+if [[ "${runtime_image}" == sandbox-code-interpreter ]]; then
+  # The driver's own tests, against the image's real kernel, as the tenant
+  # uid with no network and a read-only rootfs: state, streams, a
+  # matplotlib PNG, errors, a timeout, the output cap and separate contexts.
+  docker run --rm --platform "${expected_platform}" --network none --read-only --tmpfs /tmp \
+    --user 1000:1000 -e HOME=/tmp -e MPLCONFIGDIR=/tmp/matplotlib \
+    -v "${PWD}/images/sandbox-code-interpreter:/tmp/driver-src:ro" -w /tmp/driver-src \
+    --entrypoint /usr/local/bin/python3 "${image_ref}" -m unittest -v driver_test
+  docker run --rm --platform "${expected_platform}" --network none --entrypoint /usr/local/bin/python3 "${image_ref}" -c '
+import importlib.util
+assert importlib.util.find_spec("pip") is None, "pip is left in the image"
 '
 fi
 if [[ "${runtime_image}" == agent-base ]]; then
