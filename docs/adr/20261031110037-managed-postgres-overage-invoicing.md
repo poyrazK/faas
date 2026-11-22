@@ -208,17 +208,24 @@ Done on 2026-11-22:
   no earlier month is charged.
 - Production ran `shadow` for a few hours, then switched to `live`.
 
-Live delivery alone charges no one. A charge needs all three of these:
+Live delivery alone charges no one. A charge needs both of these:
 
 1. **Compute cap enforcement `on`.** The cap sweep records the
    `allowance` event only in that mode (`managedpostgres` caps sweep,
-   `recordCapEvents`). Production runs the default, `shadow`.
+   `recordCapEvents`). Production runs the default, `shadow`. To start
+   with either cap `on`, apid needs internal mail and that cap's
+   qualification approval. Production has neither yet.
 2. **A subject with overage on.** Customers turn overage on only through
-   `postgres-overage`, and that capability is still `internal`. Database
-   egress past the shared allowance is the exception: it follows the app
-   egress election instead (ADR-20261110160000 slice 3).
-3. **A database.** Provisioning is closed in production. Only the owner's
-   test subject has databases.
+   `postgres-overage`. In production its flag is off by default, and one
+   rule enables it for the owner's account. Database egress past the
+   shared allowance is the exception: it follows the app egress election
+   instead (ADR-20261110160000 slice 3).
+
+The product itself is already open. Since 2026-11-21 the `managed_postgres`
+flag has defaulted to true for every plan that includes databases, and the
+runtime `managed_postgres_policy` approves provisioning. The caps still run
+in `shadow`, so databases are not suspended at the ceiling. On 2026-11-22
+every live database belonged to the owner.
 
 The month of shadow was meant to compare receipts with the ledger. That
 comparison now runs between turning caps `on` and releasing
