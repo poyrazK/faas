@@ -25,9 +25,14 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces                     = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor                       = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL                    = "domain_doctor_ttl_seconds"
+	runtimeConfigTenantSurfaces  = "tenant_surfaces_enabled"
+	runtimeConfigDomainDoctor    = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL = "domain_doctor_ttl_seconds"
+	// runtimeConfigStatusExcludedAccounts lists the internal accounts (test,
+	// probe, release-acceptance) whose deployments the public status page's
+	// deployment-success indicator leaves out (prod 2026-11-22: two internal
+	// accounts alone met the two-tenant breach rule).
+	runtimeConfigStatusExcludedAccounts             = "status_excluded_account_ids"
 	runtimeConfigDataPlacement                      = "data_placement_enabled"
 	runtimeConfigAppErrors                          = "app_errors_enabled"
 	runtimeConfigRekey                              = "rekey_enabled"
@@ -145,6 +150,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigS3, Label: "S3 object storage", Description: "Allow bucket provisioning and new signed URLs. Disabling preserves metadata and cleanup; existing URLs expire normally. Provider configuration is still required.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigTenantSurfaces, Label: "Tenant surfaces", Description: "Expose the tenant surface and certificate lifecycle API.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDomainDoctor, Label: "Domain doctor", Description: "Run DNS and certificate readiness probes for customer domains.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigStatusExcludedAccounts, Label: "Status page: excluded accounts", Description: "Comma-separated account IDs (internal test, probe and release-acceptance accounts) whose deployments the public status page's deployment-success indicator leaves out of both its successes and its failures. Empty counts every account.", Category: "Operational policies", Kind: "string", Default: json.RawMessage(`""`), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true, Validate: validateAccountIDList},
 	{Key: runtimeConfigDomainDoctorTTL, Label: "Domain doctor TTL", Description: "Maximum age in seconds before a domain doctor result is stale.", Category: "Operational policies", Kind: "integer", Default: json.RawMessage("300"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigDataPlacement, Label: "Data placement", Description: "Enable customer data-upstream placement and affinity behavior.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigAppErrors, Label: "Automatic app errors", Description: "Accept and aggregate gateway error reports; enabling the socket is a graceful daemon change.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("true"), ApplyMode: state.RuntimeConfigApplyGraceful, ControllerEnabled: false, Mutable: true},
@@ -765,6 +771,42 @@ func validateGuestVCPUApps(value json.RawMessage) error {
 		}
 	}
 	return nil
+}
+
+// validateAccountIDList accepts a comma-separated list of account IDs.
+func validateAccountIDList(value json.RawMessage) error {
+	list, err := runtimeconfig.String(value)
+	if err != nil {
+		return err
+	}
+	for _, entry := range strings.Split(list, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if _, err := uuid.Parse(entry); err != nil {
+			return fmt.Errorf("%q is not an account ID", entry)
+		}
+	}
+	return nil
+}
+
+// statusExcludedAccounts is status_excluded_account_ids as canonical IDs.
+func (m *runtimeConfigManager) statusExcludedAccounts() []string {
+	if m == nil {
+		return nil
+	}
+	list, err := runtimeconfig.String(m.Value(runtimeConfigStatusExcludedAccounts))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, entry := range strings.Split(list, ",") {
+		if id, err := uuid.Parse(strings.TrimSpace(entry)); err == nil {
+			out = append(out, id.String())
+		}
+	}
+	return out
 }
 
 func runRuntimeConfigSubscriber(ctx context.Context, pool *pgxpool.Pool, srv *server, log *slog.Logger) error {
