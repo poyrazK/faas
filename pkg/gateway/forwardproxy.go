@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/vmmdhop"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -1597,6 +1598,9 @@ type NodeClientCache struct {
 	// restartNotices, when set, holds stream opens through a node's planned
 	// vmmd restart (vmmd_restart_hold.go).
 	restartNotices *restartNotices
+	// forwardHop, when set, builds each node's forward hop client
+	// (vmmd_forward_hop.go, ADR-20261121202814).
+	forwardHop ForwardHopFactory
 }
 
 // nodeConn is one dialed connection and the leases on it. Leases are counted
@@ -1607,6 +1611,7 @@ type NodeClientCache struct {
 // Guarded by NodeClientCache.mu.
 type nodeConn struct {
 	conn   *grpc.ClientConn
+	hop    *vmmdhop.Client // nil keeps ForwardHTTPStream on gRPC
 	target string
 	refs   int
 	// retired is set once the conn left the cache; the last lease closes it.
@@ -1636,34 +1641,42 @@ func (c *NodeClientCache) WithNodeBinding(name func(ctx context.Context, nodeID 
 }
 
 // dialFor opens the connection for nodeID at target, bound to the node's
-// name when WithNodeBinding is set.
-func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, error) {
+// name when WithNodeBinding is set. It returns the name it bound to, ""
+// without the binding.
+func (c *NodeClientCache) dialFor(ctx context.Context, nodeID, target string) (*grpc.ClientConn, string, error) {
 	if c.dialNode != nil {
 		name, ok := c.nodeName(ctx, nodeID)
 		if !ok || name == "" {
-			return nil, fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
+			return nil, "", fmt.Errorf("gateway: no compute_nodes.name for node %q to bind the dial to", nodeID)
 		}
-		return c.dialNode(ctx, target, name)
+		conn, err := c.dialNode(ctx, target, name)
+		return conn, name, err
 	}
 	if c.dial == nil {
-		return nil, errors.New("gateway: node client cache has no dialer")
+		return nil, "", errors.New("gateway: node client cache has no dialer")
 	}
-	return c.dial(ctx, target)
+	conn, err := c.dial(ctx, target)
+	return conn, "", err
 }
 
 // client is the VmmdClient a lease of conn hands out.
-func (c *NodeClientCache) client(nodeID string, conn *grpc.ClientConn) vmmdpb.VmmdClient {
-	cli := vmmdpb.NewVmmdClient(conn)
+func (c *NodeClientCache) client(nodeID string, entry *nodeConn) vmmdpb.VmmdClient {
+	cli := vmmdpb.NewVmmdClient(entry.conn)
+	if entry.hop != nil {
+		// Inside the restart hold, so a hop stream open waits out a planned
+		// vmmd restart exactly as a gRPC one does.
+		cli = hopVmmdClient{VmmdClient: cli, hop: entry.hop}
+	}
 	if c.restartNotices == nil {
 		return cli
 	}
-	return restartHoldClient{VmmdClient: cli, conn: conn, node: nodeID, notices: c.restartNotices, log: c.log}
+	return restartHoldClient{VmmdClient: cli, conn: entry.conn, node: nodeID, notices: c.restartNotices, log: c.log}
 }
 
 // leaseLocked takes a lease on entry. Caller holds c.mu.
 func (c *NodeClientCache) leaseLocked(nodeID string, entry *nodeConn) (vmmdpb.VmmdClient, io.Closer) {
 	entry.refs++
-	return c.client(nodeID, entry.conn), &leaseCloser{c: c, entry: entry}
+	return c.client(nodeID, entry), &leaseCloser{c: c, entry: entry}
 }
 
 type nodeDialCall struct {
@@ -1735,29 +1748,38 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 	// must not block hits for other nodes.
 	target, ok := c.resolveTarget(ctx, nodeID)
 	if !ok {
-		c.finishNodeDial(nodeID, call, nil, "")
+		c.finishNodeDial(nodeID, call, nil, "", nil)
 		return nil, nil, false
 	}
 	if c.dial == nil && c.dialNode == nil {
-		c.finishNodeDial(nodeID, call, nil, "")
+		c.finishNodeDial(nodeID, call, nil, "", nil)
 		return nil, nil, false
 	}
-	conn, err := c.dialFor(ctx, nodeID, target)
+	conn, name, err := c.dialFor(ctx, nodeID, target)
 	if err != nil {
 		if c.log != nil {
 			c.log.Warn("gateway: vmmd dial failed",
 				"node", nodeID, "target", target, "err", err.Error())
 		}
-		c.finishNodeDial(nodeID, call, nil, "")
+		c.finishNodeDial(nodeID, call, nil, "", nil)
 		return nil, nil, false
 	}
-	cli, lease, ok := c.finishNodeDial(nodeID, call, conn, target)
+	var hop *vmmdhop.Client
+	if c.forwardHop != nil {
+		// The name the gRPC dial was bound to: building the hop adds no
+		// lookup to the dial every waiter on this node is held behind.
+		hop = c.forwardHop(nodeID, target, name)
+	}
+	cli, lease, ok := c.finishNodeDial(nodeID, call, conn, target, hop)
 	if !ok {
 		// The node was evicted or the cache was closed while the dial
 		// was in flight. The dial result was not published and is now
 		// owned by this caller.
 		if conn != nil {
 			_ = conn.Close()
+		}
+		if hop != nil {
+			hop.Close()
 		}
 		return nil, nil, false
 	}
@@ -1767,7 +1789,7 @@ func (c *NodeClientCache) ClientFor(ctx context.Context, nodeID string) (vmmdpb.
 // finishNodeDial publishes a successful connection with the leader's lease
 // and wakes all waiters. It returns ok=false when an eviction/close
 // invalidated the in-flight dial.
-func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn, target string) (vmmdpb.VmmdClient, io.Closer, bool) {
+func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn *grpc.ClientConn, target string, hop *vmmdhop.Client) (vmmdpb.VmmdClient, io.Closer, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.dialing != nil {
@@ -1780,7 +1802,7 @@ func (c *NodeClientCache) finishNodeDial(nodeID string, call *nodeDialCall, conn
 	if c.clients == nil {
 		c.clients = map[string]*nodeConn{}
 	}
-	entry := &nodeConn{conn: conn, target: target}
+	entry := &nodeConn{conn: conn, hop: hop, target: target}
 	c.clients[nodeID] = entry
 	cli, lease := c.leaseLocked(nodeID, entry)
 	close(call.done)
@@ -1837,6 +1859,10 @@ func (c *NodeClientCache) evict(nodeID string) bool {
 	if idle && entry.conn != nil {
 		_ = entry.conn.Close()
 	}
+	if entry.hop != nil {
+		// Only idle hop connections close; calls in flight finish.
+		entry.hop.Close()
+	}
 	return true
 }
 
@@ -1875,6 +1901,9 @@ func (c *NodeClientCache) Close() error {
 	c.mu.Unlock()
 	var errs []error
 	for _, entry := range entries {
+		if entry.hop != nil {
+			entry.hop.Close()
+		}
 		if entry.conn == nil {
 			continue
 		}

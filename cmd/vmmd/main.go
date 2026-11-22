@@ -2274,6 +2274,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	impl.Register(gsrv)
+	// ADR-20261121202814: the light ForwardHTTPStream hop shares the gRPC
+	// port, chosen by ALPN; off unless FAAS_VMMD_FORWARD_HOP=1.
+	lis, forwardHop := wrapForwardHop(ctx, lis, serverTLS, impl, os.Getenv, ops.Registry(), log)
 	localData := newLocalDataSocket(ctx, cfg.LocalDataSocket, api.VmmdLocalDataSocket, cfg.OwnerUser, impl.Register, log)
 	defer func() {
 		if err := impl.Close(context.WithoutCancel(ctx)); err != nil {
@@ -2628,6 +2631,11 @@ heartbeat:
 			log.Debug("heartbeat", "live", mgr.LiveCount(), "leased", mgr.LeasedCount())
 		case err := <-serveErr:
 			if err != nil {
+				// The deferred impl.Close must not run under live hop
+				// exchanges (ADR-20261121202814).
+				if forwardHop != nil {
+					forwardHop.Close()
+				}
 				return err
 			}
 		}
@@ -2642,7 +2650,7 @@ heartbeat:
 		announceRestart(context.WithoutCancel(ctx), store, adoptionReport.NodeID, log)
 	}
 	localDataStopped := localData.stop(cfg.AdoptRunningVMs, log)
-	stopGRPC(gsrv, cfg.AdoptRunningVMs, log)
+	stopGRPC(hopStopper{grpc: gsrv, hop: forwardHop}, cfg.AdoptRunningVMs, log)
 	<-localDataStopped
 	// The successor adopts from the journal: write what the last RPCs changed.
 	mgr.FlushAdoptionRecords()

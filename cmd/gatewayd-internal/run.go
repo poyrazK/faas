@@ -2360,8 +2360,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
 	eventsPlatform := events.NewPlatform("gatewayd", pgStore, log, gatewayOps, nil)
-	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics, newLocalVmmd(osGetenv(localVmmdEnv) == "1", cfg.NodeName)).
+	vmmdLocal := newLocalVmmd(osGetenv(localVmmdEnv) == "1", cfg.NodeName)
+	deps.nodeCache = newNodeCache(pgStore, vmmdTLS, log, deps.metrics, vmmdLocal).
 		WithEvents(eventsPlatform).WithActivityTracker(runtimeActivity)
+	// ADR-20261121202814: ForwardHTTPStream over the light hop where vmmd
+	// offers it, gRPC otherwise. Set before the cache serves any forward.
+	if strings.TrimSpace(osGetenv(forwardHopEnv)) == "1" && pgStore != nil && vmmdTLS != nil {
+		deps.nodeCache.cache.WithForwardHop(forwardHopFactory(vmmdTLS, vmmdLocal, gatewayOps.Registry(), log))
+		log.Info("gateway: vmmd forward hop on", "env", forwardHopEnv)
+	}
 	// Synthetic invocations share the same per-node HTTP→vmmd bridge as
 	// public requests. This assignment happens after nodeCache creation so
 	// the cache has its production mTLS/overlay wiring before schedd can

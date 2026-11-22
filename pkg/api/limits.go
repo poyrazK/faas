@@ -20654,3 +20654,32 @@ const (
 )
 
 const HostedTaskBindingKeyIDMaxBytes = 64
+
+// Forward hop limits (ADR-20261121202814, security requirement 3). They bound
+// what gatewayd-internal and vmmd accept from each other on the light
+// ForwardHTTPStream hop, as gRPC's own limits bound the gRPC path.
+const (
+	// VmmdForwardHopMaxMessageBytes matches gRPC's default receive limit.
+	VmmdForwardHopMaxMessageBytes = 4 << 20
+	// VmmdForwardHopMaxStatusBytes bounds an exchange's final status.
+	VmmdForwardHopMaxStatusBytes = 64 << 10
+	// VmmdForwardHopMaxMetadataBytes bounds the metadata of an exchange.
+	VmmdForwardHopMaxMetadataBytes = 64 << 10
+	// VmmdForwardHopMaxMethodBytes bounds the method name.
+	VmmdForwardHopMaxMethodBytes = 256
+	// VmmdForwardHopMaxReplayBytes bounds the request a gateway keeps to
+	// resend an exchange vmmd turned away unread (GOAWAY).
+	VmmdForwardHopMaxReplayBytes = 256 << 10
+	// VmmdForwardHopMaxIdlePerNode bounds the idle hop connections a gateway
+	// keeps to one vmmd.
+	VmmdForwardHopMaxIdlePerNode = 64
+	// VmmdForwardHopHandshakeTimeout bounds the ClientHello peek and the TLS
+	// handshake.
+	VmmdForwardHopHandshakeTimeout = 10 * time.Second
+	// VmmdForwardHopServerIdleTimeout ends a hop connection that starts no
+	// exchange.
+	VmmdForwardHopServerIdleTimeout = 2 * time.Minute
+	// VmmdForwardHopClientIdleTimeout keeps the gateway's pool inside the
+	// server's idle timeout.
+	VmmdForwardHopClientIdleTimeout = time.Minute
+)
