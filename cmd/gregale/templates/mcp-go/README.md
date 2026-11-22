@@ -373,11 +373,11 @@ gregale mcp task-wait --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 gregale mcp task-cancel --url http://127.0.0.1:8080/mcp --task-id TASK_ID
 ```
 
-On an external OAuth endpoint, use `gregale mcp client call --tasks --task-receipt FILE`
-to save a private receipt before submitting. Recover metadata with
-`gregale mcp client status --task-receipt FILE --metadata-only` at the same
-endpoint with the original caller's credentials. A matching submission key can
-be retried for one minute, and lookup remains available until the Task expires.
+On an external OAuth endpoint, pass `--task-receipt FILE` to the Task call to save
+a private receipt before submitting. For status lookup, use the same receipt and
+`--metadata-only` with the original endpoint and caller's credentials. A matching
+submission key can be retried for one minute, and lookup remains available until
+the Task expires.
 Run `go run . tasks-migrate apply` before starting the updated web runtime to
 enable this capability.
 

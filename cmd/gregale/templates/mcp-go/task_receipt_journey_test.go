@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -89,8 +90,12 @@ func TestTaskReceiptRecoversLostSubmission(t *testing.T) {
 		}
 		var result droppedReply
 		err = fixture.pool.QueryRow(r.Context(), `SELECT task_id::text, expires_at FROM gregale_mcp_tasks WHERE namespace=$1`, fixture.namespace).Scan(&result.id, &result.expires)
-		if err != nil || result.id != response.Result.TaskID {
-			dropped <- droppedReply{err: fmt.Errorf("keyed reply had no matching committed Task, database error %v", err)}
+		if err != nil {
+			dropped <- droppedReply{err: fmt.Errorf("read committed Task: %w", err)}
+			return
+		}
+		if result.id != response.Result.TaskID {
+			dropped <- droppedReply{err: errors.New("keyed reply had no matching committed Task")}
 			return
 		}
 		conn, _, err := http.NewResponseController(w).Hijack()
