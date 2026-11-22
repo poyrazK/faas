@@ -166,6 +166,13 @@ func publishProjectReleaseWithIDTx(ctx context.Context, tx pgx.Tx, accountID, pr
 	if expectedActiveID != nil && activeID != *expectedActiveID {
 		return ProjectReleaseSet{}, ErrConflict
 	}
+	// Starting a release graph changes who can add workloads. Change the
+	// project row so a repeatable-read creator with an older snapshot retries.
+	if activeID == "" {
+		if _, err := tx.Exec(ctx, "update projects set updated_at = updated_at where id = $1", projectID); err != nil {
+			return ProjectReleaseSet{}, mapErr(err)
+		}
+	}
 	byApp := make(map[string]string, len(members))
 	for _, member := range members {
 		if _, err := uuid.Parse(member.AppID); err != nil {

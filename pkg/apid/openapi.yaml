@@ -104686,6 +104686,10 @@ components:
       type: object
       required: [slug]
       properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Existing project in the selected workspace. Projects managed by a repository or an active release set require their project release workflow.
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:

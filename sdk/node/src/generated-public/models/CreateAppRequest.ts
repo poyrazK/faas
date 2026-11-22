@@ -20,6 +20,10 @@ import type { WorkloadPort } from './WorkloadPort.js';
  * App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
+  /**
+   * Existing project in the selected workspace. Projects managed by a repository or an active release set require their project release workflow.
+   */
+  project_id?: string;
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
   /**

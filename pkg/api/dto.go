@@ -550,7 +550,9 @@ type ServiceReliabilityPolicy struct {
 
 // CreateAppRequest creates an app or function.
 type CreateAppRequest struct {
-	Slug string `json:"slug"`
+	// ProjectID places a new app in an existing project in the same workspace.
+	ProjectID string `json:"project_id,omitempty"`
+	Slug      string `json:"slug"`
 	// Visibility controls public versus authenticated private ingress. Empty
 	// defaults to public; internal is available on every plan.
 	Visibility string `json:"visibility,omitempty"`
