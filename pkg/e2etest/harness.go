@@ -865,6 +865,11 @@ const e2eMigrationTarget = 416
 // only needs apid, no schedd/vmmd).
 func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []string) *Harness {
 	t.Helper()
+	if StorageGrantsRequested() {
+		// Only StartWithAPIDEnv wires the grant world; running keyed here
+		// would pass the storage-grants lane without testing grants.
+		t.Fatalf("e2etest: %s=1 needs a test started with StartWithAPIDEnv (StartWithEnv does not support storage grants)", StorageGrantsEnv)
+	}
 	tmp := harnessTempDir(t)
 	// Shared, built-once daemon binaries — see EnsureSharedBinaries.
 	bin := buildBinaries(t)
@@ -985,11 +990,6 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 			"FAAS_SIGN_PUB="+signPubPath,
 			h.nativeRuntimeSnapshotEnv(tmp),
 		)
-		if h.grants != nil {
-			// The control plane decides the nodes' deferred deletes and
-			// sweeps jobs/ and sources/ (ADR-20261117190000).
-			env = append(env, "FAAS_SCHEDD_OBJECT_GC=1")
-		}
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
 		h.scheddEnv = append([]string(nil), env...)

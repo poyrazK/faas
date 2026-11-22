@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -51,9 +52,14 @@ type storageGrants struct {
 	// computeEnv follows controlEnv for imaged, builderd and vmmd: no key,
 	// deletes deferred, every object through secretd.
 	computeEnv []string
+	// secretd's process; teardown reads its output for refusals.
+	secretd *exec.Cmd
 	// Endpoint, AccessKey and SecretKey reach MinIO directly.
 	Endpoint, AccessKey, SecretKey string
 }
+
+// StorageGrantsOn reports whether this harness runs on store grants.
+func (h *Harness) StorageGrantsOn() bool { return h.grants != nil }
 
 // StorageGrantsComputeEnv is the environment of a granted compute daemon in
 // this harness, or nil when grants are off.
@@ -137,7 +143,8 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 		"FAAS_SECRETD_STORAGE_S3_ENDPOINT="+g.Endpoint, "FAAS_SECRETD_STORAGE_S3_REGION="+storageGrantsRegion,
 		"FAAS_SECRETD_STORAGE_S3_ACCESS_KEY="+g.AccessKey, "FAAS_SECRETD_STORAGE_S3_SECRET_KEY_FILE="+secretFile,
 	)
-	h.procs = append(h.procs, startProc(t, bin, "secretd", env))
+	g.secretd = startProc(t, bin, "secretd", env)
+	h.procs = append(h.procs, g.secretd)
 	waitTCP(t, secretdAddr, 30*time.Second)
 
 	g.controlEnv = []string{
@@ -149,6 +156,10 @@ func (h *Harness) startStorageGrants(t *testing.T, bin, dbURL string) {
 		"FAAS_S3_ACCESS_KEY_ID=" + g.AccessKey,
 		"FAAS_S3_SECRET_ACCESS_KEY=" + g.SecretKey,
 		"FAAS_STORAGE_CACHE_DIR=" + filepath.Join(dir, "cache"),
+		// As on a production compute node: no prefix stays on node disk,
+		// so snapshots, bases, kernels, layers and scans go through grants.
+		"FAAS_STORAGE_LOCAL_PREFIXES=none",
+		"FAAS_REQUIRE_SHARED_ARTIFACTS=1",
 	}
 	g.computeEnv = []string{
 		// Empty is unset: the node holds no key at all (slice 5).
@@ -189,6 +200,11 @@ func (h *Harness) checkStorageGrants(t *testing.T) {
 			}
 		}
 		rows.Close()
+	}
+	if out, ok := h.grants.secretd.Stdout.(*safeBuffer); ok {
+		if n := strings.Count(out.String(), "secretd: refused storage grant"); n > 0 {
+			t.Errorf("e2etest: secretd refused %d storage grant requests; see its log", n)
+		}
 	}
 	if grants == 0 && !t.Failed() {
 		t.Errorf("e2etest: storage grants were on but secretd issued none: the compute daemons did not use them")

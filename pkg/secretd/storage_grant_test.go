@@ -222,6 +222,19 @@ func TestGrantStorageObjects_AuditAndOrder(t *testing.T) {
 	}
 }
 
+// Platform reads stay out of the audit; platform creates are recorded under
+// the nil subject (ADR-20261117190000 amendment 1).
+func TestGrantStorageObjects_PlatformCreatesAudited(t *testing.T) {
+	f, st, _ := storageFixture(t)
+	if _, code := grant(f, get("base/base-amd64.ext4"), create("base/new-amd64.ext4"), create("scans/new-amd64.ext4.scan.json")); code != codes.OK {
+		t.Fatalf("code = %v", code)
+	}
+	want := secretd.StorageGrantRecord{NodeID: "n-owner", Class: "platform", SubjectID: "00000000-0000-0000-0000-000000000000", Access: "write", Objects: 2}
+	if len(st.records) != 1 || st.records[0] != want {
+		t.Fatalf("records = %+v, want [%+v]", st.records, want)
+	}
+}
+
 func TestGrantStorageObjects_OffAndBounds(t *testing.T) {
 	f := newFixture(t, 0)
 	if _, err := f.server.GrantStorageObjects(f.ctx, &secretdpb.GrantStorageObjectsRequest{Objects: []*secretdpb.StorageObjectRequest{get("base/x")}}); status.Code(err) != codes.FailedPrecondition {

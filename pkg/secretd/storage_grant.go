@@ -120,6 +120,10 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			s.metrics.refuse(rpcGrantStorageObjects, ReasonNotAuthorized)
 			return nil, rpcErr(codes.PermissionDenied, "secretd refused: nodes create "+string(key.subject.Class)+" objects but never replace them")
 		}
+		if access == accessWrite && key.subject.Class == storagegrant.ClassPlatform {
+			// Shared objects every node reads: name each one a node writes.
+			s.log.Info("secretd: platform object create requested", "node", logsanitize.Field(name), "key", logsanitize.Field(r.Key))
+		}
 		if counts[key] == 0 {
 			order = append(order, key)
 		}
@@ -134,9 +138,15 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 			}
 			return nil, err
 		}
-		if sub.subject.Class != storagegrant.ClassPlatform {
+		// Platform reads are only counted; platform writes are recorded
+		// like tenant grants, under the nil subject (amendment 1).
+		if sub.subject.Class != storagegrant.ClassPlatform || sub.access == accessWrite {
+			subjectID := sub.subject.ID
+			if sub.subject.Class == storagegrant.ClassPlatform {
+				subjectID = platformSubjectID
+			}
 			records = append(records, StorageGrantRecord{NodeID: nodeID, Class: string(sub.subject.Class),
-				SubjectID: sub.subject.ID, AppID: appID, Access: sub.access, Objects: counts[sub]})
+				SubjectID: subjectID, AppID: appID, Access: sub.access, Objects: counts[sub]})
 		}
 	}
 	// The record precedes the grant: a grant that cannot be recorded is
@@ -167,6 +177,10 @@ func (s *Server) GrantStorageObjects(ctx context.Context, req *secretdpb.GrantSt
 	return resp, nil
 }
 
+// platformSubjectID is the audit subject of platform objects, which belong
+// to no tenant.
+const platformSubjectID = "00000000-0000-0000-0000-000000000000"
+
 // admitStorage decides one subject for the caller and returns the app it
 // belongs to, if any. Every refusal is PermissionDenied and logged.
 func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub storageSubject) (string, error) {
@@ -184,9 +198,6 @@ func (s *Server) admitStorage(ctx context.Context, name, nodeID string, sub stor
 	switch sub.subject.Class {
 	case storagegrant.ClassPlatform:
 		// Writes reach here create-only (GrantStorageObjects).
-		if sub.access == accessWrite {
-			s.log.Info("secretd: platform object create granted", "node", logsanitize.Field(name))
-		}
 		return "", nil
 	case storagegrant.ClassBuildOutput:
 		run, err := s.store.BuildRunner(ctx, sub.subject.ID)
