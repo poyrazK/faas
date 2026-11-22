@@ -4218,26 +4218,28 @@ func (q *Queries) MarkSandboxForkCaptureUploaded(ctx context.Context, db DBTX, c
 const markSandboxSessionPaused = `-- name: MarkSandboxSessionPaused :execrows
 WITH session AS (
   SELECT id, account_id FROM sandbox_sessions
-   WHERE id=$2::text::uuid AND lease_token=$3::text AND state='pausing'
+   WHERE id=$3::text::uuid AND lease_token=$4::text AND state='pausing'
 ), capture AS (
   INSERT INTO sandbox_session_captures (id, session_id, account_id, node_id, storage_key, vmstate_storage_key, fc_version,
     mem_bytes, vmstate_bytes, has_backing, volume_backup_id)
-  SELECT $4::text::uuid, id, account_id, $5::text, $6::text,
-    $7::text, $8::text, $9::bigint, $10::bigint,
-    $11::boolean, NULLIF($12::text, '')::uuid
+  SELECT $5::text::uuid, id, account_id, $6::text, $7::text,
+    $8::text, $9::text, $10::bigint, $11::bigint,
+    $12::boolean, NULLIF($13::text, '')::uuid
   FROM session
   RETURNING session_id
 ), forks AS (
-  UPDATE sandbox_sessions f SET fork_capture_id=$4::text::uuid, updated_at=now()
+  UPDATE sandbox_sessions f SET fork_capture_id=$5::text::uuid, updated_at=now()
    WHERE f.forked_from IN (SELECT session_id FROM capture) AND f.fork_capture_id IS NULL AND f.state='queued'
 )
 UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, fork_requested_at=NULL, durability='node',
+  resume_requested_at=CASE WHEN $1::boolean AND sb.close_requested_at IS NULL THEN now() ELSE sb.resume_requested_at END,
   node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
-  expires_at=now()+make_interval(secs=>$1::double precision), updated_at=now()
+  expires_at=now()+make_interval(secs=>$2::double precision), updated_at=now()
  WHERE sb.id IN (SELECT session_id FROM capture)
 `
 
 type MarkSandboxSessionPausedParams struct {
+	ResumeAfter       bool
 	RetentionSeconds  float64
 	SessionID         string
 	LeaseToken        string
@@ -4256,6 +4258,7 @@ type MarkSandboxSessionPausedParams struct {
 // and no VM, and expires retention_seconds from now unless it resumes.
 func (q *Queries) MarkSandboxSessionPaused(ctx context.Context, db DBTX, arg MarkSandboxSessionPausedParams) (int64, error) {
 	result, err := db.Exec(ctx, markSandboxSessionPaused,
+		arg.ResumeAfter,
 		arg.RetentionSeconds,
 		arg.SessionID,
 		arg.LeaseToken,

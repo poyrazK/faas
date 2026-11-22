@@ -155,6 +155,9 @@ func (s *Server) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) error {
 		ForkRefused: func(_ context.Context, reason string) error {
 			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_ForkRefused{ForkRefused: &scheddpb.SandboxRunForkRefused{Reason: reason}}})
 		},
+		Evacuate: func(_ context.Context, reason string) error {
+			return send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Evacuate{Evacuate: &scheddpb.SandboxRunEvacuate{Reason: reason}}})
+		},
 		WebDomains: func(_ context.Context, d []sched.SandboxWebDomain) error {
 			frame := &scheddpb.SandboxRunWebDomains{Domains: make([]*scheddpb.SandboxRunWebDomain, 0, len(d))}
 			for _, x := range d {

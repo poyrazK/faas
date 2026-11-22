@@ -141,6 +141,13 @@ func (f *fakeSandboxSchedd) RunSandbox(stream scheddpb.Schedd_RunSandboxServer) 
 			return err
 		}
 	}
+	if script == "evacuate" && start.GetResume() == nil {
+		// The node drains (ADR-20261122132055 §7).
+		if err := stream.Send(&scheddpb.SandboxRunEvent{Frame: &scheddpb.SandboxRunEvent_Evacuate{Evacuate: &scheddpb.SandboxRunEvacuate{
+			Reason: "node_draining"}}}); err != nil {
+			return err
+		}
+	}
 	if script == "lose-vm" {
 		time.Sleep(50 * time.Millisecond)
 		return status.Error(codes.Unavailable, "vmmd went away")

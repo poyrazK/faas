@@ -276,9 +276,10 @@ func (s *Store) RecordAbandonedSandboxCapture(ctx context.Context, sessionID str
 
 // MarkSandboxPaused records a pausing session's capture and moves it to
 // paused: it holds no lease and no VM, and expires retention from now unless
-// it resumes first.
-func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration) error {
-	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token,
+// it resumes first. resume asks for its resume at once (an evacuation,
+// ADR-20261122132055 §7).
+func (s *Store) MarkSandboxPaused(ctx context.Context, id, token string, c SandboxCapture, retention time.Duration, resume bool) error {
+	n, err := s.q.MarkSandboxSessionPaused(ctx, s.pool, sqlc.MarkSandboxSessionPausedParams{SessionID: id, LeaseToken: token, ResumeAfter: resume,
 		CaptureID: c.ID, NodeID: c.NodeID, StorageKey: c.StorageKey, VmstateStorageKey: c.VMStateStorageKey, FcVersion: c.FCVersion,
 		MemBytes: c.MemBytes, VmstateBytes: c.VMStateBytes, HasBacking: c.HasBacking, VolumeBackupID: c.VolumeBackupID,
 		RetentionSeconds: retention.Seconds()})

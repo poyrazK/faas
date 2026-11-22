@@ -62,7 +62,7 @@ type SandboxStore interface {
 	ReturnSandboxResume(ctx context.Context, id, token string, retry bool, after time.Duration) error
 	TouchSandboxCaptures(ctx context.Context, ids []string) error
 	RecordAbandonedSandboxCapture(ctx context.Context, sessionID string, c agentstore.SandboxCapture) error
-	MarkSandboxPaused(ctx context.Context, id, token string, c agentstore.SandboxCapture, retention time.Duration) error
+	MarkSandboxPaused(ctx context.Context, id, token string, c agentstore.SandboxCapture, retention time.Duration, resume bool) error
 	MarkSandboxResumed(ctx context.Context, id, token, nodeID, instanceID string, cold bool, run time.Duration) error
 	ConsumedSandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
 	NodeOnlySandboxCaptures(ctx context.Context, limit int) ([]agentstore.SandboxCapture, error)
@@ -165,6 +165,9 @@ const (
 	// sandboxOutcomeEgressPolicy: the session has a domain policy and the
 	// node's vmmd cannot enforce one (ADR-20261117091026 §3).
 	sandboxOutcomeEgressPolicy = "egress_policy_unsupported"
+	// sandboxOutcomeEvacuated: an ephemeral session's node drained or its
+	// vmmd stopped (ADR-20261122132055 §7); a persistent one pauses instead.
+	sandboxOutcomeEvacuated = "node_evacuated"
 	// sandboxPauseRetry is how long a refused pause waits before the next
 	// try (ADR-20261122132055 §1).
 	sandboxPauseRetry = 5 * time.Second
@@ -323,6 +326,9 @@ type session struct {
 	abandoned []string
 	// placedNode is where schedd placed the VM.
 	placedNode string
+	// evacuate is why the session must leave its node (ADR-20261122132055
+	// §7), once asked: a persistent session pauses and resumes after.
+	evacuate string
 	// A fork capture of the running session (ADR-20261122132055 §3):
 	// forking while vmmd takes it, its ID and when it was asked, and the
 	// earliest next try after a refusal.
@@ -616,6 +622,8 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 			}
 		case ev.GetForkRefused() != nil:
 			s.forkRefused(ss, ev.GetForkRefused().GetReason())
+		case ev.GetEvacuate() != nil:
+			s.evacuate(ss, ev.GetEvacuate().GetReason(), send)
 		case ev.GetVolumeBackup() != nil:
 			s.recordVolumeBackup(ctx, ss, ev.GetVolumeBackup())
 		}
@@ -758,6 +766,8 @@ func (s *Sandboxes) pauseDue(ss *session, now time.Time, idle time.Duration) str
 	}
 	plan := api.Plan(ss.claim.Plan)
 	switch {
+	case ss.evacuate != "":
+		return ss.evacuate
 	case ss.lease.PauseRequested:
 		return "requested"
 	case !now.Before(ss.lease.ExpiresAt):
@@ -791,7 +801,7 @@ func (s *Sandboxes) pause(ctx context.Context, ss *session, why string, send fun
 // lease; the stream ends after this.
 func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.SandboxRunPaused) error {
 	ss.mu.Lock()
-	captureID, node, asked := ss.captureID, ss.placedNode, ss.pauseAsked
+	captureID, node, asked, evacuated := ss.captureID, ss.placedNode, ss.pauseAsked, ss.evacuate != ""
 	late := captureID == "" && ss.lateCaptureID != ""
 	if late {
 		captureID, asked = ss.lateCaptureID, ss.lateAsked
@@ -820,7 +830,9 @@ func (s *Sandboxes) markPaused(ctx context.Context, ss *session, p *scheddpb.San
 			return err
 		}
 	}
-	if err := s.store.MarkSandboxPaused(context.WithoutCancel(ctx), ss.claim.ID, ss.claim.LeaseToken, capture, retention); err != nil {
+	// An evacuated session resumes as soon as it can: on another node once
+	// its capture is uploaded, or on this one after vmmd's restart (§7).
+	if err := s.store.MarkSandboxPaused(context.WithoutCancel(ctx), ss.claim.ID, ss.claim.LeaseToken, capture, retention, evacuated); err != nil {
 		return err
 	}
 	s.actions.remove(ss.claim.ID)

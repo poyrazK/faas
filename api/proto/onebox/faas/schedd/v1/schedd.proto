@@ -1546,7 +1546,17 @@ message SandboxRunEvent {
     // forked and fork_refused relay vmmd's answers to fork.
     SandboxRunForked forked = 16;
     SandboxRunForkRefused fork_refused = 17;
+    // evacuate asks agentd to move the session off its node
+    // (ADR-20261122132055 §7): the node is draining, or its vmmd is
+    // stopping. A persistent session pauses and resumes elsewhere or after
+    // the restart; another ends. An older agentd ignores it.
+    SandboxRunEvacuate evacuate = 18;
   }
+}
+
+message SandboxRunEvacuate {
+  // reason is node_draining or vmmd_stopping.
+  string reason = 1;
 }
 
 message SandboxRunForked {

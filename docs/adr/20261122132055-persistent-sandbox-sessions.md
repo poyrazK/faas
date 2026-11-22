@@ -218,6 +218,14 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
 - **Not yet (fork):** ~~the reflink fast path~~ (amendment "same-node forks"); ~~the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook~~ and ~~`sandbox_fork_seconds` and `sandbox_forks_total`~~ (amendment "fork marker and metrics"); clients (step 10).
 
+### Step 7 as built (evacuation)
+
+- **One request, two senders.** A session is evacuated when schedd sees its agent-pool node leave (`draining`, `force_draining`, `maintenance`, `retired`; checked every 5 s from the node registry) or when its vmmd stops. Both send `evacuate{reason}` on the session's stream (`node_draining`, `vmmd_stopping`), at most once per sender.
+- **What agentd does.** A persistent session pauses at the next tick (after a fork in flight, never refused for being early), and its pause asks for its resume at once (`resume_requested_at`). An ephemeral session ends with `node_evacuated`.
+- **Where it resumes.** A capture only its node holds (durability `node`) keeps `require_node` while that node is draining: the resume waits, refused for capacity and tried again, until the upload makes it `remote` and it restores on another node. After a vmmd restart the node is still active, so the resume restores the node's copy there once vmmd serves again.
+- **vmmd stop.** Before it stops serving, vmmd sends `evacuate` to every live session and waits up to 75 s (inside systemd's default stop timeout) for their streams to end; sessions not moved by then are destroyed as before.
+- **Not yet:** a node drain does not wait for its sessions (drain completion counts app instances only); schedd and agentd restarts still end a session's VM (reattach); adoption of session VMs across a vmmd restart.
+
 ### Amendment: prompt requests and fork starts
 
 agentd learned of a pause, close or fork request at its next lease renewal (a third of the lease TTL, 10 s by default). A fork stayed unclaimable until the sweep (`SweepInterval`, 10 s) found its capture in the shared store. So a fork of a running session could wait about 20 s on polling around 1–3 s of VM work.

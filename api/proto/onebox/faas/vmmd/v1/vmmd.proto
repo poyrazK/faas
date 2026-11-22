@@ -3824,7 +3824,16 @@ message RunSandboxEvent {
     // forked and fork_refused answer fork; the VM keeps running.
     RunSandboxForked forked = 15;
     RunSandboxForkRefused fork_refused = 16;
+    // evacuate asks the session's owner to move it off this vmmd, which is
+    // stopping (ADR-20261122132055 §7): a persistent session pauses and
+    // resumes after, another ends. Sent only at vmmd's stop; an older
+    // reader ends the stream, which the stop ends anyway.
+    RunSandboxEvacuate evacuate = 17;
   }
+}
+
+message RunSandboxEvacuate {
+  string reason = 1;
 }
 
 // RunSandboxForked is a fork's capture, published node-first like a pause's

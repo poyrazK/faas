@@ -713,6 +713,7 @@ WITH session AS (
    WHERE f.forked_from IN (SELECT session_id FROM capture) AND f.fork_capture_id IS NULL AND f.state='queued'
 )
 UPDATE sandbox_sessions sb SET state='paused', paused_at=now(), pause_requested_at=NULL, fork_requested_at=NULL, durability='node',
+  resume_requested_at=CASE WHEN sqlc.arg(resume_after)::boolean AND sb.close_requested_at IS NULL THEN now() ELSE sb.resume_requested_at END,
   node_id=NULL, instance_id=NULL, lease_token=NULL, lease_owner=NULL, lease_expires_at=NULL,
   expires_at=now()+make_interval(secs=>sqlc.arg(retention_seconds)::double precision), updated_at=now()
  WHERE sb.id IN (SELECT session_id FROM capture);
