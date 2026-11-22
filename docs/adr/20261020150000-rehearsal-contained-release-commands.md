@@ -12,7 +12,7 @@
 
 - **Pinning.** imaged's `ensureReleaseTask` checks whether the app has a contained run (`ScenarioRehearsalNetworkRun`). If it does, imaged creates the release task as the contained command envelope:
   - `kind='release'`, so the prime gate still waits for it.
-  - `Command = [__gregale_rehearsal_command_v1__, spec]`, where `spec.Command` is the deployment's release argv. Shell releases are wrapped as `/bin/sh -lc <script>`, exactly as ordinary shell tasks run.
+  - `Command = [__gregale_rehearsal_command_v1__, spec]`, where `spec.Command` is the deployment's release argv. Shell releases are wrapped as `/bin/sh -c <script>`, exactly as ordinary shell tasks run (2026-11-22: was `-lc`; a login shell re-reads Debian `/etc/profile`, which resets the image PATH. Envelopes pinned with `-lc` still match).
   - No extra env or files, and `max_output_bytes = 65536`.
 - **Admission trigger.** `scenario_rehearsal_command_admission` now admits two shapes:
   - a `manual` envelope on a `live` deployment, as before;

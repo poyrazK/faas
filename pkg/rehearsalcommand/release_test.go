@@ -15,7 +15,7 @@ func TestContainedReleasePinsTheDeploymentsExactCommand(t *testing.T) {
 		argv    []string
 	}{
 		{"argv", []string{"node", "migrate.js", "--up"}, false, []string{"node", "migrate.js", "--up"}},
-		{"shell", []string{"npm run migrate && echo done"}, true, []string{"/bin/sh", "-lc", "npm run migrate && echo done"}},
+		{"shell", []string{"npm run migrate && echo done"}, true, []string{"/bin/sh", "-c", "npm run migrate && echo done"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			envelope, err := ContainedRelease(run, dep, tc.command, tc.shell)
@@ -45,5 +45,18 @@ func TestContainedReleasePinsTheDeploymentsExactCommand(t *testing.T) {
 	}
 	if _, err := ContainedRelease(run, dep, nil, true); err == nil {
 		t.Fatal("an empty shell release encoded")
+	}
+	// An envelope pinned before the shell form left the login shell still
+	// matches its deployment, and only as a shell release.
+	legacy, err := Encode(Spec{Version: Version, RunID: run, DeploymentID: dep, Command: []string{"/bin/sh", "-lc", "npm run migrate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !IsContainedReleaseFor(legacy, dep, []string{"npm run migrate"}, true) {
+		t.Fatal("a release pinned with the legacy login-shell form no longer matches")
+	}
+	if IsContainedReleaseFor(legacy, dep, []string{"npm run migrate && echo extra"}, true) ||
+		IsContainedReleaseFor(legacy, dep, []string{"npm", "run", "migrate"}, false) {
+		t.Fatal("the legacy shell form matched a different release")
 	}
 }

@@ -31,10 +31,14 @@ const SharedRuntimeEnv = sharedruntime.Env
 // minimal base. specs are the source's version declarations as written
 // (sourceVersionSpecs): the parsed source version drops bare majors such as
 // "22". A musl runner base (node22) is never chosen: the build's glibc
-// toolchain would not run on it if the app turned out ineligible.
-func sharedSourceAppRuntime(app state.App, fw Framework, specs []string, dockerfilePath string, env func(string) string) string {
+// toolchain would not run on it if the app turned out ineligible. A release
+// command that calls a package manager (`npm run migrate`, `uv run alembic
+// ...`) keeps the app's own base too: the runner bases ship none, and only
+// the start command is rewritten to run without one.
+func sharedSourceAppRuntime(app state.App, fw Framework, specs []string, dockerfilePath string, release []string, releaseShell bool, env func(string) string) string {
 	if !sharedruntime.Enabled(env(SharedRuntimeEnv)) || app.Type == state.AppTypeFunction || app.Runtime != "" ||
-		dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
+		dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob ||
+		sharedruntime.CommandUsesPackageManager(release, releaseShell) {
 		return ""
 	}
 	runtime := ""

@@ -49,7 +49,7 @@ func Mode(argv []string) (string, error) {
 		return "", ErrProbe
 	}
 	if filepath.Base(argv[0]) == "sh" {
-		if len(argv) == 3 && argv[1] == "-lc" && argv[2] == "/postgres-probe migrate" {
+		if len(argv) == 3 && (argv[1] == "-c" || argv[1] == "-lc") && argv[2] == "/postgres-probe migrate" {
 			return "migrate", nil
 		}
 		return "", ErrProbe
