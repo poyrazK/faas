@@ -20,10 +20,26 @@ type fakeGuardCounters struct {
 	cpu     map[string]float64
 	egress  map[string]uint64
 	ingress map[string]uint64
+	// addressed holds the instances with an addressed ingress reading.
+	addressed map[string]uint64
 }
 
 func newFakeGuardCounters() *fakeGuardCounters {
-	return &fakeGuardCounters{cpu: map[string]float64{}, egress: map[string]uint64{}, ingress: map[string]uint64{}}
+	return &fakeGuardCounters{cpu: map[string]float64{}, egress: map[string]uint64{}, ingress: map[string]uint64{}, addressed: map[string]uint64{}}
+}
+
+func (f *fakeGuardCounters) AddressedIngress(id string) (uint64, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.addressed[id]
+	return v, ok
+}
+
+// addAddressed moves an instance's addressed packet count, giving it a reading.
+func (f *fakeGuardCounters) addAddressed(id string, packets uint64) {
+	f.mu.Lock()
+	f.addressed[id] += packets
+	f.mu.Unlock()
 }
 
 func (f *fakeGuardCounters) CPUSeconds(id string) (float64, bool) {

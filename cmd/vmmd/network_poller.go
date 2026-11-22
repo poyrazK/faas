@@ -295,9 +295,44 @@ func evictStaleCacheEntries(cache *netstats.Cache, live map[string]string) {
 // cache for the idle ladder's activity guard (ADR-20261107122928): egress is
 // vethHost rx (guest to the world), ingress vethHost tx. A reading the cache
 // marks invalid is no reading: the guard then waits.
-type idleLadderNet struct{ cache *netstats.Cache }
+//
+// addressed, when set, also serves the IPv4 packets addressed to each
+// instance's network namespace, which the guard resumes a paused app on
+// instead of the veth bytes (ADR-20261107122928 amendment 4).
+type idleLadderNet struct {
+	cache     *netstats.Cache
+	addressed *fcvm.NetnsIngressReader
+}
 
 func (n idleLadderNet) NetBytes(instance string) (egress, ingress uint64, ok bool) {
 	r, ok := n.cache.Lookup(instance)
 	return r.CumulativeBytes, r.IngressCumulativeBytes, ok && r.Valid
+}
+
+func (n idleLadderNet) AddressedIngress(instance string) (uint64, bool) {
+	if n.addressed == nil {
+		return 0, false
+	}
+	return n.addressed.AddressedIngress(instance)
+}
+
+// runNetnsIngressPoll refreshes the addressed ingress readings of the live
+// instances on the netstats cadence until ctx ends.
+func runNetnsIngressPoll(ctx context.Context, snapshotLive snapshotLiveFunc, reader *fcvm.NetnsIngressReader, interval time.Duration) {
+	if snapshotLive == nil || reader == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = EgressBytesPollInterval
+	}
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			reader.Poll(snapshotLive())
+		}
+	}
 }
