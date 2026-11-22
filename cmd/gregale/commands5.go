@@ -1420,18 +1420,7 @@ func cmdDashboard(args []string) int {
 func cmdQueueDispatch(args []string) int {
 	parent, _ := lookupCliCommand("queue")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream (queue drain signals)\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row (blocks)\n"+
-			"  state <slug>            depth + cap (no lease)\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect up to N rows without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		return 1
 	}
 	switch args[0] {
@@ -1449,6 +1438,11 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueuePeek(args[1:])
 	case "dead-letter":
 		return cmdQueueDeadLetter(args[1:])
+	case "dlq":
+		// `queue dlq list <slug>` is rewritten to dead-letter before this
+		// switch. list is dlq's only verb, so `queue dlq <slug>` lists too;
+		// it printed the pre-rename usage on prod (hunt 2026-11-21).
+		return cmdQueueDeadLetter(args[1:])
 	case "ack":
 		return cmdQueueAck(args[1:])
 	case "setup":
@@ -1457,22 +1451,24 @@ func cmdQueueDispatch(args []string) int {
 		return cmdQueueBindings(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		PrintUsage(os.Stderr, "usage: gregale queue <subcommand> <slug> [args]\n\n"+
-			"  tail <slug>            long-poll the unified event stream\n"+
-			"  send <slug> --payload J [--queue-name Q] enqueue one row\n"+
-			"  receive <slug>         wait for the next delivered row\n"+
-			"  state <slug>            depth + cap\n"+
-			"  status <slug>           queue depth, scaling, bindings, and liveness\n"+
-			"  peek <slug> [--limit N] inspect without draining\n"+
-			"  dead-letter <slug>     rows that exhausted attempts\n"+
-			"  ack <slug> <row-id>    acknowledge a processed message's result\n"+
-			"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n"+
-			"  bindings <verb> <slug> manage queue bindings\n",
-			"queue")
+		PrintUsage(os.Stderr, queueDispatchUsage, "queue")
 		maybeSuggestSub(sug)
 		return 1
 	}
 }
+
+// queueDispatchUsage names queue's verbs as `gregale queue --help` does.
+const queueDispatchUsage = "usage: gregale queue <subcommand> <slug> [args]\n\n" +
+	"  watch <slug>           long-poll the unified event stream (queue drain signals)\n" +
+	"  send <slug> --payload J [--queue-name Q] enqueue one row\n" +
+	"  receive <slug>         wait for the next delivered row (blocks)\n" +
+	"  state <slug>           depth + cap (no lease)\n" +
+	"  status <slug>          queue depth, scaling, bindings, and liveness\n" +
+	"  peek <slug> [--limit N] inspect up to N rows without draining\n" +
+	"  dlq list <slug>        rows that exhausted attempts\n" +
+	"  ack <slug> <row-id>    acknowledge a processed message's result\n" +
+	"  setup <slug>           configure push delivery (needs an HTTP listener) + queue-depth scaling\n" +
+	"  bindings <verb> <slug> manage queue bindings\n"
 
 func cmdQueueBindings(args []string) int {
 	if len(args) == 0 {
@@ -1636,6 +1632,10 @@ func cmdQueueSend(args []string) int {
 		return jsonOut(writeJSON(resp))
 	}
 	PrintOK(osStdout, "Enqueued row %s on %s.", resp.ID, slug)
+	// A push delivery can finish before `queue receive` starts, and receive
+	// waits for the next one: on prod it reported nothing while this row had
+	// already completed with its result (hunt 2026-11-21).
+	_, _ = fmt.Fprintf(osStdout, "Check its result: %s invocation get %s\n", recoveryCLI(), recoveryArgument(resp.ID))
 	return 0
 }
 

@@ -394,6 +394,78 @@ func (q *Queries) LockFixtureDatabase(ctx context.Context, db DBTX, databaseName
 	return err
 }
 
+const observeTaskClaim = `-- name: ObserveTaskClaim :one
+SELECT EXISTS (
+  SELECT 1
+    FROM public.gregale_mcp_tasks AS task
+    JOIN public.gregale_mcp_task_worker_handlers AS handler
+      ON handler.namespace = task.namespace AND handler.tool_name = task.tool_name
+     AND handler.handler_version = task.handler_version
+    JOIN public.gregale_mcp_task_workers AS worker
+      ON worker.namespace = handler.namespace AND worker.worker_id = handler.worker_id
+   WHERE task.namespace = $1::text AND task.task_id = $2::uuid
+     AND task.tool_name = 'build_report' AND task.status = 'running' AND task.attempt_count = $3::integer
+     AND task.lease_expires_at > clock_timestamp() AND task.expires_at > clock_timestamp()
+     AND task.cancel_requested_at IS NULL
+     AND encode(sha256(convert_to(task.lease_token::text, 'UTF8')), 'hex') = $4::text
+     AND worker.worker_id = $5::uuid AND NOT worker.draining AND worker.expires_at > clock_timestamp()
+     AND handler.deployment_id = $6::text
+)
+`
+
+type ObserveTaskClaimParams struct {
+	Namespace    string
+	TaskID       pgtype.UUID
+	Attempt      int32
+	LeaseSha256  string
+	WorkerID     pgtype.UUID
+	DeploymentID string
+}
+
+func (q *Queries) ObserveTaskClaim(ctx context.Context, db DBTX, arg ObserveTaskClaimParams) (bool, error) {
+	row := db.QueryRow(ctx, observeTaskClaim,
+		arg.Namespace,
+		arg.TaskID,
+		arg.Attempt,
+		arg.LeaseSha256,
+		arg.WorkerID,
+		arg.DeploymentID,
+	)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const observeTaskResult = `-- name: ObserveTaskResult :one
+SELECT count(*) AS task_rows,
+       count(*) FILTER (WHERE status = 'completed' AND result_encrypted IS NOT NULL) AS completed_result_rows,
+       coalesce(max(attempt_count) FILTER (
+           WHERE task_id = $1::uuid AND tool_name = 'build_report'
+             AND status = 'completed' AND result_encrypted IS NOT NULL AND expires_at > clock_timestamp()
+       ), 0)::integer AS attempt
+  FROM public.gregale_mcp_tasks
+ WHERE namespace = $2::text
+`
+
+type ObserveTaskResultParams struct {
+	TaskID    pgtype.UUID
+	Namespace string
+}
+
+type ObserveTaskResultRow struct {
+	TaskRows            int64
+	CompletedResultRows int64
+	Attempt             int32
+}
+
+// Read only counts and the exact completed Task attempt, never its payload.
+func (q *Queries) ObserveTaskResult(ctx context.Context, db DBTX, arg ObserveTaskResultParams) (ObserveTaskResultRow, error) {
+	row := db.QueryRow(ctx, observeTaskResult, arg.TaskID, arg.Namespace)
+	var i ObserveTaskResultRow
+	err := row.Scan(&i.TaskRows, &i.CompletedResultRows, &i.Attempt)
+	return i, err
+}
+
 const otherSessions = `-- name: OtherSessions :one
 SELECT count(*)::bigint FROM pg_catalog.pg_stat_activity WHERE datname=$1::text AND pid<>$2::integer
 `

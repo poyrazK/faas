@@ -22,6 +22,19 @@ import (
 	"time"
 )
 
+// Pipeline limits bound durable orchestration independently of Run concurrency.
+const (
+	ExecutionPipelineReuseRetention     = 24 * time.Hour
+	ExecutionPipelineProgressRetained   = 256
+	ExecutionPipelineProgressMaxBytes   = 256 << 10
+	ExecutionPipelineCompletionMaxBytes = 1 << 20
+	ExecutionPipelineMaxAttempts        = 3
+	ExecutionPipelineDefaultTimeoutMS   = 3600000
+	ExecutionPipelineMaxTimeoutMS       = 86400000
+	ExecutionPipelineMinBackoffMS       = 1000
+	ExecutionPipelineMaxBackoffMS       = 60000
+)
+
 // Short-lived authored-source retention preview; these are storage/admission
 // ceilings, not build limits. Expired identities remain immutable tombstones.
 const (
@@ -196,6 +209,25 @@ const (
 
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
+
+// Operator fleet instance list (ADR-20261121161842).
+const (
+	ObsInstanceListDefault = 200
+	ObsInstanceListMax     = 1000
+)
+
+// Operator wake-latency report (ADR-20261121200409). The report reads each
+// wake event kind over the window, at most ObsWakeLatencyEventsPerKind rows
+// per kind (newest first; beyond that it says it was truncated). The restore
+// target is the spec's <350 ms snapshot restore interval (§14).
+const (
+	ObsWakeLatencyRestoreTargetMS = 350
+	ObsWakeLatencyEventsPerKind   = 20000
+	ObsWakeLatencySlowestMax      = 25
+	ObsWakeLatencyAppsMax         = 25
+	ObsWakeLatencyWindowDefault   = time.Hour
+	ObsWakeLatencyWindowMax       = 24 * time.Hour
+)
 
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
@@ -1438,7 +1470,7 @@ const (
 	ProfilePeriodicDefaultConfirmations                 = 2
 	ProfilePeriodicMaxHistory                           = 10
 	ProfilePeriodicMaxRows                              = 50
-	ProfilePeriodicMaxDataBytes                         = 262144
+	ProfilePeriodicMaxDataBytes                         = 524288
 
 	ProfileAutoDefaultWindowSeconds = 300
 	ProfileAutoDefaultWarmupSeconds = 120
@@ -4091,6 +4123,18 @@ const (
 	OwnerBalanceMovesPerTick     = 5
 	OwnerBalanceInterval         = time.Minute
 	OwnerBalanceMinIdle          = 24 * time.Hour
+	// Return home (ADR-20261121203000). A drain or a dead node displaces
+	// apps onto a peer; a rolling release displaces every node's apps in
+	// turn, so the last node to stay up ended up owning all of them
+	// (production 2026-11-21: 91 apps and 60.9 GB on bhs-2, none on bhs-3).
+	// A displacement does not count as a move for OwnerBalanceMinIdle, and
+	// once the home node is active again the control plane returns parked
+	// displaced apps to it, at most OwnerReturnHomeMovesPerTick every
+	// OwnerBalanceInterval. An app displaced longer than
+	// OwnerReturnHomeWindow ago has settled where it is and is left to the
+	// balance.
+	OwnerReturnHomeMovesPerTick = 20
+	OwnerReturnHomeWindow       = 6 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -11557,6 +11601,8 @@ var (
 	// reused after caller code runs, so every admitted execution occupies one
 	// slot until teardown is acknowledged.
 	ExecutionConcurrentPerAccount = [4]int{0, 1, 5, 20}
+	// Extended Runs share the total cap and have a separate smaller live cap.
+	ExecutionExtendedConcurrentPerAccount = [4]int{0, 1, 1, 2}
 
 	// ExecutionOutputMaxBytes is a combined cap across the JSON result,
 	// stdout, and stderr. The guest stops accepting output at this boundary;
@@ -12055,6 +12101,7 @@ const (
 	ExecutionTimeoutDefaultMS       = 5_000
 	ExecutionTimeoutMinMS           = 100
 	ExecutionTimeoutHardMaxMS       = 30_000
+	ExecutionExtendedTimeoutMaxMS   = 300_000
 	ExecutionMemoryDefaultMB        = 128
 	ExecutionCPUMillicoresDefault   = 250
 	ExecutionCPUMillicoresMax       = DefaultAppCPUMillicores
@@ -12067,6 +12114,9 @@ const (
 	ExecutionArtifactMaxPathBytes   = 256
 	ExecutionPlaintextFieldMaxBytes = 1 << 20
 	ExecutionPIDsMax                = 64
+	// Source Run admission keys remain bound for 24 hours after admission.
+	ExecutionIdempotencyRetentionSeconds = 24 * 60 * 60
+	ExecutionIdempotencyKeyMaxBytes      = 255
 	// ExecutionSealedPayloadMaxBytes is the storage-layer ceiling for the
 	// encrypted source/input envelope, including an optional multi-file bundle.
 	// It leaves bounded room above the admitted 1 MiB source and input fields for
@@ -12098,6 +12148,8 @@ const (
 // one-shot executions. It is returned as a value so callers cannot mutate the
 // package-level plan tables.
 type ExecutionPlanLimits struct {
+	ExtendedTimeoutMS      int
+	MaxExtendedConcurrent  int
 	Allowed                bool
 	MaxConcurrent          int
 	MaxSourceBytes         int
@@ -12673,8 +12725,10 @@ func (p Plan) ExecutionLimits() (limits ExecutionPlanLimits, ok bool) {
 
 	idx := p.PlanIndex()
 	return ExecutionPlanLimits{
-		Allowed:       true,
-		MaxConcurrent: ExecutionConcurrentPerAccount[idx],
+		Allowed:               true,
+		MaxConcurrent:         ExecutionConcurrentPerAccount[idx],
+		ExtendedTimeoutMS:     ExecutionExtendedTimeoutMaxMS,
+		MaxExtendedConcurrent: ExecutionExtendedConcurrentPerAccount[idx],
 		// Source and JSON input each reuse the existing event-payload
 		// ladder. Keeping one stored value prevents the invocation and
 		// execution request caps from drifting independently.
@@ -20431,6 +20485,135 @@ const (
 // MaxObjectKeyScopeBytes bounds a bucket binding's key_prefix
 // (ADR-20261106114500); the catalog CHECK enforces the same bound.
 const MaxObjectKeyScopeBytes = 512
+
+// Execution template capture is platform work, bounded independently of caller payloads.
+const (
+	ExecutionTemplateCaptureTimeout     = 90 * time.Second
+	ExecutionTemplateVMStateMaxBytes    = 16 << 20
+	ExecutionTemplateBackingMaxBytes    = 64 << 10
+	ExecutionTemplateCaptureConcurrency = 1
+	ExecutionTemplateShapesMax          = 32
+	ExecutionTemplateShapesMaxBytes     = 16 << 10
+)
+
+const ExecutionTemplateFCVersionMaxBytes = 64
+
+const ExecutionContractSchemaMaxBytes = 64 << 10
+
+// Stored Run files have independent data, storage and lifetime budgets.
+const (
+	ExecutionFileHardMaxBytes        int64 = 64 << 20
+	ExecutionFileMaxInputs                 = 8
+	ExecutionFileStreamChunkBytes          = 64 << 10
+	ExecutionFileRetention                 = 24 * time.Hour
+	ExecutionFileUploadTimeout             = 2 * time.Minute
+	ExecutionFileGCGrace                   = 2 * time.Minute
+	ExecutionFileGCInterval                = time.Minute
+	ExecutionFileGCBatchSize               = 32
+	ExecutionFileScratchReserveBytes int64 = 8 << 20
+	ExecutionFileKeyMaxBytes               = 8192
+)
+
+// Scoped uploaded inputs must fit inside a RAP tool envelope with a callback.
+const (
+	AgentExecutionFileGrantTTL      = 15 * time.Minute
+	AgentExecutionFileGrantMaxBytes = 1536
+	AgentExecutionFileGrantMaxCount = 4
+)
+
+// Delivery staging is per apid process and is reclaimed on process exit.
+const (
+	RunArtifactDeliveryConcurrency     = 2
+	RunArtifactDeliveryKeyMaxBytes     = 128
+	RunArtifactDeliveryRequestMaxBytes = 4096
+	RunArtifactDeliveryDownloadTTL     = 5 * time.Minute
+)
+
+var (
+	ExecutionFileBytesByPlan   = [4]int64{0, 8 << 20, 32 << 20, 64 << 20}
+	ExecutionFileStorageByPlan = [4]int64{0, 64 << 20, 1 << 30, 4 << 30}
+	ExecutionFileCountByPlan   = [4]int{0, 32, 256, 1024}
+)
+
+// Read-only Run release tooling bounds operator inputs and inventory work.
+const (
+	RunReleaseManifestMaxBytes    = 2 << 20
+	RunReleaseJSONMaxDepth        = 32
+	RunReleaseInventoryMaxEntries = 100000
+	RunReleaseCheckTimeout        = 2 * time.Minute
+)
+
+// Dependency environment limits reserve a complete artifact allowance per
+// live row (including retired rows until physical deletion acknowledges it).
+const (
+	ExecutionEnvironmentRecipeMaxBytes               = 1 << 20
+	ExecutionEnvironmentRequestMaxBytes              = 2 << 20
+	ExecutionEnvironmentImageHeadroomBytes     int64 = 64 << 20
+	ExecutionEnvironmentMaxPackages                  = 2048
+	ExecutionEnvironmentMaxSystemPackages            = 32
+	ExecutionEnvironmentSystemPackageMaxBytes        = 128
+	ExecutionEnvironmentDiagnosticMaxEvents          = 128
+	ExecutionEnvironmentDiagnosticMaxLineBytes       = 1024
+	ExecutionEnvironmentDiagnosticMaxJSONBytes       = 524288
+	ExecutionEnvironmentLeaseSeconds                 = 20 * 60
+	ExecutionEnvironmentBuildMaxAttempts             = 3
+	ExecutionEnvironmentPollSeconds                  = 2
+	ExecutionEnvironmentGCBatch                      = 10
+	ExecutionEnvironmentCleanupSeconds               = 15
+	ExecutionEnvironmentImageTimeoutSeconds          = 300
+	ExecutionEnvironmentMaxArchiveBytes        int64 = 1 << 30
+)
+
+var ExecutionEnvironmentCountByPlan = [4]int{0, 2, 5, 10}
+var ExecutionEnvironmentBytesByPlan = [4]int64{0, 256 << 20, 512 << 20, 1 << 30}
+
+// One reserved extended worker per dispatch node preserves the short task lane.
+const ExecutionExtendedDispatchWorkers = 1
+
+const ExecutionEnvironmentDiagnosticLiveMaxEvents = 512
+
+const ExecutionEnvironmentDiagnosticWriteTimeoutSeconds = 2
+
+// Versioned Run task catalogs retain encrypted source separately from Run data.
+const (
+	ExecutionTaskNameMaxBytes            = 63
+	ExecutionTaskVersionMax              = 1000000
+	ExecutionTaskDefinitionMaxBytes      = 2 << 20
+	ExecutionTaskSealedMaxBytes          = 4 << 20
+	ExecutionTaskMetadataMaxBytes        = 256 << 10
+	ExecutionTaskPublishMaxBytes         = 3 << 20
+	ExecutionTaskAgentEndpointMax        = 16
+	ExecutionTaskListMax                 = 25
+	ExecutionTaskCallbackMaxBytes        = 4096
+	ExecutionTaskCallbackBatch           = 64
+	ExecutionTaskCallbackIntervalSeconds = 5
+)
+
+var ExecutionTaskNamesByPlan = [...]int{0, 5, 25, 100}
+var ExecutionTaskVersionsByPlan = [...]int{0, 20, 100, 250}
+var ExecutionTaskSealedBytesByPlan = [...]int64{0, 16 << 20, 64 << 20, 128 << 20}
+
+// ExecutionTaskEnvelopeMaxBytes includes definition identity and digest binding.
+const ExecutionTaskEnvelopeMaxBytes = ExecutionTaskDefinitionMaxBytes + 1024
+
+const ExecutionTaskCallIDMaxBytes = 256
+
+// Named tasks reserve half their default staging envelope for file inputs.
+const ExecutionTaskDefaultOutputDiskDivisor = 2
+
+// Run controls are planning allowances, separate from monetary billing caps.
+const (
+	RunControlRefMaxBytes               = 96
+	RunControlBodyMaxBytes              = 4096
+	RunHistoryPageMax                   = 50
+	RunControlMaxConcurrent       int64 = 32
+	RunControlMaxDailyInvocations int64 = 1_000_000_000
+	RunControlMaxDailyComputeMBMS int64 = 1_000_000_000_000_000
+	RunBudgetWarningPercent             = 80
+)
+
+var RunCustomersByPlan = [4]int{0, 25, 250, 2500}
+var RunBindingsByPlan = [4]int{0, 100, 1000, 10000}
 
 const (
 	DataPipelineRelationshipsMax        = 16

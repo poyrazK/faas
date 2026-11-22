@@ -49,6 +49,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`domain`](#domain) | Manage custom domains |
 | [`edge`](#edge) | Manage edge rules, rule lists, caching and CORS |
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
+| [`bucket`](#bucket) | Manage object storage buckets |
 | [`export`](#export) | Verify and compare saved JSON Lines exports offline |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
@@ -102,7 +103,7 @@ Scaffold a project from a built-in template
 
 | Flag | Meaning | |
 |---|---|---|
-| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | template name (required unless --agents) | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--path <DIR>` | target directory (required unless --agents, which defaults to .) |  |
 | `--deploy` | deploy after scaffolding |  |
 | `--name <SLUG>` | app slug used with --deploy, or the app --agents deploys (default: the linked app, else the directory name) |  |
@@ -131,6 +132,10 @@ Source defaults to committed HEAD when origin exists; otherwise local files. Use
 
 RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Connection: use --profile NAME before the command.
 
+Projects: --project (every workload), --only SLUGS. Traffic: --rollout MODE.
+
+Retry a project&#39;s failed workloads: gregale release attempt retry SESSION_ID
+
 | Flag | Meaning | |
 |---|---|---|
 | `--atomic` | publish an existing HTTP project only after all zero-traffic candidates are ready; requires --project |  |
@@ -158,7 +163,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--github` | emit a GitHub Actions workflow snippet for the Gregale deploy action |  |
 | `--pinned-sha <SHA>` | with --github only, pin the generated Action to this full 40-character commit SHA |  |
 | `--pin-action` | with --github only, resolve the current v0 Action tag to its commit SHA |  |
-| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
+| `--template <NAME>` | scaffold from a built-in template | one of `hello-node` · `hello-python` · `hello-go` · `hello-node-private` · `cron-example` · `function-node` · `function-python` · `function-go` · `function-node24` · `function-python313` · `function-rust` · `event-worker` · `queue-worker` · `s3-uploader` · `object-storage-node` · `object-storage-python` · `slack-bot` · `rest-api-postgres` · `rest-api-postgres-python` · `cron-worker` · `webhook-receiver` · `ai-chat` · `secret-reload-node` · `customer-platform` · `mcp-node` · `mcp-node-tasks` · `mcp-go` · `mcp-python` · `customer-operation-export` · `customer-operation-job-export` · `customer-operation-workflow-export` · `data-api` · `data-api-starter` · `data-api-teams` · `data-api-support-console` |
 | `--dockerfile` | build with the supplied Dockerfile inside --tarball |  |
 | `--issue-source-maps <PATH>` | publish a portable manifest from the selected source; requires zero production traffic |  |
 | `--issue-source-map-directory <PATH>` | deployed bundle directory corresponding to the manifest directory |  |
@@ -870,6 +875,26 @@ Provision or attach PostgreSQL and inject DATABASE_URL
 | `--scale-to-zero` | suspend compute when idle |  |
 | `--environment-key <KEY>` | connection environment variable |  |
 | `--access <MODE>` | credential access | one of `read_write` · `read_only` · `migration` · `data_api` · `session` |
+| `--wait-timeout <DURATION>` | readiness timeout |  |
+
+### add bucket
+
+Provision or attach object storage and inject sealed S3 settings
+
+`gregale add bucket --app <APP> [--env <SCOPE>] [--scope <SCOPE>] [--region <REGION>] [--public] [--serve-at <PATH>] [--permission <MODE>] [--label <LABEL>] [--prefix <PREFIX>] [--key-prefix <KEYS/>] [--wait-timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <APP>` | app slug | required |
+| `--env <SCOPE>` | environment scope (defaults to linked project environment) |  |
+| `--scope <SCOPE>` | environment scope (alias for --env) |  |
+| `--region <REGION>` | object-storage region |  |
+| `--public` | serve objects publicly from the app host |  |
+| `--serve-at <PATH>` | public mount path |  |
+| `--permission <MODE>` | compute binding permission | one of `read` · `write` · `read_write` |
+| `--label <LABEL>` | bucket-scoped compute credential label |  |
+| `--prefix <PREFIX>` | injected storage secret prefix |  |
+| `--key-prefix <KEYS/>` | limit the binding to object keys under this prefix |  |
 | `--wait-timeout <DURATION>` | readiness timeout |  |
 
 ### add ai
@@ -2480,7 +2505,7 @@ Show the step-by-step timeline of one app wake
 
 Inspect an app&#39;s resource bindings and credential rotation
 
-`gregale app binding [call|probe-policy|verification|release-policy|service|check|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
+`gregale app binding [call|probe-policy|verification|release-policy|service|check|object-storage|verify] [--release <ID|vN>] [--require-complete] [--env <SCOPE>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2731,6 +2756,54 @@ gregale app binding check my-api --max-verification-age 10m --json
 gregale app binding check my-api --scope production
 gregale app binding check my-api --release v12 --release-policy --wait --json
 gregale app binding check my-api --release v12 --max-verification-age 10m --json
+```
+
+#### app binding object-storage
+
+Manage app-to-bucket compute bindings
+
+`gregale app binding object-storage <list|rotate|revoke>`
+
+##### app binding object-storage list
+
+List safe binding metadata
+
+`gregale app binding object-storage list <app> <bucket>`
+
+Examples:
+
+```sh
+gregale app binding object-storage list my-api assets
+```
+
+##### app binding object-storage rotate
+
+Rotate a binding credential and optionally wait for retirement
+
+`gregale app binding object-storage rotate [--wait] [--wait-timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket> <binding-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the previous credential to retire |  |
+| `--wait-timeout <DURATION>` | maximum time to wait for rotation (default 5m) |  |
+| `--poll-interval <DURATION>` | status polling interval while waiting (default 1s) |  |
+
+Examples:
+
+```sh
+gregale app binding object-storage rotate my-api assets BINDING_ID --wait
+```
+
+##### app binding object-storage revoke
+
+Revoke a binding credential
+
+`gregale app binding object-storage revoke <app> <bucket> <binding-id>`
+
+Examples:
+
+```sh
+gregale app binding object-storage revoke my-api assets BINDING_ID
 ```
 
 #### app binding verify
@@ -4924,6 +4997,258 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
 
 
+## bucket
+
+Manage object storage buckets
+
+`gregale bucket [<subcommand>]`
+
+### bucket multipart
+
+Inspect owned multipart upload sessions and parts
+
+#### bucket multipart get
+
+Inspect a multipart session returned by an upload
+
+`gregale bucket multipart get <app> <bucket-id> <upload-id>`
+
+#### bucket multipart cancel
+
+Abort an unfinished multipart session, freeing the bucket it holds
+
+`gregale bucket multipart cancel <app> <bucket-id> <upload-id>`
+
+#### bucket multipart list
+
+List multipart sessions
+
+`gregale bucket multipart list [--limit <N>] [--cursor <ID>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--cursor <ID>` | next page cursor |  |
+
+#### bucket multipart parts
+
+List uploaded multipart parts
+
+`gregale bucket multipart parts [--limit <N>] [--part-number-marker <N>] <app> <bucket-id> <upload-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | page size (1..1000) |  |
+| `--part-number-marker <N>` | last part from the previous page |  |
+
+### bucket deletion
+
+Create or inspect durable object deletions
+
+#### bucket deletion create
+
+Delete current data or an owned version; retry with the same UUID
+
+`gregale bucket deletion create <app> <bucket-id> <key> <request-uuid> [version-id|null]`
+
+#### bucket deletion get
+
+Show a persisted deletion receipt
+
+`gregale bucket deletion get <app> <bucket-id> <request-id>`
+
+### bucket inventory
+
+Start, inspect or cancel a fenced capacity inventory
+
+#### bucket inventory get
+
+Show reconciliation progress and reclaimed capacity
+
+`gregale bucket inventory get <app> <bucket-id> <job-id>`
+
+#### bucket inventory start
+
+Pause writes and request capacity reconciliation
+
+`gregale bucket inventory start <app> <bucket-id>`
+
+#### bucket inventory cancel
+
+Cancel reconciliation and resume writes
+
+`gregale bucket inventory cancel <app> <bucket-id> <job-id>`
+
+### bucket copy-source
+
+Manage copy-only owned source grants
+
+#### bucket copy-source list
+
+List source grants for a destination credential
+
+`gregale bucket copy-source list <app> <bucket-id> <credential-id>`
+
+#### bucket copy-source grant
+
+Allow copying an owned source bucket or prefix
+
+`gregale bucket copy-source grant <app> <bucket-id> <credential-id> <source-bucket-id> [prefix]`
+
+#### bucket copy-source revoke
+
+Prevent new copy dispatch from a source
+
+`gregale bucket copy-source revoke <app> <bucket-id> <credential-id> <source-bucket-id>`
+
+### bucket usage
+
+Account object storage observations, safety policy and billing state
+
+### bucket list
+
+List an app&#39;s object-storage buckets and their IDs
+
+`gregale bucket list <app>`
+
+### bucket delete
+
+Delete an empty bucket (including retained versions)
+
+`gregale bucket delete [--yes] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | skip the typed confirmation (alias: --quiet) |  |
+
+### bucket upload
+
+Upload a file with resumable multipart transfers
+
+`gregale bucket upload [--content-type <TYPE>] [--if-match <ETAG>] [--if-none-match <*>] [--resume <UPLOAD-ID>] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--content-type <TYPE>` | object MIME type |  |
+| `--if-match <ETAG>` | replace a matching object (single PUT only) |  |
+| `--if-none-match <*>` | create only if absent (single PUT only) |  |
+| `--resume <UPLOAD-ID>` | resume a multipart upload from its local checkpoint |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket sign
+
+Mint a short-lived signed URL to download or upload one object
+
+`gregale bucket sign [--method <METHOD>] [--expires <DURATION>] [--size-bytes <N>] [--content-type <TYPE>] <app> <bucket-id> <key>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--method <METHOD>` | GET to download (default), PUT to upload | one of `GET` · `PUT` |
+| `--expires <DURATION>` | URL lifetime, at most 15m (default 5m) |  |
+| `--size-bytes <N>` | exact upload size; required with --method PUT |  |
+| `--content-type <TYPE>` | upload content type |  |
+
+Examples:
+
+```sh
+gregale bucket sign my-api 4f2c… v1/stream/segment.gz --expires 15m
+gregale bucket sign my-api 4f2c… avatars/42.png --method PUT --size-bytes 18231 --content-type image/png
+```
+
+Send the URL with exactly the printed headers and no Gregale credentials; it needs no S3 SDK.
+
+A PUT URL writes once, and each URL reserves storage when issued, so do not retry signing automatically.
+
+### bucket download
+
+Download an object to a file after a complete transfer
+
+`gregale bucket download [--version-id <VERSION>] [--force] [--timeout <DURATION>] <app> <bucket-id> <key> <file>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--version-id <VERSION>` | download this owned immutable version |  |
+| `--force` | replace destination after a complete transfer |  |
+| `--timeout <DURATION>` | transfer deadline (default 30m) |  |
+
+### bucket writes
+
+Inspect tracked writes and await recovery
+
+#### bucket writes list
+
+List pending writes or recent completed and failed receipts
+
+`gregale bucket writes list [--status <STATUS>] [--limit <N>] [--cursor <TOKEN>] <app> <bucket-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--status <STATUS>` | pending (default), completed, failed or all |  |
+| `--limit <N>` | page size (default 50, maximum 100) |  |
+| `--cursor <TOKEN>` | next page cursor |  |
+
+#### bucket writes status
+
+Read a tracked write receipt
+
+`gregale bucket writes status <app> <bucket-id> <receipt-id>`
+
+#### bucket writes wait
+
+Poll until completed or failed; pending timeout retains the receipt
+
+`gregale bucket writes wait [--timeout <DURATION>] [--poll-interval <DURATION>] <app> <bucket-id> <receipt-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--timeout <DURATION>` | maximum wait (default 5m) |  |
+| `--poll-interval <DURATION>` | time between reads (default 5s, minimum 1s) |  |
+
+### bucket tags
+
+Read, replace or clear tags on current or selected data
+
+#### bucket tags get
+
+Read object tags
+
+`gregale bucket tags get <app> <bucket-id> <key> [version-id|null]`
+
+#### bucket tags set
+
+Replace the complete tag set
+
+`gregale bucket tags set <app> <bucket-id> <key> <URL-encoded-tags> [version-id|null]`
+
+#### bucket tags clear
+
+Remove all object tags
+
+`gregale bucket tags clear <app> <bucket-id> <key> [version-id|null]`
+
+### bucket notifications
+
+Manage bucket event notifications
+
+#### bucket notifications get
+
+Read notification rules
+
+`gregale bucket notifications get <app> <bucket-id>`
+
+#### bucket notifications set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket notifications set <app> <bucket-id> <JSON-file|->`
+
+#### bucket notifications clear
+
+Remove notification rules
+
+`gregale bucket notifications clear <app> <bucket-id>`
+
+
 ## export
 
 Verify and compare saved JSON Lines exports offline
@@ -6384,7 +6709,7 @@ Create a receiver; omitted signing secret is generated and shown once
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | HTTPS receiver URL | required |
-| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
+| `--event <EVENT>` | distinct account event (repeatable) | required; one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` · `execution.finished` · `execution.budget.threshold` · `execution.pipeline.finished` |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
 | `--from-stdin` | read the signing secret from stdin; mutually exclusive with --secret |  |
 | `--retry-policy <POLICY>` | delivery retry policy | one of `default` · `aggressive` · `none` |
@@ -6405,7 +6730,7 @@ Update a receiver
 | Flag | Meaning | |
 |---|---|---|
 | `--target-url <URL>` | replacement HTTPS receiver URL |  |
-| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` |
+| `--event <EVENT>` | replacement account event filter (repeatable) | one of `deployment.live` · `deployment.failed` · `rollout.completed` · `rollout.aborted` · `environment.gitops.changed` · `agent.approval.requested` · `agent.approval.approved` · `agent.approval.denied` · `execution.finished` · `execution.budget.threshold` · `execution.pipeline.finished` |
 | `--enable` | enable the receiver; mutually exclusive with --disable |  |
 | `--disable` | disable the receiver; mutually exclusive with --enable |  |
 | `--secret <VALUE>` | signing secret (prefer --from-stdin) |  |
@@ -6811,7 +7136,7 @@ Add an alert rule
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--name <NAME>` | rule name (3..120 chars) | required |
-| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric (mcp_tasks_metrics_stale includes the min=0 observer heartbeat) | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -6882,7 +7207,7 @@ Update one alert rule
 | `--app <slug>` | app slug (linked app or picker in interactive mode) |  |
 | `--name <NAME>` | rule name (3..120 chars) |  |
 | `--enabled` | turn the rule on or off (--enabled=false pauses it) |  |
-| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
+| `--metric <METRIC>` | metric | one of `mcp_protocol_error_rate_pct` · `mcp_protocol_execution_p95_ms` · `route_insights_detected` · `route_monitor_incidents` · `route_health_holds` · `ai_budget_alerts` · `oom_kills` · `event_recovery_notification_admission_overdue_jobs` · `event_recovery_notification_admission_dead_jobs` · `event_recovery_notification_admission_unknown_jobs` · `event_recovery_notification_admission_no_receivers_jobs` · `event_recovery_notification_execution_overdue_jobs` · `event_recovery_notification_execution_dead_jobs` · `event_recovery_notification_execution_unknown_jobs` · `event_recovery_notification_execution_no_receivers_jobs` · `event_retention_expiring_receipts` · `event_storage_utilization_pct` · `event_execution_dead_letters` · `event_execution_dead_letter_rate_per_second` · `event_handler_failure_pct` · `event_completion_latency_p95_seconds` · `event_recovery_stalled_jobs` · `event_recovery_expiring_jobs` · `event_recovery_execution_waiting_jobs` · `event_recovery_execution_prolonged_wait_jobs` · `event_recovery_execution_unknown_jobs` · `event_recovery_execution_retention_risk_jobs` · `event_recovery_capacity_wait_jobs` · `event_pending_recipients` · `event_oldest_pending_seconds` · `event_retry_rate_per_second` · `event_terminal_failure_pct` · `event_routing_latency_p95_seconds` · `event_paused_seconds` · `event_drain_rate_per_second` · `error_rate_pct` · `latency_p50_ms` · `latency_p95_ms` · `latency_p99_ms` · `cold_start_pct` · `request_count` · `failed_invocations` · `api_up` · `account_spend_eur` · `deployment_failed` · `cert_expiry_seconds` · `cert_issuance_failed` · `queue_depth` · `queue_backlog` · `queue_oldest_age_seconds` · `pre_auth_target_threshold` · `pre_auth_target_signal_gap_pct` · `pre_auth_pressure` · `edge_validation_failures` · `edge_rejections` · `edge_waf_detections` · `workflow_failures` · `workflow_schedule_quota_skips` · `workflow_pending_age_seconds` · `workflow_waiting_age_seconds` · `workflow_due_age_seconds` · `log_error_lines` · `log_warn_lines` · `edge_rule_hits` · `edge_rule_log_hits` · `edge_rule_activity` · `new_error_fingerprint` · `cold_wake_rate_pct` · `daily_cost_cents` · `slo_burn_rate` · `slo_budget_burn` · `slo_budget_remaining_pct` · `synthetic_check_consecutive_failures` · `synthetic_check_latency_p95_ms` · `canary_stuck_step` · `safedeploy_audit_emit_failing` · `deployment_audit_gc_failing` · `canary_fleet_in_flight_high` · `mcp_tasks_oldest_age_seconds` · `mcp_tasks_metrics_stale` · `mcp_task_promotion_hold_age_seconds` · `mcp_policy_unconverged_gateways` · `mcp_policy_unverified` · `mcp_readiness_unhealthy` · `mcp_catalog_drift` · `mcp_catalog_monitor_unavailable` · `mcp_oauth_reauthorization_required` · `mcp_oauth_renewal_failed` · `mcp_oauth_retirement_expiring` · `mcp_oauth_issuance_unknown` · `custom_metric` · `log_search_matches` |
 | `--comparison <OP>` | gt\|gte\|lt\|lte\|above_baseline\|below_baseline |  |
 | `--threshold <N>` | threshold value |  |
 | `--window-spec <WINDOW>` | 5m\|15m\|1h\|6h\|24h\|7d\|15d |  |
@@ -7344,6 +7669,65 @@ Revoke a pending invitation
 | `--org <SLUG>` | organization slug | required |
 | `--invitation <ID>` | invitation ID | required |
 
+### org key
+
+Manage org API keys
+
+#### org key list
+
+List org API keys
+
+`gregale org key list --org <SLUG>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key create
+
+Create an org API key; the plaintext is shown once
+
+`gregale org key create --org <SLUG> [--label <TEXT>] [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>] <label>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | key label (same as the positional label; kept for scripts) |  |
+| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
+| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
+| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
+
+#### org key get
+
+Show one org API key
+
+`gregale org key get --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key delete
+
+Revoke an org API key
+
+`gregale org key delete --org <SLUG> <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+
+#### org key rotate
+
+Rotate an org API key; the new plaintext is shown once
+
+`gregale org key rotate --org <SLUG> [--label <TEXT>] <key-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--org <SLUG>` | organization slug | required |
+| `--label <TEXT>` | new label (empty keeps the current one) |  |
+
 ### org members
 
 Manage org members
@@ -7461,65 +7845,6 @@ Delete one org
 | Flag | Meaning | |
 |---|---|---|
 | `--yes` | skip the confirmation prompt (aliases: -q, --quiet) |  |
-
-### org keys
-
-Manage org API keys
-
-#### org keys list
-
-List org API keys
-
-`gregale org keys list --org <SLUG>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys add
-
-Create an org API key; the plaintext is shown once
-
-`gregale org keys add --org <SLUG> --label <TEXT> [--scopes <SCOPES>] [--projects <SLUG,...>] [--approvals <LIST>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | key label | required |
-| `--scopes <SCOPES>` | comma-separated scopes (default admin) |  |
-| `--projects <SLUG,...>` | limit an agent key to these projects (comma-separated slugs) |  |
-| `--approvals <LIST>` | kinds of action an agent key must have a person approve: delete, production, credentials, billing, all or none (default all) |  |
-
-#### org keys info
-
-Show one org API key
-
-`gregale org keys info --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rm
-
-Revoke an org API key
-
-`gregale org keys rm --org <SLUG> <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-
-#### org keys rotate
-
-Rotate an org API key; the new plaintext is shown once
-
-`gregale org keys rotate --org <SLUG> [--label <TEXT>] <key-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--org <SLUG>` | organization slug | required |
-| `--label <TEXT>` | new label (empty keeps the current one) |  |
 
 ### org leave
 

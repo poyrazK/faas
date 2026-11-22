@@ -5,6 +5,10 @@
 // '@gregale/sdk-node/preview', adds the disposable Runs helpers, a preview
 // capability that apid serves only to accounts it is released to.
 
+import type { CreateManagedExecutionWorkflowRequest } from './generated/models/CreateManagedExecutionWorkflowRequest.js';
+import type { PublishExecutionTaskRequest } from './generated/models/PublishExecutionTaskRequest.js';
+import type { DeliverRunArtifactRequest } from './generated/models/DeliverRunArtifactRequest.js';
+import type { InvokeExecutionTaskRequest } from './generated/models/InvokeExecutionTaskRequest.js';
 import { RunsService } from './generated/services/RunsService.js';
 import {
   runExecution as runExecutionRequest,
@@ -23,8 +27,47 @@ import type { ExecutionArtifactGrantResponse } from './generated/models/Executio
 import type { RevokeExecutionArtifactGrantResponse } from './generated/models/RevokeExecutionArtifactGrantResponse.js';
 import { FaaSClient as BaseFaaSClient } from './client.js';
 
+import { watchExecutionEnvironment, type WatchEnvironmentOptions, type EnvironmentDiagnostic } from './execution-environments.js';
+
+import type { RunBudgetKind } from './generated/models/RunBudgetKind.js';
+import type { RunBindingKind } from './generated/models/RunBindingKind.js';
+import type { SetRunBudgetRequest } from './generated/models/SetRunBudgetRequest.js';
+import type { SetRunAttributionBindingRequest } from './generated/models/SetRunAttributionBindingRequest.js';
+
+import type { RerunExecutionPipelineRequest } from './generated/models/RerunExecutionPipelineRequest.js';
+import { watchExecutionPipeline, type WatchPipelineOptions } from './execution-pipeline-progress.js';
+
+import { Task } from './task.js';
+
 /** @deprecated Use createClient from '@gregale/sdk-node/preview' and its service namespaces. */
 export class FaaSClient extends BaseFaaSClient {
+  task<Input, Output>(name: string, version: number, decodeResult: (value: unknown) => Output): Task<Input, Output> { return new Task(name, version, decodeResult); }
+  deliverRunArtifact(slug: string, route: string, requestBody: DeliverRunArtifactRequest) { return RunsService.deliverRunArtifact({ slug, route, requestBody }); }
+  getRunArtifactDelivery(slug: string, route: string, delivery: string) { return RunsService.getRunArtifactDelivery({ slug, route, delivery }); }
+  signRunArtifactDelivery(slug: string, route: string, delivery: string) { return RunsService.signRunArtifactDelivery({ slug, route, delivery }); }
+  getExecutionPipelineEvents(id: string, after = 0) { return RunsService.getExecutionPipelineEvents({ id, after }); }
+  watchExecutionPipeline(id: string, options: WatchPipelineOptions = {}) { return watchExecutionPipeline(id, options); }
+  rerunExecutionPipeline(id: string, requestBody: RerunExecutionPipelineRequest) { return RunsService.rerunExecutionPipeline({ id, requestBody }); }
+
+  createExecutionPipeline(requestBody: CreateManagedExecutionWorkflowRequest, idempotencyKey?: string) { return RunsService.createManagedExecutionWorkflowV2({ requestBody, idempotencyKey }); }
+  cancelExecutionPipeline(workflowId: string) { return RunsService.cancelExecutionPipeline({ workflowId }); }
+  getRunBudget(kind: RunBudgetKind, ref: string) { return RunsService.getRunBudget({ kind, ref }); }
+  setRunBudget(kind: RunBudgetKind, ref: string, requestBody: SetRunBudgetRequest) { return RunsService.setRunBudget({ kind, ref, requestBody }); }
+  getRunAttributionBinding(kind: RunBindingKind, id: string) { return RunsService.getRunAttributionBinding({ kind, id }); }
+  setRunAttributionBinding(kind: RunBindingKind, id: string, requestBody: SetRunAttributionBindingRequest) { return RunsService.setRunAttributionBinding({ kind, id, requestBody }); }
+  deleteRunAttributionBinding(kind: RunBindingKind, id: string, expectedRevision: number) { return RunsService.deleteRunAttributionBinding({ kind, id, expectedRevision }); }
+  listRunHistory(options: Parameters<typeof RunsService.listRunHistory>[0] = {}) { return RunsService.listRunHistory(options); }
+
+  publishExecutionTask(requestBody: PublishExecutionTaskRequest) { return RunsService.publishExecutionTask({ requestBody }); }
+  invokeExecutionTask(requestBody: InvokeExecutionTaskRequest, idempotencyKey: string) { return RunsService.invokeExecutionTask({ requestBody, idempotencyKey }); }
+  getExecutionTask(name: string, version: number) { return RunsService.getExecutionTask({ name, version }); }
+  listExecutionTasks(cursor?: string) { return RunsService.listExecutionTasks({ cursor }); }
+  retireExecutionTask(name: string, version: number) { return RunsService.retireExecutionTask({ name, version }); }
+
+  watchExecutionEnvironment(id: string, options: WatchEnvironmentOptions = {}): AsyncGenerator<EnvironmentDiagnostic> {
+    return watchExecutionEnvironment(id, options);
+  }
+
   /** Read this account's Runs admission contract and plan limits. The result
    *  does not indicate scheduler or runtime image readiness. */
   getExecutionCapabilities(): Promise<ExecutionCapabilitiesResponse> {

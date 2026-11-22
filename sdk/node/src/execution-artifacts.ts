@@ -5,6 +5,7 @@ import type { ExecutionArtifact } from './generated/models/ExecutionArtifact.js'
  * This helper never writes files or creates a persistent workspace.
  */
 export function decodeExecutionArtifact(artifact: ExecutionArtifact): Uint8Array {
+  if (artifact.file_id || typeof artifact.content !== 'string') throw new Error('stored artifact bytes require authenticated downloadExecutionFile');
   const bytes = Buffer.from(artifact.content, 'base64');
   if (bytes.toString('base64') !== artifact.content || bytes.length !== artifact.size_bytes
     || `sha256:${createHash('sha256').update(bytes).digest('hex')}` !== artifact.sha256) {

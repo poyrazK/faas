@@ -2514,7 +2514,7 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		case errors.Is(err, state.ErrTrafficServingChanged):
 			api.WriteProblem(w, api.ErrTrafficServingChanged())
 		case errors.Is(err, state.ErrTrafficChangeDuringCanary):
-			api.WriteProblem(w, api.ErrTrafficChangeDuringCanary())
+			api.WriteProblem(w, s.trafficChangeDuringCanaryProblem(guardCtx, app))
 		case errors.As(err, &limitErr):
 			api.WriteProblem(w, api.ErrTrafficSplitReleaseLimit(limitErr.Limit, limitErr.Requested))
 		case errors.Is(err, state.ErrMCPTaskCompatibilityGate):

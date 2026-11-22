@@ -25,6 +25,7 @@ func TestRenderManifestAnsibleFiles_HotPath(t *testing.T) {
 		"faas_schedd_frozen_fast_path: true\n",
 		"faas_schedd_owner_cache: true\n",
 		"faas_schedd_invocation_dispatch_concurrency: 32\n",
+		"faas_schedd_frozen_tier_early_freeze_after_s: 0\n",
 	}
 	for _, tc := range []struct {
 		name string
@@ -34,12 +35,21 @@ func TestRenderManifestAnsibleFiles_HotPath(t *testing.T) {
 		{name: "off", yaml: base},
 		{name: "local socket renders both halves", yaml: base + "hot_path:\n  local_vmmd_data_socket: true\n",
 			want: []string{"faas_vmmd_local_data_socket: true\n", "faas_gateway_local_vmmd_socket: true\n"}},
-		{name: "all on", yaml: base + "public_edge:\n  compute_nodes: true\n" +
+		{name: "all on", yaml: strings.Replace(base,
+			"  schedd:\n    bind: tcp://0.0.0.0:7100\n",
+			"  schedd:\n    bind: tcp://0.0.0.0:7100\n    frozen_tier_early_freeze_after_s: 0\n", 1) + "public_edge:\n  compute_nodes: true\n" +
 			"hot_path:\n  local_request_id_journal: true\n  request_telemetry_minute_collapse: true\n  local_vmmd_data_socket: true\n" +
 			"  edge_keepalive_per_node: true\n  edge_binary_hop: true\n  frozen_tier: true\n  frozen_fast_path: true\n  owner_cache: true\n" +
 			"  invocation_dispatch_concurrency: 32\n", want: all},
 		{name: "dispatch concurrency alone", yaml: base + "hot_path:\n  invocation_dispatch_concurrency: 32\n",
 			want: []string{"faas_schedd_invocation_dispatch_concurrency: 32\n"}},
+		// Compute schedds read early freeze only from their role drop-in, so
+		// an explicit 0 must reach them (schedd's own default is 15 s).
+		{name: "early freeze off reaches compute", yaml: strings.Replace(base,
+			"  schedd:\n    bind: tcp://0.0.0.0:7100\n",
+			"  schedd:\n    bind: tcp://0.0.0.0:7100\n    frozen_tier_early_freeze_after_s: 0\n", 1) +
+			"hot_path:\n  frozen_tier: true\n",
+			want: []string{"faas_schedd_frozen_tier: true\n", "faas_schedd_frozen_tier_early_freeze_after_s: 0\n"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m, err := manifest.Parse([]byte(tc.yaml))

@@ -11,7 +11,7 @@ import (
 // testPostReleaseWatchCandidates pins ADR-1445's candidate rule on both
 // stores: a completed live release that kept automatic rollback, finished
 // inside the window and is the newest in its scope is watched against its
-// superseded predecessor; a rolled-back, opted-out or replaced release is not.
+// previously serving predecessor; a rolled-back, opted-out or replaced release is not.
 func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 	t.Helper()
 	store, ok := fx.Store.(state.PostReleaseWatchStore)
@@ -59,10 +59,31 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 	previous := deploy("sha256:watch-previous", true)
 	live(previous.ID)
 	time.Sleep(10 * time.Millisecond)
-	release := deploy("sha256:watch-release", true)
-	live(release.ID)
-	if err := fx.Store.MarkDeploymentSuperseded(fx.Ctx, previous.ID); err != nil {
+	release, err := fx.Store.CreateDeployment(fx.Ctx, state.Deployment{
+		AppID: fx.App.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:watch-release",
+		Status: state.DeployPending, RollbackOn5xx: true, TrafficPercentExplicit: true,
+	})
+	if err != nil {
 		t.Fatal(err)
+	}
+	live(release.ID)
+	now := time.Now().UTC()
+	schedules := fx.Store.(state.ScheduledReleaseStore)
+	scheduled, _, err := schedules.ScheduleRelease(fx.Ctx, state.ScheduledRelease{
+		AccountID: fx.Account.ID, AppID: fx.App.ID, DeploymentID: release.ID, ReleaseAt: now,
+		ScheduledBy: fx.Account.Email, ScheduledByAccountID: fx.Account.ID,
+	}, "replaced", "", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := schedules.StartScheduledRelease(fx.Ctx, state.ScheduledReleaseStart{
+		ScheduleID: scheduled.ID, DeploymentID: release.ID, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prior, err := fx.Store.DeploymentByID(fx.Ctx, previous.ID)
+	if err != nil || prior.Status != state.DeployLive || prior.TrafficPercent != 0 {
+		t.Fatalf("previous release after cutover = %s at %d%%, err=%v", prior.Status, prior.TrafficPercent, err)
 	}
 	complete(release.ID, time.Minute)
 	got := watched()
@@ -70,7 +91,7 @@ func testPostReleaseWatchCandidates(t *testing.T, fx *Fixture) {
 		t.Fatalf("watched = %+v, want release %s against predecessor %s", got, release.ID, previous.ID)
 	}
 	if _, ok := got[previous.ID]; ok {
-		t.Fatal("a superseded predecessor was watched")
+		t.Fatal("a demoted predecessor was watched")
 	}
 
 	complete(release.ID, 31*time.Minute)

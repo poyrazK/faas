@@ -111,11 +111,15 @@ daemons:
     # The control-plane schedd reaches the local edge; compute schedds use
     # their node-local gatewayd-internal socket after host rendering.
     gateway_synth_target: tcp://127.0.0.1:8080
-    # ADR-20261021215353 early freeze. Releases re-render schedd.toml from
-    # this manifest, so a value set by hand on a node is lost at the next
-    # rollout. Set it here only after a release whose gregalectl and imaged
-    # parse the key is live on every node: older ones reject unknown keys.
-    # frozen_tier_early_freeze_after_s: 10
+    # ADR-20261021215353 early freeze. schedd defaults it to 15 s
+    # (api.FrozenEarlyFreezeDefaultSeconds) whenever hot_path.frozen_tier is
+    # on, and frozen seconds are unbilled, so 15 s would stop billing an idle
+    # instance 15 s after its last request instead of at its plan's idle
+    # timeout. 0 keeps billing unchanged: an instance freezes only at its idle
+    # timeout, where it would otherwise park (owner decision 2026-11-21).
+    # Compute schedds get it as a drop-in (renderHotPathVars), the
+    # control-plane schedd in schedd.toml.
+    frozen_tier_early_freeze_after_s: 0
   vmmd:
     bind: tcp://0.0.0.0:50051
     tls:
@@ -325,6 +329,11 @@ log_archive:
   region: bhs
   auth: static
   credentials_src: /operator/secrets/log-archive-s3.json
+  # Compute nodes should hold a key that can only s3:PutObject on the bucket
+  # (a rooted node could otherwise read every tenant's archived logs). Create
+  # that key, then uncomment:
+  # compute_write_only: true
+  # compute_credentials_src: /operator/secrets/log-archive-s3-put-only.json
 
 # docs/ops/serving-probe.md: each compute node requests the platform-owned
 # probe function (release-acceptance account) through the public edge every
@@ -434,6 +443,17 @@ cgroups:
 # sign.key at /etc/faas/secrets/sign.key on the control plane first.
 # retire_compute_key (step 4) stays off until the full resign is clean.
 artifact_signer:
+  enabled: true
+
+# App outbound relay (ADR-989): apps reach managed outbound integrations and
+# the AI gateway at GREGALE_OUTBOUND_URL, and stateless agents
+# (ADR-20261030125501) call their model through it. outboundd listens on
+# 8096 on the control plane (nftables admits only compute CIDRs) and every
+# compute vmmd gets its relay client leaf from the control plane's CA. Needs
+# the cluster workload-identity key: the JWKS on the control plane and the
+# signing key on each compute node (installed on this fleet; the
+# control-plane play refuses to open the relay without the JWKS).
+outbound_relay:
   enabled: true
 
 # Workload-identity tokens for queue workers (ADR-1141). Off until an

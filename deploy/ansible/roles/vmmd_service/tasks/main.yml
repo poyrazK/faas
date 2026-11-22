@@ -82,17 +82,23 @@
 # host_vars value. See roles/vmmd_service/templates/99-faas-role.conf.j2
 # for the full rationale (single-box fallback, drop-in wins,
 # idempotent).
+# The release installer (pkg/roleTemplating) writes 99-faas-role.conf for
+# every daemon with only the role lines, after this role on a fresh join and
+# at every release install. Sharing that name dropped the manifest hot_path
+# switches on OVH from the 2026-11-20 cutover. This drop-in has its own name
+# and sorts after the installer's, so both apply and these settings win
+# (as zz-faas-realtimed-role.conf did for realtimed).
 - name: vmmd_service — install FAAS_VMMD_ROLE drop-in (Mega-PR-C)
   notify: restart faas-vmmd
   ansible.builtin.template:
     src: 99-faas-role.conf.j2
-    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-role.conf
+    dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-vmmd-role.conf
     owner: root
     group: root
     mode: "0644"
 
 # Manifest hot_path: these switches were first turned on by hand on
-# production (2026-11-06). 99-faas-role.conf now carries them, so the hand-made
+# production (2026-11-06). The role drop-in now carries them, so the hand-made
 # drop-ins go; left behind they would keep a switch on after the manifest
 # turned it off.
 - name: vmmd_service — remove the hand-made hot-path drop-ins

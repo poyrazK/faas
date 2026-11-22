@@ -187,16 +187,46 @@ class MCPProtocolHeaderTests(unittest.TestCase):
     def test_legacy_setting_controls_negotiation_discovery_and_notifications(self):
         for legacy in (False, True):
             self.config["legacy"] = legacy
+            # Spec negotiation: an unserved revision is answered with the
+            # server's own revision, never a refused handshake.
             for version in ("2026-07-28", "2025-11-25"):
-                status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version}}, version, [("MCP-Method", "initialize")])
-                self.assertEqual(status, 200 if legacy or version=="2026-07-28" else 400)
-            status, _ = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25"}}, extra=[("MCP-Method", "initialize")])
-            self.assertEqual(status, 200 if legacy else 400)
+                status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":version}}, version, [("MCP-Method", "initialize")])
+                self.assertEqual(status, 200)
+                want = version if legacy or version == "2026-07-28" else "2026-07-28"
+                self.assertEqual(json.loads(body)["result"]["protocolVersion"], want)
+            status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":"2025-11-25"}}, extra=[("MCP-Method", "initialize")])
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)["result"]["protocolVersion"] == "2025-11-25", legacy)
             status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"server/discover"}, extra=[("MCP-Method", "server/discover")])
             self.assertEqual(status, 200)
             self.assertEqual("2025-11-25" in json.loads(body)["result"]["supportedVersions"], legacy)
             status, _ = self.post({"jsonrpc":"2.0", "method":"notifications/initialized"}, "2025-11-25")
             self.assertEqual(status, 202 if legacy else 400)
+
+    def post_unversioned(self, message):
+        connection = http.client.HTTPConnection("127.0.0.1", self.http.server_address[1], timeout=3)
+        body = json.dumps(message).encode()
+        try:
+            connection.request("POST", "/mcp", body, {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            return response.status, response.getheader("MCP-Protocol-Version"), response.read()
+        finally:
+            connection.close()
+
+    def test_older_client_revisions_negotiate(self):
+        # Clients pinned to 2025-06-18 or 2025-03-26 connect in legacy mode;
+        # unknown revisions are offered the newest legacy revision.
+        self.config["legacy"] = True
+        for requested, want in (("2025-06-18", "2025-06-18"), ("2025-03-26", "2025-03-26"), ("2024-11-05", "2025-11-25")):
+            status, header, body = self.post_unversioned({"jsonrpc":"2.0", "id":1, "method":"initialize", "params":{"protocolVersion":requested}})
+            self.assertEqual(status, 200, body)
+            self.assertEqual(json.loads(body)["result"]["protocolVersion"], want)
+            self.assertEqual(header, want)
+        status, _ = self.post({"jsonrpc":"2.0", "id":2, "method":"tools/list"}, "2025-06-18")
+        self.assertEqual(status, 200)
+        status, header, body = self.post_unversioned({"jsonrpc":"2.0", "id":3, "method":"tools/list"})
+        self.assertEqual(status, 200, body)
+        self.assertEqual(header, "2025-03-26")
 
     def test_resource_routing_accepts_encoded_uri(self):
         status, body = self.post({"jsonrpc":"2.0", "id":1, "method":"resources/read", "params":{"uri":"greeting://welcome"}},

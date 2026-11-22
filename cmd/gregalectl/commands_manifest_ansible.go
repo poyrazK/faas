@@ -37,7 +37,7 @@ const manifestAppErrorsPort = 9093
 
 // manifestOutboundRelayPort is outboundd's ADR-989 app relay listener on the
 // control plane; the nftables role opens it to compute CIDRs.
-const manifestOutboundRelayPort = 8096
+const manifestOutboundRelayPort = manifest.OutboundRelayPort
 const manifestGithubdPort = 50053
 
 // manifestPrivateHostsGroupVarsThreshold keeps the generated inventory
@@ -238,12 +238,12 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			return nil, exactErr
 		}
 		body += exactVars
-		body += renderHotPathVars(m.HotPath, host)
+		body += renderHotPathVars(m.HotPath, m.Daemons.Schedd, host)
 		if host.Role == roleControlPlane {
 			body += renderEdgeDNSVars(m.PublicEdge, m.Fleet.Hosts, m.DNS.AppsDomain)
 		}
 		body += renderComputeObjectGatewayVars(m.ObjectStorage, host)
-		body += renderLogArchiveVars(m.LogArchive)
+		body += renderLogArchiveVars(m.LogArchive, host.Role == roleComputeOnly)
 		probeVars, probeErr := renderServingProbeVars(m.ServingProbes, m.Fleet.Hosts)
 		if probeErr != nil {
 			return nil, probeErr
@@ -255,6 +255,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		}
 		body += signerVars
 		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
+		body += renderOutboundRelayVars(m.OutboundRelay, host)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -420,7 +421,9 @@ func renderServingProbeVars(p *manifest.ServingProbes, hosts []manifest.Host) (s
 // renderLogArchiveVars hands the manifest's archive bucket to the log_archive
 // role on every host, which writes it into archive-creds.json. Absent emits
 // nothing, so a converge never rewrites an envelope the operator provisioned.
-func renderLogArchiveVars(l manifest.LogArchive) string {
+// With compute_write_only a compute-only host gets the write-only envelope
+// and, with static auth, the create-only key pair.
+func renderLogArchiveVars(l manifest.LogArchive, computeOnly bool) string {
 	if !l.Configured() {
 		return ""
 	}
@@ -432,11 +435,19 @@ func renderLogArchiveVars(l manifest.LogArchive) string {
 	fmt.Fprintf(&b, "faas_log_archive_bucket: %q\n", l.Bucket)
 	fmt.Fprintf(&b, "faas_log_archive_endpoint: %q\n", l.Endpoint)
 	fmt.Fprintf(&b, "faas_log_archive_region: %q\n", region)
+	writeOnly := computeOnly && l.ComputeWriteOnly
 	if l.Auth == "static" {
+		credentials := l.CredentialsSrc
+		if writeOnly {
+			credentials = l.ComputeCredentialsSrc
+		}
 		b.WriteString("faas_log_archive_auth_mode: \"\"\n")
-		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", l.CredentialsSrc)
+		fmt.Fprintf(&b, "faas_log_archive_credentials_src: %q\n", credentials)
 	} else {
 		fmt.Fprintf(&b, "faas_log_archive_auth_mode: %q\n", l.Auth)
+	}
+	if writeOnly {
+		b.WriteString("faas_log_archive_write_only: true\n")
 	}
 	return b.String()
 }
@@ -469,6 +480,28 @@ func renderArtifactSignerVars(a manifest.ArtifactSigner, hosts []manifest.Host, 
 		return fmt.Sprintf("faas_signd_listen: %q\n", target), nil
 	}
 	return fmt.Sprintf("faas_imaged_signd_target: %q\nfaas_compute_sign_key_retired: %t\n", target, a.RetireComputeKey), nil
+}
+
+// renderOutboundRelayVars opens the ADR-989 app outbound relay when the
+// manifest turns it on. Compute vmmd already dials outboundd.faas (see
+// renderManifestHostVars); this adds the two switches that complete it:
+// outboundd's relay listener on the control plane, which also issues its
+// server leaf, and each compute node's relay client leaf. Without them vmmd
+// logs "outbound relay disabled" and apps' GREGALE_OUTBOUND_URL (managed
+// integrations, the AI gateway) answers nothing. The listener binds every
+// interface like the control plane's other compute-facing listeners; the
+// nftables role admits only compute CIDRs to it.
+func renderOutboundRelayVars(r manifest.OutboundRelay, host manifest.Host) string {
+	if !r.Enabled {
+		return ""
+	}
+	switch host.Role {
+	case roleControlPlane:
+		return fmt.Sprintf("faas_outboundd_relay_listen: %q\n", fmt.Sprintf("tcp://0.0.0.0:%d", manifestOutboundRelayPort))
+	case roleComputeOnly:
+		return "faas_vmmd_outbound_relay_tls_managed: true\n"
+	}
+	return ""
 }
 
 func renderScheddListenVars(m *manifest.Manifest) string {
@@ -963,9 +996,11 @@ func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, control
 }
 
 // renderHotPathVars hands each compute node the request- and wake-path
-// switches its roles turn into drop-ins (manifest.HotPath). The control plane
-// runs none of the daemons they touch on the request path.
-func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
+// switches its roles turn into drop-ins (manifest.HotPath), and the schedd
+// early-freeze seconds (daemons.schedd.frozen_tier_early_freeze_after_s),
+// which compute schedds read only from that drop-in. The control plane runs
+// none of the daemons they touch on the request path.
+func renderHotPathVars(h manifest.HotPath, schedd *manifest.DaemonConfig, host manifest.Host) string {
 	if host.Role != roleComputeOnly {
 		return ""
 	}
@@ -992,6 +1027,9 @@ func renderHotPathVars(h manifest.HotPath, host manifest.Host) string {
 	}
 	if h.InvocationDispatchConcurrency > 0 {
 		fmt.Fprintf(&b, "faas_schedd_invocation_dispatch_concurrency: %d\n", h.InvocationDispatchConcurrency)
+	}
+	if schedd != nil && schedd.FrozenTierEarlyFreezeAfterS != nil {
+		fmt.Fprintf(&b, "faas_schedd_frozen_tier_early_freeze_after_s: %d\n", *schedd.FrozenTierEarlyFreezeAfterS)
 	}
 	return b.String()
 }

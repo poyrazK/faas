@@ -1,0 +1,227 @@
+{
+  "additional_checks": [
+    {
+      "check": "Migration lint",
+      "exit_code": 0,
+      "log_sha256": "e7ffeaca4a58c76640c37703c9e9aa1311bd040e45f115f03d63fcaaffdb24d5"
+    },
+    {
+      "check": "Schema snapshot and hash",
+      "exit_code": 0,
+      "log_sha256": "fb35d510ef940a456edefd62f6d286fc6ad6c5f9cc33766b75362e27205aeccc"
+    },
+    {
+      "check": "Node SDK generated types and test build",
+      "exit_code": 0,
+      "log_sha256": "33871e25e5670f8888a9ba6e7fbd5f3b060c4fae9f4f5bfdcffcfb32da66cee1"
+    },
+    {
+      "check": "ShellCheck acceptance runner",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "Changed Go file formatting",
+      "exit_code": 0,
+      "files": 56,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "additional_static_checks": [
+    {
+      "check": "text-encoding",
+      "exit_code": 0,
+      "log_sha256": "c2d0ad910d95dd156377f9406098516f65d5ef0ba99a100bbd58e3717a96c148"
+    },
+    {
+      "baseline_commit": "e74c7cfc6e5b9cff5596d7f430a4d5e0c6bbfab1",
+      "check": "adr-uniqueness",
+      "classification": "pre-existing HEAD failure",
+      "exit_code": 1,
+      "log_sha256": "2ae6cabbec73e60e5709777f276060c2e3cf936d9c2c94077f070e60b4736593",
+      "new_run_adr_unique": true,
+      "unchanged_documents": [
+        {
+          "file": "docs/adr/20261104120000-network-revocation-and-attachment-recovery.md",
+          "matches_HEAD": true,
+          "matches_turn_baseline": true,
+          "sha256": "ba060978d793279504ef1938f873a6cdca34e596e3cf0e81d3c352fce71e6575"
+        },
+        {
+          "file": "docs/adr/20261104120000-per-environment-app-automation.md",
+          "matches_HEAD": true,
+          "matches_turn_baseline": true,
+          "sha256": "fbe76bf541169a963b4f93cfd8d53cfaa9ec8366dc2d32688ebdcdcc1f03054b"
+        },
+        {
+          "file": "docs/adr/20261111130000-native-customer-support.md",
+          "matches_HEAD": true,
+          "matches_turn_baseline": true,
+          "sha256": "b4a85075bc5084e5dd1eb6f7cd5a153538d89679101c9af6b81f345e40653c4f"
+        },
+        {
+          "file": "docs/adr/20261111130000-org-notices-and-inviter-authority.md",
+          "matches_HEAD": true,
+          "matches_turn_baseline": true,
+          "sha256": "d738df88d427ce5b65ca203f8ebfddca705ac0206bf4255768a46a64f259044d"
+        }
+      ]
+    },
+    {
+      "check": "trimpath",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "shell-quoting",
+      "exit_code": 0,
+      "log_sha256": "fa368620b21a4aeeee9a58af3a0934d503482400f0fe89489f0dadae0423e3ce"
+    }
+  ],
+  "client_contracts": [
+    {
+      "all_module_packages_typechecked": true,
+      "check": "Go standalone SDK wire contracts",
+      "exit_code": 0,
+      "log_sha256": "9ed6b51cd9dd8cd0c39acf16107fe346e122d6620db2c1107bfade10819fde21",
+      "selected_tests": 2
+    },
+    {
+      "check": "Node SDK controls, task and execution contracts",
+      "exit_code": 0,
+      "log_sha256": "f596d245ebc98356ce6d319581fd153a24a15535d1f291e3c21d7c52542fca7c",
+      "tests_failed": 0,
+      "tests_passed": 8
+    },
+    {
+      "check": "Python SDK typed sync/async controls and task contracts",
+      "exit_code": 0,
+      "log_sha256": "3eabbbb9d9580aaa9e766e3eef2a362399731a2684fae85c3b5a1aac2b1cc544",
+      "tests_passed": 3
+    },
+    {
+      "check": "Acceptance verdict negative and positive contracts",
+      "exit_code": 0,
+      "log_sha256": "502ae3e0ddeccf80e35d851da10c563e90c99f65c5592ee750f32648500762a6",
+      "tests_passed": 19
+    }
+  ],
+  "final_state_contracts": {
+    "exit_code": 0,
+    "log_sha256": "a894f5ddc7e548d1b5380279b6e0e0e8f40abd06709321c461a5587875d6aff4",
+    "packages": [
+      "./pkg/state"
+    ],
+    "test_selection": "Test(Mem|Pg)Run(CustomerControls|TaskBudgetAcrossVersions|ComputeReservationRace)|TestPgRunControlsFenceOldWriterAndMissingLedger|TestRunControlUTCAndSettlementBounds|Test(Mem|Pg)VersionedRunTasks|TestCloneSchemaRegistryMatchesSchemaSQL|TestRunControlsAPIAttributionBudgetsAndRollback|TestRunHistoryAPIPaginationAndScope|TestVersionedTaskPublicationInvocationAndRollback|TestCmdRunControlsAndHistoryRouting|TestCmdRunTasksRoutingIdentityAndContractExit|TestTask|TestDefinition|TestStoredTask"
+  },
+  "interrupted_local_lint": {
+    "complete": false,
+    "exit_code": 130,
+    "interrupted": true,
+    "log_sha256": "8ec49a706f73802d05875e4aa91dfb029768c039d2928c33ac14019ccd2edfa0",
+    "observed_process_exit_code": 0,
+    "packages": [
+      "pkg/api",
+      "pkg/state",
+      "pkg/runtask",
+      "pkg/apid/runcontrols",
+      "pkg/apid/runtasks",
+      "pkg/apid/executionadmission",
+      "pkg/apid/agents",
+      "pkg/apid/apidserver",
+      "cmd/gregale",
+      "cmd/sdk-coverage"
+    ],
+    "patch_sha256": "9e89ac8c65d4a2ddc320c1f05739c638e792b38caa8fd4fa57569544ab4a77e1",
+    "reason": "Operator stopped task-owned lint when local disk space fell below 120 MiB; an interrupted process reported exit zero and is not accepted as a passing check."
+  },
+  "interrupted_optional_state_recheck": {
+    "exit_code": -2,
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "packages": [
+      "./pkg/state"
+    ],
+    "reason": "Stopped before test output as local disk space continued falling; final source is covered by Linux lint and a fresh functional KVM journey.",
+    "test_selection": "Test(Mem|Pg)Run(CustomerControls|TaskBudgetAcrossVersions|ComputeReservationRace)|TestPgRunControlsFenceOldWriterAndMissingLedger|TestRunControlUTCAndSettlementBounds|Test(Mem|Pg)VersionedRunTasks|TestCloneSchemaRegistryMatchesSchemaSQL|TestRunControlsAPIAttributionBudgetsAndRollback|TestRunHistoryAPIPaginationAndScope|TestVersionedTaskPublicationInvocationAndRollback|TestCmdRunControlsAndHistoryRouting|TestCmdRunTasksRoutingIdentityAndContractExit|TestTask|TestDefinition|TestStoredTask"
+  },
+  "policy_and_generation_checks": [
+    {
+      "check": "sdk-spec",
+      "exit_code": 0,
+      "log_sha256": "62e3a2cddf2185ebf1bb1e8b44f919028ac7f821fb713a1c1f3dbe5a6fd87bf7"
+    },
+    {
+      "check": "spec",
+      "exit_code": 0,
+      "log_sha256": "ff2cc57e965a97da656de8a8174220a356daedc1ec3b4a3704a5de3a4325f10c"
+    },
+    {
+      "check": "sdk-coverage",
+      "exit_code": 0,
+      "log_sha256": "b7baa181959265608258f954de0a674753285b85d12506c337f2e76a5c83e100"
+    },
+    {
+      "check": "teststore",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "problem-detail",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "seal-domains",
+      "exit_code": 0,
+      "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "check": "cli-reference",
+      "exit_code": 0,
+      "log_sha256": "16b4782241721d3a2463471ecc613c20bca531511aa4af60fb26bc1c1ff95dde"
+    }
+  ],
+  "portable_contracts": {
+    "exit_code": 0,
+    "log_sha256": "9fa757cd85da1c4a4118f1ec529e81e1cb9cb799287bff206163127c3cdaeabe",
+    "packages": [
+      "./pkg/state",
+      "./pkg/runtask",
+      "./pkg/apid/runcontrols",
+      "./pkg/apid/runtasks",
+      "./pkg/apid/agents",
+      "./pkg/apid/apidserver",
+      "./cmd/gregale"
+    ],
+    "test_selection": "Test(Mem|Pg)Run(CustomerControls|TaskBudgetAcrossVersions|ComputeReservationRace)|TestPgRunControlsFenceOldWriterAndMissingLedger|TestRunControlUTCAndSettlementBounds|Test(Mem|Pg)VersionedRunTasks|TestCloneSchemaRegistryMatchesSchemaSQL|TestRunControlsAPIAttributionBudgetsAndRollback|TestRunHistoryAPIPaginationAndScope|TestVersionedTaskPublicationInvocationAndRollback|TestCmdRunControlsAndHistoryRouting|TestCmdRunTasksRoutingIdentityAndContractExit|TestTask|TestDefinition|TestStoredTask"
+  },
+  "race_contracts": {
+    "exit_code": 0,
+    "log_sha256": "0fba369c0eeaa1d2c99fd0269f828ee0f5e64fa377611b2fcfde1a37cb936d8a",
+    "packages": [
+      "./pkg/state",
+      "./pkg/apid/agents"
+    ],
+    "test_selection": "Test(Mem|Pg)Run(CustomerControls|ComputeReservationRace)|TestTaskBudgetRefusalKeepsCallRetryableWithoutInboxResult"
+  },
+  "scope": "Portable, race, client, policy and generation contracts passed. Targeted state contracts also passed after the behavior-preserving clock cleanup. The validator rewrite passed the database character/length contract and standalone Go SDK checks. Exact final-source Linux lint and functional KVM evidence are recorded separately. No production flags changed. The local shared cache was retained; the separately approved node cache eviction has its own receipt.",
+  "source_verification": {
+    "mismatches": [],
+    "phase": "before qualification-result documentation updates",
+    "source_manifest_sha256": "908b512feece17b5dd87810a6496e6cd57820aea9c37851b3d15582e312c0522",
+    "unmanifested_files": [],
+    "verified_files": 55536
+  },
+  "validator_contract_and_sdk_checks": [
+    {
+      "check": "ref-database-contract",
+      "exit_code": 0,
+      "log_sha256": "b3bf7238510062381800406adc4d71ea2b2a0acccd62b325e4eea11915aa020e"
+    },
+    {
+      "check": "go-sdk-validator-final",
+      "exit_code": 0,
+      "log_sha256": "7f98a8120c5a2c5b6620825267f3c63f6b022ae8f3a77d34d7d115001595d810"
+    }
+  ]
+}

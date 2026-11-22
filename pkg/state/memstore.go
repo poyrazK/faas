@@ -155,6 +155,13 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	executionEnvironments          map[string]ExecutionEnvironment
+	executionTaskVersions          map[string]ExecutionTaskVersion
+	executionTaskInvocations       map[string]ExecutionTaskInvocation
+	runBudgets                     map[string]api.RunBudgetPolicy
+	runBindings                    map[string]api.RunAttributionBinding
+	runReservations                map[string]runControlReservation
+	runBudgetAlerts                map[string]api.RunBudgetAlert
 	toolInvocations                map[string]api.ToolInvocationRecord
 	toolPublications               map[string]api.ToolPublicationRecord
 	hostedTaskSourceIntents        map[string]HostedTaskSourceIntent
@@ -584,6 +591,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
@@ -1117,7 +1125,12 @@ type MemStore struct {
 	// split. Customer reads only touch executions; a payload is exposed solely
 	// by ClaimExecution after the in-memory lease CAS succeeds.
 	executions                      map[string]Execution
+	executionFiles                  map[string]ExecutionFile
+	executionFileLinks              map[string][]string
+	executionAdmissionMu            sync.Mutex
+	executionAdmissions             map[executionAdmissionKey]executionAdmission
 	executionWorkflowJobs           map[string]ExecutionWorkflowJob
+	executionPipelines              map[string]ExecutionPipeline
 	executionPayloads               map[string]executionPayload
 	executionArtifactGrants         map[string]ExecutionArtifactGrant
 	executionOutboundIntegrationIDs map[string][]string
@@ -2064,6 +2077,7 @@ func NewMemStore(options ...StoreOption) *MemStore {
 		executionArtifactGrants:              map[string]ExecutionArtifactGrant{},
 		executionOutboundIntegrationIDs:      map[string][]string{},
 		executionWorkflowJobs:                map[string]ExecutionWorkflowJob{},
+		executionPipelines:                   map[string]ExecutionPipeline{},
 		// Issue #463 / ADR-069 / PR-B — per-workload filesystem
 		// handles (mirrors migration 00119's PK + ON CONFLICT
 		// semantics).
@@ -6944,6 +6958,7 @@ func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
+	delete(m.appOwnerHome, appID)
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -7256,8 +7271,10 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 		node, ok := m.computeNodes[ins.NodeID]
 		if ok {
 			// App-backed rows belong to the recovery arbiter in managed
-			// lifecycle states. App-less job tasks use their lease/reaper.
-			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+			// lifecycle states, until the node has been silent longer
+			// than any handoff can take. App-less job tasks use their
+			// lease/reaper.
+			if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 				continue
 			}
 			if node.Active && !node.LastHeartbeatAt.Before(threshold) {
@@ -7299,6 +7316,14 @@ func (m *MemStore) ListRunningInstancesOnDeadNodes(_ context.Context, threshold 
 // is reserved for explicit precondition violations (the caller
 // passed an instanceID the store has never heard of) — that signal
 // is too loud to use as a silent "the row disappeared" handler.
+// recoveryHandoffOpenLocked reports whether a recovery-managed node has
+// heartbeated recently enough for the recovery arbiter to still own its app
+// rows (api.DeadNodeRecoveryHandoffMaxSeconds). Mirrors PgStore.
+func (m *MemStore) recoveryHandoffOpenLocked(node ComputeNode) bool {
+	cutoff := m.clock().Add(-time.Duration(api.DeadNodeRecoveryHandoffMaxSeconds) * time.Second)
+	return !node.LastHeartbeatAt.Before(cutoff)
+}
+
 func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID, nodeID string, threshold time.Time) error {
 	if instanceID == "" {
 		return fmt.Errorf("state: fail running instance on dead node: empty instanceID")
@@ -7316,7 +7341,7 @@ func (m *MemStore) FailRunningInstanceOnDeadNode(ctx context.Context, instanceID
 		return ErrConflict
 	}
 	if node, ok := m.computeNodes[nodeID]; ok {
-		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() {
+		if ins.AppID != "" && node.Lifecycle.UsesRecoveryController() && m.recoveryHandoffOpenLocked(node) {
 			return ErrConflict
 		}
 		if node.Active && !node.LastHeartbeatAt.Before(threshold) {
@@ -8725,6 +8750,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -9120,6 +9149,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return Deployment{}, 0, err
 		}
 		d.StagedReview = &review
+	}
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = d.ID
+		schedule.result.Created, schedule.result.Replaced = m.scheduleReleaseLocked(schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
 	}
 	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
@@ -21766,9 +21799,14 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
-		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000),
+		// and a now-Free subject's hours before the change that made it Free
+		// (ADR-20261121231500).
 		if !m.billingSubjectPaidLocked(row.AccountID) {
-			continue
+			changed, ok := m.planChangedAt[row.AccountID]
+			if !ok || !changed.After(identity.BillingFrom) || !row.Minute.Before(changed) {
+				continue
+			}
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
 		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {
@@ -25207,6 +25245,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		if workflow.AccountID == id {
 			clear(workflow.SealedPlan)
 			delete(m.executionWorkflowJobs, workflowID)
+			delete(m.executionPipelines, workflowID)
 		}
 	}
 	for instanceID, checkpoint := range m.networkUsageCheckpoints {

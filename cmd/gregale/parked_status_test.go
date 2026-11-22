@@ -101,7 +101,7 @@ func TestReleaseListMarksLiveReleaseOfParkedApp(t *testing.T) {
 		t.Fatalf("release list = %d\n%s", code, out.String())
 	}
 	got := out.String()
-	lines := strings.Split(got, "\n")
+	lines := releaseListRows(got)
 	if !strings.Contains(lines[0], "d2") || !strings.Contains(lines[0], "live/parked") {
 		t.Fatalf("live row not marked parked:\n%s", got)
 	}
@@ -137,7 +137,7 @@ func TestReleaseListAccountWideMarksOnlyParkedApps(t *testing.T) {
 	if code := cmdDeployments(nil); code != 0 {
 		t.Fatalf("release list = %d\n%s", code, out.String())
 	}
-	lines := strings.Split(out.String(), "\n")
+	lines := releaseListRows(out.String())
 	if !strings.Contains(lines[0], "live/parked") || strings.Contains(lines[1], "parked") {
 		t.Fatalf("account-wide marking wrong:\n%s", out.String())
 	}
@@ -204,4 +204,14 @@ func TestProjectInfoShowsParkedServices(t *testing.T) {
 	if strings.Contains(got, "! retail-cart") {
 		t.Fatalf("plain park got a failure notice:\n%s", got)
 	}
+}
+
+// releaseListRows drops the column header, which a terminal gets (#7665); the
+// test TestMain reports a terminal, so the rows start after it.
+func releaseListRows(out string) []string {
+	lines := strings.Split(out, "\n")
+	if len(lines) > 0 && strings.HasPrefix(lines[0], "DEPLOYMENT") {
+		return lines[1:]
+	}
+	return lines
 }

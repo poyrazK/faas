@@ -1,0 +1,115 @@
+{
+  "checks": {
+    "build": {
+      "exit_code": 0
+    },
+    "lint-cmd-vmmd": {
+      "exit_code": 0
+    },
+    "lint-pkg-api": {
+      "exit_code": 0
+    },
+    "lint-pkg-runrelease": {
+      "exit_code": 0
+    },
+    "release-tests": {
+      "exit_code": 0,
+      "failed_test_results": 0,
+      "passed_test_results": 63,
+      "required_new_test_roots": 8,
+      "skipped_test_results": 0
+    },
+    "vmmd-tests": {
+      "exit_code": 0,
+      "failed_test_results": 0,
+      "passed_test_results": 186,
+      "required_new_test_roots": 4,
+      "skipped_test_results": 0
+    }
+  },
+  "cli": {
+    "preflight": {
+      "exit_code": 3,
+      "failed_checks": [
+        "host",
+        "native_acceptance"
+      ],
+      "host": {
+        "architecture": "amd64",
+        "cgroup_v2": true,
+        "kvm": true,
+        "os": "linux",
+        "virtualization": "google"
+      },
+      "passed": false,
+      "production_enablement_checked": true,
+      "runtime_admission_granted": false
+    },
+    "rollback": {
+      "exit_code": 0,
+      "failed_checks": [],
+      "host": {
+        "architecture": "amd64",
+        "cgroup_v2": true,
+        "kvm": true,
+        "os": "linux",
+        "virtualization": "google"
+      },
+      "passed": true,
+      "production_enablement_checked": false,
+      "runtime_admission_granted": false
+    }
+  },
+  "complete": true,
+  "functional_pass": true,
+  "go_version": "go version go1.26.11 linux/amd64",
+  "lint_retry": {
+    "cause": "clean_environment_missing_lint_cache_location",
+    "fix": "explicit_existing_GOLANGCI_LINT_CACHE",
+    "initial_exit_codes": {
+      "lint-cmd-vmmd": 1,
+      "lint-pkg-api": 1,
+      "lint-pkg-runrelease": 1
+    },
+    "passing_tests_repeated": false,
+    "source_changed": false
+  },
+  "patch_sha256": "44bf92c967f7d093a5b6499efd5f934900e9fc917eb6862b187d30e91ad026df",
+  "raw_evidence_sha256": {
+    "build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "lint-cmd-vmmd.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "lint-pkg-api.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "lint-pkg-runrelease.log": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47",
+    "preflight.json": "ed3eabea18d12d0f88969e94a8f139a4be3eb23792fa8d1e09832162519abfa3",
+    "release-tests.log": "091e16b3be1f96737ba0346d870069f1bbec9c23355865c2f4f061464b60039b",
+    "rollback.json": "4a6c00b767104866e871db6c398e1ec85641133eac049f54ce24babe86ed23b3",
+    "vmmd-tests.log": "ebb6330cad9e34cf173eabc3c98f66f9388e6e2eac68f36dfbe63fedb01c61ea"
+  },
+  "raw_logs_exported": false,
+  "rollback_fixture": "same compatible binary with runtime capture disabled; no installation",
+  "runtime_release_eligibility": false,
+  "schema": "gregale.run-release-tooling-verification/v1",
+  "services_changed": false,
+  "source": {
+    "base_snapshot": "432e6058ab21b335c2aea7bd633fe8e8df06bb68",
+    "files": {
+      "cmd/vmmd/adoption_cli.go": "271768d67eb358ba8b97a547d9b6aabc39bdb20c82e345d948c8cce55e2a0b1d",
+      "cmd/vmmd/config.go": "eaaaedf50f204e2d51a56e18a5141b02fe1a967f57391a16eaa98751c71b79cf",
+      "cmd/vmmd/run_release_cli.go": "972fa3d62b27d531d30184ace62dd66ca6a6725d80aea18c575572917d01cb1f",
+      "cmd/vmmd/run_release_cli_test.go": "670b3b61e2519dc83ee21f6e302891ba5453a2884014d24c1bfb4c592e02fb96",
+      "cmd/vmmd/run_release_prepare.go": "57b59621b5f451037b1e1bfb03eb716a51378d9c483ed6bad26d85c007490fb1",
+      "pkg/api/limits.go": "69c3d14b3d46e037baf64fc7eadb4fd6ade78e06f55544b4077d0f4681018419",
+      "pkg/runrelease/files.go": "abf03971b22315c6493374c51f4f30f96b631f94991e9c8f6eb55dc946f4550e",
+      "pkg/runrelease/files_other.go": "86b8c82814bf0be84c0e005aa80c11981483ea74125b3fc6bd8173a848b1ba0e",
+      "pkg/runrelease/files_unix.go": "a7233e67d762ad4709942b3e17d09a96c7f5204267f9bfee0181c7bc7c81ad4c",
+      "pkg/runrelease/files_unix_test.go": "ed822daf81f190d36b718757011bb8a9b34138cee70f56f42d9dfce9d4671210",
+      "pkg/runrelease/host_linux.go": "06e587381ed764358416a4fa044c8b36722e4396e8ef66ab5874bd1714f3d63d",
+      "pkg/runrelease/host_other.go": "658b31c616c6fddf3674913df9005fb07ab449767b850dd9d008afffb27d6826",
+      "pkg/runrelease/release.go": "081dd647cbe698ed34fd5b2990795ef689e4176527533b0149558d6db1a5a706",
+      "pkg/runrelease/release_test.go": "29a71ffadc5e6f1b941bdf988d86bee7c12d3d1431f1d850b8b5fc422481c0e6"
+    }
+  },
+  "verification": "source, binary, test coverage, exits and CLI results independently checked on node; only fixed metadata, counts and hashes exported",
+  "vmmd_sha256": "7778f94f87dabda810cd1eac53dfbcebd51a39cc46615886b19a37e24a778763",
+  "vms_started": false
+}

@@ -7,6 +7,45 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Object storage GA on OVH — 2026-11-21 (live: v0.1.18-rc.369, flags on 2026-11-22)
+
+[ADR-20261121230052](adr/20261121230052-object-storage-ga.md) moves
+`object-storage`, `s3-credentials`, `signed-urls`, `multipart-uploads`,
+`object-storage-compute` and `object-storage-key-scopes` to `ga` on their
+current plans. `object-versioning` and `object-protection` stay `preview`
+because the OVH backend is `"versioning": "unsupported"`
+(ADR-20261121150000). `bucket-encryption`, `object-lifecycle`, `bucket-cors`
+and `bucket-access-grants` also stay `preview`: they are not qualified on OVH.
+`/docs/object-storage` is published.
+
+The OVH launch blockers found on 2026-11-21 are fixed by #7762 and #7792.
+`TestObjectStorage` against production on rc.367 found three more, all on
+OVH: keys with spaces listed under the wrong name (#7818, listing keys are
+form-encoded), and every gateway copy answered 409 because OVH refuses
+copy-source conditions with 501 (#7819, ADR-20261121150000 amendment 3).
+The six flags keep their stored `default: false` (owner and release-acceptance
+accounts only), so the release opens nothing.
+
+Evidence:
+- `tests/journeys/object_storage_test.go::TestObjectStorage` passed against
+  production on v0.1.18-rc.368 (2026-11-22, release-acceptance account,
+  `--tier full --apps-domain gregale.app`): 19 passed, 0 failed, 0 skipped.
+  A raw probe of every launch capability on a fresh bucket (S3 put/get/range,
+  paged and delimited listing, copy, conditional put, CRC32/SHA256 checksums,
+  multipart create/complete/abort, high-level 12 MB copy, signed URL PUT/GET,
+  API multipart, compute binding create/rotate/delete, usage, credential
+  revoke) passed the same day.
+- GA: the owner turned the six flag defaults `true` after a TOTP step-up on
+  2026-11-22 (ADR rollout step 4, `object_storage` last, each key written
+  separately). The six preview children (`object_versioning`,
+  `object_protection`, `bucket_encryption`, `object_lifecycle`, `bucket_cors`,
+  `bucket_access_grants`) stay `default: false`.
+- Open owner decisions: three acceptance-account test buckets latched
+  versions-observed before #7792 (`smoke-20261121124839-6b045393`,
+  `probe-1121203745-32108`, `apiprobe-1121210106`) cannot be deleted without
+  bypassing the latch trigger; `docs/DPA.md` names US hosting while BHS is in
+  Canada; the OVH project bucket quota is 95 until OVH raises it.
+
 ## Data API investigation fixes — 2026-11-12 (branch, not released)
 
 All 30 retained findings have implementations and regression coverage in

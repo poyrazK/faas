@@ -22,8 +22,17 @@ type mcpInitOptions struct {
 // Validate the complete access contract before creating customer files. This
 // uses the same configuration validator as deploy; no network or credentials
 // are needed to scaffold a private resource server.
+// mcpInitTemplate is the starter a runtime uses. The Node Tasks stack starts
+// from mcp-node-tasks; plain Node starts from the smaller mcp-node.
+func mcpInitTemplate(options mcpInitOptions) string {
+	if options.Tasks && options.Runtime == "node" {
+		return "mcp-node-tasks"
+	}
+	return "mcp-" + options.Runtime
+}
+
 func mcpInitConfig(options mcpInitOptions) (mcphosting.Config, error) {
-	body, err := templates.FS.ReadFile("mcp-" + options.Runtime + "/" + mcphosting.ConfigFile)
+	body, err := templates.FS.ReadFile(mcpInitTemplate(options) + "/" + mcphosting.ConfigFile)
 	if err != nil {
 		return mcphosting.Config{}, err
 	}
@@ -88,7 +97,7 @@ func runMCPInit(options mcpInitOptions) int {
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			return printErr("Could not stage MCP project", err)
 		}
-		if err := templates.Materialize("mcp-"+options.Runtime, root); err != nil {
+		if err := templates.Materialize(mcpInitTemplate(options), root); err != nil {
 			return printErr("Could not materialize MCP project", err)
 		}
 		body, err := json.MarshalIndent(config, "", "  ")
@@ -132,7 +141,7 @@ func runMCPInit(options mcpInitOptions) int {
 			AuthMode  string   `json:"auth_mode"`
 			Tasks     bool     `json:"tasks"`
 			NextSteps []string `json:"next_steps"`
-		}{"mcp-" + options.Runtime, dest, "created", options.Runtime, options.AuthMode, options.Tasks, next}))
+		}{mcpInitTemplate(options), dest, "created", options.Runtime, options.AuthMode, options.Tasks, next}))
 	}
 	PrintOK(osStdout, "Created %s MCP project at %s (access: %s)", options.Runtime, dest, options.AuthMode)
 	for _, step := range next {

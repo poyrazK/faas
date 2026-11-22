@@ -796,6 +796,7 @@
         "/v1/orgs/{}/invoices",
         "/v1/orgs/{}/overage-cap",
         "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/referrals/checkout",
         "/v1/orgs/{}/seat_usage",
         "/v1/orgs/{}/usage",
         "/v1/usage",
@@ -1762,8 +1763,18 @@
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection",
       "routes": [
+        "/v1/apps/{}/run-artifact-deliveries",
         "/v1/execution-artifact-grants",
-        "/v1/executions"
+        "/v1/execution-files",
+        "/v1/execution-environments",
+        "/v2/executions",
+        "/v2/execution-workflows",
+        "/v1/execution-pipelines",
+        "/v2/execution-pipelines",
+        "/v1/executions",
+        "/v1/run-tasks",
+        "/v1/run-controls",
+        "/v1/run-history"
       ],
       "cli": [
         "run",
@@ -3257,6 +3268,7 @@
         "=/v1/postgres/databases",
         "=/v1/postgres/databases/{}",
         "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/databases/{}/query",
         "/v1/postgres/databases/{}/undelete",
         "/v1/postgres/usage"
       ],
@@ -3533,7 +3545,7 @@
       "name": "Multipart uploads",
       "category": "data",
       "description": "Upload large objects in parts.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3654,7 +3666,7 @@
       "name": "Private object storage",
       "category": "data",
       "description": "Use private managed object buckets and signed URLs from an API.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -3663,7 +3675,7 @@
       ],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
-      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification",
+      "acceptance_test": "tests/journeys/object_storage_test.go::TestObjectStorage",
       "settings": [
         "manifest.buckets"
       ],
@@ -3689,7 +3701,7 @@
       "name": "Object storage compute bindings and triggers",
       "category": "data",
       "description": "Bind buckets to apps and run app code on bucket notifications.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
@@ -3712,7 +3724,7 @@
       "name": "Key-scoped bucket bindings",
       "category": "data",
       "description": "Limit an app's bucket binding to object keys under one prefix.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5472,7 +5484,7 @@
       "name": "S3 credentials",
       "category": "data",
       "description": "Mint S3-compatible credentials for a bucket.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -5785,7 +5797,7 @@
       "name": "Signed URLs and upload routes",
       "category": "data",
       "description": "Share objects with signed URLs and accept browser uploads.",
-      "maturity": "preview",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",

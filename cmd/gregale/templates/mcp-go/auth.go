@@ -543,8 +543,20 @@ type jwkResolver struct {
 	keys        []jsonWebKey
 	loadedAt    time.Time
 	lastRefresh time.Time
-	refresh     *jwkRefresh
+	// lastFailed marks a refresh that could not load the key set. It only
+	// backs off briefly: a transient fetch failure (an issuer waking, a
+	// network blip) must not reject every token for the full throttle.
+	lastFailed bool
+	refresh    *jwkRefresh
 }
+
+const (
+	// jwksUnknownKeyThrottle limits refetches for a kid the issuer's current
+	// key set does not contain (prevents token-driven fetch amplification).
+	jwksUnknownKeyThrottle = 30 * time.Second
+	// jwksFailureBackoff is the wait after a failed fetch before retrying.
+	jwksFailureBackoff = time.Second
+)
 
 type jwkRefresh struct {
 	done chan struct{}
@@ -568,11 +580,21 @@ type jsonWebKey struct {
 	Y      string          `json:"y"`
 }
 
+func jwksTransport() http.RoundTripper {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
+	return transport
+}
+
 func newJWKResolver(jwksURL string) *jwkResolver {
 	return &jwkResolver{
 		url: jwksURL,
 		client: &http.Client{
-			Timeout: 5 * time.Second,
+			// A fresh connection per fetch: key sets are fetched minutes
+			// apart, and a pooled keep-alive socket can be dead after the app
+			// is parked and restored from a snapshot.
+			Transport: jwksTransport(),
+			Timeout:   5 * time.Second,
 			CheckRedirect: func(request *http.Request, via []*http.Request) error {
 				if request.URL.Scheme != "https" || len(via) >= 3 {
 					return errors.New("unsafe JWKS redirect")
@@ -710,9 +732,16 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 			}
 			continue
 		}
-		if !r.lastRefresh.IsZero() && now.Sub(r.lastRefresh) < 30*time.Second {
-			r.mu.Unlock()
-			return nil, errors.New("unknown JWT key")
+		if !r.lastRefresh.IsZero() {
+			since := now.Sub(r.lastRefresh)
+			if r.lastFailed && since < jwksFailureBackoff {
+				r.mu.Unlock()
+				return nil, errors.New("could not fetch JWKS")
+			}
+			if !r.lastFailed && since < jwksUnknownKeyThrottle {
+				r.mu.Unlock()
+				return nil, errors.New("unknown JWT key")
+			}
 		}
 		pending := &jwkRefresh{done: make(chan struct{})}
 		r.refresh = pending
@@ -722,6 +751,7 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		keys, err := r.fetch()
 		r.mu.Lock()
 		r.lastRefresh = time.Now()
+		r.lastFailed = err != nil
 		if err == nil {
 			r.keys, r.loadedAt = keys, r.lastRefresh
 		}

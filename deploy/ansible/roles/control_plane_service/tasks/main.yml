@@ -668,19 +668,29 @@
     group: root
     mode: "0644"
 
-- name: control_plane_service — install traffic apps-domain drop-in for schedd
-  notify: restart faas-schedd
+# apid gets it too: apid.toml is hand-written operator config, so after the
+# apps-domain move its apps_domain still named the alias, and the layout
+# drop-in below made apid refuse to start ("apps domains overlap"), which took
+# the API down during the rc.364 converge (2026-11-21).
+- name: control_plane_service — install traffic apps-domain drop-in for schedd and apid
+  notify:
+    - restart faas-schedd
+    - restart faas-apid
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-apps-domain.conf.j2
-    dest: /etc/systemd/system/faas-schedd.service.d/99-faas-apps-domain.conf
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-apps-domain.conf"
     owner: root
     group: root
     mode: "0644"
+  loop:
+    - faas-schedd
+    - faas-apid
 
 - name: control_plane_service — install domain layout drop-in (ADR-20261026100000)
   notify:
     - restart faas-schedd
     - restart faas-apid
+    - restart faas-meterd
   ansible.builtin.template:
     src: ../../_shared/templates/99-faas-domain-layout.conf.j2
     dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-domain-layout.conf"
@@ -690,6 +700,9 @@
   loop:
     - faas-schedd
     - faas-apid
+    # meterd links customer alert notifications to the dashboard on the
+    # platform domain (Observe audit 2026-11-21).
+    - faas-meterd
 
 # ADR-20261112114642: meterd probes customers' synthetic checks at
 # <slug>.<apps domain> (ADR-748). Without this it fell back to gregale.dev,

@@ -1,0 +1,43 @@
+{
+  "schema": "gregale.run-lifecycle-attempt/v1",
+  "snapshot_commit": "0ea8f5b63e6faabb9caaff9aa290c19f533b1e96",
+  "functional_pass": false,
+  "p0_3_complete": false,
+  "runtime_release_eligibility": false,
+  "virtualization": "google",
+  "source_recovery_profile": "journal_adoption_v7",
+  "process_exits": {
+    "source": 0,
+    "oci": 1,
+    "leakcheck_before": 0,
+    "leakcheck_after": 0
+  },
+  "source_passed_tests": [
+    "TestSourceRunLifecycleMetal/source_result_artifact_and_usage",
+    "TestSourceRunLifecycleMetal/apid_restart_replays_original_receipt",
+    "TestSourceRunLifecycleMetal/fresh_guest_and_network_isolation",
+    "TestSourceRunLifecycleMetal/guest_error_is_terminal",
+    "TestSourceRunLifecycleMetal/output_is_bounded",
+    "TestSourceRunLifecycleMetal/running_cancel_tears_down",
+    "TestSourceRunLifecycleMetal/deadline_does_not_extend",
+    "TestSourceRunLifecycleMetal/queued_expiry_never_dispatches",
+    "TestSourceRunLifecycleMetal/schedd_restart_never_reexecutes_running_work",
+    "TestSourceRunLifecycleMetal/vmmd_restart_never_reexecutes_running_work",
+    "TestSourceRunLifecycleMetal/payload_erasure_and_single_usage_entry",
+    "TestSourceRunLifecycleMetal"
+  ],
+  "oci_failed_tests": [
+    "TestInteractiveImageRunMetal/pipes",
+    "TestInteractiveImageRunMetal"
+  ],
+  "finding": "OCI image materialization published readiness on an empty private store before staging base/base-amd64.ext4; BootJob failed before interactive attach.",
+  "correction": "Stage the verified minimal boot base before publishing a job image as ready.",
+  "raw_evidence_sha256": {
+    "source.jsonl": "53092ceb1c1b54cf82df193df974bb49b61f579bd79c2c3bc6d1692573d0bb9f",
+    "oci.jsonl": "5d02a68c0a5dc30849833757fa961cdd64c5f1dbcf80b5f39177417d344a9df4",
+    "harness-checks.jsonl": "f03ae6bbb581a2a996cbff2d01931b8735d651a5505b8057f83fcae6b26c2124",
+    "process-exits.json": "ff7b3972ddbc45b60a525297413f1f05fdb3065e6262ebf53e6ac8e483b3ad6a",
+    "leakcheck-before.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97",
+    "leakcheck-after.log": "7a047dfe909c8e045e41838995200d53f89f19bb8e6bcb313059b371e2190c97"
+  }
+}

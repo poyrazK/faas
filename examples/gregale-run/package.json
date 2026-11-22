@@ -1,0 +1,12 @@
+{
+  "name": "gregale-run-examples",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "demo": "node scripts/local-demo.mjs",
+    "prepare": "node scripts/manifests.mjs",
+    "setup:report": "node scripts/setup-report-agent.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

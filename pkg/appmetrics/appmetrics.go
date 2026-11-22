@@ -110,16 +110,30 @@ func PercentRatioQuery(numerator, denominator string) string {
 	return fmt.Sprintf(`(((%s) or vector(0)) / (%s) * 100) and ((%s) > 0)`, numerator, denominator, denominator)
 }
 
-// ErrorRatePctQuery is the app error rate: 5xx over the eligible 2xx and 5xx
-// responses, as a percentage. Client-caused 3xx/4xx are excluded from the
+// ErrorRatePctQuery is the app error rate: failed requests (5xx and capacity
+// refusals) over the eligible 2xx, 5xx and refused requests, as a percentage. Client-caused 3xx/4xx are excluded from the
 // population, so a window whose traffic is all 4xx (404s, edge-rule 429s) has
 // requests but no eligible denominator. That is a 0% error rate, not missing
 // telemetry: production-us hunt #4 found `gregale canary simulate` and
 // `gregale metrics` reporting such an app as "degraded".
 func ErrorRatePctQuery(appID, rng string) string {
-	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class="5xx"}[%s]))`, appID, rng),
-		fmt.Sprintf(`sum(rate(gateway_request_duration_seconds_count{app=%q,class=~"2xx|5xx"}[%s]))`, appID, rng)))
+	return fmt.Sprintf(`(%s) or vector(0)`, PercentRatioQuery(FailedRequestsQuery("rate", appID, rng), EligibleRequestsQuery("rate", appID, rng)))
+}
+
+// FailedRequestsQuery sums an app's failed requests over rng with fn (rate or
+// increase): the 5xx responses plus the 429s the gateway answered because the
+// app had no capacity (gateway_capacity_refusals_total). Those visitors were
+// turned away as surely as by a 5xx, and counting only 5xx kept error rates,
+// SLOs and outage alerts green while an app refused its traffic (Observe audit
+// 2026-11-21, finding 8; ADR-20261121190000).
+func FailedRequestsQuery(fn, appID, rng string) string {
+	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class="5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
+}
+
+// EligibleRequestsQuery sums the requests an app's error rate is measured
+// over: 2xx, 5xx and capacity refusals. Client-caused 3xx/4xx stay outside.
+func EligibleRequestsQuery(fn, appID, rng string) string {
+	return fmt.Sprintf(`sum(%[1]s(gateway_request_duration_seconds_count{app=%[2]q,class=~"2xx|5xx"}[%[3]s]) or %[1]s(gateway_capacity_refusals_total{app=%[2]q}[%[3]s]))`, fn, appID, rng)
 }
 
 // HistogramQuantileMSQuery builds an idle-safe latency percentile query.
@@ -391,6 +405,14 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 		n := int64(math.Round(SafeFloat(q.wakeSamples.v)))
 		resp.WakeSamples = &n
 	}
+	// 7a. The app's own wake p95 (gateway_app_wake_latency_seconds). Best
+	// effort: a gateway release without the series leaves it unset and
+	// clients keep showing the fleet figure.
+	if q.appWakeP95.err == nil && q.appWakeSamples.err == nil {
+		n := int64(math.Round(SafeFloat(q.appWakeSamples.v)))
+		p95 := SafeFloat(q.appWakeP95.v)
+		resp.AppWakeSamples, resp.AppWakeP95MS = &n, &p95
+	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
 	// (gateway_queue_depth{app}). The alert preset
@@ -457,6 +479,7 @@ type fetchQueries struct {
 	count, p50, p95, p99               fetchResult
 	errorRate, cacheHitRate, coldStart fetchResult
 	wakeP95, wakeSamples, queueDepth   fetchResult
+	appWakeP95, appWakeSamples         fetchResult
 	egressBytes, txBytes               fetchResult
 	freshness                          *fetchResult
 }
@@ -506,6 +529,11 @@ func startFetchQueries(ctx context.Context, fetcher PromQL, appID, rng string) f
 		fmt.Sprintf(`sum by (le) (rate(gateway_wake_latency_seconds_bucket[%s]))`, rng),
 		fmt.Sprintf(`sum(rate(gateway_wake_latency_seconds_count[%s]))`, rng)), nil)
 	query(&out.wakeSamples, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng), nil)
+	query(&out.appWakeP95, HistogramQuantileMSQuery(
+		0.95,
+		fmt.Sprintf(`sum by (le) (rate(gateway_app_wake_latency_seconds_bucket{app=%q}[%s]))`, appID, rng),
+		fmt.Sprintf(`sum(rate(gateway_app_wake_latency_seconds_count{app=%q}[%s]))`, appID, rng)), nil)
+	query(&out.appWakeSamples, fmt.Sprintf(`sum(increase(gateway_app_wake_latency_seconds_count{app=%q}[%s])) or vector(0)`, appID, rng), nil)
 	query(&out.queueDepth, fmt.Sprintf(`gateway_queue_depth{app=%q, account_id=~".+"}`, appID), nil)
 	query(&out.egressBytes, fmt.Sprintf(`sum(increase(schedd_egress_net_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)
 	query(&out.txBytes, fmt.Sprintf(`sum(increase(gateway_egress_tx_bytes_total{app=%q}[%s]))`, appID, rng), nil)

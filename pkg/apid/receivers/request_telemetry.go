@@ -20,6 +20,7 @@ package receivers
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -553,6 +554,14 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// unless its gateway counted it into its own rollups (amendment 5).
 	if !req.GetAnalyticsCounted() {
 		if err := r.addRollup(ctx, req, accountID, appID, deploymentID, eventID, count, consumerID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				// The app was purged after the gateway served this row; no
+				// retry can record it, and a retryable answer dropped the
+				// gateway's whole batch (prod hunt 2026-11-21).
+				r.observe(rtOutcomeNotRetained)
+				out.Outcome = rtOutcomeNotRetained
+				return out, nil
+			}
 			r.observe(rtOutcomeDBError)
 			out.Outcome = rtOutcomeAnalyticsBackpressure
 			return out, nil
@@ -583,10 +592,7 @@ func (r *requestTelemetryReceiver) prepareOne(ctx context.Context, req *apidpb.I
 	// Wire compatibility: older gateways do not send the additive dimension
 	// fields. Map proto3 empty defaults to the database sentinels so a rolling
 	// upgrade continues to insert rows while new gateways populate dimensions.
-	uaFamily := req.GetUaFamily()
-	if uaFamily == "" {
-		uaFamily = "__unknown__"
-	}
+	uaFamily := requestTelemetryUAFamily(req.GetUaFamily())
 	referrerHost := req.GetReferrerHost()
 	if referrerHost == "" {
 		referrerHost = "__none__"

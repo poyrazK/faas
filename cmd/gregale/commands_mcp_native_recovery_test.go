@@ -38,7 +38,7 @@ func TestMCPNativeRestoreTrafficAndRecovery(t *testing.T) {
 				return nil
 			}
 			root := t.TempDir()
-			config, err := os.ReadFile("templates/mcp-node/gregale-mcp.json")
+			config, err := os.ReadFile("templates/mcp-node-tasks/gregale-mcp.json")
 			if err != nil {
 				t.Fatal(err)
 			}

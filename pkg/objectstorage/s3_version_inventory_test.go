@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,7 +25,7 @@ func TestS3VersionInventoryPagination(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/xml")
 		if q.Get("key-marker") == "" {
-			_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>marker/+%%</NextVersionIdMarker><Version><Key>%s</Key><VersionId>null</VersionId><Size>3</Size></Version><Version><Key>%s</Key><VersionId>v1</VersionId><Size>4</Size></Version><DeleteMarker><Key>%s</Key><VersionId>marker/+%%</VersionId></DeleteMarker></ListVersionsResult>`, url.PathEscape(key), url.PathEscape(key), url.PathEscape(key), url.PathEscape(key))
+			_, _ = fmt.Fprintf(w, `<ListVersionsResult><EncodingType>url</EncodingType><IsTruncated>true</IsTruncated><NextKeyMarker>%s</NextKeyMarker><NextVersionIdMarker>marker/+%%</NextVersionIdMarker><Version><Key>%s</Key><VersionId>null</VersionId><Size>3</Size></Version><Version><Key>%s</Key><VersionId>v1</VersionId><Size>4</Size></Version><DeleteMarker><Key>%s</Key><VersionId>marker/+%%</VersionId></DeleteMarker></ListVersionsResult>`, s3ListEncode(key), s3ListEncode(key), s3ListEncode(key), s3ListEncode(key))
 		} else {
 			if q.Get("key-marker") != key || q.Get("version-id-marker") != "marker/+%" {
 				t.Error("lost paired cursor", q)

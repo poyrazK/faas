@@ -720,6 +720,11 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	if err := ensureWorkingDir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
 		return fmt.Errorf("run app: prepare working directory: %w", err)
 	}
+	if devWatchActive.Load() {
+		if err := prepareDevWatchWorkdir(cmd.Dir, credential.Uid, credential.Gid); err != nil {
+			slog.Warn("dev watch: working directory stays read-only for the app user", "dir", cmd.Dir, "err", err)
+		}
+	}
 	cmd.Env = env
 	// ADR-051 Phase 4 Slice A PR-B: tee the customer's stdout/stderr
 	// into the supervisor's ring buffer so the characterize probe can

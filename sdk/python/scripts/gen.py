@@ -210,6 +210,7 @@ ROOT_WRAPPER_MODULES = (
 # Hand-written modules of preview and internal capabilities,
 # `faas_sdk/preview/<name>` (ADR-20261023115741).
 PREVIEW_WRAPPER_MODULES = (
+    "execution_pipeline_progress.py",
     "_pipeline_compensation_protocol.py",
     "pipeline_compensation_state.py",
     "pipeline_compensations.py",
@@ -274,6 +275,8 @@ PREVIEW_WRAPPER_MODULES = (
     "realtime_backpressure.py",
     "realtime_drain.py",
     "executions.py",
+    "execution_environments.py",
+    "tasks.py",
     "crash_snapshots.py",
     "dev_bridge.py",
     "auth.py",
@@ -600,7 +603,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,job_runtime.py,_typed_jobs.py,job_types.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_async_request.py,_pagination.py,_waiters.py,_source_upload.py,_source_preparation.py,_source_deployment.py,_project_inspection.py,_project_workflows.py,_project_verification.py,job_runtime.py,_typed_jobs.py,job_types.py,_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,execution_environments.py,tasks.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -1549,7 +1552,9 @@ from .dev_bridge import (
     current_dev_bridge_context,
     with_dev_bridge_context,
 )
+from .tasks import Task, TaskRun, TaskIntent, TaskResult, TaskDestination, TaskExecutionError, TaskSubmissionError, TaskDeliveryError
 from .executions import ExecutionEvent, ExecutionID, awatch_execution, decode_execution_artifact, watch_execution
+from .execution_environments import awatch_execution_environment, watch_execution_environment
 from .flags import (
     GREGALE_CLIENT_COUNTRY_HEADER,
     GREGALE_CLIENT_UA_FAMILY_HEADER,
@@ -1996,9 +2001,12 @@ __all__ = (
     "CrashSnapshotResult",
     "capture_crash_snapshot",
     "acapture_crash_snapshot",
+    "Task", "TaskRun", "TaskIntent", "TaskResult", "TaskDestination", "TaskExecutionError", "TaskSubmissionError", "TaskDeliveryError",
     "ExecutionEvent",
     "ExecutionID",
     "watch_execution",
+    "watch_execution_environment",
+    "awatch_execution_environment",
     "awatch_execution",
     "decode_execution_artifact",
     "DEV_BRIDGE_CONTEXT_HEADER",

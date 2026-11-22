@@ -36,6 +36,7 @@ export { RegistryService } from './RegistryService.js';
 export { RunsService } from './RunsService.js';
 export { SecretsService } from './SecretsService.js';
 export { StatusService } from './StatusService.js';
+export { StorageService } from './StorageService.js';
 export { TemplatesService } from './TemplatesService.js';
 export { UploadsService } from './UploadsService.js';
 export { UsageService } from './UsageService.js';

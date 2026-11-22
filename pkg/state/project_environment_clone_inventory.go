@@ -92,6 +92,10 @@ const (
 	CloneInventoryShared         = "shared"
 	CloneInventoryDerived        = "derived"
 	CloneInventoryTargetIdentity = "target_identity"
+	// CloneInventoryProductionOnly marks app-wide settings that stay with
+	// production: the stage starts without them (ADR-20261104120000
+	// amendment 2026-11-21).
+	CloneInventoryProductionOnly = "production_only"
 )
 
 // Blocker codes for tables a source uses but the clone cannot copy.
@@ -143,7 +147,7 @@ func validCloneInventory(policy ProjectEnvironmentCloneSchemaPolicy) bool {
 	}
 	switch c.Strategy {
 	case "":
-	case CloneInventoryShared, CloneInventoryDerived, CloneInventoryTargetIdentity:
+	case CloneInventoryShared, CloneInventoryDerived, CloneInventoryTargetIdentity, CloneInventoryProductionOnly:
 		if c.Unavailable != "" {
 			return false
 		}

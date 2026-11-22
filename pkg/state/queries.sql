@@ -1907,6 +1907,17 @@ where ($1 = '' or actor = $1)
 order by at desc, id desc
 limit $5::int8;
 
+-- name: ListEventsByKindSince :many
+-- The operator wake-latency report (ADR-20261121200409): one kind's rows at
+-- or after since, newest first, as a backward scan of events_kind_at_idx
+-- (kind, at DESC). The caller asks for one row more than it keeps to learn
+-- whether the window was cut.
+SELECT id, at, actor, kind, subject, data
+FROM events
+WHERE kind = sqlc.arg(kind)::text AND at >= sqlc.arg(since)::timestamptz
+ORDER BY at DESC
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on
@@ -2051,6 +2062,9 @@ with subject as (
     join builds b on b.deployment_id = d.id
    where b.started_at >= sqlc.arg(month_start)::timestamptz
      and b.coalesced_with is null
+     -- A build the platform failed (builder VM, node or registry outage)
+     -- used no customer build minutes (ADR-20261121231500).
+     and b.failure_class is distinct from 'infra'
 )
 select coalesce((select br.plan from billing_resource_accounts br join subject s on br.id = s.id), '')::text as plan,
        (select seconds from used)::bigint as used_seconds;
@@ -6738,19 +6752,23 @@ SELECT count(*) FROM executions
 WHERE account_id = sqlc.arg(account_id)
   AND status IN ('queued', 'restoring', 'running');
 
+-- name: ExecutionCountExtendedActive :one
+SELECT count(*) FROM executions WHERE account_id = sqlc.arg(account_id)
+AND execution_class = 'extended' AND status IN ('queued', 'restoring', 'running');
+
 -- name: ExecutionInsert :one
 INSERT INTO executions (
-  account_id, runtime, profile, status, network_mode, timeout_ms, memory_mb,
+  account_id, runtime, profile, execution_class, status, network_mode, timeout_ms, memory_mb,
   cpu_millicores, ephemeral_disk_mb, max_output_bytes, pids_max,
   source_bytes, input_bytes, deadline_at, created_at, updated_at, runs_principal_id,
-  workflow_id, step_label
+  workflow_id, step_label, max_artifact_bytes, input_file_bytes, environment_id, runtime_image_digest
 ) VALUES (
-  sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), 'queued', sqlc.arg(network_mode),
+  sqlc.arg(account_id), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(execution_class), 'queued', sqlc.arg(network_mode),
   sqlc.arg(timeout_ms), sqlc.arg(memory_mb), sqlc.arg(cpu_millicores),
   sqlc.arg(ephemeral_disk_mb), sqlc.arg(max_output_bytes), sqlc.arg(pids_max),
   sqlc.arg(source_bytes), sqlc.arg(input_bytes), sqlc.arg(deadline_at),
   sqlc.arg(admitted_at), sqlc.arg(admitted_at), sqlc.narg(runs_principal_id)::uuid,
-  sqlc.narg(workflow_id), sqlc.narg(step_label)
+  sqlc.narg(workflow_id), sqlc.narg(step_label), sqlc.narg(max_artifact_bytes)::bigint, sqlc.narg(input_file_bytes)::bigint, sqlc.narg(environment_id)::uuid, (SELECT 'sha256:' || image_digest FROM execution_environments WHERE id=sqlc.narg(environment_id)::uuid)
 )
 RETURNING *;
 
@@ -6863,6 +6881,31 @@ FROM candidate
 WHERE execution.id = candidate.id
 RETURNING execution.*;
 
+-- name: ExecutionClaimNextForClass :one
+WITH candidate AS (
+  SELECT id, deadline_at
+  FROM executions
+  WHERE (sqlc.narg(account_id)::uuid IS NULL OR executions.account_id = sqlc.narg(account_id)::uuid)
+    AND executions.execution_class = sqlc.arg(execution_class)
+    AND executions.status = 'queued'
+    AND executions.cancel_requested_at IS NULL
+    AND executions.created_at <= sqlc.arg(claimed_at)::timestamptz
+    AND executions.deadline_at > sqlc.arg(claimed_at)::timestamptz
+  ORDER BY executions.created_at, executions.id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+)
+UPDATE executions AS execution
+SET status = 'restoring',
+    lease_token = sqlc.arg(lease_token),
+    lease_owner = sqlc.arg(lease_owner),
+    lease_expires_at = LEAST(sqlc.arg(lease_expires_at)::timestamptz, candidate.deadline_at),
+    updated_at = sqlc.arg(claimed_at)
+FROM candidate
+WHERE execution.id = candidate.id
+RETURNING execution.*;
+
+
 -- name: ExecutionQueueStats :one
 SELECT count(*)::bigint AS queued, min(created_at) AS oldest_created_at
 FROM executions
@@ -6938,7 +6981,7 @@ WHERE id = sqlc.arg(execution_id)
   AND lease_expires_at > sqlc.arg(started_at)
   AND cancel_requested_at IS NULL
   AND deadline_at > sqlc.arg(started_at)
-  AND (profile = 'standard' OR runtime_image_digest IS NOT NULL)
+  AND (profile = 'standard' AND environment_id IS NULL OR runtime_image_digest IS NOT NULL)
 RETURNING *;
 
 -- name: ExecutionPinRuntime :one
@@ -6978,6 +7021,7 @@ SET status = sqlc.arg(terminal_status),
     result = NULLIF(sqlc.arg(result_json)::text, '')::jsonb,
     result_bytes = sqlc.arg(result_bytes),
     artifacts = sqlc.arg(artifacts),
+    result_validation = sqlc.narg(result_validation)::jsonb,
     stdout = sqlc.arg(stdout),
     stderr = sqlc.arg(stderr),
     output_truncated = sqlc.arg(output_truncated),
@@ -7154,13 +7198,13 @@ WHERE account_id = sqlc.arg(account_id)
 -- Publication is insert-only; retirement is the sole mutable transition.
 -- name: RuntimeSnapshotInsert :one
 INSERT INTO runtime_snapshots (
-    catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
+    fc_version, catalog_key, runtime, profile, architecture, kernel_digest, guest_executor_digest,
     base_image_digest, memory_mb, ephemeral_disk_mb, format_version,
     storage_key, snapshot_digest, mem_bytes, vm_state_bytes, sanitized,
     payload_free, state, created_at, published_at, retired_at
 )
 VALUES (
-    sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(architecture),
+    sqlc.arg(fc_version), sqlc.arg(catalog_key), sqlc.arg(runtime), sqlc.arg(profile), sqlc.arg(architecture),
     sqlc.arg(kernel_digest), sqlc.arg(guest_executor_digest),
     sqlc.arg(base_image_digest), sqlc.arg(memory_mb), sqlc.arg(ephemeral_disk_mb),
     sqlc.arg(format_version), sqlc.arg(storage_key), sqlc.arg(snapshot_digest),
@@ -13048,7 +13092,12 @@ WHERE id IN (sqlc.arg(from_node_id)::uuid, sqlc.arg(to_node_id)::uuid)
 ORDER BY id FOR SHARE;
 
 -- name: ReassignOrphanedAppOwner :execrows
-UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now()
+-- ADR-20261121203000: a displacement remembers the node the app came from
+-- (its home), keeps an older home across a chain of drains, and clears it
+-- when the app lands back on its home.
+UPDATE apps SET node_id=sqlc.arg(to_node_id)::uuid, reassigned_at=now(),
+  owner_home_node_id=CASE WHEN owner_home_node_id=sqlc.arg(to_node_id)::uuid THEN NULL
+                          ELSE coalesce(owner_home_node_id, sqlc.arg(from_node_id)::uuid) END
 WHERE id=sqlc.arg(app_id)::uuid AND node_id=sqlc.arg(from_node_id)::uuid
   AND status IN ('active', 'evicted_cold')
   AND (sqlc.arg(cooldown_seconds)::integer < 0 OR reassigned_at IS NULL
@@ -30651,6 +30700,10 @@ WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND d.previews IN ('empty', 'copy') AND d.preview_pr_number IS NULL
   AND d.state NOT IN ('deleting', 'deleted')
 ORDER BY b.environment_key;
+
+-- name: RuntimeSnapshotRecords :many
+-- Both ready and retired entries retain their immutable native objects.
+SELECT * FROM runtime_snapshots ORDER BY catalog_key;
 
 -- ADR-20261104120000: the project environment a published event belongs to.
 -- Production is the empty environment, so its row reports production = true.

@@ -251,3 +251,33 @@ SELECT pg_catalog.set_config('search_path','pg_catalog',true),pg_catalog.set_con
  pg_catalog.set_config('IntervalStyle','postgres',true),pg_catalog.set_config('bytea_output','hex',true),
  pg_catalog.set_config('extra_float_digits','3',true),pg_catalog.set_config('statement_timeout','5000',true),
  pg_catalog.set_config('enable_indexscan','off',true),pg_catalog.set_config('enable_indexonlyscan','off',true),pg_catalog.set_config('enable_bitmapscan','off',true);
+
+-- name: ObserveTaskClaim :one
+SELECT EXISTS (
+  SELECT 1
+    FROM public.gregale_mcp_tasks AS task
+    JOIN public.gregale_mcp_task_worker_handlers AS handler
+      ON handler.namespace = task.namespace AND handler.tool_name = task.tool_name
+     AND handler.handler_version = task.handler_version
+    JOIN public.gregale_mcp_task_workers AS worker
+      ON worker.namespace = handler.namespace AND worker.worker_id = handler.worker_id
+   WHERE task.namespace = sqlc.arg(namespace)::text AND task.task_id = sqlc.arg(task_id)::uuid
+     AND task.tool_name = 'build_report' AND task.status = 'running' AND task.attempt_count = sqlc.arg(attempt)::integer
+     AND task.lease_expires_at > clock_timestamp() AND task.expires_at > clock_timestamp()
+     AND task.cancel_requested_at IS NULL
+     AND encode(sha256(convert_to(task.lease_token::text, 'UTF8')), 'hex') = sqlc.arg(lease_sha256)::text
+     AND worker.worker_id = sqlc.arg(worker_id)::uuid AND NOT worker.draining AND worker.expires_at > clock_timestamp()
+     AND handler.deployment_id = sqlc.arg(deployment_id)::text
+);
+
+
+-- name: ObserveTaskResult :one
+-- Read only counts and the exact completed Task attempt, never its payload.
+SELECT count(*) AS task_rows,
+       count(*) FILTER (WHERE status = 'completed' AND result_encrypted IS NOT NULL) AS completed_result_rows,
+       coalesce(max(attempt_count) FILTER (
+           WHERE task_id = sqlc.arg(task_id)::uuid AND tool_name = 'build_report'
+             AND status = 'completed' AND result_encrypted IS NOT NULL AND expires_at > clock_timestamp()
+       ), 0)::integer AS attempt
+  FROM public.gregale_mcp_tasks
+ WHERE namespace = sqlc.arg(namespace)::text;

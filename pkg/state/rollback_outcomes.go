@@ -71,6 +71,7 @@ type RollbackOutcomeStore interface {
 	// finished=false means another worker already resolved it.
 	FinishRollback(ctx context.Context, id string, outcome RollbackOutcome) (record RollbackRecord, finished bool, err error)
 	RollbackRecordByID(ctx context.Context, accountID, appID, id string) (RollbackRecord, error)
+	LatestRollbackFromDeployment(ctx context.Context, appID, deploymentID string) (RollbackRecord, error)
 }
 
 var errRollbackOutcomeInvalid = errors.New("state: invalid rollback outcome")
@@ -263,6 +264,14 @@ func (s *PgStore) RollbackRecordByID(ctx context.Context, accountID, appID, id s
 	return r, nil
 }
 
+func (s *PgStore) LatestRollbackFromDeployment(ctx context.Context, appID, deploymentID string) (RollbackRecord, error) {
+	r, err := scanRollbackRecord(s.pool.QueryRow(ctx, `select `+rollbackRecordColumns+`
+		  from deployment_rollbacks
+		 where app_id = $1 and from_deployment_id = $2
+		 order by requested_at desc, id desc limit 1`, appID, deploymentID))
+	return r, mapErr(err)
+}
+
 // truncateBytes bounds a string to n bytes without splitting a UTF-8 rune.
 func truncateBytes(s string, n int) string {
 	if len(s) <= n {
@@ -379,4 +388,21 @@ func (m *MemStore) RollbackRecordByID(_ context.Context, accountID, appID, id st
 		return RollbackRecord{}, ErrNotFound
 	}
 	return r, nil
+}
+
+func (m *MemStore) LatestRollbackFromDeployment(_ context.Context, appID, deploymentID string) (RollbackRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var latest RollbackRecord
+	for _, r := range m.rollbackRecords {
+		if r.AppID == appID && sameDeploymentID(r.FromDeploymentID, deploymentID) &&
+			(latest.ID == "" || r.RequestedAt.After(latest.RequestedAt) ||
+				(r.RequestedAt.Equal(latest.RequestedAt) && r.ID > latest.ID)) {
+			latest = r
+		}
+	}
+	if latest.ID == "" {
+		return RollbackRecord{}, ErrNotFound
+	}
+	return latest, nil
 }

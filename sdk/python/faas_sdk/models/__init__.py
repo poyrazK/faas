@@ -381,6 +381,7 @@ from .change_plan_request_plan import ChangePlanRequestPlan
 from .check_account_workflow_readiness_body import CheckAccountWorkflowReadinessBody
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
+from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
@@ -501,9 +502,17 @@ from .create_managed_postgres_database_request_service_class import CreateManage
 from .create_notification_channel_request import CreateNotificationChannelRequest
 from .create_notification_channel_request_kind import CreateNotificationChannelRequestKind
 from .create_notification_channel_request_pagerduty_region import CreateNotificationChannelRequestPagerdutyRegion
+from .create_object_bucket_body import CreateObjectBucketBody
+from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
+from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
+from .create_object_s3_credential_request_permission import CreateObjectS3CredentialRequestPermission
+from .create_object_storage_compute_binding_request import CreateObjectStorageComputeBindingRequest
+from .create_object_storage_compute_binding_request_permission import CreateObjectStorageComputeBindingRequestPermission
+from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_approval_categories_item import CreateOrgAPIKeyRequestApprovalCategoriesItem
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
+from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
 from .create_preview_request import CreatePreviewRequest
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
@@ -841,12 +850,44 @@ from .event_workflow_recovery_plan import EventWorkflowRecoveryPlan
 from .event_workflow_recovery_target import EventWorkflowRecoveryTarget
 from .execution_artifact_input import ExecutionArtifactInput
 from .execution_file import ExecutionFile
+from .execution_file_input import ExecutionFileInput
+from .execution_finished_webhook_payload import ExecutionFinishedWebhookPayload
 from .execution_limit_request import ExecutionLimitRequest
 from .execution_limit_request_cpu_millicores import ExecutionLimitRequestCpuMillicores
 from .execution_limit_request_ephemeral_disk_mb import ExecutionLimitRequestEphemeralDiskMb
+from .execution_limit_request_execution_class import ExecutionLimitRequestExecutionClass
 from .execution_limit_request_memory_mb import ExecutionLimitRequestMemoryMb
 from .execution_network_policy import ExecutionNetworkPolicy
 from .execution_network_policy_mode import ExecutionNetworkPolicyMode
+from .execution_pipeline_artifact_ref import ExecutionPipelineArtifactRef
+from .execution_pipeline_attempt_response import ExecutionPipelineAttemptResponse
+from .execution_pipeline_attempt_response_status import ExecutionPipelineAttemptResponseStatus
+from .execution_pipeline_completed_attempt import ExecutionPipelineCompletedAttempt
+from .execution_pipeline_completed_attempt_status import ExecutionPipelineCompletedAttemptStatus
+from .execution_pipeline_completed_step import ExecutionPipelineCompletedStep
+from .execution_pipeline_completed_step_outcome import ExecutionPipelineCompletedStepOutcome
+from .execution_pipeline_completed_step_result_validation import ExecutionPipelineCompletedStepResultValidation
+from .execution_pipeline_completion import ExecutionPipelineCompletion
+from .execution_pipeline_completion_outcome import ExecutionPipelineCompletionOutcome
+from .execution_pipeline_completion_version import ExecutionPipelineCompletionVersion
+from .execution_pipeline_finished_webhook_payload import ExecutionPipelineFinishedWebhookPayload
+from .execution_pipeline_finished_webhook_payload_outcome import ExecutionPipelineFinishedWebhookPayloadOutcome
+from .execution_pipeline_options import ExecutionPipelineOptions
+from .execution_pipeline_progress import ExecutionPipelineProgress
+from .execution_pipeline_progress_status import ExecutionPipelineProgressStatus
+from .execution_pipeline_receipt import ExecutionPipelineReceipt
+from .execution_pipeline_rerun import ExecutionPipelineRerun
+from .execution_pipeline_response import ExecutionPipelineResponse
+from .execution_pipeline_reused_step import ExecutionPipelineReusedStep
+from .execution_pipeline_step_progress import ExecutionPipelineStepProgress
+from .execution_pipeline_step_progress_reason import ExecutionPipelineStepProgressReason
+from .execution_pipeline_step_progress_state import ExecutionPipelineStepProgressState
+from .execution_pipeline_step_response import ExecutionPipelineStepResponse
+from .execution_retry_policy import ExecutionRetryPolicy
+from .execution_task_batch import ExecutionTaskBatch
+from .execution_task_batch_item import ExecutionTaskBatchItem
+from .execution_task_ref import ExecutionTaskRef
+from .execution_usage import ExecutionUsage
 from .execution_usage_summary_response import ExecutionUsageSummaryResponse
 from .execution_workflow_response import ExecutionWorkflowResponse
 from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
@@ -1018,6 +1059,7 @@ from .invoice_refresh_response import InvoiceRefreshResponse
 from .invoice_refresh_response_provider import InvoiceRefreshResponseProvider
 from .invoice_refresh_response_source_gap import InvoiceRefreshResponseSourceGap
 from .invoice_status import InvoiceStatus
+from .invoke_execution_task_request import InvokeExecutionTaskRequest
 from .invoke_request import InvokeRequest
 from .invoke_request_headers import InvokeRequestHeaders
 from .invoke_request_payload import InvokeRequestPayload
@@ -1095,6 +1137,8 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
+from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
+from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_config_revisions_response import ListConfigRevisionsResponse
 from .list_cron_runs_response import ListCronRunsResponse
 from .list_delayed_tasks_response import ListDelayedTasksResponse
@@ -1113,6 +1157,8 @@ from .list_jobs_response import ListJobsResponse
 from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
+from .list_org_bucket_objects_response_200 import ListOrgBucketObjectsResponse200
+from .list_org_bucket_objects_response_200_items_item import ListOrgBucketObjectsResponse200ItemsItem
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
 from .list_wake_timeline_pagination import ListWakeTimelinePagination
@@ -1217,10 +1263,55 @@ from .o_auth_token_exchange_response import OAuthTokenExchangeResponse
 from .o_auth_token_exchange_response_issued_token_type import OAuthTokenExchangeResponseIssuedTokenType
 from .o_auth_token_exchange_response_scope import OAuthTokenExchangeResponseScope
 from .o_auth_token_exchange_response_token_type import OAuthTokenExchangeResponseTokenType
+from .object_bucket import ObjectBucket
+from .object_bucket_list import ObjectBucketList
+from .object_bucket_list_upload_profile import ObjectBucketListUploadProfile
+from .object_bucket_notifications import ObjectBucketNotifications
+from .object_bucket_notifications_request import ObjectBucketNotificationsRequest
+from .object_bucket_retry import ObjectBucketRetry
+from .object_bucket_retry_reason import ObjectBucketRetryReason
+from .object_bucket_state import ObjectBucketState
+from .object_capacity_reconciliation import ObjectCapacityReconciliation
+from .object_capacity_reconciliation_inventory_scope import ObjectCapacityReconciliationInventoryScope
+from .object_capacity_reconciliation_state import ObjectCapacityReconciliationState
+from .object_deletion import ObjectDeletion
+from .object_deletion_last_error_code import ObjectDeletionLastErrorCode
+from .object_deletion_request import ObjectDeletionRequest
+from .object_deletion_state import ObjectDeletionState
+from .object_encryption import ObjectEncryption
+from .object_encryption_algorithm import ObjectEncryptionAlgorithm
+from .object_multipart_completed_part import ObjectMultipartCompletedPart
+from .object_multipart_part import ObjectMultipartPart
+from .object_multipart_part_list import ObjectMultipartPartList
+from .object_multipart_part_sign_request import ObjectMultipartPartSignRequest
+from .object_multipart_upload import ObjectMultipartUpload
+from .object_multipart_upload_list import ObjectMultipartUploadList
+from .object_multipart_upload_state import ObjectMultipartUploadState
+from .object_notification_rule import ObjectNotificationRule
+from .object_notification_rule_events_item import ObjectNotificationRuleEventsItem
+from .object_retention_period import ObjectRetentionPeriod
+from .object_s3_copy_source import ObjectS3CopySource
+from .object_s3_copy_source_list import ObjectS3CopySourceList
+from .object_s3_credential import ObjectS3Credential
+from .object_s3_credential_list import ObjectS3CredentialList
+from .object_s3_credential_permission import ObjectS3CredentialPermission
+from .object_s3_credential_secret import ObjectS3CredentialSecret
+from .object_s3_credential_secret_addressing_style import ObjectS3CredentialSecretAddressingStyle
+from .object_s3_credential_status import ObjectS3CredentialStatus
+from .object_sign_request import ObjectSignRequest
+from .object_sign_request_if_none_match import ObjectSignRequestIfNoneMatch
+from .object_sign_request_metadata import ObjectSignRequestMetadata
+from .object_sign_request_method import ObjectSignRequestMethod
+from .object_sign_request_tags import ObjectSignRequestTags
 from .object_signed_request import ObjectSignedRequest
 from .object_signed_request_headers import ObjectSignedRequestHeaders
 from .object_signed_request_method import ObjectSignedRequestMethod
 from .object_storage_charge import ObjectStorageCharge
+from .object_storage_compute_binding import ObjectStorageComputeBinding
+from .object_storage_compute_binding_list import ObjectStorageComputeBindingList
+from .object_storage_compute_binding_secret_keys import ObjectStorageComputeBindingSecretKeys
+from .object_storage_compute_trigger import ObjectStorageComputeTrigger
+from .object_storage_compute_trigger_events_item import ObjectStorageComputeTriggerEventsItem
 from .object_storage_over_ceiling_deletion import ObjectStorageOverCeilingDeletion
 from .object_storage_policy import ObjectStoragePolicy
 from .object_storage_policy_accounting_mode import ObjectStoragePolicyAccountingMode
@@ -1231,6 +1322,18 @@ from .object_storage_usage import ObjectStorageUsage
 from .object_storage_usage_response import ObjectStorageUsageResponse
 from .object_storage_usage_response_billing_mode import ObjectStorageUsageResponseBillingMode
 from .object_storage_usage_unavailable_meters_item import ObjectStorageUsageUnavailableMetersItem
+from .object_tagging_request import ObjectTaggingRequest
+from .object_tagging_request_tags import ObjectTaggingRequestTags
+from .object_tagging_result import ObjectTaggingResult
+from .object_tagging_result_tags import ObjectTaggingResultTags
+from .object_upload_route import ObjectUploadRoute
+from .object_upload_route_list import ObjectUploadRouteList
+from .object_version_legal_hold import ObjectVersionLegalHold
+from .object_version_legal_hold_status import ObjectVersionLegalHoldStatus
+from .object_version_retention import ObjectVersionRetention
+from .object_version_retention_event_hold import ObjectVersionRetentionEventHold
+from .object_version_retention_mode import ObjectVersionRetentionMode
+from .object_write_protection import ObjectWriteProtection
 from .obs_alert_episode import ObsAlertEpisode
 from .obs_alert_episode_observation_state import ObsAlertEpisodeObservationState
 from .obs_alert_suppression import ObsAlertSuppression
@@ -2070,6 +2173,7 @@ from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
+from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
 from .record_release_outcome_check_request import RecordReleaseOutcomeCheckRequest
 from .recover_rollout_request import RecoverRolloutRequest
 from .recover_rollout_request_action import RecoverRolloutRequestAction
@@ -2206,6 +2310,9 @@ from .route_monitor_webhook_escalation import RouteMonitorWebhookEscalation
 from .route_monitor_webhook_payload import RouteMonitorWebhookPayload
 from .route_monitor_webhook_payload_status import RouteMonitorWebhookPayloadStatus
 from .route_row import RouteRow
+from .run_budget_kind import RunBudgetKind
+from .run_budget_refusal import RunBudgetRefusal
+from .run_budget_refusal_metric import RunBudgetRefusalMetric
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -2335,6 +2442,8 @@ from .set_custom_domain_hosts_request import SetCustomDomainHostsRequest
 from .set_deployment_alias_request import SetDeploymentAliasRequest
 from .set_financial_budget_channels_request import SetFinancialBudgetChannelsRequest
 from .set_grace_window_request import SetGraceWindowRequest
+from .set_object_s3_copy_source_request import SetObjectS3CopySourceRequest
+from .set_object_storage_binding_release_policy_request import SetObjectStorageBindingReleasePolicyRequest
 from .set_password_request import SetPasswordRequest
 from .set_project_environment_shared_secret_request import SetProjectEnvironmentSharedSecretRequest
 from .set_service_wake_ahead_request import SetServiceWakeAheadRequest
@@ -3111,6 +3220,7 @@ __all__ = (
     "CheckAccountWorkflowReadinessBody",
     "ClearObsoleteDeploymentsBody",
     "ClearObsoleteReport",
+    "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
@@ -3229,9 +3339,17 @@ __all__ = (
     "CreateNotificationChannelRequest",
     "CreateNotificationChannelRequestKind",
     "CreateNotificationChannelRequestPagerdutyRegion",
+    "CreateObjectBucketBody",
+    "CreateObjectMultipartUploadRequest",
+    "CreateObjectS3CredentialRequest",
+    "CreateObjectS3CredentialRequestPermission",
+    "CreateObjectStorageComputeBindingRequest",
+    "CreateObjectStorageComputeBindingRequestPermission",
+    "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestApprovalCategoriesItem",
     "CreateOrgAPIKeyRequestScopesItem",
+    "CreateOrgObjectBucketBody",
     "CreateOrgRequest",
     "CreatePreviewRequest",
     "CreateWorkflowCallbackWebhookBindingRequest",
@@ -3557,12 +3675,44 @@ __all__ = (
     "EventWorkflowRecoveryTarget",
     "ExecutionArtifactInput",
     "ExecutionFile",
+    "ExecutionFileInput",
+    "ExecutionFinishedWebhookPayload",
     "ExecutionLimitRequest",
     "ExecutionLimitRequestCpuMillicores",
     "ExecutionLimitRequestEphemeralDiskMb",
+    "ExecutionLimitRequestExecutionClass",
     "ExecutionLimitRequestMemoryMb",
     "ExecutionNetworkPolicy",
     "ExecutionNetworkPolicyMode",
+    "ExecutionPipelineArtifactRef",
+    "ExecutionPipelineAttemptResponse",
+    "ExecutionPipelineAttemptResponseStatus",
+    "ExecutionPipelineCompletedAttempt",
+    "ExecutionPipelineCompletedAttemptStatus",
+    "ExecutionPipelineCompletedStep",
+    "ExecutionPipelineCompletedStepOutcome",
+    "ExecutionPipelineCompletedStepResultValidation",
+    "ExecutionPipelineCompletion",
+    "ExecutionPipelineCompletionOutcome",
+    "ExecutionPipelineCompletionVersion",
+    "ExecutionPipelineFinishedWebhookPayload",
+    "ExecutionPipelineFinishedWebhookPayloadOutcome",
+    "ExecutionPipelineOptions",
+    "ExecutionPipelineProgress",
+    "ExecutionPipelineProgressStatus",
+    "ExecutionPipelineReceipt",
+    "ExecutionPipelineRerun",
+    "ExecutionPipelineResponse",
+    "ExecutionPipelineReusedStep",
+    "ExecutionPipelineStepProgress",
+    "ExecutionPipelineStepProgressReason",
+    "ExecutionPipelineStepProgressState",
+    "ExecutionPipelineStepResponse",
+    "ExecutionRetryPolicy",
+    "ExecutionTaskBatch",
+    "ExecutionTaskBatchItem",
+    "ExecutionTaskRef",
+    "ExecutionUsage",
     "ExecutionUsageSummaryResponse",
     "ExecutionWorkflowResponse",
     "ExecutionWorkflowStatusCounts",
@@ -3734,6 +3884,7 @@ __all__ = (
     "InvoiceRefreshResponseProvider",
     "InvoiceRefreshResponseSourceGap",
     "InvoiceStatus",
+    "InvokeExecutionTaskRequest",
     "InvokeRequest",
     "InvokeRequestHeaders",
     "InvokeRequestPayload",
@@ -3803,6 +3954,8 @@ __all__ = (
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
     "ListBindingVerificationRunsStatus",
+    "ListBucketObjectsResponse200",
+    "ListBucketObjectsResponse200ItemsItem",
     "ListConfigRevisionsResponse",
     "ListCronRunsResponse",
     "ListDelayedTasksResponse",
@@ -3821,6 +3974,8 @@ __all__ = (
     "ListOrgActivityActorType",
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
+    "ListOrgBucketObjectsResponse200",
+    "ListOrgBucketObjectsResponse200ItemsItem",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
     "ListWakeTimelinePagination",
@@ -3925,10 +4080,55 @@ __all__ = (
     "OAuthTokenExchangeResponseIssuedTokenType",
     "OAuthTokenExchangeResponseScope",
     "OAuthTokenExchangeResponseTokenType",
+    "ObjectBucket",
+    "ObjectBucketList",
+    "ObjectBucketListUploadProfile",
+    "ObjectBucketNotifications",
+    "ObjectBucketNotificationsRequest",
+    "ObjectBucketRetry",
+    "ObjectBucketRetryReason",
+    "ObjectBucketState",
+    "ObjectCapacityReconciliation",
+    "ObjectCapacityReconciliationInventoryScope",
+    "ObjectCapacityReconciliationState",
+    "ObjectDeletion",
+    "ObjectDeletionLastErrorCode",
+    "ObjectDeletionRequest",
+    "ObjectDeletionState",
+    "ObjectEncryption",
+    "ObjectEncryptionAlgorithm",
+    "ObjectMultipartCompletedPart",
+    "ObjectMultipartPart",
+    "ObjectMultipartPartList",
+    "ObjectMultipartPartSignRequest",
+    "ObjectMultipartUpload",
+    "ObjectMultipartUploadList",
+    "ObjectMultipartUploadState",
+    "ObjectNotificationRule",
+    "ObjectNotificationRuleEventsItem",
+    "ObjectRetentionPeriod",
+    "ObjectS3CopySource",
+    "ObjectS3CopySourceList",
+    "ObjectS3Credential",
+    "ObjectS3CredentialList",
+    "ObjectS3CredentialPermission",
+    "ObjectS3CredentialSecret",
+    "ObjectS3CredentialSecretAddressingStyle",
+    "ObjectS3CredentialStatus",
     "ObjectSignedRequest",
     "ObjectSignedRequestHeaders",
     "ObjectSignedRequestMethod",
+    "ObjectSignRequest",
+    "ObjectSignRequestIfNoneMatch",
+    "ObjectSignRequestMetadata",
+    "ObjectSignRequestMethod",
+    "ObjectSignRequestTags",
     "ObjectStorageCharge",
+    "ObjectStorageComputeBinding",
+    "ObjectStorageComputeBindingList",
+    "ObjectStorageComputeBindingSecretKeys",
+    "ObjectStorageComputeTrigger",
+    "ObjectStorageComputeTriggerEventsItem",
     "ObjectStorageOverCeilingDeletion",
     "ObjectStoragePolicy",
     "ObjectStoragePolicyAccountingMode",
@@ -3939,6 +4139,18 @@ __all__ = (
     "ObjectStorageUsageResponse",
     "ObjectStorageUsageResponseBillingMode",
     "ObjectStorageUsageUnavailableMetersItem",
+    "ObjectTaggingRequest",
+    "ObjectTaggingRequestTags",
+    "ObjectTaggingResult",
+    "ObjectTaggingResultTags",
+    "ObjectUploadRoute",
+    "ObjectUploadRouteList",
+    "ObjectVersionLegalHold",
+    "ObjectVersionLegalHoldStatus",
+    "ObjectVersionRetention",
+    "ObjectVersionRetentionEventHold",
+    "ObjectVersionRetentionMode",
+    "ObjectWriteProtection",
     "ObsAlertEpisode",
     "ObsAlertEpisodeObservationState",
     "ObsAlertSuppression",
@@ -4654,6 +4866,7 @@ __all__ = (
     "RaiseOverageCapRequest",
     "RealtimeTriggerConfig",
     "ReceiveInboundWebhookBody",
+    "ReconcileObjectStorageComputeTriggersRequest",
     "RecordReleaseOutcomeCheckRequest",
     "RecoverRolloutRequest",
     "RecoverRolloutRequestAction",
@@ -4788,6 +5001,9 @@ __all__ = (
     "RouteMonitorWebhookPayload",
     "RouteMonitorWebhookPayloadStatus",
     "RouteRow",
+    "RunBudgetKind",
+    "RunBudgetRefusal",
+    "RunBudgetRefusalMetric",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -4913,6 +5129,8 @@ __all__ = (
     "SetDeploymentAliasRequest",
     "SetFinancialBudgetChannelsRequest",
     "SetGraceWindowRequest",
+    "SetObjectS3CopySourceRequest",
+    "SetObjectStorageBindingReleasePolicyRequest",
     "SetPasswordRequest",
     "SetProjectEnvironmentSharedSecretRequest",
     "SetServiceWakeAheadRequest",

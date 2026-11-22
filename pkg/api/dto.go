@@ -905,6 +905,10 @@ type DevPostgresResponse struct {
 	BindingID      string `json:"binding_id"`
 	BindingState   string `json:"binding_state"`
 	EnvironmentKey string `json:"environment_key"`
+	// MigrationEnvironmentKey names the release-only migration credential the
+	// database is also bound to (MIGRATION_DATABASE_URL). Empty from a control
+	// plane that binds none.
+	MigrationEnvironmentKey string `json:"migration_environment_key,omitempty"`
 }
 
 // DevSessionResponse is returned when a developer preview is created or its
@@ -7097,6 +7101,13 @@ type AppMetricsResponse struct {
 	// in four made it 18 s) and clients show it as unavailable, as the
 	// status page does (Hunt 12 H12-40). Nil when the count is unknown.
 	WakeSamples *int64 `json:"wake_samples,omitempty"`
+	// AppWakeP95MS is this app's own wake p95
+	// (gateway_app_wake_latency_seconds), and AppWakeSamples the wakes it
+	// was computed from. Below FleetWakeP95MinSamples clients show it as
+	// unavailable. Nil when the gateway does not export the series yet
+	// (Observe audit 2026-11-21, finding 6).
+	AppWakeP95MS   *float64 `json:"app_wake_p95_ms,omitempty"`
+	AppWakeSamples *int64   `json:"app_wake_samples,omitempty"`
 	// QueueDepth (issue #1233 / ADR-123) is the current waiters
 	// in the per-app wake gate queue, sourced from
 	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth
@@ -7541,8 +7552,8 @@ type WakeTimelineApp struct {
 //     this app in the window. GBHours is the rounded float
 //     (6-decimal precision — mirrors MonthlyUsageGB's rounding).
 //   - Requests / TxBytes: cumulative HTTP activity (informational).
-//   - BuilderSeconds: cumulative builder-microVM CPU-time
-//     (informational — surfaced as a sidebar line on the dashboard).
+//   - BuilderSeconds: wall-clock seconds of the app's builds that
+//     finished in the window (informational — a dashboard sidebar line).
 //   - ColdBootCount: WAKE_RESTORE→WAKE_COLD_BOOT transitions.
 //   - PlanIncludedGBHours: echoed from acct.Plan.PlanIncludedGBHours()
 //     so the dashboard can render the included-band badge without
@@ -7551,7 +7562,7 @@ type WakeTimelineApp struct {
 //     app shares the plan allowance, so one app's usage has no overage
 //     of its own. Kept for older clients; GET /v1/usage/summary reports
 //     the account's billed overage (ADR-20261101113742).
-//   - Source: "usage_minutes" today (after the 30d retention cap).
+//   - Source: "usage_minutes" today (13-month retention).
 //     "usage_daily" / "mixed" land with the trail-period reader
 //     follow-up — same wire shape, no migration needed.
 //   - AsOf: RFC3339Nano UTC stamping the envelope's authoritative
@@ -13149,6 +13160,10 @@ type RecoverRolloutRequest struct {
 	// the recovery transaction; other recovery actions retain legacy behavior.
 	DeploymentID                    string `json:"deployment_id,omitempty"`
 	ExpectedPredecessorDeploymentID string `json:"expected_predecessor_deployment_id,omitempty"`
+	// ExpectedStep, for advance and promote, is the canary step the caller
+	// observed; the recovery is refused with canary_step_conflict when the
+	// running canary is elsewhere, as `deployment advance` does.
+	ExpectedStep *int `json:"expected_step,omitempty"`
 }
 
 // RecoverDeploymentRolloutRequest is the loopback deployment-addressed variant

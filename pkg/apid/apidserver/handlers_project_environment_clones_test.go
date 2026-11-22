@@ -257,7 +257,6 @@ func TestFullProjectEnvironmentCloneAdmissionMapsSourceRefusals(t *testing.T) {
 		{"idempotency key", state.ErrInvalidProjectEnvironmentCloneOperation, http.StatusBadRequest, api.CodeValidation, ""},
 		{"undeployed workload", state.ErrProjectEnvironmentCloneSourceNotDeployed, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.workloads"},
 		{"release pinned", state.ErrReleaseConfigurationTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.release_configuration"},
-		{"project secrets", state.ErrProjectSecretCloneTransferUnsupported, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.project_secrets"},
 		{"legacy stage queues", state.ErrProjectEnvironmentQueueCollectionUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.queue_bindings"},
 		{"work policies", state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable, http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "source.work_policies"},
 		{"missing source", state.ErrNotFound, http.StatusNotFound, "", ""},

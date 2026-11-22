@@ -1035,6 +1035,7 @@ func (h *Handler) download(w http.ResponseWriter, r *http.Request, req requestCo
 		return
 	}
 	response, err := h.client.Do(upstream)
+	objectstorage.NormalizeProviderResponse(req.provider, response)
 	if err != nil {
 		h.providerError(w, r, req, objectstorage.ErrUnavailable, key)
 		return

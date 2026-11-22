@@ -158,7 +158,7 @@ func (s *PgStore) ReassignParkedAppOwner(ctx context.Context, appID, fromNodeID,
 	if resident {
 		return ErrAppResident
 	}
-	if _, err := tx.Exec(ctx, `update apps set node_id = $2, reassigned_at = now() where id = $1`, appID, toNodeID); err != nil {
+	if _, err := tx.Exec(ctx, `update apps set node_id = $2, reassigned_at = now(), owner_home_node_id = null where id = $1`, appID, toNodeID); err != nil {
 		return fmt.Errorf("state: reassign parked app owner: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
