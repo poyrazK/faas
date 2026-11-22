@@ -138,7 +138,7 @@ func TestMCPTasksObserverCredentialAcceptsNamedSecretsAndPostgresBindings(t *tes
 	if owner.Ready {
 		t.Fatalf("a secret in another scope is not what the deployed app reads: %+v", owner)
 	}
-	database := main.McpTasksObserverCredential(app, "DATABASE_URL", api.AppSecretListResponse{}, true, map[string]bool{"DATABASE_URL": true})
+	database := main.McpTasksObserverCredential(app, "DATABASE_URL", api.AppSecretListResponse{}, true, map[string]string{"DATABASE_URL": "read_only"})
 	if !database.Ready || !database.ManagedPostgres {
 		t.Fatalf("managed PostgreSQL binding should be ready: %+v", database)
 	}

@@ -36,7 +36,7 @@ export function resolveMcpTaskMetricsSettings({ env = process.env, role = 'combi
 }
 
 function publishError(step, status) {
-  const error = new Error(`Gregale MCP task ${step} publish failed with HTTP ${status}`);
+  const error = new Error(status === undefined ? `Gregale MCP task ${step} publish failed` : `Gregale MCP task ${step} publish failed with HTTP ${status}`);
   error.step = step;
   error.status = status;
   return error;
@@ -55,8 +55,17 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
   let stopped = false;
   let publishing;
 
+  async function send(step, url, init) {
+    try {
+      return await fetchImpl(url, init);
+    } catch {
+      // A network failure is the API call's, not the queue's.
+      throw publishError(step, undefined);
+    }
+  }
+
   async function push(name, value) {
-    const response = await fetchImpl(endpoint(name), {
+    const response = await send(`metric:${name}`, endpoint(name), {
       method: 'PUT',
       redirect: 'error',
       signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
@@ -67,7 +76,7 @@ export function startMcpTaskMetricsPublisher({ store, appSlug, token, apiURL = D
   }
 
   async function pushCompatibilityReport(metrics) {
-    const response = await fetchImpl(compatibilityEndpoint, {
+    const response = await send('compatibility_report', compatibilityEndpoint, {
       method: 'PUT',
       redirect: 'error',
       signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),

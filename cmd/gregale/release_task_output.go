@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
@@ -37,7 +39,8 @@ func printReleaseTaskOutput(ctx context.Context, c appTaskReader, w io.Writer, s
 	}
 	if slug == "" {
 		// `gregale deploys status <id>` knows only the deployment.
-		if app := releaseTaskReceiptApp.FindStringSubmatch(d.Error); app != nil {
+		// imaged names the app ID when it could not read the slug.
+		if app := releaseTaskReceiptApp.FindStringSubmatch(d.Error); app != nil && uuid.Validate(app[1]) != nil {
 			slug = app[1]
 		}
 	}

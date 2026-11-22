@@ -381,6 +381,9 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 	if !result.ObserverHeartbeatFresh {
 		result.Violations = append(result.Violations, "observer_heartbeat_is_not_fresh_on_the_worker_app")
 	}
+	if access, bound := observerPostgres[databaseEnv]; bound && access != "read_only" {
+		result.ManualChecks = append(result.ManualChecks, fmt.Sprintf("The observer's %s binding has %s access; the observer needs only read_only. Reattach it with `gregale postgres attach <db> %s --env %s --access read_only`.", databaseEnv, access, observer.Slug, databaseEnv))
+	}
 	if observer.Manifest.EnvSecrets[ownerKeyEnv] != "" || observer.Manifest.Env[ownerKeyEnv] != "" {
 		result.ManualChecks = append(result.ManualChecks, "The observer has a task owner key binding; remove it if no other process in that app needs it.")
 	}
@@ -417,7 +420,7 @@ func mcpTasksObserverRoleConfigured(env map[string]string, entrypoint []string) 
 // reference, an app secret of that name (`gregale secrets set`), or a managed
 // PostgreSQL binding (postgres holds the binding keys). A plain variable is
 // configured but never ready.
-func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.AppSecretListResponse, metadataLoaded bool, postgres map[string]bool) mcpTasksObserverCredentialCheck {
+func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.AppSecretListResponse, metadataLoaded bool, postgres map[string]string) mcpTasksObserverCredentialCheck {
 	check := mcpTasksObserverCredentialCheck{Env: env, MetadataLoaded: metadataLoaded}
 	ref := strings.TrimSpace(app.Manifest.EnvSecrets[env])
 	if strings.HasPrefix(ref, api.SecretRefPrefix) {
@@ -428,7 +431,7 @@ func mcpTasksObserverCredential(app api.AppResponse, env string, secrets api.App
 		check.Ready = check.SecretExists
 		return check
 	}
-	if postgres[env] {
+	if _, bound := postgres[env]; bound {
 		check.Configured, check.SecretBacked, check.SecretExists, check.ManagedPostgres, check.Ready = true, true, true, true, true
 		return check
 	}

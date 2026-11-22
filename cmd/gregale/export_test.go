@@ -1487,6 +1487,7 @@ var McpNativeWorkerLogs = mcpNativeWorkerLogs
 var McpTasksObserverConfigEnvNames = mcpTasksObserverConfigEnvNames
 var McpTasksObserverCredential = mcpTasksObserverCredential
 var McpTasksRuntimeApp = mcpTasksRuntimeApp
+var PrintReleaseTaskOutput = printReleaseTaskOutput
 var McpTasksObserverEntrypointDetected = mcpTasksObserverEntrypointDetected
 var McpTasksObserverHeartbeatIsFresh = mcpTasksObserverHeartbeatIsFresh
 var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches

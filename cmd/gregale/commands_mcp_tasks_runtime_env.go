@@ -33,11 +33,13 @@ func mcpTasksRuntimeApp(ctx context.Context, client *api.Client, app api.AppResp
 	return app
 }
 
-// mcpTasksPostgresBindingKeys returns the environment keys the app's live
-// managed PostgreSQL bindings inject in the default scope. A binding is a
-// platform-managed credential, as good as a secret for the readiness checks.
-func mcpTasksPostgresBindingKeys(ctx context.Context, client *api.Client, slug string) map[string]bool {
-	keys := map[string]bool{}
+// mcpTasksPostgresBindingKeys returns the access mode of each environment key
+// a ready managed PostgreSQL binding injects in the default scope. A ready
+// binding is a platform-managed credential, as good as a secret for the
+// readiness checks; a provisioning, failed or retiring one injects nothing
+// the app can use yet.
+func mcpTasksPostgresBindingKeys(ctx context.Context, client *api.Client, slug string) map[string]string {
+	keys := map[string]string{}
 	if client == nil || slug == "" {
 		return keys
 	}
@@ -46,8 +48,8 @@ func mcpTasksPostgresBindingKeys(ctx context.Context, client *api.Client, slug s
 		return keys
 	}
 	for _, binding := range list.Items {
-		if binding.Scope == "" || binding.Scope == "default" {
-			keys[binding.EnvironmentKey] = true
+		if binding.State == "ready" && (binding.Scope == "" || binding.Scope == "default") {
+			keys[binding.EnvironmentKey] = binding.Access
 		}
 	}
 	return keys

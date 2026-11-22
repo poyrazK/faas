@@ -15,7 +15,7 @@ func TestContainedReleasePinsTheDeploymentsExactCommand(t *testing.T) {
 		argv    []string
 	}{
 		{"argv", []string{"node", "migrate.js", "--up"}, false, []string{"node", "migrate.js", "--up"}},
-		{"shell", []string{"npm run migrate && echo done"}, true, []string{"/bin/sh", "-c", "npm run migrate && echo done"}},
+		{"shell", []string{"npm run migrate && echo done"}, true, []string{"/bin/sh", "-lc", "npm run migrate && echo done"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			envelope, err := ContainedRelease(run, dep, tc.command, tc.shell)
@@ -35,13 +35,6 @@ func TestContainedReleasePinsTheDeploymentsExactCommand(t *testing.T) {
 				t.Fatal("a different deployment, command, shell mode or raw argv matched the pinned release")
 			}
 		})
-	}
-	legacy, err := Encode(Spec{Version: Version, RunID: run, DeploymentID: dep, Command: []string{"/bin/sh", "-lc", "npm run migrate"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !IsContainedReleaseFor(legacy, dep, []string{"npm run migrate"}, true) {
-		t.Fatal("the -lc form an N-1 imaged encodes was rejected")
 	}
 	withEnv, err := Encode(Spec{Version: Version, RunID: run, DeploymentID: dep, Command: []string{"node", "migrate.js"}, Env: map[string]string{"EXTRA": "1"}})
 	if err != nil {

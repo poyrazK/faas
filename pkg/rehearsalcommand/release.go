@@ -17,27 +17,16 @@ func canonicalDeployment(id string) string {
 }
 
 // ReleaseArgv is the argv a deployment's release command executes. A shell
-// release runs through the same /bin/sh -c wrapper as an ordinary shell task.
+// release runs through the same /bin/sh -lc wrapper as an ordinary shell task.
 func ReleaseArgv(command []string, shell bool) []string {
 	if shell {
 		// A shell release is one script string; anything else is ambiguous.
 		if len(command) != 1 {
 			return nil
 		}
-		return []string{"/bin/sh", "-c", command[0]}
+		return []string{"/bin/sh", "-lc", command[0]}
 	}
 	return append([]string(nil), command...)
-}
-
-// legacyReleaseArgv is the login-shell form imaged encoded before shell tasks
-// stopped using `sh -l`. It stays accepted while release N-1 imaged runs beside
-// this one; remove it one release after the -c form shipped.
-func legacyReleaseArgv(command []string, shell bool) []string {
-	argv := ReleaseArgv(command, shell)
-	if shell && len(argv) == 3 {
-		argv[1] = "-lc"
-	}
-	return argv
 }
 
 // ContainedRelease encodes a deployment's release command as the pinned
@@ -52,5 +41,5 @@ func ContainedRelease(runID, deploymentID string, command []string, shell bool) 
 func IsContainedReleaseFor(argv []string, deploymentID string, command []string, shell bool) bool {
 	spec, err := Decode(argv)
 	return err == nil && spec.DeploymentID == canonicalDeployment(deploymentID) && len(spec.Env) == 0 && len(spec.Files) == 0 &&
-		len(command) > 0 && (slices.Equal(spec.Command, ReleaseArgv(command, shell)) || slices.Equal(spec.Command, legacyReleaseArgv(command, shell)))
+		len(command) > 0 && slices.Equal(spec.Command, ReleaseArgv(command, shell))
 }
