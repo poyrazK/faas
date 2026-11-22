@@ -38,8 +38,8 @@ func TestMCPPrivateOnboardingEachRuntime(t *testing.T) {
 			if config.Auth.ToolScopes["add"] == nil || config.Auth.ResourceScopes["customer://records/{recordId}"] == nil || config.Auth.PromptScopes["summarize"] == nil {
 				t.Fatal("lost explicit catalog allowlists")
 			}
-			// Plain Node has no Tasks block; Go and Python declare Tasks off.
-			if runtime == "node" && config.Tasks != nil || runtime != "node" && (config.Tasks == nil || *config.Tasks.Enabled) {
+			// The plain starters have no Tasks block; Tasks stacks use -tasks.
+			if config.Tasks != nil {
 				t.Fatalf("Tasks unexpectedly enabled or declared: %+v", config.Tasks)
 			}
 			if !strings.Contains(out.String(), "--token-env MCP_ACCESS_TOKEN") || strings.Contains(out.String(), "uses public access") {
