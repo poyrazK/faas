@@ -24,7 +24,8 @@ func eventTriggerNeedsEvents(trigger *api.WorkflowTriggerSpec) bool {
 // storedWorkflowEventsRefusal returns the problem that refuses a publish or
 // enable of the stored workflow name in app, or nil when it may proceed.
 func (s *server) storedWorkflowEventsRefusal(ctx context.Context, store state.StoredWorkflowStore, account state.Account, app state.App, name string, mutation state.StoredWorkflowMutation) *api.Problem {
-	if s.capGate == nil || !(mutation.Action == "publish" || mutation.Action == "enable" && mutation.Enabled) {
+	turnsOn := mutation.Action == "publish" || mutation.Action == "enable" && mutation.Enabled
+	if s.capGate == nil || !turnsOn {
 		return nil
 	}
 	if s.capGate.Enabled("events", appFlagSubject(account, app)) {
@@ -32,7 +33,7 @@ func (s *server) storedWorkflowEventsRefusal(ctx context.Context, store state.St
 	}
 	records, err := store.ListStoredWorkflows(ctx, app.ID)
 	if err != nil {
-		return nil
+		return api.ErrCapacity("failed to read stored workflow")
 	}
 	for _, record := range records {
 		if record.Name != name {
@@ -42,8 +43,8 @@ func (s *server) storedWorkflowEventsRefusal(ctx context.Context, store state.St
 		if mutation.Action == "enable" {
 			raw = record.Published
 		}
-		var def api.WorkflowSpec
-		if len(raw) == 0 || json.Unmarshal(raw, &def) != nil || !eventTriggerNeedsEvents(def.Trigger) {
+		def, ok := decodeStoredWorkflowSpec(raw)
+		if !ok || !eventTriggerNeedsEvents(def.Trigger) {
 			return nil
 		}
 		return api.NewProblem(http.StatusConflict, api.CodeStoredWorkflowEventsUnavailable, "Custom events are not enabled",
@@ -52,4 +53,14 @@ func (s *server) storedWorkflowEventsRefusal(ctx context.Context, store state.St
 			WithDocs("https://gregale.dev/docs/stored-workflows#start-on-an-event")
 	}
 	return nil
+}
+
+// decodeStoredWorkflowSpec decodes a saved definition; ok is false when it
+// is empty or unreadable, which MutateStoredWorkflow itself refuses.
+func decodeStoredWorkflowSpec(raw []byte) (api.WorkflowSpec, bool) {
+	var def api.WorkflowSpec
+	if len(raw) == 0 {
+		return def, false
+	}
+	return def, json.Unmarshal(raw, &def) == nil
 }
