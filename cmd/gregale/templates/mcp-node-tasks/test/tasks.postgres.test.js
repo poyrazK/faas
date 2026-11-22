@@ -2255,10 +2255,13 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, deferredForm, timeout } of [
+for (const { title, useReceipt, deferredForm, formReplyFault, reviewedInput, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
+  { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
+  { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
+  { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
 ]) test(title, {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
   timeout,
@@ -2302,17 +2305,26 @@ for (const { title, useReceipt, deferredForm, timeout } of [
   const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
     result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
   let dropFirstReply = true, committedID, proxyError, submittingCLI;
+  let pendingFormReplyFault = formReplyFault;
   const requests = [];
   const server = createServer((req, res) => {
-    requests.push(req.headers['mcp-method']);
-    if (!dropFirstReply || req.headers['mcp-method'] !== 'gregale/tasks/submit') return api.app(req, res);
-    dropFirstReply = false;
+    const method = req.headers['mcp-method'];
+    requests.push(method);
+    const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
+    const dropFormReply = method === 'tasks/update' && pendingFormReplyFault;
+    if (!dropSubmission && !dropFormReply) return api.app(req, res);
+    if (dropSubmission) dropFirstReply = false;
+    if (dropFormReply) pendingFormReplyFault = undefined;
+    if (dropFormReply === 'before') {
+      req.destroy();
+      return;
+    }
     void (async () => {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
       const body = Buffer.concat(chunks);
-      if (useReceipt) {
+      if (dropSubmission && useReceipt) {
         const metadata = JSON.parse(body).params._meta;
         const key = metadata['io.gregale/task-submission-key'];
         assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -2328,6 +2340,13 @@ for (const { title, useReceipt, deferredForm, timeout } of [
       });
       assert.equal(reply.status, 200);
       await reply.arrayBuffer();
+      if (dropFormReply === 'after') {
+        const persisted = await rows();
+        assert.equal(persisted.length, 1);
+        assert.equal(persisted[0].task_id, committedID);
+        assert.ok(['queued', 'running', 'completed'].includes(persisted[0].status), 'form update did not commit');
+        return;
+      }
       const persisted = await rows();
       assert.equal(persisted.length, 1);
       committedID = persisted[0].task_id;
@@ -2384,6 +2403,66 @@ for (const { title, useReceipt, deferredForm, timeout } of [
       assert.ok(Number.isFinite(Date.parse(snapshot.lastUpdatedAt)));
       assert.deepEqual(snapshot, { taskId: committedID, status: 'input_required', lastUpdatedAt: snapshot.lastUpdatedAt,
         nextAction: 'provide_input' });
+      if (reviewedInput) {
+        const file = join(clientDir, 'reviewed-input.json');
+        const exportArgs = [...selector, '--write-input-template', file];
+        assert.equal(await cli('status', foreign, 1, exportArgs), '');
+        await assert.rejects(stat(file), { code: 'ENOENT' });
+        assert.deepEqual(JSON.parse(await cli('status', owner, 0, exportArgs)), snapshot);
+        const template = JSON.parse(await readFile(file, 'utf8'));
+        assert.equal((await stat(file)).mode & 0o777, 0o600);
+        assert.equal(template.taskId, committedID);
+        assert.equal(template.endpointSha256, createHash('sha256').update(endpoint).digest('hex'));
+        assert.deepEqual(Object.keys(template.forms), ['approval']);
+        assert.equal(template.forms.approval.message, 'Approve generating this report?');
+        assert.deepEqual(template.forms.approval.schema.required, ['approved']);
+        assert.match(template.forms.approval.formSha256, /^[a-f0-9]{64}$/);
+        assert.equal(template.forms.approval.response, null);
+        const reviewedArgs = ['--reviewed-input-file', file];
+        assert.equal(await cli('wait', owner, 1, [...selector, ...reviewedArgs]), '');
+
+        template.forms.approval.response = { action: 'accept', content: { approved: true } };
+        const filled = JSON.stringify(template);
+        await writeFile(file, filled);
+        assert.equal(await cli('status', owner, 1, exportArgs), '');
+        assert.equal(await readFile(file, 'utf8'), filled);
+
+        const otherReceipt = join(clientDir, 'other-task.json');
+        const second = JSON.parse(await cli('call', owner, 0, receiptCall.map(value => value === receiptPath ? otherReceipt : value)));
+        const otherID = second.result.taskId;
+        assert.notEqual(otherID, committedID);
+        await eventually(async () => (await rows()).some(row => row.task_id === otherID && row.status === 'input_required'),
+          'second Task did not persist its form request');
+        const beforeWrongTask = requests.length;
+        assert.equal(await cli('wait', owner, 1, ['--task-receipt', otherReceipt, ...reviewedArgs]), '');
+        assert.deepEqual(requests.slice(beforeWrongTask), ['server/discover', 'gregale/tasks/lookup']);
+        const beforeWrongEndpoint = requests.length;
+        assert.equal(await cli('wait', owner, 1, ['--task-id', committedID, ...reviewedArgs, '--url', `${endpoint}/other`]), '');
+        assert.equal(requests.length, beforeWrongEndpoint);
+
+        const authenticGet = runtime.get;
+        runtime.get = async (...args) => {
+          const task = await authenticGet(...args);
+          task.inputRequests.approval.params.message = 'A different approval question';
+          return task;
+        };
+        try {
+          assert.equal(await cli('wait', owner, 1, [...selector, ...reviewedArgs]), '');
+        } finally {
+          runtime.get = authenticGet;
+        }
+        assert.equal(requests.filter(method => method === 'tasks/update').length, 0);
+        assert.ok((await rows()).every(row => row.status === 'input_required' && !row.has_result));
+        const completed = JSON.parse(await cli('wait', owner, 0, [...selector, ...reviewedArgs]));
+        assert.equal(completed.taskId, committedID);
+        assert.equal(completed.result.content[0].text, 'Report original is ready after 1 steps.');
+        assert.equal(requests.filter(method => method === 'tasks/update').length, 1);
+        const byID = new Map((await rows()).map(row => [row.task_id, row]));
+        assert.equal(byID.size, 2);
+        assert.deepEqual(byID.get(committedID), { task_id: committedID, status: 'completed', attempt_count: 1, has_result: true });
+        assert.deepEqual(byID.get(otherID), { task_id: otherID, status: 'input_required', attempt_count: 1, has_result: false });
+        return;
+      }
       const responses = join(clientDir, 'responses.json');
       await writeFile(responses, JSON.stringify({ approval: { action: 'accept', content: { approved: true } } }),
         { flag: 'wx', mode: 0o600 });
@@ -2395,14 +2474,23 @@ for (const { title, useReceipt, deferredForm, timeout } of [
         assert.deepEqual(requests.slice(beforeDenied), ['server/discover', 'gregale/tasks/lookup']);
       }
       assert.deepEqual(await rows(), [{ task_id: committedID, status: 'input_required', attempt_count: 1, has_result: false }]);
+      const waitRequests = ['server/discover', 'gregale/tasks/lookup', 'tasks/get', 'tasks/update'];
+      if (formReplyFault === 'before') {
+        const beforeLostReply = requests.length;
+        const pending = JSON.parse(await cli('wait', owner, 3, waitArgs));
+        assert.deepEqual(pending, snapshot);
+        assert.deepEqual(requests.slice(beforeLostReply), [...waitRequests, 'tasks/get']);
+        assert.deepEqual(await rows(), [{ task_id: committedID, status: 'input_required', attempt_count: 1, has_result: false }]);
+      }
       const beforeWait = requests.length;
       const completed = JSON.parse(await cli('wait', owner, 0, waitArgs));
+      assert.ifError(proxyError);
       assert.equal(completed.taskId, committedID);
       assert.equal(completed.status, 'completed');
       assert.equal(completed.result.content[0].text, 'Report original is ready after 1 steps.');
-      assert.deepEqual(requests.slice(beforeWait, beforeWait + 4),
-        ['server/discover', 'gregale/tasks/lookup', 'tasks/get', 'tasks/update']);
-      assert.equal(requests.filter(method => method === 'tasks/update').length, 1);
+      const expected = formReplyFault === 'after' ? [...waitRequests, 'tasks/update', 'tasks/get'] : waitRequests;
+      assert.deepEqual(requests.slice(beforeWait, beforeWait + expected.length), expected);
+      assert.equal(requests.filter(method => method === 'tasks/update').length, formReplyFault ? 2 : 1);
       assert.equal(requests.filter(method => method === 'gregale/tasks/submit').length, 2, 'one submission relayed by the test server');
       assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
       return;

@@ -460,8 +460,25 @@ func cmdMCPRemote(command string, args []string) int {
 	promptName := fs.String("prompt", "", "prompt name to render (prompt-get only)")
 	taskID := fs.String("task-id", "", "opaque task ID (task-get, task-wait or task-cancel)")
 	var metadataOnly bool
+	var inputTemplatePath, reviewedInputPath string
 	if command == "task-get" {
 		fs.BoolVar(&metadataOnly, "metadata-only", false, "show Task metadata and next action")
+		fs.Func("write-input-template", "write pending forms to a new private file", func(value string) error {
+			if value == "" {
+				return errors.New("task input template path is required")
+			}
+			inputTemplatePath = value
+			return nil
+		})
+	}
+	if command == "task-wait" {
+		fs.Func("reviewed-input-file", "answer forms from a reviewed private Task input template", func(value string) error {
+			if value == "" {
+				return errors.New("reviewed Task input file path is required")
+			}
+			reviewedInputPath = value
+			return nil
+		})
 	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
@@ -483,6 +500,10 @@ func cmdMCPRemote(command string, args []string) int {
 		return printErr("Invalid MCP input flags", errors.New("choose either --interactive or --input-responses-file"))
 	}
 	inputMode := *interactive || *inputResponsesFile != ""
+	if inputMode && reviewedInputPath != "" {
+		return printErr("Invalid MCP input flags", errors.New("choose --reviewed-input-file, --interactive or --input-responses-file"))
+	}
+	inputMode = inputMode || reviewedInputPath != ""
 	if inputMode && ((command != "call" && command != "task-wait") || *legacy) {
 		return printErr("Invalid MCP input flags", errors.New("interactive input is supported only for modern mcp call and mcp task-wait"))
 	}
@@ -499,8 +520,11 @@ func cmdMCPRemote(command string, args []string) int {
 	if command == "call" && keyed && (!*enableTasks || *waitForTask || inputMode) {
 		return printErr("Invalid MCP Tasks flags", errors.New("--task-receipt and --task-submission-key require a handle-only call with --tasks"))
 	}
-	if command == "task-get" && keyed && (!metadataOnly || *taskID != "") {
-		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only and accepts one Task selector"))
+	if metadataOnly && inputTemplatePath != "" {
+		return printErr("Invalid MCP task flags", errors.New("choose --metadata-only or --write-input-template"))
+	}
+	if command == "task-get" && keyed && ((!metadataOnly && inputTemplatePath == "") || *taskID != "") {
+		return printErr("Invalid MCP task flags", errors.New("keyed Task status requires --metadata-only or --write-input-template and accepts one Task selector"))
 	}
 	if *cancelOnTimeout && (command != "task-wait" || *legacy) {
 		return printErr("Invalid MCP task flags", errors.New("--cancel-on-timeout is supported only by modern task-wait"))
@@ -560,6 +584,9 @@ func cmdMCPRemote(command string, args []string) int {
 	if taskReceiptPath != "" && token == "" {
 		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
 	}
+	if (inputTemplatePath != "" || reviewedInputPath != "") && token == "" {
+		return printErr("MCP Task input review", errors.New("task input review requires a client credential from --token-env"))
+	}
 	if taskReceiptPath != "" && command != "call" {
 		submissionKey, err = readMCPTaskReceipt(taskReceiptPath, c.Endpoint)
 		if err != nil {
@@ -569,12 +596,34 @@ func cmdMCPRemote(command string, args []string) int {
 	if metadataOnly {
 		return runMCPTaskMetadataStatus(ctx, c, *taskID, submissionKey)
 	}
+	if inputTemplatePath != "" {
+		return runMCPTaskInputTemplate(ctx, c, *taskID, submissionKey, inputTemplatePath)
+	}
+	var review mcpTaskInputReview
+	if reviewedInputPath != "" {
+		review, err = readMCPTaskInputReview(reviewedInputPath, c.Endpoint)
+		if err != nil {
+			return printErr("MCP Task input review", err)
+		}
+	}
+	if command == "task-wait" && submissionKey != "" {
+		recovered, exchange, err := c.GetTaskBySubmissionKey(ctx, submissionKey)
+		if err != nil {
+			return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
+		}
+		*taskID = recovered.TaskID
+	}
+	if reviewedInputPath != "" && review.TaskID != *taskID {
+		return printErr("MCP Task input review", errors.New("MCP Task input review belongs to a different Task"))
+	}
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)
 	}
 	var responder mcphosting.InputResponder
-	if *interactive {
+	if reviewedInputPath != "" {
+		responder = review.respond
+	} else if *interactive {
 		scanner := bufio.NewScanner(osStdin)
 		scanner.Buffer(make([]byte, 4096), 1<<20)
 		responder = func(_ context.Context, form mcphosting.InputRequest) (mcphosting.InputResponse, error) {
@@ -680,19 +729,19 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 		}
 		return jsonOut(writeJSON(task))
 	case "task-wait":
-		if options.TaskSubmissionKey != "" {
-			recovered, exchange, err := c.GetTaskBySubmissionKey(ctx, options.TaskSubmissionKey)
-			if err != nil {
-				return mcpTaskMetadataReadFailure("", exchange.HTTPStatus, err)
-			}
-			taskID = recovered.TaskID
-		}
 		task, err := c.WaitTask(ctx, taskID, mcphosting.CallOptions{
 			Responder: options.Responder, CancelOnTimeout: cancelOnTimeout,
 			OnTask: func(task mcphosting.Task) {
 				_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 			},
 		})
+		var update *mcphosting.TaskInputUpdateUnconfirmedError
+		if errors.As(err, &update) {
+			return mcpTaskInputUpdateStatus(update)
+		}
+		if errors.Is(err, errMCPTaskInputReviewMismatch) {
+			return printErr("MCP Task input review", err)
+		}
 		if task.TaskID != "" {
 			if code := jsonOut(writeJSON(task)); code != 0 {
 				return code
@@ -737,6 +786,10 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 			_, _ = fmt.Fprintf(osStderr, "MCP task status: %s\n", task.Status)
 		}
 		x, err := c.CallWithOptions(ctx, candidate, args, options)
+		var update *mcphosting.TaskInputUpdateUnconfirmedError
+		if errors.As(err, &update) {
+			return mcpTaskInputUpdateStatus(update)
+		}
 		if x.Result != nil {
 			if code := jsonOut(writeJSON(x)); code != 0 {
 				return code
