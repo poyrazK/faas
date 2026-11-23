@@ -106,7 +106,7 @@ See [Authentication](auth.md#expiry-and-rotation).
 
 HTTP 429 Too Many Requests · API rate limit reached
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_admission_unavailable`
 
@@ -150,17 +150,19 @@ See [Managed PostgreSQL](postgres.md).
 
 HTTP 503 Service Unavailable · App health is unavailable
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_healthz_unauthorized`
 
 HTTP 422 Unprocessable Entity · App_healthz_unauthorized; Health endpoint returning 401
 
+See [Troubleshooting](troubleshooting.md).
+
 ### `app_layer_too_large`
 
 HTTP 403 Forbidden · App too large
 
-See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md).
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_log_drain_invalid`
 
@@ -178,7 +180,7 @@ See [CLI guide](cli-setup.md), [Logs](logs.md), [Errors](errors.md).
 
 HTTP 422 Unprocessable Entity · App bound to loopback; Application bound to loopback
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_maintenance_mode`
 
@@ -214,13 +216,13 @@ HTTP 409 Conflict · Slug taken
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_crash`
 
 HTTP 422 Unprocessable Entity · App exited during startup
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_timeout`
 
@@ -238,7 +240,7 @@ HTTP 503 Service Unavailable · App temporarily unavailable
 
 Retry the request in a few seconds.
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_visibility_invalid`
 
@@ -276,7 +278,7 @@ HTTP 503 Service Unavailable · App connection failed; Edge rule compile error
 
 Retry the request; if it still fails, check the app logs.
 
-See [Quickstart](quickstart.md), [Errors](errors.md).
+See [Quickstart](quickstart.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `bad_request`
 
@@ -398,6 +400,8 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
+See [Troubleshooting](troubleshooting.md).
+
 ### `build_provenance_not_found`
 
 HTTP 404 Not Found · Build provenance not found
@@ -414,9 +418,13 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
+See [Troubleshooting](troubleshooting.md).
+
 ### `build_undetected`
 
 HTTP 400 Bad Request
+
+See [Troubleshooting](troubleshooting.md).
 
 ## C
 
@@ -586,7 +594,7 @@ HTTP 409 Conflict · Debug replay is unavailable; Mirror replay is unavailable
 
 HTTP 422 Unprocessable Entity · Dependency installation failure
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `deploy_failed`
 
@@ -1044,7 +1052,7 @@ HTTP 503 Service Unavailable · Gateway overloaded
 
 HTTP 403 Forbidden · Country not allowed; Country denied
 
-See [Edge rules](edge-rules.md), [Errors](errors.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `github_account_conflict`
 
@@ -1482,7 +1490,7 @@ See [CLI guide](cli-setup.md).
 
 HTTP 403 Forbidden · IP address not allowed; IP denied; IP not allowed
 
-See [Edge rules](edge-rules.md), [Errors](errors.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ## J
 
@@ -3148,7 +3156,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `request_too_large`
 
@@ -3782,7 +3790,7 @@ See [Authentication](auth.md#email-verification), [Errors](errors.md).
 
 HTTP 403 Forbidden · Request blocked
 
-See [Edge rules](edge-rules.md), [Errors](errors.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `wait_for_warm`
 
