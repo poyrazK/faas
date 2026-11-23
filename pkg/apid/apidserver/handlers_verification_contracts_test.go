@@ -62,6 +62,11 @@ type verifyQueryProvider struct {
 	sql   *[]string
 }
 
+func (verifyQueryProvider) IssueCredentials(_ context.Context, r managedpostgres.CredentialRequest) (managedpostgres.CredentialMaterial, error) {
+	return managedpostgres.CredentialMaterial{ProviderIdentityID: "identity-" + r.IdentityKey, Username: "runtime", Password: "test-password", Database: "gregale", TLSMode: "require",
+		Endpoints: []managedpostgres.Endpoint{{Role: managedpostgres.EndpointPooled, Host: "pool.example.test", Port: 5432}, {Role: managedpostgres.EndpointDirect, Host: "direct.example.test", Port: 5432}}}, nil
+}
+
 func (p verifyQueryProvider) QueryReadOnly(_ context.Context, req managedpostgres.ReadOnlyQueryRequest) (managedpostgres.ReadOnlyQueryResult, error) {
 	*p.sql = append(*p.sql, req.SQL)
 	if req.SQL == "broken" {
