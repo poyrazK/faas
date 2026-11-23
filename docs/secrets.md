@@ -5,8 +5,9 @@ app they belong to. Gregale injects them into the guest at wake; plaintext
 values are never returned, logged, or included in deployment receipts.
 
 Most apps need only the first three sections: set a secret, know when a change
-reaches the app, and check that it did. The rest of the page covers companions,
-project-wide secrets, and reloading credentials inside a running process.
+reaches the app, and check that it did. The rest of the page covers JSON
+receipts for scripts, companions, project-wide secrets, and reloading
+credentials inside a running process.
 
 ## Set, rotate and remove a secret
 
@@ -162,8 +163,9 @@ per-secret limit.
 ## Reload secrets without a restart
 
 This section is for apps that swap credentials inside a running process, such
-as a database pool that adopts a rotated password. Without it, snapshots and
-restores still deliver current secrets (see
+as a database pool that adopts a rotated password. Without the reload label
+(`com.gregale.secret-reload-signal`), snapshots and restores still deliver
+current secrets (see
 [Snapshots and secrets](#snapshots-and-secrets)), and a change reaches running
 processes on their next cold wake or with `--restart`.
 
@@ -281,7 +283,8 @@ unknown.
 
 ### Acknowledge a reload from the app
 
-An opted-in app may make that last step explicit. After rereading
+An opted-in app may confirm to the platform that it applied the new
+credentials. After rereading
 `FAAS_SECRETS_SNAPSHOT_FILE` and successfully applying its `secrets` map to its
 own clients, it can POST the non-sensitive `revision` from that same JSON
 envelope and its own `FAAS_SECRETS_RELOAD_GENERATION` to
@@ -324,7 +327,8 @@ reload-signal OCI label to gate reload delivery on application handler readiness
 On each process start, after installing the selected handler, write exactly
 `ready\n` to the existing file at `FAAS_SECRETS_RELOAD_READY_FILE`. Its path is
 platform-owned, private to that process generation, and removed when it exits.
-A prior process's marker cannot unlock a restart. The Node starter implements
+A prior process's marker cannot unlock a restart. The
+[Node starter](#starters-and-sdk-helpers) implements
 this handshake before awaited database initialization. An absent marker variable
 indicates an older guest; its prior signal contract still applies.
 
