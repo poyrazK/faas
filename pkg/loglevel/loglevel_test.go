@@ -43,6 +43,8 @@ func TestDetect(t *testing.T) {
 		{"guest-init: main restart (restart 2/3 policy=always): exit status 1", loglevel.Error},
 		{"guest-init: app out of memory: the kernel killed a workload process (peak 512 MB)", loglevel.Error},
 		{"guest-init: build failed: exit status 1", loglevel.Error},
+		{"guest-init: app crash-looped after 3 restart(s): exit status 3", loglevel.Error},
+		{"vmmd: app restart budget exhausted after 3 restart(s)", loglevel.Error},
 		{"guest-init: app exited cleanly (status 0, policy=on-failure); a clean exit is not restarted", ""},
 		{"WARNING disk 91% full", loglevel.Warn},
 		{"ERROR payment declined", loglevel.Error},

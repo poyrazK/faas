@@ -44,6 +44,9 @@ var patterns = []pattern{
 	{Error, "[fatal]"}, {Error, "[critical]"}, {Error, "[crit]"}, {Error, "[panic]"}, {Error, "[emerg]"},
 	{Error, "level=fatal"}, {Error, "level=critical"}, {Error, "level=crit"}, {Error, "level=panic"},
 	{Warn, "[warn]"}, {Warn, "[warning]"}, {Warn, "level=warn"}, {Warn, `"level":"warn"`}, {Warn, `"level": "warn"`}, {Warn, `"severity":"warn"`},
+	// guest-init's supervisor giving up (guest/init/supervise.go), wherever
+	// the line's prefix puts it (prod hunt r32).
+	{Error, "app crash-looped after "}, {Error, "app restart budget exhausted"},
 	{Info, "[info]"}, {Info, "[notice]"}, {Info, "level=info"}, {Info, `"level":"info"`}, {Info, `"level": "info"`}, {Info, `"severity":"info"`},
 }
 
