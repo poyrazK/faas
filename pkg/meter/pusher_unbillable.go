@@ -32,16 +32,12 @@ func (p *Pusher) paidWithoutIdentityGauge() *prometheus.GaugeVec {
 // publishPaidWithoutIdentity sets the gauge from one hourly pass's counts.
 func (p *Pusher) publishPaidWithoutIdentity(counts map[string]int) {
 	g := p.paidWithoutIdentityGauge()
+	// Reset drops a plan that no longer has any, so the alert clears.
+	g.Reset()
 	for _, plan := range unbillablePlans {
-		g.WithLabelValues(plan).Set(float64(counts[plan]))
+		g.WithLabelValues(plan).Set(0)
 	}
 	for plan, n := range counts {
-		known := false
-		for _, k := range unbillablePlans {
-			known = known || k == plan
-		}
-		if !known {
-			g.WithLabelValues(plan).Set(float64(n))
-		}
+		g.WithLabelValues(plan).Set(float64(n))
 	}
 }

@@ -207,11 +207,19 @@ egress:
 vmmd takes `compute_node.internal_egress_cidrs` (IPv4 prefixes or addresses)
 and `compute_node.internal_egress_hosts` (`FAAS_VMMD_INTERNAL_EGRESS_CIDRS` /
 `_HOSTS` win) and adds them to every namespace's `faas_internal_tx` rule it
-prepares. Hosts are resolved at start and every 5 minutes; an address stays
-internal for 24 h after DNS last returned it, and a failed lookup keeps the
-previous set. Namespaces already running keep the set they were prepared
-with until their next wake. Production lists the regional Neon host and
-Gregale's public names in `group_vars/compute_nodes/internal_egress_destinations.yml`.
+prepares. The static prefixes apply before vmmd serves; hosts are resolved in
+the background right after start and every 5 minutes, so a slow resolver
+never delays start. An address stays internal for 24 h after DNS last
+returned it, and a failed lookup keeps the previous set. Namespaces already
+running keep the set they were prepared with until their next wake.
+Production (`group_vars/compute_nodes/internal_egress_destinations.yml`)
+lists the public entry addresses (51.222.39.227/32 and .228/32, behind
+`*.gregale.app` and the DNS-only storage/objects/otel names) and the regional
+Neon host. Cloudflare-proxied names (`s3.gregale.dev`, `api.gregale.dev`) are
+never listed: they resolve to shared Cloudflare anycast addresses, so traffic
+to them stays billed. Neon's regional addresses are shared by every project
+in the region, so a customer's own Neon database there is exempt too; that
+is the accepted cost of not billing managed-database traffic twice.
 
 The same review found the gateway billed by status, not by author: an app's
 own 4xx/5xx body was never billed and the bridge's synthetic init-error 502

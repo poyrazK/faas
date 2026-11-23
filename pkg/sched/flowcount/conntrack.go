@@ -74,6 +74,15 @@ func WithBinPath(p string) Option {
 	return func(r *Reader) { r.binPath = p }
 }
 
+// WithClock replaces time.Now for the cache TTL (tests).
+func WithClock(now func() time.Time) Option {
+	return func(r *Reader) {
+		if now != nil {
+			r.now = now
+		}
+	}
+}
+
 // WithTTL overrides the cache lifetime. Tests use a tiny value to exercise
 // the refresh path without sleeping.
 func WithTTL(d time.Duration) Option {
@@ -116,6 +125,7 @@ type Reader struct {
 	cacheAt   time.Time                // when the cache was last successfully filled
 	cachedOut []byte                   // last successful conntrack output, reused on cache-fresh Warm
 	failed    bool                     // latch: true after a failed Warm, cleared on next successful Warm
+	now       func() time.Time         // clock; time.Now unless WithClock
 }
 
 // NewReader constructs a Reader with sensible defaults (DefaultBinPath,
@@ -129,6 +139,7 @@ func NewReader(runner Runner, opts ...Option) *Reader {
 		binPath:      DefaultBinPath,
 		ttl:          DefaultTTL,
 		maxSummaries: DefaultMaxSummaries,
+		now:          time.Now,
 	}
 	for _, opt := range opts {
 		opt(r)
@@ -168,7 +179,7 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 		return nil
 	}
 	r.mu.Lock()
-	cacheFresh := !r.failed && !r.cacheAt.IsZero() && time.Since(r.cacheAt) < r.ttl
+	cacheFresh := !r.failed && !r.cacheAt.IsZero() && r.now().Sub(r.cacheAt) < r.ttl
 	var out []byte
 	reused := false
 	if cacheFresh && r.cachedOut != nil {
@@ -214,7 +225,7 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	// whole lifetime and stale flows kept idle instances from parking until
 	// vmmd restarted (metering review 2026-11-23).
 	if !reused {
-		r.cacheAt = time.Now()
+		r.cacheAt = r.now()
 	}
 	r.cachedOut = out
 	r.failed = false

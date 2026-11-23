@@ -323,21 +323,22 @@ func TestReader_CacheTTLTriggersRefresh(t *testing.T) {
 // instances from parking (metering review 2026-11-23).
 func TestReader_FrequentWarmsStillRefreshAfterTTL(t *testing.T) {
 	runner := &fakeRunner{out: []byte(cannedConntrack)}
-	r := NewReader(runner, WithTTL(30*time.Millisecond))
+	now := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	r := NewReader(runner, WithTTL(10*time.Second), WithClock(func() time.Time { return now }))
 	insts := makeInstances([2]string{"10.100.0.5", "inst-A"})
-	deadline := time.Now().Add(120 * time.Millisecond)
-	for time.Now().Before(deadline) {
+	// 40 warms one second apart span four TTLs.
+	for range 40 {
 		if err := r.Warm(context.Background(), insts); err != nil {
 			t.Fatalf("Warm: %v", err)
 		}
-		time.Sleep(5 * time.Millisecond)
+		now = now.Add(time.Second)
 	}
-	if calls := runner.calls.Load(); calls < 3 {
-		t.Fatalf("conntrack reads over 4 TTLs of 5 ms warms = %d, want at least 3", calls)
+	if calls := runner.calls.Load(); calls != 4 {
+		t.Fatalf("conntrack reads over 4 TTLs of 1 s warms = %d, want 4", calls)
 	}
 	// The ended flow must disappear once conntrack no longer lists it.
 	runner.out = nil
-	time.Sleep(40 * time.Millisecond)
+	now = now.Add(10 * time.Second)
 	if err := r.Warm(context.Background(), insts); err != nil {
 		t.Fatalf("Warm: %v", err)
 	}

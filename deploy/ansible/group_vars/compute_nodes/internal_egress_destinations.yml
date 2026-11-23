@@ -3,17 +3,22 @@
 # namespace's faas_internal_tx counter, so meterd leaves the guest's traffic to
 # them out of billed app egress (meterd_internal_egress_unbilled).
 #
-# - Managed Postgres (Neon) endpoints: Neon already includes 500 GB of egress
-#   per database, so app→database bytes are not billed again as app egress.
-#   An app connects to <endpoint>.<region>.aws.neon.tech, a CNAME of the
-#   regional host below; vmmd resolves it every 5 minutes and keeps each
-#   address internal for 24 h after it was last seen.
-# - Gregale's public entry (*.gregale.app, storage, objects, otel): an app
-#   calling another app, object storage or the OTLP endpoint over its public
-#   name is platform-internal traffic; the receiving side bills it where due.
+# - Gregale's public entry: the OVH addresses behind *.gregale.app,
+#   storage.gregale.dev, objects.gregale.dev and otel.gregale.dev (DNS-only
+#   records). An app calling another app or those endpoints over its public
+#   name is platform traffic; the receiving side bills it where due.
+#   Cloudflare-proxied names (s3.gregale.dev, api.gregale.dev) resolve to
+#   shared Cloudflare anycast addresses and must never be listed: every other
+#   Cloudflare-fronted site on them would become unbilled egress.
+# - Managed Postgres (Neon): Neon already includes 500 GB of egress per
+#   database, so app→database bytes are not billed again. Apps connect to
+#   <endpoint>.<region>.aws.neon.tech, a CNAME of the regional host below;
+#   vmmd resolves it every 5 minutes and keeps each address internal for 24 h.
+#   The regional addresses are shared by every Neon project in the region, so
+#   a customer's own Neon database there is exempt too (amendment, accepted
+#   trade-off).
+faas_vmmd_internal_egress_cidrs:
+  - 51.222.39.227/32
+  - 51.222.39.228/32
 faas_vmmd_internal_egress_hosts:
   - us-east-2.aws.neon.tech
-  - storage.gregale.dev
-  - objects.gregale.dev
-  - otel.gregale.dev
-faas_vmmd_internal_egress_cidrs: []

@@ -9545,12 +9545,19 @@ type statusRecorder struct {
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 // markPlatformResponse flags the statusRecorder under w (through any
-// Unwrap chain) as carrying a gateway-written response.
+// Unwrap chain) as carrying a gateway-written response. An uncommitted retry
+// attempt keeps the mark itself until it commits or is discarded.
 func markPlatformResponse(w http.ResponseWriter) {
 	for w != nil {
 		if rec, ok := w.(*statusRecorder); ok {
 			rec.platformResponse = true
 			return
+		}
+		if rw, ok := w.(*retryWriter); ok {
+			if !rw.committed {
+				rw.platformResponse = true
+				return
+			}
 		}
 		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
 		if !ok {

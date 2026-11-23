@@ -119,6 +119,7 @@ func (r *internalEgressResolver) run(ctx context.Context) {
 	if len(r.hosts) == 0 {
 		return
 	}
+	r.refresh(ctx)
 	t := time.NewTicker(internalEgressResolveEvery)
 	defer t.Stop()
 	for {
@@ -131,15 +132,17 @@ func (r *internalEgressResolver) run(ctx context.Context) {
 	}
 }
 
-// seedInternalEgressDestinations applies the configured destinations before
-// any namespace is prepared and keeps resolving hosts in the background.
+// seedInternalEgressDestinations applies the static prefixes before any
+// namespace is prepared and resolves hosts in the background, so a slow
+// resolver never delays vmmd's start for a billing-only counter. Namespaces
+// prepared before the first resolution miss the hosts until their next wake.
 func seedInternalEgressDestinations(ctx context.Context, cfg ComputeNodeConfig, log *slog.Logger) error {
 	cidrs, err := parseInternalEgressCIDRs(cfg.InternalEgressCIDRs)
 	if err != nil {
 		return err
 	}
 	r := newInternalEgressResolver(cidrs, cfg.InternalEgressHosts, log)
-	r.refresh(ctx)
+	r.apply(append([]netip.Prefix(nil), cidrs...))
 	go r.run(ctx)
 	if log != nil && (len(cidrs) > 0 || len(cfg.InternalEgressHosts) > 0) {
 		log.Info("vmmd: internal egress destinations seeded (ADR-20261114100000)", "cidrs", len(cidrs), "hosts", cfg.InternalEgressHosts)

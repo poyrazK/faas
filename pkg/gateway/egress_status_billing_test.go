@@ -8,6 +8,29 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
 )
 
+// A discarded failed attempt's platform mark must not unbill the app's
+// replayed response; a committed platform answer stays unbilled.
+func TestRetryWriterPlatformMarkFollowsCommittedAttempt(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder()}
+	rw := newRetryWriter(rec)
+	writeForwarderProblem(rw, 503)
+	rw.discard()
+	rw.WriteHeader(200)
+	_, _ = rw.Write([]byte("app body"))
+	rw.finish()
+	if rec.isPlatformResponse() {
+		t.Fatal("replayed app response marked as platform after a discarded failure")
+	}
+
+	rec = &statusRecorder{ResponseWriter: httptest.NewRecorder()}
+	rw = newRetryWriter(rec)
+	writeForwarderProblem(rw, 503)
+	rw.finish()
+	if !rec.isPlatformResponse() {
+		t.Fatal("committed platform problem not marked")
+	}
+}
+
 // App 4xx/5xx bodies leave the platform like any other response and are
 // billed; responses the platform writes itself (a marked writer, or a
 // problem carrying api.ErrorCodeHeader) and informational statuses are not.
