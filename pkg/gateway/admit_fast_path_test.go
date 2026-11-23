@@ -19,6 +19,7 @@ func (c *countingAdmitScheduler) AdmitInstance(ctx context.Context, appID, deplo
 	return c.FakeScheduler.AdmitInstance(ctx, appID, deploymentID, scope, trigger)
 }
 
+// adr: 20261123120000
 // Prod 2026-11-23: an older release at 0% traffic and the live release filled
 // max_concurrency 1 + the rollout grant in the gateway's picker. The gateway
 // answered the next release's smoke "at capacity" without asking schedd, so

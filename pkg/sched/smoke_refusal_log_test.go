@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 20261123120000
 // A refused deployment smoke surfaces as deployment_verification_unavailable;
 // the diagnostic must name the holders and the ledger counts, once per window.
 func TestRefusedDeploymentSmokeLogsHoldersOncePerWindow(t *testing.T) {
