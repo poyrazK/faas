@@ -3096,6 +3096,7 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		Manifest:       manifest,
 		ProvenWorker:   bootProvenWorker(),
 		FunctionRunner: bootFunctionRunner(),
+		RawTCPListener: bootRawTCPListener(),
 		AppPID:         func() int { return sup.LastAppPID() },
 		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
