@@ -2856,7 +2856,7 @@ HTTP 409 Conflict · Deployment control conflicted
 
 ### `project_release_rollback_required`
 
-HTTP 409 Conflict · Project release rollback required
+HTTP 409 Conflict · Project release owns traffic; Project release rollback required
 
 Roll back the project environment release, then retry this app rollback if needed.
 
@@ -2877,6 +2877,86 @@ HTTP 409 Conflict · Project required
 ### `project_retry_changed`
 
 HTTP 409 Conflict · Project retry stopped
+
+### `project_rollback_already_complete`
+
+HTTP 409 Conflict · Rollback already complete
+
+### `project_rollback_auto_undo_blocked`
+
+HTTP 409 Conflict · Automatic rollback undo paused
+
+### `project_rollback_conflict`
+
+HTTP 409 Conflict · Project rollback already running; Project rollback conflict; Rollback resume unavailable
+
+### `project_rollback_health_failed`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_health_probe_required`
+
+HTTP 409 Conflict · Health probe required
+
+### `project_rollback_health_timeout`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_live_traffic_failed`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_live_traffic_required`
+
+HTTP 409 Conflict · Production error budget required; Request telemetry required
+
+### `project_rollback_live_traffic_timeout`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_paused`
+
+HTTP 409 Conflict · Project rollback paused
+
+### `project_rollback_plan_changed`
+
+HTTP 409 Conflict · Reviewed resume plan changed; Reviewed rollback plan changed; Reviewed undo plan changed
+
+### `project_rollback_pre_cutover_health_failed`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_pre_cutover_health_timeout`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_preparation_expired`
+
+HTTP 409 Conflict · Rollback preparation expired
+
+### `project_rollback_preparation_released`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_prepared`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_request_reused`
+
+HTTP 409 Conflict · Rollback request ID already used
+
+### `project_rollback_undo_artifacts_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_undo_started`
+
+HTTP 409 Conflict · Rollback undo already accepted
+
+### `project_rollback_undo_unavailable`
+
+HTTP 409 Conflict · Rollback undo unavailable
 
 ### `project_selection_empty`
 

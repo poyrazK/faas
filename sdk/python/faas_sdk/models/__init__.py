@@ -2318,6 +2318,28 @@ from .project_release_verification_percent import ProjectReleaseVerificationPerc
 from .project_release_worker import ProjectReleaseWorker
 from .project_release_worker_status import ProjectReleaseWorkerStatus
 from .project_response import ProjectResponse
+from .project_rollback_auto_undo import ProjectRollbackAutoUndo
+from .project_rollback_auto_undo_status import ProjectRollbackAutoUndoStatus
+from .project_rollback_batch import ProjectRollbackBatch
+from .project_rollback_health import ProjectRollbackHealth
+from .project_rollback_history import ProjectRollbackHistory
+from .project_rollback_live_traffic import ProjectRollbackLiveTraffic
+from .project_rollback_member import ProjectRollbackMember
+from .project_rollback_operation import ProjectRollbackOperation
+from .project_rollback_operation_status import ProjectRollbackOperationStatus
+from .project_rollback_pre_cutover_health import ProjectRollbackPreCutoverHealth
+from .project_rollback_protection import ProjectRollbackProtection
+from .project_rollback_request import ProjectRollbackRequest
+from .project_rollback_resume_request import ProjectRollbackResumeRequest
+from .project_rollback_step import ProjectRollbackStep
+from .project_rollback_step_status import ProjectRollbackStepStatus
+from .project_rollback_summary import ProjectRollbackSummary
+from .project_rollback_target_deploy import ProjectRollbackTargetDeploy
+from .project_rollback_targets import ProjectRollbackTargets
+from .project_rollback_traffic import ProjectRollbackTraffic
+from .project_rollback_traffic_status import ProjectRollbackTrafficStatus
+from .project_rollback_undo_artifacts import ProjectRollbackUndoArtifacts
+from .project_rollback_undo_request import ProjectRollbackUndoRequest
 from .project_safe_release import ProjectSafeRelease
 from .project_safe_release_status import ProjectSafeReleaseStatus
 from .project_scan_request import ProjectScanRequest
@@ -2332,6 +2354,7 @@ from .project_worker_health_status import ProjectWorkerHealthStatus
 from .project_worker_job_sample import ProjectWorkerJobSample
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_stored_workflow_live_baseline_request import PromoteStoredWorkflowLiveBaselineRequest
+from .protect_project_rollback_deploy_request import ProtectProjectRollbackDeployRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
 from .public_auth_status import PublicAuthStatus
@@ -5333,6 +5356,28 @@ __all__ = (
     "ProjectReleaseWorker",
     "ProjectReleaseWorkerStatus",
     "ProjectResponse",
+    "ProjectRollbackAutoUndo",
+    "ProjectRollbackAutoUndoStatus",
+    "ProjectRollbackBatch",
+    "ProjectRollbackHealth",
+    "ProjectRollbackHistory",
+    "ProjectRollbackLiveTraffic",
+    "ProjectRollbackMember",
+    "ProjectRollbackOperation",
+    "ProjectRollbackOperationStatus",
+    "ProjectRollbackPreCutoverHealth",
+    "ProjectRollbackProtection",
+    "ProjectRollbackRequest",
+    "ProjectRollbackResumeRequest",
+    "ProjectRollbackStep",
+    "ProjectRollbackStepStatus",
+    "ProjectRollbackSummary",
+    "ProjectRollbackTargetDeploy",
+    "ProjectRollbackTargets",
+    "ProjectRollbackTraffic",
+    "ProjectRollbackTrafficStatus",
+    "ProjectRollbackUndoArtifacts",
+    "ProjectRollbackUndoRequest",
     "ProjectSafeRelease",
     "ProjectSafeReleaseStatus",
     "ProjectScanRequest",
@@ -5347,6 +5392,7 @@ __all__ = (
     "ProjectWorkerJobSample",
     "ProjectWorkloadResponse",
     "PromoteStoredWorkflowLiveBaselineRequest",
+    "ProtectProjectRollbackDeployRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
     "PublicAuthStatus",

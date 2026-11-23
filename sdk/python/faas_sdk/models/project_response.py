@@ -11,6 +11,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.project_rollback_batch import ProjectRollbackBatch
     from ..models.project_workload_response import ProjectWorkloadResponse
 
 
@@ -34,6 +35,8 @@ class ProjectResponse:
     production_branch: str | Unset = UNSET
     last_reconciliation_status: str | Unset = UNSET
     last_build_status: str | Unset = UNSET
+    rollback_batch: ProjectRollbackBatch | Unset = UNSET
+    """Recorded production project deployment membership and serving predecessors."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -68,6 +71,10 @@ class ProjectResponse:
 
         last_build_status = self.last_build_status
 
+        rollback_batch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback_batch, Unset):
+            rollback_batch = self.rollback_batch.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -92,11 +99,14 @@ class ProjectResponse:
             field_dict["last_reconciliation_status"] = last_reconciliation_status
         if last_build_status is not UNSET:
             field_dict["last_build_status"] = last_build_status
+        if rollback_batch is not UNSET:
+            field_dict["rollback_batch"] = rollback_batch
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_rollback_batch import ProjectRollbackBatch
         from ..models.project_workload_response import ProjectWorkloadResponse
 
         d = dict(src_dict)
@@ -136,6 +146,13 @@ class ProjectResponse:
 
         last_build_status = d.pop("last_build_status", UNSET)
 
+        _rollback_batch = d.pop("rollback_batch", UNSET)
+        rollback_batch: ProjectRollbackBatch | Unset
+        if isinstance(_rollback_batch, Unset):
+            rollback_batch = UNSET
+        else:
+            rollback_batch = ProjectRollbackBatch.from_dict(_rollback_batch)
+
         project_response = cls(
             id=id,
             slug=slug,
@@ -150,6 +167,7 @@ class ProjectResponse:
             production_branch=production_branch,
             last_reconciliation_status=last_reconciliation_status,
             last_build_status=last_build_status,
+            rollback_batch=rollback_batch,
         )
 
         project_response.additional_properties = d

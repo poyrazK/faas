@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -56,6 +57,8 @@ class Problem:
     status: int
     code: str
     """Stable machine-readable error code. See StatusForCode."""
+    active_operation_id: UUID | Unset = UNSET
+    """The running project rollback identified by a project rollback start conflict."""
     run_budget: RunBudgetRefusal | Unset = UNSET
     """Budget limit that prevented admission and the current usage against it."""
     current_sequence: int | Unset = UNSET
@@ -180,6 +183,10 @@ class Problem:
         status = self.status
 
         code = self.code
+
+        active_operation_id: str | Unset = UNSET
+        if not isinstance(self.active_operation_id, Unset):
+            active_operation_id = str(self.active_operation_id)
 
         run_budget: dict[str, Any] | Unset = UNSET
         if not isinstance(self.run_budget, Unset):
@@ -318,6 +325,8 @@ class Problem:
                 "code": code,
             }
         )
+        if active_operation_id is not UNSET:
+            field_dict["active_operation_id"] = active_operation_id
         if run_budget is not UNSET:
             field_dict["run_budget"] = run_budget
         if current_sequence is not UNSET:
@@ -414,6 +423,13 @@ class Problem:
         status = d.pop("status")
 
         code = d.pop("code")
+
+        _active_operation_id = d.pop("active_operation_id", UNSET)
+        active_operation_id: UUID | Unset
+        if isinstance(_active_operation_id, Unset):
+            active_operation_id = UNSET
+        else:
+            active_operation_id = UUID(_active_operation_id)
 
         _run_budget = d.pop("run_budget", UNSET)
         run_budget: RunBudgetRefusal | Unset
@@ -583,6 +599,7 @@ class Problem:
             title=title,
             status=status,
             code=code,
+            active_operation_id=active_operation_id,
             run_budget=run_budget,
             current_sequence=current_sequence,
             agent_approval=agent_approval,

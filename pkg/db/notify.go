@@ -1001,6 +1001,9 @@ const (
 	//   schedd -> gatewayd-internal: a readiness-gated service rollout has
 	//   published its candidate as the sole positive-weight generation.
 	NotifyDeploymentRouteChanged = "deployment_route_changed"
+	// NotifyProjectRollbackRouteChanged carries the same routing envelope to
+	// gateways that can persist project rollback observations.
+	NotifyProjectRollbackRouteChanged = "project_rollback_route_changed"
 	// NotifyDeploymentRouteAck {"generation":int,"node":string}
 	//   gatewayd-internal -> schedd: the named serving gateway refreshed both
 	//   deployment weights and live targets for the generation.
