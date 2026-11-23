@@ -233,6 +233,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body += databases.hostVars(host, hostScheddTarget)
 		body += renderServiceTCPVars(m.ServiceTCP, host)
 		body += renderComputeEdgeVars(m.PublicEdge, host, postgresListenAddress, computeAllowedCIDRs)
+		body += renderPeerEntryVars(m.PublicEdge, m.Fleet.Hosts, host)
 		exactVars, exactErr := renderExactPeerVars(m.Fleet.Hosts, host)
 		if exactErr != nil {
 			return nil, exactErr
@@ -928,6 +929,39 @@ func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
 		return ""
 	}
 	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
+}
+
+// renderPeerEntryVars hands a compute edge with an IPv4 entry address the
+// other compute edges' IPv4 entry addresses (ADR-20261123100000). Its
+// guests' 443 calls to them are DNATed to its own entry address, so an app
+// calling another app's public URL stays on the node: every edge serves
+// every app, the edge sees the guest's own bridge address, and the call does
+// not cross the provider network between the servers' primary addresses.
+// Dynamically enrolled nodes have no entry address, so public DNS never
+// names them and the manifest's hosts are the whole list.
+func renderPeerEntryVars(edge manifest.PublicEdge, hosts []manifest.Host, host manifest.Host) string {
+	if !edge.ComputeNodes || !edge.NoFront() || host.Role != roleComputeOnly {
+		return ""
+	}
+	own, err := netip.ParseAddr(host.EntryAddress())
+	if err != nil || !own.Is4() {
+		return ""
+	}
+	var peers []string
+	for _, h := range hosts {
+		if h.Role != roleComputeOnly || h.Name == host.Name {
+			continue
+		}
+		addr, err := netip.ParseAddr(h.EntryAddress())
+		if err != nil || !addr.Is4() || addr == own || slices.Contains(peers, addr.String()) {
+			continue
+		}
+		peers = append(peers, addr.String())
+	}
+	if len(peers) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("faas_peer_entry_addrs: [%s]\n", quotedYAMLList(peers))
 }
 
 func renderComputeEdgeVars(edge manifest.PublicEdge, host manifest.Host, controlPlaneAddress string, computeCIDRs []string) string {

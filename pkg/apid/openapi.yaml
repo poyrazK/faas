@@ -124563,6 +124563,24 @@ components:
             - type: object
               additionalProperties: { type: array, items: { type: string } }
             - type: "null"
+        credential:
+          description: |
+            What callers present. Omitted means a bearer JWT verified against
+            the rule's issuer. consumer_key means an app consumer key whose
+            mcp:<scope> scopes satisfy the policy's scopes.
+          type: string
+          enum: [consumer_key]
+        tool_limits:
+          description: Per-caller limits on tools/call, keyed by tool name.
+          type: object
+          additionalProperties: { $ref: '#/components/schemas/MCPToolLimit' }
+    MCPToolLimit:
+      description: At most requests tools/call requests per caller in each window.
+      type: object
+      required: [requests, window_seconds]
+      properties:
+        requests: { type: integer, minimum: 1, maximum: 100000 }
+        window_seconds: { type: integer, minimum: 1, maximum: 3600 }
 
     EdgeRuleJWTAction:
       description: |

@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { MCPToolLimit } from './MCPToolLimit.js';
 /**
  * Opt-in MCP resource-server policy on a JWT edge rule. Requires a
  * canonical HTTPS resource, matching JWT audience, match_path=**,
@@ -20,5 +21,16 @@ export type MCPResourcePolicy = {
    */
   resource_scopes?: (Record<string, Array<string>> | null);
   prompt_scopes?: (Record<string, Array<string>> | null);
+  /**
+   * What callers present. Omitted means a bearer JWT verified against
+   * the rule's issuer. consumer_key means an app consumer key whose
+   * mcp:<scope> scopes satisfy the policy's scopes.
+   *
+   */
+  credential?: 'consumer_key';
+  /**
+   * Per-caller limits on tools/call, keyed by tool name.
+   */
+  tool_limits?: Record<string, MCPToolLimit>;
 };
 

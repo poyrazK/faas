@@ -39,7 +39,8 @@ func visibleCliCommandsWith(realtimePreview bool) []cliCommand {
 	auth, monetization := applicationAuthCLI(), monetizationCLI()
 	fullClone := fullEnvironmentCloneCLI()
 	branches, customRoles := environmentBranchCLI(), postgresCustomRolesCLI()
-	if auth && monetization && realtimePreview && fullClone && branches && customRoles {
+	mcpGateway := mcpGatewayPreviewCLI()
+	if auth && monetization && realtimePreview && fullClone && branches && customRoles && mcpGateway {
 		return cliCommands
 	}
 	visible := make([]cliCommand, 0, len(cliCommands))
@@ -65,6 +66,9 @@ func visibleCliCommandsWith(realtimePreview bool) []cliCommand {
 		}
 		if !customRoles {
 			command = withoutPostgresCustomRoles(command)
+		}
+		if !mcpGateway {
+			command = withoutMCPGatewayPreview(command)
 		}
 		visible = append(visible, command)
 	}

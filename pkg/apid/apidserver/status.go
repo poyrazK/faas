@@ -339,7 +339,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	// 1. API availability over last 5m: 2xx / eligible 2xx+5xx outcomes
 	// for resolved apps. Client/application 4xx responses and requests that
 	// never reached a tenant route are not platform failures.
-	if pct, err := c.client.QueryScalar(ctx, statusAPIAvailabilityQuery); err == nil {
+	if pct, err := c.client.QueryScalar(ctx, availabilityQueryExcluding(c.excludedAppIDs(ctx))); err == nil {
 		snap.legacy.APIAvailabilityPct = pct
 		snap.indicatorAvailable["api_availability"] = true
 		okCount++

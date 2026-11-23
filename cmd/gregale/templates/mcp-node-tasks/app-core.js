@@ -1,4 +1,4 @@
-import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel } from './protocol-telemetry.js';
+import { protocolContext, observeProtocolRequest, observeServerTransport, toolLabel, labelTool } from './protocol-telemetry.js';
 import { performance } from 'node:perf_hooks';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -158,7 +158,15 @@ function installDefaultCatalog(catalog, { clientSupportsMcpTasks, mcpTaskHandler
   return { sampleCustomerRecord };
 }
 
-export function createApp(config, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+// Gregale's gateway authorizes every request for api-key and oauth-proxy
+// before it reaches this server, so the server itself serves them as open.
+function guestConfig(config) {
+  return ['api-key', 'oauth-proxy'].includes(config?.auth?.mode) ? { ...config, auth: { mode: 'open' } } : config;
+}
+
+export function createApp(suppliedConfig, { keyResolver, log = console.log, taskRuntime, tasks = NO_TASKS, resourceUpdateAdapter: suppliedResourceUpdateAdapter, expectedCatalogSHA256 = process.env.MCP_CATALOG_EXPECTED_SHA256 } = {}) {
+  const config = guestConfig(suppliedConfig);
+  const gatewayOnly = config !== suppliedConfig;
   const { clientSupportsMcpTasks, installMcpTaskHandlers, MCP_TASKS_EXTENSION_ID } = tasks;
   if (taskRuntime && tasks === NO_TASKS) throw new Error('A task runtime needs the MCP Tasks module');
   if (config.version !== 1 || config.transport !== 'streamable-http' || config.mode !== 'stateless') throw new Error('Unsupported MCP hosting profile');
@@ -264,6 +272,7 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
         return entry.handler(args, ctx, { authInfo, config, taskRuntime });
       };
       const definition = taskCall ? { ...entry.definition, outputSchema: undefined } : entry.definition;
+      labelTool(entry.name);
       const tool = server.registerTool(entry.name, definition, auth.toolPolicy.guard(entry.name, observe(entry.name, callback)));
       if (!auth.toolPolicy.canAccess(entry.name, authInfo)) tool.disable();
     }
@@ -650,6 +659,10 @@ export function createApp(config, { keyResolver, log = console.log, taskRuntime,
   });
   if (auth.metadata) app.get(`/.well-known/oauth-protected-resource${config.endpoint}`, (_req, res) => res.json(auth.metadata));
   app.use(config.endpoint, (req, res, next) => {
+    // api-key and oauth-proxy servers trust only requests Gregale's gateway
+    // admitted (it removes any caller-supplied value); without its policy
+    // they would serve anyone.
+    if (gatewayOnly && !String(req.headers['gregale-mcp-gateway-authorized'] ?? '').trim()) return res.status(401).json({ error: 'gateway_policy_required' });
     if (!catalogStatus().ready) return res.status(503).set('Retry-After', '5').json({ error: 'catalog_contract_mismatch' });
     next();
   }, auth.middleware, express.json({ limit: '1mb' }), auth.authorizeCall);
