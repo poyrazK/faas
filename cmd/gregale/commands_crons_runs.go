@@ -72,8 +72,11 @@ func cmdCronsRuns(args []string) int {
 		}
 		return cmdCronsRunsInteractive(slug)
 	}
-	if logsFlagWasSet(fs, "app") {
-		return printErr("Invalid app flag", fmt.Errorf("--app requires --interactive; otherwise supply a task ID"))
+	// A cron ID names its app, so `cron runs ID --app APP` just runs; with no
+	// ID the app's crons are where the ID comes from (prod hunt r31: the old
+	// "--app requires --interactive" answered even when an ID was given).
+	if logsFlagWasSet(fs, "app") && len(pos) == 0 {
+		return printErr("Missing cron ID", fmt.Errorf("cron runs takes a cron ID: list %s's crons with gregale cron list %s, or choose one with gregale cron runs --interactive --app %s", *app, *app, *app))
 	}
 	if len(pos) > 1 {
 		// prod 2026-11-20: `cron runs <app> <id>` (the order `cron list
@@ -89,6 +92,10 @@ func cmdCronsRuns(args []string) int {
 		return 1
 	}
 	id := pos[0]
+	if !cronIDPattern.MatchString(id) && api.ValidAppSlug(id) {
+		// `cron runs APP` printed only the usage line (prod hunt r31).
+		return printErr("Missing cron ID", fmt.Errorf("cron runs takes a cron ID, not an app: list %s's crons with gregale cron list %s, then run gregale cron runs <id>", id, id))
+	}
 	if !cronIDPattern.MatchString(id) {
 		printCommandValidation(os.Stderr, "usage: gregale cron runs <id> [--cursor C] [--limit N] [--run TASK-ID]\n")
 		return 1

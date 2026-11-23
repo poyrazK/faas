@@ -2647,6 +2647,7 @@ var RoutesAppFlagAsPositional = routesAppFlagAsPositional
 
 var RenderProject = renderProject
 var InspectAttention = inspectAttention
+var SelectInspectDeployments = selectInspectDeployments
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel

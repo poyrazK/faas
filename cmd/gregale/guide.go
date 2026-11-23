@@ -145,7 +145,8 @@ var guidePages = []guidePage{
 			{Do: "Send a message", Command: "gregale queue send <app> --queue-name <queue> --payload '<json>'"},
 			{Do: "See queue depth, bindings and consumer liveness", Command: "gregale queue status <app>"},
 			{Do: "List and replay dead letters", Command: "gregale dlq list <app>"},
-			{Do: "List an app's crons, then one cron's runs", Command: "gregale cron list <app>"},
+			{Do: "List an app's crons", Command: "gregale cron list <app>"},
+			{Do: "Show one cron's runs (its ID is in the list)", Command: "gregale cron runs <cron-id>"},
 		},
 		Notes: []string{
 			"A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.",
