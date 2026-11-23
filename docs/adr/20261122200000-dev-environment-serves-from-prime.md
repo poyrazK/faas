@@ -65,7 +65,7 @@ and the implementation adds an explicit marker for it rather than inferring it.
      this one case. If the grant is already in use, the prime parks as today.
      The invariant-1 property test covers the path.
    - **Billing.** Metering starts at promotion, not at prime boot. The cold
-     boot and health check stay unbilled platform work, as they are today.
+     boot and health check are platform work and are not billed to the developer.
      The capacity ledger entry and ownership row are moved to the serving
      instance explicitly at promotion.
 2. **No snapshot is captured on the critical path.** The environment's first
