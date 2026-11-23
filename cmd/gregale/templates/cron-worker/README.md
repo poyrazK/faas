@@ -84,7 +84,7 @@ here authenticates you to QStash; the function never needs it), publish
 to your function URL:
 
 ```sh
-curl -X POST https://qstash.upstash.io/v2/publish/<slug>.gregale.dev \
+curl -X POST https://qstash.upstash.io/v2/publish/<slug>.gregale.app \
   -H "Authorization: Bearer $QSTASH_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"task":"tick"}'

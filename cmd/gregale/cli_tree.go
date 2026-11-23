@@ -384,6 +384,7 @@ var cliTreeAliases = []cliTreeAlias{
 	{"mcp client watch", "mcp resource-watch"},
 	{"mcp client status", "mcp task-get"},
 	{"mcp client wait", "mcp task-wait"},
+	{"mcp client respond", "mcp task-respond"},
 	{"mcp client cancel", "mcp task-cancel"},
 	// Hosted agent runs' approvals (ADR-20261027090016 amendment 2).
 	{"agent run approval list", "agents runs approvals"},

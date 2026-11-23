@@ -19,7 +19,7 @@ var cliTreeVerbs = []string{
 	"replay", "recover", "scale", "park", "wake", "wake-ahead", "restart", "rename", "restore",
 	"exec", "cp", "port-forward", "run", "publish", "send", "deliver", "receive", "peek", "ack",
 	"apply", "check", "verify", "setup", "sync", "connect", "disconnect", "link", "advance",
-	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render",
+	"simulate", "hide", "prune", "reorder", "serve", "call", "complete", "read", "render", "respond",
 	"resolve", "audit", "accept", "deploy", "suppress",
 	// Plain verbs today's commands already use with one meaning.
 	"abandon", "activate", "deactivate", "adopt", "allow", "assign", "attach", "detach",

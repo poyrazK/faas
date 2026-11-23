@@ -136,7 +136,7 @@ RULES = [
     (r"^rammb$|^ram-mb$|default-max-retries", "Resource sizing"),
     (r"app-changes", "Change timeline"),
     (r"faas-implementation-spec|faas-ux-spec|ga-capability-inventory|^status$|^capabilities$", "TOOLING"),
-    (r"^quickstart$", "Docs site and trust pages"),
+    (r"^(quickstart|troubleshooting)$", "Docs site and trust pages"),
     (r"^security$|^supply-chain$|httpsec|hsts", "Docs site and trust pages"),
     (r"^internal$|^observability$", "INFRA"),
     (r"^runs$", "Disposable isolated runs"),

@@ -247,18 +247,23 @@ func ClearGuestIdentityHeaders(h http.Header) {
 		return
 	}
 	for name := range h {
-		if IsGuestIdentityHeader(name) {
-			// Delete the key as stored. h.Del would canonicalize it again
-			// (a scan per header) and, for a key stored in another case,
-			// remove the canonical spelling while leaving this one behind.
+		// The exact-service selector is guest-authored on a managed service
+		// call, never inherited from a public client that an app might
+		// blindly forward, so it goes too.
+		if IsGuestIdentityHeader(name) || isServiceSelectorHeader(name) {
+			// Delete the key as stored. h.Del canonicalizes its argument, so
+			// a key stored in another case (a direct map write) would survive
+			// it and sit beside the canonical value stamped later.
 			delete(h, name)
 		}
 	}
-	// The exact-service selector is guest-authored on a managed service call,
-	// never inherited from a public client that an app might blindly forward.
-	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
-		h.Del(name)
-	}
+}
+
+// isServiceSelectorHeader reports one of the exact-service selector headers,
+// in any case.
+func isServiceSelectorHeader(name string) bool {
+	return strings.EqualFold(name, "X-Faas-App") || strings.EqualFold(name, "X-Faas-Instance") ||
+		strings.EqualFold(name, "X-Faas-Node") || strings.EqualFold(name, TargetDeploymentHeader)
 }
 
 // IsGuestIdentityHeader reports whether a platform-authored identity header
