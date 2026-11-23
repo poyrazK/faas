@@ -7,6 +7,13 @@ package api
 // (ADR-20261018101500).
 const ProvenWorkerBootArg = "faas.worker=proven"
 
+// RawTCPListenerBootArg is the kernel command-line flag vmmd adds to a cold
+// boot whose routed port is a raw TCP server (a managed Valkey cache, a
+// declared TCP port). Characterization's L7 probes would send an HTTP GET
+// with a Host header and an HTTP/2 preface to it, which Valkey logs as
+// "Possible SECURITY ATTACK detected" (agent eval 2026-11-23, voting-app P8).
+const RawTCPListenerBootArg = "faas.listener=rawtcp"
+
 // FunctionRunnerBootArg is the kernel command-line flag vmmd adds to a cold
 // boot of a function (an app with a runner runtime such as node22 or
 // binary). Characterization's L7 probes would reach the customer's handler
