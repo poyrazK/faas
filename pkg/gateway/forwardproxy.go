@@ -294,6 +294,8 @@ func fwdOnce(w http.ResponseWriter, r *http.Request, nodes NodeClientLookup, log
 // responses. The detailed node, stream and gRPC errors remain in logs; app
 // visitors get a stable code, a safe explanation and one next action.
 func writeForwarderProblem(w http.ResponseWriter, status int) {
+	// The gateway, not the app, answers: its bytes are never the app's egress.
+	markPlatformResponse(w)
 	var problem *api.Problem
 	switch status {
 	case http.StatusServiceUnavailable:
@@ -1251,17 +1253,12 @@ func rawStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 				// panel when the bridge is the source of
 				// the failure).
 				wsOutcome = WSOutcomeUpstreamUnavailable
-				errBody := []byte(init.Error + "\n")
-				if _, werr := w.Write(errBody); werr == nil && sink != nil {
-					// Init-error body is part of the
-					// per-instance egress ring too:
-					// the bridge wrote the synthetic
-					// 502 from inside the per-instance
-					// netns, so the bytes count toward
-					// the same usage_minutes.tx_bytes
-					// bucket the body_chunks do.
-					sink.RecordResponseBytes(t.InstanceID, int64(len(errBody)))
-				}
+				// The bridge wrote this synthetic 502 because
+				// the guest refused the connect: it is the
+				// platform's response, not app egress, so its
+				// bytes are not billed.
+				markPlatformResponse(w)
+				_, _ = w.Write([]byte(init.Error + "\n"))
 				flushSafe(w)
 			}
 			if refusalRemaining == 0 {
