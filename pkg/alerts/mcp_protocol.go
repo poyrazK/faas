@@ -25,7 +25,7 @@ func mcpProtocolExpressions(rule state.AlertRule) (string, string) {
 		return value, count
 	}
 	count := `sum(increase(vmmd_mcp_protocol_requests_total` + selector + `[` + window + `]))`
-	errors := fmt.Sprintf(`sum(increase(vmmd_mcp_protocol_requests_total{app_id=%q,outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[%s]))`, rule.AppID, window)
+	errors := fmt.Sprintf(`sum(increase(vmmd_mcp_protocol_requests_total{app_id=%q,outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout|invalid_params"}[%s]))`, rule.AppID, window)
 	return `100 * (` + errors + `) / (` + count + `)`, count
 }
 func mcpProtocolSustainedQuery(rule state.AlertRule, value, count string) string {

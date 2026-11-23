@@ -171,6 +171,12 @@ func handleHTTP(config mcpConfig, auth *authenticator, tasks *mcpTaskRuntime, w 
 		handleCORSPreflight(config, w, r, len(origins) == 1)
 		return
 	}
+	// api-key and oauth-proxy servers trust only requests the gateway
+	// admitted; without its policy they would serve anyone.
+	if auth != nil && auth.gatewayOnly && r.URL.Path == config.Endpoint && strings.TrimSpace(r.Header.Get(gatewayAuthorizedHeader)) == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "gateway_policy_required"})
+		return
+	}
 	if r.URL.Path == "/healthz" && r.Method == http.MethodGet {
 		ready, revision, digest := runtimeCatalogStatus(config, tasks)
 		statusCode := http.StatusOK
@@ -491,7 +497,7 @@ func callTool(w http.ResponseWriter, r *http.Request, id, rawParams json.RawMess
 		params.Arguments = map[string]any{}
 	}
 	if entry.inputSchema != nil && entry.inputSchema.Validate(params.Arguments) != nil {
-		writeToolError(w, id, "tool arguments do not match inputSchema")
+		writeToolError(w, id, toolArgumentsMismatch)
 		return
 	}
 	canCreateTask := tasks != nil && protocol == currentProtocol && clientSupportsMcpTasks(params.Meta.ClientCapabilities)

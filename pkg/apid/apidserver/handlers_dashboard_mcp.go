@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/mcpprotocol"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -137,6 +138,9 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 			snapshot, err := mcpprotocol.Fetch(ctx, s.promqlClient, appID, now)
 			if err == nil {
 				view = dashboard.MCPPerformance(snapshot, now)
+				if s.platformFlagFor(platformflags.MCPToolInsights, platformflags.Subject{AccountID: account.ID, Plan: string(account.Plan)}) {
+					dashboard.MCPToolInsights(&view, snapshot, s.dashboardMCPAppRAM(ctx, appID, account.Plan))
+				}
 				if coverageErr == nil && coverage.State == "Reporting" && now.Sub(snapshot.LastEvent) > 5*time.Minute {
 					view.Freshness = "Telemetry reporting; no recent RPC completions"
 				}
@@ -350,4 +354,13 @@ func dashboardMCPOAuthNotice(notice string) string {
 	default:
 		return ""
 	}
+}
+
+// dashboardMCPAppRAM is the plan RAM the app's instances are billed at.
+func (s *server) dashboardMCPAppRAM(ctx context.Context, appID string, plan api.Plan) int {
+	app, err := s.store.AppByID(ctx, appID)
+	if err != nil {
+		return appRAM(0, plan)
+	}
+	return appRAM(app.RAMMB, plan)
 }
