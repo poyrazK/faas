@@ -31,6 +31,8 @@ func TestHostingCheckNeverRunsAFunctionHandler(t *testing.T) {
 		{"edge answers 404 for healthz", state.App{Slug: "fn", Type: state.AppTypeFunction}, state.Deployment{ID: "d1", Kind: state.DeploymentKindTarball}, http.StatusNotFound, defaultHealthzPath, true},
 		{"own health path is strict", state.App{Slug: "fn", Type: state.AppTypeFunction, Manifest: state.AppManifest{Healthz: "/ready"}}, state.Deployment{ID: "d1", Kind: state.DeploymentKindTarball}, http.StatusOK, "/ready", true},
 		{"workflow function keeps GET /", state.App{Slug: "fn", Type: state.AppTypeFunction}, state.Deployment{ID: "d1", Kind: state.DeploymentKindTarball, Workflows: json.RawMessage(`[{"name":"w","code":{"path":"/"}}]`)}, http.StatusMethodNotAllowed, "/", true},
+		{"image function keeps strict healthz", state.App{Slug: "fn", Type: state.AppTypeFunction}, state.Deployment{ID: "d1", Kind: state.DeploymentKindImage}, http.StatusNotFound, defaultHealthzPath, false},
+		{"configured healthz stays strict", state.App{Slug: "fn", Type: state.AppTypeFunction}, state.Deployment{ID: "d1", Kind: state.DeploymentKindTarball, OverrideHealthcheck: json.RawMessage(`{"path":"/healthz"}`)}, http.StatusNotFound, defaultHealthzPath, false},
 		{"http app keeps its health path", state.App{Slug: "web", Type: state.AppTypeApp, Manifest: state.AppManifest{Healthz: "/ready"}}, state.Deployment{ID: "d1", Kind: state.DeploymentKindTarball}, http.StatusOK, "/ready", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

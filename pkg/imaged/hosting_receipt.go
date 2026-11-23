@@ -230,6 +230,15 @@ func runnerFunctionHealth(app state.App, dep state.Deployment) bool {
 	if app.Type != state.AppTypeFunction || isWorkflowFunction(app, dep) || strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep) {
 		return false
 	}
+	// An image-kind function may serve /healthz itself rather than through a
+	// runner shim, and a health route the customer named (gregale.yaml or a
+	// deploy override) is theirs: both keep the strict HTTP health check.
+	if dep.Kind == state.DeploymentKindImage || len(dep.OverrideHealthcheck) > 0 {
+		return false
+	}
 	profile := hostingReceiptProfile(app, dep)
+	if profile.HealthFromConfig {
+		return false
+	}
 	return profile.HealthPath == "" || profile.HealthDefaulted || profile.HealthPath == defaultHealthzPath
 }

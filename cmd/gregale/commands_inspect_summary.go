@@ -634,7 +634,7 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		if candidate.RolloutState == "aborted" {
 			add("newer_candidate_failed", "warning",
 				"The newest deployment "+candidate.DeploymentID+" was rolled back during its rollout; the previous release still serves.",
-				"Run `gregale deployment timeline "+candidate.DeploymentID+" --app "+summary.App.Slug+"` for why it stopped.")
+				"Run `gregale release timeline "+candidate.DeploymentID+" --app "+summary.App.Slug+"` for why it stopped.")
 		} else {
 			add("newer_candidate_failed", "warning",
 				"A newer zero-traffic deployment candidate failed; the serving release remains active.",

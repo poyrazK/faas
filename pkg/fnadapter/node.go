@@ -67,7 +67,7 @@ if (functionHooks.init) {
   try {
     await functionHooks.init({ signal: new AbortController().signal });
   } catch (err) {
-    console.error("gregale: function init failed: " + (err && err.stack ? err.stack : err));
+    console.error("gregale: function init failed: " + customerStack(err));
     throw err;
   }
 }
@@ -187,7 +187,7 @@ async function runFunctionHook(env, out) {
     try {
       await hook({ signal: out.controller.signal, hook: env.function_hook });
     } catch (err) {
-      console.error("gregale: function " + env.function_hook + " hook failed: " + (err && err.stack ? err.stack : err));
+      console.error("gregale: function " + env.function_hook + " hook failed: " + customerStack(err));
       emitWhole(out, 500, {}, Buffer.from("function hook failed"));
       return;
     }
