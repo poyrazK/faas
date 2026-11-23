@@ -3069,3 +3069,6 @@ func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
 	}
 	return names
 }
+
+// LeadingDeploymentID exposes the traffic verbs' positional-id fold (prod hunt r32).
+var LeadingDeploymentID = leadingDeploymentID
