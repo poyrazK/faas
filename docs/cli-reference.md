@@ -9584,3 +9584,4 @@ Keys: project, app, environment, service_policy, services.&lt;name&gt;.service_p
 Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.
 
 Runs locally; nothing is uploaded.
+
