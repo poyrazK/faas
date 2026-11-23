@@ -633,17 +633,18 @@ type AlertChannelResolveRetry struct {
 }
 
 type AlertChannelStandDown struct {
-	RuleID        pgtype.UUID
-	ChannelID     pgtype.UUID
-	AccountID     pgtype.UUID
-	AppID         pgtype.UUID
-	RuleName      string
-	RuleMetric    string
-	Reason        string
-	QueuedAt      pgtype.Timestamptz
-	Attempts      int32
-	NextAttemptAt pgtype.Timestamptz
-	LastError     string
+	RuleID                pgtype.UUID
+	ChannelID             pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	RuleName              string
+	RuleMetric            string
+	Reason                string
+	QueuedAt              pgtype.Timestamptz
+	Attempts              int32
+	NextAttemptAt         pgtype.Timestamptz
+	LastError             string
+	ObservationTransition bool
 }
 
 type AlertDelivery struct {
@@ -773,6 +774,23 @@ type AlertTestSend struct {
 	Result       []byte
 	CreatedAt    pgtype.Timestamptz
 	CompletedAt  pgtype.Timestamptz
+}
+
+type AlertWebhookStandDown struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	NextAttemptAt       pgtype.Timestamptz
+	Attempts            int32
 }
 
 type AnalyticsCohort struct {

@@ -107,8 +107,8 @@ func TestObserveOnlyScopesTrafficAndBaselines(t *testing.T) {
 		evidence := got.AnomalyEvaluation
 		if err != nil || len(got.ObservedIncidents) != tc.incidents || evidence.Baseline == nil || *evidence.Baseline != tc.baseline ||
 			evidence.BaselineDays == nil || *evidence.BaselineDays != tc.days ||
-			tc.source.historyQueries.Load() != int32(api.AnomalyBaselineDays+tc.days) {
-			t.Fatalf("scope=%s evidence=%+v incidents=%+v reads=%d err=%v", tc.rule.EnvironmentScope, evidence, got.ObservedIncidents, tc.source.historyQueries.Load(), err)
+			tc.source.exactQueries.Load() != 2 {
+			t.Fatalf("scope=%s evidence=%+v incidents=%+v reads=%d err=%v", tc.rule.EnvironmentScope, evidence, got.ObservedIncidents, tc.source.exactQueries.Load(), err)
 		}
 		if tc.incidents > 0 && got.ObservedIncidents[0].EnvironmentScope != tc.rule.EnvironmentScope {
 			t.Fatalf("incorrect incident environment: %+v", got.ObservedIncidents[0])

@@ -155,6 +155,9 @@ type Querier interface {
 	// used within the window, newest use first. A windowed rule lets it cover
 	// the same request again until the window closes.
 	AgentApprovalUsedWithin(ctx context.Context, db DBTX, arg AgentApprovalUsedWithinParams) (pgtype.UUID, error)
+	// A new fire can supersede ordinary stand-downs. On entering Observe only,
+	// the old episode's terminal notice must go out before the channel opens another.
+	AlertChannelStandDownPending(ctx context.Context, db DBTX, arg AlertChannelStandDownPendingParams) (bool, error)
 	AlertRuleEpisodeOpen(ctx context.Context, db DBTX, ruleID pgtype.UUID) (bool, error)
 	// Customers with at least min_count matching events since since_at, in
 	// customer order, at most max_rows (ADR 20261119102741 §3).
@@ -1220,6 +1223,7 @@ type Querier interface {
 	DeleteAlertChannelStandDown(ctx context.Context, db DBTX, arg DeleteAlertChannelStandDownParams) error
 	// ADR-749 slice 2: alert rule -> notification channel bindings.
 	DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error
+	DeleteAlertWebhookStandDown(ctx context.Context, db DBTX, id pgtype.UUID) error
 	DeleteAnalyticsCohort(ctx context.Context, db DBTX, arg DeleteAnalyticsCohortParams) (int64, error)
 	DeleteAnalyticsCohortMembers(ctx context.Context, db DBTX, cohortID pgtype.UUID) error
 	// Deletes up to max_rows events of accounts on a plan without analytics
@@ -1422,6 +1426,7 @@ type Querier interface {
 	// Retries due now whose rule is still enabled and recovered.
 	DueAlertChannelResolveRetries(ctx context.Context, db DBTX, arg DueAlertChannelResolveRetriesParams) ([]DueAlertChannelResolveRetriesRow, error)
 	DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg DueAlertChannelStandDownsParams) ([]DueAlertChannelStandDownsRow, error)
+	DueAlertWebhookStandDowns(ctx context.Context, db DBTX, arg DueAlertWebhookStandDownsParams) ([]DueAlertWebhookStandDownsRow, error)
 	// Cohorts whose refresh was requested or whose last refresh is older than
 	// stale_before, oldest request first, with the account's plan.
 	DueAnalyticsCohorts(ctx context.Context, db DBTX, arg DueAnalyticsCohortsParams) ([]DueAnalyticsCohortsRow, error)
@@ -6487,6 +6492,8 @@ type Querier interface {
 	// recovery notice (ADR-20261104142830): the channels of its open episode,
 	// and those whose recovery notice is still being retried, which move here.
 	QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error)
+	// Snapshot the pre-edit destination and payload while its live episode is open.
+	QueueAlertWebhookStandDown(ctx context.Context, db DBTX, arg QueueAlertWebhookStandDownParams) error
 	QueueApplicationStandardExceptionChange(ctx context.Context, db DBTX, arg QueueApplicationStandardExceptionChangeParams) (int64, error)
 	// This runs in the same transaction as the installed enrollment and target.
 	// A lost LISTEN hint still leaves replayable scheduler work after a crash.
@@ -8006,6 +8013,7 @@ type Querier interface {
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
 	// A failed send waits and tries again; after the last attempt it fails.
 	RetryAgentApprovalNotification(ctx context.Context, db DBTX, arg RetryAgentApprovalNotificationParams) error
+	RetryAlertWebhookStandDown(ctx context.Context, db DBTX, arg RetryAlertWebhookStandDownParams) error
 	RetryCustomDomainVerificationClaim(ctx context.Context, db DBTX, arg RetryCustomDomainVerificationClaimParams) (int64, error)
 	RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error)
 	RetryDeploymentDependencyGate(ctx context.Context, db DBTX, arg RetryDeploymentDependencyGateParams) error

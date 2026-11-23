@@ -506,7 +506,8 @@ type MemStore struct {
 	alertRuleChannels             map[string][]string                               // rule id → channel ids (ADR-749)
 	alertChannelResolveRetries    map[alertChannelRetryKey]AlertChannelResolveRetry // ADR-20261031144636
 	alertChannelStandDowns        map[alertChannelRetryKey]memStandDown             // ADR-20261104142830
-	appSLOs                       map[string][]SLO                                  // app id → definitions (ADR-747), lazily made
+	alertWebhookStandDowns        map[string]memWebhookStandDown
+	appSLOs                       map[string][]SLO // app id → definitions (ADR-747), lazily made
 	sloHours                      map[string]map[time.Time]memSLOHour
 	syntheticChecks               map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
 	syntheticRuns                 map[string][]SyntheticCheckRun
@@ -26030,7 +26031,8 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	}
 	if r.ObserveOnly != before.ObserveOnly {
 		if r.ObserveOnly {
-			m.queueAlertChannelStandDownsLocked(before, StandDownDisabled, r.UpdatedAt)
+			m.queueAlertChannelStandDownsLocked(before, StandDownDisabled, r.UpdatedAt, true)
+			m.queueAlertWebhookStandDownLocked(before, r.UpdatedAt)
 		}
 		r.State = AlertStateOk
 		m.recordAlertEpisodeLocked(r, r.UpdatedAt)
@@ -26067,12 +26069,17 @@ func (m *MemStore) deleteAlertRuleLocked(id string) {
 	// (ADR-20261104142830), unless its account is being deleted too.
 	if rule, ok := m.alertRules[id]; ok {
 		if _, live := m.accounts[rule.AccountID]; live {
-			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC())
+			m.queueAlertChannelStandDownsLocked(rule, StandDownDeleted, time.Now().UTC(), false)
 		}
 	}
 	m.keepDeletedRuleEpisodesLocked(m.alertRules[id], time.Now().UTC())
 	m.clearAlertChannelResolveRetriesLocked(func(k alertChannelRetryKey) bool { return k.rule == id })
 	delete(m.alertRules, id)
+	for key, notice := range m.alertWebhookStandDowns {
+		if notice.Rule.ID == id {
+			delete(m.alertWebhookStandDowns, key)
+		}
+	}
 	delete(m.readinessIncidentCursors, id)
 	delete(m.readinessPagerDutyPolicies, id)
 	delete(m.readinessPagerDutyAckPolicies, id+":primary")

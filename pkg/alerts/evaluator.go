@@ -449,8 +449,18 @@ func (s *Stats) add(o Stats) {
 // wires one Evaluator per daemon. Within a tick, accounts are evaluated
 // in parallel and each account's rules in order (accounts.go).
 func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
-	var stats Stats
 	now := e.now()
+	return e.runOnce(ctx, now, now)
+}
+
+// RunOnceAt uses the scheduled tick time for anomaly queries. Other alert
+// timing, including cooldowns and notification timestamps, uses the clock.
+func (e *Evaluator) RunOnceAt(ctx context.Context, scheduled time.Time) (Stats, error) {
+	return e.runOnce(ctx, scheduled, e.now())
+}
+
+func (e *Evaluator) runOnce(ctx context.Context, scheduled, now time.Time) (Stats, error) {
+	var stats Stats
 
 	rules, err := e.store.ListEnabledAlertRules(ctx)
 	if err != nil {
@@ -461,7 +471,8 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 		return stats, fmt.Errorf("alerts: list enabled: %w", err)
 	}
 	stats.Evaluated = len(rules)
-	e.anomaly.begin(now)
+	e.anomaly.begin(ctx, scheduled)
+	e.deliverWebhookStandDowns(ctx, now, &stats)
 
 	for _, account := range e.evalAccounts(ctx, groupByAccount(rules), now) {
 		stats.add(account)
@@ -482,9 +493,9 @@ func (e *Evaluator) RunOnce(ctx context.Context) (Stats, error) {
 	}
 	stats.ReleaseApprovalNotices = e.deliverReleaseApprovalEvents(ctx, e.now())
 	e.standDownStranded(ctx, e.now(), &stats)
-	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
 	stats.ChannelResolvesRetried, stats.ChannelResolvesAbandoned = e.retryChannelResolves(ctx, e.now())
 	stats.ChannelStandDownsDelivered, stats.ChannelStandDownsAbandoned = e.deliverChannelStandDowns(ctx, e.now())
+	stats.ChannelFiresRetried = e.retryChannelFires(ctx, e.now())
 	stats.DeliveriesPurged = e.purgeDeliveries(ctx, e.now())
 	return stats, nil
 }
@@ -969,29 +980,30 @@ func (e *Evaluator) openIdentities() []*age.X25519Identity {
 	return idents
 }
 
-// deliverResolve sends a recovered rule's webhook a signed resolve event, for
-// rules that asked for one (ADR-20261029203000). A resolve is not a fire: it
-// takes no delivery-ledger row and runs no action, and a failure is logged and
-// counted, never retried on a later tick.
-// deliverResolve sends the webhook's alert.resolved. A rule stood down
-// (ADR-20261104142830) has no observed value; its payload carries the
-// reason instead.
+// deliverResolve sends an opted-in webhook its signed recovery or stand-down.
+// A recovery has no delivery-ledger row and runs no rule action.
 func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason string, now time.Time, stats *Stats) {
+	e.send(ctx, stats, func(stats *Stats) {
+		e.sendResolve(ctx, rule, observed, reason, uuid.NewString(), now, now, stats)
+	})
+}
+
+func (e *Evaluator) sendResolve(ctx context.Context, rule state.AlertRule, observed *float64, reason, eventID string, resolvedAt, sentAt time.Time, stats *Stats) bool {
 	idents := e.openIdentities()
 	if len(idents) == 0 {
 		stats.SkippedNoIdentity++
-		return
+		return false
 	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(idents, rule.WebhookSecretSealed)
 	if err != nil || ns != AlertSecretNamespace && ns != legacyAlertSecretNamespace {
 		e.log.Warn("alerts: open webhook secret for a resolve; skipping it", "rule", rule.ID, "namespace", ns, "err", err)
 		stats.ResolvesFailed++
-		return
+		return false
 	}
 	payload := map[string]any{
 		"event": eventResolve, "rule_id": rule.ID, "rule_name": rule.Name,
 		"metric": string(rule.Metric), "comparison": string(rule.Comparison), "threshold": rule.Threshold,
-		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": now.UTC().Format(time.RFC3339Nano),
+		"observed": observed, "window": string(rule.WindowSpec), "resolved_at": resolvedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if reason != "" {
 		payload["reason"] = reason
@@ -1000,24 +1012,23 @@ func (e *Evaluator) deliverResolve(ctx context.Context, rule state.AlertRule, ob
 		payload["environment_scope"] = rule.EnvironmentScope
 	}
 	evt := webhookout.Event{
-		ID:         uuid.NewString(),
-		OccurredAt: now,
+		ID:         eventID,
+		OccurredAt: sentAt,
 		Rule:       rule.Name,
 		RuleName:   rule.Name,
 		AppID:      rule.AppID,
 		Payload:    payload,
 	}
-	e.send(ctx, stats, func(stats *Stats) {
-		dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
-		result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
-		cancel()
-		if result.Err != nil {
-			e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
-			stats.ResolvesFailed++
-			return
-		}
-		stats.ResolvesDelivered++
-	})
+	dctx, cancel := context.WithTimeout(ctx, api.AlertWebhookBudget)
+	defer cancel()
+	result := e.dispatch.Dispatch(dctx, webhookout.Target{URL: rule.WebhookURL, Signer: e.newSigner(plaintext)}, evt)
+	if result.Err != nil {
+		e.log.Warn("alerts: resolve webhook not delivered", "rule", rule.ID, "status", result.StatusCode, "attempts", result.Attempts, "err", result.Err)
+		stats.ResolvesFailed++
+		return false
+	}
+	stats.ResolvesDelivered++
+	return true
 }
 
 // runAction is the SAFE-RELEASES-B fan-out (issue #976 / ADR-122).

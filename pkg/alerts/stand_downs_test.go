@@ -11,9 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
+
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/alerts"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/webhookout"
 )
 
 func (f *channelRetryFixture) episodeOpen(t *testing.T) bool {
@@ -78,6 +83,67 @@ func TestEvaluator_ObserveOnlyStandsDownLiveAlert(t *testing.T) {
 	}
 	if _, sent := f.tick(t, 12, rule.UpdatedAt.Add(2*time.Minute)); len(sent) != 0 {
 		t.Fatalf("observe-only check sent %+v after the stand-down", sent)
+	}
+}
+
+func TestEvaluator_ObserveOnlyRepromotionResolvesPagerDutyBeforeRefiring(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	rule, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
+	sealed, err := secretbox.SealBytes(ident.Recipient(), alertchannels.SealNamespace, []byte("test-page-routing-key"), 256)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := store.CreateNotificationChannel(ctx, state.NotificationChannel{
+		AccountID: rule.AccountID, Kind: alertchannels.KindPagerDuty, Name: "on-call", TargetSealed: sealed, PagerDutyRegion: "us",
+	}, api.MaxNotificationChannelsPerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAlertRuleChannels(ctx, rule.ID, []string{channel.ID}); err != nil {
+		t.Fatal(err)
+	}
+	edit := func(observing bool, scope *string) state.AlertRule {
+		t.Helper()
+		updated, err := store.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{ObserveOnly: &observing, EnvironmentScope: scope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return updated
+	}
+	edit(true, new("production"))
+	live := edit(false, nil)
+	now := live.UpdatedAt.Add(time.Minute)
+	channels := &recordingChannels{fail: map[string]error{}}
+	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+		Store: store, PromQL: &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7},
+		Identity: func() *age.X25519Identity { return ident }, Now: func() time.Time { return now },
+		Channels: channels, Log: discardLog(), Dispatcher: &recordingDispatcher{result: webhookout.Result{StatusCode: 200}},
+	})
+	if stats, err := ev.RunOnce(ctx); err != nil || stats.Fired != 1 || len(channels.sent) != 1 {
+		t.Fatalf("initial PagerDuty fire: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
+	}
+	edit(true, new("staging"))
+	live = edit(false, nil)
+	// Keep the evaluator clock after the edit and the prior evaluation.
+	if live.UpdatedAt.After(now) {
+		now = live.UpdatedAt
+	}
+	now = now.Add(time.Minute)
+	channels.fail[alertchannels.KindPagerDuty] = errors.New("PagerDuty unavailable")
+	if stats, err := ev.RunOnce(ctx); err != nil || stats.Fired != 1 || len(channels.sent) != 2 || channels.sent[1].msg.Event != alertchannels.EventResolve {
+		t.Fatalf("the unavailable destination should only attempt the old resolve: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
+	}
+	channels.fail[alertchannels.KindPagerDuty] = nil
+	now = now.Add(time.Minute)
+	stats, err := ev.RunOnce(ctx)
+	if err != nil || len(channels.sent) != 4 || stats.ChannelStandDownsDelivered != 1 || stats.ChannelFiresRetried != 1 {
+		t.Fatalf("recovered PagerDuty: stats=%+v sent=%+v err=%v", stats, channels.sent, err)
+	}
+	resolved, fired := channels.sent[2].msg, channels.sent[3].msg
+	if resolved.Event != alertchannels.EventResolve || fired.Event != alertchannels.EventFire ||
+		resolved.IdempotencyKey != channels.sent[1].msg.IdempotencyKey || resolved.DedupKey != fired.DedupKey || fired.DedupKey != channels.sent[0].msg.DedupKey {
+		t.Fatalf("want a stable resolve before reopening the PagerDuty key, got resolve=%+v fire=%+v", resolved, fired)
 	}
 }
 

@@ -22327,11 +22327,12 @@ WITH rule AS (
     DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = sqlc.arg(rule_id)::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at, observation_transition)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+       sqlc.arg(reason)::text, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, sqlc.arg(observation_transition)::boolean
   FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING;
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET observation_transition = true
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition;
 
 -- name: DueAlertChannelStandDowns :many
 SELECT s.rule_id::text AS rule_id, s.channel_id::text AS channel_id, s.account_id::text AS account_id,
@@ -22351,7 +22352,47 @@ DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AN
 
 -- name: ClearAlertChannelStandDowns :exec
 -- A new fire of the rule supersedes the recovery notices it still owed.
-DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid;
+DELETE FROM alert_channel_stand_downs WHERE rule_id = sqlc.arg(rule_id)::uuid AND NOT observation_transition;
+
+-- name: AlertChannelStandDownPending :one
+-- A new fire can supersede ordinary stand-downs. On entering Observe only,
+-- the old episode's terminal notice must go out before the channel opens another.
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid
+       AND NOT observation_transition AND sqlc.arg(supersede)::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = sqlc.arg(rule_id)::uuid AND channel_id = sqlc.arg(channel_id)::uuid AND observation_transition
+)::boolean AS pending;
+
+-- name: QueueAlertWebhookStandDown :exec
+-- Snapshot the pre-edit destination and payload while its live episode is open.
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz
+  FROM alert_rules r
+ WHERE r.id = sqlc.arg(rule_id)::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL);
+
+-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= sqlc.arg(now)::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT sqlc.arg(max_rows)::integer;
+
+-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = sqlc.arg(id)::uuid;
+
+-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz
+ WHERE id = sqlc.arg(id)::uuid;
 
 -- name: ListStrandedAlertRules :many
 -- Rules left out of evaluation (disabled, or their app deleted) while not

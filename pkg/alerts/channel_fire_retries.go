@@ -62,6 +62,24 @@ func (e *Evaluator) trackChannelFire(rule state.AlertRule, ch state.Notification
 	e.fireRetries.pending[key] = fireRetry{ruleID: rule.ID, channelID: ch.ID, observed: observed, firedAt: now, attempts: 1, next: now.Add(fireRetryBackoff(1))}
 }
 
+// deferChannelFire lets a due stand-down run before the fire retry in this tick.
+func (e *Evaluator) deferChannelFire(rule state.AlertRule, ch state.NotificationChannel, observed float64, now time.Time) {
+	e.queueChannelFire(fireRetry{ruleID: rule.ID, channelID: ch.ID, observed: observed, firedAt: now, next: now})
+}
+
+func (e *Evaluator) queueChannelFire(r fireRetry) {
+	e.fireRetries.mu.Lock()
+	defer e.fireRetries.mu.Unlock()
+	if e.fireRetries.pending == nil {
+		e.fireRetries.pending = map[string]fireRetry{}
+	}
+	key := fireRetryKey(r.ruleID, r.channelID)
+	// A fire recorded meanwhile is newer; keep it.
+	if _, newer := e.fireRetries.pending[key]; !newer {
+		e.fireRetries.pending[key] = r
+	}
+}
+
 // clearChannelFires drops a rule's pending fire retries: the rule recovered,
 // stood down or fired again, and a late page would contradict that.
 func (e *Evaluator) clearChannelFires(ruleID string) {
@@ -113,6 +131,11 @@ func (e *Evaluator) retryChannelFires(ctx context.Context, now time.Time) (retri
 		if !found {
 			continue
 		}
+		if e.channelStandDownPending(ctx, rule.ID, ch.ID, true) {
+			r.next = now.Add(fireRetryBackoff(1))
+			e.queueChannelFire(r)
+			continue
+		}
 		errMsg := ""
 		if target, ok := openTarget(ids, ch); !ok {
 			errMsg = "could not open the channel destination; recreate the channel"
@@ -134,15 +157,7 @@ func (e *Evaluator) retryChannelFires(ctx context.Context, now time.Time) (retri
 		}
 		r.attempts++
 		r.next = now.Add(fireRetryBackoff(r.attempts))
-		e.fireRetries.mu.Lock()
-		if e.fireRetries.pending == nil {
-			e.fireRetries.pending = map[string]fireRetry{}
-		}
-		// A fire recorded meanwhile is newer; keep it.
-		if _, newer := e.fireRetries.pending[fireRetryKey(r.ruleID, r.channelID)]; !newer {
-			e.fireRetries.pending[fireRetryKey(r.ruleID, r.channelID)] = r
-		}
-		e.fireRetries.mu.Unlock()
+		e.queueChannelFire(r)
 	}
 	return retried
 }

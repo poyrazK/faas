@@ -75,13 +75,23 @@ func (e *Evaluator) notifyChannels(ctx context.Context, rule state.AlertRule, ev
 		// A new incident supersedes a recovery notice a channel never took;
 		// sent now, it would resolve the incident this fire opens.
 		e.clearChannelResolves(ctx, rule.ID)
-		e.clearChannelStandDowns(ctx, rule.ID, chans)
 	}
 	// Any new notice supersedes a fire still waiting for a retry: a newer
 	// fire repeats it, and a late fire after a recovery would reopen the
 	// incident (ADR-20261109153000).
 	e.clearChannelFires(rule.ID)
-	return e.sendToChannels(ctx, chans, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
+	fire := event == alertchannels.EventFire
+	ready := chans[:0]
+	for _, ch := range chans {
+		if e.channelStandDownPending(ctx, rule.ID, ch.ID, fire) {
+			if fire {
+				e.deferChannelFire(rule, ch, observed, now)
+			}
+			continue
+		}
+		ready = append(ready, ch)
+	}
+	return e.sendToChannels(ctx, ready, e.channelMessage(ctx, rule, event, observed, now), now, func(ch state.NotificationChannel, errMsg string) {
 		switch event {
 		case alertchannels.EventResolve:
 			e.trackChannelResolve(ctx, rule, ch, observed, now, errMsg)

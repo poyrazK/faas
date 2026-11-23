@@ -32015,6 +32015,7 @@ CREATE TABLE public.alert_channel_stand_downs (
     attempts integer DEFAULT 0 NOT NULL,
     next_attempt_at timestamp with time zone NOT NULL,
     last_error text DEFAULT ''::text NOT NULL,
+    observation_transition boolean DEFAULT false NOT NULL,
     CONSTRAINT alert_channel_stand_downs_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT alert_channel_stand_downs_last_error_check CHECK ((char_length(last_error) <= 512)),
     CONSTRAINT alert_channel_stand_downs_reason_check CHECK ((reason = ANY (ARRAY['disabled'::text, 'not_released'::text, 'app_deleted'::text, 'deleted'::text])))
@@ -32264,6 +32265,29 @@ CREATE TABLE public.alert_test_sends (
 --
 
 COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
+
+
+--
+-- Name: alert_webhook_stand_downs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_webhook_stand_downs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    rule_id uuid NOT NULL,
+    app_id uuid,
+    rule_name text NOT NULL,
+    metric text NOT NULL,
+    comparison text NOT NULL,
+    threshold double precision NOT NULL,
+    window_spec text NOT NULL,
+    environment_scope text NOT NULL,
+    webhook_url text NOT NULL,
+    webhook_secret_sealed bytea NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    next_attempt_at timestamp with time zone NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    CONSTRAINT alert_webhook_stand_downs_attempts_check CHECK ((attempts >= 0))
+);
 
 
 --
@@ -64586,6 +64610,14 @@ ALTER TABLE ONLY public.alert_test_sends
 
 
 --
+-- Name: alert_webhook_stand_downs alert_webhook_stand_downs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_webhook_stand_downs
+    ADD CONSTRAINT alert_webhook_stand_downs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: analytics_cohort_members analytics_cohort_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79329,6 +79361,20 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 --
 
 CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
+-- Name: alert_webhook_stand_downs_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_webhook_stand_downs_due_idx ON public.alert_webhook_stand_downs USING btree (next_attempt_at);
+
+
+--
+-- Name: alert_webhook_stand_downs_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_webhook_stand_downs_rule_idx ON public.alert_webhook_stand_downs USING btree (rule_id);
 
 
 --
@@ -99007,6 +99053,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_test_sends
     ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_webhook_stand_downs alert_webhook_stand_downs_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_webhook_stand_downs
+    ADD CONSTRAINT alert_webhook_stand_downs_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
 
 
 --

@@ -1371,6 +1371,33 @@ func (q *Queries) AdvanceRuntimeUpgradeOperation(ctx context.Context, db DBTX, a
 	return i, err
 }
 
+const alertChannelStandDownPending = `-- name: AlertChannelStandDownPending :one
+WITH superseded AS (
+    DELETE FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid
+       AND NOT observation_transition AND $3::boolean
+)
+SELECT EXISTS (
+    SELECT 1 FROM alert_channel_stand_downs
+     WHERE rule_id = $1::uuid AND channel_id = $2::uuid AND observation_transition
+)::boolean AS pending
+`
+
+type AlertChannelStandDownPendingParams struct {
+	RuleID    pgtype.UUID
+	ChannelID pgtype.UUID
+	Supersede bool
+}
+
+// A new fire can supersede ordinary stand-downs. On entering Observe only,
+// the old episode's terminal notice must go out before the channel opens another.
+func (q *Queries) AlertChannelStandDownPending(ctx context.Context, db DBTX, arg AlertChannelStandDownPendingParams) (bool, error) {
+	row := db.QueryRow(ctx, alertChannelStandDownPending, arg.RuleID, arg.ChannelID, arg.Supersede)
+	var pending bool
+	err := row.Scan(&pending)
+	return pending, err
+}
+
 const alertRuleEpisodeOpen = `-- name: AlertRuleEpisodeOpen :one
 SELECT EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $1::uuid AND e.resolved_at IS NULL)::boolean AS open
 `
@@ -8423,7 +8450,7 @@ func (q *Queries) ClearAlertChannelResolveRetries(ctx context.Context, db DBTX, 
 }
 
 const clearAlertChannelStandDowns = `-- name: ClearAlertChannelStandDowns :exec
-DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid
+DELETE FROM alert_channel_stand_downs WHERE rule_id = $1::uuid AND NOT observation_transition
 `
 
 // A new fire of the rule supersedes the recovery notices it still owed.
@@ -15316,6 +15343,15 @@ func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID p
 	return err
 }
 
+const deleteAlertWebhookStandDown = `-- name: DeleteAlertWebhookStandDown :exec
+DELETE FROM alert_webhook_stand_downs WHERE id = $1::uuid
+`
+
+func (q *Queries) DeleteAlertWebhookStandDown(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertWebhookStandDown, id)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -17147,6 +17183,70 @@ func (q *Queries) DueAlertChannelStandDowns(ctx context.Context, db DBTX, arg Du
 			&i.RuleName,
 			&i.RuleMetric,
 			&i.Reason,
+			&i.QueuedAt,
+			&i.Attempts,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dueAlertWebhookStandDowns = `-- name: DueAlertWebhookStandDowns :many
+SELECT id, rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+       webhook_url, webhook_secret_sealed, queued_at, attempts
+  FROM alert_webhook_stand_downs
+ WHERE next_attempt_at <= $1::timestamptz
+ ORDER BY next_attempt_at, id
+ LIMIT $2::integer
+`
+
+type DueAlertWebhookStandDownsParams struct {
+	Now     pgtype.Timestamptz
+	MaxRows int32
+}
+
+type DueAlertWebhookStandDownsRow struct {
+	ID                  pgtype.UUID
+	RuleID              pgtype.UUID
+	AppID               pgtype.UUID
+	RuleName            string
+	Metric              string
+	Comparison          string
+	Threshold           float64
+	WindowSpec          string
+	EnvironmentScope    string
+	WebhookUrl          string
+	WebhookSecretSealed []byte
+	QueuedAt            pgtype.Timestamptz
+	Attempts            int32
+}
+
+func (q *Queries) DueAlertWebhookStandDowns(ctx context.Context, db DBTX, arg DueAlertWebhookStandDownsParams) ([]DueAlertWebhookStandDownsRow, error) {
+	rows, err := db.Query(ctx, dueAlertWebhookStandDowns, arg.Now, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DueAlertWebhookStandDownsRow{}
+	for rows.Next() {
+		var i DueAlertWebhookStandDownsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.AppID,
+			&i.RuleName,
+			&i.Metric,
+			&i.Comparison,
+			&i.Threshold,
+			&i.WindowSpec,
+			&i.EnvironmentScope,
+			&i.WebhookUrl,
+			&i.WebhookSecretSealed,
 			&i.QueuedAt,
 			&i.Attempts,
 		); err != nil {
@@ -82392,39 +82492,68 @@ func (q *Queries) PutTCPListenerTLSObservation(ctx context.Context, db DBTX, arg
 
 const queueAlertChannelStandDowns = `-- name: QueueAlertChannelStandDowns :execrows
 WITH rule AS (
-    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $3::uuid
+    SELECT r.id, r.account_id, r.app_id, r.name, r.metric FROM alert_rules r WHERE r.id = $4::uuid
 ), owed AS (
     SELECT b.channel_id FROM alert_rule_channels b
-     WHERE b.rule_id = $3::uuid
-       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $3::uuid AND e.resolved_at IS NULL)
+     WHERE b.rule_id = $4::uuid
+       AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = $4::uuid AND e.resolved_at IS NULL)
     UNION
-    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    SELECT x.channel_id FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 ), moved AS (
-    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $3::uuid
+    DELETE FROM alert_channel_resolve_retries x WHERE x.rule_id = $4::uuid
 )
 INSERT INTO alert_channel_stand_downs
-    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at)
+    (rule_id, channel_id, account_id, app_id, rule_name, rule_metric, reason, queued_at, next_attempt_at, observation_transition)
 SELECT rule.id, owed.channel_id, rule.account_id, rule.app_id, rule.name, rule.metric,
-       $1::text, $2::timestamptz, $2::timestamptz
+       $1::text, $2::timestamptz, $2::timestamptz, $3::boolean
   FROM rule CROSS JOIN owed
-ON CONFLICT (rule_id, channel_id) DO NOTHING
+ON CONFLICT (rule_id, channel_id) DO UPDATE SET observation_transition = true
+ WHERE EXCLUDED.observation_transition AND NOT alert_channel_stand_downs.observation_transition
 `
 
 type QueueAlertChannelStandDownsParams struct {
-	Reason string
-	At     pgtype.Timestamptz
-	RuleID pgtype.UUID
+	Reason                string
+	At                    pgtype.Timestamptz
+	ObservationTransition bool
+	RuleID                pgtype.UUID
 }
 
 // A rule whose episode ends without it recovering owes each bound channel a
 // recovery notice (ADR-20261104142830): the channels of its open episode,
 // and those whose recovery notice is still being retried, which move here.
 func (q *Queries) QueueAlertChannelStandDowns(ctx context.Context, db DBTX, arg QueueAlertChannelStandDownsParams) (int64, error) {
-	result, err := db.Exec(ctx, queueAlertChannelStandDowns, arg.Reason, arg.At, arg.RuleID)
+	result, err := db.Exec(ctx, queueAlertChannelStandDowns,
+		arg.Reason,
+		arg.At,
+		arg.ObservationTransition,
+		arg.RuleID,
+	)
 	if err != nil {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const queueAlertWebhookStandDown = `-- name: QueueAlertWebhookStandDown :exec
+INSERT INTO alert_webhook_stand_downs
+    (rule_id, app_id, rule_name, metric, comparison, threshold, window_spec, environment_scope,
+     webhook_url, webhook_secret_sealed, queued_at, next_attempt_at)
+SELECT r.id, r.app_id, r.name, r.metric, r.comparison, r.threshold, r.window_spec, r.environment_scope,
+       r.webhook_url, r.webhook_secret_sealed, $1::timestamptz, $1::timestamptz
+  FROM alert_rules r
+ WHERE r.id = $2::uuid AND r.notify_resolved AND r.webhook_url <> ''
+   AND EXISTS (SELECT 1 FROM alert_episodes e WHERE e.rule_id = r.id AND e.resolved_at IS NULL)
+`
+
+type QueueAlertWebhookStandDownParams struct {
+	At     pgtype.Timestamptz
+	RuleID pgtype.UUID
+}
+
+// Snapshot the pre-edit destination and payload while its live episode is open.
+func (q *Queries) QueueAlertWebhookStandDown(ctx context.Context, db DBTX, arg QueueAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, queueAlertWebhookStandDown, arg.At, arg.RuleID)
+	return err
 }
 
 const queueApplicationStandardExceptionChange = `-- name: QueueApplicationStandardExceptionChange :execrows
@@ -106381,6 +106510,22 @@ func (q *Queries) RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDat
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const retryAlertWebhookStandDown = `-- name: RetryAlertWebhookStandDown :exec
+UPDATE alert_webhook_stand_downs
+   SET attempts = attempts + 1, next_attempt_at = $1::timestamptz
+ WHERE id = $2::uuid
+`
+
+type RetryAlertWebhookStandDownParams struct {
+	NextAttemptAt pgtype.Timestamptz
+	ID            pgtype.UUID
+}
+
+func (q *Queries) RetryAlertWebhookStandDown(ctx context.Context, db DBTX, arg RetryAlertWebhookStandDownParams) error {
+	_, err := db.Exec(ctx, retryAlertWebhookStandDown, arg.NextAttemptAt, arg.ID)
+	return err
 }
 
 const retryCustomDomainVerificationClaim = `-- name: RetryCustomDomainVerificationClaim :execrows

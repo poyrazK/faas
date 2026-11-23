@@ -46,8 +46,10 @@ type AlertChannelStandDownStore interface {
 	// RecordAlertChannelStandDownAttempt counts a failed attempt.
 	RecordAlertChannelStandDownAttempt(ctx context.Context, ruleID, channelID string, next time.Time, lastErr string) error
 	DeleteAlertChannelStandDown(ctx context.Context, ruleID, channelID string) error
-	// ClearAlertChannelStandDowns drops a rule's notices: a new fire
-	// supersedes them.
+	// AlertChannelStandDownPending reports a terminal notice from entering
+	// Observe only. A new fire may supersede ordinary queued notices.
+	AlertChannelStandDownPending(ctx context.Context, ruleID, channelID string, supersede bool) (bool, error)
+	// ClearAlertChannelStandDowns drops ordinary notices for a rule.
 	ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error
 	// ListStrandedAlertRules lists up to maxRows rules that are not ok but
 	// are no longer evaluated: disabled, or their app deleted.
@@ -115,6 +117,16 @@ func (s *PgStore) DeleteAlertChannelStandDown(ctx context.Context, ruleID, chann
 	return nil
 }
 
+func (s *PgStore) AlertChannelStandDownPending(ctx context.Context, ruleID, channelID string, supersede bool) (bool, error) {
+	rule, channel, err := alertChannelRetryKeys(ruleID, channelID)
+	if err != nil {
+		return false, err
+	}
+	return sqlc.New().AlertChannelStandDownPending(ctx, s.pool, sqlc.AlertChannelStandDownPendingParams{
+		RuleID: rule, ChannelID: channel, Supersede: supersede,
+	})
+}
+
 func (s *PgStore) ClearAlertChannelStandDowns(ctx context.Context, ruleID string) error {
 	rule, err := alertPgUUID(ruleID)
 	if err != nil || !rule.Valid {
@@ -153,8 +165,9 @@ func validStandDownReason(reason string) bool {
 // memStandDown is one queued notice and its retry state.
 type memStandDown struct {
 	AlertChannelStandDown
-	nextAttemptAt time.Time
-	lastError     string
+	nextAttemptAt         time.Time
+	lastError             string
+	observationTransition bool
 }
 
 func (m *MemStore) QueueAlertChannelStandDowns(_ context.Context, ruleID, reason string, at time.Time) (int64, error) {
@@ -167,12 +180,12 @@ func (m *MemStore) QueueAlertChannelStandDowns(_ context.Context, ruleID, reason
 	if !ok {
 		return 0, nil
 	}
-	return m.queueAlertChannelStandDownsLocked(rule, reason, at.UTC()), nil
+	return m.queueAlertChannelStandDownsLocked(rule, reason, at.UTC(), false), nil
 }
 
 // queueAlertChannelStandDownsLocked mirrors QueueAlertChannelStandDowns and
 // the alert_rules_channel_stand_downs trigger; m.mu is held.
-func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason string, at time.Time) int64 {
+func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason string, at time.Time, observationTransition bool) int64 {
 	owed := map[string]bool{}
 	if m.alertRuleEpisodeOpenLocked(rule.ID) {
 		for _, id := range m.alertRuleChannels[rule.ID] {
@@ -195,7 +208,14 @@ func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason stri
 	var queued int64
 	for channelID := range owed {
 		key := alertChannelRetryKey{rule.ID, channelID}
-		if _, dup := m.alertChannelStandDowns[key]; dup || !live[channelID] {
+		if prior, exists := m.alertChannelStandDowns[key]; exists {
+			if observationTransition {
+				prior.observationTransition = true
+				m.alertChannelStandDowns[key] = prior
+			}
+			continue
+		}
+		if !live[channelID] {
 			continue
 		}
 		m.alertChannelStandDowns[key] = memStandDown{
@@ -203,7 +223,7 @@ func (m *MemStore) queueAlertChannelStandDownsLocked(rule AlertRule, reason stri
 				RuleID: rule.ID, ChannelID: channelID, AccountID: rule.AccountID, AppID: rule.AppID,
 				RuleName: rule.Name, RuleMetric: string(rule.Metric), Reason: reason, QueuedAt: at,
 			},
-			nextAttemptAt: at,
+			nextAttemptAt: at, observationTransition: observationTransition,
 		}
 		queued++
 	}
@@ -269,10 +289,26 @@ func (m *MemStore) DeleteAlertChannelStandDown(_ context.Context, ruleID, channe
 	return nil
 }
 
+func (m *MemStore) AlertChannelStandDownPending(_ context.Context, ruleID, channelID string, supersede bool) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := alertChannelRetryKey{ruleID, channelID}
+	notice := m.alertChannelStandDowns[key]
+	if notice.observationTransition {
+		return true, nil
+	}
+	if supersede {
+		delete(m.alertChannelStandDowns, key)
+	}
+	return false, nil
+}
+
 func (m *MemStore) ClearAlertChannelStandDowns(_ context.Context, ruleID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool { return k.rule == ruleID })
+	m.clearAlertChannelStandDownsLocked(func(k alertChannelRetryKey) bool {
+		return k.rule == ruleID && !m.alertChannelStandDowns[k].observationTransition
+	})
 	return nil
 }
 

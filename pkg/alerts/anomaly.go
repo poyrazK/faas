@@ -29,7 +29,11 @@ type anomalyRead struct {
 	ok       bool
 }
 
-const anomalyBaselineStep = time.Minute
+const (
+	anomalyBaselineStep = time.Minute
+	anomalyWarmBudget   = 30 * time.Second
+	anomalyWarmLimit    = 2
+)
 
 type anomalyBaselineFrame struct {
 	first     time.Time
@@ -47,13 +51,18 @@ func (f anomalyBaselineFrame) at(check time.Time) (anomalyBaseline, bool) {
 // Share matching reads within a tick and retain aligned historical checkpoints
 // across ticks. The frame retains time-of-day changes inside the cache period.
 type anomalyState struct {
-	mu     sync.Mutex
-	at     time.Time
-	reads  map[anomalyKey]*anomalyRead
-	frames map[anomalyKey]anomalyBaselineFrame
+	mu      sync.Mutex
+	at      time.Time
+	reads   map[anomalyKey]*anomalyRead
+	frames  map[anomalyKey]anomalyBaselineFrame
+	warming map[anomalyKey]bool
+	runCtx  context.Context
 }
 
-func (s *anomalyState) begin(now time.Time) {
+func (s *anomalyState) begin(ctx context.Context, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.runCtx = ctx
 	at := now.UTC().Truncate(time.Second)
 	if !s.at.Equal(at) || s.reads == nil {
 		s.at = at
@@ -154,7 +163,7 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 	key := anomalyKey{appID: rule.AppID, scope: rule.EnvironmentScope, metric: string(rule.Metric), window: string(rule.WindowSpec)}
 	at := e.anomaly.at
 	e.anomaly.mu.Lock()
-	frame, attempted := e.anomaly.frames[key]
+	frame := e.anomaly.frames[key]
 	if baseline, ok := frame.at(at); ok {
 		e.anomaly.mu.Unlock()
 		return baseline, true
@@ -172,24 +181,10 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 	e.anomaly.reads[key] = read
 	e.anomaly.mu.Unlock()
 
-	if !attempted {
-		frame = e.prefetchAnomalyBaselines(ctx, key, at)
-		if ctx.Err() == nil {
-			e.anomaly.mu.Lock()
-			if e.anomaly.frames == nil {
-				e.anomaly.frames = make(map[anomalyKey]anomalyBaselineFrame)
-			}
-			e.anomaly.frames[key] = frame
-			e.anomaly.mu.Unlock()
-		}
-	}
-	read.baseline, read.ok = frame.at(at)
-	if !read.ok && ctx.Err() == nil {
-		values, qualified, source := appmetrics.FetchAnomalyAlertHistory(ctx, e.promQL, e.log, key.appID, key.scope, key.window, key.metric, at)
-		read.ok = source == appmetrics.SourcePrometheus
-		if read.ok {
-			read.baseline = anomalyBaseline{value: median(values), days: qualified}
-		}
+	values, qualified, source := appmetrics.FetchAnomalyAlertHistory(ctx, e.promQL, e.log, key.appID, key.scope, key.window, key.metric, at)
+	read.ok = source == appmetrics.SourcePrometheus
+	if read.ok {
+		read.baseline = anomalyBaseline{value: median(values), days: qualified}
 	}
 	if !read.ok && ctx.Err() != nil {
 		// A canceled account or rule budget should not poison later callers.
@@ -198,7 +193,39 @@ func (e *Evaluator) anomalyBaselineFor(ctx context.Context, rule state.AlertRule
 		e.anomaly.mu.Unlock()
 	}
 	close(read.done)
+	if read.ok {
+		e.warmAnomalyBaselines(key, at)
+	}
 	return read.baseline, read.ok
+}
+
+// Warming is best effort and uses its own deadline. The next check takes the
+// exact-read path whenever the frame is missing, unfinished or off-grid.
+func (e *Evaluator) warmAnomalyBaselines(key anomalyKey, at time.Time) {
+	s := &e.anomaly
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, attempted := s.frames[key]; attempted || s.warming[key] || len(s.warming) >= anomalyWarmLimit || s.runCtx.Err() != nil {
+		return
+	}
+	if s.warming == nil {
+		s.warming = make(map[anomalyKey]bool)
+	}
+	s.warming[key] = true
+	ctx, cancel := context.WithTimeout(s.runCtx, anomalyWarmBudget)
+	go func() {
+		defer cancel()
+		frame := e.prefetchAnomalyBaselines(ctx, key, at)
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		delete(s.warming, key)
+		if s.at.Before(at.Add(api.AnomalyBaselineCacheTTL)) {
+			if s.frames == nil {
+				s.frames = make(map[anomalyKey]anomalyBaselineFrame)
+			}
+			s.frames[key] = frame
+		}
+	}()
 }
 
 func (e *Evaluator) prefetchAnomalyBaselines(ctx context.Context, key anomalyKey, first time.Time) anomalyBaselineFrame {

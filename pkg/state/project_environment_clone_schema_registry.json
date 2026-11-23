@@ -759,6 +759,7 @@
       "channel_id",
       "last_error",
       "next_attempt_at",
+      "observation_transition",
       "queued_at",
       "reason",
       "rule_id",
@@ -919,6 +920,26 @@
     "clone": {
       "owner": "app"
     }
+  },
+  {
+    "table": "alert_webhook_stand_downs",
+    "columns": [
+      "app_id",
+      "attempts",
+      "comparison",
+      "environment_scope",
+      "id",
+      "metric",
+      "next_attempt_at",
+      "queued_at",
+      "rule_id",
+      "rule_name",
+      "threshold",
+      "webhook_secret_sealed",
+      "webhook_url",
+      "window_spec"
+    ],
+    "kind": "operational"
   },
   {
     "table": "api_consumer_billing_policies",

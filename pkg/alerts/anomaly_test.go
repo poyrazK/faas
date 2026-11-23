@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"filippo.io/age"
@@ -25,10 +26,11 @@ type anomalyProm struct {
 	currentSamples, currentValue float64
 	pastSamples, pastValue       float64
 	trafficDays                  int
-	historyQueries               atomic.Int32
+	exactQueries                 atomic.Int32
 	lastCheckAt                  atomic.Int64
 	currentCount                 func(time.Time) float64
 	pastCount                    func(time.Time) float64
+	warm                         func(context.Context) error
 }
 
 func (p *anomalyProm) QueryScalar(context.Context, string) (float64, error) {
@@ -47,16 +49,21 @@ func (p *anomalyProm) QueryVectorStrictAt(_ context.Context, query string, at ti
 	return []promql.VectorSample{{Value: value}}, nil
 }
 
-func (p *anomalyProm) QueryRangeStrict(_ context.Context, q, start, end, step string) ([]promql.QueryRangeSeries, error) {
-	p.historyQueries.Add(1)
+func (p *anomalyProm) QueryRangeStrict(ctx context.Context, q, start, end, step string) ([]promql.QueryRangeSeries, error) {
 	first, firstErr := strconv.ParseInt(start, 10, 64)
 	last, lastErr := strconv.ParseInt(end, 10, 64)
 	const day = int64(24 * time.Hour / time.Second)
 	var interval int64
 	switch step {
 	case "1d":
+		p.exactQueries.Add(1)
 		interval = day
 	case "60":
+		if p.warm != nil {
+			if err := p.warm(ctx); err != nil {
+				return nil, err
+			}
+		}
 		interval = 60
 	}
 	if firstErr != nil || lastErr != nil || interval == 0 || last < first || (last-first)%interval != 0 {
@@ -107,16 +114,16 @@ func TestAnomalyRuleFiresAboveBaseline(t *testing.T) {
 		t.Fatalf("state = %q, want firing", got.State)
 	}
 
-	// Each day needs one range for request coverage and one for error rate.
-	// A retry at the same time uses the already-read historical checkpoint.
-	before := prom.historyQueries.Load()
-	if before != 2*api.AnomalyBaselineDays {
-		t.Fatalf("history queries=%d, want %d", before, 2*api.AnomalyBaselineDays)
+	// The direct read uses one range for coverage and one for error rate.
+	// A retry at the same time reuses the historical checkpoint.
+	before := prom.exactQueries.Load()
+	if before != 2 {
+		t.Fatalf("exact historical queries=%d, want 2", before)
 	}
 	if _, err := ev.RunOnce(context.Background()); err != nil {
 		t.Fatalf("second RunOnce: %v", err)
 	}
-	if after := prom.historyQueries.Load(); after != before {
+	if after := prom.exactQueries.Load(); after != before {
 		t.Fatalf("baseline recomputed at the same timestamp: %d -> %d range queries", before, after)
 	}
 }
@@ -374,32 +381,49 @@ func TestAnomalyRuleReportsRepeatNotificationCooldown(t *testing.T) {
 }
 
 func TestAnomalyRulesShareMatchingBaseline(t *testing.T) {
-	store := state.NewMemStore()
-	rule, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
-	rule.ID, rule.Name = "", "second-anomaly-rule"
-	rule.Threshold = 2
-	if _, err := store.CreateAlertRule(t.Context(), rule); err != nil {
-		t.Fatal(err)
-	}
-	prom := &anomalyProm{currentSamples: 400, pastSamples: 100, trafficDays: 7}
-	dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
-	start := rule.UpdatedAt.Add(time.Minute)
-	now := start
-	ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
-		Store: store, PromQL: prom, Dispatcher: dispatch, Log: discardLog(),
-		Identity: func() *age.X25519Identity { return ident },
-		Now:      func() time.Time { return now },
+	synctest.Test(t, func(t *testing.T) {
+		store := state.NewMemStore()
+		rule, ident, _ := seedRule(t, store, state.AlertMetricRequestCount, state.AlertAboveBaseline, 3)
+		rule.ID, rule.Name = "", "second-anomaly-rule"
+		rule.Threshold = 2
+		if _, err := store.CreateAlertRule(t.Context(), rule); err != nil {
+			t.Fatal(err)
+		}
+		warming := make(chan struct{})
+		prom := &anomalyProm{
+			currentSamples: 400, pastSamples: 100, trafficDays: 7,
+			warm: func(ctx context.Context) error {
+				select {
+				case <-warming:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		}
+		dispatch := &recordingDispatcher{result: webhookout.Result{StatusCode: 200}}
+		start := rule.UpdatedAt.Add(time.Minute).Truncate(time.Second)
+		now := start.Add(time.Second)
+		ev := alerts.NewEvaluator(alerts.EvaluatorOptions{
+			Store: store, PromQL: prom, Dispatcher: dispatch, Log: discardLog(),
+			Identity: func() *age.X25519Identity { return ident },
+			Now:      func() time.Time { return now },
+		})
+		stats, err := ev.RunOnceAt(t.Context(), start)
+		if err != nil || stats.Fired != 2 || prom.exactQueries.Load() != 1 {
+			t.Errorf("stats=%+v exact queries=%d err=%v, want two fires from one shared read while warming is blocked", stats, prom.exactQueries.Load(), err)
+		}
+		close(warming)
+		synctest.Wait()
+		scheduled := start.Add(time.Minute)
+		now = scheduled.Add(3 * time.Second)
+		if _, err := ev.RunOnceAt(t.Context(), scheduled); err != nil || prom.exactQueries.Load() != 1 || prom.lastCheckAt.Load() != scheduled.Unix() {
+			t.Errorf("delayed tick sampled at %d, ran %d total exact queries, err=%v", prom.lastCheckAt.Load(), prom.exactQueries.Load(), err)
+		}
+		scheduled = start.Add(api.AnomalyBaselineCacheTTL)
+		now = scheduled.Add(time.Second)
+		if _, err := ev.RunOnceAt(t.Context(), scheduled); err != nil || prom.exactQueries.Load() != 2 {
+			t.Errorf("expired cache ran %d total exact queries, err=%v", prom.exactQueries.Load(), err)
+		}
 	})
-	stats, err := ev.RunOnce(t.Context())
-	if err != nil || stats.Fired != 2 || prom.historyQueries.Load() != api.AnomalyBaselineDays {
-		t.Fatalf("stats=%+v history queries=%d err=%v, want two fires from one shared baseline frame", stats, prom.historyQueries.Load(), err)
-	}
-	now = start.Add(time.Minute)
-	if _, err := ev.RunOnce(t.Context()); err != nil || prom.historyQueries.Load() != api.AnomalyBaselineDays {
-		t.Fatalf("next tick fetched %d total historical ranges, err=%v", prom.historyQueries.Load(), err)
-	}
-	now = start.Add(api.AnomalyBaselineCacheTTL)
-	if _, err := ev.RunOnce(t.Context()); err != nil || prom.historyQueries.Load() != 2*api.AnomalyBaselineDays {
-		t.Fatalf("expired cache fetched %d total historical ranges, err=%v", prom.historyQueries.Load(), err)
-	}
 }

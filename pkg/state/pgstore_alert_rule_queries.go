@@ -212,8 +212,11 @@ func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertR
 	updatedAt := pgtype.Timestamptz{Time: at, Valid: true}
 	if observeOnly && !old.ObserveOnly {
 		if _, err := queries.QueueAlertChannelStandDowns(ctx, tx, sqlc.QueueAlertChannelStandDownsParams{
-			RuleID: rule, Reason: StandDownDisabled, At: updatedAt,
+			RuleID: rule, Reason: StandDownDisabled, At: updatedAt, ObservationTransition: true,
 		}); err != nil {
+			return AlertRule{}, err
+		}
+		if err := queries.QueueAlertWebhookStandDown(ctx, tx, sqlc.QueueAlertWebhookStandDownParams{RuleID: rule, At: updatedAt}); err != nil {
 			return AlertRule{}, err
 		}
 	}

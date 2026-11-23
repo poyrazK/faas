@@ -200,16 +200,17 @@ func (e *Evaluator) abandonStandDown(ctx context.Context, store state.AlertChann
 	}
 }
 
-// clearChannelStandDowns drops the notices a rule still owed: a new fire
-// supersedes them, as it does a resolve retry.
-func (e *Evaluator) clearChannelStandDowns(ctx context.Context, ruleID string, channels []state.NotificationChannel) {
+// channelStandDownPending holds a new notification while the recipient still
+// owes an earlier episode a terminal event from entering Observe only.
+func (e *Evaluator) channelStandDownPending(ctx context.Context, ruleID, channelID string, fire bool) bool {
 	store, ok := e.store.(state.AlertChannelStandDownStore)
 	if !ok {
-		return
+		return false
 	}
-	for _, channel := range channels {
-		if err := store.DeleteAlertChannelStandDown(ctx, ruleID, channel.ID); err != nil {
-			e.log.Warn("alerts: clear channel stand-down", "rule", ruleID, "channel", channel.ID, "err", err)
-		}
+	pending, err := store.AlertChannelStandDownPending(ctx, ruleID, channelID, fire)
+	if err != nil {
+		e.log.Warn("alerts: check channel stand-down", "rule", ruleID, "channel", channelID, "err", err)
+		return true
 	}
+	return pending
 }

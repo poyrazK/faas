@@ -18,6 +18,7 @@ import (
 
 type standDownStore interface {
 	state.AlertChannelStandDownStore
+	state.AlertWebhookStandDownStore
 	state.AlertChannelResolveRetryStore
 	state.NotificationChannelUpdateStore
 	CreateAlertRule(ctx context.Context, r state.AlertRule) (state.AlertRule, error)
@@ -133,6 +134,9 @@ func checkStandDowns(t *testing.T, ctx context.Context, s standDownStore, templa
 		if got := due(); len(got) != 1 || got[0].RuleID != rule.ID {
 			t.Fatalf("switching back lost the pending stand-down: %+v", got)
 		}
+		if pending, err := s.AlertChannelStandDownPending(ctx, rule.ID, ch.ID, true); err != nil || !pending {
+			t.Fatalf("a refire must preserve the old stand-down: pending=%v err=%v", pending, err)
+		}
 		if err := s.DeleteAlertChannelStandDown(ctx, rule.ID, ch.ID); err != nil {
 			t.Fatal(err)
 		}
@@ -176,6 +180,49 @@ func checkStandDowns(t *testing.T, ctx context.Context, s standDownStore, templa
 	if got := due(); len(got) != 1 || got[0].RuleID != retried.ID {
 		t.Fatalf("due after deleting a rule with a pending resolve = %+v", got)
 	}
+
+	t.Run("pre-edit webhook snapshot", func(t *testing.T) {
+		live := newRule("webhook live")
+		live, err := s.UpdateAlertRule(ctx, live.ID, state.UpdateAlertRuleParams{
+			NotifyResolved: new(true), WebhookURL: new("https://example.com/live"), WebhookSecretSealed: new([]byte("live sealed key")),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.SetAlertRuleState(ctx, live.ID, state.AlertStateFiring, now); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := s.UpdateAlertRule(ctx, live.ID, state.UpdateAlertRuleParams{
+			ObserveOnly: new(true), Metric: new(state.AlertMetricErrorRate), Comparison: new(state.AlertAboveBaseline),
+			Threshold: new(3.0), Name: new("webhook observation"), EnvironmentScope: new("staging"),
+			NotifyResolved: new(false), WebhookURL: new("https://example.com/observation"), WebhookSecretSealed: new([]byte("new sealed key")),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		notices, err := s.DueAlertWebhookStandDowns(ctx, now.Add(time.Hour), 10)
+		if err != nil || len(notices) != 1 {
+			t.Fatalf("queued webhook stand-downs=%d err=%v, want 1", len(notices), err)
+		}
+		notice := notices[0]
+		if notice.Rule.ID != live.ID || notice.Rule.Name != live.Name || notice.Rule.WebhookURL != live.WebhookURL ||
+			string(notice.Rule.WebhookSecretSealed) != string(live.WebhookSecretSealed) || !notice.QueuedAt.Equal(changed.UpdatedAt) ||
+			notice.Rule.EnvironmentScope != live.EnvironmentScope || notice.Rule.Comparison != live.Comparison || notice.Rule.Threshold != live.Threshold {
+			t.Fatal("queued webhook did not snapshot the original live rule")
+		}
+		if err := s.RetryAlertWebhookStandDown(ctx, notice.ID, now.Add(2*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		if notices, err := s.DueAlertWebhookStandDowns(ctx, now.Add(time.Hour), 10); err != nil || len(notices) != 0 {
+			t.Fatalf("webhook notices=%d before backoff, err=%v", len(notices), err)
+		}
+		if notices, err := s.DueAlertWebhookStandDowns(ctx, now.Add(3*time.Hour), 10); err != nil || len(notices) != 1 || notices[0].Attempts != 1 {
+			t.Fatalf("webhook notices=%d after backoff, err=%v", len(notices), err)
+		}
+		if err := s.DeleteAlertWebhookStandDown(ctx, notice.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
 
 	checkChannelUpdate(t, ctx, s, ch)
 }
