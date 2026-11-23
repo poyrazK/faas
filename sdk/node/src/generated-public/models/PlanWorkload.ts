@@ -39,7 +39,7 @@ export type PlanWorkload = {
    */
   visibility?: 'internal';
   /**
-   * Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml, ADR-20261124090000): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none.
+   * Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none.
    */
   access?: 'public' | 'key';
   /**

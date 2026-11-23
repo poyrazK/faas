@@ -60,8 +60,8 @@ class PlanWorkload:
     service without `ports:`. Omitted means public."""
     access: PlanWorkloadAccess | Unset = UNSET
     """Declared access to the service's public URL (`x-gregale-access` in Compose or
-    `project.services.<name>.access` in gregale.yaml, ADR-20261124090000): `public` needs no Gregale API key, `key`
-    needs one. Every production deploy applies it. Omitted when the source declares none."""
+    `project.services.<name>.access` in gregale.yaml): `public` needs no Gregale API key, `key` needs one. Every
+    production deploy applies it. Omitted when the source declares none."""
     dockerfile: str | Unset = UNSET
     image: str | Unset = UNSET
     """Normalized prebuilt OCI image for a workload without build. Tags are resolved and pinned by the image worker
