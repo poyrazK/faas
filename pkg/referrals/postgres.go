@@ -122,7 +122,8 @@ func (s *PostgresStore) Summary(ctx context.Context, scope Scope) ([]Summary, er
 	}
 	out := make([]Summary, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, Summary{Kind: r.Kind, Currency: r.Currency, Signups: r.Signups, Paid: r.Paid, Eligible: r.Eligible, RewardCents: r.RewardCents, PaidCents: r.PaidCents})
+		out = append(out, Summary{Kind: r.Kind, Currency: r.Currency, Signups: r.Signups, Paid: r.Paid, Eligible: r.Eligible, RewardCents: r.RewardCents, PaidCents: r.PaidCents,
+			Sales: r.Sales, SalesThisMonth: r.SalesThisMonth, PaidThisMonthCents: r.PaidThisMonthCents})
 	}
 	return out, nil
 }

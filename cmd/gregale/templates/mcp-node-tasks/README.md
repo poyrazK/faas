@@ -142,7 +142,12 @@ Keep reader keys until all retained payloads using them have expired.
 `MCP_TASK_NAMESPACE` overrides
 
 Run `npm run tasks:migrate -- apply` with a separate schema-owner binding in
-`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. This creates or upgrades
+`MCP_TASK_MIGRATION_DATABASE_URL` before starting the app. On Gregale, declare it
+as the web app's release command so it runs before every deploy goes live:
+`release: {command: node tasks-migrate.js apply}` in `gregale.yaml`, with the
+binding from `gregale postgres attach <db> <web-app> --env
+MCP_TASK_MIGRATION_DATABASE_URL --access migration`. Call node directly: the
+shared Node runtime ships no npm. This creates or upgrades
 the Task schema and prepares the namespace. The application binding uses the
 runtime role and needs Task DML and metadata SELECT privileges; startup performs
 read-only checks. The store

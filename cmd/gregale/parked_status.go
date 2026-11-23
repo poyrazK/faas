@@ -65,6 +65,22 @@ func listedReleaseStatus(d api.DeploymentResponse) string {
 	return d.Status
 }
 
+// servingReleaseApps returns the apps with a listed release taking traffic.
+// Beside one, a live release at 0% is a flip-back standby: an MCP redeploy (or
+// a traffic flip) keeps the previous release live at 0% so traffic can move
+// back instantly, and it is superseded when its pins expire. The list called
+// both "live" (MCP Tasks prod re-probe 2026-11-23). A sole live release with
+// no recorded share stays "live".
+func servingReleaseApps(items []api.DeploymentResponse) map[string]bool {
+	serving := map[string]bool{}
+	for _, d := range items {
+		if d.Status == "live" && d.TrafficPercent > 0 {
+			serving[d.AppID] = true
+		}
+	}
+	return serving
+}
+
 func parkedReleaseStatus(status string) string {
 	if status == "live" || strings.HasPrefix(status, "live/") {
 		return status + "/parked"

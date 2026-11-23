@@ -86,6 +86,46 @@ func TestUsageCoversBillingPeriodChangeWithinTimeframe(t *testing.T) {
 	}
 }
 
+func TestUsageCoversBillingPeriodChangeReportedByOnePeriod(t *testing.T) {
+	// Neon on 2026-11-22: the plan changed at 19:51:47; an idle project's
+	// 19:00 bucket came only in the ending period and the new period's
+	// frames began at 20:00. The bucket is covered whole.
+	from := time.Date(2026, 11, 22, 19, 0, 0, 0, time.UTC)
+	middle, to := from.Add(time.Hour), from.Add(2*time.Hour)
+	change := from.Add(51*time.Minute + 47*time.Second)
+	metric := func(value int) map[string]any {
+		return map[string]any{"metric_name": "compute_unit_seconds", "value": value}
+	}
+	for _, test := range []struct {
+		name    string
+		first   map[string]any
+		second  map[string]any
+		wantErr bool
+	}{
+		{name: "bucket only in ending period", first: usagePeriod(from.Add(-time.Hour), usageFrame(from, middle, metric(3))), second: usagePeriod(change, usageFrame(middle, to, metric(4)))},
+		{name: "bucket only in starting period", first: usagePeriod(from.Add(-time.Hour)), second: usagePeriod(change, usageFrame(from, middle, metric(3)), usageFrame(middle, to, metric(4)))},
+		{name: "frame outside its period", first: usagePeriod(from.Add(-time.Hour), usageFrame(from, middle, metric(3)), usageFrame(middle, to, metric(4))), second: usagePeriod(change), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			test.first["period_end"] = change
+			test.second["period_id"] = "period-b"
+			provider := testProvider(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				writeResponse(t, w, http.StatusOK, map[string]any{"projects": []map[string]any{{"project_id": "quiet-river-123", "periods": []map[string]any{test.first, test.second}}}})
+			}))
+			usage, err := provider.Usage(context.Background(), "quiet-river-123", managedpostgres.UsageWindow{From: from, To: to})
+			if test.wantErr {
+				if !errors.Is(err, managedpostgres.ErrUnavailable) {
+					t.Fatalf("frame outside its period accepted: %+v, %v", usage, err)
+				}
+				return
+			}
+			if err != nil || len(usage.Readings) != 4 || usage.Readings[0].Quantity != 7 {
+				t.Fatalf("usage across billing change = %+v, %v", usage, err)
+			}
+		})
+	}
+}
+
 func TestUsageNormalizesByteMonthStorage(t *testing.T) {
 	from := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)

@@ -18,7 +18,7 @@ func QueueCanaryProblem(err error) *api.Problem {
 	case err == nil:
 		return nil
 	case errors.Is(err, state.ErrNotFound):
-		return api.NewProblem(http.StatusNotFound, "not_found", "Not found", "Queue canary or eligible deployment/consumer not found.")
+		return api.NewProblem(http.StatusNotFound, "not_found", "Not found", "Queue canary or eligible deployment/consumer not found. A canary needs a live release with a runnable image (function releases have none), an enabled push consumer matching the reviewed binding, and the binding declared in GREGALE_QUEUE_CANARY_BINDINGS in the deployment's override env or reviewed variables; app variables do not count.")
 	case errors.Is(err, state.ErrInvalidArgument):
 		return api.ErrValidation("Supply an exact deployment, binding, publication consent and 1–600 second TTL. The deployment must declare this binding in GREGALE_QUEUE_CANARY_BINDINGS as a JSON array in override_env or its frozen reviewed variables.")
 	case errors.Is(err, state.ErrConflict):

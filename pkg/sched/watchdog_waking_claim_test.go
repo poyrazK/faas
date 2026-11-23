@@ -45,7 +45,7 @@ func TestWatchdogGivesEveryWakingRowTheFallbackBudget(t *testing.T) {
 		t.Fatalf("destroys = %d, want 0 inside the fallback budget", destroys)
 	}
 
-	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+time.Second)
+	backdateInstance(t, store, waking.ID, WakingSweepBudget+ColdBootSweepBudget+coldBootRPCGrace+time.Second)
 	w.sweepRuns(context.Background())
 	if got := rowState(t, store, waking.ID); got == string(state.StateWaking) {
 		t.Fatal("WAKING row past the fallback budget was not killed")

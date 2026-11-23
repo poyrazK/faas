@@ -144,13 +144,8 @@ func (s *server) admitAppTaskWithAttach(r *http.Request, acct state.Account, app
 	if problem != nil {
 		return state.AppTask{}, problem
 	}
-	if app.Type == state.AppTypeFunction && deployment.ImageDigest == "" {
-		// prod 2026-11-20: `app exec` on a live function said it needed "a
-		// live deployment with a materialized runtime image". A function
-		// runs on the shared runner and its release has no image to start a
-		// task VM from; the same refusal, said plainly.
-		return state.AppTask{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "App task deployment unavailable",
-			"app exec and app tasks start a VM from the app's image, and a function's release has none; run the code through an invocation instead (gregale invocation run "+app.Slug+")")
+	if problem := functionAppTaskUnavailable(app, deployment); problem != nil {
+		return state.AppTask{}, problem
 	}
 	pin, pinErr := s.captureBindingVerificationPin(r, acct, app, deployment, resolved)
 	if pinErr != nil {
@@ -200,6 +195,21 @@ func declaresSmokeService(app state.App, service string) bool {
 		}
 	}
 	return false
+}
+
+// functionAppTaskUnavailable refuses an app task on a function release.
+// prod 2026-11-20: `app exec` on a live function said it needed "a live
+// deployment with a materialized runtime image". A function runs on the
+// shared runner and its release has no image to start a task VM from, so
+// app tasks, in-app binding verification (`app binding verify --all`) and
+// queue canaries cannot run there; the same refusal, said plainly.
+func functionAppTaskUnavailable(app state.App, deployment state.Deployment) *api.Problem {
+	if app.Type != state.AppTypeFunction || deployment.ImageDigest != "" {
+		return nil
+	}
+	return api.NewProblem(http.StatusConflict, api.CodeConflict, "App task deployment unavailable",
+		"app exec, app tasks and in-app binding verification start a VM from the app's image, and a function's release has none; "+
+			"verify bindings through an invocation instead (gregale invocation run "+app.Slug+")")
 }
 
 func writeAppTaskDeploymentUnavailable(w http.ResponseWriter) {

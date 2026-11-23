@@ -10267,7 +10267,7 @@ groups:
       - alert: FaasMCPProtocolHighErrorRate
         expr: |
           (
-            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout"}[5m]))
+            sum by (app_id) (increase(vmmd_mcp_protocol_requests_total{outcome=~"rpc_error|tool_error|authorization_error|internal_error|timeout|invalid_params"}[5m]))
             / sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m]))
           ) > 0.1
           and on (app_id) (sum by (app_id) (increase(vmmd_mcp_protocol_requests_total[5m])) >= 20)

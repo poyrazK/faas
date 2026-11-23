@@ -123,6 +123,31 @@ pass other paths if your `gregale.yaml` names others. Secret rotation keeps its
 own path through `SecretReloadCoordinator`
 ([pool runtime guide](postgres-pool-runtime.md)); do not reload secrets in a hook.
 
+### Node.js outbound HTTP after a wake
+
+Node 20 and later try every address of a host in turn ("Happy Eyeballs",
+`autoSelectFamily`) and give each attempt only 250 ms. The first outbound
+connection from a freshly woken instance can take longer than that. Node then
+gives up on every address at once, and `fetch` or `https.request` fails in
+about 300 ms with an `AggregateError` whose errors are `ETIMEDOUT` and whose
+message is empty. Instances connect out over IPv4 (they have no global IPv6
+address), so give the connection more time, or skip the IPv6 attempts, once at
+startup:
+
+```js
+import net from "node:net";
+net.setDefaultAutoSelectFamilyAttemptTimeout(2000); // or:
+net.setDefaultAutoSelectFamily(false);
+```
+
+The `NODE_OPTIONS=--network-family-autoselection-attempt-timeout=2000`
+environment variable does the same without a code change. Combine it with the
+pool helpers above, so connections inherited from the snapshot are dropped
+rather than reused.
+
+Inbound keep-alive needs no change: Gregale closes its idle connections to your
+app well before Node's 5-second `keepAliveTimeout` (or gunicorn's 2 seconds).
+
 You can detect the wake tier on every routed response:
 
 - `x-faas-wake: hot` means an already-running instance served the request.

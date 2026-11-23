@@ -310,7 +310,9 @@ func linkedAppSlug(start string) (string, error) {
 		return "", err
 	}
 	if context.App == "" {
-		return "", fmt.Errorf("project %q has multiple or no workloads; link again with --app <slug>", context.Project)
+		// The fix is usually one flag on this command; "link again" read as
+		// the only way out in a Compose checkout (prod hunt r27).
+		return "", fmt.Errorf("this checkout is linked to project %q, which has multiple or no workloads; name one app: pass --app <slug>, or link one with %s link %s --app <slug>", context.Project, recoveryCLI(), context.Project)
 	}
 	return context.App, nil
 }
@@ -474,4 +476,11 @@ func fillLinkedApp(slug *string) {
 func linkedProjectOnly(start string) bool {
 	context, _, err := targetProjectContext(start)
 	return err == nil && context.Project != "" && context.App == ""
+}
+
+// linkedProjectOnlyHere reports whether the working directory's checkout is
+// linked to a project without naming one app.
+func linkedProjectOnlyHere() bool {
+	cwd, err := os.Getwd()
+	return err == nil && linkedProjectOnly(cwd)
 }

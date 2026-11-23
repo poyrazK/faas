@@ -124,6 +124,8 @@ var previewFields = map[string]map[string]bool{
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// ADR-20261122194324: fixed empty key set for old gateways' fail-closed api-key MCP policies.
+	"GET /v1/mcp/consumer-key-jwks.json":                      true,
 	"GET /v1/referrals/checkout":                              true, // private browser checkout hint; mounted in sales.go
 	"GET /v1/orgs/{slug}/referrals/checkout":                  true, // private browser checkout hint for an organization's first purchase
 	"GET /v1/sales/templates":                                 true, // private sales message tools; session authentication
@@ -561,6 +563,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/instances":                    true, // operator fleet instance list (ADR-20261121161842)
 	"GET /v1/admin/obs/instances/{id}":               true,
 	"GET /v1/admin/obs/wake-latency":                 true, // operator wake-latency report (ADR-20261121200409)
+	"GET /v1/admin/obs/snapshot-health":              true, // operator snapshot health report (ADR-20261122135018)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1120,7 +1123,13 @@ var dtoExclude = map[string]bool{
 	"ObsWakeReasonCount":   true,
 	"ObsWakeSample":        true,
 	"ObsWakeAppStat":       true,
-	"ObsInvocationRow":     true,
+	// ADR-20261122135018 operator snapshot health report.
+	"ObsSnapshotHealthReport":    true,
+	"ObsSnapshotTotals":          true,
+	"ObsSnapshotGroup":           true,
+	"ObsSnapshotRow":             true,
+	"ObsUnsnapshottedDeployment": true,
+	"ObsInvocationRow":           true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,

@@ -74,6 +74,15 @@ func cmdMCP(args []string) int {
 		return cmdMCPAccess(args[1:])
 	case "policy":
 		return cmdMCPPolicy(args[1:])
+	case "auth", "replay":
+		if !mcpGatewayPreviewCLI() {
+			printCommandValidation(os.Stderr, "unknown mcp subcommand %q\n", args[0])
+			return unknownSubcommandChoices(os.Stderr, "mcp", nestedCliCommand("mcp"), args[0])
+		}
+		if args[0] == "auth" {
+			return cmdMCPAuth(args[1:])
+		}
+		return cmdMCPReplay(args[1:])
 	case "tasks":
 		return cmdMCPTasks(args[1:])
 	case "lock":
@@ -492,13 +501,25 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
-	// (production-us hunt #5, H5-3).
+	// (production-us hunt #5, H5-3). A leading URL is the endpoint: it was
+	// taken for an app slug and answered "no such API route" (MCP Tasks prod
+	// probe 2026-11-22).
+	leadingURL := ""
+	if len(args) > 0 && (strings.HasPrefix(args[0], "https://") || strings.HasPrefix(args[0], "http://")) {
+		leadingURL, args = args[0], args[1:]
+	}
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
 		return printErr("Invalid MCP flags", fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if leadingURL != "" {
+		if *endpoint != "" && *endpoint != leadingURL {
+			return printErr("Invalid MCP flags", errors.New("pass the endpoint once, as the first argument or with --url"))
+		}
+		*endpoint = leadingURL
 	}
 	if *timeout <= 0 {
 		return printErr("Invalid MCP flags", errors.New("--timeout must be positive"))
@@ -944,8 +965,8 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	if err != nil {
 		return printErr("MCP client token", err)
 	}
-	if cfg.Auth.Mode == "external-oauth" && token == "" && o.publicationID == "" {
-		return printErr("MCP verification", errors.New("external-oauth deploy requires --token-env with a client access token for verification"))
+	if cfg.Auth.Mode != mcphosting.AuthOpen && token == "" && o.publicationID == "" {
+		return printErr("MCP verification", fmt.Errorf("%s deploy requires --token-env with a %s for verification", cfg.Auth.Mode, mcpVerificationCredential(cfg.Auth.Mode)))
 	}
 	if o.validateEndpoint != "" {
 		report, validationErr := validateMCPEndpoint(context.Background(), o.validateEndpoint, token, mcphosting.ProtocolVersion, 30*time.Second)
@@ -982,6 +1003,9 @@ func runMCPDeploy(o mcpDeployOptions) int {
 	}
 	if err := precheckMCPServingIngress(ctx, c, o.slug); err != nil {
 		return printErr("MCP candidate", err)
+	}
+	if err := requireMCPGatewayPolicy(ctx, c, o.slug, cfg); err != nil {
+		return printErr("MCP gateway policy", err)
 	}
 	if !jsonOutput {
 		PrintProgress(osStdout, "Deploying stateless MCP (%s client access)", cfg.Auth.Mode)
@@ -1073,6 +1097,12 @@ func pinMCPCandidateRevisionWithSubmit(ctx context.Context, c *Client, o mcpDepl
 		return api.DeploymentResponse{}, "", err
 	}
 	health := probeMCPCatalogHealth(ctx, preview, 5*time.Second)
+	if health.EdgeAnswered && !health.Supported {
+		// The gateway answers an app's health path itself, so the public
+		// probe never reaches the server's catalog digest; --require-catalog-pin
+		// then refused every first deploy. Read it from a replica instead.
+		health = probeMCPCatalogReplicaForPin(ctx, c, o.slug, candidate.ID, preview, health)
+	}
 	digest, err := mcpCatalogDigestForPin(health)
 	if err != nil {
 		return api.DeploymentResponse{}, "", err

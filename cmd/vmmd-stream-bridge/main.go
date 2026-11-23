@@ -521,7 +521,7 @@ func handleH1Stream(w http.ResponseWriter, r *http.Request, guestIP string, gues
 	}
 	outboundReq.Host = sanitizeCRLF(host)
 
-	resp, err := transport.RoundTrip(outboundReq)
+	resp, err := roundTripGuestH1(transport, outboundReq)
 	headerTimer.Stop()
 	if err != nil {
 		markGuestTransportError(w, r, roundTripCtx)

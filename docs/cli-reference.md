@@ -51,6 +51,7 @@ Read retries: put `--http-retries 3` before the command for up to three addition
 | [`postgres`](#postgres) | Create, attach and restore managed PostgreSQL databases |
 | [`bucket`](#bucket) | Manage object storage buckets |
 | [`export`](#export) | Verify and compare saved JSON Lines exports offline |
+| [`realtime`](#realtime) | Manage realtime endpoints, channels and connections |
 | [`cron`](#cron) | Schedule requests and commands |
 | [`job`](#job) | Manage jobs that run to completion |
 | [`workflow`](#workflow) | Manage durable workflows |
@@ -310,7 +311,7 @@ Search an app&#39;s runtime logs and HTTP requests, or follow them
 | `--latest-failure` | select latest failed deployment and read up to 500 retained build/deploy entries; accepts only an app target |  |
 | `--latest-request-error` | select newest retained HTTP 5xx row; default 15m window; accepts app, since, route |  |
 | `--interactive` | choose source, time window, and filters and show the equivalent command |  |
-| `--follow` | stream logs until interrupted |  |
+| `--follow` | stream new runtime lines, or new HTTP requests with --source http, until interrupted |  |
 | `--deployment <ID>` | deployment id or vN revision (default: latest) |  |
 | `--release <ID|vN>` | release id or revision (alias for --deployment) |  |
 | `--source <SOURCE>` | log source | one of `runtime` · `http` |
@@ -335,6 +336,7 @@ Examples:
 ```sh
 gregale logs my-api --interactive
 gregale logs my-api --follow
+gregale logs my-api --follow --source http
 gregale logs --project shop --follow
 gregale logs my-api --since 1h --level error
 gregale logs views save runtime-errors --since 1h --level error
@@ -3281,7 +3283,7 @@ Reuse an idempotency key only with the same async request within the server&#39;
 
 ### invocation watch
 
-Watch invocations finish across your account in real time
+Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)
 
 `gregale invocation watch [--app <slug>] [--include-stateless] [<slug>]`
 
@@ -4725,34 +4727,37 @@ Show or change compute overage past the monthly allowance
 Examples:
 
 ```sh
-gregale postgres overage on
+gregale postgres overage get
+gregale postgres overage set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
 
 #### postgres overage get
 
-Show or change compute overage past the monthly allowance
+Show whether databases keep running past the monthly compute allowance
 
 `gregale postgres overage get [on|off]`
 
 Examples:
 
 ```sh
-gregale postgres overage get on
+gregale postgres overage get
+gregale postgres overage get set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
 
 #### postgres overage set
 
-Show or change compute overage past the monthly allowance
+Turn compute overage on or off (on: databases run up to twice the allowance)
 
 `gregale postgres overage set [on|off]`
 
 Examples:
 
 ```sh
+gregale postgres overage set get
 gregale postgres overage set on
 ```
 
@@ -5037,6 +5042,40 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+### postgres query
+
+Run one SQL query and print rows (read-only unless --write)
+
+`gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | read the query from PATH, or - for stdin |  |
+| `--write` | allow writes and several statements (commits) |  |
+| `--read-only` | refuse writes (the default) |  |
+| `--max-rows <N>` | rows kept per result, 1..10000 (default 500) |  |
+| `--timeout <D>` | statement timeout (default 30s) |  |
+| `--app <SLUG>` | bound app whose credentials to use (default: the best ready binding) |  |
+| `--env <KEY>` | binding environment key |  |
+| `--access <MODE>` | binding access (default prefers read_only for reads, read_write for --write) | one of `read_only` · `session` · `read_write` · `migration` |
+| `--wait-timeout <D>` | maximum time to wait for each task VM to start |  |
+
+Examples:
+
+```sh
+gregale postgres sql orders "select status, count(*) from orders group by 1"
+gregale postgres sql orders --file audit.sql --json
+gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
+```
+
+Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.
+
+Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.
+
+--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch &lt;database&gt; &lt;name&gt; --ttl 2h`.
+
+--json prints typed rows: numbers, booleans and json stay typed; NULL is null; other values are PostgreSQL text.
 
 
 ## bucket
@@ -5351,6 +5390,220 @@ Comparisons exit 0 unless --fail-on-change is enabled and changes exist, then ex
 --explain adds JSON Pointer field paths and added/removed/changed kinds for changed IDs, without field values. Arrays and added/removed objects are reported at their parent field; the default report is unchanged.
 
 --ignore-path excludes exact object fields from comparison and explanations, and lists sorted unique ignored_paths in the report. The selected key cannot be ignored; array elements cannot be selected. Added and removed records remain visible.
+
+
+## realtime
+
+Manage realtime endpoints, channels and connections
+
+`gregale realtime [<subcommand>]`
+
+### realtime drain
+
+Close a bounded, filtered set of live connections
+
+`gregale realtime drain [status] --reason <TEXT> [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--connection-id <ID>] [--limit <N>] [--dry-run] [--allow-partial] [--wait] [--timeout <DURATION>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | required audit reason | required |
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--principal <PRINCIPAL>` | only connections for this principal |  |
+| `--connection-id <ID>` | select a specific connection; repeat up to 100 times |  |
+| `--limit <N>` | maximum connections to select (1-1000) |  |
+| `--dry-run` | preview without closing connections |  |
+| `--allow-partial` | allow the reachable subset when nodes are unavailable |  |
+| `--wait` | wait for the drain to reach a terminal state |  |
+| `--timeout <DURATION>` | maximum time to wait with --wait |  |
+
+#### realtime drain status
+
+Show or wait for a durable realtime drain
+
+`gregale realtime drain status [--wait] [--timeout <DURATION>] <app> <endpoint-id> <operation-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the drain to reach a terminal state |  |
+| `--timeout <DURATION>` | maximum time to wait with --wait |  |
+
+### realtime list
+
+List managed realtime endpoints
+
+`gregale realtime list <app>`
+
+### realtime get
+
+Show one endpoint and safe auth-rotation status
+
+`gregale realtime get <app> <endpoint-id>`
+
+### realtime create
+
+Create a managed realtime endpoint
+
+`gregale realtime create --callback-url <URL> [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-mode <MODE>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--allowed-origin <ORIGIN>]... [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enabled[=true|false]] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--callback-url <URL>` | application callback URL | required |
+| `--callback-auth-token-stdin` | read the callback bearer token from stdin (this or --callback-auth-token is required) |  |
+| `--callback-auth-token <TOKEN>` | callback bearer token your app verifies (prefer --callback-auth-token-stdin) |  |
+| `--connect-path <PATH>` | callback path for connect events |  |
+| `--message-path <PATH>` | callback path for message events |  |
+| `--disconnect-path <PATH>` | callback path for disconnect events |  |
+| `--auth-mode <MODE>` | client auth mode | one of `none` · `static_bearer` · `oidc_jwt` |
+| `--auth-token-stdin` | read the client static bearer token from stdin |  |
+| `--auth-token <TOKEN>` | client static bearer token (prefer --auth-token-stdin) |  |
+| `--auth-issuer <URL>` | OIDC issuer URL |  |
+| `--auth-jwks-url <URL>` | OIDC JWKS URL |  |
+| `--auth-audience <AUDIENCE>` | OIDC audience (repeatable) |  |
+| `--auth-algorithm <ALG>` | OIDC signing algorithm, required for oidc_jwt (repeatable) |  |
+| `--auth-claim <KEY=VALUE>` | required OIDC claim as KEY=VALUE (repeatable) |  |
+| `--allowed-origin <ORIGIN>` | exact browser origin (repeatable) |  |
+| `--max-connections <N>` | per-endpoint connection cap (0 inherits the default) |  |
+| `--max-message-bytes <N>` | decoded message size cap (0 inherits the default) |  |
+| `--max-connection-age-seconds <SECONDS>` | connection age cap (0 inherits the default) |  |
+| `--enabled[=true|false]` | create enabled or disabled | one of `true` · `false` |
+
+### realtime update
+
+Update endpoint callback, auth, or connection policy
+
+`gregale realtime update [--callback-url <URL>] [--callback-auth-token-stdin] [--callback-auth-token <TOKEN>] [--connect-path <PATH>] [--message-path <PATH>] [--disconnect-path <PATH>] [--auth-token-stdin] [--auth-token <TOKEN>] [--auth-mode <MODE>] [--auth-issuer <URL>] [--auth-jwks-url <URL>] [--auth-audience <AUDIENCE>]... [--auth-algorithm <ALG>]... [--auth-claim <KEY=VALUE>]... [--clear-auth-claims] [--allowed-origin <ORIGIN>]... [--clear-allowed-origins] [--max-connections <N>] [--max-message-bytes <N>] [--max-connection-age-seconds <SECONDS>] [--enable] [--disable] [--enabled[=true|false]] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--callback-url <URL>` | new application callback URL |  |
+| `--callback-auth-token-stdin` | read replacement callback bearer token from stdin |  |
+| `--callback-auth-token <TOKEN>` | replacement callback bearer token (prefer --callback-auth-token-stdin) |  |
+| `--connect-path <PATH>` | new callback path for connect events |  |
+| `--message-path <PATH>` | new callback path for message events |  |
+| `--disconnect-path <PATH>` | new callback path for disconnect events |  |
+| `--auth-token-stdin` | read replacement client bearer token from stdin |  |
+| `--auth-token <TOKEN>` | new client static bearer token (prefer --auth-token-stdin) |  |
+| `--auth-mode <MODE>` | new client auth mode | one of `none` · `static_bearer` · `oidc_jwt` |
+| `--auth-issuer <URL>` | new OIDC issuer URL |  |
+| `--auth-jwks-url <URL>` | new OIDC JWKS URL |  |
+| `--auth-audience <AUDIENCE>` | replace OIDC audiences (repeatable) |  |
+| `--auth-algorithm <ALG>` | replace OIDC signing algorithms (repeatable) |  |
+| `--auth-claim <KEY=VALUE>` | set required OIDC claim as KEY=VALUE (repeatable) |  |
+| `--clear-auth-claims` | remove all required OIDC claims |  |
+| `--allowed-origin <ORIGIN>` | replace exact browser origins (repeatable) |  |
+| `--clear-allowed-origins` | remove the browser-origin allowlist |  |
+| `--max-connections <N>` | new per-endpoint connection cap |  |
+| `--max-message-bytes <N>` | new decoded message size cap |  |
+| `--max-connection-age-seconds <SECONDS>` | new connection age cap |  |
+| `--enable` | enable the endpoint |  |
+| `--disable` | disable the endpoint |  |
+| `--enabled[=true|false]` | --enabled or --enabled=false, as on create | one of `true` · `false` |
+
+### realtime delete
+
+Delete a managed realtime endpoint
+
+`gregale realtime delete <app> <endpoint-id> --yes`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--yes` | confirm the deletion | required |
+
+### realtime connections
+
+List live connections for an endpoint
+
+`gregale realtime connections [--channel <CHANNEL>] [--principal <PRINCIPAL>] [--limit <N>] [--cursor <TOKEN>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--channel <CHANNEL>` | only connections subscribed to this channel |  |
+| `--principal <PRINCIPAL>` | only connections for this authenticated principal |  |
+| `--limit <N>` | maximum connections to return (1-1000) |  |
+| `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
+
+### realtime send
+
+Send a message to one live connection
+
+`gregale realtime send [--data <DATA>] [--data-stdin] [--binary] [--principal <PRINCIPAL>] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
+| `--principal <PRINCIPAL>` | send to every connection of one principal (with it, 11 more flags: see gregale realtime send --principal &lt;PRINCIPAL&gt; --help) |  |
+
+### realtime receipt
+
+Show client acknowledgements for one sent message
+
+`gregale realtime receipt <app> <endpoint-id> <message-id>`
+
+### realtime close
+
+Close one live connection
+
+`gregale realtime close [--reason <TEXT>] <app> <endpoint-id> <connection-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--reason <TEXT>` | close reason |  |
+
+### realtime subscribe
+
+Subscribe one live connection to a channel
+
+`gregale realtime subscribe <app> <endpoint-id> <connection-id> <channel>`
+
+### realtime unsubscribe
+
+Remove one live connection from a channel
+
+`gregale realtime unsubscribe <app> <endpoint-id> <connection-id> <channel>`
+
+### realtime publish
+
+Publish a message to a channel
+
+`gregale realtime publish [--data <DATA>] [--data-stdin] [--binary] [--delivery <MODE>] [--idempotency-key <KEY>] <app> <endpoint-id> <channel>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--data <DATA>` | message text (or --data-stdin) |  |
+| `--data-stdin` | read the message from stdin |  |
+| `--binary` | send as a binary frame |  |
+| `--delivery <MODE>` | live (the default) | one of `live` |
+| `--idempotency-key <KEY>` | stable retry key |  |
+
+### realtime auth
+
+Rotate, finalize, or inspect static bearer auth
+
+#### realtime auth rotate
+
+Stage a new bearer token; the old one stays valid for the grace period
+
+`gregale realtime auth rotate [--token-stdin] [--token <TOKEN>] [--grace-period <SECONDS>] <app> <endpoint-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--token-stdin` | read the new token from stdin |  |
+| `--token <TOKEN>` | new token (prefer --token-stdin) |  |
+| `--grace-period <SECONDS>` | seconds the previous token stays valid |  |
+
+#### realtime auth finalize
+
+Retire the previous bearer token now
+
+`gregale realtime auth finalize <app> <endpoint-id>`
+
+#### realtime auth status
+
+Show bearer token rotation state
+
+`gregale realtime auth status <app> <endpoint-id>`
 
 
 ## cron

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Job hook of the unit-release build runner (ACTIONS_RUNNER_HOOK_JOB_STARTED
+# and _COMPLETED; docs/adr/20261122170000-continuous-unit-lane.md). A
+# cancelled build leaves its go test, go build and compiler processes running
+# on this persistent runner (2026-11-22: a 6 GB apidserver compile outlived
+# its job and held the control plane's memory under pressure), and merges
+# cancel builds every few minutes. Before and after every job, kill this
+# account's Go tool processes; the runner's own processes do not match.
+# Managed by Ansible (roles/github_actions_runner).
+pkill -KILL -u "$(id -u)" -f '/pkg/tool/[a-z0-9_]+/|(^|/)go (test|build|vet|list|run|tool)( |$)|/go-build[0-9]+/' || true
+exit 0

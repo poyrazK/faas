@@ -168,6 +168,22 @@ class WatchTest(unittest.TestCase):
         self.assertIn(f"on known-good {G[:12]}", out.report)
         self.assertIn("restarted apid, gatewayd-public", out.report)
 
+    def test_breach_names_the_host_configuration_to_converge_back_to(self):
+        def with_config():
+            r = record()
+            r["host_config"] = {"known_good": "7" * 40, "current": "8" * 40, "first_activation": 1,
+                                "last_activation": 2, "gate": [["--unit", "host-config", "--component", "host-config"]]}
+            return r
+        shell = FakeShell([with_config(), with_config()], FakeProc(1, lines=["::error::slo-gate: X true for 600s"]))
+        out = self.watch(shell).run()
+        self.assertEqual(out.host_config_rollback_to, "7" * 40)
+        self.assertIn("roles converge back to `777777777777`", out.report)
+        self.assertIn("host configuration: known-good `777777777777`", out.report)
+
+    def test_breach_without_host_configuration_converges_nothing(self):
+        shell = FakeShell([record(), record()], FakeProc(1, lines=["::error::slo-gate: X true for 600s"]))
+        self.assertEqual(self.watch(shell).run().host_config_rollback_to, "")
+
     def test_a_failed_post_merge_light_run_is_a_breach(self):
         proc = FakeProc(0, polls=100)
         gh = FakeGitHub(light={"2" * 40: [{"status": "completed", "conclusion": "failure", "html_url": "https://l/1"}]})
