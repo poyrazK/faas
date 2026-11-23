@@ -84,7 +84,11 @@ func TestRoundTripGuestH1NeverReplaysARequestBody(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	_ = resp.Body.Close()
-	if _, err = send(); err == nil {
+	resp2, err := send()
+	if resp2 != nil {
+		_ = resp2.Body.Close()
+	}
+	if err == nil {
 		t.Fatalf("a POST with a consumed body was replayed (served %d)", served.Load())
 	}
 	if got := served.Load(); got != 1 {
