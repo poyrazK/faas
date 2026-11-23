@@ -46005,6 +46005,10 @@ components:
           type: string
           enum: [internal]
           description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:`. Omitted means public."
+        access:
+          type: string
+          enum: [public, key]
+          description: "Declared access to the service's public URL (`x-gregale-access` in Compose or `project.services.<name>.access` in gregale.yaml, ADR-20261124090000): `public` needs no Gregale API key, `key` needs one. Every production deploy applies it. Omitted when the source declares none."
         root_dir:
           type: string
           example: ""
