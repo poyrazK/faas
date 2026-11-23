@@ -450,17 +450,68 @@ func (s *server) deleteEnvironmentBranchDatabase(ctx context.Context, row state.
 			return nil // the restore never started
 		}
 	}
-	bindings, err := s.managedPostgresBindings.List(ctx, row.AccountID, copyID)
+	if err := s.deleteEnvironmentBranchCopyBindings(ctx, row.AccountID, copyID); err != nil {
+		return err
+	}
+	if _, err := s.managedPostgres.Delete(ctx, row.AccountID, copyID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// deleteEnvironmentBranchCopyBindings deletes every binding of a branch's
+// database copy, and with each its credential in the branch's scope.
+func (s *server) deleteEnvironmentBranchCopyBindings(ctx context.Context, accountID, copyID string) error {
+	bindings, err := s.managedPostgresBindings.List(ctx, accountID, copyID)
 	if err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
 		return err
 	}
 	for _, binding := range bindings {
-		if _, err := s.managedPostgresBindings.Delete(ctx, row.AccountID, binding.ID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+		if _, err := s.managedPostgresBindings.Delete(ctx, accountID, binding.ID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
 			return err
 		}
 	}
-	if _, err := s.managedPostgres.Delete(ctx, row.AccountID, copyID); err != nil && !errors.Is(err, managedpostgres.ErrNotFound) {
+	return nil
+}
+
+// releaseEnvironmentBranchCredentials removes the credentials a branch's
+// database copies and buckets hold in its scope, leaving the copies and
+// buckets to the reconciler. A reset runs it before deleting the branch:
+// the branch is made again under the same slug, and a scope still holding
+// the old branch's credentials refuses the new one.
+func (s *server) releaseEnvironmentBranchCredentials(ctx context.Context, branch state.ProjectEnvironmentBranch) error {
+	if store, ok := s.store.(state.ProjectEnvironmentBranchDataStore); ok {
+		copies, err := store.ListProjectEnvironmentBranchDatabases(ctx, branch.EnvironmentID)
+		if err != nil {
+			return err
+		}
+		for _, row := range copies {
+			if row.CopyDatabaseID == "" {
+				continue // bindings are made only once the copy is recorded
+			}
+			if s.managedPostgresBindings == nil {
+				return managedpostgres.ErrUnavailable
+			}
+			if err := s.deleteEnvironmentBranchCopyBindings(ctx, row.AccountID, row.CopyDatabaseID); err != nil {
+				return fmt.Errorf("release database copy %s: %w", row.CopyName, err)
+			}
+		}
+	}
+	buckets, ok := s.store.(state.ProjectEnvironmentBranchBucketStore)
+	if !ok {
+		return nil
+	}
+	rows, err := buckets.ListProjectEnvironmentBranchBuckets(ctx, branch.EnvironmentID)
+	if err != nil {
 		return err
+	}
+	for _, row := range rows {
+		if row.CopyBucketID == "" {
+			continue
+		}
+		if err := s.revokeEnvironmentBranchBucketCredentials(ctx, row.AccountID, row.CopyBucketID); err != nil {
+			return fmt.Errorf("release branch bucket for source %s: %w", row.SourceBucketID, err)
+		}
 	}
 	return nil
 }

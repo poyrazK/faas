@@ -106,7 +106,7 @@ changing credentials to another Gregale account will fail ownership checks.
 ## Customer API
 
 Send the customer's key as `Authorization: Bearer <customer-key>` to
-`https://<slug>.gregale.dev`:
+`https://<slug>.gregale.app`:
 
 | Method | Path | Body / result |
 | --- | --- | --- |

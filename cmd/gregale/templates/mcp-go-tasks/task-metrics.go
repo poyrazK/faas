@@ -124,6 +124,9 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 		metricsContext, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		metrics, err := runtime.queueMetrics(metricsContext)
+		if err != nil {
+			err = &mcpTaskPublishError{step: "queue_metrics"}
+		}
 		if err == nil {
 			err = publishMCPTaskGauges(metricsContext, client, settings, metrics)
 		}
@@ -138,10 +141,7 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 			if observer {
 				event = "mcp_task_observer_health_check_failed"
 			}
-			body, _ := json.Marshal(struct {
-				Event string `json:"event"`
-			}{Event: event})
-			log.Print(string(body))
+			log.Print(mcpTaskPublishFailureLog(event, err))
 		}
 	}
 
@@ -156,6 +156,35 @@ func (publisher *mcpTaskMetricsPublisher) run(ctx context.Context, runtime *mcpT
 			publish()
 		}
 	}
+}
+
+// mcpTaskPublishError names the publish step that failed and, for an HTTP
+// refusal, its status. It carries nothing else: transport and database errors
+// can quote URLs or connection strings, so they are never logged.
+type mcpTaskPublishError struct {
+	step   string
+	status int
+}
+
+func (e *mcpTaskPublishError) Error() string {
+	if e.status != 0 {
+		return fmt.Sprintf("MCP task metrics %s failed with HTTP %d", e.step, e.status)
+	}
+	return fmt.Sprintf("MCP task metrics %s failed", e.step)
+}
+
+func mcpTaskPublishFailureLog(event string, err error) string {
+	entry := struct {
+		Event  string `json:"event"`
+		Step   string `json:"step"`
+		Status int    `json:"status,omitempty"`
+	}{Event: event, Step: "queue_metrics"}
+	var publishErr *mcpTaskPublishError
+	if errors.As(err, &publishErr) {
+		entry.Step, entry.Status = publishErr.step, publishErr.status
+	}
+	body, _ := json.Marshal(entry)
+	return string(body)
 }
 
 func publishMCPTaskGauges(ctx context.Context, client *http.Client, settings mcpTaskMetricsSettings, metrics mcpTaskQueueMetrics) error {
@@ -182,24 +211,31 @@ func publishMCPTaskGauges(ctx context.Context, client *http.Client, settings mcp
 }
 
 func pushMCPTaskMetric(ctx context.Context, client *http.Client, settings mcpTaskMetricsSettings, name string, value any) error {
+	step := "metric:" + name
 	body, err := json.Marshal(map[string]any{"value": value})
 	if err != nil {
-		return err
+		return &mcpTaskPublishError{step: step}
 	}
 	endpoint := fmt.Sprintf("%s/v1/apps/%s/custom-metrics/%s", settings.apiURL, url.PathEscape(settings.appSlug), name)
+	return putMCPTaskMetricsJSON(ctx, client, settings, endpoint, body, step)
+}
+
+// putMCPTaskMetricsJSON PUTs body and wants 204; a failure names only step and,
+// for an HTTP refusal, the status.
+func putMCPTaskMetricsJSON(ctx context.Context, client *http.Client, settings mcpTaskMetricsSettings, endpoint string, body []byte, step string) error {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return &mcpTaskPublishError{step: step}
 	}
 	request.Header.Set("Authorization", "Bearer "+settings.token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.Do(request)
 	if err != nil {
-		return err
+		return &mcpTaskPublishError{step: step}
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("gregale custom metric push failed with HTTP %d", response.StatusCode)
+		return &mcpTaskPublishError{step: step, status: response.StatusCode}
 	}
 	return nil
 }
@@ -210,24 +246,10 @@ func pushMCPTaskCompatibilityReport(ctx context.Context, client *http.Client, se
 		Truncated bool                          `json:"truncated"`
 	}{Handlers: handlers, Truncated: truncated})
 	if err != nil {
-		return err
+		return &mcpTaskPublishError{step: "compatibility_report"}
 	}
 	endpoint := fmt.Sprintf("%s/v1/apps/%s/mcp-task-compatibility", settings.apiURL, url.PathEscape(settings.appSlug))
-	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+settings.token)
-	request.Header.Set("Content-Type", "application/json")
-	response, err := client.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("gregale MCP task compatibility report failed with HTTP %d", response.StatusCode)
-	}
-	return nil
+	return putMCPTaskMetricsJSON(ctx, client, settings, endpoint, body, "compatibility_report")
 }
 
 func (runtime *mcpTaskRuntime) queueMetrics(ctx context.Context) (mcpTaskQueueMetrics, error) {
