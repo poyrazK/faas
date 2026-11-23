@@ -43,7 +43,6 @@ import type { DeployTokenResponse } from '../models/DeployTokenResponse.js';
 import type { EdgeProtectionResponse } from '../models/EdgeProtectionResponse.js';
 import type { GuardedDebugRegressionActionRequest } from '../models/GuardedDebugRegressionActionRequest.js';
 import type { ListDeployTokensResponse } from '../models/ListDeployTokensResponse.js';
-import type { MCPToolInsightsResponse } from '../models/MCPToolInsightsResponse.js';
 import type { PreAuthObservationsResponse } from '../models/PreAuthObservationsResponse.js';
 import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
@@ -1683,49 +1682,6 @@ export class AppsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
-        `,
-      },
-    });
-  }
-  /**
-   * Per-tool MCP calls, failures, argument mismatches and estimated compute.
-   * Reads the last hour of the app's per-tool MCP telemetry. Execution
-   * seconds are converted to GB-seconds at the app's plan RAM + 8 MB, and
-   * estimated_millicents is an upper bound at the overage rate: usage
-   * inside the plan's included GB-hours costs nothing extra. telemetry is
-   * not_observed (with no tools) when the app reported nothing in the
-   * window. Available only where MCP tool insights are enabled for the
-   * account.
-   *
-   * @returns MCPToolInsightsResponse Per-tool MCP insights for the last hour.
-   * @throws ApiError
-   */
-  public static getMcpToolInsights({
-    slug,
-  }: {
-    /**
-     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
-     */
-    slug: string,
-  }): CancelablePromise<MCPToolInsightsResponse> {
-    return __request(this?.clientConfig ?? OpenAPI, {
-      method: 'GET',
-      url: '/v1/apps/{slug}/mcp-tool-insights',
-      path: {
-        'slug': slug,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-        503: `Generic 503 envelope. Used by the API capacity gate (e.g.
-        host age recipient not loaded → registry credential PUT
-        returns 503 instead of accepting plaintext).
         `,
       },
     });
