@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -170,6 +171,15 @@ func TestBuildRunnerIsIsolatedFromTheDeploymentRunner(t *testing.T) {
 		if !strings.Contains(string(unit), want) {
 			t.Errorf("runner unit template is missing %q", want)
 		}
+	}
+	// The runner runs a hook only by its extension; without one every job
+	// failed at "Set up runner" (2026-11-22).
+	defaults, err := os.ReadFile(filepath.Join(role, "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^faas_runner_job_cleanup_hook: \S+\.sh$`).Match(defaults) {
+		t.Error("faas_runner_job_cleanup_hook must end in .sh: the runner refuses any other hook path")
 	}
 	hook, err := os.ReadFile(filepath.Join(role, "templates", "faas-build-runner-job-cleanup.sh.j2"))
 	if err != nil {
