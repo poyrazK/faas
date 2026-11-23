@@ -154,6 +154,16 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				continue
 			}
 		}
+		if _, blocked := api.BlockedAppName(slug); blocked {
+			// app_name_blocklist binds only new names: a project member
+			// that already has the name keeps deploying under it.
+			if app, exists := bySlug[slug]; !exists || projectID == "" || app.ProjectID != projectID || !member(app, workload) {
+				reasons = append(reasons, fmt.Sprintf(
+					"workload %q uses app name %q, which is not available; set another name for it",
+					workload.Name, slug))
+				continue
+			}
+		}
 		if !api.ValidAppSlug(slug) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",

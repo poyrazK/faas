@@ -1845,6 +1845,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-1700: report what this apid applies so the console shows
 	// convergence per consumer, not only the database acknowledgement.
 	srv.runtimeConfig.enableReceipts("apid")
+	// app_name_blocklist binds new names on allocation paths outside this
+	// package too (project workload admission); they read it live.
+	api.SetAppNameBlocklistSource(srv.runtimeConfig.appNameBlocklist)
 	// The managed PostgreSQL operator policy is hot runtime configuration;
 	// bind it before the durable reconcile so the stored policy, not the
 	// file's, serves the first request.

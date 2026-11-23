@@ -397,6 +397,9 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
 	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.Slug); problem != nil {
+		return state.App{}, problem
+	}
 	if !validSlug(req.Slug) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug", "slug must be 3–40 chars, lowercase letters, digits, and hyphens")
