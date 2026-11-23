@@ -1503,6 +1503,10 @@ func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq 
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusConflict {
 		return err
 	}
+	if ae.Problem.Code == api.CodeAppNameUnavailable {
+		// app_name_blocklist: nobody holds the name; it is not offered.
+		return &slugTakenError{slug: req.Slug, unavailable: true}
+	}
 	existing, err = client.GetApp(ctx, req.Slug)
 	if err != nil {
 		return slugInUseError(ctx, client, req.Slug)
@@ -1529,9 +1533,17 @@ func slugInUseError(ctx context.Context, client *Client, slug string) error {
 // slugTakenError is a 409 on create for a slug the caller does not hold:
 // another owner has it. A deploy may then take an alternative name
 // (createOrFetchAppWithAlternatives).
-type slugTakenError struct{ slug string }
+type slugTakenError struct {
+	slug string
+	// unavailable: the platform does not offer the name (app_name_blocklist)
+	// rather than another owner holding it.
+	unavailable bool
+}
 
 func (e *slugTakenError) Error() string {
+	if e.unavailable {
+		return fmt.Sprintf("app name %q is not available; pick a different --name", e.slug)
+	}
 	return fmt.Sprintf("slug %q is already in use; pick a different --name", e.slug)
 }
 
@@ -3506,11 +3518,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 		requestedSlug := slug
 		var createErr error
-		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		var nameUnavailable bool
+		slug, nameUnavailable, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
 		if createErr != nil {
 			return printErr("Could not create or fetch app", createErr)
 		}
-		printSlugAlternativeNotice(requestedSlug, slug)
+		printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -4420,12 +4433,13 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				}
 			}
 			requestedSlug := slug
-			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			var nameUnavailable bool
+			slug, nameUnavailable, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 			if errors.Is(err, errDeployToAlternativeDeclined) {
 				return 1
 			}
 			if err == nil {
-				printSlugAlternativeNotice(requestedSlug, slug)
+				printSlugAlternativeNotice(requestedSlug, slug, nameUnavailable)
 			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)

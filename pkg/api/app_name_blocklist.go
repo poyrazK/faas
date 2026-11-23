@@ -6,8 +6,12 @@ import (
 	"net/url"
 	"path"
 	"strings"
-	"sync/atomic"
 )
+
+// CodeAppNameUnavailable (409): app_name_blocklist refuses the requested app
+// name as a new name. Clients treat it like a taken name: a deploy takes a
+// suffixed alternative, everything else asks for another name.
+const CodeAppNameUnavailable = "app_name_unavailable"
 
 // App name blocklist bounds.
 const (
@@ -73,31 +77,6 @@ func MatchAppNameBlocklist(slug string, blocklist []string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-// appNameBlocklistSource supplies the live blocklist; apid points it at its
-// runtime config (SetAppNameBlocklistSource). Unset means no blocklist.
-var appNameBlocklistSource atomic.Pointer[func() []string]
-
-// SetAppNameBlocklistSource sets where BlockedAppName reads the blocklist.
-func SetAppNameBlocklistSource(source func() []string) {
-	if source == nil {
-		appNameBlocklistSource.Store(nil)
-		return
-	}
-	appNameBlocklistSource.Store(&source)
-}
-
-// BlockedAppName reports whether the live blocklist refuses slug as a new
-// app name, and the entry that matched. Like the reserved names it binds only
-// allocation (create, rename, a new project workload): an app that already
-// has the name keeps it.
-func BlockedAppName(slug string) (string, bool) {
-	source := appNameBlocklistSource.Load()
-	if source == nil {
-		return "", false
-	}
-	return MatchAppNameBlocklist(slug, (*source)())
 }
 
 // GetAppNameReport lists existing apps the live app_name_blocklist matches,

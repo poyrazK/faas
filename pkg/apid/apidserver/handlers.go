@@ -301,6 +301,9 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	limits := api.MustLimitsFor(acct.Plan)
 	app, prob := s.buildApp(acct, req, limits)
+	if prob == nil {
+		prob = s.blockedAppNameProblem(acct.ID, app.Slug)
+	}
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -396,9 +399,6 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 	if api.IsReservedAppSlug(req.Slug) {
 		return state.App{}, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.Slug))
-	}
-	if problem := s.blockedAppNameProblem(acct.ID, req.Slug); problem != nil {
-		return state.App{}, problem
 	}
 	if !validSlug(req.Slug) {
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,

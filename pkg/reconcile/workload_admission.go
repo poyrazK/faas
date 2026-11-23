@@ -154,16 +154,6 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 				continue
 			}
 		}
-		if _, blocked := api.BlockedAppName(slug); blocked {
-			// app_name_blocklist binds only new names: a project member
-			// that already has the name keeps deploying under it.
-			if app, exists := bySlug[slug]; !exists || projectID == "" || app.ProjectID != projectID || !member(app, workload) {
-				reasons = append(reasons, fmt.Sprintf(
-					"workload %q uses app name %q, which is not available; set another name for it",
-					workload.Name, slug))
-				continue
-			}
-		}
 		if !api.ValidAppSlug(slug) {
 			reasons = append(reasons, fmt.Sprintf(
 				"workload %q has invalid app slug %q; use 3-40 lowercase letters, digits, or hyphens",
@@ -220,6 +210,47 @@ func validateWorkloadAdmissionWithManaged(workloads []reposcan.Workload, managed
 		return nil
 	}
 	return fmt.Errorf("%w: %s", ErrInvalidWorkloadPlan, strings.Join(reasons, "; "))
+}
+
+// BlockedAppNameReasons refuses workloads whose app name blocklist (the
+// app_name_blocklist runtime setting, api.ParseAppNameBlocklist) matches. The
+// list binds only new names: a project member that already has the name, or a
+// standalone function app of the account the import adopts, keeps it.
+func BlockedAppNameReasons(workloads []reposcan.Workload, accountApps []state.App, projectID string, blocklist []string) []string {
+	if len(blocklist) == 0 || len(workloads) == 0 {
+		return nil
+	}
+	bySlug := make(map[string]state.App, len(accountApps))
+	var projectApps []state.App
+	for _, app := range accountApps {
+		bySlug[app.Slug] = app
+		if projectID != "" && app.ProjectID == projectID {
+			projectApps = append(projectApps, app)
+		}
+	}
+	renamed := RenamedWorkloads(workloads, projectApps)
+	var reasons []string
+	for _, workload := range PreserveAppSlugs(workloads, accountApps, projectID) {
+		slug := AppSlug(workload)
+		// An invalid slug already has its own reason.
+		if !api.ValidAppSlug(slug) {
+			continue
+		}
+		if _, blocked := api.MatchAppNameBlocklist(slug, blocklist); !blocked {
+			continue
+		}
+		if app, exists := bySlug[slug]; exists {
+			member := app.WorkloadName == workload.Name || renamed[app.WorkloadName] == workload.Name
+			if adoptableFunctionApp(app, workload) ||
+				(projectID != "" && app.ProjectID == projectID && member && app.PreviewOfSlug == "") {
+				continue
+			}
+		}
+		reasons = append(reasons, fmt.Sprintf(
+			"workload %q uses app name %q, which is not available; set another name for it",
+			workload.Name, slug))
+	}
+	return reasons
 }
 
 // adoptableFunctionApp reports whether app is a function app of the

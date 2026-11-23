@@ -3511,10 +3511,6 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 			"Reserved slug", fmt.Sprintf("app slug %q is reserved for a Gregale service", req.NewSlug)))
 		return
 	}
-	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
-		api.WriteProblem(w, problem)
-		return
-	}
 	if !validSlug(req.NewSlug) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid slug",
@@ -3526,6 +3522,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// current app shape so retries don't 4xx.
 		resp := s.appResponseWithContext(r.Context(), app, acct.Plan)
 		writeJSON(w, http.StatusOK, s.withParkedDeploymentRef(r.Context(), resp, app))
+		return
+	}
+	if problem := s.blockedAppNameProblem(acct.ID, req.NewSlug); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	// Route rules name their target by slug, and host rules may name the

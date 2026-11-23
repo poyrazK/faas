@@ -41,19 +41,3 @@ func TestMatchAppNameBlocklist(t *testing.T) {
 		}
 	}
 }
-
-func TestBlockedAppNameFollowsSource(t *testing.T) {
-	t.Cleanup(func() { SetAppNameBlocklistSource(nil) })
-	if _, ok := BlockedAppName("paypal"); ok {
-		t.Fatal("blocked with no source")
-	}
-	list := []string{"paypal"}
-	SetAppNameBlocklistSource(func() []string { return list })
-	if entry, ok := BlockedAppName("paypal"); !ok || entry != "paypal" {
-		t.Fatalf("got %q, %v", entry, ok)
-	}
-	list = nil
-	if _, ok := BlockedAppName("paypal"); ok {
-		t.Fatal("still blocked after the list emptied")
-	}
-}

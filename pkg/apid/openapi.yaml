@@ -60814,6 +60814,9 @@ paths:
         setting matches, for review. Nothing is changed: existing apps keep
         their names. With `blocklist` the report uses that list instead of the
         live one, so an operator can see a list's effect before setting it.
+        Deleted apps that can still be restored are listed too (status
+        `deleted`): a restore brings their name back. When more than 5000 apps
+        match, the first 5000 by name are listed and `truncated` is true.
       parameters:
         - { name: blocklist, in: query, required: false, schema: { type: string }, description: "Entries separated by commas, spaces or newlines: exact names or patterns where * matches any characters." }
       responses:

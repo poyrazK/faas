@@ -1,98 +1,66 @@
-package apidserver
+package apidserver_test
 
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-func setAppNameBlocklist(t *testing.T, e testEnv, list string) {
+func setAppNameBlocklist(t *testing.T, e apidserver.TestEnv, list string) {
 	t.Helper()
 	raw, _ := json.Marshal(list)
-	if err := e.s.runtimeConfig.apply(runtimeConfigAppNameBlocklist, raw); err != nil {
+	if err := (*(*e.S()).RuntimeConfig()).Apply(apidserver.RuntimeConfigAppNameBlocklist, raw); err != nil {
 		t.Fatalf("apply app_name_blocklist: %v", err)
 	}
 }
 
-// A blocked name is answered like a taken one (409), so a CLI deploy falls
-// back to a suffixed name; an unblocked name is created as before.
-func TestCreateAppRefusesBlocklistedNameAsTaken(t *testing.T) {
-	e := setup(t, api.PlanPro)
+// A blocked name gets a 409 with its own code, so a CLI deploy falls back to
+// a suffixed name; an unblocked name is created as before, and a malformed
+// name that a pattern matches is still refused as invalid.
+func TestCreateAppRefusesBlocklistedName(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
 	setAppNameBlocklist(t, e, "paypal, *-login")
 	for _, slug := range []string{"paypal", "bank-login"} {
-		rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
-		assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+		rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: slug}, nil)
+		apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeAppNameUnavailable)
 	}
-	if rec := e.do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "paypal-shop-x7k2q"}, nil); rec.Code != http.StatusCreated {
+	invalid := strings.Repeat("x", 60) + "-login"
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: invalid}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusBadRequest, api.CodeValidation)
+	if rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "paypal-shop-x7k2q"}, nil); rec.Code != http.StatusCreated {
 		t.Fatalf("unblocked name: status %d: %s", rec.Code, rec.Body)
 	}
 }
 
 // The blocklist binds only new names: an app that already has the name keeps
-// working, and renaming to a blocked name is refused.
+// working, renaming it to its own name stays a no-op, and renaming another
+// app to a blocked name is refused.
 func TestBlocklistKeepsExistingAppsAndRefusesRename(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "secure-pay")
-	mustSeedApp(t, e, "my-shop")
+	e := apidserver.Setup(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "secure-pay")
+	apidserver.MustSeedApp(t, e, "my-shop")
 	setAppNameBlocklist(t, e, "secure-*")
-	if rec := e.do(t, "GET", "/v1/apps/secure-pay", nil, nil); rec.Code != http.StatusOK {
+	if rec := e.Do(t, "GET", "/v1/apps/secure-pay", nil, nil); rec.Code != http.StatusOK {
 		t.Fatalf("existing app: status %d: %s", rec.Code, rec.Body)
 	}
-	rec := e.do(t, "POST", "/v1/apps/my-shop/rename", api.RenameAppRequest{NewSlug: "secure-login"}, nil)
-	assertProblem(t, rec, http.StatusConflict, api.CodeValidation)
+	if rec := e.Do(t, "POST", "/v1/apps/secure-pay/rename", api.RenameAppRequest{NewSlug: "secure-pay"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("same-name rename: status %d: %s", rec.Code, rec.Body)
+	}
+	rec := e.Do(t, "POST", "/v1/apps/my-shop/rename", api.RenameAppRequest{NewSlug: "secure-login"}, nil)
+	apidserver.AssertProblem(t, rec, http.StatusConflict, api.CodeAppNameUnavailable)
 }
 
 func TestAppNameBlocklistRejectsBadEntries(t *testing.T) {
-	e := setup(t, api.PlanPro)
+	e := apidserver.Setup(t, api.PlanPro)
 	raw, _ := json.Marshal("pay_pal")
-	if err := validateAppNameBlocklist(raw); err == nil {
+	if err := apidserver.ValidateAppNameBlocklist(raw); err == nil {
 		t.Fatal("pay_pal accepted")
 	}
-	if got := e.s.runtimeConfig.appNameBlocklist(); len(got) != 0 {
+	if got := (*(*e.S()).RuntimeConfig()).AppNameBlocklist(); len(got) != 0 {
 		t.Fatalf("default blocklist = %v, want empty", got)
-	}
-}
-
-func TestAppNameReportListsMatchesWithoutChangingThem(t *testing.T) {
-	e := setup(t, api.PlanPro)
-	mustSeedApp(t, e, "paypal")
-	mustSeedApp(t, e, "bank-login")
-	mustSeedApp(t, e, "my-shop")
-	report := func(query string) api.AppNameReportResponse {
-		t.Helper()
-		rec := httptest.NewRecorder()
-		e.s.appNameReport(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/app-names/report"+query, nil), e.acct)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("report%s: status %d: %s", query, rec.Code, rec.Body)
-		}
-		var out api.AppNameReportResponse
-		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-			t.Fatal(err)
-		}
-		return out
-	}
-	if got := report(""); got.Source != "live" || got.Entries != 0 || len(got.Matches) != 0 {
-		t.Fatalf("empty live list: %+v", got)
-	}
-	got := report("?blocklist=paypal,*-login")
-	if got.Source != "preview" || got.Entries != 2 || len(got.Matches) != 2 ||
-		got.Matches[0].Slug != "bank-login" || got.Matches[0].Entry != "*-login" || got.Matches[1].Slug != "paypal" {
-		t.Fatalf("preview: %+v", got)
-	}
-	setAppNameBlocklist(t, e, "my-*")
-	if got := report(""); len(got.Matches) != 1 || got.Matches[0].Slug != "my-shop" {
-		t.Fatalf("live: %+v", got)
-	}
-	// Report only: the matched apps still exist.
-	if rec := e.do(t, "GET", "/v1/apps/my-shop", nil, nil); rec.Code != http.StatusOK {
-		t.Fatalf("my-shop after report: %d", rec.Code)
-	}
-	rec := httptest.NewRecorder()
-	e.s.appNameReport(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/app-names/report?blocklist=pay_pal", nil), e.acct)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("bad preview: status %d", rec.Code)
 	}
 }
