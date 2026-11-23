@@ -31,6 +31,7 @@ from gregale_sandbox_e2b import commands as commands_module
 API = "https://api.gregale.test"
 ID = "0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10"
 MISSING = "11111111-0000-0000-0000-000000000000"
+FORK = "f0f0f0f0-0000-4000-8000-000000000001"
 
 
 class FakeResponse:
@@ -56,6 +57,9 @@ def js(status: int, body: Any) -> FakeResponse:
 class FakeGregale:
     def __init__(self) -> None:
         self.state = "queued"
+        self.kind = "ephemeral"
+        self.controls: List[str] = []
+        self.fork_req: Optional[Dict[str, Any]] = None
         self.created: Optional[Dict[str, Any]] = None
         self.patched: Optional[Dict[str, Any]] = None
         self.deleted = 0
@@ -71,6 +75,7 @@ class FakeGregale:
         v: Dict[str, Any] = {
             "id": ID,
             "state": self.state,
+            "kind": self.kind,
             "preset": "codex",
             "ram_mb": 2048,
             "network": {"mode": "registries"},
@@ -79,7 +84,7 @@ class FakeGregale:
             "created_at": "2026-11-05T00:00:00Z",
             "labels": {"team": "evals"},
         }
-        if self.state != "closed":
+        if self.state in ("queued", "ready", "frozen"):
             v["token"] = "sbx-1"
             v["token_expires_at"] = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat().replace("+00:00", "Z")
         return v
@@ -95,14 +100,29 @@ class FakeGregale:
         if auth == "Bearer key-1":
             if method == "POST" and path == "/v1/sandboxes":
                 self.created = json.loads(text)
+                if self.created.get("kind"):
+                    self.kind = self.created["kind"]
                 return js(201, self.view())
+            if method == "GET" and path == f"/v1/sandboxes/{FORK}":
+                self.state = "ready" if self.state == "queued" else self.state
+                return js(200, {**self.view(), "id": FORK, "state": "ready", "kind": "ephemeral", "forked_from": ID, "token": "sbx-1"})
+            if method == "POST" and path in (f"{base}/pause", f"{base}/resume", f"{base}/fork"):
+                op = path[len(base):]
+                self.controls.append(op)
+                if op == "/fork":
+                    self.fork_req = json.loads(text)
+                    return js(201, {"forks": [{**self.view(), "id": FORK, "state": "queued", "kind": "ephemeral"}]})
+                self.state = "pausing" if op == "/pause" else "resuming"
+                return js(202, self.view())
             if method == "GET" and path == "/v1/sandboxes":
                 return js(200, {"items": [self.view()], "next_before": ""})
             if path == f"/v1/sandboxes/{MISSING}":
                 return js(404, {"code": "sandbox_not_found", "status": 404})
             if method == "GET" and path == base:
-                if self.state == "queued":
+                if self.state in ("queued", "resuming"):
                     self.state = "ready"
+                elif self.state == "pausing":
+                    self.state = "paused"
                 return js(200, self.view())
             if method == "PATCH" and path == base:
                 self.patched = json.loads(text)
@@ -345,6 +365,24 @@ class ShimTest(unittest.TestCase):
 
     # adr: 20261027090013 step 12 — a terminal is a background command on a
     # pty, driven through its input; background commands take stdin.
+    def test_a_persistent_session_pauses_resumes_on_connect_and_forks(self) -> None:
+        sbx = Sandbox.create(kind="persistent", volume_gb=10, vcpu=2, **self.opts)
+        assert self.fake.created is not None
+        self.assertEqual((self.fake.created["kind"], self.fake.created["volume_gb"], self.fake.created["vcpu"]), ("persistent", 10, 2))
+        self.assertTrue(sbx.beta_pause())
+        self.assertEqual(self.fake.state, "paused")
+        self.assertEqual(sbx.get_info().state, SandboxState.PAUSED)
+        self.assertFalse(sbx.is_running())
+        self.assertFalse(Sandbox.pause(ID, **self.opts), "already paused")
+        items = Sandbox.list(query=SandboxQuery(state=[SandboxState.PAUSED]), **self.opts).next_items()
+        self.assertEqual([(i.sandbox_id, i.state) for i in items], [(ID, SandboxState.PAUSED)])
+        back = Sandbox.connect(ID, **self.opts)
+        self.assertEqual(self.fake.controls, ["/pause", "/resume"])
+        self.assertTrue(back.is_running())
+        forks = back.fork(1, metadata={"run": "a"})
+        self.assertEqual(self.fake.fork_req, {"count": 1, "labels": {"run": "a"}})
+        self.assertEqual([f.sandbox_id for f in forks], [FORK])
+
     def test_a_terminal_is_driven_through_its_input(self) -> None:
         sbx = Sandbox.create(**self.opts)
         term = sbx.pty.create(PtySize(rows=24, cols=80))

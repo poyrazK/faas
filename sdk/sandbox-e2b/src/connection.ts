@@ -7,7 +7,9 @@ import { SandboxNotFoundError, TimeoutError } from './errors.js';
 /** A session as the API shows it. */
 export type SandboxView = {
   id: string;
-  state: 'queued' | 'starting' | 'ready' | 'frozen' | 'closed' | 'expired' | 'failed';
+  state: 'queued' | 'starting' | 'ready' | 'frozen' | 'pausing' | 'paused' | 'resuming' | 'closed' | 'expired' | 'failed';
+  /** ephemeral or persistent (ADR-20261122132055). */
+  kind?: 'ephemeral' | 'persistent';
   preset: string;
   /** The sandbox template the session boots, if any. */
   template?: string;
@@ -21,9 +23,19 @@ export type SandboxView = {
   created_at: string;
   token?: string;
   token_expires_at?: string;
+  vcpu?: number;
+  volume_gb?: number;
+  resume_requested_at?: string;
+  paused_at?: string;
+  durability?: 'node' | 'remote';
+  forked_from?: string;
+  stored_bytes?: number;
 };
 
-const LIVE = new Set(['queued', 'starting', 'ready', 'frozen']);
+// A paused persistent session is live: it resumes (ADR-20261122132055).
+const LIVE = new Set(['queued', 'starting', 'ready', 'frozen', 'pausing', 'paused', 'resuming']);
+/** The states of a persistent session that has no running VM. */
+export const PAUSED = new Set(['pausing', 'paused', 'resuming']);
 const PLACED = new Set(['ready', 'frozen']);
 const MARGIN_MS = 60_000;
 
