@@ -15,6 +15,28 @@ const path = pathModule.default || pathModule;
 // response envelopes consumed by faas-runner.
 console.log = console.error;
 console.info = console.error;
+// A customer stack names the customer's frames: the adapter's own frames
+// (invoke, handleOne, inGregaleRequestContext) and node internals followed
+// every handler error (prod hunt r31), as the Python adapter already trims.
+const fsModule = await import("node:fs");
+// An ES module's frames name it by file URL and a CommonJS one's by plain
+// path; either may be the real path behind a symlinked directory.
+const adapterNames = [process.argv[1]];
+try {
+  adapterNames.push(fsModule.realpathSync(process.argv[1]));
+} catch {}
+for (const name of adapterNames.slice()) {
+  adapterNames.push(urlModule.pathToFileURL(name).href);
+}
+function customerStack(err) {
+  if (!(err && err.stack)) return err;
+  const lines = String(err.stack).split("\n");
+  const frame = (line) => line.trimStart().startsWith("at ");
+  const platform = (line) => line.includes("node:internal/") ||
+    adapterNames.some((name) => line.includes("(" + name + ":") || line.includes("at " + name + ":"));
+  const kept = lines.filter((line) => !frame(line) || !platform(line));
+  return kept.some(frame) ? kept.join("\n") : err.stack;
+}
 ` + NodeResources + `
 const postgresResources = installPostgresLifecycle();
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
@@ -45,7 +67,7 @@ if (functionHooks.init) {
   try {
     await functionHooks.init({ signal: new AbortController().signal });
   } catch (err) {
-    console.error("gregale: function init failed: " + (err && err.stack ? err.stack : err));
+    console.error("gregale: function init failed: " + customerStack(err));
     throw err;
   }
 }
@@ -165,7 +187,7 @@ async function runFunctionHook(env, out) {
     try {
       await hook({ signal: out.controller.signal, hook: env.function_hook });
     } catch (err) {
-      console.error("gregale: function " + env.function_hook + " hook failed: " + (err && err.stack ? err.stack : err));
+      console.error("gregale: function " + env.function_hook + " hook failed: " + customerStack(err));
       emitWhole(out, 500, {}, Buffer.from("function hook failed"));
       return;
     }
@@ -308,7 +330,7 @@ async function handleOne(input, out) {
     if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
-    console.error(err && err.stack ? err.stack : err);
+    console.error(customerStack(err));
     // The status is already sent once a stream has started; the error
     // frame tells the runner to abort the response.
     if (out.streaming) {

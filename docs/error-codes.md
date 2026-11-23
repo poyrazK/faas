@@ -386,9 +386,13 @@ Verify the exact deployment receiving traffic, then promote, advance its canary,
 
 The response's `title` and `detail` describe the failure.
 
+See [Troubleshooting](troubleshooting.md).
+
 ### `build_infrastructure_failed`
 
 The response's `title` and `detail` describe the failure.
+
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_not_found`
 
@@ -710,7 +714,7 @@ See [Deploys](deploys.md).
 
 HTTP 503 Service Unavailable
 
-See [Container compatibility](container-compatibility.md).
+See [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
 ### `dev_debug_not_developer_environment`
 
@@ -3066,7 +3070,7 @@ See [Deploys](deploys.md#release-approvals).
 
 HTTP 422 Unprocessable Entity
 
-See [Safe releases](releases.md).
+See [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_freeze_limit`
 
@@ -3120,7 +3124,7 @@ HTTP 409 Conflict · Active graph required; History unavailable; Release graph c
 
 The response's `title` and `detail` describe the failure.
 
-See [Deploys](deploys.md), [Safe releases](releases.md).
+See [Deploys](deploys.md), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_not_parked`
 
@@ -3156,7 +3160,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md).
 
 ### `request_too_large`
 
@@ -3210,7 +3214,7 @@ HTTP 409 Conflict · Rollback crosses release commands
 
 If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.
 
-See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md).
+See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `rollback_deployment_changed`
 

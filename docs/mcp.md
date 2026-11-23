@@ -5613,8 +5613,8 @@ caller credential. It emits JSON with the Task ID, state, last update,
 is limited to those fields.
 
 - `poll_status` means the Task is working. Wait `pollIntervalMs`, then read the same handle.
-- `provide_input` means the Task is waiting for a form response. Use `client wait` with `--interactive` or `--input-responses-file`.
-- `read_result` means the Task completed. Use the default `client status` output to read its result.
+- `provide_input` means the Task is waiting for a form response. Use `client respond` with a reviewed file, or `client wait` with `--interactive` or `--input-responses-file`.
+- `read_result` means the Task completed. Use `client status` with the Task ID or use `--read-result` with a receipt.
 - `none` means the Task failed or was cancelled.
 - `retry_status` means a temporary endpoint failure left the state `unknown`. Exit code 3 accompanies the snapshot. Use the same handle and honor a polling delay when provided.
 
@@ -5694,10 +5694,105 @@ gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKE
   --task-receipt ./weekly-task.json --metadata-only
 ```
 
-The receipt contains the submission key and a fingerprint of the resolved
-endpoint. Use the same endpoint and provide the original caller's credential
-when reading it. Use a new receipt path for each new submission. An existing
-receipt remains available for status lookup after a lost reply or CLI exit.
+The CLI saves the submission key, fingerprints of the resolved endpoint and
+original request, and a proof bound to the original client credential. Use a
+new receipt path for each new submission.
+
+If the initial reply is lost, explicitly retry within one minute using the
+existing receipt, the original caller's credential, and the same endpoint,
+tool, arguments and `--defer-form-input` setting. The CLI checks the request
+fingerprint and credential proof and reuses the receipt's submission key. A
+retry creates the Task if the server never accepted it or returns the original
+handle if it did.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json --retry-submission
+```
+
+Use `client status --metadata-only` to check for a retained Task after the
+retry window expires or the credential changes. Version 1 and 2 receipts
+support retained Task recovery. Submission retry requires a version 3 receipt
+and the exact credential used to create it.
+
+To check several receipts for the same endpoint, repeat `--task-receipt` with
+`client status --metadata-only`.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+With multiple receipts, the command returns a JSON array in argument order.
+Each entry has an `outcome` and, when available, a `task` containing the
+metadata described above. An `available` entry contains the observed status.
+An `invalid_receipt` entry means the file could not be read as a private receipt
+for the selected endpoint. An `unavailable` entry covers expired or inaccessible
+Tasks. A `retry` entry gives `nextAction: retry_status` after a temporary failure
+or when the batch timeout expires. Exit code 0 means every entry is available.
+Exit code 3 means at least one entry needs a retry. Exit code 1 covers other
+unavailable or invalid entries. The array is returned in all three cases once
+the batch starts. A single receipt still returns the Task metadata object.
+
+To recover an inbox after restart, point metadata status at a directory
+containing the application's receipts.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --metadata-only --receipt-dir ./receipts
+```
+
+Directory mode always returns an array sorted by filename, including when
+the directory is empty or has one receipt. Each outcome includes the relative
+filename in `receipt`. The scan covers direct files of any extension and
+skips subdirectories and the CLI's temporary publication files. Entries must
+be private regular files for the selected endpoint. Malformed, mismatched, or
+unreadable entries receive `invalid_receipt`. The current credential and the
+usual batch exit codes apply to the whole scan.
+
+To watch Task status from a receipt, use `client watch` with the same endpoint
+and the caller's current credential.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+The watch writes newline-delimited JSON metadata, starting with the current
+snapshot. It exits when the Task needs input or reaches a terminal state.
+Each update is checked against the receipt, including after a stream
+disconnect. If subscriptions are unavailable, the watch polls the receipt.
+`--interval` controls the reconciliation interval (default 30 seconds).
+Use `nextAction` to decide how to respond or retrieve the result. Press Ctrl+C
+to stop watching and reuse the receipt from another process.
+
+Repeat `--task-receipt` to watch several Tasks on that endpoint.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+Batch watch writes one initial record per receipt in argument order, followed
+by changed records. Each record includes `receiptIndex`, the receipt's
+zero-based position, and the same `outcome` and `task` fields as batch status.
+Paused, terminal, and unsuccessful receipts stop producing updates while the
+remaining working Tasks continue on the shared subscription. The watch
+rechecks working receipts after a disconnect. It uses polling if the stream
+is unavailable or the working set exceeds the 64-ID subscription limit.
+When the working set is empty, it exits with the batch status exit codes.
+
+To read the result from a receipt in one status check, use `--read-result`.
+The CLI resolves the original Task using the caller's current credential and
+fetches its result once if it completed. The completed Task has the same JSON
+format as a status read by Task ID. In other states the CLI returns metadata
+and a `nextAction` immediately.
+
+```sh
+gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --read-result
+```
 
 To wait for the result directly from a receipt, use the same endpoint and
 provide the caller's current credential. This resolves the original Task even
@@ -5709,6 +5804,21 @@ if the wait times out after resolving the Task.
 gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
   --task-receipt ./weekly-task.json
 ```
+
+To request cooperative cancellation from a fresh process, pass the same
+receipt and the caller's current credential:
+
+```sh
+gregale mcp client cancel --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json
+```
+
+Use either `--task-receipt` or `--task-id`. A cancellation acknowledgement
+sets `cancellation_requested` to true. If the Task is already terminal,
+the receipt command returns its metadata. If time remains after an ambiguous
+cancellation reply, it reads the same receipt once. A terminal status is
+reported as observed. Exit code 3 with `retry_status` means the outcome is still unclear.
+Check the same receipt before deciding whether to request cancellation again.
 
 Use `--defer-form-input` on a keyed submission to let a Task request approval
 after the submitting process exits. Keep this opt-in on matching retries.
@@ -5749,9 +5859,25 @@ gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKE
 ```
 
 After reviewing a form, fill in its `response` field. For the example report,
-`{"action":"accept","content":{"approved":true}}` is an approval. Resume using
-the same endpoint and Task receipt. The CLI checks the Task and live form
-before sending any answer.
+`{"action":"accept","content":{"approved":true}}` is an approval. Use the same
+endpoint, Task receipt, and the caller's current credential. The CLI checks
+the Task and each live form against the review before sending any answers.
+
+```sh
+gregale mcp client respond --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./approval-task.json --reviewed-input-file ./reviewed-input.json
+```
+
+`respond` sends at most one update, then returns the Task's status metadata
+without waiting for completion. If the reply is lost, it checks status once
+without resending the update. Exit code 3 with `provide_input` means an
+answer is still pending. Review the live form before submitting again.
+Exit code 3 with `retry_status` means status is temporarily unavailable.
+Check the receipt before taking another action. Use `client status --read-result`
+with the same receipt to retrieve a completed result.
+
+To submit reviewed input and wait for completion in the same process, use
+`client wait`.
 
 ```sh
 gregale mcp client wait --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
@@ -5937,7 +6063,7 @@ Before adding sensitive catalog entries, change `auth` in `gregale-mcp.json`:
   "mode": "external-oauth",
   "issuer": "https://identity.example.com",
   "jwks_url": "https://identity.example.com/.well-known/jwks.json",
-  "resource": "https://my-mcp.gregale.dev/mcp",
+  "resource": "https://my-mcp.gregale.app/mcp",
   "scopes": ["mcp:tools"],
   "tool_scopes": {
     "greet": [],
@@ -7457,6 +7583,12 @@ ADR-20261118140000.
   mode on or off. The plan is pinned to the current rules: apply fails with
   `plan_stale` if they changed. On a production app the apply asks a person
   first.
+- Verification contracts (toolset `release`, ADR-20261122220000):
+  `gregale_validate_verification_contract` checks a `gregale.verify.yaml`
+  offline; `gregale_get_verification_contract` reads the app's stored contract;
+  `gregale_plan_verification_contract_change` reviews `set` or `delete`, pinned
+  to the stored revision. Once set, a new deployment whose required check fails
+  is not promoted.
 - Previews (toolset `release`): `gregale_list_previews`, `gregale_get_preview`
   and `gregale_plan_preview_change` (`create` for a pull request, or
   `destroy`, which asks a person first). Previews are reached only through

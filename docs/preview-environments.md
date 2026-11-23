@@ -198,7 +198,7 @@ the implementation is deployed:
 ```bash
 gregale edge rule create --app pr-42-checkout \
   --kind respond \
-  --match-host pr-42-checkout.gregale.dev \
+  --match-host pr-42-checkout.gregale.app \
   --match-path /shipping/estimate \
   --match-method GET \
   --respond-status 200 \

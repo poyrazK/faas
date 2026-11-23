@@ -283,3 +283,35 @@ func TestDeploymentSmokeCandidatePickerDoesNotUseStableSibling(t *testing.T) {
 		t.Fatalf("candidate picker fell back to stable target: %+v", pick)
 	}
 }
+
+// ADR-20261122220000: a smoke token the gateway does not know must never be
+// served by the live deployment; a verification contract's POST would
+// otherwise reach the predecessor.
+func TestUnknownDeploymentSmokeTokenIsRefusedNotServedByLive(t *testing.T) {
+	hits := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusCreated)
+	}))
+	t.Cleanup(upstream.Close)
+	fake := &fakeBackend{
+		app:  App{ID: "app-1", AccountID: "acct-1", Plan: api.PlanFree, MaxConcurrency: 1, HealthPath: "/healthz"},
+		host: "demo.apps.dom", upstream: upstream.Listener.Addr().String(),
+	}
+	fake.AddTarget(Target{NodeID: upstream.Listener.Addr().String(), InstanceID: "stable-1", DeploymentID: "dep-stable"})
+	backend := &deploymentSmokeRoutingBackend{fakeBackend: fake, deploymentID: "dep-candidate", token: "secret"}
+	h := NewHandlerWith(backend, NewMetrics(), nil)
+	req := httptest.NewRequest(http.MethodPost, "http://demo.apps.dom/orders", nil)
+	req.Host = "demo.apps.dom"
+	req.Header.Set(apihostingreceipt.PlatformSmokeHeader, "1")
+	req.Header.Set(apihostingreceipt.PlatformSmokeDeploymentHeader, backend.deploymentID)
+	req.Header.Set(apihostingreceipt.PlatformSmokeTokenHeader, "not-yet-published")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusServiceUnavailable || hits != 0 {
+		t.Fatalf("status=%d upstream hits=%d, want 503 and none", rec.Code, hits)
+	}
+	if rec.Header().Get(apihostingreceipt.ServedResponseHeader) != "" {
+		t.Fatal("refusal carried a candidate proof")
+	}
+}

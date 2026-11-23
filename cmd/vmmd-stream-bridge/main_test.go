@@ -842,9 +842,11 @@ func TestNewHandler_FramingSlog(t *testing.T) {
 	// Parse the JSON log line + assert the framing-related
 	// fields. slog emits one line per call; buf should have
 	// exactly one.
+	// The closed port's dial failure logs a second line after it
+	// (guestBadGateway, prod hunt r30); the framing line comes first.
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if len(lines) != 1 {
-		t.Fatalf("expected exactly one slog line, got %d (buf = %q)", len(lines), buf.String())
+	if len(lines) == 0 || lines[0] == "" {
+		t.Fatalf("expected the framing slog line, got none (buf = %q)", buf.String())
 	}
 	var rec map[string]any
 	if err := json.Unmarshal([]byte(lines[0]), &rec); err != nil {

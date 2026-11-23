@@ -31,6 +31,8 @@ add fields of their own, such as `retry_after_seconds`.
 The [error code reference](error-codes.md) lists every code with the HTTP
 status it is sent with, its title and hint, and the page that explains it.
 This page covers the codes you are most likely to meet and what to do next.
+For a deployment that failed, start with
+[Troubleshooting](troubleshooting.md#a-deploy-failed).
 
 ## 502, 503 and 504 responses
 
@@ -61,7 +63,7 @@ The build or the app's start failed. `app_runtime_oom` can also appear for a rel
 |---|---|---|
 | `app_not_listening`, `app_loopback_bound` | The process did not expose a reachable listener | Bind `0.0.0.0:$PORT`; rerun `gregale deploy --dry-run`. |
 | `dep_install_failed` | Dependencies could not be installed | Pin the lockfile and inspect `gregale logs APP`. |
-| `app_startup_timeout` | Readiness budget was exceeded | Run `gregale doctor` and select a compatible profile. |
+| `app_startup_timeout` | Readiness budget was exceeded | Run `gregale deploy check` and select a compatible profile. |
 | `app_runtime_oom` | The kernel killed the app for using more memory than its plan allows (the detail carries the peak). A deployment that is starting or rolling out fails and the previous release keeps serving; a live release is not failed and the instance is replaced | Raise the app's memory to at least the reported peak plus 8 MB with `gregale app <app> --ram <MB>` (your account plan sets the per-app maximum), or lower its peak memory. `gregale inspect <app>` lists kills from the last 24 hours. |
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
 | `function_init_failed` | A function's `init` hook threw, so its worker never became ready (the detail carries its error). An `init` that never finishes fails as `app_startup_timeout` | Fix the error in that output; `gregale dev --local` runs `init` the same way. See [functions](functions.md). |

@@ -74,6 +74,9 @@ func inspectAttentionCommand(summary inspectSummary, code string) string {
 	cli, slug := recoveryCLI(), recoveryArgument(summary.App.Slug)
 	switch code {
 	case "deployment_failed", "newer_candidate_failed", "no_live_deployment":
+		if candidate := summary.Release.NewerFailedCandidate; code == "newer_candidate_failed" && candidate != nil && candidate.RolloutState == "aborted" {
+			return cli + " release timeline " + recoveryArgument(candidate.DeploymentID) + " --app " + slug
+		}
 		if summary.Failure != nil {
 			return cli + " deployment get " + recoveryArgument(summary.Failure.DeploymentID)
 		}

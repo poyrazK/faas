@@ -17,7 +17,7 @@ command after readiness succeeds. For example:
 ```
 ✓ Staged v44 with 0% production traffic.
   Preview: https://deploy-44-my-api.gregale.dev
-  Production remains on v43. https://my-api.gregale.dev
+  Production remains on v43. https://my-api.gregale.app
   Promote: gregale release traffic promote --app my-api --release v44 --if-serving v43
 ```
 
@@ -301,7 +301,7 @@ Send a stable, opaque user or tenant identifier in `Gregale-Version-Key` when
 the same caller must stay in one rollout cohort across requests:
 
 ```bash
-curl -H 'Gregale-Version-Key: customer-42' https://my-api.gregale.dev/account
+curl -H 'Gregale-Version-Key: customer-42' https://my-api.gregale.app/account
 ```
 
 Gregale hashes the app, the active rollout revisions, and the key, then applies

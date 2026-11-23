@@ -2,11 +2,11 @@
 
 Run `gregale guide <task>` for one page.
 
-  deploy             Deploy an app
-  compose-project    Deploy a Compose project
-  health-checks      Health checks and readiness
-  private-services   Private services and TCP ports
-  secrets-and-env    Environment variables and secrets
-  rollouts           Releases, rollouts and rollback
-  functions-and-queues Functions, queues and crons
-  debug-a-failure    Debug a failed deploy or a failing app
+  deploy                Deploy an app
+  compose-project       Deploy a Compose project
+  health-checks         Health checks and readiness
+  private-services      Private services and TCP ports
+  secrets-and-env       Environment variables and secrets
+  rollouts              Releases, rollouts and rollback
+  functions-and-queues  Functions, queues and crons
+  debug-a-failure       Debug a failed deploy or a failing app

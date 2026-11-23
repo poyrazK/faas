@@ -41,6 +41,10 @@ const (
 	// parked it for liveness exhaustion while the probe retried. It is the
 	// app's verdict, not an outage.
 	SmokeErrorCandidateCrashLoop = "smoke_candidate_crash_loop"
+	// SmokeErrorVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate
+	// (ADR-20261122220000). The receipt carries the full report.
+	SmokeErrorVerificationContractFailed = "smoke_verification_contract_failed"
 )
 
 const (
@@ -88,7 +92,14 @@ func (v Verifier) VerifyDeployment(ctx context.Context, slug, path, deploymentID
 // VerifyDeploymentRoute checks candidate reachability for TCP-ready images
 // that declare no HTTP health endpoint. It never establishes endpoint health.
 func (v Verifier) VerifyDeploymentRoute(ctx context.Context, slug, deploymentID string) (SmokeResult, error) {
-	return v.verifyWithContract(ctx, slug, "/", deploymentID, VerificationRouteConnectivity)
+	return v.VerifyDeploymentRouteAt(ctx, slug, "/", deploymentID)
+}
+
+// VerifyDeploymentRouteAt is VerifyDeploymentRoute on a chosen path: a
+// function's route check uses its runner's /healthz, because every other
+// path of a function runs its handler.
+func (v Verifier) VerifyDeploymentRouteAt(ctx context.Context, slug, path, deploymentID string) (SmokeResult, error) {
+	return v.verifyWithContract(ctx, slug, path, deploymentID, VerificationRouteConnectivity)
 }
 
 // VerifyDeploymentAPIRoute checks one explicitly selected, read-only API
