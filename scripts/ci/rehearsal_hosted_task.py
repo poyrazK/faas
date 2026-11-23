@@ -29,6 +29,7 @@ worker:
 # Only the dedicated worker fixture emits an observation of the claim returned
 # by the stock store. The lease itself must never reach the platform log.
 WORKER_CLAIM_PROBE = b"""import { createHash } from 'node:crypto';
+import { setTimeout } from 'node:timers/promises';
 import { createPostgresMcpTaskStore } from './task-store.js';
 
 export function createObservedStore(options) {
@@ -42,9 +43,13 @@ export function createObservedStore(options) {
         namespace: options.namespace,
         task_id: task.task_id,
         attempt: task.attempt_count,
+        at_checkpoint: task.attempt_count === 1,
         worker_id: workerID,
         lease_sha256: createHash('sha256').update(task.lease_token, 'utf8').digest('hex'),
       }));
+      // Keep attempt one at a checkpoint before the handler starts. The
+      // stock 30s lease is allowed to expire normally if the VM disappears.
+      if (task.attempt_count === 1) await setTimeout(15_000);
     }
     return task;
   };
@@ -176,7 +181,7 @@ def observation(receipt, phase):
     return observed
 
 
-def verify(directory):
+def verify(directory, receipt_path=None):
     prepared = read_document(directory / "preparation.json")
     fixture = directory / "fixture"
     expected_preparation = preparation(fixture, include_sources=False)
@@ -188,7 +193,7 @@ def verify(directory):
         expected_preparation["source_sha256"] = {role: source_digest(fixture / (role + ".tar.gz")) for role in ROLES}
     if json_bytes(prepared) != json_bytes(expected_preparation):
         raise ValueError("prepared fixture and archive digests disagree")
-    receipt = read_document(directory / "hosted-task-receipt.json")
+    receipt = read_document(receipt_path or directory / "hosted-task-receipt.json")
     run_id = identity(receipt.get("run_id"), "run ID")
     task_id = identity(receipt.get("task_id"), "submitted Task ID")
     initial, recovered = (observation(receipt, phase) for phase in ("initial", "recovered"))

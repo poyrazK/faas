@@ -623,6 +623,40 @@
     "kind": "account_identity"
   },
   {
+    "table": "instance_resource_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cpu_limit_millicores",
+      "cpu_ms",
+      "cpu_peak_millicores",
+      "deployment_id",
+      "instance_id",
+      "mem_end_mb",
+      "mem_limit_mb",
+      "mem_peak_mb",
+      "mem_start_mb",
+      "minute",
+      "samples"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_route_minutes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "busy_ms",
+      "instance_id",
+      "max_latency_ms",
+      "method",
+      "minute",
+      "requests",
+      "route"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "mfa_trusted_browsers",
     "columns": [
       "account_id",
@@ -3042,6 +3076,7 @@
       "only_declared_routes",
       "org_id",
       "overflow_node",
+      "owner_home_node_id",
       "park_transition_id",
       "platform_tenant_required",
       "preview_destroy_commented_at",
@@ -12654,6 +12689,7 @@
       "net_rx_valid",
       "net_tx_bytes",
       "net_tx_valid",
+      "node_id",
       "observed_at",
       "service_reply_pending",
       "updated_at"

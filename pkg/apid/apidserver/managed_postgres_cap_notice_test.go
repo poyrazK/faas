@@ -22,6 +22,10 @@ func TestManagedPostgresCapEnforcementNeedsTheNoticeEmail(t *testing.T) {
 		{"no producer outbox", map[string]string{internalmail.EnableEnv: "1", internalmail.ManagedPostgresCapOutboxEnableEnv: "1"}, false},
 		{"notice path on", map[string]string{internalmail.EnableEnv: "1", internalmail.ProducerOutboxEnableEnv: "1",
 			internalmail.ManagedPostgresCapOutboxEnableEnv: "1"}, true},
+		// The owner may waive the email before production has customers
+		// (ADR-20261025094915 amendment 2026-11-22); only an exact 1 counts.
+		{"notice waived", map[string]string{managedpostgres.CapNoticeWaiverEnv: "1"}, true},
+		{"waiver not exactly 1", map[string]string{managedpostgres.CapNoticeWaiverEnv: "true"}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

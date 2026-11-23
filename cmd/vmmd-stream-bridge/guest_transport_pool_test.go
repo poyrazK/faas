@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -317,5 +318,75 @@ func TestPersistentH1HandlerReusesGuestConnection(t *testing.T) {
 	}
 	if got := connections.Load(); got != 1 {
 		t.Fatalf("guest TCP connections = %d, want one keep-alive connection", got)
+	}
+}
+
+// An app server closes an idle keep-alive connection after its own timeout;
+// a POST the bridge sends on that connection as it closes gets a reset and
+// is not retried (prod 2026-11-22: a cron POST to a Node app, 5 s keep-alive,
+// answered 502). The bridge must drop an idle guest connection before the
+// shortest common app keep-alive (gunicorn gthread, 2 s) and dial a fresh one.
+func TestPersistentH1HandlerDropsIdleGuestConnectionBeforeAppKeepAlive(t *testing.T) {
+	const appKeepAlive = 2 * time.Second
+	if h1IdleConnTimeout >= appKeepAlive {
+		t.Fatalf("h1IdleConnTimeout = %s, want below the %s app keep-alive", h1IdleConnTimeout, appKeepAlive)
+	}
+	var connections, guestClosed atomic.Int32
+	guest := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Length", "2")
+		_, _ = io.WriteString(w, "ok")
+	}))
+	guest.Config.IdleTimeout = appKeepAlive
+	guest.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		switch state {
+		case http.StateNew:
+			connections.Add(1)
+		case http.StateClosed:
+			guestClosed.Add(1)
+		}
+	}
+	guest.Start()
+	defer guest.Close()
+
+	_, portText, err := net.SplitHostPort(guest.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := newGuestTransportPool("127.0.0.1")
+	defer pool.closeIdleConnections()
+	handler := newHandlerWithPool("127.0.0.1", uint16(port), time.Now().Add(time.Minute), pool)
+
+	post := func(i int) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "http://unix/cron-hit", strings.NewReader("x=1"))
+		req.Header.Set(bridgeRequestMarkerHeader, "1")
+		req.Header.Set(bridgeRequestProtocolHeader, "h1")
+		req.Header.Set(bridgeRequestPortHeader, portText)
+		req.Header.Set(bridgeRequestHostHeader, "guest.test")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("POST %d status = %d, want 200 (body %q)", i, rr.Code, rr.Body.String())
+		}
+	}
+	post(1)
+	// Wait past the bridge's idle timeout but short of the app's: the bridge,
+	// not the app, must have closed the idle connection.
+	wait := appKeepAlive - 200*time.Millisecond
+	deadline := time.Now().Add(wait)
+	for guestClosed.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if guestClosed.Load() == 0 {
+		t.Fatalf("idle guest connection still open after %s; the app's %s keep-alive would close it under a reused request", wait, appKeepAlive)
+	}
+	post(2)
+	if got := connections.Load(); got != 2 {
+		t.Fatalf("guest TCP connections = %d, want a fresh connection for the second POST", got)
 	}
 }

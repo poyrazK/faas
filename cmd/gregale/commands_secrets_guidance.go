@@ -65,20 +65,20 @@ func renderSecretReferenceAvailability(ctx context.Context, client *Client, app 
 
 func printSecretReferenceApplicationHint(app, environment string) {
 	_, _ = fmt.Fprintln(osStdout, "Reference changes apply on future cold wakes; running instances keep their current environment.")
-	_, _ = fmt.Fprintf(osStdout, "Review scoped secret delivery (POSIX shells):\n  %s secrets list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(environment))
+	_, _ = fmt.Fprintf(osStdout, "Review scoped secret delivery (POSIX shells):\n  %s env list --app %s --scope %s\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(environment))
 	_, _ = fmt.Fprintln(osStdout, "A fresh restart affects the app's active workloads, not only the environment shown above. Review the serving deployment scope before requesting one.")
 }
 
 func printSecretUpdateNextSteps(app, scope, wakeID string, keys ...string) {
-	command := fmt.Sprintf("%s secrets list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
+	command := fmt.Sprintf("%s env list --app %s --scope %s", recoveryCLI(), recoveryArgument(app), recoveryArgument(scopeOrDefault(scope)))
 	for _, key := range sortedUniqueStrings(keys) {
 		command += " --key " + recoveryArgument(key)
 	}
 	_, _ = fmt.Fprintf(osStdout, "\nApp: %s; scope: %s\nReview secret metadata and delivery (POSIX shells):\n  %s\n", oneLine(app), oneLine(scopeOrDefault(scope)), command)
 	if wakeID != "" {
-		_, _ = fmt.Fprintf(osStdout, "Follow the requested restart:\n  %s app %s restart status --wake-id %s --wait\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(wakeID))
+		_, _ = fmt.Fprintf(osStdout, "Follow the requested restart:\n  %s app restart status %s --wake-id %s --wait\n", recoveryCLI(), recoveryArgument(app), recoveryArgument(wakeID))
 		return
 	}
 	_, _ = fmt.Fprintln(osStdout, "To apply on a fresh boot, review the serving deployment scope first. A restart affects the app's active workloads.")
-	_, _ = fmt.Fprintf(osStdout, "  %s app %s restart --fresh --wait\n", recoveryCLI(), recoveryArgument(app))
+	_, _ = fmt.Fprintf(osStdout, "  %s app restart %s --fresh --wait\n", recoveryCLI(), recoveryArgument(app))
 }

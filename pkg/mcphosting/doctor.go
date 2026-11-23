@@ -3,6 +3,8 @@ package mcphosting
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -46,7 +48,7 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			return report
 		}
 	}
-	catalog, x, err := c.DiscoverCatalog(ctx)
+	catalog, x, err := discoverCatalogRetryingGateway(ctx, c)
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
 	add("modern_catalog_discovery", err)
@@ -111,4 +113,29 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 // in OAuth setup; no token or provider credential is embedded in the output.
 func ConnectionConfig(name, endpoint string) map[string]any {
 	return map[string]any{"mcpServers": map[string]any{name: map[string]string{"type": "http", "url": endpoint}}}
+}
+
+// doctorGatewayRetries bounds how often discovery is repeated after a gateway
+// 502/503/504. A candidate's first request through its preview host can meet
+// a connection or route that is still settling; failing the whole release on
+// one such answer left good candidates unpromoted.
+const doctorGatewayRetries = 2
+
+var doctorGatewayRetryDelay = time.Second
+
+func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
+	catalog, x, err := c.DiscoverCatalog(ctx)
+	for attempt := 0; attempt < doctorGatewayRetries && err != nil && transientGatewayStatus(x.HTTPStatus); attempt++ {
+		select {
+		case <-ctx.Done():
+			return catalog, x, err
+		case <-time.After(doctorGatewayRetryDelay):
+		}
+		catalog, x, err = c.DiscoverCatalog(ctx)
+	}
+	return catalog, x, err
+}
+
+func transientGatewayStatus(status int) bool {
+	return status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
 }

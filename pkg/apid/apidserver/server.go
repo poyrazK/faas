@@ -138,8 +138,12 @@ import (
 type server struct {
 	privateTools     *toolregistry.PrivateExecutor
 	privateToolsOnce sync.Once
-	sales            sales.Service
-	customerSupport  *support.Service
+	// environmentBranchDataWake wakes the branch data reconciler when a
+	// branch is created with pending data (environment_branch_data.go).
+	environmentBranchDataWake     chan struct{}
+	environmentBranchDataWakeOnce sync.Once
+	sales                         sales.Service
+	customerSupport               *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
 	customerErrors *customererrors.Recorder
@@ -1014,6 +1018,9 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
+	// Read at evaluation time: the runtime config manager may be attached
+	// after the cache and changes without a restart.
+	s.statusCache.excludedAccounts = func() []string { return s.runtimeConfig.statusExcludedAccounts() }
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
@@ -4645,6 +4652,7 @@ func (s *server) handler() http.Handler {
 	// API writes remain Bearer-key + MFA + deploy-scope gated below.
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/timeseries", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalyticsTimeseries)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-customers", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteCustomerUsage)))
+	mux.HandleFunc("GET /v1/apps/{slug}/analytics/route-resources", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRouteResources)))
 	mux.HandleFunc("GET /v1/apps/{slug}/analytics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppRequestAnalytics)))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryCoverageHandler))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/dependencies", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugDependencyLatencyHandler))))
@@ -4906,6 +4914,12 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.obsListInstances)))
 	mux.HandleFunc("GET /v1/admin/obs/instances/{id}",
 		s.authLimited(s.requireOperatorSessionRead(s.obsGetInstance)))
+	// Fleet wake-latency report (ADR-20261121200409).
+	mux.HandleFunc("GET /v1/admin/obs/wake-latency",
+		s.authLimited(s.requireOperatorSessionRead(s.obsWakeLatency)))
+	// Fleet snapshot health report (ADR-20261122135018).
+	mux.HandleFunc("GET /v1/admin/obs/snapshot-health",
+		s.authLimited(s.requireOperatorSessionRead(s.obsSnapshotHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",

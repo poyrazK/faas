@@ -216,6 +216,32 @@ const (
 	ObsInstanceListMax     = 1000
 )
 
+// Operator wake-latency report (ADR-20261121200409). The report reads each
+// wake event kind over the window, at most ObsWakeLatencyEventsPerKind rows
+// per kind (newest first; beyond that it says it was truncated). The restore
+// target is the spec's <350 ms snapshot restore interval (§14).
+const (
+	ObsWakeLatencyRestoreTargetMS = 350
+	ObsWakeLatencyEventsPerKind   = 20000
+	ObsWakeLatencySlowestMax      = 25
+	ObsWakeLatencyAppsMax         = 25
+	ObsWakeLatencyWindowDefault   = time.Hour
+	ObsWakeLatencyWindowMax       = 24 * time.Hour
+)
+
+// Operator snapshot health report (ADR-20261122135018). The report reads at
+// most ObsSnapshotInventoryMax snapshot rows, largest first (beyond that it
+// says it was truncated), and lists the largest and recently stale ones and
+// the live deployments with no usable snapshot. The fleet average is judged
+// against FleetSnapshotAvgTargetMB and the §12 warn and page thresholds.
+const (
+	ObsSnapshotInventoryMax     = 20000
+	ObsSnapshotListMax          = 25
+	ObsSnapshotUnsnapshottedMax = 200
+	ObsSnapshotFleetAvgWarnMB   = 160
+	ObsSnapshotFleetAvgPageMB   = 200
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -4110,6 +4136,18 @@ const (
 	OwnerBalanceMovesPerTick     = 5
 	OwnerBalanceInterval         = time.Minute
 	OwnerBalanceMinIdle          = 24 * time.Hour
+	// Return home (ADR-20261121203000). A drain or a dead node displaces
+	// apps onto a peer; a rolling release displaces every node's apps in
+	// turn, so the last node to stay up ended up owning all of them
+	// (production 2026-11-21: 91 apps and 60.9 GB on bhs-2, none on bhs-3).
+	// A displacement does not count as a move for OwnerBalanceMinIdle, and
+	// once the home node is active again the control plane returns parked
+	// displaced apps to it, at most OwnerReturnHomeMovesPerTick every
+	// OwnerBalanceInterval. An app displaced longer than
+	// OwnerReturnHomeWindow ago has settled where it is and is left to the
+	// balance.
+	OwnerReturnHomeMovesPerTick = 20
+	OwnerReturnHomeWindow       = 6 * time.Hour
 	// DevPatchMaxEntries and DevPatchMaxBytes bound one developer live source
 	// patch (ADR-740). A larger edit is reported as patch_too_large and keeps
 	// using the normal developer build.
@@ -4119,6 +4157,11 @@ const (
 	// mode (ADR-1170): development servers need far more memory than the
 	// production server of the same app.
 	DevWatchMinRAMMB = 512
+	// DevWatchDefaultRAMMB is the RAM a new watch-mode developer environment
+	// gets, capped at the plan's RAM (DevWatchRAMMB). A Next.js 15 dev server
+	// compiled its first page in 31.8 s at 512 MB and 2.3 s at 2048 MB on prod
+	// (2026-11-22): at the 512 MB app default it swaps through the first build.
+	DevWatchDefaultRAMMB = 1024
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4235,15 +4278,24 @@ const (
 const ProjectWorkloadDefaultRAMMB = 128
 
 // StandaloneAppDefaultMaxRAMMB caps the RAM a standalone app gets when it is
-// created without ram_mb, a resource profile or vcpu (ADR-20261029234500).
-// Below the cap the default stays the plan's RAM; a Scale app starts at
-// 1024 MB instead of 2048 MB and can still be raised to the plan's RAM.
-const StandaloneAppDefaultMaxRAMMB = 1024
+// created without ram_mb, a resource profile or vcpu (ADR-20261029234500,
+// lowered to 512 MB by ADR-20261122180000). Below the cap the default stays
+// the plan's RAM: Free starts at 256 MB, every other plan at 512 MB, and an
+// app can still be raised to the plan's RAM. Apps are billed at their RAM, so
+// an agent that deploys without a size must not get a large instance.
+const StandaloneAppDefaultMaxRAMMB = 512
 
 // StandaloneAppDefaultRAMMB is the RAM of a standalone app created without a
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
 func StandaloneAppDefaultRAMMB(l Limits) int {
 	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
+
+// DevWatchRAMMB is the RAM of a new watch-mode developer environment: the
+// plan's RAM, capped at DevWatchDefaultRAMMB. A plan below DevWatchMinRAMMB
+// is still refused by the watch-mode check.
+func DevWatchRAMMB(l Limits) int {
+	return min(l.RAMMB, DevWatchDefaultRAMMB)
 }
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -10190,8 +10242,10 @@ const (
 	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
-	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget the
-	// scheduler's watchdog enforces (sched.ColdBootSweepBudget). An app on a
+	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget
+	// (sched.ColdBootSweepBudget). vmmd's cold-boot call judges readiness
+	// against it; the scheduler's watchdog stops the row only after a further
+	// grace, so vmmd's typed verdict lands first (ADR-20261123140000). An app on a
 	// plan with a longer startup window (Limits.MaxStartupDeadlineS) that sets
 	// startup_deadline_s above it gets that window on every cold boot
 	// (ADR-20261114120000).

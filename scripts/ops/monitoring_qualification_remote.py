@@ -15,7 +15,9 @@ import sys
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
-ROLES = ("faas-heartbeat", "faas-page", "faas-warn")
+DELIVERY_RECEIVER = "faas-delivery-page"
+ROLES = (DELIVERY_RECEIVER, "faas-heartbeat", "faas-page", "faas-warn")
+FIXED_INTEGRATIONS = {DELIVERY_RECEIVER: "pagerduty", "faas-heartbeat": "webhook"}
 INTEGRATIONS = ("email", "slack", "pushover", "webhook", "pagerduty", "opsgenie", "victorops", "wechat", "telegram", "webex", "sns", "discord", "msteams", "msteamsv2", "rocketchat", "jira")
 MAX_BYTES = 1 << 20  # pkg/api/limits.go: ObsAlertmanagerResponseMaxBytes.
 GROUPS_MAX = 32  # pkg/api/limits.go: ObsNotificationIntegrationsMax.
@@ -52,6 +54,11 @@ def inventory_digest(groups):
     return hashlib.sha256(json.dumps(groups, separators=(",", ":"), sort_keys=True).encode()).hexdigest()
 
 
+def valid_receiver_pair(row):
+    receiver, integration = row.get("receiver"), row.get("integration")
+    return receiver in ROLES and integration in INTEGRATIONS and FIXED_INTEGRATIONS.get(receiver, integration) == integration
+
+
 def receiver_inventory(body, now):
     if not isinstance(body, dict) or not fresh(body.get("generated_at"), now):
         raise QualificationError("inventory_unavailable")
@@ -73,7 +80,7 @@ def receiver_inventory(body, now):
         raise QualificationError("inventory_unavailable")
     groups = []
     for row in rows:
-        if not isinstance(row, dict) or row.get("expected") is not True or row.get("receiver") not in ROLES or row.get("integration") not in INTEGRATIONS:
+        if not isinstance(row, dict) or row.get("expected") is not True or not valid_receiver_pair(row):
             raise QualificationError("invalid_receiver_inventory")
         groups.append({"receiver": row["receiver"], "integration": row["integration"]})
     groups.sort(key=lambda row: (row["receiver"], row["integration"]))
@@ -82,8 +89,6 @@ def receiver_inventory(body, now):
     roles = {row["receiver"] for row in groups}
     if not {"faas-page", "faas-heartbeat"}.issubset(roles):
         raise QualificationError("required_receiver_missing")
-    if any(row["receiver"] == "faas-heartbeat" and row["integration"] != "webhook" for row in groups):
-        raise QualificationError("invalid_receiver_inventory")
     return groups
 
 
@@ -138,22 +143,29 @@ def test_alerts(plan, now, resolving=False):
         raise QualificationError("invalid_receiver_inventory")
     roles = set()
     for row in groups:
-        if not isinstance(row, dict) or row.get("receiver") not in ROLES or row.get("integration") not in INTEGRATIONS:
+        if not isinstance(row, dict) or not valid_receiver_pair(row):
             raise QualificationError("invalid_receiver_inventory")
         roles.add(row["receiver"])
     alerts = []
-    for role in ("faas-page", "faas-warn"):
+    for role, severity, suffix in (("faas-page", "page", "page"), ("faas-warn", "warn", "warn"),
+                                   (DELIVERY_RECEIVER, "page", "delivery_page")):
         if role not in roles:
             continue
-        severity = role.removeprefix("faas-")
-        # Unique alertname separates page groups; distinct families avoid
-        # page-over-warn inhibition and collision with real warn digests.
-        labels = {"alertname": "FaasDeliveryQualification_" + identity.replace("-", "_") + "_" + severity,
+        # Unique alertnames and families isolate qualification from live groups.
+        labels = {"alertname": "FaasDeliveryQualification_" + identity.replace("-", "_") + "_" + suffix,
                   "component": "alertmanager", "severity": severity,
-                  "family": "monitoring_qualification_" + identity + "_" + severity,
+                  "family": "monitoring_qualification_" + identity + "_" + suffix,
                   "qualification_id": identity}
-        alerts.append({"labels": labels, "annotations": {"summary": "Gregale delivery qualification " + identity + " " + severity,
-                                                        "qualification_id": identity},
+        annotations = {"summary": "Gregale delivery qualification " + identity + " " + suffix,
+                       "qualification_id": identity}
+        if role == "faas-page":
+            annotations.update(
+                first_action="Open Notification Receiver Failures and confirm the dashboard loads.",
+                customer_impact="None. This is a monitoring qualification test.",
+                failure_stage="Notification delivery qualification",
+                dashboard_path="/d/faas-fleet-m8?viewPanel=452&from=now-2h&to=now",
+            )
+        alerts.append({"labels": labels, "annotations": annotations,
                        "startsAt": stamp(started), "endsAt": stamp(max(now, started) if resolving else expires)})
     if not alerts:
         raise QualificationError("required_receiver_missing")

@@ -814,6 +814,7 @@ type ApiConsumer struct {
 	RevokedAt             pgtype.Timestamptz
 	PlatformTenantID      pgtype.UUID
 	PlatformTenantManaged bool
+	EnvironmentID         pgtype.UUID
 }
 
 // Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).
@@ -1230,6 +1231,7 @@ type App struct {
 	GithubPreviewEnabled              pgtype.Bool
 	ScalingRevision                   int64
 	SandboxTemplate                   bool
+	OwnerHomeNodeID                   pgtype.UUID
 }
 
 type AppApiRoute struct {
@@ -3423,19 +3425,20 @@ type ComputeNodeKey struct {
 }
 
 type ConsumerKey struct {
-	ID           pgtype.UUID
-	AccountID    pgtype.UUID
-	AppID        pgtype.UUID
-	Name         string
-	Prefix       string
-	HashedSecret []byte
-	Scopes       []string
-	ExpiresAt    pgtype.Timestamptz
-	LastUsedAt   pgtype.Timestamptz
-	RevokedAt    pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ConsumerID   pgtype.UUID
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	AppID         pgtype.UUID
+	Name          string
+	Prefix        string
+	HashedSecret  []byte
+	Scopes        []string
+	ExpiresAt     pgtype.Timestamptz
+	LastUsedAt    pgtype.Timestamptz
+	RevokedAt     pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	ConsumerID    pgtype.UUID
+	EnvironmentID pgtype.UUID
 }
 
 type ContainerHostPortLease struct {
@@ -7584,6 +7587,36 @@ type InstanceQuietPause struct {
 	RecordedAt pgtype.Timestamptz
 }
 
+// Per-instance app cgroup memory and CPU per minute; written by apid from vmmd, swept by meterd (ADR-20261121170000).
+type InstanceResourceMinute struct {
+	AppID              pgtype.UUID
+	InstanceID         string
+	Minute             pgtype.Timestamptz
+	AccountID          pgtype.UUID
+	DeploymentID       pgtype.UUID
+	Samples            int32
+	MemStartMb         int32
+	MemPeakMb          int32
+	MemEndMb           int32
+	MemLimitMb         int32
+	CpuMs              int64
+	CpuPeakMillicores  int32
+	CpuLimitMillicores int32
+}
+
+// Per-instance route activity per minute; written by apid from gateways, swept by meterd (ADR-20261121170000).
+type InstanceRouteMinute struct {
+	AppID        pgtype.UUID
+	InstanceID   string
+	Minute       pgtype.Timestamptz
+	Route        string
+	Method       string
+	AccountID    pgtype.UUID
+	Requests     int64
+	BusyMs       int64
+	MaxLatencyMs int32
+}
+
 type InstanceRuntimeConfigReceipt struct {
 	InstanceID            pgtype.UUID
 	WakeID                pgtype.UUID
@@ -10477,6 +10510,7 @@ type MeterNetworkCheckpoint struct {
 	InternalTxValid     bool
 	InternalTxPending   int64
 	ServiceReplyPending int64
+	NodeID              string
 }
 
 type MeterdTenantSurfaceCertExpiryState struct {

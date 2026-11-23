@@ -79,6 +79,8 @@ syntax() {
   ansible-playbook --syntax-check scale_check.yml
   # Gate-D: keep the trusted deployment-runner bootstrap parseable.
   ansible-playbook --syntax-check fleet_runner.yml
+  # ADR-20261122170000: the unit-release build runner bootstrap.
+  ansible-playbook --syntax-check build_runner.yml
   # ADR-143: the post-activation verify playbook is production
   # tooling (`make verify-fleet`) and must stay parseable.
   ansible-playbook --syntax-check verify.yml

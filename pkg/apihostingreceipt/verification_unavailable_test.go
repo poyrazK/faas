@@ -40,7 +40,7 @@ func TestCandidateProofControlsFailureAttribution(t *testing.T) {
 						}
 					} else {
 						want := SmokeFailed
-						if status < 300 || (contract == VerificationRouteConnectivity && (status < 400 || status == 401 || status == 403 || status == 404)) {
+						if status < 300 || (contract == VerificationRouteConnectivity && status < 500 && status != 408 && status != 429) {
 							want = SmokeVerified
 						}
 						if err != nil || got.Status != want || got.StatusCode != status {

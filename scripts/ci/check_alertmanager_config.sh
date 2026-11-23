@@ -89,6 +89,19 @@ grep -q 'api_url_file:' "$work/slack.yml" || { echo "alertmanager config [slack]
 render email_pushover "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_pushover_token_file\": \"$work/pushover-token\", \"am_pushover_user_key_file\": \"$work/pushover-user-key\"}"
 route email_pushover faas-page severity=page component=apid family=x
 route email_pushover faas-warn severity=warn component=apid family=x
+route email_pushover faas-page severity=page alertname=FaasAlertmanagerNotificationsFailed
+test_alert=FaasDeliveryQualification_mq_123_1_delivery_page
+route email_pushover faas-silent severity=page alertname="$test_alert" qualification_id=mq-123-1
+
+printf 'fixture-routing-key\n' >"$work/delivery-pagerduty-key"
+render delivery_pagerduty "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_heartbeat_url_file\": \"$work/heartbeat-url\", \"am_delivery_pagerduty_key_file\": \"$work/delivery-pagerduty-key\", \"am_fleet_name\": \"production\"}"
+for alert in FaasPrometheusNotificationsDropped FaasAlertmanagerNotificationsFailed; do
+  route delivery_pagerduty faas-delivery-page,faas-page severity=page alertname="$alert"
+  route delivery_pagerduty faas-warn severity=warn alertname="$alert"
+done
+route delivery_pagerduty faas-page severity=page alertname=FaasSyntheticCanaryFailed
+route delivery_pagerduty faas-heartbeat severity=info alertname=FaasWatchdog
+route delivery_pagerduty faas-delivery-page severity=page alertname="$test_alert" qualification_id=mq-123-1
 
 render pushover_only "{\"am_pushover_token_file\": \"$work/pushover-token\", \"am_pushover_user_key_file\": \"$work/pushover-user-key\"}"
 route pushover_only faas-page severity=page component=apid family=x
@@ -126,7 +139,7 @@ grep -q 'repeat_interval: 24h' "$work/slack.yml" || { echo "alertmanager config 
 
 # Evaluate the receiver templates with the expected Prometheus annotations
 # for the runtime warnings in one notification.
-render runtime_links "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_slack_webhook_url_file\": \"$work/slack-webhook-url\", \"am_discord_webhook_url_file\": \"$work/discord-webhook-url\", \"am_grafana_base_url\": \"https://grafana.example.test/ops/\"}"
+render runtime_links "{\"am_smtp_smarthost\": \"smtp.example.invalid:587\", \"am_smtp_password_file\": \"$work/smtp-password\", \"am_slack_webhook_url_file\": \"$work/slack-webhook-url\", \"am_discord_webhook_url_file\": \"$work/discord-webhook-url\", \"am_pushover_token_file\": \"$work/pushover-token\", \"am_pushover_user_key_file\": \"$work/pushover-user-key\", \"am_grafana_base_url\": \"https://grafana.example.test/ops/\", \"am_fleet_name\": \"production-us\"}"
 python3 - "$repo_root" "$work" "$amtool" <<'PY'
 import html
 from datetime import datetime
@@ -198,6 +211,64 @@ for case, base in (("email_pushover", "http://127.0.0.1:3000"),
                 assert "Existing warning details" in prior and base not in prior, f"{case} changed unrelated email"
             else:
                 assert not prior, f"{case} changed unrelated chat text"
+
+data["receiver"] = "faas-page"
+rule_groups = yaml.safe_load((root / "deploy/ansible/roles/prometheus/files/faas.rules.yml").read_text())["groups"]
+page_names = ("FaasApiAvailabilityBurnRateHigh", "FaasPrometheusNotificationsDropped",
+              "FaasAlertmanagerNotificationsFailed")
+pages = {
+    rule["alert"]: rule for group in rule_groups for rule in group.get("rules", [])
+    if rule.get("alert") in page_names
+}
+assert set(pages) == set(page_names)
+config = yaml.safe_load((work / "runtime_links.yml").read_text())
+base = "https://grafana.example.test/ops"
+page_receiver = next(recv for recv in config["receivers"] if recv["name"] == "faas-page")
+page_alerts = []
+for name in page_names:
+    rule = pages[name]
+    page_alerts.append({"status": "firing", "labels": dict(rule["labels"], alertname=name),
+                        "annotations": dict(rule["annotations"], failure_stage="test stage")})
+canary = {"status": "firing", "labels": {"alertname": "FaasSyntheticCanaryFailed"},
+          "annotations": {"summary": "Canary failed", "first_action": "Open the first failing step.",
+                          "failure_stage": "Deploy and invoke", "fleet": "production",
+                          "active_release": "a" * 40, "last_successful_check": "Earlier verified probe",
+                          "description": "Raw probe output",
+                          "run_url": "https://github.com/example/faas/actions/runs/42",
+                          "runbook_url": "https://github.com/example/faas/blob/main/docs/runbook.md"}}
+page_alerts.append(canary)
+
+for receiver, field, kind, default_name in (
+    ("email_configs", "html", "html", "email.default.html"),
+    ("slack_configs", "text", "text", "slack.default.text"),
+    ("pushover_configs", "message", "text", "pushover.default.message"),
+):
+    for delivery in page_receiver[receiver]:
+        template = delivery[field]
+        for alert in page_alerts:
+            annotations = alert["annotations"]
+            output = html.unescape(render(template, kind, [alert]))
+            first_action = f'First check: {annotations["first_action"]}'
+            assert first_action in output, (receiver, alert["labels"]["alertname"], output)
+            assert f'Fleet: {annotations.get("fleet", "production-us")}' in output, output
+            assert f'Customer impact: {annotations.get("customer_impact", "unknown")}' in output, output
+            assert f'Stage: {annotations["failure_stage"]}' in output, output
+            assert f'Last successful check: {annotations.get("last_successful_check", "unknown")}' in output, output
+            assert f'Active release: {annotations.get("active_release", "unknown")}' in output, output
+            assert annotations["runbook_url"] in output, output
+            evidence_url = annotations.get("run_url") or base + annotations["dashboard_path"]
+            assert evidence_url in output, output
+            assert "Raw probe output" not in output, output
+            if receiver == "pushover_configs":
+                url = render(delivery["url"], "text", [alert]).strip()
+                assert url == evidence_url, (alert["labels"]["alertname"], url, evidence_url)
+
+        resolved = html.unescape(render(template, kind, [dict(canary, status="resolved")]))
+        assert "RESOLVED Canary failed" in resolved and "First check:" not in resolved, resolved
+        assert render(template, kind, [unrelated]).strip() == render(
+            '{{ template "' + default_name + '" . }}', kind, [unrelated]).strip()
+        grouped = html.unescape(render(template, kind, [canary, unrelated]))
+        assert "Open the first failing step." in grouped and "Existing warning details" in grouped, grouped
 PY
 
 # Secrets are referenced by path only; no placeholder URL may be inlined.

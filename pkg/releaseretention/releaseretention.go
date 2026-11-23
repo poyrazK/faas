@@ -17,9 +17,20 @@ import (
 	"time"
 )
 
+// procRoot is the process table Prune reads to find releases still running.
+// Tests point it at a fake table.
+var procRoot = "/proc"
+
 // DefaultKeepPrevious is the number of non-active releases retained after a
 // successful deployment. The active release is always retained separately.
-const DefaultKeepPrevious = 3
+// The unit lane's post-deploy watch lets a host hold up to
+// scripts/ci/release_units.json watch.max_unwatched releases not yet watched
+// clean, and a breach rolls back to the release before them, so that
+// known-good release must still be retained: max_unwatched stays below this
+// (TestUnwatchedReleasesLeaveTheKnownGoodRetained). 5 since 2026-11-23 (was
+// 3, with max_unwatched 2), so merge bursts do not queue behind the watch
+// (ADR-20261122170000); a release is about 2 GB.
+const DefaultKeepPrevious = 5
 
 // Report describes a retention pass. Removed entries are release IDs, not
 // arbitrary paths; the implementation only removes direct, SHA-named child
@@ -39,7 +50,12 @@ type candidate struct {
 // Prune removes old release directories while preserving the active release,
 // keepPrevious newest inactive releases and the protected release ids: the
 // deploy controller protects the release a rollback of the active one
-// restores, however old it is. Only direct children named as a
+// restores, however old it is. A release a running process still executes
+// from is kept too: a per-instance stream bridge (faas-ibridge-*) lives as
+// long as its instance and keeps the binary of the release that started it.
+// Deleting that release left the bridge on a "(deleted)" executable, which
+// `gregalectl release verify` reports as a replaced binary (bhs-2,
+// 2026-11-22). Only direct children named as a
 // 40-character lowercase Git SHA are eligible. Unknown files, symlinks, and
 // legacy/non-SHA directories are left untouched.
 //
@@ -102,6 +118,7 @@ func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...stri
 		return candidates[i].modTime.After(candidates[j].modTime)
 	})
 
+	inUse := releasesInUse(procRoot, root)
 	previousKept := 0
 	for _, item := range candidates {
 		if item.id == current || previousKept < keepPrevious {
@@ -115,7 +132,7 @@ func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...stri
 		// release it was built over, and gregalectl doctor verifies those
 		// canonical binaries in that release's own directory. Keep it while
 		// it is the active release's base.
-		if item.id == base || slices.Contains(protected, item.id) {
+		if item.id == base || slices.Contains(protected, item.id) || inUse[item.id] {
 			report.Kept = append(report.Kept, item.id)
 			continue
 		}
@@ -198,4 +215,37 @@ func validReleaseID(value string) bool {
 		}
 	}
 	return true
+}
+
+// releasesInUse returns the release IDs under root that a running process
+// executes from. It is best effort: a process table that cannot be read
+// (another OS, no permission) protects nothing extra.
+func releasesInUse(procRoot, root string) map[string]bool {
+	prefixes := []string{filepath.Clean(root) + string(filepath.Separator)}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil && resolved != filepath.Clean(root) {
+		prefixes = append(prefixes, resolved+string(filepath.Separator))
+	}
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return nil
+	}
+	inUse := map[string]bool{}
+	for _, entry := range entries {
+		if strings.Trim(entry.Name(), "0123456789") != "" {
+			continue
+		}
+		exe, err := os.Readlink(filepath.Join(procRoot, entry.Name(), "exe"))
+		if err != nil {
+			continue
+		}
+		exe = strings.TrimSuffix(exe, " (deleted)")
+		for _, prefix := range prefixes {
+			if rest, ok := strings.CutPrefix(exe, prefix); ok {
+				if id, _, _ := strings.Cut(rest, string(filepath.Separator)); validReleaseID(id) {
+					inUse[id] = true
+				}
+			}
+		}
+	}
+	return inUse
 }

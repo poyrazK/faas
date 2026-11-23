@@ -33,6 +33,12 @@ that the tracked events are queryable. A failing step logs the app's `/debug`
 view: the SDK refresh error and the workload-identity and runtime-flags
 statuses. Subject units, ratio, percentile, bandit and segment results stay
 with the apidserver tests.
+`TestFlagsSDKs` runs the same contract against the Python and Go flags
+SDKs (`sdk/python/faas_sdk/preview/flags.py`, `sdk/go`), each in its own
+one-service project built from the repository's source: the SDK's variant
+matches `flag inspect`, `track()` accepts a verified customer's conversion
+and drops nothing, and a kill serves the fallback until it is unset.
+Experiment counting is server-side and stays with the Node journey.
 
 Application Auth (ADR-1190) is dark-launched, so it is not a GA row either.
 `TestApplicationAuth` runs when the account's `gregale feature list` does not
@@ -42,6 +48,16 @@ the ES256-only JWKS, the 8-character and leaked-password defaults, sign-up,
 the hold after 10 wrong passwords, and a `users:read` admin key that reads
 users but cannot sign one out. Parking and wake, row-level security through
 the Data API, bans and import stay with `make auth-staging-canary`.
+
+Managed Redis (ADR-20261116192126, row 174) is a preview behind the
+`managed-redis` capability, so it is not a GA row either. `TestManagedRedis`
+runs when the account's capabilities do not report `managed-redis` hidden, and
+skips otherwise. It creates a 64 MB cache, binds it to a probe app
+(`testdata/redis-probe`, which speaks RESP to `REDIS_URL`), writes through the
+app's public URL, and checks the data is kept across the cache parking and
+waking, `redis restart`, and `redis resize` to 96 MB (the replication handoff).
+Many back-to-back handoffs under write load stay with the metal soak
+`TestManagedRedisHandoffSoakMetal` (`FAAS_E2E_REDIS_SOAK=1`).
 
 | # | GA capability | Journeys and steps | Not covered |
 |---|---|---|---|

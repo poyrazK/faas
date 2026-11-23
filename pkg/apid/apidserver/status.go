@@ -174,6 +174,9 @@ type statusCache struct {
 	client *promql.Client
 	log    *slog.Logger
 	store  state.Store
+	// excludedAccounts returns the operator's status_excluded_account_ids
+	// (nil: count every account).
+	excludedAccounts func() []string
 
 	mu        sync.Mutex
 	lastEval  time.Time
@@ -201,7 +204,7 @@ type statusEvaluation struct {
 }
 
 type deploymentOutcomeCounter interface {
-	CountDeploymentOutcomesSince(context.Context, time.Time) (state.DeploymentOutcomeCounts, error)
+	CountDeploymentOutcomesSince(context.Context, time.Time, ...string) (state.DeploymentOutcomeCounts, error)
 }
 
 const statusDeploymentOutcomeWindow = 24 * time.Hour
@@ -336,7 +339,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	// 1. API availability over last 5m: 2xx / eligible 2xx+5xx outcomes
 	// for resolved apps. Client/application 4xx responses and requests that
 	// never reached a tenant route are not platform failures.
-	if pct, err := c.client.QueryScalar(ctx, statusAPIAvailabilityQuery); err == nil {
+	if pct, err := c.client.QueryScalar(ctx, availabilityQueryExcluding(c.excludedAppIDs(ctx))); err == nil {
 		snap.legacy.APIAvailabilityPct = pct
 		snap.indicatorAvailable["api_availability"] = true
 		okCount++
@@ -377,13 +380,23 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 	buildAvailable := false
 	queryPrometheusBuild := true
 	if counter, ok := c.store.(deploymentOutcomeCounter); ok {
-		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow))
+		var excluded []string
+		if c.excludedAccounts != nil {
+			excluded = c.excludedAccounts()
+		}
+		counts, countErr := counter.CountDeploymentOutcomesSince(ctx, now.Add(-statusDeploymentOutcomeWindow), excluded...)
 		switch {
 		case countErr == nil && counts.Succeeded+counts.Failed > 0:
 			queryPrometheusBuild = false
 			buildAvailable = true
 			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
 			snap.deploymentFailedAccounts, snap.deploymentTenantsCounted = counts.FailedAccounts, true
+		case countErr == nil && len(excluded) > 0:
+			// An empty window after exclusions means only excluded
+			// accounts deployed. Prometheus cannot filter accounts, so
+			// falling back would let them drive the indicator again; the
+			// indicator is unavailable until a counted deployment lands.
+			queryPrometheusBuild = false
 		case countErr != nil:
 			queryPrometheusBuild = false
 			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)

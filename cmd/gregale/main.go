@@ -176,6 +176,12 @@ func run(args []string) (status int) {
 	// ADR-20261026145832: a path in the new command tree runs the command
 	// that implements it today, so help, gating and dispatch see that path.
 	typed := args
+	previousTypedNoun := typedNoun
+	typedNoun = ""
+	if len(typed) > 0 {
+		typedNoun = typed[0]
+	}
+	defer func() { typedNoun = previousTypedNoun }()
 	args, err := rewriteCliTree(args)
 	if err != nil {
 		if errors.As(err, new(errFoldFlagRequired)) {
@@ -839,6 +845,10 @@ func run(args []string) (status int) {
 		// Tier C: --account flips to GET /v1/account/metrics
 		// (account-wide aggregate).
 		return cmdMetrics(args[1:])
+	case "route-resources":
+		// Which routes an app's memory and CPU peaks come from
+		// (ADR-20261121170000).
+		return cmdRouteResources(args[1:])
 	case "analytics":
 		// Customer-facing historical request analytics with bounded
 		// route/country/referrer/client/status groupings.

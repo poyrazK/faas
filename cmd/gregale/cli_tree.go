@@ -162,6 +162,14 @@ var cliTreeAliases = []cliTreeAlias{
 	{"app binding", "bindings"},
 	{"app deploy-token", "deploy-tokens"},
 	{"app streaming-cap", "apps streaming-cap"},
+	// Gregale Run preview commands (#7747) under tree names.
+	{"sandbox customer budget", "run controls customer"},
+	{"sandbox task budget", "run controls task"},
+	{"sandbox binding controls", "run controls binding"},
+	{"sandbox delivery sign", "run deliveries download-url"},
+	{"sandbox environment publish", "run environments build"},
+	{"sandbox task call", "run tasks invoke"},
+	{"sandbox workflow retry", "runs workflow rerun"},
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
@@ -335,6 +343,7 @@ var cliTreeAliases = []cliTreeAlias{
 
 	// Observe.
 	{"metric requests", "analytics"},
+	{"metric resources", "route-resources"},
 	{"metric", "metrics"},
 	{"debug trace", "trace"},
 	{"debug issue", "issues"},
@@ -709,6 +718,9 @@ var cliTreeShorts = map[string]string{
 	"mcp server":                  "Scaffold, deploy and check the MCP servers you host",
 	"event backfill":              "Deliver retained events to a subscription again, and track the jobs",
 	"event subscription-capacity": "Set, list and read a subscription's live-delivery limit commands",
+	// Both verbs printed the parent's "Show or change …" (prod hunt r28).
+	"postgres overage get": "Show whether databases keep running past the monthly compute allowance",
+	"postgres overage set": "Turn compute overage on or off (on: databases run up to twice the allowance)",
 }
 
 // cliTreeVerbSynonyms gives, for a standard verb, today's spellings that a
@@ -958,6 +970,20 @@ func rewriteAppPath(args []string) ([]string, error) {
 		return joinTreeRewrite(alias, args[used:]), nil
 	}
 	verb := args[1]
+	// `app show APP` is the spelling most nouns use for reading one thing;
+	// it answered "unexpected positional argument" (prod hunt r26). Only
+	// with an explicit target, so a bare `app show` still reads an app
+	// named "show".
+	if verb == "show" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		verb = "get"
+	}
+	// Apps are created by deploying. `app create NAME` answered "unexpected
+	// positional argument" (prod hunt r28); a bare `app create` still reads
+	// an app named "create".
+	if verb == "create" && len(args) > 2 && !strings.HasPrefix(args[2], "-") {
+		name := recoveryArgument(args[2])
+		return nil, fmt.Errorf("apps are created by deploying: run %s deploy --name %s from its source directory, or %s deploy --create-only --name %s to reserve the name without a build", recoveryCLI(), name, recoveryCLI(), name)
+	}
 	if verb == "listener" {
 		return rewriteAppListener(args)
 	}

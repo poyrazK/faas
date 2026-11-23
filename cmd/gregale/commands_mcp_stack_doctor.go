@@ -128,6 +128,7 @@ func collectMCPDoctorBindings(ctx context.Context, client *Client, options mcpOv
 	if webErr != nil || workerErr != nil || web.Slug != options.App || worker.Slug != options.Worker {
 		return []mcphosting.Check{{Name: "task_process_bindings", Status: "unknown", Detail: "Could not inspect both web and worker settings."}}
 	}
+	web, worker = mcpTasksRuntimeApp(ctx, client, web), mcpTasksRuntimeApp(ctx, client, worker)
 	checks := []mcphosting.Check{}
 	for _, entry := range []struct {
 		app  api.AppResponse

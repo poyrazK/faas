@@ -92,7 +92,16 @@ path-classes.md.
 Binaries outside both lanes (shared with compute hosts, compute-only, CLIs)
 are reported as pending: the per-unit lanes leave them at base, which is the
 mixed state every rolling rollout already passes through while compute hosts
-trail the control plane.
+trail the control plane. A commit that changes a lane daemon together with
+an input only those binaries read is one change the lane would split
+(`cross_lane`, blocking; cross_lane_commits).
+
+The lane releases whole commits (docs/adr/20261122170000-continuous-unit-
+lane.md). When the range is not eligible, `lane_prefix` names the newest
+commit up to which every commit is, judged one commit at a time oldest
+first; the first blocked commit stops the lane and is reported with how
+many commits wait. release-units.yml re-runs this analysis at that commit
+and releases it when it is eligible.
 
 The checkout must be at --head (`go list` reads the working tree).
 
@@ -567,6 +576,12 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
     if claimed:
         flags["data"] = {"blocking": False, "count": len(claimed), "paths": step["paths"][:FLAG_PATH_LIMIT]}
 
+    crossed = cross_lane_commits(commits, closures, config, exists)
+    if crossed:
+        paths = sorted({p for sha in crossed for p in crossed[sha]})
+        flags["cross_lane"] = {"blocking": True, "count": len(crossed), "commits": sorted(crossed),
+                               "paths": paths[:FLAG_PATH_LIMIT]}
+
     blocking = sorted(f for f, v in flags.items() if v["blocking"])
     has_data = bool(step["version"])
     has_host = bool(host_step["version"])
@@ -620,6 +635,89 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset(), data=Non
         "reasons": [] if eligible else [r for lane in lanes.values() for r in lane["reasons"]],
         "commits": len(commits),
     }
+
+
+def cross_lane_commits(commits, closures, config, exists):
+    """{sha: [paths]} for the commits that change a deployable lane's binary
+    together with an input only binaries outside both lanes (shared,
+    compute) read: one change made to two daemons the unit lane would split,
+    shipping one half now and leaving the other at base until the next full
+    release (docs/adr/20261122170000-continuous-unit-lane.md, "Whole
+    commits"). An input every lane reads (a shared package, go.mod) is the
+    mixed state every rolling rollout passes through (N±1) and does not
+    count; neither do tools, which no host runs."""
+    global_inputs = set(config.get("global_inputs") or [])
+    lanes = {name: entry["lane"] for name, entry in config["binaries"].items()}
+    out = {}
+    for sha, paths in commits:
+        deployable, exclusive = False, []
+        for path in paths:
+            if path in global_inputs:
+                continue
+            hit = {lanes[n] for n, (dirs, files) in closures.items() if n in lanes and hits(path, dirs, files, exists)}
+            if hit & set(DEPLOY_LANES):
+                deployable = True
+            elif hit & {"shared", "compute"}:
+                exclusive.append(path)
+        if deployable and exclusive:
+            out[sha] = sorted(exclusive)
+    return out
+
+
+def commit_verdict(data, paths, directory):
+    """classify_range's verdict narrowed to the migrations one commit adds;
+    None when the commit adds none."""
+    mine = [p for p in paths if directory and migration_lint.is_migration_file(p, directory)]
+    if not mine:
+        return None
+    if not data:
+        return {"eligible": False, "migrations": [], "blockers": ["migrations were not classified"]}
+    verdicts = [v for v in data.get("migrations") or [] if v.get("path") in mine]
+    blockers = [f"{v['path']}: {reason}" for v in verdicts for reason in v.get("blockers") or []]
+    if len(verdicts) < len(mine):
+        blockers.append("a migration of this commit was not classified")
+    return {"eligible": not blockers, "migrations": verdicts, "blockers": blockers}
+
+
+def lane_prefix(commits, closures, config, exists, recipe_shas=frozenset(), data=None, host=None,
+                comment_only=frozenset(), host_for=None, comments_for=None):
+    """The newest commit the unit lane may release when the whole range may
+    not: walking (base, head] oldest first, every commit up to it carries no
+    blocking flag on its own (analyze over that commit alone). The lane never
+    skips a commit or splits one, so the first blocked commit stops it; it
+    waits for the next full release, and so does everything merged after it.
+
+    Returns {"head", "behind", "stalled_by"}: head is None when the first
+    commit is blocked; behind counts the commits after head; stalled_by is
+    {"commit", "blocked_by", "reasons"} for the stopping commit, or None when
+    nothing blocks. Each commit is judged by path class and by the roles it
+    changed: host_for(sha, paths) returns the host view of that commit
+    against its parent (role content hashes, so a new group variable no
+    stateful role reads changes no stateful role), or None, and then the
+    roles its own paths own count (changed_roles, every role for a group
+    global). comments_for(sha, paths) gives the deploy paths that commit
+    changed only in comments (against its parent); without it,
+    comment_only (the range's) is used. The caller re-runs the full
+    analysis at head before releasing it, which is the verdict that
+    counts."""
+    directory = config.get("migrations_dir")
+    per_commit_host = {g: {k: v for k, v in view.items() if k != "changed"} for g, view in (host or {}).items()}
+    head, done = None, 0
+    ordered = list(reversed(commits))
+    for sha, paths in ordered:
+        view = (host_for(sha, paths) if host_for else None) or per_commit_host
+        comments = comments_for(sha, paths) if comments_for else comment_only
+        rep = analyze([(sha, paths)], closures, config, exists, recipe_shas & {sha},
+                      commit_verdict(data, paths, directory), view, comment_only=comments)
+        if rep["blocked_by"]:
+            reasons = [f"{f} ({rep['flags'][f]['count']} paths, e.g. {rep['flags'][f]['paths'][0]})"
+                       for f in rep["blocked_by"]]
+            if rep["data"]["blockers"]:
+                reasons.append(f"migrations are not lane-eligible: {rep['data']['blockers'][0]}")
+            return {"head": head, "behind": len(ordered) - done,
+                    "stalled_by": {"commit": sha, "blocked_by": rep["blocked_by"], "reasons": reasons}}
+        head, done = sha, done + 1
+    return {"head": head, "behind": 0, "stalled_by": None}
 
 
 def host_view(base_sha, head_sha, root=".", services=()):
@@ -704,7 +802,21 @@ def write_code_cache(path, base_sha, go, digests):
         fh.write("\n")
 
 
-def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workdir=None):
+def prebuilt_digests(names, prebuilt, stamps, workdir=None):
+    """({binary: digests}, missing) for names whose release binary is in
+    prebuilt, normalised to the code build (binary_code.normalised_digests);
+    stamps(name) gives its (stamped, neutral) pairs."""
+    found, missing = {}, []
+    for n in names:
+        path = os.path.join(prebuilt, n)
+        if os.path.isfile(path):
+            found[n] = binary_code.normalised_digests(path, stamps(n), workdir)
+        else:
+            missing.append(n)
+    return found, missing
+
+
+def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workdir=None, prebuilt=None, stamps=None):
     """({binary: {"code", "code_digest", "base_code_digest"}}, binaries
     whose base digests came from the cache, binaries built at base) for
     names, built at base (an exported tree) and at head (the checkout) with
@@ -727,7 +839,12 @@ def measure_code(names, base_sha, head_sha, go, root=".", cache_path=None, workd
             buildable = [n for n in missing if n in base.binaries and os.path.isdir(os.path.join(base.path, "cmd", n))]
             if buildable:
                 base_hashes.update(binary_code.build(base, buildable, out))
-        head_hashes = binary_code.build(BuildSide(head_sha, root), names, out)
+        # One build (ADR-20261122170000): the release binaries already built
+        # at head, normalised, are the code builds; anything missing builds.
+        head_hashes, rest = (prebuilt_digests(names, prebuilt, stamps, tmp) if prebuilt and stamps
+                             else ({}, list(names)))
+        if rest:
+            head_hashes.update(binary_code.build(BuildSide(head_sha, root), rest, out))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if cache_path:
@@ -748,7 +865,8 @@ def code_candidates(rep):
                   if b["closure"] and b["lane"] in DEPLOY_LANES and not rep["lanes"][b["lane"]]["blocked_by"])
 
 
-def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_cache=None, workdir=None):
+def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_cache=None, workdir=None,
+           code_from=None):
     config = load_config(config_path)
     base_sha = git("rev-parse", "--verify", f"{base}^{{commit}}", root=root).strip()
     head_sha = git("rev-parse", "--verify", f"{head}^{{commit}}", root=root).strip()
@@ -780,6 +898,24 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
     comments = comment_only_paths(base_sha, head_sha, {p for _, paths in commits for p in paths
                                                        if matches(p, deploy_prefixes) and p not in owned}, root)
     out = analyze(commits, closures, config, exists, recipes, data, host, comment_only=comments)
+    owned_paths = {p for view in host.values() for p in view["owners"]}
+
+    def host_for(sha, paths):
+        # Only commits that touch a path a host role reads need the hashes.
+        if not hc or not owned_paths.intersection(paths):
+            return None
+        try:
+            return host_view(f"{sha}^", sha, root, hc.get("stateful_services") or ())
+        except (RuntimeError, KeyError, ValueError):
+            return None
+
+    def comments_for(sha, paths):
+        # A change one commit makes and a later one reverts is no comment
+        # change for the commit that made it.
+        mine = {p for p in paths if matches(p, deploy_prefixes) and p not in owned}
+        return comment_only_paths(f"{sha}^", sha, mine, root) if mine else frozenset()
+
+    prefix = lane_prefix(commits, closures, config, exists, recipes, data, host, comments, host_for, comments_for)
     selection = None
     if code:
         names = code_candidates(out)
@@ -788,16 +924,21 @@ def report(base, head, config_path=DEFAULT_CONFIG, root=".", code=False, code_ca
         try:
             selection["go"] = binary_code.go_version(root)
             if names:
+                # Release binaries already built at head carry their unit
+                # version and the head commit as stamps.
+                versions = {n: b["version"] for n, b in out["binaries"].items()}
                 measured, selection["base_cached"], selection["base_built"] = measure_code(
-                    names, base_sha, head_sha, selection["go"], root, code_cache, workdir)
+                    names, base_sha, head_sha, selection["go"], root, code_cache, workdir, code_from,
+                    lambda n: binary_code.release_stamps(versions[n], head_sha))
+                selection["prebuilt"] = bool(code_from)
                 out = analyze(commits, closures, config, exists, recipes, data, host, measured, comments)
-        except (RuntimeError, subprocess.CalledProcessError) as err:
+        except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
             # Selecting by closure restarts more units, never fewer: the
             # release carries no digests and hosts compare unit versions.
             detail = getattr(err, "stderr", "") or ""
             selection.update(measured=[], base_cached=[], base_built=[], error=f"{err} {detail}".strip())
             print(f"warning: code selection failed, selecting by closure: {selection['error']}", file=sys.stderr)
-    out.update(base=base_sha, head=head_sha, base_ref=base, code_selection=selection)
+    out.update(base=base_sha, head=head_sha, base_ref=base, code_selection=selection, lane_prefix=prefix)
     return out
 
 
@@ -831,6 +972,11 @@ def summary(rep):
     lines.append(f"deployable: {' '.join(rep['deployable']) or '<none>'}")
     lines.append(f"eligible: {str(rep['eligible']).lower()}" +
                  ("" if rep["eligible"] else f" ({'; '.join(rep['reasons'])})"))
+    prefix = rep.get("lane_prefix")
+    if prefix and prefix["stalled_by"]:
+        stop = prefix["stalled_by"]
+        lines.append(f"lane head: {(prefix['head'] or '<base>')[:12]} ({prefix['behind']} commits wait); "
+                     f"stalled by {stop['commit'][:12]}: {'; '.join(stop['reasons'])}")
     return "\n".join(lines)
 
 
@@ -843,11 +989,13 @@ def main():
                     help="build each deployable closure binary at base and head and select by code")
     ap.add_argument("--code-cache", help="JSON file of base code digests, read and updated (with --code)")
     ap.add_argument("--workdir", help="parent directory for the exported base tree and binaries (with --code)")
+    ap.add_argument("--code-from", help="directory of the release binaries already built at head (with --code): "
+                                        "measured normalised instead of built again")
     ap.add_argument("--output", help="write the JSON report here instead of stdout")
     args = ap.parse_args()
     try:
         rep = report(args.base, args.head, args.config, code=args.code, code_cache=args.code_cache,
-                     workdir=args.workdir)
+                     workdir=args.workdir, code_from=args.code_from)
     except (RuntimeError, ValueError, subprocess.CalledProcessError) as err:
         detail = getattr(err, "stderr", "") or ""
         print(f"affected_units: {err} {detail}".strip(), file=sys.stderr)

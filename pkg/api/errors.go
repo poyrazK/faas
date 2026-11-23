@@ -783,6 +783,10 @@ const (
 	CodeStoredWorkflowVersionConflict   = "stored_workflow_version_conflict"
 	CodeStoredWorkflowOwnershipConflict = "stored_workflow_ownership_conflict"
 	CodeStoredWorkflowInvalid           = "stored_workflow_invalid"
+	// CodeStoredWorkflowEventsUnavailable refuses publishing or enabling a
+	// stored workflow whose event trigger matches custom events while the
+	// account has custom events off.
+	CodeStoredWorkflowEventsUnavailable = "stored_workflow_events_unavailable"
 	CodeRealtimeConditionConflict       = "realtime_condition_conflict"
 	CodeRealtimeEntityVersionConflict   = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict        = "realtime_sequence_conflict"
@@ -2314,6 +2318,8 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
+	case CodeStoredWorkflowEventsUnavailable:
+		return http.StatusConflict
 	case CodeStoredWorkflowInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
@@ -6018,6 +6024,24 @@ func ErrAPIKeyRevoked() *Problem {
 	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
 		"API key revoked",
 		"this API key has been revoked; create a new one with `gregale key create`").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
+// ErrDeployTokenExpired and ErrDeployTokenRevoked keep the API key codes
+// clients match on but name the deploy-token commands: a revoked deploy token
+// in CI was told to "create a new one with `gregale key create`", an
+// account-wide key (prod hunt r26).
+func ErrDeployTokenExpired() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyExpired,
+		"Deploy token expired",
+		"this deploy token has expired; mint a new one with `gregale app deploy-token create --app APP`, or rotate tokens before they expire with `gregale app deploy-token rotate`").
+		WithDocs(docsBase + "/auth#expiry-and-rotation")
+}
+
+func ErrDeployTokenRevoked() *Problem {
+	return NewProblem(http.StatusUnauthorized, CodeAPIKeyRevoked,
+		"Deploy token revoked",
+		"this deploy token has been revoked; mint a new one with `gregale app deploy-token create --app APP` and update the CI secret").
 		WithDocs(docsBase + "/auth#expiry-and-rotation")
 }
 

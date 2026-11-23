@@ -177,7 +177,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 			target = customerConn
 			query = s.sql
 			customerStatements++
-		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go/") {
+		} else if strings.HasPrefix(pos, "../../cmd/gregale/templates/mcp-go-tasks/") {
 			target = mcpConn
 			query = s.sql
 			mcpStatements++
@@ -220,7 +220,7 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 
 func mcpStarterSchemaStatements(t *testing.T) []string {
 	t.Helper()
-	f, err := parser.ParseFile(token.NewFileSet(), "../../cmd/gregale/templates/mcp-go/tasks.go", nil, 0)
+	f, err := parser.ParseFile(token.NewFileSet(), "../../cmd/gregale/templates/mcp-go-tasks/tasks.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

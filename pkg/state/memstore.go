@@ -117,6 +117,8 @@ type networkUsageCheckpoint struct {
 	internalTx        int64
 	internalTxValid   bool
 	internalTxPending int64
+	// nodeID is the node whose counters these are (ADR-20261122090000).
+	nodeID string
 }
 
 // auditEventOutboxRow is the in-memory mirror of audit_event_outbox. The
@@ -591,6 +593,7 @@ type MemStore struct {
 	deployTokens              map[string]DeployToken
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
+	appOwnerHome              map[string]string
 	managedValkeyCaches       sync.Map               // app id -> ManagedValkeyCache (ADR-20261116192126)
 	appSlugHolds              map[string]appSlugHold // mirrors app_slug_holds (H80)
 	scenarioTestMembers       map[string]ScenarioTestMember
@@ -5555,6 +5558,21 @@ func (m *MemStore) enrollNewAppsLocked(apps []App) error {
 // prepareAppIfUnderQuotaLocked constructs an app against a proposed map. The
 // caller holds m.mu and must validate the final topology before publishing it.
 func (m *MemStore) prepareAppIfUnderQuotaLocked(app App, limits api.Limits, apps map[string]App) (App, error) {
+	if app.AddToProject {
+		project, ok := m.projects[app.ProjectID]
+		if !ok || project.AccountID != app.AccountID || project.OrgID != app.OrgID {
+			return App{}, ErrNotFound
+		}
+		if project.RepoFullName != "" {
+			return App{}, ErrProjectAppManaged
+		}
+		for _, release := range m.projectReleaseSets {
+			if release.ProjectID == app.ProjectID && release.Active {
+				return App{}, ErrProjectAppManaged
+			}
+		}
+		app.AddToProject = false
+	}
 	limits, _, err := m.resolveAppQuotaLocked(&app, limits)
 	if err != nil {
 		return App{}, err
@@ -6068,12 +6086,16 @@ func (m *MemStore) ListAllDeployments(_ context.Context) ([]Deployment, error) {
 // CountDeploymentOutcomesSince mirrors the production aggregate without
 // widening Store. Status evaluators discover it through a narrow optional
 // interface, keeping existing test stores source-compatible.
-func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
+func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Time, excludedAccounts ...string) (DeploymentOutcomeCounts, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
 	failedTenants := map[string]struct{}{}
+	failures := map[string]struct{}{}
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
 			terminalAt := d.CreatedAt
@@ -6093,7 +6115,11 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 				continue
 			}
 			if !m.customerCausedFailureLocked(d) {
-				out.Failed++
+				key := d.AppID
+				if key == "" {
+					key = d.ID
+				}
+				failures[key+":"+d.ErrorCode+":"+terminalAt.UTC().Truncate(time.Hour).String()] = struct{}{}
 				tenant := d.AppID
 				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
 					tenant = app.AccountID
@@ -6102,13 +6128,23 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 		}
 	}
+	out.Failed = len(failures)
 	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
+// excludedOutcomeAccountLocked reports whether d belongs to an account the
+// status aggregates leave out. Caller holds m.mu.
+func (m *MemStore) excludedOutcomeAccountLocked(d Deployment, excludedAccounts []string) bool {
+	app, ok := m.apps[d.AppID]
+	return ok && app.AccountID != "" && slices.Contains(excludedAccounts, app.AccountID)
+}
+
 // customerCausedFailureLocked mirrors the PgStore status aggregates' exclusion
-// of a failed deployment: a user_error build, or an error code that places the
-// failure in the customer's workload. Caller holds m.mu.
+// of a failed deployment: a user_error build, an error code that places the
+// failure in the customer's workload, a release command the task shows ended
+// on its own (api.IsCustomerCausedReleaseTask), or a proven 4xx smoke answer
+// (api.IsCustomerCausedSmokeStatus). Caller holds m.mu.
 func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 	if api.IsCustomerCausedDeploymentFailure(d.ErrorCode) {
 		return true
@@ -6118,16 +6154,38 @@ func (m *MemStore) customerCausedFailureLocked(d Deployment) bool {
 			return true
 		}
 	}
+	switch d.ErrorCode {
+	case api.CodeReleaseCommandFailed:
+		for _, task := range m.appTasks {
+			if task.DeploymentID == d.ID && task.Kind == AppTaskKindRelease &&
+				api.IsCustomerCausedReleaseTask(task.ExitCode, derefString(task.FailureCode), task.StderrTail, task.Status == AppTaskTimedOut, task.Status == AppTaskCancelled && task.CancelRequested != nil) {
+				return true
+			}
+		}
+		return false
+	case api.CodeDeploymentSmokeFailed:
+		var receipt struct {
+			Smoke struct {
+				ErrorCode  string `json:"error_code"`
+				StatusCode int    `json:"status_code"`
+			} `json:"smoke"`
+		}
+		return json.Unmarshal(d.APIHostingReceipt, &receipt) == nil && receipt.Smoke.ErrorCode == api.CustomerCausedSmokeErrorCode &&
+			api.IsCustomerCausedSmokeStatus(receipt.Smoke.StatusCode)
+	}
 	return false
 }
 
 // LatestPlatformDeploymentOutcome mirrors the production last-known result.
-func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context) (LatestDeploymentOutcome, error) {
+func (m *MemStore) LatestPlatformDeploymentOutcome(_ context.Context, excludedAccounts ...string) (LatestDeploymentOutcome, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var latest LatestDeploymentOutcome
 	found := false
 	for _, d := range m.deployments {
+		if m.excludedOutcomeAccountLocked(d, excludedAccounts) {
+			continue
+		}
 		succeeded := d.Status == DeployLive || d.Status == DeploySuperseded
 		if !succeeded && d.Status != DeployFailed {
 			continue
@@ -6957,6 +7015,7 @@ func (m *MemStore) reassignAppOwnerLocked(appID, fromNodeID, toNodeID string) {
 	}
 	a.ReassignedAt = &now
 	m.apps[appID] = a
+	delete(m.appOwnerHome, appID)
 }
 
 // ListLiveInstancesOnNode mirrors
@@ -7819,7 +7878,54 @@ func (m *MemStore) restoreAppLocked(ctx context.Context, id string, limits api.L
 			m.crons[cronID] = anchorCronSchedule(cron, restored, time.Now())
 		}
 	}
+	m.returnDeletedAppCanaryTrafficLocked(id)
 	return a, nil
+}
+
+// returnDeletedAppCanaryTrafficLocked mirrors restoreAppTx: a canary aborted
+// because its app was deleted hands its share to the live release with the
+// most traffic in its scope (ties: newest, then id).
+func (m *MemStore) returnDeletedAppCanaryTrafficLocked(appID string) {
+	stuck := map[string]bool{}
+	for depID, d := range m.deployments {
+		if d.AppID == appID && d.Status == DeployLive && d.RolloutState == "aborted" &&
+			d.RolloutAbortedReason == RolloutAbortedAppDeleted && d.TrafficPercent > 0 {
+			stuck[depID] = true
+		}
+	}
+	ids := make([]string, 0, len(stuck))
+	for depID := range stuck {
+		ids = append(ids, depID)
+	}
+	sort.Strings(ids)
+	for _, depID := range ids {
+		d := m.deployments[depID]
+		heir := ""
+		for otherID, o := range m.deployments {
+			if stuck[otherID] || o.AppID != appID || o.Status != DeployLive ||
+				normalizedDeploymentScope(o.Scope) != normalizedDeploymentScope(d.Scope) {
+				continue
+			}
+			if heir == "" {
+				heir = otherID
+				continue
+			}
+			h := m.deployments[heir]
+			if o.TrafficPercent > h.TrafficPercent ||
+				(o.TrafficPercent == h.TrafficPercent && (o.CreatedAt.After(h.CreatedAt) ||
+					(o.CreatedAt.Equal(h.CreatedAt) && otherID < heir))) {
+				heir = otherID
+			}
+		}
+		if heir == "" {
+			continue
+		}
+		h := m.deployments[heir]
+		h.TrafficPercent += d.TrafficPercent
+		d.TrafficPercent = 0
+		m.putDeploymentLocked(heir, h)
+		m.putDeploymentLocked(depID, d)
+	}
 }
 
 func (m *MemStore) ListDeletedApps(_ context.Context) ([]App, error) {
@@ -8748,6 +8854,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 	if err := validateDeploymentReleaseCommand(d.ReleaseCommand, d.ReleaseCommandShell); err != nil {
 		return Deployment{}, 0, err
 	}
+	schedule, err := deploymentScheduleForCreate(ctx, d)
+	if err != nil {
+		return Deployment{}, 0, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if err := m.checkOrgAccessLocked(ctx); err != nil {
@@ -9143,6 +9253,10 @@ func (m *MemStore) createDeployment(ctx context.Context, d Deployment, activity 
 			return Deployment{}, 0, err
 		}
 		d.StagedReview = &review
+	}
+	if schedule.result != nil {
+		schedule.schedule.DeploymentID = d.ID
+		schedule.result.Created, schedule.result.Replaced = m.scheduleReleaseLocked(schedule.schedule, schedule.replacedCode, schedule.replacedDetail, time.Now())
 	}
 	d.StageState = m.deployments[d.ID].StageState
 	return d, outboxID, nil
@@ -20719,8 +20833,16 @@ func (m *MemStore) appendUsage(_ context.Context, accountID, appID, instanceID s
 // counter checkpoint. MemStore's single mutex makes the checkpoint advance and
 // usage delta append one atomic operation.
 func (m *MemStore) AppendNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool) (int64, int64, error) {
-	tx, rx, _, err := m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
+	tx, rx, _, err := m.appendNetworkUsageObservation(appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, nil)
 	return tx, rx, err
+}
+
+// AppendNodeNetworkUsageObservation implements NodeNetworkObserver.
+func (m *MemStore) AppendNodeNetworkUsageObservation(_ context.Context, _, appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+	if internal != nil && *internal < 0 {
+		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
+	}
+	return m.appendNetworkUsageObservation(appID, instanceID, minute, reading, netTxCumulative, netTxValid, netRxCumulative, netRxValid, internal)
 }
 
 // AppendNetworkUsageObservationExcludingInternal mirrors PgStore (billing
@@ -20729,10 +20851,10 @@ func (m *MemStore) AppendNetworkUsageObservationExcludingInternal(_ context.Cont
 	if internalCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
-	return m.appendNetworkUsageObservation(appID, instanceID, minute, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
+	return m.appendNetworkUsageObservation(appID, instanceID, minute, NetworkReading{}, netTxCumulative, netTxValid, netRxCumulative, netRxValid, &internalCumulative)
 }
 
-func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minute time.Time, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
+func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minute time.Time, reading NetworkReading, netTxCumulative int64, netTxValid bool, netRxCumulative int64, netRxValid bool, internal *int64) (int64, int64, int64, error) {
 	if netTxCumulative < 0 || netRxCumulative < 0 {
 		return 0, 0, 0, fmt.Errorf("network usage counters must be non-negative")
 	}
@@ -20754,6 +20876,16 @@ func (m *MemStore) appendNetworkUsageObservation(appID, instanceID string, minut
 
 	billingAccountID := m.usage[usageIndex].AccountID
 	checkpoint := m.networkUsageCheckpoints[instanceID]
+	skip, fresh, node := networkReadingStep(checkpoint.nodeID, reading)
+	if skip {
+		return 0, 0, 0, nil
+	}
+	if fresh {
+		// Another node's counter: all of it is new usage.
+		checkpoint.netTxValid, checkpoint.netRxValid, checkpoint.internalTxValid = false, false, false
+		checkpoint.internalTxPending = 0
+	}
+	checkpoint.nodeID = node
 	previousTxValid := checkpoint.netTxValid
 	var netTxDelta, netRxDelta int64
 	if netTxValid {
@@ -21789,9 +21921,14 @@ func (m *MemStore) pendingBillingMeterUsageWindows(provider string, meter Billin
 		if !ok || row.Minute.Before(start) || !row.Minute.Before(end) || row.Minute.Before(identity.BillingFrom) {
 			continue
 		}
-		// Only paid subjects are pending, as in PgStore (ADR-20261031100000).
+		// Only paid subjects are pending, as in PgStore (ADR-20261031100000),
+		// and a now-Free subject's hours before the change that made it Free
+		// (ADR-20261121231500).
 		if !m.billingSubjectPaidLocked(row.AccountID) {
-			continue
+			changed, ok := m.planChangedAt[row.AccountID]
+			if !ok || !changed.After(identity.BillingFrom) || !row.Minute.Before(changed) {
+				continue
+			}
 		}
 		hour := row.Minute.UTC().Truncate(time.Hour)
 		if _, delivered := m.billingUsageDeliveries[billingUsageDeliveryKey(provider, row.AccountID, meter, hour)]; delivered {

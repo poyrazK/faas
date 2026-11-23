@@ -83,6 +83,17 @@ func (s *PgStore) ThawFrozenInstance(ctx context.Context, t FrozenThaw) (Instanc
 	if err := validateFrozenThaw(t); err != nil {
 		return Instance{}, err
 	}
+	// The thaw takes the app's runtime fences without waiting, like every
+	// other publication (ADR-595), so a concurrent wake in the account makes
+	// it busy for a few milliseconds. Unreplayed, schedd abandoned the thaw
+	// and parked the warm VM (prod 2026-11-22: a */15 cron app beside nine
+	// other crons of its account, 11 times on one node in a morning).
+	return retryRuntimeAdmissionBusy(ctx, func() (Instance, error) {
+		return s.thawFrozenInstanceOnce(ctx, t)
+	})
+}
+
+func (s *PgStore) thawFrozenInstanceOnce(ctx context.Context, t FrozenThaw) (Instance, error) {
 	params := sqlc.ThawFrozenInstanceParams{
 		AppID: mustPgUUID(t.AppID), InstanceID: mustPgUUID(t.InstanceID), NodeID: mustPgUUID(t.NodeID), WakeID: mustPgUUID(t.WakeID),
 		DeploymentID: mustPgUUID(t.Fence.SecretFence.DeploymentID), ConfigFingerprint: t.Fence.Fingerprint, Generation: t.Generation,

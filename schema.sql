@@ -1700,6 +1700,7 @@ CREATE TABLE public.apps (
     github_preview_enabled boolean,
     scaling_revision bigint DEFAULT 1 NOT NULL,
     sandbox_template boolean DEFAULT false NOT NULL,
+    owner_home_node_id uuid,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -5843,6 +5844,24 @@ BEGIN
            SET last_index = greatest(c.last_index, EXCLUDED.last_index);
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: assign_consumer_key_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.assign_consumer_key_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.consumer_id IS NULL THEN
+    NEW.environment_id := NULL;
+  ELSE
+    SELECT c.environment_id INTO NEW.environment_id FROM api_consumers c WHERE c.id = NEW.consumer_id;
+  END IF;
+  RETURN NEW;
 END;
 $$;
 
@@ -14898,6 +14917,27 @@ BEGIN
     END IF;
     RETURN OLD;
 END $$;
+
+
+--
+-- Name: guard_api_consumer_environment(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_api_consumer_environment() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.environment_id IS DISTINCT FROM OLD.environment_id THEN
+    RAISE EXCEPTION 'an API consumer keeps its environment' USING ERRCODE = '23514';
+  END IF;
+  IF NEW.environment_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM apps a JOIN project_environments e ON e.project_id = a.project_id AND e.account_id = a.account_id
+      WHERE a.id = NEW.app_id AND e.id = NEW.environment_id) THEN
+    RAISE EXCEPTION 'an API consumer environment belongs to its app''s project' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -32182,7 +32222,7 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_mcp_readiness_action_chk CHECK (((metric <> 'mcp_readiness_unhealthy'::text) OR ((action = 'webhook'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_mcp_readiness_scope_chk CHECK (((mcp_readiness_scope = ''::text) OR ((metric = 'mcp_readiness_unhealthy'::text) AND (app_id IS NOT NULL) AND (mcp_readiness_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text) OR (metric = ANY (ARRAY['queue_backlog'::text, 'queue_oldest_age_seconds'::text])) OR (metric = ANY (ARRAY['route_monitor_incidents'::text, 'route_health_holds'::text])) OR (metric = 'ai_budget_alerts'::text) OR (metric = 'oom_kills'::text))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -32879,6 +32919,7 @@ CREATE TABLE public.api_consumers (
     revoked_at timestamp with time zone,
     platform_tenant_id uuid,
     platform_tenant_managed boolean DEFAULT false NOT NULL,
+    environment_id uuid,
     CONSTRAINT api_consumers_external_ref_len_chk CHECK (((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256))),
     CONSTRAINT api_consumers_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 128))),
     CONSTRAINT api_consumers_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
@@ -36909,6 +36950,7 @@ CREATE TABLE public.consumer_keys (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     consumer_id uuid,
+    environment_id uuid,
     CONSTRAINT consumer_keys_expires_after_created_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
     CONSTRAINT consumer_keys_hashed_secret_credhash_chk CHECK ((octet_length(hashed_secret) = ANY (ARRAY[32, 33]))),
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
@@ -39453,7 +39495,7 @@ CREATE TABLE public.deployment_route_policy_snapshots (
     schema_version integer DEFAULT 1 NOT NULL,
     captured_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT deployment_route_policy_snapshots_schema_version_positive CHECK ((schema_version >= 1)),
-    CONSTRAINT deployment_route_policy_snapshots_scope_shape CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT deployment_route_policy_snapshots_scope_v2_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_route_policy_snapshots_sha256_shape CHECK ((sha256 ~ '^[0-9a-f]{64}$'::text))
 );
 
@@ -44733,6 +44775,75 @@ CREATE TABLE public.instance_quiet_pauses (
     recorded_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT instance_quiet_pauses_order CHECK (((ended_at IS NULL) OR (ended_at >= started_at)))
 );
+
+
+--
+-- Name: instance_resource_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_resource_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    account_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    samples integer NOT NULL,
+    mem_start_mb integer NOT NULL,
+    mem_peak_mb integer NOT NULL,
+    mem_end_mb integer NOT NULL,
+    mem_limit_mb integer NOT NULL,
+    cpu_ms bigint NOT NULL,
+    cpu_peak_millicores integer NOT NULL,
+    cpu_limit_millicores integer NOT NULL,
+    CONSTRAINT instance_resource_minutes_check CHECK ((mem_peak_mb >= mem_start_mb)),
+    CONSTRAINT instance_resource_minutes_check1 CHECK (((mem_end_mb >= 0) AND (mem_end_mb <= mem_peak_mb))),
+    CONSTRAINT instance_resource_minutes_cpu_limit_millicores_check CHECK ((cpu_limit_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_ms_check CHECK ((cpu_ms >= 0)),
+    CONSTRAINT instance_resource_minutes_cpu_peak_millicores_check CHECK ((cpu_peak_millicores >= 0)),
+    CONSTRAINT instance_resource_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_resource_minutes_mem_limit_mb_check CHECK ((mem_limit_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_mem_start_mb_check CHECK ((mem_start_mb >= 0)),
+    CONSTRAINT instance_resource_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_resource_minutes_samples_check CHECK ((samples >= 1))
+);
+
+
+--
+-- Name: TABLE instance_resource_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_resource_minutes IS 'Per-instance app cgroup memory and CPU per minute; written by apid from vmmd, swept by meterd (ADR-20261121170000).';
+
+
+--
+-- Name: instance_route_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_route_minutes (
+    app_id uuid NOT NULL,
+    instance_id text NOT NULL,
+    minute timestamp with time zone NOT NULL,
+    route text NOT NULL,
+    method text NOT NULL,
+    account_id uuid NOT NULL,
+    requests bigint NOT NULL,
+    busy_ms bigint NOT NULL,
+    max_latency_ms integer NOT NULL,
+    CONSTRAINT instance_route_minutes_busy_ms_check CHECK ((busy_ms >= 0)),
+    CONSTRAINT instance_route_minutes_instance_id_check CHECK (((octet_length(instance_id) >= 1) AND (octet_length(instance_id) <= 128))),
+    CONSTRAINT instance_route_minutes_max_latency_ms_check CHECK ((max_latency_ms >= 0)),
+    CONSTRAINT instance_route_minutes_method_check CHECK ((octet_length(method) <= 16)),
+    CONSTRAINT instance_route_minutes_minute_check CHECK ((isfinite(minute) AND (minute = date_bin('00:01:00'::interval, minute, '1970-01-01 00:00:00+00'::timestamp with time zone)))),
+    CONSTRAINT instance_route_minutes_requests_check CHECK ((requests >= 0)),
+    CONSTRAINT instance_route_minutes_route_check CHECK (((octet_length(route) >= 1) AND (octet_length(route) <= 256)))
+);
+
+
+--
+-- Name: TABLE instance_route_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.instance_route_minutes IS 'Per-instance route activity per minute; written by apid from gateways, swept by meterd (ADR-20261121170000).';
 
 
 --
@@ -50117,6 +50228,7 @@ CREATE TABLE public.meter_network_checkpoints (
     internal_tx_valid boolean DEFAULT false NOT NULL,
     internal_tx_pending bigint DEFAULT 0 NOT NULL,
     service_reply_pending bigint DEFAULT 0 NOT NULL,
+    node_id text DEFAULT ''::text NOT NULL,
     CONSTRAINT meter_network_checkpoints_net_rx_bytes_check CHECK ((net_rx_bytes >= 0)),
     CONSTRAINT meter_network_checkpoints_net_tx_bytes_check CHECK ((net_tx_bytes >= 0))
 );
@@ -59677,7 +59789,7 @@ CASE
     WHEN (environment_id IS NULL) THEN ('scope:'::text || scope)
     ELSE ('environment:'::text || (environment_id)::text)
 END)),
-    CONSTRAINT runtime_environment_scaling_states_scope_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (scope <> 'default'::text)))
+    CONSTRAINT runtime_environment_scaling_states_scope_v2_check CHECK (((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text) AND (scope <> 'default'::text)))
 );
 
 
@@ -59699,7 +59811,7 @@ CREATE TABLE public.runtime_instance_config_proofs (
     CONSTRAINT runtime_instance_config_proofs_environment_id_check CHECK ((environment_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT runtime_instance_config_proofs_prime_activation_handoff_check CHECK (((prime_activation_handoff IS NULL) OR (jsonb_typeof(prime_activation_handoff) = 'object'::text))),
-    CONSTRAINT runtime_instance_config_proofs_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))),
+    CONSTRAINT runtime_instance_config_proofs_scope_v2_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text))),
     CONSTRAINT runtime_instance_config_proofs_secret_fingerprint_check CHECK ((secret_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT runtime_instance_config_proofs_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
@@ -70280,6 +70392,22 @@ ALTER TABLE ONLY public.instance_quiet_pauses
 
 
 --
+-- Name: instance_resource_minutes instance_resource_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_resource_minutes
+    ADD CONSTRAINT instance_resource_minutes_pkey PRIMARY KEY (app_id, minute, instance_id);
+
+
+--
+-- Name: instance_route_minutes instance_route_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_route_minutes
+    ADD CONSTRAINT instance_route_minutes_pkey PRIMARY KEY (app_id, minute, instance_id, route, method);
+
+
+--
 -- Name: instance_runtime_config_receipts instance_runtime_config_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79356,10 +79484,24 @@ CREATE INDEX api_consumers_account_app_idx ON public.api_consumers USING btree (
 
 
 --
+-- Name: api_consumers_app_environment_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX api_consumers_app_environment_external_ref_uniq ON public.api_consumers USING btree (app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), external_ref);
+
+
+--
 -- Name: api_consumers_app_external_ref_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX api_consumers_app_external_ref_uniq ON public.api_consumers USING btree (app_id, external_ref);
+
+
+--
+-- Name: api_consumers_environment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumers_environment_idx ON public.api_consumers USING btree (environment_id) WHERE (environment_id IS NOT NULL);
 
 
 --
@@ -80953,6 +81095,20 @@ CREATE INDEX compute_nodes_lifecycle_idx ON public.compute_nodes USING btree (na
 --
 
 CREATE INDEX compute_nodes_region_zone_idx ON public.compute_nodes USING btree (region, zone) WHERE active;
+
+
+--
+-- Name: consumer_keys_app_environment_name_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_environment_name_idx ON public.consumer_keys USING btree (account_id, app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), name);
+
+
+--
+-- Name: consumer_keys_app_environment_prefix_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX consumer_keys_app_environment_prefix_idx ON public.consumer_keys USING btree (app_id, COALESCE(environment_id, '00000000-0000-0000-0000-000000000000'::uuid), prefix);
 
 
 --
@@ -83931,6 +84087,20 @@ CREATE INDEX instance_quiet_pauses_started_at ON public.instance_quiet_pauses US
 
 
 --
+-- Name: instance_resource_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_resource_minutes_minute_idx ON public.instance_resource_minutes USING btree (minute);
+
+
+--
+-- Name: instance_route_minutes_minute_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_route_minutes_minute_idx ON public.instance_route_minutes USING btree (minute);
+
+
+--
 -- Name: instances_app_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -86287,6 +86457,13 @@ CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_
 --
 
 CREATE INDEX object_storage_inventory_scans_open ON public.object_storage_inventory_scans USING btree (started_at) WHERE ((pages > 0) AND (NOT complete));
+
+
+--
+-- Name: object_storage_multipart_completion_versions_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_multipart_completion_versions_idx ON public.object_storage_multipart_uploads USING btree (bucket_id) WHERE completion_versions_observed;
 
 
 --
@@ -90963,6 +91140,13 @@ CREATE TRIGGER alert_rules_keep_episodes BEFORE DELETE ON public.alert_rules FOR
 
 
 --
+-- Name: api_consumers api_consumer_environment_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER api_consumer_environment_guard BEFORE INSERT OR UPDATE ON public.api_consumers FOR EACH ROW EXECUTE FUNCTION public.guard_api_consumer_environment();
+
+
+--
 -- Name: api_consumers api_consumers_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -93077,6 +93261,13 @@ CREATE TRIGGER compute_nodes_release_activation_insert AFTER INSERT ON public.co
 --
 
 CREATE TRIGGER compute_nodes_release_activation_update AFTER UPDATE OF release_id ON public.compute_nodes FOR EACH ROW WHEN (((new.release_id IS NOT NULL) AND (new.release_id <> ''::text) AND (old.release_id IS DISTINCT FROM new.release_id))) EXECUTE FUNCTION public.record_compute_release_activation();
+
+
+--
+-- Name: consumer_keys consumer_key_environment; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER consumer_key_environment BEFORE INSERT OR UPDATE OF consumer_id, environment_id ON public.consumer_keys FOR EACH ROW EXECUTE FUNCTION public.assign_consumer_key_environment();
 
 
 --
@@ -99315,6 +99506,14 @@ ALTER TABLE ONLY public.api_consumers
 
 
 --
+-- Name: api_consumers api_consumers_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumers
+    ADD CONSTRAINT api_consumers_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
+
+
+--
 -- Name: api_consumers api_consumers_platform_tenant_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -100987,6 +101186,14 @@ ALTER TABLE ONLY public.apps
 
 
 --
+-- Name: apps apps_owner_home_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.apps
+    ADD CONSTRAINT apps_owner_home_node_id_fkey FOREIGN KEY (owner_home_node_id) REFERENCES public.compute_nodes(id) ON DELETE SET NULL;
+
+
+--
 -- Name: apps apps_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -101776,6 +101983,14 @@ ALTER TABLE ONLY public.consumer_keys
 
 ALTER TABLE ONLY public.consumer_keys
     ADD CONSTRAINT consumer_keys_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: consumer_keys consumer_keys_environment_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.consumer_keys
+    ADD CONSTRAINT consumer_keys_environment_fkey FOREIGN KEY (environment_id) REFERENCES public.project_environments(id) ON DELETE CASCADE NOT VALID;
 
 
 --

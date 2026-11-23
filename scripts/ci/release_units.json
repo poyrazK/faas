@@ -90,17 +90,21 @@
     "mcp-bridged": {"lane": "control-plane", "services": [{"name": "mcp-bridge", "optional": true}]},
     "gregalectl": {"lane": "tool"}
   },
+  "activation": {
+    "_comment": "Parallel activation (docs/adr/20261122170000-continuous-unit-lane.md): a unit deploy restarts daemons of equal Lifecycle.After depth together, at most `parallel` at once, vmmd alone (cmd/deployctl/restart_waves.go, through DEPLOYCTL_RESTART_PARALLEL). 1 restarts one at a time, as full releases and rollbacks do.",
+    "parallel": 4
+  },
   "gates": {
     "_comment": "SLO gate per host (scripts/ci/slo_gate.py --duration/--max-hold). The canary is the first host of a lane: the control plane in the control-plane lane, the designated compute node in the edge lane (the control plane when no compute node restarts a gateway). Every later host gets the follower gate, long enough to catch crash loops and immediate error spikes. scripts/ci/plan_edge_rollout.py checks these against the 30-minute budget (ADR-1650).",
     "canary": {"duration": "4m", "max_hold": "2m"},
     "follower": {"duration": "90s", "max_hold": "30s"}
   },
   "watch": {
-    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (3 previous releases) still holds its known-good release.",
+    "_comment": "Post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md): the SLO gate keeps running for `window` after a run's last activation, each rule held for its own for: (max hold = window). `max_blind_rounds` rounds without evidence (5 minutes at the interval) make it inconclusive. A host holds at most `max_unwatched` unit releases not yet watched clean, so release retention (pkg/releaseretention DefaultKeepPrevious, 5 previous releases) still holds its known-good release; max_unwatched stays below it (pkg/releaseretention test). 4 since 2026-11-23 (was 2): with 2, a third release in a merge burst waited up to 30 min for the watch (ADR-20261122170000).",
     "window": "30m",
     "interval": "15s",
     "max_blind_rounds": 20,
-    "max_unwatched": 2
+    "max_unwatched": 4
   },
   "global_inputs": ["go.mod", "go.sum"],
   "_migrations_comment": "Goose migrations (*.sql directly in migrations_dir). When every one added since base is lane-eligible (declared -- migration-compat: expand, no contract change; docs/adr/20261018084150-unit-lane-expand-migrations.md), they are the data step the control-plane lane applies before restarting anything. Otherwise they block like any other path under blocking_paths.migrations.",
@@ -143,7 +147,7 @@
       "deploy/ansible/roles/neond_service/files/faas-neond.service"
     ]
   },
-  "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) Cloudflare workers, which deploy through their own workflows, the backup bucket lifecycle (deploy/backup-lifecycle/) and the OVH Object Storage user policies (deploy/ovh/), which an operator applies by hand. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
+  "_deploy_classes_comment": "Every deploy/ path has exactly one class (docs/adr/20261027151755-unit-lane-deploy-path-classes.md; scripts/ci/affected_units.py deploy_class), first match wins: a release unit (host_config.release_units, blocking); a path a host role reads (host_config on the control plane, compute_deploy on compute); then the first class below with a pattern that names it. A pattern is a directory (trailing /), an exact path, or a glob (* inside one segment, **/ across segments). inert: nothing a host runs reads it at activation, so it maps to no flag: documentation, tests, samples (*.example, which roles install only as /etc/faas/*.example for operators to copy), the legacy unit tree deployctl generate writes for dev VMs (deploy/systemd/), the grafana role's dashboard mirror (deploy/grafana/, make grafana-mirror-check) Cloudflare workers, which deploy through their own workflows, the backup bucket lifecycle (deploy/backup-lifecycle/) and the OVH Object Storage user policies (deploy/ovh/) and the unit-release build runner's bootstrap (build_runner.yml) and the github_actions_runner role it shares with the deployment runner (ADR-20261122170000), which an operator applies by hand and no release, full or unit, runs. compute_only: playbooks only compute hosts run; pending for the control-plane lane, they hold the edge lane while it restarts a gateway on a compute host (compute_deploy). blocking: read by a full release or an operator path the lanes cannot vouch for, so a change waits for the next full tag (deploy). A path none of these names blocks, and scripts/ci/affected_units_test.py fails until it is classified. Whatever its class, a path no host role reads whose change since base only touches blank and # comment lines maps to no flag.",
   "deploy_classes": {
     "inert": [
       "deploy/**/*.md",
@@ -157,7 +161,9 @@
       "deploy/grafana/",
       "deploy/cloudflare/",
       "deploy/backup-lifecycle/",
-      "deploy/ovh/"
+      "deploy/ovh/",
+      "deploy/ansible/build_runner.yml",
+      "deploy/ansible/roles/github_actions_runner/"
     ],
     "compute_only": [
       "deploy/ansible/node_join.yml",
@@ -191,7 +197,6 @@
       "deploy/ansible/roles/database_node_pki/",
       "deploy/ansible/roles/database_vmmd/",
       "deploy/ansible/roles/dbbackupd_service/",
-      "deploy/ansible/roles/github_actions_runner/",
       "deploy/ansible/roles/go_cache_retention/",
       "deploy/ansible/roles/metal-h2c-acceptance/",
       "deploy/ansible/roles/native_acceptance_host/",

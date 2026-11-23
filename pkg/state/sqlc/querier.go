@@ -106,6 +106,11 @@ type Querier interface {
 	// left out of results.
 	// The arrays are parallel: the select list unnests them in step.
 	AddFlagExperimentUnits(ctx context.Context, db DBTX, arg AddFlagExperimentUnitsParams) error
+	// Route resource peaks (ADR-20261121170000).
+	// The arrays are parallel. Rows of one batch never share a key: vmmd
+	// sends each instance-minute once per batch.
+	AddInstanceResourceMinutes(ctx context.Context, db DBTX, arg AddInstanceResourceMinutesParams) error
+	AddInstanceRouteMinutes(ctx context.Context, db DBTX, arg AddInstanceRouteMinutesParams) error
 	// ADR-20261103113952 amendment 2: the same flush folded to UTC hours, in
 	// the same shape as AddRequestAnalyticsMinutes.
 	AddRequestAnalyticsHours(ctx context.Context, db DBTX, arg AddRequestAnalyticsHoursParams) error
@@ -282,6 +287,9 @@ type Querier interface {
 	// count as the app's egress (ADR-20261104132753): tx_bytes and net_tx_bytes
 	// under the app's edge usage ID, md5('gregale-edge-egress:' || app id).
 	ApplyGatewayEdgeUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayEdgeUsageEventParams) (int64, error)
+	// $6 is the frame's billed egress: its response bytes when meterd counts
+	// gateway responses as app egress (ADR-20261121210517, compute nodes whose
+	// public responses do not cross the instance veth), otherwise 0.
 	ApplyGatewayUsageEvent(ctx context.Context, db DBTX, arg ApplyGatewayUsageEventParams) (int64, error)
 	ApplyMCPNotificationAction(ctx context.Context, db DBTX, arg ApplyMCPNotificationActionParams) error
 	// Change only the debugger workflow state for one app-scoped observation.
@@ -4238,6 +4246,11 @@ type Querier interface {
 	// fan-out can enforce tenant isolation without joining apps.
 	ListEventSubscriptionsForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]EventSubscription, error)
 	ListEvents(ctx context.Context, db DBTX, arg ListEventsParams) ([]ListEventsRow, error)
+	// The operator wake-latency report (ADR-20261121200409): one kind's rows at
+	// or after since, newest first, as a backward scan of events_kind_at_idx
+	// (kind, at DESC). The caller asks for one row more than it keeps to learn
+	// whether the window was cut.
+	ListEventsByKindSince(ctx context.Context, db DBTX, arg ListEventsByKindSinceParams) ([]ListEventsByKindSinceRow, error)
 	// One kind of a subject's events since a time, newest first: the debugger's
 	// "why is it running" history reads only the scheduler's observations, so
 	// other events about the app cannot push them out of a bounded read
@@ -4292,6 +4305,8 @@ type Querier interface {
 	// to its build log there. The spool sweeper never removes either while the
 	// deployment is in one of these states, whatever the file's age.
 	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
+	ListInstanceResourceMinutes(ctx context.Context, db DBTX, arg ListInstanceResourceMinutesParams) ([]ListInstanceResourceMinutesRow, error)
+	ListInstanceRouteMinutes(ctx context.Context, db DBTX, arg ListInstanceRouteMinutesParams) ([]ListInstanceRouteMinutesRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	// The app's pending and dispatching rows per source from the backlog
 	// counters (ADR-20261022105723), so `queue status` shows async invocations,
@@ -4410,7 +4425,7 @@ type Querier interface {
 	// ADR-1445: post-release watch.
 	// Completed live releases that kept automatic rollback, finished within the
 	// watch window (plus telemetry grace), are the newest deployment in their
-	// scope to have served, and have a superseded predecessor created before them.
+	// scope to have served, and have a predecessor created before them.
 	// Being the newest to have served excludes rollback targets, which are older
 	// than what they replaced. A newer release that never served (staged with no
 	// traffic, parked for its schedule, or still building) leaves the serving
@@ -4419,7 +4434,8 @@ type Querier interface {
 	// ends when it completed.
 	// The predecessor is the release a plain rollback returns to
 	// (LatestRetainedRollbackDeployment): the one that served most recently, never
-	// a canary candidate aborted before it completed. Ordered by created_at, a
+	// a canary candidate aborted before it completed. Scheduled cutovers retain
+	// their previous release live at zero traffic. Ordered by created_at, a
 	// canary aborted between v1 and v3 (retired as superseded when v3 completed)
 	// or a build superseded before it went live was chosen, so the watch compared
 	// v3 with a release that never served and rolled back to it (release review
@@ -5594,8 +5610,9 @@ type Querier interface {
 	// ADR-20261110151628 §3: how far the inventory sweep is behind. due_buckets
 	// counts what ObjectInventoriesDue would hand out now (same rule).
 	// oldest_age_seconds is the oldest observation admission still holds to the
-	// 900 s window: a bucket held by a versioning, Object Lock or capacity change
-	// (with an observation), or whose listing advanced within progress_window on
+	// 900 s window: a bucket held by a versioning, Object Lock or capacity change,
+	// or whose all-version refresh waits for a live multipart session (with an
+	// observation), or whose listing advanced within progress_window on
 	// an observation under scan_max_age, stays fresh on an older one and does not
 	// count (objectBucketInventoryStale). A bucket never observed counts from its
 	// creation. With quiet set and object_inventory_quiet on (§2), a quiet bucket
@@ -5832,6 +5849,9 @@ type Querier interface {
 	// narrows by their indexes without changing the result. The subject function
 	// alone cannot use an index (its EXISTS keeps it from inlining): it scanned
 	// every bucket on the platform, under the account lock of every object write.
+	// inventory_held also covers an all-version-path bucket with a live multipart
+	// session: its refresh cannot start until the session ends (ADR-533/540), and
+	// its tracked reservations keep capacity conservative meanwhile.
 	ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error)
 	ObjectUsageGrant(ctx context.Context, db DBTX, arg ObjectUsageGrantParams) (int64, error)
 	ObjectUsageGrantIncrement(ctx context.Context, db DBTX, arg ObjectUsageGrantIncrementParams) error
@@ -5964,6 +5984,11 @@ type Querier interface {
 	OperatorIncidentEvidence(ctx context.Context, db DBTX, arg OperatorIncidentEvidenceParams) ([]OperatorIncidentEvidenceRow, error)
 	OperatorIncidents(ctx context.Context, db DBTX, arg OperatorIncidentsParams) ([]OperatorIncidentsRow, error)
 	OperatorInsertAuditLog(ctx context.Context, db DBTX, arg OperatorInsertAuditLogParams) error
+	// Live deployments of active apps with no usable snapshot (none, or every one
+	// stale or pending deletion): they cold boot on every wake until a snapshot
+	// is taken. cold_bootable is false when the deployment has no rootfs either,
+	// which breaks spec invariant 6.2-3. Those come first, then the newest.
+	OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error)
 	OperatorNodeHasLiveInstances(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error)
 	OperatorOverviewActivity(ctx context.Context, db DBTX, auditSince pgtype.Timestamptz) (OperatorOverviewActivityRow, error)
 	// Deploys and new accounts by the coding agent the Gregale CLI reported
@@ -5990,6 +6015,12 @@ type Querier interface {
 	// Legacy rows are ambiguous even after the old cache's TTL. Never reclaim them here.
 	OperatorRecoveryLegacyKeyExists(ctx context.Context, db DBTX, arg OperatorRecoveryLegacyKeyExistsParams) (bool, error)
 	OperatorRestartDatabaseTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	// The operator snapshot health report (ADR-20261122135018): every snapshot
+	// row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+	// definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+	// plus the deployment's above-base layer) and its app, largest first. The
+	// caller asks for one row more than it keeps to learn whether it was cut.
+	OperatorSnapshotInventory(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorSnapshotInventoryRow, error)
 	OperatorSnapshotPrimeSnapshot(ctx context.Context, db DBTX, arg OperatorSnapshotPrimeSnapshotParams) ([]OperatorSnapshotPrimeSnapshotRow, error)
 	OperatorTenantApps(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) ([]OperatorTenantAppsRow, error)
 	OperatorTenantCounts(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) (OperatorTenantCountsRow, error)
@@ -7277,6 +7308,9 @@ type Querier interface {
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.
 	RearmTenantStoredWorkflowSchedules(ctx context.Context, db DBTX, arg RearmTenantStoredWorkflowSchedulesParams) error
+	// ADR-20261121203000: a displacement remembers the node the app came from
+	// (its home), keeps an older home across a chain of drains, and clears it
+	// when the app lands back on its home.
 	ReassignOrphanedAppOwner(ctx context.Context, db DBTX, arg ReassignOrphanedAppOwnerParams) (int64, error)
 	RecentAccountSessions(ctx context.Context, db DBTX, arg RecentAccountSessionsParams) ([]RecentAccountSessionsRow, error)
 	// ADR-20261107140000 §6: the key's most recent request with the same binding,

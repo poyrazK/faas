@@ -2726,10 +2726,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-958: one in-guest span ingester shared by both SpansWriter listeners.
 	// Its flush loop writes back through WriteSpansSummary so guest spans share
 	// that path's validation, rate cap and outcome metrics.
+	// ADR-20261121170000: route resource peaks, for the accounts the
+	// route_resource_peaks flag releases. Nil (off) with the in-memory store.
+	var routeResources *receivers.RouteResources
+	if rrStore, ok := srv.store.(state.RouteResourceStore); ok {
+		routeResources = receivers.NewRouteResources(rrStore, func(subject platformflags.Subject) bool {
+			return srv.platformFlagFor(platformflags.RouteResourcePeaks, subject)
+		})
+	}
 	var guestSpans *receivers.GuestSpansIngester
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		guestSpans = receivers.NewGuestSpansIngester(srv.store, spansLimiter, log).WithLogs(srv.store).
-			WithMetrics(guestMetricsSink{s: srv}).WithTracingRelease(tracing)
+			WithMetrics(guestMetricsSink{s: srv}).WithTracingRelease(tracing).WithRouteResources(routeResources)
 		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
 		// spans and logs must come from instances on that node.
 		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
@@ -2766,13 +2774,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// A store without rollups (the in-memory dev store) leaves them off.
 	var rollups *receivers.RequestAnalyticsRollups
 	if rollupStore, ok := srv.store.(state.RequestAnalyticsRollupStore); ok {
-		// Amendment 4: a marker under /var/lib/faas tells the next start that
-		// this apid stopped without writing its pending rollups.
-		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas/apid-analytics-rollups.running")
+		// Amendment 4: a marker in apid's StateDirectory tells the next start that
+		// this apid stopped without writing its pending rollups. apid runs
+		// as faas-apid, which cannot write /var/lib/faas (faas:faas 0750):
+		// on prod every start logged "crash marker unavailable" there.
+		marker := envOr("FAAS_ANALYTICS_ROLLUP_CRASH_MARKER", "/var/lib/faas-apid/analytics-rollups.running")
 		rollups = receivers.NewRequestAnalyticsRollups(rollupStore, srv.ops.Registry(), log).WithCrashMarker(marker)
 		go rollups.Run(ctx, api.RequestAnalyticsRollupFlushInterval)
 	}
-	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups}
+	ingest := telemetryIngest{gate: receivers.NewIngestGate(api.TelemetryIngestDBConcurrency), rollups: rollups, routeResources: routeResources}
 	// ADR-20261101085552: gateways that keep the request-ID journal on their
 	// node hold a lookup stream on whichever listener carries their request
 	// telemetry; one hub serves both and the debug request lookup.
@@ -3481,7 +3491,7 @@ func runAppErrorsServer(ctx context.Context, target string, tlsCfg *tls.Config, 
 	// request_telemetry.sock server below, preserving the separate DAC
 	// boundaries for the legacy Unix sockets.
 	if !isUnixSocketPath(target) {
-		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups)
+		receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, os.Getenv("FAAS_REQUEST_TELEMETRY_ENABLED") != "false", ingest.gate, ingest.rollups, ingest.routeResources)
 	}
 	// gatewayd-internal's platform-owned spans use the same private mTLS
 	// listener in split-box deployments. The dedicated Unix socket remains the
@@ -3511,7 +3521,7 @@ func runRequestTelemetryServer(ctx context.Context, target string, store state.S
 		return nil, nil, fmt.Errorf("request telemetry listen: %w", err)
 	}
 	srv := grpc.NewServer(wire.TraceServerOptions()...)
-	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups)
+	receivers.RegisterRequestTelemetryReceiver(srv, store, ops, limiter, enabled, ingest.gate, ingest.rollups, ingest.routeResources)
 	// Single-box realtimed reaches apid through this DAC-protected socket,
 	// and asks it to match Data API server keys there (ADR 20261029202403
 	// amendment 1).
@@ -3572,6 +3582,8 @@ func runAuthServer(ctx context.Context, target string, store state.Store, log *s
 type telemetryIngest struct {
 	gate    receivers.IngestGate
 	rollups *receivers.RequestAnalyticsRollups
+	// routeResources keeps gateway route minutes (ADR-20261121170000).
+	routeResources *receivers.RouteResources
 }
 
 // spansIngest is the span-ingest wiring every telemetry listener shares:

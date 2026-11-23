@@ -49,17 +49,29 @@ func TestHostedMCP(t *testing.T) {
 	s.step("connection_listed", j.connectionListed)
 	s.step("connection_revoked", j.connectionRevoked)
 	s.step("org_created", j.orgCreated)
-	s.step("org_policy_read_only", j.orgPolicyReadOnly)
-	s.check("org_policy_refuses_deploy_key", j.orgPolicyRefusesDeployKey)
-	s.step("org_key_lists_org_apps", j.orgKeyListsOrgApps)
-	s.step("org_connection_listed", j.orgConnectionListed)
-	s.step("denying_agents_revokes", j.denyingAgentsRevokes)
+	// A skipped org_created passes, so the org steps check the org exists.
+	s.step("org_policy_read_only", j.needsOrg(j.orgPolicyReadOnly))
+	s.check("org_policy_refuses_deploy_key", j.needsOrg(j.orgPolicyRefusesDeployKey))
+	s.step("org_key_lists_org_apps", j.needsOrg(j.orgKeyListsOrgApps))
+	s.step("org_connection_listed", j.needsOrg(j.orgConnectionListed))
+	s.step("denying_agents_revokes", j.needsOrg(j.denyingAgentsRevokes))
+}
+
+// needsOrg skips an organization step when org_created made no organization.
+func (j *hostedMCPJourney) needsOrg(fn func(t *testing.T)) func(t *testing.T) {
+	return func(t *testing.T) {
+		if !j.orgMade {
+			t.Skip("no organization: org_created was skipped")
+		}
+		fn(t)
+	}
 }
 
 type hostedMCPJourney struct {
 	tg       *target
 	root     *testing.T // owns cleanups for what later steps use
 	endpoint string
+	orgMade  bool   // org_created made j.org
 	probe    string // the shared probe app: the account's, not the org's
 	admin    string // admin key for the connected-agents API
 	keyID    string // the account agent key
@@ -189,6 +201,7 @@ func (j *hostedMCPJourney) orgCreated(t *testing.T) {
 		t.Fatalf("gregale org create failed (exit %d): %s", res.exit, res.problem())
 	}
 	j.root.Cleanup(func() { j.tg.run(j.root, time.Minute, "org", "delete", j.org, "--yes") })
+	j.orgMade = true
 }
 
 // orgPolicyReadOnly: an owner sets the policy that lets agents in with

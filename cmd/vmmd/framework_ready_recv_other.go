@@ -39,6 +39,7 @@ type FrameworkReadyReceiver struct {
 	eventPublisher                      GuestEventPublisher
 	eventCapturer                       GuestEventCapturer
 	qualificationFrameworkReadyRecorder QualificationFrameworkReadyRecorder
+	resourceSlots                       atomic.Pointer[resourceMinutes]
 }
 
 // GuestEventPublisher mirrors the Linux receiver's callback type so the

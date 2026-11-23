@@ -273,9 +273,36 @@ class TaskRestartQualificationTest(unittest.TestCase):
         receipt_path = self.evidence / row["artifact"]
         self.assertNotIn("postgres://", receipt_path.read_text())
         self.assertNotIn("secret", receipt_path.read_text())
-        self.assertTrue(self._checker().validate_tasks_restart_receipt(
+        self.assertIsNone(self._checker().validate_tasks_restart_receipt(
             json.loads(receipt_path.read_text()), row["name"], row["target"], require_passed=False
-        ) is None)
+        ))
+
+        # A runner that ignores --gregale and returns version 1 cannot supply the extra proof.
+        command = [
+            sys.executable, str(RUNNER), "tasks-restart", "--dir", str(self.evidence),
+            "--target", receipt["target"], "--starter-dir", str(self.starter),
+            "--confirm-disposable-database", "--node", str(fake_node), "--gregale", str(self.root / "gregale"),
+        ]
+        downgrade = subprocess.run(command, check=False, capture_output=True, text=True, env=env)
+        self.assertEqual(downgrade.returncode, 1)
+        failed = json.loads(receipt_path.read_text())
+        self.assertEqual((failed["version"], failed["status"]), (2, "failed"))
+
+        receipt["version"], receipt["runner"] = 2, "gregale-mcp-tasks-restart-v2"
+        receipt["checks"]["reviewed_input_worker_replacement"] = "passed"
+        receipt["observations"].update(denied_input_updates=0, accepted_input_updates=1, reviewed_task_results=1)
+        fake_node.write_text(
+            "#!/usr/bin/env python3\n"
+            "import sys\n"
+            f"assert sys.argv[-2:] == ['--gregale', {str(self.root / 'gregale')!r}]\n"
+            f"print({json.dumps(receipt)!r})\n"
+        )
+        reviewed = subprocess.run(command, check=False, capture_output=True, text=True, env=env)
+        self.assertEqual(reviewed.returncode, 0, reviewed.stdout + reviewed.stderr)
+        manifest = json.loads((self.evidence / "manifest.json").read_text())
+        row = next(row for row in manifest["checks"] if row["name"] == "tasks_restart_replicas")
+        self.assertEqual(row["evidence_type"], receipt["runner"])
+        self.assertEqual(json.loads(receipt_path.read_text()), receipt)
 
     @staticmethod
     def _checker():

@@ -26692,6 +26692,42 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/analytics/route-resources:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppRouteResources
+      summary: Which routes the app's memory and CPU peaks come from.
+      description: |
+        Joins each instance's per-minute memory and CPU with the routes that
+        instance served in the same minutes. A memory peak is a minute whose
+        memory rose by at least high_memory_rise_mb above where it started; a
+        CPU peak is a minute whose busiest second reached 80% of the CPU limit.
+        For each route the response gives the share of peaks it was in flight
+        for, how often it ran at all, and the p95 peak in minutes with and
+        without it. This is a correlation over minutes, not a per-request
+        measurement: a route that runs in every minute shares every peak.
+        Available only where route resource peaks are enabled for the account.
+      parameters:
+        - name: since
+          in: query
+          required: false
+          schema: { type: string, default: 24h }
+          description: "Lookback duration, at least 1m and at most 336h."
+      responses:
+        '200':
+          description: Route attribution of the app's memory and CPU peaks.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteResourcesResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/analytics/timeseries:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -48110,15 +48146,13 @@ paths:
       summary: Publish a message to live or resumable channel subscribers.
       description: >-
         delivery=live (the default) fans out to live raw-frame subscribers.
-        delivery=retained is preview-only and requires
-        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most
-        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
-        commits the message to the ordered channel log before fan-out and
-        returns its sequence. V2 subscribers read the committed log in sequence;
-        a best-effort wake reduces latency while bounded polling recovers missed
-        wakes. The retained log remains authoritative if live fan-out is
-        incomplete. The resume protocol separately requires
-        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+        delivery=retained is part of the realtime preview, released per
+        account; it accepts at most 4096 decoded bytes and requires an
+        Idempotency-Key. Retained delivery commits the message to the ordered
+        channel log before fan-out and returns its sequence. Resumable
+        subscribers read the committed log in sequence; a best-effort wake
+        reduces latency while bounded polling recovers missed wakes. The
+        retained log remains authoritative if live fan-out is incomplete.
 
         A supplied Idempotency-Key binds the publish to delivery mode, decoded
         payload and binary flag for 24 hours. Replays return the original
@@ -100780,7 +100814,7 @@ components:
         Expected is null when independent deployment intent cannot be established.
       required: [receiver, integration, expected, state, requests, failures, last_success_observation]
       properties:
-        receiver: { type: string, enum: [faas-heartbeat, faas-page, faas-warn] }
+        receiver: { type: string, enum: [faas-delivery-page, faas-heartbeat, faas-page, faas-warn] }
         integration:
           type: string
           enum: [email, pushover, slack, webhook, pagerduty, opsgenie, victorops, wechat, telegram, discord, webex, sns, msteams, msteamsv2, rocketchat, jira]
@@ -104704,6 +104738,10 @@ components:
       type: object
       required: [slug]
       properties:
+        project_id:
+          type: string
+          format: uuid
+          description: Existing project in the selected workspace. Projects managed by a repository or an active release set require their project release workflow.
         profiling:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
@@ -106031,6 +106069,7 @@ components:
         binding_id: { type: string }
         binding_state: { type: string, enum: [provisioning, ready, deleting, failed, deleted] }
         environment_key: { type: string, example: DATABASE_URL }
+        migration_environment_key: { type: string, example: MIGRATION_DATABASE_URL, description: "The release-only migration credential the database is also bound to. Absent from a control plane that binds none." }
 
     DevSessionResponse:
       description: Stable remote developer workspace and its renewable lease.
@@ -123251,6 +123290,7 @@ components:
             - route_monitor_incidents
             - route_health_holds
             - ai_budget_alerts
+            - oom_kills
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -123357,7 +123397,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts, oom_kills]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -123450,7 +123490,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches, queue_backlog, queue_oldest_age_seconds, route_monitor_incidents, route_health_holds, ai_budget_alerts, oom_kills]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -128096,6 +128136,15 @@ components:
           format: int64
           description: "Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown."
           x-since: "2026-10"
+        app_wake_p95_ms:
+          type: number
+          description: "This app's own p95 wake latency over the window. Below 20 wakes (app_wake_samples) it is not meaningful and clients show it as unavailable. Omitted when it is not available."
+          x-since: "2026-11"
+        app_wake_samples:
+          type: integer
+          format: int64
+          description: "Number of this app's wakes app_wake_p95_ms was computed from. Omitted when it is not available."
+          x-since: "2026-11"
         queue_depth:
           type: integer
           format: int64
@@ -129677,6 +129726,71 @@ components:
         customers_truncated: { type: boolean, description: "More identity pairs matched than the customer detail limit." }
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
+    RouteResourcesResponse:
+      type: object
+      description: "Route attribution of an app's memory and CPU peaks over a window."
+      required: [slug, from, until, truncated, resource_minutes, active_minutes, route_minutes_without_resources, mem_peak_p50_mb, mem_peak_p95_mb, mem_peak_max_mb, mem_limit_mb, high_memory_rise_mb, high_memory_minutes, unattributed_high_memory_minutes, cpu_peak_p95_millicores, cpu_limit_millicores, high_cpu_minutes, routes, routes_omitted]
+      properties:
+        slug: { type: string }
+        from: { type: string, format: date-time, description: "Inclusive start of the analysed window." }
+        until: { type: string, format: date-time, description: "Exclusive end of the analysed window." }
+        truncated: { type: boolean, description: "The window held more minutes than one read analyses; the newest were used." }
+        resource_minutes: { type: integer, description: "Instance-minutes with memory and CPU samples." }
+        active_minutes: { type: integer, description: "Instance-minutes with samples that also served requests." }
+        route_minutes_without_resources: { type: integer, description: "Instance-minutes that served requests but have no samples; left out of every share." }
+        mem_peak_p50_mb: { type: integer }
+        mem_peak_p95_mb: { type: integer }
+        mem_peak_max_mb: { type: integer }
+        mem_limit_mb: { type: integer, description: "The app's memory limit; 0 when unknown." }
+        high_memory_rise_mb: { type: integer, description: "Rise above the minute's starting memory that counted as a memory peak in this window." }
+        high_memory_minutes: { type: integer }
+        unattributed_high_memory_minutes: { type: integer, description: "Memory peaks with no request in flight, such as background work." }
+        cpu_peak_p95_millicores: { type: integer }
+        cpu_limit_millicores: { type: integer, description: "The app's CPU limit; 0 when unknown." }
+        high_cpu_minutes: { type: integer }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/RouteResourceAttribution' }
+        routes_omitted: { type: integer, description: "Routes past the 50 reported." }
+        split: { $ref: '#/components/schemas/RouteResourceSplit' }
+    RouteResourceSplit:
+      type: object
+      description: "Present when one route holds at least 80% of at least 3 memory peaks while running in at most 30% of minutes, and the rest of the app would fit in less memory: move that route to its own app and size the app down."
+      required: [route, path_glob, route_ram_mb, current_ram_mb, main_ram_mb, high_memory_share, presence_share, high_memory_minutes, reason]
+      properties:
+        route: { type: string }
+        method: { type: string }
+        path_glob: { type: string, description: "Edge-rule path match for the route; path parameters become one-segment wildcards." }
+        route_ram_mb: { type: integer, description: "Suggested size of the new app: the route's p95 peak plus 25%, rounded up to 64 MB." }
+        route_ram_over_plan: { type: boolean, description: "The route needs more memory than the plan's largest app." }
+        current_ram_mb: { type: integer }
+        main_ram_mb: { type: integer, description: "Suggested size of the app without the route: its median peak plus the p95 rise without the route, plus 25%, rounded up to 64 MB." }
+        high_memory_share: { type: number }
+        presence_share: { type: number }
+        high_memory_minutes: { type: integer }
+        reason: { type: string }
+    RouteResourceAttribution:
+      type: object
+      description: "One route's share of the window's memory and CPU peaks."
+      required: [route, method, requests, busy_ms, active_minutes, presence_share, high_memory_minutes, high_memory_share, sole_high_memory_minutes, mem_peak_p95_with_mb, mem_peak_p95_without_mb, mem_rise_p95_with_mb, mem_rise_p95_without_mb, high_cpu_minutes, high_cpu_share, cpu_peak_p95_with_millicores, cpu_peak_p95_without_millicores]
+      properties:
+        route: { type: string }
+        method: { type: string }
+        requests: { type: integer, format: int64 }
+        busy_ms: { type: integer, format: int64, description: "Time requests of the route were in flight, summed over concurrent requests." }
+        active_minutes: { type: integer }
+        presence_share: { type: number, description: "Share of active minutes the route ran in." }
+        high_memory_minutes: { type: integer }
+        high_memory_share: { type: number, description: "Share of attributed memory peaks the route was in flight for." }
+        sole_high_memory_minutes: { type: integer, description: "Memory peaks the route was the only route in flight for." }
+        mem_peak_p95_with_mb: { type: integer }
+        mem_peak_p95_without_mb: { type: integer, description: "p95 memory peak in active minutes without the route." }
+        mem_rise_p95_with_mb: { type: integer }
+        mem_rise_p95_without_mb: { type: integer }
+        high_cpu_minutes: { type: integer }
+        high_cpu_share: { type: number }
+        cpu_peak_p95_with_millicores: { type: integer }
+        cpu_peak_p95_without_millicores: { type: integer }
     RouteCustomerUsageResponse:
       type: object
       description: "Bounded observed customer usage for one app, deployment and half-open retained telemetry window."

@@ -38,6 +38,11 @@ func UnitMcpBridge() daemonunit.Unit {
 			` --oauth-redirect-uri cursor://anysphere.cursor-mcp/oauth/callback` +
 			` --oauth-redirect-uri https://vscode.dev/redirect --oauth-redirect-uri http://127.0.0.1/ --oauth-redirect-uri http://127.0.0.1` +
 			` --oauth-redirect-uri http://127.0.0.1/oauth/callback` +
+			// Hosts match exactly, and clients built on the MCP TypeScript
+			// SDK (mcp-remote among them) return to localhost rather than
+			// 127.0.0.1, so each loopback callback is listed for both.
+			` --oauth-redirect-uri http://localhost/ --oauth-redirect-uri http://localhost` +
+			` --oauth-redirect-uri http://localhost/oauth/callback` +
 			// Uploads and plan directories live on the state disk, not in the
 			// private /tmp, which may be tmpfs inside the 1G memory limit; the
 			// bridge bounds the bytes it stages there (bug hunt H92).
