@@ -93,9 +93,6 @@ type Client struct {
 // they appear on *Client; the compiler will refuse to drift.
 var _ ScheddClient = (*Client)(nil)
 
-// withWakeCorrelation forwards the request-derived trigger class without
-// widening the scheduler RPC surface. Internal scheduler callers continue to
-// send only the trigger enum and therefore carry no class.
 // startupOOMResponse is any admission response carrying startup_oom.
 type startupOOMResponse interface {
 	GetInstanceId() string
@@ -111,6 +108,9 @@ func noteStartupOOM(ctx context.Context, resp startupOOMResponse) {
 	}
 }
 
+// withWakeCorrelation forwards the request-derived trigger class without
+// widening the scheduler RPC surface. Internal scheduler callers continue to
+// send only the trigger enum and therefore carry no class.
 func withWakeCorrelation(ctx context.Context, trigger string) context.Context {
 	if fields, ok := wire.FromContext(ctx); ok {
 		fields.Trigger = trigger
