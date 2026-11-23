@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/mcpmanagement"
 )
@@ -82,9 +83,13 @@ type guideCommandHit struct {
 	Example string `json:"example,omitempty"`
 }
 
+// guideDocsHit is one docs section. A preview page has no URL, since the
+// site does not serve it; Page names it for the MCP gregale_get_docs_page.
 type guideDocsHit struct {
 	Title   string `json:"title"`
-	URL     string `json:"url"`
+	Page    string `json:"page"`
+	URL     string `json:"url,omitempty"`
+	Preview bool   `json:"preview,omitempty"`
 	Snippet string `json:"snippet"`
 }
 
@@ -217,7 +222,7 @@ func searchGuide(ctx context.Context, query string) guideSearchResult {
 			if d.Heading != "" {
 				title += " › " + d.Heading
 			}
-			result.Docs = append(result.Docs, guideDocsHit{Title: title, URL: d.URL, Snippet: clip(d.Snippet, guideSnippetMax)})
+			result.Docs = append(result.Docs, guideDocsHit{Title: title, Page: d.Page, URL: d.URL, Preview: d.Preview, Snippet: clip(d.Snippet, guideSnippetMax)})
 		}
 	}
 	switch {
@@ -235,7 +240,11 @@ func clip(s string, n int) string {
 	}
 	cut := strings.LastIndexByte(s[:n], ' ')
 	if cut < n/2 {
+		// No word break: cut at a character boundary, never inside one.
 		cut = n
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
 	}
 	return strings.TrimRight(s[:cut], " ,.;:") + "…"
 }
@@ -256,7 +265,11 @@ func renderGuideSearch(w io.Writer, r guideSearchResult) {
 		}
 		_, _ = fmt.Fprintln(w, "Docs:")
 		for _, d := range r.Docs {
-			_, _ = fmt.Fprintf(w, "  %s\n      %s\n      %s\n", d.Title, d.URL, d.Snippet)
+			where := d.URL
+			if where == "" {
+				where = "preview docs, not on the site yet: read with the MCP tool gregale_get_docs_page page=" + d.Page
+			}
+			_, _ = fmt.Fprintf(w, "  %s\n      %s\n      %s\n", d.Title, where, d.Snippet)
 		}
 	}
 	if r.Next != "" {

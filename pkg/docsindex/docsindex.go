@@ -83,8 +83,9 @@ type route struct {
 	Unpublished string `json:"unpublished"`
 }
 
-// previewReason is the prefix customer-pages.json gives a page held back
-// only until its capability leaves preview. Every other reason (internal,
+// previewReason is the phrase customer-pages.json uses for a page held back
+// only until its capability leaves preview ("preview capability; …", or
+// "Data API is a preview capability; …"). Every other reason (internal,
 // dark, roadmap) keeps the page out of the index.
 const previewReason = "preview capability"
 
@@ -120,7 +121,7 @@ func Build(docsDir string, catalog productcap.Catalog) ([]byte, error) {
 		if r.Source == "" || r.External || r.Path == "" {
 			continue
 		}
-		if r.Unpublished != "" && !strings.HasPrefix(r.Unpublished, previewReason) {
+		if r.Unpublished != "" && !strings.Contains(r.Unpublished, previewReason) {
 			continue
 		}
 		cur, ok := bySource[r.Source]

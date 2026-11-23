@@ -4,10 +4,13 @@ package mcpmanagement
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/docsindex"
@@ -21,11 +24,18 @@ import (
 // from the embedded index and is shown only to an account for which one of
 // its capabilities is available.
 
+var embeddedDocsDecodeFailed sync.Once
+
 // embeddedDocsPages converts the shipped index; each call returns fresh
-// pages, because building a corpus indexes them in place.
+// pages, because building a corpus indexes them in place. An index that does
+// not decode is a broken build: it is logged once and searches go on with
+// the live site alone.
 func embeddedDocsPages() []*docsPage {
 	pages, err := docsindex.Pages()
 	if err != nil {
+		embeddedDocsDecodeFailed.Do(func() {
+			slog.Error("decode embedded docs index", "err", fmt.Errorf("docsindex.Pages: %w", err))
+		})
 		return nil
 	}
 	out := make([]*docsPage, 0, len(pages))
@@ -40,8 +50,11 @@ func embeddedDocsPages() []*docsPage {
 	return out
 }
 
-// mergeDocsPages appends the embedded pages the live site lacks; embedded
-// nil adds none.
+// mergeDocsPages appends the embedded preview pages the live site lacks;
+// embedded nil adds none. A published page the site no longer serves was
+// retired, renamed or made internal after this binary was built, so it is
+// not brought back: only the offline fallback (embeddedDocsCorpus) serves
+// the embedded published pages.
 func mergeDocsPages(live []*docsPage, embedded func() []*docsPage) []*docsPage {
 	if embedded == nil {
 		return live
@@ -52,7 +65,7 @@ func mergeDocsPages(live []*docsPage, embedded func() []*docsPage) []*docsPage {
 	}
 	out := append([]*docsPage{}, live...)
 	for _, p := range embedded() {
-		if !seen[p.slug] {
+		if !seen[p.slug] && len(p.capabilities) > 0 {
 			out = append(out, p)
 		}
 	}
@@ -101,13 +114,34 @@ func previewVisibility(unavailable map[string]bool, ok bool) func(*docsPage) boo
 	}
 }
 
+// docsCapabilitiesFor is how long a session reuses the account's capability
+// answer for docs visibility, so a run of searches costs one API read.
+const docsCapabilitiesFor = 5 * time.Minute
+
+// docsCapabilities caches the capability answer docs visibility uses.
+type docsCapabilities struct {
+	mu          sync.Mutex
+	at          time.Time
+	unavailable map[string]bool
+}
+
 // docsVisibility asks the account's capabilities only when the corpus holds
-// preview pages.
+// preview pages, and reuses a successful answer for docsCapabilitiesFor. A
+// failed read is not cached: previews stay hidden for that call only.
 func (m *management) docsVisibility(ctx context.Context, corpus *docsCorpus) func(*docsPage) bool {
 	if !corpus.hasPreview() {
 		return nil
 	}
+	c := &m.docsCaps
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.at.IsZero() && time.Since(c.at) < docsCapabilitiesFor {
+		return previewVisibility(c.unavailable, true)
+	}
 	unavailable, ok := m.unavailableCapabilities(ctx)
+	if ok {
+		c.at, c.unavailable = time.Now(), unavailable
+	}
 	return previewVisibility(unavailable, ok)
 }
 
@@ -119,8 +153,10 @@ type DocsHit = docsHit
 const (
 	cliDocsCacheTTL     = 24 * time.Hour
 	cliDocsFetchTimeout = 3 * time.Second
+	cliDocsRetryAfter   = 15 * time.Minute
 	cliDocsIndexFile    = "llms.txt"
 	cliDocsFullFile     = "llms-full.txt"
+	cliDocsFailedFile   = "fetch-failed"
 )
 
 // LocalDocsOptions configures SearchLocalDocs.
@@ -146,7 +182,12 @@ func SearchLocalDocs(ctx context.Context, query string, limit int, opts LocalDoc
 		site = docsSiteURL
 	}
 	pages := liveDocsPagesCached(ctx, site, opts)
-	corpus := buildDocsCorpus(site, mergeDocsPages(pages, embeddedDocsPages), time.Now())
+	var corpus *docsCorpus
+	if len(pages) > 0 {
+		corpus = buildDocsCorpus(site, mergeDocsPages(pages, embeddedDocsPages), time.Now())
+	} else if corpus = embeddedDocsCorpus(site, embeddedDocsPages, time.Now()); corpus == nil {
+		corpus = buildDocsCorpus(site, nil, time.Now())
+	}
 	if len(corpus.pages) == 0 {
 		return nil, errors.New("this gregale binary ships no docs index and the docs site is out of reach")
 	}
@@ -158,22 +199,26 @@ func SearchLocalDocs(ctx context.Context, query string, limit int, opts LocalDoc
 
 // liveDocsPagesCached reads the site's agent files from the cache, fetching
 // them when the cache is missing or a day old. Any failure returns what the
-// cache holds, or nothing.
+// cache holds, or nothing, and marks the attempt so searches in the next
+// cliDocsRetryAfter skip the fetch instead of each waiting out its timeout
+// on an unreachable site.
 func liveDocsPagesCached(ctx context.Context, site string, opts LocalDocsOptions) []*docsPage {
 	if opts.CacheDir == "" {
 		return nil
 	}
 	indexPath, fullPath := filepath.Join(opts.CacheDir, cliDocsIndexFile), filepath.Join(opts.CacheDir, cliDocsFullFile)
+	failedPath := filepath.Join(opts.CacheDir, cliDocsFailedFile)
 	fresh := false
 	if info, err := os.Stat(fullPath); err == nil && time.Since(info.ModTime()) < cliDocsCacheTTL {
 		fresh = true
 	}
+	if info, err := os.Stat(failedPath); err == nil && time.Since(info.ModTime()) < cliDocsRetryAfter {
+		fresh = true
+	}
 	if !fresh {
-		client := opts.Client
-		if client == nil {
-			client = &http.Client{Timeout: cliDocsFetchTimeout}
-		}
-		library := newDocsLibrary(site, client)
+		// A nil client gets the library's own, which refuses redirects off
+		// the docs host; fetchCtx bounds the fetch.
+		library := newDocsLibrary(site, opts.Client)
 		fetchCtx, cancel := context.WithTimeout(ctx, cliDocsFetchTimeout)
 		index, err := library.get(fetchCtx, "/llms.txt", docsIndexMaxBytes)
 		var full string
@@ -182,9 +227,15 @@ func liveDocsPagesCached(ctx context.Context, site string, opts LocalDocsOptions
 		}
 		cancel()
 		if err == nil {
-			if _, perr := parseDocsPages(site, index, full); perr == nil && os.MkdirAll(opts.CacheDir, 0o700) == nil {
+			_, err = parseDocsPages(site, index, full)
+		}
+		if os.MkdirAll(opts.CacheDir, 0o700) == nil {
+			if err == nil {
 				_ = writeFileAtomic(indexPath, index)
 				_ = writeFileAtomic(fullPath, full)
+				_ = os.Remove(failedPath)
+			} else {
+				_ = writeFileAtomic(failedPath, err.Error()+"\n")
 			}
 		}
 	}

@@ -2,6 +2,9 @@
 
 package main
 
+// GuideClip shortens a docs snippet as `gregale guide "<query>"` shows it.
+var GuideClip = clip
+
 // GuideSearchCommands returns the command lines `gregale guide "<query>"`
 // lists, best first, without reading the network.
 func GuideSearchCommands(query string) []string {

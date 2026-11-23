@@ -62,7 +62,10 @@ type docsHit struct {
 	Title   string `json:"title"`
 	Section string `json:"section,omitempty"`
 	Heading string `json:"heading,omitempty"`
-	URL     string `json:"url"`
+	// URL is the page on the docs site; empty for a preview page, which the
+	// site does not serve: read it with gregale_get_docs_page.
+	URL     string `json:"url,omitempty"`
+	Preview bool   `json:"preview,omitempty"`
 	Snippet string `json:"snippet"`
 }
 
@@ -84,7 +87,8 @@ type docsPageView struct {
 	Page        string            `json:"page"`
 	Title       string            `json:"title"`
 	Summary     string            `json:"summary,omitempty"`
-	URL         string            `json:"url"`
+	URL         string            `json:"url,omitempty"`
+	Preview     bool              `json:"preview,omitempty"`
 	Section     string            `json:"section,omitempty"`
 	Markdown    string            `json:"markdown"`
 	Headings    []docsHeadingView `json:"headings"`
@@ -141,7 +145,7 @@ func (m *management) getDocsPage(ctx context.Context, args docsPageArgs) (any, e
 	if page == nil {
 		return nil, invalid("docs_page_not_found", fmt.Sprintf("no published docs page %q; find pages with gregale_search_docs", slug))
 	}
-	view := docsPageView{Page: page.slug, Title: page.title, Summary: page.summary, URL: corpus.pageURL(page.slug, ""), RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale, Headings: []docsHeadingView{}}
+	view := docsPageView{Page: page.slug, Title: page.title, Summary: page.summary, URL: corpus.pageURL(page, ""), Preview: len(page.capabilities) > 0, RetrievedAt: corpus.fetchedAt.UTC(), Stale: corpus.stale, Headings: []docsHeadingView{}}
 	for _, s := range page.sections[1:] {
 		view.Headings = append(view.Headings, docsHeadingView{Section: s.anchor, Heading: s.heading, Level: s.level})
 	}
@@ -151,7 +155,7 @@ func (m *management) getDocsPage(ctx context.Context, args docsPageArgs) (any, e
 		if s == nil {
 			return nil, invalid("docs_section_not_found", fmt.Sprintf("page %q has no section %q; read the page without section to list its headings", page.slug, section))
 		}
-		view.Section, view.URL = s.anchor, corpus.pageURL(page.slug, s.anchor)
+		view.Section, view.URL = s.anchor, corpus.pageURL(page, s.anchor)
 		markdown = page.sectionMarkdown(s)
 	}
 	view.Markdown, view.Truncated = truncateDocsMarkdown(markdown, docsPageMaxBytes)
@@ -219,6 +223,9 @@ type docsLibrary struct {
 	corpus     *docsCorpus
 	failedAt   time.Time
 	lastFailed error
+	// offline is the embedded corpus built once for site outages; the index
+	// never changes within a process.
+	offline *docsCorpus
 }
 
 func newDocsLibrary(site string, client *http.Client) *docsLibrary {
@@ -265,9 +272,13 @@ func (l *docsLibrary) load(ctx context.Context) (*docsCorpus, error) {
 		return nil, ctxErr
 	}
 	// The site is out of reach: the index shipped in this binary stands in.
-	if corpus := embeddedDocsCorpus(l.site, l.embedded, now); corpus != nil {
-		corpus.stale = true
-		return corpus, nil
+	if l.offline == nil {
+		if l.offline = embeddedDocsCorpus(l.site, l.embedded, now); l.offline != nil {
+			l.offline.stale = true
+		}
+	}
+	if l.offline != nil {
+		return l.offline, nil
 	}
 	return nil, invalid("docs_unavailable", fmt.Sprintf("the Gregale docs could not be fetched (%v); retry in a minute or read %s/docs", err, l.site))
 }
@@ -335,8 +346,8 @@ type docsPage struct {
 	capabilities []string
 	// weight scales the page's scores; zero means 1. Command search uses it
 	// to favour curated and common entries.
-	weight float64
-	titleTerms                  map[string]bool
+	weight     float64
+	titleTerms map[string]bool
 	// sections[0] is the introduction above the first heading.
 	sections []*docsSection
 }
@@ -594,8 +605,13 @@ func docsTermSet(text string) map[string]bool {
 	return set
 }
 
-func (c *docsCorpus) pageURL(slug, anchor string) string {
-	u := c.site + "/docs/" + slug
+// pageURL is the page on the docs site, or empty for a preview page: those
+// come only from the index shipped in this binary and the site serves none.
+func (c *docsCorpus) pageURL(page *docsPage, anchor string) string {
+	if len(page.capabilities) > 0 {
+		return ""
+	}
+	u := c.site + "/docs/" + page.slug
 	if anchor != "" {
 		u += "#" + anchor
 	}
@@ -702,7 +718,7 @@ func (c *docsCorpus) search(query string, limit int, visible func(*docsPage) boo
 			continue
 		}
 		perPage[s.page.slug]++
-		hits = append(hits, docsHit{Page: s.page.slug, Title: s.page.title, Section: s.anchor, Heading: s.heading, URL: c.pageURL(s.page.slug, s.anchor), Snippet: c.snippet(s, terms)})
+		hits = append(hits, docsHit{Page: s.page.slug, Title: s.page.title, Section: s.anchor, Heading: s.heading, URL: c.pageURL(s.page, s.anchor), Preview: len(s.page.capabilities) > 0, Snippet: c.snippet(s, terms)})
 	}
 	return hits
 }

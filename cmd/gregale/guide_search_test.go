@@ -5,9 +5,25 @@ package main_test
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	main "github.com/onebox-faas/faas/cmd/gregale"
 )
+
+// A snippet with no word break is cut on a character boundary, so text and
+// --json output never carry a broken character.
+func TestGuideClipKeepsCharactersWhole(t *testing.T) {
+	for _, s := range []string{
+		strings.Repeat("a", 159) + "›" + strings.Repeat("b", 40),
+		strings.Repeat("é", 120),
+		"short › enough",
+	} {
+		got := main.GuideClip(s, 160)
+		if !utf8.ValidString(got) {
+			t.Fatalf("clip(%q) = %q is not valid UTF-8", s, got)
+		}
+	}
+}
 
 // Questions in the words agents used in the 2026-11-23 eval transcripts:
 // each must list a command containing want among its three commands.

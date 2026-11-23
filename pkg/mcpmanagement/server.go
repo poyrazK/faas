@@ -104,7 +104,9 @@ type Options struct {
 type management struct {
 	// channelTests holds each notification channel's last test send time,
 	// for gregale_test_notification_channel's rate limit.
-	channelTests     sync.Map
+	channelTests sync.Map
+	// docsCaps caches the capability answer that gates preview docs.
+	docsCaps         docsCapabilities
 	grantLifecycle   *Lifecycle
 	lifecycle        *Lifecycle
 	toolWrites       map[string]bool

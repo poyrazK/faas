@@ -3,6 +3,7 @@ package docsindex
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -16,7 +17,7 @@ func build(t *testing.T) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gz, err := Build("../../docs", catalog)
+	gz, err := Build(filepath.Join("..", "..", "docs"), catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
