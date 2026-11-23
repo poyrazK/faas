@@ -138,6 +138,9 @@ func TestCmdAppRestartFreshWaitPostsOnceAndReadsExactRequest(t *testing.T) {
 						status = "pass"
 					}
 					_ = json.NewEncoder(w).Encode(api.AppHealthResponse{AppID: "demo", Checks: []api.AppHealthCheck{{Code: "readiness", Status: status}}})
+				} else if r.Method == "GET" && r.URL.Path == "/v1/apps/demo" {
+					// A wait that is not ready checks for a failure park.
+					_ = json.NewEncoder(w).Encode(api.AppResponse{Slug: "demo", Status: "active"})
 				} else {
 					t.Errorf("unexpected request: %s %s", r.Method, r.URL)
 					http.Error(w, "unexpected", 500)
