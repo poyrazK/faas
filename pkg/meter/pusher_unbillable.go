@@ -1,6 +1,10 @@
 package meter
 
 import (
+	"context"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -9,7 +13,7 @@ import (
 // never billed. PushPending lists only subjects with a billing_identities
 // row, so its held gauges never saw them; the hourly pass only logged a
 // warning. meterd_billing_paid_subjects_without_identity counts them per plan
-// on every hourly pass, so an operator comps, downgrades or completes them.
+// hourly from PushPending, so an operator comps, downgrades or completes them.
 
 // unbillablePlans are the paid plans the gauge always reports, zero included.
 var unbillablePlans = []string{"hobby", "pro", "scale"}
@@ -29,7 +33,60 @@ func (p *Pusher) paidWithoutIdentityGauge() *prometheus.GaugeVec {
 	return g
 }
 
-// publishPaidWithoutIdentity sets the gauge from one hourly pass's counts.
+// unbillableRefreshEvery bounds the identity lookups: one per paid subject.
+const unbillableRefreshEvery = time.Hour
+
+// reportPaidWithoutIdentity refreshes the gauge from PushPending, meterd's
+// billing path, at most hourly. A failure only logs: it never blocks billing,
+// and the next pass retries.
+func (p *Pusher) reportPaidWithoutIdentity(ctx context.Context, now time.Time) {
+	if !p.unbillableAt.IsZero() && now.Sub(p.unbillableAt) < unbillableRefreshEvery {
+		return
+	}
+	accounts, err := state.ListBillingResourceAccounts(ctx, p.store)
+	if err != nil {
+		p.logUnbillable(err)
+		return
+	}
+	comps, err := p.complimentaryIDs(ctx)
+	if err != nil {
+		p.logUnbillable(err)
+		return
+	}
+	counts := map[string]int{}
+	for _, acct := range accounts {
+		if acct.Plan == "free" {
+			continue
+		}
+		if _, comp := comps[acct.ID]; comp {
+			continue
+		}
+		if !usageDeliverable(acct, now) {
+			continue // held and reported as suspended or deleting
+		}
+		acct, err := p.accountForProvider(ctx, acct)
+		if err != nil {
+			p.logUnbillable(err)
+			return
+		}
+		if acct.ProviderCustomerID == "" || acct.StripeSubscriptionItem == "" {
+			counts[string(acct.Plan)]++
+			if p.log != nil {
+				p.log.Warn("meter: billing identity incomplete", "account", acct.ID, "plan", acct.Plan)
+			}
+		}
+	}
+	p.publishPaidWithoutIdentity(counts)
+	p.unbillableAt = now
+}
+
+func (p *Pusher) logUnbillable(err error) {
+	if p.log != nil {
+		p.log.Warn("meter: count paid subjects without billing identity", "err", err)
+	}
+}
+
+// publishPaidWithoutIdentity sets the gauge from one pass's counts.
 func (p *Pusher) publishPaidWithoutIdentity(counts map[string]int) {
 	g := p.paidWithoutIdentityGauge()
 	// Reset drops a plan that no longer has any, so the alert clears.

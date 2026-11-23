@@ -43,6 +43,9 @@ type Pusher struct {
 	// source is what billed hours are quantified from (ADR-20261107105126);
 	// empty bills usage_minutes and compares nothing.
 	source UsageSource
+	// unbillableAt is when meterd_billing_paid_subjects_without_identity was
+	// last refreshed; PushPending refreshes it at most hourly.
+	unbillableAt time.Time
 }
 
 // NewPusher wires the pusher. now defaults to time.Now if nil so callers
@@ -145,8 +148,6 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	pushed := 0
-	withoutIdentity := map[string]int{}
-	defer func() { p.publishPaidWithoutIdentity(withoutIdentity) }()
 	for _, acct := range accounts {
 		if acct.Plan == "free" {
 			// Free plan: no customer id, no overage — skip.
@@ -170,7 +171,6 @@ func (p *Pusher) PushHour(ctx context.Context) (int, error) {
 			// with an incomplete account can be a successful no-op (Polar and
 			// Stripe both use that shape), which would falsely advance the
 			// pusher's success count and leave usage unbilled.
-			withoutIdentity[string(acct.Plan)]++
 			p.log.Warn("meter: billing identity incomplete",
 				"account", acct.ID, "provider_customer_id_set", acct.ProviderCustomerID != "",
 				"subscription_id_set", acct.StripeSubscriptionItem != "")
@@ -250,6 +250,7 @@ func (p *Pusher) PushPending(ctx context.Context, lookback time.Duration) (int, 
 		lookback = 30 * 24 * time.Hour
 	}
 	now := p.now()
+	p.reportPaidWithoutIdentity(ctx, now)
 	start, end := billing.CompletedUsageWindow(now, lookback)
 	// ADR-1162: deliver an hour only once every minute up to its end is final;
 	// a late catch-up row can never land in an hour already delivered.

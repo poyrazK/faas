@@ -9460,6 +9460,9 @@ type statusRecorder struct {
 	// platformResponse marks a response the gateway wrote itself (a
 	// forwarder problem), not the app: its bytes are not app egress.
 	platformResponse bool
+	// platformProblem is whether the committed headers carried
+	// api.ErrorCodeHeader (prepareResponseHeaders).
+	platformProblem bool
 	// headerAt is when the response headers were committed: a long-lived
 	// response's latency (ADR-20261109153000).
 	headerAt                 time.Time
@@ -9550,7 +9553,11 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 func markPlatformResponse(w http.ResponseWriter) {
 	for w != nil {
 		if rec, ok := w.(*statusRecorder); ok {
-			rec.platformResponse = true
+			// Once the app's status is on the wire the response is the
+			// app's; a later platform write must not unbill it.
+			if !rec.wroteHeader {
+				rec.platformResponse = true
+			}
 			return
 		}
 		if rw, ok := w.(*retryWriter); ok {
@@ -9574,6 +9581,9 @@ func markPlatformResponse(w http.ResponseWriter) {
 func (s *statusRecorder) isPlatformResponse() bool {
 	if s.platformResponse {
 		return true
+	}
+	if s.wroteHeader {
+		return s.platformProblem
 	}
 	if s.ResponseWriter == nil {
 		return false
@@ -9625,6 +9635,9 @@ func (s *statusRecorder) prepareResponseHeaders(code int) {
 		// reading it here is race-free relative to the underlying
 		// ResponseWriter.
 		s.ContentType = s.ResponseWriter.Header().Get("Content-Type")
+		// Who wrote the response is fixed when its headers commit; a header
+		// set afterwards never unbills bytes already sent.
+		s.platformProblem = s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
 		s.headCachePrivate = s.sharedCachePrivate || responseForbidsSharedCaching(s.Header())
 		// ADR-089 / issue #561 PR 4: apply any EdgeRuleHeaderOp
 		// mutations the applyEdgeRuleHeaders helper installed

@@ -11,8 +11,8 @@ import (
 )
 
 // Metering review r10: a paid subject with no billing identity is never
-// billed; the hourly pass reports it per plan instead of only logging.
-func TestPushHour_ReportsPaidSubjectsWithoutIdentity(t *testing.T) {
+// billed; PushPending reports it per plan instead of only logging.
+func TestPushPending_ReportsPaidSubjectsWithoutIdentity(t *testing.T) {
 	t.Parallel()
 	s := state.NewMemStore()
 	ctx := context.Background()
@@ -29,9 +29,9 @@ func TestPushHour_ReportsPaidSubjectsWithoutIdentity(t *testing.T) {
 
 	ops := testOpsMetrics(t)
 	pusher := meter.NewPusher(s, &recordingStripe{}, discardLog(), clock, ops)
-	if _, err := pusher.PushHour(ctx); err != nil {
-		t.Fatalf("PushHour: %v", err)
-	}
+	// meterd's loop runs PushPending, never PushHour; the gauge must come
+	// from it. A delivery error does not matter here.
+	_, _ = pusher.PushPending(ctx, 0)
 	families, err := ops.Registry().Gather()
 	if err != nil {
 		t.Fatal(err)

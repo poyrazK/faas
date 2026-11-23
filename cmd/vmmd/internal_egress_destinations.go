@@ -21,6 +21,9 @@ import (
 const (
 	internalEgressResolveEvery   = 5 * time.Minute
 	internalEgressResolveTimeout = 5 * time.Second
+	// internalEgressStartBudget bounds the first, synchronous resolution, so
+	// a slow resolver delays vmmd's start by at most this much.
+	internalEgressStartBudget = 2 * time.Second
 	// internalEgressAddressTTL keeps an address internal for a day after DNS
 	// last returned it, so a regional endpoint rotating its addresses does
 	// not turn a long-lived database session into billed egress.
@@ -119,7 +122,6 @@ func (r *internalEgressResolver) run(ctx context.Context) {
 	if len(r.hosts) == 0 {
 		return
 	}
-	r.refresh(ctx)
 	t := time.NewTicker(internalEgressResolveEvery)
 	defer t.Stop()
 	for {
@@ -132,17 +134,21 @@ func (r *internalEgressResolver) run(ctx context.Context) {
 	}
 }
 
-// seedInternalEgressDestinations applies the static prefixes before any
-// namespace is prepared and resolves hosts in the background, so a slow
-// resolver never delays vmmd's start for a billing-only counter. Namespaces
-// prepared before the first resolution miss the hosts until their next wake.
+// seedInternalEgressDestinations applies the static prefixes and a first
+// resolution of the hosts before any namespace is prepared, bounded by
+// internalEgressStartBudget, then keeps resolving in the background. A host
+// the first resolution missed is added by the next refresh; a namespace keeps
+// the set it was prepared with until its next wake, so a long-running
+// instance does not see rotated addresses until then.
 func seedInternalEgressDestinations(ctx context.Context, cfg ComputeNodeConfig, log *slog.Logger) error {
 	cidrs, err := parseInternalEgressCIDRs(cfg.InternalEgressCIDRs)
 	if err != nil {
 		return err
 	}
 	r := newInternalEgressResolver(cidrs, cfg.InternalEgressHosts, log)
-	r.apply(append([]netip.Prefix(nil), cidrs...))
+	startCtx, cancel := context.WithTimeout(ctx, internalEgressStartBudget)
+	r.refresh(startCtx)
+	cancel()
 	go r.run(ctx)
 	if log != nil && (len(cidrs) > 0 || len(cfg.InternalEgressHosts) > 0) {
 		log.Info("vmmd: internal egress destinations seeded (ADR-20261114100000)", "cidrs", len(cidrs), "hosts", cfg.InternalEgressHosts)

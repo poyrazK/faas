@@ -207,15 +207,16 @@ egress:
 vmmd takes `compute_node.internal_egress_cidrs` (IPv4 prefixes or addresses)
 and `compute_node.internal_egress_hosts` (`FAAS_VMMD_INTERNAL_EGRESS_CIDRS` /
 `_HOSTS` win) and adds them to every namespace's `faas_internal_tx` rule it
-prepares. The static prefixes apply before vmmd serves; hosts are resolved in
-the background right after start and every 5 minutes, so a slow resolver
-never delays start. An address stays internal for 24 h after DNS last
-returned it, and a failed lookup keeps the previous set. Namespaces already
-running keep the set they were prepared with until their next wake.
-Production (`group_vars/compute_nodes/internal_egress_destinations.yml`)
-lists the public entry addresses (51.222.39.227/32 and .228/32, behind
-`*.gregale.app` and the DNS-only storage/objects/otel names) and the regional
-Neon host. Cloudflare-proxied names (`s3.gregale.dev`, `api.gregale.dev`) are
+prepares. The prefixes and a first resolution of the hosts (bounded to 2 s)
+apply before vmmd serves; hosts are re-resolved every 5 minutes. An address
+stays internal for 24 h after DNS last returned it, and a failed lookup
+keeps the previous set. Namespaces already running keep the set they were
+prepared with until their next wake. vmmd_service's `99-faas-egress.conf`,
+installed on every vmmd host, adds every compute edge's entry address from
+the manifest (`faas_public_entry_addrs`, `faas_peer_entry_addrs`; behind
+`*.gregale.app` and the DNS-only storage/objects/otel names), so a new node
+is covered without a hand-kept list. Production adds the regional Neon host
+(`group_vars/compute_nodes/internal_egress_destinations.yml`). Cloudflare-proxied names (`s3.gregale.dev`, `api.gregale.dev`) are
 never listed: they resolve to shared Cloudflare anycast addresses, so traffic
 to them stays billed. Neon's regional addresses are shared by every project
 in the region, so a customer's own Neon database there is exempt too; that

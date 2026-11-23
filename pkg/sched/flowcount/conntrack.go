@@ -126,6 +126,7 @@ type Reader struct {
 	cachedOut []byte                   // last successful conntrack output, reused on cache-fresh Warm
 	failed    bool                     // latch: true after a failed Warm, cleared on next successful Warm
 	now       func() time.Time         // clock; time.Now unless WithClock
+	readGen   uint64                   // bumped by every stored conntrack read
 }
 
 // NewReader constructs a Reader with sensible defaults (DefaultBinPath,
@@ -182,6 +183,7 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	cacheFresh := !r.failed && !r.cacheAt.IsZero() && r.now().Sub(r.cacheAt) < r.ttl
 	var out []byte
 	reused := false
+	gen := r.readGen
 	if cacheFresh && r.cachedOut != nil {
 		reused = true
 		// Cache is fresh: re-parse the cached conntrack output against the
@@ -215,6 +217,12 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	summaries := parseFlowSummaries(out, hostIndex, r.maxSummaries)
 
 	r.mu.Lock()
+	if reused && r.readGen != gen {
+		// A concurrent Warm stored a fresher read while this one re-parsed
+		// the old output; keep the fresher state.
+		r.mu.Unlock()
+		return nil
+	}
 	r.hostIndex = hostIndex
 	r.counts = counts
 	r.summaries = summaries
@@ -226,6 +234,7 @@ func (r *Reader) Warm(ctx context.Context, instances []state.Instance) error {
 	// vmmd restarted (metering review 2026-11-23).
 	if !reused {
 		r.cacheAt = r.now()
+		r.readGen++
 	}
 	r.cachedOut = out
 	r.failed = false

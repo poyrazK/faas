@@ -31,6 +31,19 @@ func TestRetryWriterPlatformMarkFollowsCommittedAttempt(t *testing.T) {
 	}
 }
 
+// After the app's status is on the wire, neither a platform mark nor an error
+// code header set later unbills what the app already sent.
+func TestPlatformMarkAfterCommitKeepsAppBytesBilled(t *testing.T) {
+	rec := &statusRecorder{ResponseWriter: httptest.NewRecorder()}
+	rec.WriteHeader(200)
+	_, _ = rec.Write([]byte("app body"))
+	markPlatformResponse(rec)
+	rec.Header().Set(api.ErrorCodeHeader, "app_unavailable")
+	if rec.isPlatformResponse() {
+		t.Fatal("app response unbilled by a platform write after commit")
+	}
+}
+
 // App 4xx/5xx bodies leave the platform like any other response and are
 // billed; responses the platform writes itself (a marked writer, or a
 // problem carrying api.ErrorCodeHeader) and informational statuses are not.

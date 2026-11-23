@@ -12,7 +12,8 @@ vmmd_apid_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 
 # ADR-20261114100000 amendment 2026-11-23: public destinations (IPv4 CIDRs or
 # addresses, and hostnames vmmd re-resolves) whose guest traffic is counted as
-# internal and left out of billed app egress. Production sets them in
+# internal and left out of billed app egress, on top of the manifest's entry
+# addresses (99-faas-egress.conf). Production sets them in
 # group_vars/compute_nodes/internal_egress_destinations.yml.
 faas_vmmd_internal_egress_cidrs: []
 faas_vmmd_internal_egress_hosts: []
