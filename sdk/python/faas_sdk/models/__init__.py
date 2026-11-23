@@ -502,6 +502,14 @@ from .create_managed_postgres_binding_request_access import CreateManagedPostgre
 from .create_managed_postgres_database_request import CreateManagedPostgresDatabaseRequest
 from .create_managed_postgres_database_request_availability import CreateManagedPostgresDatabaseRequestAvailability
 from .create_managed_postgres_database_request_service_class import CreateManagedPostgresDatabaseRequestServiceClass
+from .create_managed_realtime_endpoint_request import CreateManagedRealtimeEndpointRequest
+from .create_managed_realtime_endpoint_request_auth_algorithms_item import (
+    CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRealtimeEndpointRequestAuthMode
+from .create_managed_realtime_endpoint_request_auth_required_claims import (
+    CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .create_notification_channel_request import CreateNotificationChannelRequest
 from .create_notification_channel_request_kind import CreateNotificationChannelRequestKind
 from .create_notification_channel_request_pagerduty_region import CreateNotificationChannelRequestPagerdutyRegion
@@ -908,6 +916,8 @@ from .failure_rules_unmatched_failure import FailureRulesUnmatchedFailure
 from .failure_rules_version import FailureRulesVersion
 from .feature_hint import FeatureHint
 from .field_error import FieldError
+from .finalize_managed_realtime_auth_response import FinalizeManagedRealtimeAuthResponse
+from .finalize_managed_realtime_auth_response_auth_mode import FinalizeManagedRealtimeAuthResponseAuthMode
 from .financial_allocation import FinancialAllocation
 from .financial_app_cost_allocation import FinancialAppCostAllocation
 from .financial_app_costs_response import FinancialAppCostsResponse
@@ -1234,6 +1244,29 @@ from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUs
 from .managed_postgres_usage_response_egress_state import ManagedPostgresUsageResponseEgressState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_postgres_usage_response_hold import ManagedPostgresUsageResponseHold
+from .managed_realtime_close_request import ManagedRealtimeCloseRequest
+from .managed_realtime_connection_list_response import ManagedRealtimeConnectionListResponse
+from .managed_realtime_connection_response import ManagedRealtimeConnectionResponse
+from .managed_realtime_drain_request import ManagedRealtimeDrainRequest
+from .managed_realtime_drain_response import ManagedRealtimeDrainResponse
+from .managed_realtime_drain_response_status import ManagedRealtimeDrainResponseStatus
+from .managed_realtime_drain_result import ManagedRealtimeDrainResult
+from .managed_realtime_drain_result_status import ManagedRealtimeDrainResultStatus
+from .managed_realtime_endpoint_response import ManagedRealtimeEndpointResponse
+from .managed_realtime_endpoint_response_auth_algorithms_item import ManagedRealtimeEndpointResponseAuthAlgorithmsItem
+from .managed_realtime_endpoint_response_auth_mode import ManagedRealtimeEndpointResponseAuthMode
+from .managed_realtime_endpoint_response_auth_required_claims import ManagedRealtimeEndpointResponseAuthRequiredClaims
+from .managed_realtime_endpoint_response_auth_token_masked import ManagedRealtimeEndpointResponseAuthTokenMasked
+from .managed_realtime_endpoint_response_callback_auth_token_masked import (
+    ManagedRealtimeEndpointResponseCallbackAuthTokenMasked,
+)
+from .managed_realtime_message_request import ManagedRealtimeMessageRequest
+from .managed_realtime_principal_message_request import ManagedRealtimePrincipalMessageRequest
+from .managed_realtime_principal_message_request_delivery import ManagedRealtimePrincipalMessageRequestDelivery
+from .managed_realtime_principal_receipt_delivery import ManagedRealtimePrincipalReceiptDelivery
+from .managed_realtime_principal_receipt_response import ManagedRealtimePrincipalReceiptResponse
+from .managed_realtime_principal_send_response import ManagedRealtimePrincipalSendResponse
+from .managed_realtime_publish_response import ManagedRealtimePublishResponse
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
 from .mcp_policy_convergence_snapshot_state import MCPPolicyConvergenceSnapshotState
@@ -2204,6 +2237,7 @@ from .public_status_update import PublicStatusUpdate
 from .public_status_update_components_item import PublicStatusUpdateComponentsItem
 from .public_status_update_impact import PublicStatusUpdateImpact
 from .public_status_update_state import PublicStatusUpdateState
+from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_stored_workflow_request import PublishStoredWorkflowRequest
 from .purge_deleted_app_body import PurgeDeletedAppBody
 from .put_app_env_request import PutAppEnvRequest
@@ -2226,6 +2260,8 @@ from .queue_release_requirements import QueueReleaseRequirements
 from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
+from .realtime_channel_webhook_filter import RealtimeChannelWebhookFilter
+from .realtime_channel_webhook_filter_metadata import RealtimeChannelWebhookFilterMetadata
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .reconcile_object_storage_compute_triggers_request import ReconcileObjectStorageComputeTriggersRequest
@@ -2342,6 +2378,9 @@ from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_request import RotateKeyRequest
 from .rotate_key_response import RotateKeyResponse
+from .rotate_managed_realtime_auth_request import RotateManagedRealtimeAuthRequest
+from .rotate_managed_realtime_auth_response import RotateManagedRealtimeAuthResponse
+from .rotate_managed_realtime_auth_response_auth_mode import RotateManagedRealtimeAuthResponseAuthMode
 from .rotate_org_api_key_request import RotateOrgAPIKeyRequest
 from .rotate_org_api_key_response import RotateOrgAPIKeyResponse
 from .route_customer_observation import RouteCustomerObservation
@@ -2732,6 +2771,14 @@ from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpoin
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
+from .update_managed_realtime_endpoint_request import UpdateManagedRealtimeEndpointRequest
+from .update_managed_realtime_endpoint_request_auth_algorithms_item import (
+    UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem,
+)
+from .update_managed_realtime_endpoint_request_auth_mode import UpdateManagedRealtimeEndpointRequestAuthMode
+from .update_managed_realtime_endpoint_request_auth_required_claims import (
+    UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
+)
 from .update_notification_channel_request import UpdateNotificationChannelRequest
 from .update_notification_channel_request_pagerduty_region import UpdateNotificationChannelRequestPagerdutyRegion
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
@@ -3498,6 +3545,10 @@ __all__ = (
     "CreateManagedPostgresDatabaseRequest",
     "CreateManagedPostgresDatabaseRequestAvailability",
     "CreateManagedPostgresDatabaseRequestServiceClass",
+    "CreateManagedRealtimeEndpointRequest",
+    "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "CreateManagedRealtimeEndpointRequestAuthMode",
+    "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateNotificationChannelRequest",
     "CreateNotificationChannelRequestKind",
     "CreateNotificationChannelRequestPagerdutyRegion",
@@ -3892,6 +3943,8 @@ __all__ = (
     "FailureRulesVersion",
     "FeatureHint",
     "FieldError",
+    "FinalizeManagedRealtimeAuthResponse",
+    "FinalizeManagedRealtimeAuthResponseAuthMode",
     "FinancialAllocation",
     "FinancialAppCostAllocation",
     "FinancialAppCostsResponse",
@@ -4210,6 +4263,27 @@ __all__ = (
     "ManagedPostgresUsageResponseEgressState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedPostgresUsageResponseHold",
+    "ManagedRealtimeCloseRequest",
+    "ManagedRealtimeConnectionListResponse",
+    "ManagedRealtimeConnectionResponse",
+    "ManagedRealtimeDrainRequest",
+    "ManagedRealtimeDrainResponse",
+    "ManagedRealtimeDrainResponseStatus",
+    "ManagedRealtimeDrainResult",
+    "ManagedRealtimeDrainResultStatus",
+    "ManagedRealtimeEndpointResponse",
+    "ManagedRealtimeEndpointResponseAuthAlgorithmsItem",
+    "ManagedRealtimeEndpointResponseAuthMode",
+    "ManagedRealtimeEndpointResponseAuthRequiredClaims",
+    "ManagedRealtimeEndpointResponseAuthTokenMasked",
+    "ManagedRealtimeEndpointResponseCallbackAuthTokenMasked",
+    "ManagedRealtimeMessageRequest",
+    "ManagedRealtimePrincipalMessageRequest",
+    "ManagedRealtimePrincipalMessageRequestDelivery",
+    "ManagedRealtimePrincipalReceiptDelivery",
+    "ManagedRealtimePrincipalReceiptResponse",
+    "ManagedRealtimePrincipalSendResponse",
+    "ManagedRealtimePublishResponse",
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
     "MCPPolicyConvergenceSnapshotState",
@@ -5056,6 +5130,7 @@ __all__ = (
     "PublicStatusUpdateComponentsItem",
     "PublicStatusUpdateImpact",
     "PublicStatusUpdateState",
+    "PublishManagedRealtimeChannelDelivery",
     "PublishStoredWorkflowRequest",
     "PurgeDeletedAppBody",
     "PutAppEnvRequest",
@@ -5078,6 +5153,8 @@ __all__ = (
     "QueueReleaseRequirementsAdditionalProperty",
     "QuotaBlock",
     "RaiseOverageCapRequest",
+    "RealtimeChannelWebhookFilter",
+    "RealtimeChannelWebhookFilterMetadata",
     "RealtimeTriggerConfig",
     "ReceiveInboundWebhookBody",
     "ReconcileObjectStorageComputeTriggersRequest",
@@ -5192,6 +5269,9 @@ __all__ = (
     "RotateDeployTokenResponse",
     "RotateKeyRequest",
     "RotateKeyResponse",
+    "RotateManagedRealtimeAuthRequest",
+    "RotateManagedRealtimeAuthResponse",
+    "RotateManagedRealtimeAuthResponseAuthMode",
     "RotateOrgAPIKeyRequest",
     "RotateOrgAPIKeyResponse",
     "RouteCustomerObservation",
@@ -5568,6 +5648,10 @@ __all__ = (
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
+    "UpdateManagedRealtimeEndpointRequest",
+    "UpdateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
+    "UpdateManagedRealtimeEndpointRequestAuthMode",
+    "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateNotificationChannelRequest",
     "UpdateNotificationChannelRequestPagerdutyRegion",
     "UpdateOutboundBindingPolicyRequest",

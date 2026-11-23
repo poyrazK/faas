@@ -333,3 +333,18 @@ The opt-in `TestFirstHourCLI` uses one new private app for response verification
 a source edit, interruption/resume, startup-failure recovery and checked cleanup.
 Run it with `scripts/first-hour/acceptance.py`; it is not selected by ordinary
 smoke/full runs. See [the acceptance and baseline guide](../../docs/first-hour-acceptance.md).
+
+## Realtime load
+
+The opt-in `TestRealtimeLoad` (ADR-20261123074615) holds
+`GREGALE_E2E_REALTIME_LOAD` connections (`1` means 500; at most 500, under the edge's 512 open connections per client address) on
+one endpoint of a new app, idles them for 90 seconds, then measures a
+principal send to every connection of one principal and a channel publish to
+connections the backend subscribed. Every connection must stay open, every
+message must arrive, and the delivery p99 must stay within 2 seconds. Set
+`GREGALE_E2E_REALTIME_LOAD_OUT` to a path to write the measurements as JSON:
+
+```sh
+GREGALE_E2E_REALTIME_LOAD=1 GREGALE_E2E_REALTIME_LOAD_OUT=/tmp/realtime-load.json \
+  scripts/e2e-journeys.sh --tier full --run '^TestRealtimeLoad$'
+```

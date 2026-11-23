@@ -7563,7 +7563,7 @@ var supervisedWorkloadMarkers = []string{
 const guestCleanExitMarker = " exited cleanly (status 0, policy="
 
 // cleanExitDetail explains a workload that ended on its own with status 0.
-const cleanExitDetail = "; the app's process exited with status 0 (a clean exit is not restarted). Keep the server process running in the foreground and listening on $PORT"
+const cleanExitDetail = "; " + api.StartupCleanExitMarker + ". Keep the server process running in the foreground and listening on $PORT"
 
 // cleanExitHint is cleanExitDetail when guest-init's clean-exit line is among
 // lines.

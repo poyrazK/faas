@@ -10242,8 +10242,10 @@ const (
 	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
-	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget the
-	// scheduler's watchdog enforces (sched.ColdBootSweepBudget). An app on a
+	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget
+	// (sched.ColdBootSweepBudget). vmmd's cold-boot call judges readiness
+	// against it; the scheduler's watchdog stops the row only after a further
+	// grace, so vmmd's typed verdict lands first (ADR-20261123140000). An app on a
 	// plan with a longer startup window (Limits.MaxStartupDeadlineS) that sets
 	// startup_deadline_s above it gets that window on every cold boot
 	// (ADR-20261114120000).

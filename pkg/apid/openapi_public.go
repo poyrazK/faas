@@ -193,6 +193,14 @@ func hideRealtimePreviewFields(root *yaml.Node) []*yaml.Node {
 			required.Content = slices.DeleteFunc(required.Content, func(n *yaml.Node) bool { return slices.Contains(fields, n.Value) })
 		}
 	}
+	for schema, byField := range realtimepreview.FieldValues {
+		properties := mappingValue(mappingValue(schemas, schema), "properties")
+		for field, values := range byField {
+			if property := mappingValue(properties, field); property != nil {
+				dropListValues(property, func(value string) bool { return slices.Contains(values, value) })
+			}
+		}
+	}
 	return removed
 }
 
