@@ -129,11 +129,16 @@ than 5 seconds is closed with code 1013.
 Check the callback token on every request. Each callback body is JSON with the
 event `type`, `endpoint_id`, `connection_id`, `principal` and, for
 `authorize-channel`, the `channel` and the `permission` asked for: `read` to
-subscribe, `presence` to set presence state or send signals. A
-`/realtime/message` body also carries the frame: `data` is the frame's bytes
-base64-encoded (standard alphabet, with padding) for text and binary frames
-alike, and `binary` says which kind the client sent, so decode `data` before
-you parse it. A grant lasts 30
+subscribe, `presence` to set presence state or send signals. A `message`
+callback carries the frame in `data`, which is always base64 (even for a text
+frame with `"binary": false`), and, for a text frame that is valid UTF-8, the
+same frame as a plain string in `text`:
+
+```json
+{"type":"message","connection_id":"rt_…","binary":false,"data":"eyJoaSI6MX0=","text":"{\"hi\":1}"}
+```
+
+A grant lasts 30
 seconds and is checked again after that while the subscription stays open; a
 401 or 403 then removes the subscription with an `access_revoked` error, and
 any other failure of that check closes the connection with code 1013 so the

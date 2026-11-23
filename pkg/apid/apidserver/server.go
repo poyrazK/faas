@@ -138,8 +138,12 @@ import (
 type server struct {
 	privateTools     *toolregistry.PrivateExecutor
 	privateToolsOnce sync.Once
-	sales            sales.Service
-	customerSupport  *support.Service
+	// environmentBranchDataWake wakes the branch data reconciler when a
+	// branch is created with pending data (environment_branch_data.go).
+	environmentBranchDataWake     chan struct{}
+	environmentBranchDataWakeOnce sync.Once
+	sales                         sales.Service
+	customerSupport               *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
 	customerErrors *customererrors.Recorder

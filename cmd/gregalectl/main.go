@@ -225,6 +225,9 @@ func run(args []string) int {
 		return cmdDatabaseNodes(args[1:])
 	case "release-acceptance":
 		return cmdReleaseAcceptanceDispatch(args[1:])
+	case "unit-smoke":
+		// The unit lane's smoke account and key (ADR-20261122170000).
+		return cmdUnitSmokeDispatch(args[1:])
 	case dispatchOperatorAuth:
 		// Password + TOTP session used by strict provider mutations.
 		return cmdOperatorAuthDispatch(args[1:])
