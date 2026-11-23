@@ -7582,7 +7582,10 @@ haveApp:
 		wakeMethod        WakeMethod
 		platformWakeStart time.Time
 		platformWakeTrace *wakePhaseTrace
-		err               error
+		// startupOOM collects the instances whose wake reported that the
+		// app ran out of memory while booting; set only on wake paths.
+		startupOOM *sched.StartupOOMRecorder
+		err        error
 	)
 
 	// PickWarm is the combined warm-path decision for the production backend. A
@@ -7695,6 +7698,7 @@ haveApp:
 				platformWakeStart = time.Now()
 				platformWakeTrace = newWakePhaseTrace(platformWakeStart)
 				wakeCtx := withWakePhaseTrace(r.Context(), platformWakeTrace)
+				wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 				if acceptsWakePage(r) {
 					var cancel context.CancelFunc
 					wakeCtx, cancel = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
@@ -7799,6 +7803,7 @@ haveApp:
 		// booting. API clients retain the plan-derived wait budget.
 		wakeCtx := r.Context()
 		wakeCtx = withWakePhaseTrace(wakeCtx, platformWakeTrace)
+		wakeCtx = withStartupOOMRecorder(wakeCtx, &startupOOM)
 		// A thaw prefers the frozen instance this session is pinned to
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
@@ -7952,7 +7957,7 @@ haveApp:
 		if platformWakeStart.IsZero() {
 			platformWakeStart = time.Now()
 		}
-		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(r.Context(), "gateway.wake_fanout",
+		fanoutCtx, fanoutSpan := pkgtrace.StartSpan(withStartupOOMRecorder(r.Context(), &startupOOM), "gateway.wake_fanout",
 			attribute.String("app_id", app.ID),
 			attribute.String("deployment_id", pick.ColdBucket),
 		)
@@ -8697,7 +8702,14 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+				if startupOOM.Has(target.InstanceID) {
+					// The app ran out of memory while this wake booted it:
+					// the kernel's OOM kill, not the platform, set the
+					// latency. The app's own wake latency (above) keeps it.
+					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
+				} else {
+					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+				}
 				platformWakeTrace.observe(h.metrics, firstByteAt)
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment

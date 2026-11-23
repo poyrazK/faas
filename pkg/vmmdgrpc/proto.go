@@ -975,6 +975,7 @@ func wakeResponseFromInstance(instance string, req fcvm.WakeRequest, inst *fcvm.
 		RestoreMs:    inst.RestoreMs,
 		NetnsTapMs:   inst.NetnsTapMs,
 		GuestReadyMs: inst.GuestReadyMs,
+		StartupOom:   inst.StartupOOM,
 	}
 	if requestMethod == vmmdpb.WakeMethod_WAKE_RESTORE && inst.Method == fcvm.WakeColdBoot {
 		switch inst.RestoreFallbackReason {
