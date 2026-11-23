@@ -307,8 +307,6 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 		},
 		Violations: []string{},
 	}
-	result.ObserverProcessDetected = mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) ||
-		mcpTasksObserverRoleConfigured(observer.Manifest.Env, observer.Manifest.Entrypoint)
 	result.ObserverMinimumConfigured = observer.Manifest.WorkerReplicas != nil && observer.Manifest.WorkerReplicas.Min >= 1
 	result.NamespaceMatches = mcpTasksObserverNamespacesMatch(worker, observer)
 	result.ObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches(observer, worker.Slug)
@@ -335,6 +333,7 @@ func inspectMCPTasksObserver(ctx context.Context, client *api.Client, worker, ob
 			break
 		}
 	}
+	result.ObserverProcessDetected = mcpTasksObserverProcessDetected(observer, result.ObserverHeartbeatFresh)
 
 	observerAndWorkerUsable := mcpTasksObserverAppUsable(worker) && mcpTasksObserverAppUsable(observer) && worker.ID != observer.ID
 	result.EligibleToApplyMinimum = observerAndWorkerUsable && result.ObserverProcessDetected &&
@@ -402,6 +401,21 @@ func mcpTasksObserverEntrypointDetected(entrypoint []string) bool {
 		}
 	}
 	return false
+}
+
+// mcpTasksObserverProcessDetected reports whether observer runs the task
+// observer. Its entrypoint names it, or the app has MCP_TASKS_ROLE=observer and
+// runs a known command. A source-built app's start command lives on its
+// deployment, so GET /v1/apps carries no entrypoint and the check could never
+// pass (MCP Tasks prod re-probe 2026-11-23). Then the role setting plus a fresh
+// heartbeat is the evidence: only an observer-role process publishes it.
+func mcpTasksObserverProcessDetected(observer api.AppResponse, heartbeatFresh bool) bool {
+	if mcpTasksObserverEntrypointDetected(observer.Manifest.Entrypoint) ||
+		mcpTasksObserverRoleConfigured(observer.Manifest.Env, observer.Manifest.Entrypoint) {
+		return true
+	}
+	return heartbeatFresh && len(observer.Manifest.Entrypoint) == 0 &&
+		strings.TrimSpace(observer.Manifest.Env["MCP_TASKS_ROLE"]) == "observer"
 }
 
 func mcpTasksObserverRoleConfigured(env map[string]string, entrypoint []string) bool {
