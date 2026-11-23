@@ -226,20 +226,8 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 				}
 			}
 			if unavailable == "" {
-				health := api.RouteHealthReport{AppID: r.AppID, DeploymentID: d.ID, StableDeploymentID: d.ID, CheckedAt: now, Routes: []api.RouteHealthFinding{}}
-				gate := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
-				for _, f := range r.Routes {
-					gate.Routes = append(gate.Routes, api.RouteHealthRoute{Method: f.Route.Method, Path: f.Route.Path, MaxP95MS: f.Route.MaxP95MS})
-					health.Routes = append(health.Routes, api.RouteHealthFinding{Method: f.Route.Method, Path: f.Route.Path, Windows: routehealth.Windows(now)})
-				}
-				// Passing the same ID reads one population. Only the candidate counts are used.
-				if err := pgRouteHealthObservations(ctx, db, owner.Account.ID, gate, &health, false); err != nil {
+				if err := pgReadRouteMonitorObservations(ctx, db, owner.Account.ID, &r); err != nil {
 					return r, recovery, nil, err
-				}
-				for i := range r.Routes {
-					for j, w := range health.Routes[i].Windows {
-						r.Routes[i].Windows[j].Observed = w.Candidate
-					}
 				}
 				if c.CustomerGroupBy != "" {
 					if err := pgRouteMonitorCustomers(ctx, db, owner.Account.ID, d.ID, r, recovery, active); err != nil {
@@ -262,6 +250,27 @@ func pgRouteMonitorReportScope(ctx context.Context, db sqlc.DBTX, owner RoutePol
 		recovery, r = mergeRouteMonitorRecoveryState(recovery, r)
 	}
 	return r, recovery, candidateBaseline, nil
+}
+
+// A monitor reads a single population of requests to the observed deployment.
+func pgReadRouteMonitorObservations(ctx context.Context, db sqlc.DBTX, account string, r *api.RouteMonitorReport) error {
+	health := api.RouteHealthReport{
+		AppID: r.AppID, DeploymentID: r.DeploymentID, StableDeploymentID: r.DeploymentID, CheckedAt: r.CheckedAt,
+	}
+	gate := api.RouteHealthGate{Routes: []api.RouteHealthRoute{}}
+	for _, f := range r.Routes {
+		gate.Routes = append(gate.Routes, api.RouteHealthRoute{Method: f.Route.Method, Path: f.Route.Path, MaxP95MS: f.Route.MaxP95MS})
+		health.Routes = append(health.Routes, api.RouteHealthFinding{Method: f.Route.Method, Path: f.Route.Path, Windows: routehealth.Windows(r.CheckedAt)})
+	}
+	if err := pgRouteHealthObservations(ctx, db, account, gate, &health, false); err != nil {
+		return err
+	}
+	for i := range r.Routes {
+		for j, w := range health.Routes[i].Windows {
+			r.Routes[i].Windows[j].Observed = w.Candidate
+		}
+	}
+	return nil
 }
 
 func routeMonitorDeploymentBaseline(d sqlc.RouteMonitorServingDeploymentsRow) *api.RouteMonitorDeploymentBaseline {

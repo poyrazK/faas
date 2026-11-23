@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -189,4 +190,21 @@ func DecodeAppTaskAttachTerminal(payload []byte) (AppTaskAttachTerminalMessage, 
 		return AppTaskAttachTerminalMessage{}, ErrAppTaskAttachMessage
 	}
 	return terminal, nil
+}
+
+// InteractiveSessionsUnavailableTitle titles the refusal of an interactive
+// task while the installation has interactive sessions off; the CLI keys its
+// hint on it.
+const InteractiveSessionsUnavailableTitle = "Interactive sessions unavailable"
+
+// ErrInteractiveSessionsNotEnabled refuses an interactive task. The app-tasks
+// capability can be available while this gate is off, so the refusal names
+// what is off and what still works: an agent told only "not enabled" plus
+// "feature list shows what is available" saw app-tasks listed and had no way
+// to run its DDL (agent eval 2026-11-23).
+func ErrInteractiveSessionsNotEnabled() *Problem {
+	return NewProblem(http.StatusNotImplemented, CodeNotImplemented, InteractiveSessionsUnavailableTitle,
+		"interactive sessions (postgres query and connect, app exec, port-forward) are not enabled on this Gregale installation, "+
+			"although app tasks without a session still run. To change a database schema, attach it with --access migration "+
+			"(MIGRATION_DATABASE_URL) and run the change in release.command")
 }

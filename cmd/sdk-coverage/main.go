@@ -1448,6 +1448,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/alert-rollbacks":                             "ListAlertRollbacks",
 	"GET /v1/apps/{slug}/alert-rollbacks/{fire}":                      "GetAlertRollback",
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                       "GetRollbackOperation",
+	"GET /v1/apps/{slug}/rollbacks/preflight":                         "PreflightCheckedRollback",
 	"GET /v1/apps/{slug}/operational-summary":                         "GetAppOperationalSummary",
 	// The hyphenated path uses its explicit OpenAPI operationId in the Go SDK.
 	"GET /v1/service-caller-keys": "GetServiceCallerKeys",
@@ -1591,6 +1592,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}": "GetPlatformTenantReconciliationReceipt",
 	"GET /v1/apps/{slug}/deployments":                                    "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                             "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/verification-contract":                          "GetVerificationContract",    // ADR-20261122220000
+	"PUT /v1/apps/{slug}/verification-contract":                          "PutVerificationContract",    // ADR-20261122220000
+	"DELETE /v1/apps/{slug}/verification-contract":                       "DeleteVerificationContract", // ADR-20261122220000
 	"GET /v1/apps/{slug}/deployment-aliases":                             "ListDeploymentAliases",
 	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                      "SetDeploymentAlias",
 	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":                   "DeleteDeploymentAlias",
@@ -1600,6 +1604,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/projects":                                                   "ListProjects",
 	"GET /v1/projects/{slug}":                                            "GetProject",
 	"PATCH /v1/projects/{slug}":                                          "UpdateProject",
+	"GET /v1/projects/{slug}/rollbacks":                                  "ListProjectRollbacks",
+	"POST /v1/projects/{slug}/rollbacks":                                 "StartProjectRollback",
+	"GET /v1/projects/{slug}/rollbacks/preview":                          "PreviewProjectRollback",
+	"GET /v1/projects/{slug}/rollbacks/targets":                          "ListProjectRollbackTargets",
+	"POST /v1/projects/{slug}/rollbacks/targets/{deploy}/protection":     "ProtectProjectRollbackDeploy",
+	"GET /v1/projects/{slug}/rollbacks/{operation}":                      "GetProjectRollback",
+	"POST /v1/projects/{slug}/rollbacks/{operation}/pause":               "PauseProjectRollback",
+	"POST /v1/projects/{slug}/rollbacks/{operation}/resume":              "ResumeReviewedProjectRollback",
+	"GET /v1/projects/{slug}/rollbacks/{operation}/resume/preview":       "PreviewProjectRollbackResume",
+	"POST /v1/projects/{slug}/rollbacks/{operation}/undo":                "UndoProjectRollback",
+	"GET /v1/projects/{slug}/rollbacks/{operation}/undo/preview":         "PreviewProjectRollbackUndo",
 	"GET /v1/projects/{slug}/environments":                               "ListProjectEnvironments",
 	"POST /v1/projects/{slug}/environments":                              "CreateProjectEnvironment",
 	"POST /v1/projects/{slug}/environment-clones":                        "CreateFullProjectEnvironmentClone",
@@ -2826,6 +2841,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/analytics/timeseries":      "GetAppRequestAnalyticsTimeseries",
 	"GET /v1/apps/{slug}/analytics/route-customers": "GetAppRouteCustomerUsage",
 	"GET /v1/apps/{slug}/analytics/route-resources": "GetAppRouteResources",
+	"GET /v1/apps/{slug}/mcp-tool-insights":         "GetMCPToolInsights",
 
 	// ADR-127 / PR-A — production debugger data plane. The
 	// auto-derivation would produce GetAppsSlugDebugRequests
@@ -3189,6 +3205,7 @@ func (r *reportT) print() {
 // Convenience aliases share a route with its checked path-shaped method.
 // An alias is accounted for only while that route still exists in the spec.
 var methodAliasRoutes = map[string]string{
+	"ResumeProjectRollback":                "POST /v1/projects/{slug}/rollbacks/{operation}/resume",
 	"StreamExecutionPipeline":              "GET /v1/execution-pipelines/{id}/events",
 	"WatchExecutionPipeline":               "GET /v1/execution-pipelines/{id}/events",
 	"CancelDelegatedToolInvocation":        "POST /v1/delegated-tool-invocations/{id}/{action}",

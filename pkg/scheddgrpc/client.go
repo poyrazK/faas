@@ -93,6 +93,21 @@ type Client struct {
 // they appear on *Client; the compiler will refuse to drift.
 var _ ScheddClient = (*Client)(nil)
 
+// startupOOMResponse is any admission response carrying startup_oom.
+type startupOOMResponse interface {
+	GetInstanceId() string
+	GetStartupOom() bool
+}
+
+// noteStartupOOM marks the admitted instance on the caller's
+// sched.StartupOOMRecorder when schedd reported that the app ran out of memory
+// while it booted, so the gateway files that wake as an app fault.
+func noteStartupOOM(ctx context.Context, resp startupOOMResponse) {
+	if resp.GetStartupOom() {
+		sched.NoteStartupOOM(ctx, resp.GetInstanceId())
+	}
+}
+
 // withWakeCorrelation forwards the request-derived trigger class without
 // widening the scheduler RPC surface. Internal scheduler callers continue to
 // send only the trigger enum and therefore carry no class.
@@ -193,6 +208,7 @@ func (c *Client) Wake(ctx context.Context, appID, deploymentID, scope string) (i
 	if err != nil {
 		return "", "", "", "", 0, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int(resp.GetPort()), nil
 }
 
@@ -205,6 +221,7 @@ func (c *Client) WakeWithIdentity(ctx context.Context, appID, deploymentID, scop
 	if err != nil {
 		return "", "", "", "", 0, api.PlatformIdentity{}, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
 }
 
@@ -247,6 +264,7 @@ func (c *Client) AdmitInstance(ctx context.Context, appID, deploymentID, scope, 
 	if err != nil {
 		return "", "", "", "", 0, false, 0, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil
 }
 
@@ -260,6 +278,7 @@ func (c *Client) AdmitInstanceWithIdentity(ctx context.Context, appID, deploymen
 	if err != nil {
 		return "", "", "", "", 0, false, 0, api.PlatformIdentity{}, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
 }
 
@@ -313,6 +332,7 @@ func (c *Client) AdmitInstances(ctx context.Context, appID, scope, trigger strin
 				return
 			}
 			if report != nil {
+				noteStartupOOM(ctx, resp)
 				report(resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), nil)
 			}
 		}()
@@ -382,6 +402,7 @@ func (c *Client) admitDeploymentInstancesWithIdentity(ctx context.Context, appID
 				return
 			}
 			if report != nil {
+				noteStartupOOM(ctx, resp)
 				report(resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), resp.GetAtCapacity(), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil)
 			}
 		}()
@@ -404,6 +425,7 @@ func (c *Client) EnsureWake(ctx context.Context, appID, trigger string) (instanc
 	if err != nil {
 		return "", "", "", "", 0, 0, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), int(resp.GetPort()), nil
 }
 
@@ -416,6 +438,7 @@ func (c *Client) EnsureWakeWithIdentity(ctx context.Context, appID, trigger stri
 	if err != nil {
 		return "", "", "", "", 0, 0, api.PlatformIdentity{}, liftErr(err)
 	}
+	noteStartupOOM(ctx, resp)
 	return resp.GetInstanceId(), resp.GetNodeId(), resp.GetDeploymentId(), resp.GetWakeId(), int32(resp.GetMethod()), int(resp.GetPort()), platformIdentityFromProto(resp.GetIdentity()), nil
 }
 

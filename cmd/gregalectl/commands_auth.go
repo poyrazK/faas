@@ -291,13 +291,25 @@ func newOperatorHTTPClient(sess *operatorSession) *operatorHTTPClient {
 
 func (c *operatorHTTPClient) verifyMFA(ctx context.Context, totp string) error {
 	if strings.TrimSpace(totp) == "" {
-		return errors.New("TOTP code is required")
+		return fmt.Errorf("TOTP code is required; no authenticator yet? %s", c.mfaSetupHint())
 	}
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/account/mfa/verify", api.MFAVerifyRequest{Totp: strings.TrimSpace(totp)}, nil, true, nil); err != nil {
+		// 409 mfa_required: the account has no confirmed authenticator, so no
+		// code can verify. A new operator has to finish setup in the browser.
+		var httpErr *operatorHTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusConflict && httpErr.Code == api.CodeMFARequired {
+			return fmt.Errorf("this account has no confirmed authenticator yet; %s", c.mfaSetupHint())
+		}
 		return err
 	}
 	c.session.SteppedUpAt = time.Now().UTC()
 	return nil
+}
+
+// mfaSetupHint names apid's browser enrollment page. login and step-up both
+// verify a code, so it says to retry rather than naming either command.
+func (c *operatorHTTPClient) mfaSetupHint() string {
+	return fmt.Sprintf("finish authenticator setup at %s/dashboard/account/mfa?action=enroll, then try again", c.baseURL)
 }
 
 func (c *operatorHTTPClient) doJSON(ctx context.Context, method, path string, input, output any, idempotent bool, extraCookies []*http.Cookie) error {

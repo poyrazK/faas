@@ -523,3 +523,21 @@ func TestInspectRecommendations_ParkedAppWakesOnNextRequest(t *testing.T) {
 		}
 	}
 }
+
+// Prod hunt r31: a canary the rollout aborted stays "live" at 0% traffic, and
+// health answered "No urgent issues" after the latest deploy was rolled back.
+func TestInspectNamesAnAbortedNewerCandidate(t *testing.T) {
+	aborted := api.DeploymentResponse{ID: "v2", Status: "live", RolloutState: "aborted", TrafficPercent: 0}
+	serving := api.DeploymentResponse{ID: "v1", Status: "live", RolloutState: "complete", TrafficPercent: 100}
+	current, candidate := main.SelectInspectDeployments([]api.DeploymentResponse{aborted, serving})
+	if current == nil || current.ID != "v1" {
+		t.Fatalf("current = %+v, want v1", current)
+	}
+	if candidate == nil || candidate.ID != "v2" {
+		t.Fatalf("candidate = %+v, want the aborted v2", candidate)
+	}
+	rolling := api.DeploymentResponse{ID: "v3", Status: "live", RolloutState: "rolling_out", TrafficPercent: 1}
+	if _, candidate := main.SelectInspectDeployments([]api.DeploymentResponse{rolling, serving}); candidate != nil {
+		t.Fatalf("a canary still rolling out is not a failed candidate: %+v", candidate)
+	}
+}

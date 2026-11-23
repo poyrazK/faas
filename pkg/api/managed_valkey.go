@@ -262,6 +262,12 @@ func ErrManagedValkeyLimit(plan Plan, limit int) *Problem {
 		WithLimit(int64(limit), int64(limit+1))
 }
 
+// ComposeRedisConfiguredReason is a plan's not_provisioned_reason for a
+// Compose redis service whose every user already has its key set (bound to a
+// managed cache by an earlier apply, or set by hand). Feature hints read it to
+// say the key is in place instead of asking for an external Redis.
+const ComposeRedisConfiguredReason = "every service that uses it already has its key set"
+
 // Problem codes for managed caches.
 const (
 	CodeManagedRedisNotInPlan = "managed_redis_not_in_plan"

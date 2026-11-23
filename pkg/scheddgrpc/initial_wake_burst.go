@@ -16,6 +16,10 @@ func (c *Client) EnsureWakeCapacity(ctx context.Context, appID, trigger string, 
 	if err != nil {
 		return liftErr(err)
 	}
+	noteStartupOOM(ctx, response)
+	for _, instance := range response.GetAdditionalInstances() {
+		noteStartupOOM(ctx, instance)
+	}
 	if report != nil {
 		report(response.GetInstanceId(), response.GetNodeId(), response.GetDeploymentId(), response.GetWakeId(), int32(response.GetMethod()), int(response.GetPort()))
 		for _, instance := range response.GetAdditionalInstances() {

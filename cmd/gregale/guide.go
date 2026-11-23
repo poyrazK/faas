@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -72,7 +71,7 @@ var guidePages = []guidePage{
 			"A gRPC service declares `x-gregale-app-protocol: grpc` on its Compose service.",
 			"Too many files: each service's .dockerignore applies inside its build context; list directories no service builds from (k8s, docs) in .gregaleignore.",
 			"Code that dials a Compose name (redis, db) must read $GREGALE_SERVICE_<NAME>_HOST (raw TCP) or $GREGALE_SERVICE_<NAME>_URL (HTTP); the caller lists the service in depends_on. The dry run names each place.",
-			"A postgres service becomes a managed database bound as DATABASE_URL. Gregale does not run other datastores (redis, mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (Upstash, PlanetScale, Atlas) with an env URL.",
+			"A postgres service becomes a managed database bound as DATABASE_URL, and a redis service a managed Redis cache bound as REDIS_URL where managed Redis is on for the account (`gregale feature list`). Gregale does not run other datastores (mysql, mongo): an app parks to a snapshot and keeps no data. Point the code at a hosted one (PlanetScale, Atlas) with an env URL.",
 			"A build target or command for development (target: dev, nodemon, --reload) is deployed as written.",
 			"A gRPC address (PRODUCT_SERVICE_ADDR: products:3550) is rewritten to products.svc.gregale:10081. Set x-gregale-streaming and x-gregale-wake-ahead on a service instead of later app commands.",
 		},
@@ -145,7 +144,8 @@ var guidePages = []guidePage{
 			{Do: "Send a message", Command: "gregale queue send <app> --queue-name <queue> --payload '<json>'"},
 			{Do: "See queue depth, bindings and consumer liveness", Command: "gregale queue status <app>"},
 			{Do: "List and replay dead letters", Command: "gregale dlq list <app>"},
-			{Do: "List an app's crons, then one cron's runs", Command: "gregale cron list <app>"},
+			{Do: "List an app's crons", Command: "gregale cron list <app>"},
+			{Do: "Show one cron's runs (its ID is in the list)", Command: "gregale cron runs <cron-id>"},
 		},
 		Notes: []string{
 			"A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.",
@@ -203,8 +203,14 @@ func renderGuidePage(page guidePage) string {
 func renderGuideIndex() string {
 	var b strings.Builder
 	b.WriteString("Gregale task guide. Run `gregale guide <task>` for one page.\n\n")
+	// The column fits the longest task: a fixed 18 ran
+	// "functions-and-queues" into its title (prod hunt r31).
+	width := 0
 	for _, page := range guidePages {
-		fmt.Fprintf(&b, "  %-18s %s\n", page.Task, page.Title)
+		width = max(width, len(page.Task))
+	}
+	for _, page := range guidePages {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, page.Task, page.Title)
 	}
 	return b.String()
 }
@@ -222,10 +228,6 @@ func cmdGuide(args []string) int {
 	if *asJSON {
 		jsonOutput = true
 	}
-	if fs.NArg() > 1 {
-		PrintUsage(osStderr, "usage: gregale guide [<task>] [--json]", "guide")
-		return 1
-	}
 	if fs.NArg() == 0 {
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"tasks": guidePages}))
@@ -233,14 +235,16 @@ func cmdGuide(args []string) int {
 		_, _ = io.WriteString(osStdout, renderGuideIndex())
 		return 0
 	}
+	// One word naming a task shows its page; anything else is a question
+	// (ADR-20261123180000).
 	page, ok := lookupGuidePage(fs.Arg(0))
-	if !ok {
-		tasks := make([]string, 0, len(guidePages))
-		for _, p := range guidePages {
-			tasks = append(tasks, p.Task)
+	if fs.NArg() > 1 || !ok {
+		query := strings.TrimSpace(strings.Join(fs.Args(), " "))
+		if query == "" || len(query) > 200 {
+			PrintUsage(osStderr, "usage: gregale guide [<task> | \"<question>\"] [--json]  (a question is 1 to 200 characters)", "guide")
+			return 1
 		}
-		sort.Strings(tasks)
-		return printErr("Unknown guide task", fmt.Errorf("no guide task %q; tasks: %s", fs.Arg(0), strings.Join(tasks, ", ")))
+		return cmdGuideSearch(query)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(page))

@@ -51,8 +51,18 @@ See [Builds and framework detection](build.md) and
 Code: `dep_install_failed`.
 
 Read the build log with `gregale logs my-api --latest-failure`. Commit your
-lockfile (for example `package-lock.json` or `go.sum`) so the build installs
-the versions you tested.
+lockfile (for example `package-lock.json`, `poetry.lock`, `uv.lock` or
+`go.sum`) so the build installs the versions you tested. A package from a
+private registry needs its credentials; see
+[Private registry credentials](registry-credentials.md). A failing
+`postinstall` script fails the build the same way.
+
+### A Dockerfile step failed
+
+Code: `build_failed`.
+
+The build log names the step, for example `[build 3/5] RUN npm run build`.
+Run `docker build .` locally to reproduce it.
 
 ### The build ran out of memory or time
 
@@ -83,8 +93,71 @@ build inputs out of the final stage.
 | `app_startup_timeout` | The app did not become ready in time | Start the server before slow work such as cache warm-up or migrations. Run `gregale deploy check`. |
 | `app_healthz_unauthorized` | The health path answered 401 | Make the health path answer without credentials, or set `hosting.health` to a path that does. |
 
+The most common causes behind those codes:
+
+- **A missing environment variable or secret.** The app crashes reading a
+  variable that is not set. Add it with `gregale env set --app my-api NAME=value`,
+  or for a credential see [Secrets](secrets.md), then deploy again.
+- **The process exits when it is done.** A web app must keep running. A start
+  command that runs a script and exits with code 0 still fails, because
+  nothing is left to serve. For run-to-completion work, use a [job](jobs.md)
+  or a [cron](crons.md).
+- **The health path is slow or guarded.** When the source defines `/healthz`,
+  `/health`, `/readyz`, `/ready`, `/livez` or `/live`, Gregale waits for it to
+  answer 2xx, so keep it free of slow dependencies. An app that rejects
+  unknown hosts, such as Django with `ALLOWED_HOSTS`, must answer that path
+  first; see [Deploy a Django app](deploy-django.md#health-check). Do not use
+  `/` as the health path; see [Health checks](frameworks.md#health-checks).
+- **The app needs longer to start.** The startup deadline is 15 seconds by
+  default on Free and 30 on the other plans. Set `lifecycle.startup_deadline_s`
+  in `gregale.yaml` for an app that loads a model or warms a cache first; a
+  deploy from a local directory can also pass `--startup-deadline-s`. The plan
+  caps it: 30 seconds on Free and Hobby, 60 on Pro and 120 on Scale.
+- **The memory size is too small for the framework.** Very small sizes leave
+  little room once the runtime is loaded, so a server with several worker
+  processes, such as gunicorn, usually needs more than 128 MB. Fewer workers
+  also lower the peak.
+
+### The release command failed
+
+Code: `release_command_failed`.
+
+The release command (`release:` in a Procfile, or `release.command` in the
+manifest), usually a migration, exited non-zero or timed out, so the new
+version never served. Read its output with
+`gregale release logs v42 --app my-api`, using the failed version, then fix it
+and deploy again. Run the same command against a copy of the database
+first when you can. See
+[Releases that change the database](releases.md#releases-that-change-the-database).
+
+### Gregale could not finish the deploy
+
+Codes: `capacity_unavailable`, `release_infrastructure_failed`,
+`build_infrastructure_failed`, `deployment_verification_unavailable`.
+
+These mean the platform could not finish the deploy, not that the app is
+wrong. Wait a minute and deploy again; check
+[status.gregale.dev](https://status.gregale.dev) if it keeps happening.
+
 When a deployment fails, the release that was serving keeps serving. Nothing
 changes for your users until a new deployment succeeds.
+
+## The new version broke production
+
+A deploy that passed its checks can still misbehave. Go back to the release
+that served before it, without rebuilding:
+
+```sh
+gregale rollback my-api            # the release that most recently stopped serving
+gregale rollback my-api --to v41   # a specific release
+```
+
+If a release command, such as a migration, ran after the release you are
+going back to last served, the rollback is refused with
+`rollback_crosses_release`: the older code would run against the changed
+database. Pass `--acknowledge-releases` to go back anyway, or
+`--restore-databases` to restore the managed database with it. See
+[Rollbacks that restore the database](releases.md#rollbacks-that-restore-the-database).
 
 ## Requests fail
 

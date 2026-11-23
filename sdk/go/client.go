@@ -39,7 +39,7 @@ type Client struct {
 // flow and the public status page are the only operations that work
 // without auth.
 //
-//	c, err := faas.NewClient("https://api.example.com", os.Getenv("FAAS_TOKEN"),
+//	c, err := faas.NewClient("https://api.example.com", os.Getenv("GREGALE_TOKEN"),
 //	    faas.WithDeployTimeout(5*time.Minute),
 //	    faas.WithLogger(slog.Default()),
 //	)

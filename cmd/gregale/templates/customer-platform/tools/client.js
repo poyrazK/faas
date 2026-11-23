@@ -20,7 +20,7 @@ export function apiClient(apiBase, token, fetchAPI = fetch) {
         ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname)))) {
     throw new Error("FAAS_API must be an HTTPS origin (HTTP is allowed only on loopback)");
   }
-  if (!token) throw new Error("Set FAAS_TOKEN on the operator machine");
+  if (!token) throw new Error("Set GREGALE_TOKEN on the operator machine");
   return {
     base: base.origin,
     async request(method, path, body) {

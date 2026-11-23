@@ -103,5 +103,6 @@ func validateCheckedRollbackArguments(acct, app, target, current, reason string)
 }
 
 func validRollbackStatusUpdate(r api.RollbackOperation, status string) bool {
-	return status == r.Status || status == "failed" || status == "blocked" && (r.Status == "ready" || r.Status == "blocked") || status == "complete" && r.Status == "routing"
+	return status == r.Status || status == "failed" || status == "blocked" && (r.Status == "ready" || r.Status == "blocked") ||
+		status == "complete" && r.Status == "routing" || r.ProjectRollbackID != "" && status == "ready" && r.Status == "blocked"
 }

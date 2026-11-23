@@ -104,6 +104,8 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// ActiveOperationID identifies the running project rollback behind a conflict.
+	ActiveOperationID string `json:"active_operation_id,omitempty"`
 	// AgentApproval is the request behind approval_required: the link a
 	// person opens to approve it (ADR-20261104140058).
 	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`
@@ -1963,6 +1965,11 @@ const (
 	// Public candidate verification stayed unavailable within the durable
 	// recovery window. This does not establish an application health verdict.
 	CodeDeploymentVerificationUnavailable = "deployment_verification_unavailable"
+	// CodeDeploymentVerificationContractFailed means a required check of the
+	// app's gregale.verify.yaml failed against the candidate, so it was not
+	// promoted (ADR-20261122220000). The deployment's hosting receipt holds
+	// the full report.
+	CodeDeploymentVerificationContractFailed = "deployment_verification_contract_failed"
 	// CodePromotionRolledBack means an environment promotion was rolled back
 	// and this release, the first in its environment, had no earlier release
 	// to restore, so it was retired. The release itself did not fail.
@@ -2508,6 +2515,7 @@ func StatusForCode(code string) int {
 		CodeFunctionInitFailed,
 		CodeExecutionModeConflict,
 		CodeDeploymentSmokeFailed,
+		CodeDeploymentVerificationContractFailed,
 		CodeReleaseCommandFailed,
 		CodeReleasePhaseUnavailable,
 		CodeReleaseOutcomeUncertain:

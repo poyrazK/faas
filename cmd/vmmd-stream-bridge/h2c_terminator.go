@@ -219,7 +219,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	outboundURL := "http://" + net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)) + uri
 	outboundReq, err := newGuestRequest(ctx, method, outboundURL, r)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("build outbound request: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "build outbound request", err)
 		return
 	}
 	// Propagate selected inbound headers to the outbound request.
@@ -262,7 +262,7 @@ func handleH2CStream(w http.ResponseWriter, r *http.Request, guestIP string, gue
 	resp, err := transport.RoundTrip(outboundReq)
 	if err != nil {
 		markGuestTransportError(w, r, ctx)
-		http.Error(w, fmt.Sprintf("guest h2c roundtrip: %v", err), http.StatusBadGateway)
+		guestBadGateway(w, r, "guest h2c roundtrip", err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

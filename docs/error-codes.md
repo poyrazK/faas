@@ -162,7 +162,7 @@ See [Troubleshooting](troubleshooting.md).
 
 HTTP 403 Forbidden · App too large
 
-See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_log_drain_invalid`
 
@@ -180,7 +180,7 @@ See [CLI guide](cli-setup.md), [Logs](logs.md), [Errors](errors.md).
 
 HTTP 422 Unprocessable Entity · App bound to loopback; Application bound to loopback
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_maintenance_mode`
 
@@ -220,13 +220,13 @@ HTTP 409 Conflict · Slug taken
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_crash`
 
 HTTP 422 Unprocessable Entity · App exited during startup
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `app_startup_timeout`
 
@@ -390,13 +390,13 @@ Verify the exact deployment receiving traffic, then promote, advance its canary,
 
 The response's `title` and `detail` describe the failure.
 
-See [Fix a failed deploy](troubleshoot-deploys.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_infrastructure_failed`
 
 The response's `title` and `detail` describe the failure.
 
-See [Fix a failed deploy](troubleshoot-deploys.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_not_found`
 
@@ -408,7 +408,7 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
-See [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_provenance_not_found`
 
@@ -426,7 +426,7 @@ See [Builds and framework detection](build.md).
 
 HTTP 503 Service Unavailable
 
-See [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Troubleshooting](troubleshooting.md).
 
 ### `build_undetected`
 
@@ -602,7 +602,7 @@ HTTP 409 Conflict · Debug replay is unavailable; Mirror replay is unavailable
 
 HTTP 422 Unprocessable Entity · Dependency installation failure
 
-See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md), [Troubleshooting](troubleshooting.md).
+See [Errors](errors.md), [Troubleshooting](troubleshooting.md).
 
 ### `deploy_failed`
 
@@ -718,7 +718,7 @@ See [Deploys](deploys.md).
 
 HTTP 503 Service Unavailable
 
-See [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Container compatibility](container-compatibility.md), [Troubleshooting](troubleshooting.md).
 
 ### `dev_debug_not_developer_environment`
 
@@ -2448,7 +2448,7 @@ See [Environment variables](env.md).
 
 HTTP 403 Forbidden · Project secret limit reached
 
-See [Delivered secrets](secrets.md#project-environment-secrets).
+See [Secrets](secrets.md#project-environment-secrets).
 
 ### `plan_limit_ram`
 
@@ -2460,7 +2460,7 @@ See [Plans and pricing](plans.md#at-a-glance).
 
 HTTP 403 Forbidden · Secret count limit reached
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `plan_limit_trusted_signers`
 
@@ -2860,7 +2860,7 @@ HTTP 409 Conflict · Deployment control conflicted
 
 ### `project_release_rollback_required`
 
-HTTP 409 Conflict · Project release rollback required
+HTTP 409 Conflict · Project release owns traffic; Project release rollback required
 
 Roll back the project environment release, then retry this app rollback if needed.
 
@@ -2872,7 +2872,7 @@ Bind the bucket in an environment whose release does not pin secrets, or release
 
 Bind the database in an environment whose release does not pin secrets, or release without pinned secrets first.
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `project_required`
 
@@ -2881,6 +2881,86 @@ HTTP 409 Conflict · Project required
 ### `project_retry_changed`
 
 HTTP 409 Conflict · Project retry stopped
+
+### `project_rollback_already_complete`
+
+HTTP 409 Conflict · Rollback already complete
+
+### `project_rollback_auto_undo_blocked`
+
+HTTP 409 Conflict · Automatic rollback undo paused
+
+### `project_rollback_conflict`
+
+HTTP 409 Conflict · Project rollback already running; Project rollback conflict; Rollback resume unavailable
+
+### `project_rollback_health_failed`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_health_probe_required`
+
+HTTP 409 Conflict · Health probe required
+
+### `project_rollback_health_timeout`
+
+HTTP 409 Conflict · Rollback health verification paused
+
+### `project_rollback_live_traffic_failed`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_live_traffic_required`
+
+HTTP 409 Conflict · Production error budget required; Request telemetry required
+
+### `project_rollback_live_traffic_timeout`
+
+HTTP 409 Conflict · Rollback live-traffic verification paused
+
+### `project_rollback_paused`
+
+HTTP 409 Conflict · Project rollback paused
+
+### `project_rollback_plan_changed`
+
+HTTP 409 Conflict · Reviewed resume plan changed; Reviewed rollback plan changed; Reviewed undo plan changed
+
+### `project_rollback_pre_cutover_health_failed`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_pre_cutover_health_timeout`
+
+HTTP 409 Conflict · Pre-cutover health verification failed
+
+### `project_rollback_preparation_expired`
+
+HTTP 409 Conflict · Rollback preparation expired
+
+### `project_rollback_preparation_released`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_prepared`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_request_reused`
+
+HTTP 409 Conflict · Rollback request ID already used
+
+### `project_rollback_undo_artifacts_unavailable`
+
+The response's `title` and `detail` describe the failure.
+
+### `project_rollback_undo_started`
+
+HTTP 409 Conflict · Rollback undo already accepted
+
+### `project_rollback_undo_unavailable`
+
+HTTP 409 Conflict · Rollback undo unavailable
 
 ### `project_selection_empty`
 
@@ -3074,7 +3154,7 @@ See [Deploys](deploys.md#release-approvals).
 
 HTTP 422 Unprocessable Entity
 
-See [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_freeze_limit`
 
@@ -3128,7 +3208,7 @@ HTTP 409 Conflict · Active graph required; History unavailable; Release graph c
 
 The response's `title` and `detail` describe the failure.
 
-See [Deploys](deploys.md), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Deploys](deploys.md), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `release_not_parked`
 
@@ -3164,7 +3244,7 @@ See [Functions and runtimes](functions.md).
 
 HTTP 503 Service Unavailable · Request budget exceeded; Request timed out
 
-See [Edge rules](edge-rules.md), [Errors](errors.md), [Troubleshooting](troubleshooting.md).
+See [Edge rules](edge-rules.md), [Errors](errors.md), [Host an MCP server](mcp-hosting.md).
 
 ### `request_too_large`
 
@@ -3218,7 +3298,7 @@ HTTP 409 Conflict · Rollback crosses release commands
 
 If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.
 
-See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
+See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Troubleshooting](troubleshooting.md).
 
 ### `rollback_deployment_changed`
 
@@ -3332,13 +3412,13 @@ HTTP 410 Gone · Secret entry unavailable
 
 HTTP 400 Bad Request · Invalid secret key
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_not_found`
 
 HTTP 400 Bad Request · Secret not set; Secret unavailable
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_reference_conflict`
 
@@ -3354,7 +3434,7 @@ See [Environment variables](env.md).
 
 HTTP 422 Unprocessable Entity · Secret-shaped values found in uploaded source
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `secret_store_unavailable`
 
@@ -3364,7 +3444,7 @@ HTTP 503 Service Unavailable · Secret storage unavailable
 
 HTTP 413 Request Entity Too Large · Secret value too large
 
-See [Delivered secrets](secrets.md).
+See [Secrets](secrets.md).
 
 ### `security_posture_blocked`
 
