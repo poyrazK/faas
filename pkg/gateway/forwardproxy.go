@@ -532,7 +532,17 @@ func fwdStreamOnceWithEvents(w http.ResponseWriter, r *http.Request, cli vmmdpb.
 		bodyErrCh <- nil
 		close(bodyErrCh)
 	} else {
-		go pumpForwardRequestBody(ctx, r.Body, stream, touch, bodyErrCh)
+		var discard func() bool
+		if !grpcDuplex {
+			// The rest of an upload the guest stopped reading is drained, for
+			// at most forwardRequestBodyDiscardTimeout (see the pump). Not for
+			// gRPC: its status trailers must not wait for the client's stream.
+			// (x-faas-stream marks most ordinary requests, so it is no guide.)
+			discard = func() bool {
+				return http.NewResponseController(w).SetReadDeadline(time.Now().Add(forwardRequestBodyDiscardTimeout)) == nil
+			}
+		}
+		go pumpForwardRequestBody(ctx, r.Body, stream, touch, bodyErrCh, discard)
 	}
 
 	// ADR-696: join the body pump even if the response writer or receiver
@@ -1925,11 +1935,18 @@ type forwardBodySender interface {
 	CloseSend() error
 }
 
-// forwardRequestBodyDiscardMaxBytes bounds how much of an upload the gateway
-// reads and discards after the guest stopped taking it (see
-// pumpForwardRequestBody). It matches the largest body any forward path
-// accepts.
-var forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
+const (
+	// forwardRequestBodyDiscardMaxBytes bounds how much of an upload the
+	// gateway reads and discards after the guest stopped taking it (see
+	// pumpForwardRequestBody). It matches the largest body any forward path
+	// accepts.
+	forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
+	// forwardRequestBodyDiscardTimeout bounds that discard in time: a client
+	// that stops uploading after the answer cannot hold the request open.
+	// The response is already complete; past this the connection closes as
+	// it did before the discard existed.
+	forwardRequestBodyDiscardTimeout = 10 * time.Second
+)
 
 // pumpForwardRequestBody streams body to the forward stream in 8 KiB chunks
 // and reports the first error (client disconnect, send failure) on result,
@@ -1939,13 +1956,16 @@ var forwardRequestBodyDiscardMaxBytes = api.RawStreamMaxRequestBytes
 //
 // A guest may answer before reading the whole body (a 413 from a size cap,
 // or a handler that ignores the body); the stream then refuses further
-// chunks. The pump keeps reading the rest of the upload and discards it,
-// up to forwardRequestBodyDiscardMaxBytes and within ctx, before it reports
-// the send error. Leaving it unread made this server close the connection
-// with unread data, which reset it, and the hop in front (Caddy, Cloudflare)
-// dropped the response already sent: clients saw an HTTP/2 INTERNAL_ERROR
-// or an empty reply for any body above about 1 MB instead of the answer.
-func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error) {
+// chunks. When discard is non-nil and returns true (it arms the discard's
+// read deadline; nil or false for gRPC and other duplex streams, whose
+// trailers must not wait for the client's upload), the pump reads the rest of
+// the upload and drops it, up to forwardRequestBodyDiscardMaxBytes, before it
+// reports the send error. Leaving it unread made this server close the
+// connection with unread data, which reset it, and the hop in front (Caddy,
+// Cloudflare) dropped the response already sent: clients saw an HTTP/2
+// INTERNAL_ERROR or an empty reply for any body above about 1 MB instead of
+// the answer.
+func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardBodySender, touch func(), result chan<- error, discard func() bool) {
 	defer close(result)
 	cr, stopReader := newCtxReader(ctx, body)
 	defer stopReader()
@@ -1959,8 +1979,8 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 					BodyChunk: append([]byte(nil), buf[:n]...),
 				},
 			}); serr != nil {
-				if err == nil {
-					discardForwardRequestBody(cr, buf, touch)
+				if err == nil && discard != nil && discard() {
+					discardForwardRequestBody(cr, buf, forwardRequestBodyDiscardMaxBytes)
 				}
 				result <- serr
 				return
@@ -1980,17 +2000,15 @@ func pumpForwardRequestBody(ctx context.Context, body io.Reader, stream forwardB
 }
 
 // discardForwardRequestBody reads and drops the rest of a request body the
-// guest no longer accepts, up to forwardRequestBodyDiscardMaxBytes. It stops
-// at the end of the body, on any read error (including the ctxReader's
+// guest no longer accepts, up to limit bytes. It stops at the end of the
+// body, on any read error (the discard's read deadline, the ctxReader's
 // cancellation), or at the cap, past which the connection closes as before.
-func discardForwardRequestBody(body io.Reader, buf []byte, touch func()) {
+// It does not refresh the session's idle timer: discarding is not activity.
+func discardForwardRequestBody(body io.Reader, buf []byte, limit int64) {
 	var read int64
-	for read < forwardRequestBodyDiscardMaxBytes {
+	for read < limit {
 		n, err := body.Read(buf)
-		if n > 0 {
-			read += int64(n)
-			touch()
-		}
+		read += int64(n)
 		if err != nil {
 			return
 		}

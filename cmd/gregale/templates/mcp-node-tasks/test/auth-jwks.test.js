@@ -87,6 +87,11 @@ test('a JWKS fetch failure is labelled signing keys unavailable with Retry-After
   const wrong = await answer(auth, await credential('other-key'));
   assert.equal(wrong.headers['Retry-After'], undefined);
   assert.deepEqual(wrong.body, { error: 'invalid_token' });
+  // A wrong JWKS URL (404) is configuration, not a passing failure.
+  t.mock.method(globalThis, 'fetch', async () => new Response('', { status: 404 }));
+  const misconfigured = await answer(createAuth(config), token);
+  assert.equal(misconfigured.headers['Retry-After'], undefined);
+  assert.deepEqual(misconfigured.body, { error: 'invalid_token' });
 });
 
 test('failed rotation refresh does not block a still-fresh cached verification key', async t => {

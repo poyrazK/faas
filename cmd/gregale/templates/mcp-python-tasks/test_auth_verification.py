@@ -5,7 +5,7 @@ import json
 import time
 import unittest
 from unittest.mock import Mock, patch
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
@@ -155,6 +155,16 @@ class JWKVerificationTests(unittest.TestCase):
                 auth.authenticate("Bearer " + self.token(private=rsa.generate_private_key(public_exponent=65537, key_size=2048)))
             self.assertEqual(caught.exception.description, "")
             self.assertFalse(caught.exception.retryable)
+
+    def test_wrong_jwks_url_is_not_retryable(self):
+        auth = Authenticator(CONFIG)
+        opener = Mock()
+        opener.open.side_effect = HTTPError(CONFIG["auth"]["jwks_url"], 404, "Not Found", {}, io.BytesIO(b""))
+        with patch("urllib.request.build_opener", return_value=opener), patch("auth.time.monotonic", return_value=1000):
+            for _ in range(2):  # the failed fetch, then its cooldown
+                with self.assertRaises(AuthFailure) as caught:
+                    auth.authenticate("Bearer " + self.token())
+                self.assertEqual((caught.exception.code, caught.exception.retryable), ("invalid_token", False))
 
     def test_failed_rotation_preserves_fresh_cached_keys(self):
         auth = Authenticator(CONFIG)

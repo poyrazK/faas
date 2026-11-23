@@ -570,7 +570,9 @@ type jwkResolver struct {
 	// backs off briefly: a transient fetch failure (an issuer waking, a
 	// network blip) must not reject every token for the full throttle.
 	lastFailed bool
-	refresh    *jwkRefresh
+	// lastErr is that refresh's error, repeated while it backs off.
+	lastErr error
+	refresh *jwkRefresh
 }
 
 const (
@@ -758,8 +760,9 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		if !r.lastRefresh.IsZero() {
 			since := now.Sub(r.lastRefresh)
 			if r.lastFailed && since < jwksFailureBackoff {
+				lastErr := r.lastErr
 				r.mu.Unlock()
-				return nil, errSigningKeysUnavailable
+				return nil, lastErr
 			}
 			if !r.lastFailed && since < jwksUnknownKeyThrottle {
 				r.mu.Unlock()
@@ -772,12 +775,9 @@ func (r *jwkResolver) resolve(kid, algorithm string) (crypto.PublicKey, error) {
 		// Network I/O never holds the cache lock. Fresh cached keys remain
 		// available while other callers share this one bounded refresh.
 		keys, err := r.fetch()
-		if err != nil {
-			err = fmt.Errorf("%w: %v", errSigningKeysUnavailable, err)
-		}
 		r.mu.Lock()
 		r.lastRefresh = time.Now()
-		r.lastFailed = err != nil
+		r.lastFailed, r.lastErr = err != nil, err
 		if err == nil {
 			r.keys, r.loadedAt = keys, r.lastRefresh
 		}
@@ -797,16 +797,25 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 		return nil, errors.New("could not request JWKS")
 	}
 	request.Header.Set("Accept", "application/json")
+	// Only a failure that can pass (network, timeout, a provider 5xx/429)
+	// is errSigningKeysUnavailable, answered with Retry-After. A 404 or a
+	// bad document is a configuration error that retrying cannot fix.
 	response, err := r.client.Do(request)
 	if err != nil {
-		return nil, errors.New("could not fetch JWKS")
+		return nil, fmt.Errorf("%w: could not fetch JWKS", errSigningKeysUnavailable)
 	}
 	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode >= http.StatusInternalServerError || response.StatusCode == http.StatusTooManyRequests {
+		return nil, fmt.Errorf("%w: JWKS provider answered HTTP %d", errSigningKeysUnavailable, response.StatusCode)
+	}
 	if response.StatusCode != http.StatusOK || response.Request.URL.Scheme != "https" {
 		return nil, errors.New("could not fetch JWKS")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxJWKSBytes+1))
-	if err != nil || len(data) > maxJWKSBytes {
+	if err != nil {
+		return nil, fmt.Errorf("%w: could not read JWKS", errSigningKeysUnavailable)
+	}
+	if len(data) > maxJWKSBytes {
 		return nil, errors.New("invalid JWKS response")
 	}
 	var set jsonWebKeySet

@@ -46,7 +46,7 @@ func TestPumpForwardRequestBodyDiscardsUploadAfterGuestAnswered(t *testing.T) {
 	const size = 4 << 20
 	body := &countingReader{r: bytes.NewReader(make([]byte, size))}
 	result := make(chan error, 1)
-	pumpForwardRequestBody(context.Background(), body, &closedAfterSender{accept: 2}, func() {}, result)
+	pumpForwardRequestBody(context.Background(), body, &closedAfterSender{accept: 2}, func() {}, result, func() bool { return true })
 	if err := <-result; !errors.Is(err, io.EOF) {
 		t.Fatalf("pump result = %v, want the stream's send error", err)
 	}
@@ -55,16 +55,27 @@ func TestPumpForwardRequestBodyDiscardsUploadAfterGuestAnswered(t *testing.T) {
 	}
 }
 
-func TestPumpForwardRequestBodyDiscardStopsAtCap(t *testing.T) {
-	old := forwardRequestBodyDiscardMaxBytes
-	forwardRequestBodyDiscardMaxBytes = 64 << 10
-	t.Cleanup(func() { forwardRequestBodyDiscardMaxBytes = old })
+func TestDiscardForwardRequestBodyStopsAtCap(t *testing.T) {
+	const limit = 64 << 10
 	body := &countingReader{r: bytes.NewReader(make([]byte, 1<<20))}
-	result := make(chan error, 1)
-	pumpForwardRequestBody(context.Background(), body, &closedAfterSender{}, func() {}, result)
-	<-result
-	if limit := int64(8<<10) + forwardRequestBodyDiscardMaxBytes; body.read > limit {
-		t.Fatalf("pump read %d bytes past the discard cap (limit %d)", body.read, limit)
+	discardForwardRequestBody(body, make([]byte, 8<<10), limit)
+	if body.read > limit+8<<10 {
+		t.Fatalf("discard read %d bytes past the cap %d", body.read, limit)
+	}
+}
+
+// gRPC passes no discard: its status trailers must not wait for the
+// client's stream, so the pump stops at the send error as before. The same
+// holds when the discard's read deadline cannot be armed.
+func TestPumpForwardRequestBodyWithoutDiscardStopsAtSendError(t *testing.T) {
+	for _, discard := range []func() bool{nil, func() bool { return false }} {
+		body := &countingReader{r: bytes.NewReader(make([]byte, 1<<20))}
+		result := make(chan error, 1)
+		pumpForwardRequestBody(context.Background(), body, &closedAfterSender{}, func() {}, result, discard)
+		<-result
+		if body.read > 8<<10 {
+			t.Fatalf("pump read %d bytes after the stream ended", body.read)
+		}
 	}
 }
 
@@ -98,7 +109,7 @@ func TestPumpForwardRequestBodyDiscardEndsOnCancel(t *testing.T) {
 	go pumpForwardRequestBody(ctx, struct {
 		io.Reader
 		io.Closer
-	}{body, &blockingBody{closed: make(chan struct{})}}, &closedAfterSender{}, func() {}, result)
+	}{body, &blockingBody{closed: make(chan struct{})}}, &closedAfterSender{}, func() {}, result, func() bool { return true })
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	select {

@@ -36,19 +36,33 @@ export class SigningKeysUnavailableError extends Error {
   }
 }
 
+// Marks a JWKS fetch failure that can pass (network, timeout, provider
+// 5xx/429). A 404 or a bad document is configuration that retrying cannot fix.
+const transientJWKSFailure = Symbol('transientJWKSFailure');
+
+function jwksFailure(message, transient) {
+  const error = new Error(message);
+  if (transient) error[transientJWKSFailure] = true;
+  return error;
+}
+
 function createJWKResolver(url) {
   let retryAt = 0;
-  let failures = 0;
+  let lastTransient = false;
   const remote = createRemoteJWKSet(new URL(url), {
     timeoutDuration: 5000,
     [customFetch]: async (...args) => {
-      if (performance.now() < retryAt) {
-        failures++;
-        throw new Error('JWKS refresh is cooling down');
-      }
+      if (performance.now() < retryAt) throw jwksFailure('JWKS refresh is cooling down', lastTransient);
       try {
-        const response = await fetch(...args);
-        if (response.status !== 200) throw new Error('JWKS refresh failed');
+        let response;
+        try {
+          response = await fetch(...args);
+        } catch (error) {
+          throw jwksFailure(`JWKS fetch failed: ${error?.name ?? 'error'}`, true);
+        }
+        if (response.status !== 200) {
+          throw jwksFailure('JWKS refresh failed', response.status >= 500 || response.status === 429);
+        }
         const jwks = await readJWKSet(response);
         createLocalJWKSet(jwks); // Validate the payload before considering the fetch successful.
         return new Response(JSON.stringify(jwks), { status: 200 });
@@ -57,19 +71,19 @@ function createJWKResolver(url) {
         // backoff. Keep it short: a transient failure (the issuer waking, a
         // network blip) must not reject every valid token for 30 s.
         retryAt = performance.now() + JWKS_FAILURE_BACKOFF_MS;
-        failures++;
+        lastTransient = Boolean(error?.[transientJWKSFailure]);
         throw error;
       }
     },
   });
-  // A fetch failing during this verification (coalesced fetches count for
-  // every waiter) marks the token unverifiable rather than invalid.
+  // The error this verification got (jose hands every coalesced waiter the
+  // same one) decides: a transient fetch failure means the token was not
+  // checked, so it is not reported as wrong.
   return async (...args) => {
-    const before = failures;
     try {
       return await remote(...args);
     } catch (error) {
-      if (failures !== before) throw new SigningKeysUnavailableError();
+      if (error?.[transientJWKSFailure] || error?.code === 'ERR_JWKS_TIMEOUT') throw new SigningKeysUnavailableError();
       throw error;
     }
   };

@@ -88,6 +88,11 @@ func describeAuthRefusal(problem *api.Problem, response *http.Response) {
 		// The CLI's generic 401 hint said to run `gregale login`, which
 		// does not authenticate an MCP client (Hunt 32 H32-28).
 		problem.Hint = mcpTokenHint
+	case code == "authentication_required":
+		// A token went out, yet the server saw no usable Bearer credential
+		// (malformed, oversized, or stripped on the way).
+		problem.Detail = fmt.Sprintf("MCP server did not accept the Authorization header as a Bearer token (HTTP 401 %s)", reason)
+		problem.Hint = "A token was sent: check the variable named by --token-env holds a bare token (no \"Bearer \" prefix, no line breaks) of a size the server accepts."
 	case strings.Contains(strings.ToLower(description), signingKeysUnavailable):
 		problem.Detail = fmt.Sprintf("MCP server could not check the token (HTTP 401 %s)", reason)
 		problem.Hint = "The server could not fetch its authorization server's signing keys (JWKS); the token itself may be fine. Check that the JWKS URL is reachable from the app, then retry."
@@ -111,38 +116,44 @@ var (
 // bearerChallengeParams returns the auth-params of the first Bearer
 // challenge, unquoted. Malformed input yields what parsed before it.
 func bearerChallengeParams(values []string) map[string]string {
-	params := map[string]string{}
 	for _, value := range values {
-		rest := strings.TrimSpace(value)
-		for rest != "" {
-			scheme, after, _ := strings.Cut(rest, " ")
-			if !strings.EqualFold(strings.TrimSuffix(scheme, ","), "bearer") {
-				// Skip to the next challenge in a list: "Basic realm=x, Bearer ...".
-				idx := strings.Index(strings.ToLower(rest), "bearer ")
-				if idx <= 0 {
-					break
-				}
-				rest = rest[idx:]
-				continue
+		s := value
+		for {
+			// Each challenge is a scheme then its auth-params; the params of
+			// another scheme are parsed (quoted strings included) to find the
+			// next challenge, so "bearer" inside a quoted realm is no match.
+			s = strings.TrimLeft(s, " ,")
+			if s == "" {
+				break
 			}
-			parseAuthParams(after, params)
-			return params
+			end := strings.IndexAny(s, " ,")
+			if end < 0 {
+				end = len(s)
+			}
+			scheme := s[:end]
+			params := map[string]string{}
+			s = parseAuthParams(s[end:], params)
+			if strings.EqualFold(scheme, "bearer") {
+				return params
+			}
 		}
 	}
-	return params
+	return map[string]string{}
 }
 
-func parseAuthParams(s string, params map[string]string) {
+// parseAuthParams reads name=value pairs into params and returns the rest of
+// s from the next challenge's scheme, or "" at the end or on malformed input.
+func parseAuthParams(s string, params map[string]string) string {
 	for {
 		s = strings.TrimLeft(s, " ,")
 		eq := strings.IndexByte(s, '=')
 		if eq <= 0 {
-			return
+			return ""
 		}
 		name := strings.ToLower(strings.TrimSpace(s[:eq]))
-		if strings.ContainsAny(name, " \t\"") {
-			// Next challenge ("Basic realm=...") or junk: stop.
-			return
+		if strings.ContainsAny(name, " \t\",") {
+			// The next challenge ("Bearer error=..."): hand it back.
+			return s
 		}
 		s = strings.TrimLeft(s[eq+1:], " ")
 		var value string
@@ -167,7 +178,7 @@ func parseAuthParams(s string, params map[string]string) {
 				b.WriteByte(s[i])
 			}
 			if !closed {
-				return
+				return ""
 			}
 			value, s = b.String(), s[i+1:]
 		} else {

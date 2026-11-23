@@ -49,6 +49,7 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 		{"code only in body", `Bearer realm="x"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token", "audience"},
 		{"hostile description dropped", meta + `, error="invalid_token", error_description="a` + "\x1b[2J" + `"`, `{}`, true, "invalid_token", "(HTTP 401 invalid_token)", ""},
 		{"no challenge, non-JSON", "", "<html>", true, "authentication_required", "HTTP 401 authentication_required", ""},
+		{"token sent but not a Bearer credential", meta, `{"error":"authentication_required"}`, true, "authentication_required", "did not accept the Authorization header", "bare token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := authResponse(http.StatusUnauthorized, tc.challenge, tc.body, tc.token)
@@ -74,9 +75,15 @@ func TestMCP403InsufficientScopeNamesScope(t *testing.T) {
 }
 
 func TestBearerChallengeParamsInChallengeList(t *testing.T) {
-	got := bearerChallengeParams([]string{`Basic realm="a, b", Bearer error="invalid_token", error_description="x \"y\""`})
-	if got["error"] != "invalid_token" || got["error_description"] != `x "y"` {
-		t.Fatalf("params = %#v", got)
+	for _, header := range []string{
+		`Basic realm="a, b", Bearer error="invalid_token", error_description="x \"y\""`,
+		`Basic realm="use bearer tokens", Bearer error="invalid_token", error_description="x \"y\""`,
+		`Bearer error="invalid_token", error_description="x \"y\"", Basic realm="z"`,
+	} {
+		got := bearerChallengeParams([]string{header})
+		if got["error"] != "invalid_token" || got["error_description"] != `x "y"` || got["realm"] != "" {
+			t.Fatalf("%s: params = %#v", header, got)
+		}
 	}
 }
 

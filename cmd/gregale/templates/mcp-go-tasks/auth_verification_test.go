@@ -298,6 +298,21 @@ func TestJWKFetchFailureBacksOffBriefly(t *testing.T) {
 	}
 }
 
+// A wrong JWKS URL is configuration: retrying cannot fix it, so the 401 is
+// a plain invalid_token without Retry-After.
+func TestJWKSNotFoundIsNotRetryable(t *testing.T) {
+	_, token := verificationKeyAndToken(t)
+	provider := httptest.NewTLSServer(http.NotFoundHandler())
+	defer provider.Close()
+	auth := testScopedAuthenticator(t, scopedAuthConfig)
+	auth.keyResolver.url, auth.keyResolver.client = provider.URL, provider.Client()
+	for range 2 { // the failed fetch, then its backoff
+		if _, failure := auth.authenticate("Bearer " + token); failure == nil || failure.retryable || failure.description != "" {
+			t.Fatalf("404 JWKS failure = %+v, want a plain invalid_token", failure)
+		}
+	}
+}
+
 func TestJWKSTransportDoesNotPoolConnections(t *testing.T) {
 	transport, ok := jwksTransport().(*http.Transport)
 	if !ok || !transport.DisableKeepAlives {
