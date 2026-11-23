@@ -649,6 +649,20 @@ type healthcheckPollOptions struct {
 	WorkloadLeaf func() string
 }
 
+// logHealthcheckPollUnavailable reports why the DGRAM report poll did not
+// start. Linux virtio-vsock (Firecracker) has no datagram transport, so the
+// socket is ENODEV in every Firecracker guest, and readiness never depended
+// on it: the host runs the HEALTHCHECK through the stream listener
+// (handleImageReadinessConn). The Warn sent an agent and a diagnosis after a
+// missing-device "deadlock" that did not exist (agent eval 2026-11-23).
+func logHealthcheckPollUnavailable(log *slog.Logger, err error) {
+	if errors.Is(err, unix.ENODEV) {
+		log.Debug("healthcheck report poll off: no vsock datagram transport; the host runs the HEALTHCHECK over the stream listener", "err", err)
+		return
+	}
+	log.Warn("healthcheck poll unavailable", "err", err)
+}
+
 func runHealthcheckPoll(ctx context.Context, manifest api.AppManifest, log *slog.Logger, options ...healthcheckPollOptions) error {
 	if log == nil {
 		log = slog.Default()

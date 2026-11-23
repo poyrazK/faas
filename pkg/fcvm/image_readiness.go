@@ -53,7 +53,7 @@ func (v *JailerVMM) WaitImageHealthcheck(ctx context.Context, l Lease, startupS 
 				return nil
 			}
 			if resp.Error != "runtime_unavailable" {
-				return imageHealthcheckProblem(l, "guest command check failed: "+resp.Error)
+				return imageHealthcheckProblem(l, imageHealthcheckFailureDetail(resp.Error))
 			}
 		}
 		// Listener/runtime publication can lag the network socket on cold boot.
@@ -99,6 +99,13 @@ func imageHealthcheckExchange(ctx context.Context, socket string, probe, ackKind
 	}
 	if probe == healthcheckproto.Probe {
 		budget = min(budget, int64(api.MaxAppManifestStartupDeadlineS)*1000)
+		// The guest stops checking when the budget runs out and then answers.
+		// With the whole remaining deadline as its budget, that answer raced
+		// the host's own deadline and lost, so a HEALTHCHECK that never passed
+		// read "fresh guest command result unavailable" (agent eval
+		// 2026-11-23, voting-app P2). Keep room for the answer, up to half of
+		// a short budget.
+		budget -= min(imageHealthcheckReplyMarginMS, budget/2)
 	}
 	request := healthcheckproto.Request{Nonce: hex.EncodeToString(nonce[:]), BudgetMS: min(budget, healthcheckproto.MaxProbeBudgetMS), RuntimeID: runtimeID}
 	conn, err := (&net.Dialer{Timeout: 200 * time.Millisecond}).DialContext(ctx, "unix", socket)
@@ -125,6 +132,22 @@ func imageHealthcheckExchange(ctx context.Context, socket string, probe, ackKind
 		return "", err
 	}
 	return request.Nonce, nil
+}
+
+// imageHealthcheckReplyMarginMS is the part of the startup deadline a probe
+// keeps for the guest's answer after its command budget runs out.
+const imageHealthcheckReplyMarginMS = 1000
+
+// imageHealthcheckFailureDetail explains the guest's outcome of an image
+// HEALTHCHECK that did not pass.
+func imageHealthcheckFailureDetail(outcome string) string {
+	switch outcome {
+	case "deadline":
+		return "the image's HEALTHCHECK command had not passed by the startup deadline; Gregale waits for it before serving, so check what it tests (gregale logs shows the app's output)"
+	case "unhealthy":
+		return "the image's HEALTHCHECK command failed on every retry; check what it tests (gregale logs shows the app's output)"
+	}
+	return "guest command check failed: " + outcome
 }
 
 func imageHealthcheckProblem(l Lease, detail string) *api.Problem {
