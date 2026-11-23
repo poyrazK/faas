@@ -48129,15 +48129,13 @@ paths:
       summary: Publish a message to live or resumable channel subscribers.
       description: >-
         delivery=live (the default) fans out to live raw-frame subscribers.
-        delivery=retained is preview-only and requires
-        FAAS_REALTIME_RETAINED_PREVIEW_ENABLED=1 on the API; it accepts at most
-        4096 decoded bytes and requires an Idempotency-Key. Retained delivery
-        commits the message to the ordered channel log before fan-out and
-        returns its sequence. V2 subscribers read the committed log in sequence;
-        a best-effort wake reduces latency while bounded polling recovers missed
-        wakes. The retained log remains authoritative if live fan-out is
-        incomplete. The resume protocol separately requires
-        FAAS_REALTIME_RESUME_PREVIEW_ENABLED=1 on the realtime service.
+        delivery=retained is part of the realtime preview, released per
+        account; it accepts at most 4096 decoded bytes and requires an
+        Idempotency-Key. Retained delivery commits the message to the ordered
+        channel log before fan-out and returns its sequence. Resumable
+        subscribers read the committed log in sequence; a best-effort wake
+        reduces latency while bounded polling recovers missed wakes. The
+        retained log remains authoritative if live fan-out is incomplete.
 
         A supplied Idempotency-Key binds the publish to delivery mode, decoded
         payload and binary flag for 24 hours. Replays return the original

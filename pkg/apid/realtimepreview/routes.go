@@ -166,6 +166,18 @@ var Fields = map[string][]string{
 	"UpdateManagedRealtimeEndpointRequest": {"slug", "channel_rules"},
 	"ManagedRealtimeEndpointResponse":      {"slug", "channel_rules"},
 	"ManagedRealtimeMessageRequest":        {"ttl_seconds", "expected_sequence", "metadata"},
+	// Principal send is released with core realtime (ADR-20261123074615);
+	// its retained inbox delivery, expiry and push fallback are the preview's.
+	"ManagedRealtimePrincipalMessageRequest": {"ttl_seconds", "fallback_after_seconds", "notification_group_key",
+		"notification_not_before", "notification_collapse_key", "notification_ttl_seconds", "notification_priority",
+		"notification_group_label", "notification_category"},
+	"ManagedRealtimePrincipalSendResponse": {"delivery_expires_at", "sequence", "durable", "fallback_deadline"},
+}
+
+// FieldValues are, per schema and property, the enum values of released
+// schemas that only the preview accepts.
+var FieldValues = map[string]map[string][]string{
+	"ManagedRealtimePrincipalMessageRequest": {"delivery": {RetainedDelivery}},
 }
 
 // Components are the preview's components that no path references, as

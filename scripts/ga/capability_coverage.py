@@ -409,6 +409,9 @@ PRIORITY_RULES = [
     (r"^(project-)?environment-(workload-)?qualification|^project-environment-qualifications$", "Environments and Environment GitOps"),
     (r"stored-workflow-test", "Stored workflows:"),
     (r"realtime-customer-examples", "Realtime channels"),
+    # ADR-20261123074615: core realtime is beta; retained history and what
+    # builds on it stay preview, so they have their own inventory row.
+    (r"^realtime-(access|channels|occupancy|publishers|push|tickets|workers)$", "Realtime preview:"),
     (r"^durableentity$", "Durable entities"),
     (r"^appmetrics$", "App, service and account metrics"),
     (r"^otlpmetrics$", "Custom metrics and OTLP"),

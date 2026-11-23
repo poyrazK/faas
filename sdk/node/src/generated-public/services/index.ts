@@ -33,6 +33,7 @@ export { OrgsService } from './OrgsService.js';
 export { OutboundService } from './OutboundService.js';
 export { PreviewsService } from './PreviewsService.js';
 export { ProjectsService } from './ProjectsService.js';
+export { RealtimeService } from './RealtimeService.js';
 export { RegistryService } from './RegistryService.js';
 export { RunsService } from './RunsService.js';
 export { SecretsService } from './SecretsService.js';
