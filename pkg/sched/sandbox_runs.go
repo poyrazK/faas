@@ -398,6 +398,16 @@ func (r *AgentRunner) RunSandbox(ctx context.Context, a SandboxAdmission, placed
 		return err
 	}
 	req := Request{Instance: SandboxInstanceID(a.SandboxID), Plan: a.Plan, RAMMB: a.RAMMB, VCPU: a.VCPU, CPUMillicores: a.CPUMillicores}
+	if a.large() {
+		// ADR-20261122132055 §5: large shapes run only on the nodes that
+		// declare them; with none, the session is refused for capacity and
+		// queues as any session no node can place.
+		req.agentPool = r.largePool
+		if len(r.largePool) == 0 {
+			return api.NewProblem(503, api.CodeCapacity, "No node for this shape",
+				fmt.Sprintf("no agent-pool node takes sessions above %d MB or %d vCPU", api.SandboxLargeShapeRAMMB, api.SandboxLargeShapeVCPU))
+		}
+	}
 	if a.Resume != nil && a.Resume.NodeID != "" {
 		// The capture's node has it in its cache; any node restores it from
 		// the shared store (ADR-20261122132055 §2).
@@ -534,6 +544,12 @@ func (a SandboxAdmission) validate() error {
 		return &AgentRunInvalidError{Reason: "the sandbox browser goes with a preset session, without commands of its own"}
 	}
 	return nil
+}
+
+// large reports a session above the shape every agent-pool node takes
+// (ADR-20261122132055 §5).
+func (a SandboxAdmission) large() bool {
+	return a.RAMMB > api.SandboxLargeShapeRAMMB || a.VCPU > api.SandboxLargeShapeVCPU
 }
 
 // fork reports a session that starts from another session's fork capture.

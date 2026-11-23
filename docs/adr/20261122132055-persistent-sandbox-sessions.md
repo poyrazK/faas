@@ -240,6 +240,13 @@ A fork of a running session still waited for its capture's upload to the shared 
 - **Reseed hook.** `POST …/exec` takes `reseed_on_fork` for a background command. A foreground command ends with its call, so it never runs on in a fork, and the flag is refused there. On `forked`, guest-init sends `SIGUSR2` to the process group of each running command that asked. Commands that did not ask are left alone.
 - **Metrics.** `sandbox_fork_seconds{count_bucket=1|2-4|5+}` is the time from agentd asking for a running session's fork capture to vmmd recording it. `sandbox_forks_total{outcome}` counts fork starts: `node` (restored on the capture's node), `remote` (from the shared store), `cold`, `refused_node` (the capture's node refused it and it waits for the upload) and `orphaned` (its source ended before the capture). Both are on the agent runs dashboard.
 
+### Step 8 as built
+
+- **Declared nodes.** Until `compute_nodes` carries the agents role, an agent-pool node declares large shapes by being listed in schedd's `FAAS_SCHEDD_SANDBOX_LARGE_NODES` (IDs or names, a subset of `FAAS_SCHEDD_AGENT_RUN_NODES`).
+- **Large.** A session above `SandboxLargeShapeRAMMB` (4,096 MB, the largest ephemeral shape) or `SandboxLargeShapeVCPU` (2) is placed only on those nodes: a new session, a resume, a fork and a drain's move alike. With none declared it is refused for capacity and queues, failing after `SandboxQueueMaxSec` as any session no node can place. A reattach goes to the node it runs on.
+- **Unchanged:** invariant 2 per node, measured admission, and the plan limits (`SandboxPersistentRAMMBMax`, `SandboxPersistentVCPUMax`).
+- **Not yet:** packing large sessions before small ones (small sessions may still land on a large node); a per-node maximum shape; the manifest and Ansible key for the list.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.
