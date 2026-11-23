@@ -62,6 +62,12 @@ var prefixes = []pattern{
 	{Error, "panic: "}, {Error, "fatal error: "},
 	{Error, "Uncaught "}, {Error, "UnhandledPromiseRejection"},
 	{Error, "ERROR "}, {Warn, "WARNING:"}, {Warn, "WARN:"}, {Warn, "WARNING "}, {Warn, "WARN "},
+	// guest-init's own report of a crash, an OOM kill or a failed build. A
+	// Node app that died with process.exit(3) left only these lines, and
+	// `logs --level error` returned nothing (prod hunt r32).
+	{Error, "guest-init: app restart ("}, {Error, "guest-init: main restart ("},
+	{Error, "guest-init: app out of memory"},
+	{Error, "guest-init: build failed"},
 	{Info, "INFO:"}, {Info, "INFO "},
 }
 
