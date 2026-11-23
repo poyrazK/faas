@@ -385,6 +385,10 @@ class WatchCapTest(PreflightCase):
         self.host = healthy_host()
         self.host["watch"] = {"owner_run": owner, "hosts": {"control-plane": {"releases": releases}}}
 
+    def full(self):
+        """As many unwatched releases as the cap allows (release_units.json)."""
+        return ["abcdef0123456789"[i] * 40 for i in range(dp.MAX_UNWATCHED)]
+
     def test_open_watch_below_the_cap_lets_the_deploy_join_it(self):
         self.watched(["a" * 40])
         code, go, summary = self.run_preflight()
@@ -392,7 +396,7 @@ class WatchCapTest(PreflightCase):
         self.assertIn("run 90's watch covers the unwatched releases", summary)
 
     def test_at_the_cap_waits_for_the_running_watch(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "in_progress", "html_url": "https://r/90"}
 
         def watch_done(t):
@@ -405,14 +409,14 @@ class WatchCapTest(PreflightCase):
         self.assertIn("watch: 600 s", summary)
 
     def test_at_the_cap_with_no_watch_running_fails_and_says_how_to_adopt(self):
-        self.watched(["a" * 40, "c" * 40])
+        self.watched(self.full())
         self.gh.runs["actions/runs/90"] = {"status": "completed", "conclusion": "failure"}
         code, go, summary = self.run_preflight()
         self.assertEqual((code, go), (1, False))
         self.assertIn("adopt=true", summary)
 
     def test_cap_comes_from_the_release_units_config(self):
-        self.assertEqual(dp.MAX_UNWATCHED, 2)
+        self.assertEqual(dp.MAX_UNWATCHED, 4)
 
 
 class MainTest(unittest.TestCase):
