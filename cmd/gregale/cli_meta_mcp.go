@@ -260,7 +260,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
 			{Name: "token-env", Short: "environment variable containing an MCP client token", Value: "ENV"},
 			{Name: "uri", Short: "resource URI to read and watch", Value: "URI"},
-			{Name: "task-receipt", Short: "private Task receipt for a metadata-only watch", Value: "FILE"},
+			{Name: "task-receipt", Short: "private Task receipt for a metadata-only watch (repeatable)", Value: "FILE"},
 			{Name: "interval", Short: "poll and stream reconciliation interval (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'", "gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json"}},
 		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp client prompts --app my-mcp"}},

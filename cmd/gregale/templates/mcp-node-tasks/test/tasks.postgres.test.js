@@ -25,6 +25,7 @@ for (const [title, mode] of [
   ['a fresh Gregale CLI resumes the same PostgreSQL Task after a dropped connection', 'handle'],
   ['receipt watch reconciles a stream disconnect and resumes from a fresh CLI', 'watch'],
   ['batch receipt status preserves mixed outcomes in input order', 'batch'],
+  ['batch receipt watch follows both Tasks on one stream and rechecks after disconnect', 'watch-batch'],
 ]) test(title, {
   skip: postgresOnly.skip || (!process.env.MCP_TASKS_TEST_GREGALE && 'set MCP_TASKS_TEST_GREGALE to the Gregale CLI binary'),
   timeout: 30_000,
@@ -33,12 +34,14 @@ for (const [title, mode] of [
   const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-cli-'));
   t.after(() => rm(clientDir, { recursive: true, force: true }));
   const finishReport = Promise.withResolvers();
+  const requestApproval = Promise.withResolvers();
   const resultText = 'Private reconnect report is ready.';
-  const batchReceipt = mode === 'batch';
+  const batchReceipt = mode === 'batch' || mode === 'watch-batch';
   const buildReport = batchReceipt ? mcpTaskHandlers.build_report : { version: '1' };
   const runtime = createMcpTaskRuntime({ store, pollIntervalMs: 500, workerConcurrency: batchReceipt ? 2 : 1, handlers: {
     build_report: { ...buildReport, async execute(args, context) {
       if (!batchReceipt || args.report === 'reconnect') await finishReport.promise;
+      if (mode === 'watch-batch' && args.report === 'paused') await requestApproval.promise;
       if (batchReceipt) return buildReport.execute(args, context);
       return { content: [{ type: 'text', text: resultText }] };
     } },
@@ -53,6 +56,12 @@ for (const [title, mode] of [
   const owner = await token('alice');
   const otherCaller = await token('bob');
   const reduced = await token('alice', 'mcp:tools');
+  const subscriptionTaskIDs = [];
+  const subscribe = runtime.subscribe.bind(runtime);
+  runtime.subscribe = (taskIDs, ...args) => {
+    subscriptionTaskIDs.push(taskIDs);
+    return subscribe(taskIDs, ...args);
+  };
   const api = createApp({ version: 1, endpoint: '/mcp', transport: 'streamable-http', mode: 'stateless',
     legacy: false, allowed_origins: [], tasks: { enabled: true }, auth,
   }, { taskRuntime: runtime, keyResolver: publicKey, log() {} });
@@ -119,6 +128,64 @@ for (const [title, mode] of [
           '--task-receipt', path, '--arguments', argumentsJSON, ...(needsInput ? ['--defer-form-input'] : [])]));
         return { path, id: result.taskId };
       }
+      const receiptFlags = paths => paths.flatMap(path => ['--task-receipt', path]);
+      if (mode === 'watch-batch') {
+        const foreign = await submitReceipt('foreign', otherCaller);
+        const paused = await submitReceipt('paused', owner, true);
+        await eventually(async () => (await rows()).some(row => row.task_id === paused.id && row.status === 'running'),
+          'worker did not start the approval Task');
+        const paths = [paused.path, foreign.path, receipt[1], receipt[1]];
+        const beforeDenied = requests.length;
+        const denied = await cli('watch', reduced, receiptFlags(paths), 1);
+        assert.deepEqual(denied.trim().split('\n').map(line => JSON.parse(line)),
+          paths.map((_, receiptIndex) => ({ receiptIndex, outcome: 'unavailable' })));
+        assert.deepEqual(requests.slice(beforeDenied), ['server/discover', ...Array(4).fill('gregale/tasks/lookup')]);
+        assert.deepEqual(subscriptionTaskIDs, []);
+
+        let output = '';
+        const beforeWatch = requests.length;
+        const pending = cli('watch', owner, receiptFlags(paths), 1, child => {
+          child.stdout.setEncoding('utf8');
+          child.stdout.on('data', chunk => { output += chunk; });
+        });
+        void pending.catch(() => {});
+        await eventually(() => subscriptions[0]?.headersSent, 'batch watch did not open a shared subscription');
+        assert.deepEqual(subscriptionTaskIDs, [[paused.id, taskId]]);
+        requestApproval.resolve();
+        await eventually(() => output.includes('"nextAction":"provide_input"'), 'batch watch missed the live approval transition');
+        assert.equal(subscriptions.length, 1);
+
+        api.closeTaskSubscriptions();
+        await eventually(() => subscriptions[1]?.headersSent, 'batch watch did not reconnect for the remaining Task');
+        assert.deepEqual(subscriptionTaskIDs, [[paused.id, taskId], [taskId]]);
+        finishReport.resolve();
+        const observed = (await pending).trim().split('\n').map(line => JSON.parse(line));
+        assert.equal(observed.length, 7);
+        const event = (index, id, status, nextAction, extra = {}) => {
+          const lastUpdatedAt = observed[index].task.lastUpdatedAt;
+          assert.ok(Number.isFinite(Date.parse(lastUpdatedAt)));
+          return { outcome: 'available', task: { taskId: id, status, lastUpdatedAt, nextAction, ...extra } };
+        };
+        const working = { pollIntervalMs: 500 };
+        assert.deepEqual(observed, [
+          { receiptIndex: 0, ...event(0, paused.id, 'working', 'poll_status', working) },
+          { receiptIndex: 1, outcome: 'unavailable' },
+          { receiptIndex: 2, ...event(2, taskId, 'working', 'poll_status', working) },
+          { receiptIndex: 3, ...event(3, taskId, 'working', 'poll_status', working) },
+          { receiptIndex: 0, ...event(4, paused.id, 'input_required', 'provide_input') },
+          { receiptIndex: 2, ...event(5, taskId, 'completed', 'read_result') },
+          { receiptIndex: 3, ...event(6, taskId, 'completed', 'read_result') },
+        ]);
+        assert.deepEqual(requests.slice(beforeWatch), [
+          'server/discover', ...Array(4).fill('gregale/tasks/lookup'), 'subscriptions/listen',
+          'gregale/tasks/lookup', ...Array(2).fill('gregale/tasks/lookup'), 'subscriptions/listen',
+          ...Array(2).fill('gregale/tasks/lookup'),
+        ]);
+        const persisted = new Map((await rows()).map(row => [row.task_id, row]));
+        assert.deepEqual(persisted.get(paused.id), { task_id: paused.id, status: 'input_required', attempt_count: 1, has_result: false });
+        assert.deepEqual(persisted.get(taskId), { task_id: taskId, status: 'completed', attempt_count: 1, has_result: true });
+        return;
+      }
       const paused = await submitReceipt('paused', owner, true);
       const completed = await submitReceipt('done', owner);
       const foreign = await submitReceipt('foreign', otherCaller);
@@ -131,7 +198,6 @@ for (const [title, mode] of [
       await pool.query('UPDATE gregale_mcp_tasks SET expires_at=clock_timestamp() WHERE namespace=$1 AND task_id=$2',
         [namespace, expired.id]);
 
-      const receiptFlags = paths => paths.flatMap(path => ['--task-receipt', path]);
       const statusFlags = paths => ['--metadata-only', ...receiptFlags(paths)];
       const goodPaths = [paused.path, completed.path, receipt[1]];
       const beforeInvalid = requests.length;
@@ -241,6 +307,7 @@ for (const [title, mode] of [
     assert.deepEqual(await rows(), [{ task_id: taskId, status: 'completed', attempt_count: 1, has_result: true }]);
   } finally {
     finishReport.resolve();
+    requestApproval.resolve();
     api.closeTaskSubscriptions();
     await new Promise(resolve => {
       server.close(resolve);

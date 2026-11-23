@@ -40,21 +40,21 @@ func runMCPTaskReceiptBatchStatus(ctx context.Context, client *mcphosting.Client
 }
 
 func readMCPTaskReceiptStatus(ctx context.Context, client *mcphosting.Client, receipt string) (mcpTaskReceiptStatusResult, int) {
-	retry := func(err error) (mcpTaskReceiptStatusResult, int) {
-		status := mcpTaskRetrySnapshot("", err)
-		return mcpTaskReceiptStatusResult{Outcome: "retry", Task: &status}, exitCodeForStatus(http.StatusServiceUnavailable)
-	}
 	if err := ctx.Err(); err != nil {
-		return retry(err)
+		return mcpTaskReceiptLookupOutcome(mcphosting.Task{}, mcphosting.Exchange{}, err)
 	}
 	key, err := readMCPTaskReceipt(receipt, client.Endpoint)
 	if err != nil {
 		return mcpTaskReceiptStatusResult{Outcome: "invalid_receipt"}, 1
 	}
-	task, exchange, err := client.GetTaskBySubmissionKey(ctx, key)
+	return mcpTaskReceiptLookupOutcome(client.GetTaskBySubmissionKey(ctx, key))
+}
+
+func mcpTaskReceiptLookupOutcome(task mcphosting.Task, exchange mcphosting.Exchange, err error) (mcpTaskReceiptStatusResult, int) {
 	if err != nil {
 		if mcpTaskMetadataReadRetryable(exchange.HTTPStatus, err) {
-			return retry(err)
+			status := mcpTaskRetrySnapshot("", err)
+			return mcpTaskReceiptStatusResult{Outcome: "retry", Task: &status}, exitCodeForStatus(http.StatusServiceUnavailable)
 		}
 		return mcpTaskReceiptStatusResult{Outcome: "unavailable"}, 1
 	}
@@ -63,9 +63,6 @@ func readMCPTaskReceiptStatus(ctx context.Context, client *mcphosting.Client, re
 }
 
 func runMCPTaskReceiptWatch(ctx context.Context, client *mcphosting.Client, receipt string, interval time.Duration) int {
-	if client.Token == "" {
-		return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
-	}
 	key, err := readMCPTaskReceipt(receipt, client.Endpoint)
 	if err != nil {
 		return printErr("MCP Task receipt", err)

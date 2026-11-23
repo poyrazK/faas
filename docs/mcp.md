@@ -5734,6 +5734,22 @@ disconnect. If subscriptions are unavailable, the watch polls the receipt.
 Use `nextAction` to decide how to respond or retrieve the result. Press Ctrl+C
 to stop watching and reuse the receipt from another process.
 
+Repeat `--task-receipt` to watch several Tasks on that endpoint.
+
+```sh
+gregale mcp client watch --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --task-receipt ./weekly-task.json --task-receipt ./monthly-task.json
+```
+
+Batch watch writes one initial record per receipt in argument order, followed
+by changed records. Each record includes `receiptIndex`, the receipt's
+zero-based position, and the same `outcome` and `task` fields as batch status.
+Paused, terminal, and unsuccessful receipts stop producing updates while the
+remaining working Tasks continue on the shared subscription. The watch
+rechecks working receipts after a disconnect. It uses polling if the stream
+is unavailable or the working set exceeds the 64-ID subscription limit.
+When the working set is empty, it exits with the batch status exit codes.
+
 To read the result from a receipt in one status check, use `--read-result`.
 The CLI resolves the original Task using the caller's current credential and
 fetches its result once if it completed. The completed Task has the same JSON

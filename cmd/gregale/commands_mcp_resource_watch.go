@@ -34,7 +34,14 @@ func cmdMCPResourceWatch(args []string) int {
 	path := fs.String("endpoint", "/mcp", "endpoint path with --app (default /mcp)")
 	tokenEnv := fs.String("token-env", "", "environment variable containing an MCP client token")
 	uri := fs.String("uri", "", "resource URI to read and watch")
-	receipt := fs.String("task-receipt", "", "private Task receipt for a metadata-only watch")
+	var receipts []string
+	fs.Func("task-receipt", "private Task receipt for a metadata-only watch (repeatable)", func(path string) error {
+		if path == "" {
+			return errors.New("task receipt path is required")
+		}
+		receipts = append(receipts, path)
+		return nil
+	})
 	interval := fs.Duration("interval", 30*time.Second, "poll and stream reconciliation interval")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -42,7 +49,7 @@ func cmdMCPResourceWatch(args []string) int {
 	if fs.NArg() != 0 || *interval <= 0 || *interval > time.Hour {
 		return printErr("Invalid MCP watch flags", errors.New("watch requires a positive --interval up to 1h and accepts no positional arguments"))
 	}
-	hasURI, hasReceipt := *uri != "", *receipt != ""
+	hasURI, hasReceipt := *uri != "", len(receipts) > 0
 	if hasURI == hasReceipt {
 		return printErr("Invalid MCP watch flags", errors.New("choose exactly one of --uri or --task-receipt"))
 	}
@@ -61,7 +68,13 @@ func cmdMCPResourceWatch(args []string) int {
 		return printErr("MCP endpoint", err)
 	}
 	if hasReceipt {
-		return runMCPTaskReceiptWatch(ctx, client, *receipt, *interval)
+		if client.Token == "" {
+			return printErr("MCP Task receipt", errors.New("--task-receipt requires a client credential from --token-env"))
+		}
+		if len(receipts) > 1 {
+			return runMCPTaskReceiptBatchWatch(ctx, client, receipts, *interval)
+		}
+		return runMCPTaskReceiptWatch(ctx, client, receipts[0], *interval)
 	}
 	initial, err := client.ReadResource(ctx, *uri)
 	if err != nil {
