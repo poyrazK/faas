@@ -1275,6 +1275,36 @@ const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicent
 // over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
 const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
 
+// ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth and
+// ManagedPostgresNeonMillicentsPerSnapshotGBMonth are what Neon's Scale plan
+// charges Gregale per GB-month of instant-restore history ($0.20) and of
+// snapshot storage ($0.09): 10^9 bytes held for Neon's 744-hour month
+// (neon.com/pricing, last updated 2026-11-04; ADR-20261123062111).
+const ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth = 20_000
+const ManagedPostgresNeonMillicentsPerSnapshotGBMonth = 9_000
+
+// ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth and
+// ManagedPostgresSnapshotOverageMillicentsPerGBMonth price restore history
+// and snapshot storage past the plan's included history for a subject with
+// overage on: Neon's price plus the markup, $0.21 and $0.0945 per GB-month
+// (ADR-20261123062111). No overage ceiling applies; the spend cap bounds the
+// charge.
+const ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+const ManagedPostgresSnapshotOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerSnapshotGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+
+// ManagedPostgresHistoryMonthSeconds is the month restore history is priced
+// over: Neon reports byte-months normalised to 744 hours, so one GB-month is
+// 10^9 bytes held for this many seconds whatever the calendar month.
+const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
+
+// ManagedPostgresIncludedHistoryBytes is the restore history and snapshot
+// storage a plan includes, held for the whole month: its managed PostgreSQL
+// storage pool (Hobby 1 GiB, Pro 5 GiB, Scale 20 GiB; ADR-20261123062111
+// D1). It covers restore history first, then snapshots.
+func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
+	return max(storagePoolBytes, 0)
+}
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -10356,6 +10386,11 @@ const (
 	// the same Hobby+ plans) so an LLM-style upgrade stream has
 	// the same headroom.
 	RawStreamMaxRequestBytes int64 = 100 * 1024 * 1024
+	// ForwardRequestBodyDiscardTimeout bounds how long the gateway drains
+	// an HTTP/1 upload the guest left unread after answering, so the
+	// connection ends cleanly instead of resetting (and losing the answer)
+	// without a stalled client holding the request open.
+	ForwardRequestBodyDiscardTimeout = 10 * time.Second
 
 	// RawStreamMaxResponseBytes (issue #676 / ADR-080 follow-up,
 	// PR-C) bounds the per-session egress bytes on the raw-bytes

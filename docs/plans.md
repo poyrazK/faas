@@ -1,7 +1,5 @@
 # Plans and pricing
 
-<!-- GENERATED — do not edit by hand; regenerate with `make pricing-md`. -->
-
 These are the same limits the API enforces: this page is generated from them. Prices are monthly, shown in US dollars and before tax: the billing provider adds any sales tax or VAT that applies where you live at checkout. Usage beyond the included GB-RAM-hours is billed at $0.05 per GB-RAM-hour on paid plans.
 
 ## At a glance
@@ -75,6 +73,19 @@ Object storage bills the bytes it holds. Each plan includes an average amount of
 | **Scale** | 200 GiB | $0.03 per GiB-month | 1,000 GiB | 2,000 GiB | 10,000,000 |
 
 Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. A lower spend cap lowers how much a paid plan stores: a $0 cap stops at the included storage. Need more than the plan stores? Ask support to raise your account's ceiling; your spend cap still applies. At the ceiling, uploads are refused, and downloads stop while you store more than it until you delete objects. A downgrade waits until your data fits. Every plan stores up to 1,000,000 objects per account, counting retained versions. Egress counts the bytes Gregale serves from your buckets, through `s3.gregale.dev`, signed URLs and public buckets; a public object served from the CDN's cache does not count. At the egress limit, requests other than deletes are refused until the month ends; at the request limit, every request is refused until the month ends. See [object storage](object-storage.md#limits).
+
+## Managed PostgreSQL
+
+Each paid plan includes [managed PostgreSQL](postgres.md) databases, with storage pooled across them and a monthly compute allowance. Restore history and snapshots are included up to the size of the storage pool, averaged over the month.
+
+| Plan | Databases | Pooled storage | Compute per month | Included restore history |
+|---|---:|---:|---:|---:|
+| **Free** | — | — | — | — |
+| **Hobby** | 1 | 1 GiB | 25 CU-hours | 1 GiB |
+| **Pro** | 3 | 5 GiB | 75 CU-hours | 5 GiB |
+| **Scale** | 10 | 20 GiB | 200 CU-hours | 20 GiB |
+
+With overage on (`gregale postgres overage on`), compute past the allowance costs $0.2331 per CU-hour, storage past the pool $0.50 per GiB-month, restore history past the included history $0.21 per GB-month and snapshots past it $0.0945 per GB-month. Restore history uses the included history first. With egress overage on, a database's egress past its own 500 GB costs $0.105 per GB. Overage counts toward your [spend cap](billing.md#spend-cap). A GB is 10^9 bytes. See [usage and limits](postgres.md#usage-and-limits).
 
 ## Choose a plan
 

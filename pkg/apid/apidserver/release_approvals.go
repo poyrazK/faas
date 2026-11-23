@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
 	"github.com/onebox-faas/faas/pkg/apid/freeze"
+	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/releasemetrics"
@@ -1004,17 +1005,26 @@ func (s *server) releaseApprovalCanaryProblem(ctx context.Context, app state.App
 	if !approval.TakesTrafficWithoutCanary(req) {
 		return nil
 	}
-	if p := s.releaseGateWatchProblem(ctx, app, req); p != nil {
-		return p
+	problem := s.releaseGateWatchProblem(ctx, app, req)
+	if problem == nil {
+		required, err := approval.CanaryRequired(ctx, s.store, app, req.Scope, req.Environment)
+		if err != nil {
+			logCustomerFailure(s.log, "read release approval policy", err)
+			return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
+		}
+		if !required {
+			return nil
+		}
+		problem = api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
-	required, err := approval.CanaryRequired(ctx, s.store, app, req.Scope, req.Environment)
-	if err != nil {
-		logCustomerFailure(s.log, "read release approval policy", err)
-		return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
+	// A managed cache's resize or update must cut over at once (ADR-1446
+	// amendment of 2026-11-23), so neither gates nor approvals can demand a
+	// canary of it. Checked last so ordinary deploys pay no extra lookup.
+	if release.IsManagedCache(ctx, s.store, s.log, app.ID) {
+		return nil
 	}
-	if required {
+	if problem.Code == api.CodeReleaseApprovalCanaryRequired {
 		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
-		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
-	return nil
+	return problem
 }
