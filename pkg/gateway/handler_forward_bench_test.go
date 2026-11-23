@@ -17,6 +17,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// spec: §4.1 (gateway hot-path overhead per proxied request)
+//
 // BenchmarkHandlerForwardStream measures gatewayd-internal's per-request
 // work on the path production traffic takes: the trace middleware, the
 // awaiting-response cap, TrustedTrafficIngress and the Handler, forwarding
