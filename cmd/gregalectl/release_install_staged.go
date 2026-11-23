@@ -81,7 +81,7 @@ func removeStagedInstallMarker(root, gitSHA string) error {
 }
 
 func fileSHA256(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:forbidigo // operator-supplied release triple or the root-owned staged copy of it.
 	if err != nil {
 		return "", err
 	}
