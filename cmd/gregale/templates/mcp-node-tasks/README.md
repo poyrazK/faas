@@ -327,6 +327,61 @@ When the last watched Task expires or becomes inaccessible, its subscription
 slot and database listener are released. A Task-only SSE stream finishes; any
 resource or catalog filters on the same stream continue receiving updates.
 
+### Resume a report with the example supervisor
+
+The [Task supervisor](examples/task-supervisor.mjs) calls the Gregale CLI using
+the credential named by `--token-env`. Use a CLI with receipt-directory status
+and batch watching. Set `GREGALE_BIN` if that CLI is outside your PATH. Keep the
+supervisor's private workspace outside the deployed source directory.
+
+```sh
+node examples/task-supervisor.mjs submit --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --report weekly
+node examples/task-supervisor.mjs run --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work
+```
+
+The `run` command discovers retained Tasks from `receipts/` and watches active
+work. The example handles the starter report's approval round. When it emits
+`review_required`, open the indicated private file in `reviews/` and review the
+form. To approve the sample report, set its `response` to
+`{"action":"accept","content":{"approved":true}}`, then run the same `run`
+command again. The CLI checks the live Task and form before submitting the
+answer. If a run is interrupted, restart with `run` and the same workspace.
+
+For a submission you may need to retry, save the original Task arguments in a
+private job file outside the deployed source directory. Use the same file for
+`submit` and `recover`.
+
+```sh
+(umask 077; printf '%s\n' '{"report":"weekly","steps":1,"request_approval":true}' > ../weekly-job.json)
+node examples/task-supervisor.mjs submit --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --job-file ../weekly-job.json
+```
+
+If that submission is interrupted after the receipt is saved, explicitly
+recover the selected receipt with the original caller's credential and the
+same endpoint.
+
+```sh
+node examples/task-supervisor.mjs recover --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --job-file ../weekly-job.json
+```
+
+This requires a CLI that supports `--retry-submission`. The CLI checks the
+original request and credential before using the saved key within its
+one-minute window. The supervisor then checks for a retained Task, including
+after the window expires or the credential changes. It reports
+`submission_unresolved` if it cannot confirm a Task after a retry and lookup.
+A temporary lookup failure or an interrupted watch reports `retry_status` for
+receipts that need another status check. Review and respond using the same
+`run` flow above.
+
+Completed results are published once to private files in `results/`, using the
+receipt filename. The example checks the saved Task ID on later runs and
+reports `already_saved`. Standard output contains JSON action records with
+filenames for review or result files.
+
 The portable suite exercises the MCP wire with a memory store and checks SQL
 parameters through a fake PostgreSQL pool. The repository's PostgreSQL 16
 integration job also runs the store against a real database, covering table
