@@ -3082,3 +3082,24 @@ func RunMCPReplayGateForTest(ctx context.Context, endpoint, candidate, serving s
 	report, ok := runMCPReplayGate(ctx, endpoint, candidate, serving, "", gate)
 	return report.Skipped, ok
 }
+
+// MCPDiscoverJWKS is mcpDiscoverJWKS.
+var MCPDiscoverJWKS = mcpDiscoverJWKS
+
+// MCPToolKeyScopes is mcpToolKeyScopes.
+var MCPToolKeyScopes = mcpToolKeyScopes
+
+// MCPAuthNext is mcpAuthNext.
+var MCPAuthNext = mcpAuthNext
+
+// SetMCPOIDCHTTPClient replaces the issuer-discovery client until the test ends.
+func SetMCPOIDCHTTPClient(t interface{ Cleanup(func()) }, c *http.Client) {
+	previous := mcpOIDCHTTPClient
+	mcpOIDCHTTPClient = c
+	t.Cleanup(func() { mcpOIDCHTTPClient = previous })
+}
+
+// MCPAuthEnableExternalIssuer is mcpAuthEnableConfig with an external issuer.
+func MCPAuthEnableExternalIssuer(cfg *mcphosting.Config, mode, endpoint, issuer, jwksURL, audience, scopes string) error {
+	return mcpAuthEnableConfig(cfg, mode, endpoint, mcpAuthIssuer{url: issuer, jwksURL: jwksURL, audience: audience}, scopes)
+}

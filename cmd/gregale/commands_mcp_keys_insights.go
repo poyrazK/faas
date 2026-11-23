@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -98,6 +99,7 @@ func cmdMCPKeys(args []string) int {
 	newConsumer := fs.String("new-consumer", "", "create an API consumer with this name and give it the key (create)")
 	name := fs.String("name", "", "key name (create)")
 	scopes := fs.String("scopes", "", "comma-separated MCP scopes without the mcp: prefix (create; default the endpoint scopes)")
+	tools := fs.String("tools", "", "comma-separated tools the key may call: the endpoint scopes plus each tool's scopes from gregale-mcp.json (create)")
 	expires := fs.String("expires", "", "key expiry, RFC3339 (create)")
 	key := fs.String("key", "", "key ID (revoke)")
 	timeout := fs.Duration("timeout", 30*time.Second, "API deadline")
@@ -118,7 +120,7 @@ func cmdMCPKeys(args []string) int {
 	defer cancel()
 	switch verb {
 	case "create":
-		return mcpKeyCreate(ctx, c, mcpKeyCreateOptions{slug: *slug, path: *path, consumer: *consumer, newConsumer: *newConsumer, name: *name, scopes: *scopes, expires: *expires})
+		return mcpKeyCreate(ctx, c, mcpKeyCreateOptions{slug: *slug, path: *path, consumer: *consumer, newConsumer: *newConsumer, name: *name, scopes: *scopes, tools: *tools, expires: *expires})
 	case "list":
 		if *consumer == "" {
 			return printErr("MCP keys", errors.New("--consumer is required"))
@@ -154,7 +156,7 @@ func cmdMCPKeys(args []string) int {
 }
 
 type mcpKeyCreateOptions struct {
-	slug, path, consumer, newConsumer, name, scopes, expires string
+	slug, path, consumer, newConsumer, name, scopes, tools, expires string
 }
 
 func mcpKeyCreate(ctx context.Context, c *Client, o mcpKeyCreateOptions) int {
@@ -197,6 +199,16 @@ func mcpKeyRequest(o mcpKeyCreateOptions) (api.CreateConsumerKeyRequest, error) 
 		return req, fmt.Errorf("--name is required and at most %d bytes", api.ConsumerKeyNameMaxBytes)
 	}
 	names := splitMCPScopes(o.scopes)
+	if o.tools != "" {
+		if len(names) > 0 {
+			return req, errors.New("give --scopes or --tools, not both")
+		}
+		toolScopes, err := mcpToolKeyScopes(o.path, splitMCPScopes(o.tools))
+		if err != nil {
+			return req, err
+		}
+		names = toolScopes
+	}
 	if len(names) == 0 {
 		dir, err := filepath.Abs(o.path)
 		if err != nil {
@@ -280,4 +292,32 @@ func requireMCPKey(ctx context.Context, c *Client, slug, consumer, keyID string)
 		return nil
 	}
 	return fmt.Errorf("key %s is not a key of consumer %s", keyID, consumer)
+}
+
+// mcpToolKeyScopes returns the scopes a key needs to call tools on an
+// api-key server: the endpoint scopes and each tool's scopes in
+// gregale-mcp.json (ADR-20261123192254). Tools that need no scope stay
+// callable by every key; the gateway still checks each call.
+func mcpToolKeyScopes(path string, tools []string) ([]string, error) {
+	dir, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := mcphosting.Load(dir)
+	if err != nil {
+		return nil, fmt.Errorf("--tools needs %s: %w", mcphosting.ConfigFile, err)
+	}
+	if cfg.Auth.Mode != mcphosting.AuthAPIKey {
+		return nil, fmt.Errorf("%s auth mode is %q, not api-key", mcphosting.ConfigFile, cfg.Auth.Mode)
+	}
+	scopes := slices.Clone(cfg.Auth.Scopes)
+	for _, tool := range tools {
+		required, ok := cfg.Auth.ToolScopes[tool]
+		if !ok {
+			return nil, fmt.Errorf("tool %q is not in auth.tool_scopes of %s", tool, mcphosting.ConfigFile)
+		}
+		scopes = append(scopes, required...)
+	}
+	slices.Sort(scopes)
+	return slices.Compact(scopes), nil
 }
