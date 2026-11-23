@@ -79,11 +79,29 @@ func TestDeployTakesSuffixedNameWhenAnotherOwnerHoldsIt(t *testing.T) {
 	if err != nil || got != want || len(*created) != 1 {
 		t.Fatalf("redeploy = %q, %v, created %v; want %q and one create", got, err, *created, want)
 	}
-	// The other owner frees "shop" later: the redeploy still targets our app.
-	delete(others, "shop")
-	got, err = main.DeployAppWithAlternatives(ctx, client, "shop", "")
-	if err != nil || got != want || len(*created) != 1 {
-		t.Fatalf("after base freed = %q, %v, created %v; want %q", got, err, *created, want)
+}
+
+// A deploy whose name is free makes no extra calls: no account lookup, no
+// alternative probes.
+func TestDeployFreeNameMakesNoAlternativeCalls(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/apps":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "a1", Slug: "shop"})
+		default:
+			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", ""))
+		}
+	}))
+	defer srv.Close()
+	got, err := main.DeployAppWithAlternatives(context.Background(), main.NewClient(srv.URL, "fp_live_x"), "shop", "")
+	if err != nil || got != "shop" {
+		t.Fatalf("got %q, %v; want shop", got, err)
+	}
+	if strings.Join(paths, ",") != "GET /v1/apps/shop,POST /v1/apps" {
+		t.Fatalf("calls %v; want one lookup and one create", paths)
 	}
 }
 

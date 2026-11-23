@@ -15,50 +15,46 @@ import (
 // the requested one turns out to belong to another owner.
 const appSlugAlternativeCount = 3
 
-// appSlugAlternatives prepares a deploy of an app the caller does not hold
-// yet. owned is the caller's existing suffixed app for slug, when an earlier
-// deploy already took one (a fresh checkout has no link to it); otherwise
-// alternatives are the names to try, in order, if creating slug finds
-// another owner holding it. Both are empty when the caller already holds
-// slug, gregale.yaml names the app (its triggers, routes and bindings would
-// no longer match a different name), or the owner cannot be read: the
-// deploy then behaves as before and a conflict stays an error.
-func appSlugAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (owned string, alternatives []string) {
-	if _, err := client.GetApp(ctx, slug); !isNotFound(err) {
-		return "", nil
+// errDeployToAlternativeDeclined stops a deploy whose user declined to
+// replace the running release of their existing suffixed app.
+var errDeployToAlternativeDeclined = errors.New("deploy cancelled")
+
+// createOrFetchAppWithAlternatives is createOrFetchAppWith that, when another
+// owner holds req.Slug, deploys under a suffixed alternative instead of
+// failing (api.SuffixedAppSlugs). The alternatives are the same for the same
+// owner and name every time, so an alternative the caller already holds (an
+// earlier deploy took it; a fresh checkout has no link to it) is updated, a
+// free one is created, and one another owner holds is skipped. It returns the
+// slug the app has.
+//
+// A request that does not conflict makes exactly the calls it made before.
+// The conflict error stays when gregale.yaml in sourceDir names the app (its
+// triggers, routes and bindings would no longer match another name) or the
+// owner cannot be read. confirmExisting, when set, may decline updating an
+// existing alternative (the unlinked-app guard).
+func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, sourceDir string, confirmExisting func(slug string) bool, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (string, error) {
+	err := createOrFetchAppWith(ctx, client, req, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
+	var taken *slugTakenError
+	if !errors.As(err, &taken) || manifestNamesApp(sourceDir, req.Slug) {
+		return req.Slug, err
 	}
-	if manifestNamesApp(sourceDir, slug) {
-		return "", nil
-	}
-	acct, err := client.Whoami(ctx)
-	if err != nil || acct.ID == "" {
-		return "", nil
+	acct, whoErr := client.Whoami(ctx)
+	if whoErr != nil || acct.ID == "" {
+		return req.Slug, err
 	}
 	// An organization key creates the app in the organization, so every
-	// member deploying the same checkout gets the same alternative.
+	// member deploying the same checkout gets the same alternatives.
 	owner := acct.ID
 	if acct.KeyOrg != nil && acct.KeyOrg.ID != "" {
 		owner = "org:" + acct.KeyOrg.ID
 	}
-	alternatives = api.SuffixedAppSlugs(owner, slug, appSlugAlternativeCount)
+	alternatives := api.SuffixedAppSlugs(owner, req.Slug, appSlugAlternativeCount)
 	for _, alt := range alternatives {
-		if _, err := client.GetApp(ctx, alt); err == nil {
-			return alt, alternatives
+		if confirmExisting != nil {
+			if _, getErr := client.GetApp(ctx, alt); getErr == nil && !confirmExisting(alt) {
+				return alt, errDeployToAlternativeDeclined
+			}
 		}
-	}
-	return "", alternatives
-}
-
-// createOrFetchAppWithAlternatives is createOrFetchAppWith that, when another
-// owner holds req.Slug, creates the app under the first free alternative
-// instead of failing. It returns the slug the app was created or found under.
-func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, alternatives []string, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved *api.AppResponse) (string, error) {
-	err := createOrFetchAppWith(ctx, client, req, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
-	var taken *slugTakenError
-	if !errors.As(err, &taken) || len(alternatives) == 0 {
-		return req.Slug, err
-	}
-	for _, alt := range alternatives {
 		altReq, altExisting := req, existingReq
 		altReq.Slug, altExisting.Slug = alt, alt
 		err = createOrFetchAppWith(ctx, client, altReq, altExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved)
@@ -70,7 +66,7 @@ func createOrFetchAppWithAlternatives(ctx context.Context, client *Client, req, 
 }
 
 // printSlugAlternativeNotice tells the user their app has a different name
-// from the one they asked for, and how to keep or change it.
+// from the one they asked for, and how to change it.
 func printSlugAlternativeNotice(requested, got string) {
 	if jsonOutput || requested == got {
 		return
@@ -86,8 +82,7 @@ func manifestNamesApp(dir, slug string) bool {
 	}
 	m, ok, err := gregalemanifest.Load(dir)
 	if err != nil {
-		// An unreadable manifest fails the deploy elsewhere; do not rename
-		// an app whose manifest we could not check.
+		// Do not rename an app whose manifest could not be checked.
 		return true
 	}
 	if !ok || m == nil {

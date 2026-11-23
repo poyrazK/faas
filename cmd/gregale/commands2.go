@@ -3505,12 +3505,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			createReq.VCPU = *vcpu
 		}
 		requestedSlug := slug
-		ownedAlt, alternatives := appSlugAlternatives(ctx, client, slug, sourceDir)
-		if ownedAlt != "" {
-			createReq.Slug, alternatives = ownedAlt, nil
-		}
 		var createErr error
-		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, alternatives, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, sourceDir, nil, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
 		if createErr != nil {
 			return printErr("Could not create or fetch app", createErr)
 		}
@@ -4404,15 +4400,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
-			// Another owner may hold the name: an earlier deploy may already
-			// have taken a suffixed alternative, which this deploy updates,
-			// or creation falls back to one.
-			requestedSlug := slug
-			ownedAlt, alternatives := appSlugAlternatives(ctx, client, slug, sourceDir)
-			if ownedAlt != "" {
-				slug, createReq.Slug, existingReq.Slug = ownedAlt, ownedAlt, ownedAlt
-				alternatives = nil
-			}
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
@@ -4423,8 +4410,20 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// deploy warned it would replace a running release that did not
 			// exist (MCP Tasks prod re-probe 2026-11-23).
 			_, getErr := client.GetApp(ctx, slug)
-			creating := isNotFound(getErr) || ownedAlt != ""
-			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, alternatives, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			creating := isNotFound(getErr)
+			// Another owner may hold the name: deploy under the caller's
+			// suffixed alternative instead (createOrFetchAppWithAlternatives).
+			var confirmExisting func(string) bool
+			if !*createOnly {
+				confirmExisting = func(alt string) bool {
+					return guardUnlinkedExistingApp(ctx, client, alt, contextDir, *yes) == 0
+				}
+			}
+			requestedSlug := slug
+			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, sourceDir, confirmExisting, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if errors.Is(err, errDeployToAlternativeDeclined) {
+				return 1
+			}
 			if err == nil {
 				printSlugAlternativeNotice(requestedSlug, slug)
 			}
