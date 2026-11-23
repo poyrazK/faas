@@ -68,8 +68,8 @@ gregale deploy
 
 ```sh
 gregale open <slug>                  # browser, opens the app
-curl -X POST -H 'content-type: text/plain' --data-binary 'hello world' https://<slug>.gregale.dev/upload/hello.txt
-curl -X POST -H 'content-type: image/png' --data-binary @photo.png https://<slug>.gregale.dev/upload/photo.png
+curl -X POST -H 'content-type: text/plain' --data-binary 'hello world' https://<slug>.gregale.app/upload/hello.txt
+curl -X POST -H 'content-type: image/png' --data-binary @photo.png https://<slug>.gregale.app/upload/photo.png
 ```
 
 The response is `{"ok":true,"key":"hello.txt","bucket":"my-bucket"}`. The body is stored
