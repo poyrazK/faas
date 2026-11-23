@@ -11,7 +11,7 @@ when it stops. To read it again later:
 
 ```bash
 gregale inspect my-api --errors        # the latest failed deployment's explanation
-gregale release list my-api --limit 5  # recent deployments and their status
+gregale release list --app my-api --limit 5 # recent deployments and their status
 gregale release logs v42 --app my-api  # one deployment's full build and deploy log
 gregale logs my-api --since 15m --level error   # the app's own output
 ```
