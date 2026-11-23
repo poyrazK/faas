@@ -121,7 +121,8 @@
       {
         "id": "exact-release-verification",
         "kind": "command",
-        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b",
+        "tools": ["gregale_verify_application_response"]
       }
     ],
     "budget_usd": 3.0,
@@ -157,7 +158,8 @@
       {
         "id": "exact-release-verification",
         "kind": "command",
-        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b"
+        "pattern": "\\bgregale\\b[^\\n]*\\brelease\\s+verify\\b",
+        "tools": ["gregale_verify_application_response"]
       }
     ],
     "budget_usd": 4.0,

@@ -282,6 +282,15 @@ class CheckTests(unittest.TestCase):
         self.assertTrue(results[0]["ok"], results)
         self.assertEqual(g.verified, ["d1"])
 
+    def test_command_feature_counts_its_mcp_tool(self):
+        task = {"features": [{"id": "verify", "kind": "command", "pattern": r"\brelease\s+verify\b",
+                              "tools": ["gregale_verify_application_response"]}]}
+        with tempfile.TemporaryDirectory() as d:
+            mcp = ev.grade_features(task, ["gregale deploy"], Path(d), {}, tools=["Bash", "mcp__gregale__gregale_verify_application_response"])
+            none = ev.grade_features(task, ["gregale deploy"], Path(d), {}, tools=["Bash"])
+        self.assertEqual(mcp["features_used"], ["verify"])
+        self.assertEqual(none["features_missed"], ["verify"])
+
     def test_http_check_retries_through_a_cold_wake(self):
         responses = iter([(503, "waking"), (200, "hello from gregale")])
         with mock.patch.object(ev.time, "sleep"):

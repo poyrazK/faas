@@ -831,13 +831,16 @@ def _project_files_text(project: Path, glob: str, limit: int = 2_000_000) -> str
     return "\n".join(text)
 
 
-def grade_features(task: dict, commands: list[str], project: Path, created: dict) -> dict:
-    """Which of the task's applicable Gregale features the run used."""
+def grade_features(task: dict, commands: list[str], project: Path, created: dict, tools: list[str] | None = None) -> dict:
+    """Which of the task's applicable Gregale features the run used. A command
+    feature also counts when the agent called one of its equivalent MCP
+    tools (`tools`, matched on the tool name's suffix)."""
     used, missed = [], []
     joined = "\n".join(commands)
     for feature in task.get("features", []):
         if feature["kind"] == "command":
-            hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None
+            hit = re.search(feature["pattern"], joined, re.MULTILINE) is not None or any(
+                name.endswith(tool) for name in tools or [] for tool in feature.get("tools", []))
         elif feature["kind"] == "file":
             hit = re.search(feature["pattern"], _project_files_text(project, feature.get("glob", "**/*")), re.MULTILINE) is not None
         else:  # state
@@ -1017,7 +1020,7 @@ def run_one(task: dict, agent: str, toolset: str, gregale: Gregale, options) -> 
         record["checks"] = run_checks(task, slug, project, metrics["answer"], gregale, created=created, since=record["started_at"],
                                       expected_app_id=record.get("initial_app_id"))
         record["success"] = all(check["ok"] for check in record["checks"])
-        record.update(grade_features(task, metrics["commands"], project, created))
+        record.update(grade_features(task, metrics["commands"], project, created, tools=list(metrics.get("tool_calls") or {})))
         record["anti_patterns"] = grade_anti_patterns(metrics["commands"])
         record["wrote_outside_run"] = writes_outside(metrics.get("written_paths") or [], run_dir, project, AGENT_OWN_DIRS[agent])
         if record["wrote_outside_run"]:
