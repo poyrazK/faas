@@ -102,7 +102,7 @@ func cmdPostgresSQL(args []string) int {
 	timeout := fs.Duration("timeout", defaultPostgresSQLTimeout, "statement timeout")
 	waitTimeout := fs.Duration("wait-timeout", appExecInteractiveStartupWait, "maximum time to wait for each task VM to start")
 	flags, positionals := splitArgsForFlags(args, "write", "read-only")
-	if err := fs.Parse(flags); err != nil || len(positionals) < 1 || len(positionals) > 2 {
+	if err := fs.Parse(flags); err != nil || len(positionals) != 1 && len(positionals) != 2 {
 		PrintUsage(osStderr, postgresSQLUsage, "postgres")
 		return 1
 	}
