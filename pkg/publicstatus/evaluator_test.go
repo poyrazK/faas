@@ -109,6 +109,39 @@ func TestThirtyDayUptimeWeightsPartialCurrentDayByExpectedBuckets(t *testing.T) 
 	}
 }
 
+func TestSummarizeDayIgnoresBriefDegradation(t *testing.T) {
+	day := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	full := func(degraded int, extra State) []Bucket {
+		out := make([]Bucket, 288)
+		for i := range out {
+			out[i] = Bucket{At: day.Add(time.Duration(i) * 5 * time.Minute), State: StateOperational, HasTelemetry: true}
+			if i < degraded {
+				out[i].State = StateDegraded
+			}
+		}
+		if extra != "" {
+			out[287].State = extra
+		}
+		return out
+	}
+	// 14 of 288 intervals (~4.9%, 70 min) degraded: still operational.
+	if obs := SummarizeDay(day, full(14, ""), 288); obs.State != StateOperational {
+		t.Fatalf("brief degradation state = %q, want operational", obs.State)
+	}
+	// 15 of 288 (~5.2%) degraded: degraded day.
+	if obs := SummarizeDay(day, full(15, ""), 288); obs.State != StateDegraded {
+		t.Fatalf("sustained degradation state = %q, want degraded", obs.State)
+	}
+	// One outage interval is never thresholded away.
+	if obs := SummarizeDay(day, full(0, StatePartialOutage), 288); obs.State != StatePartialOutage {
+		t.Fatalf("brief outage state = %q, want partial_outage", obs.State)
+	}
+	// Maintenance still shows, and brief degradation does not outrank it.
+	if obs := SummarizeDay(day, full(3, StateMaintenance), 288); obs.State != StateMaintenance {
+		t.Fatalf("maintenance day state = %q, want maintenance", obs.State)
+	}
+}
+
 func TestSummarizeDayDoesNotCreateSyntheticGreenHistory(t *testing.T) {
 	day := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	obs := SummarizeDay(day, nil, 288)

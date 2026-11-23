@@ -178,6 +178,13 @@ func AvailableStates() []string {
 	return []string{string(StateOperational), string(StateMaintenance), string(StateDegraded)}
 }
 
+// DailyDegradedMinShare is the share of a day's observed intervals that must
+// be degraded before the day shows as degraded (5% ≈ 72 minutes of a full
+// day). One slow five-minute window is not a degraded day. Outage and
+// maintenance intervals are not thresholded: a short outage still marks the
+// day.
+const DailyDegradedMinShare = 0.05
+
 func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObservation {
 	obs := DailyObservation{Date: day.UTC(), State: StateUnknown, Expected: expectedBuckets}
 	if expectedBuckets <= 0 {
@@ -185,6 +192,7 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 	}
 	available := 0
 	up := 0
+	degraded := 0
 	worst := StateOperational
 	for _, bucket := range buckets {
 		if !bucket.HasTelemetry {
@@ -194,7 +202,14 @@ func SummarizeDay(day time.Time, buckets []Bucket, expectedBuckets int) DailyObs
 		if CountsAsAvailable(bucket.State) {
 			up++
 		}
+		if bucket.State == StateDegraded {
+			degraded++
+			continue
+		}
 		worst = Worse(worst, bucket.State)
+	}
+	if available > 0 && float64(degraded)/float64(available) >= DailyDegradedMinShare {
+		worst = Worse(worst, StateDegraded)
 	}
 	obs.CoveragePct = float64(available) / float64(expectedBuckets) * 100
 	obs.Observed = available
