@@ -53419,6 +53419,21 @@ components:
             each per CLI tripwire). The CLI renders the first 5
             inline as a fenced block. Optional + omitempty.
           items: {$ref: '#/components/schemas/LogExcerpt'}
+        fix_commands:
+          type: array
+          description: |
+            The runnable commands quoted in `fix`, in order, with this
+            failure's values (app, deployment) filled in. A command that
+            still needs a value nobody knew is left out rather than shown
+            with a placeholder. Omitted when there are none.
+          items: {type: string}
+        retryable:
+          type: boolean
+          description: |
+            Whether repeating the same request can succeed without a
+            change: true for rate limits, a Retry-After and transient
+            platform errors; false when the request or the app must
+            change. Absent when unknown.
     LogExcerpt:
       type: object
       description: |
