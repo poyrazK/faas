@@ -22,6 +22,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "tasks", Short: "accept modern MCP task handles for later inspection"},
 		cliFlag{Name: "task-submission-key", Short: "saved UUIDv7 for retrying a Task submission (requires --tasks)", Value: "UUID"},
 		cliFlag{Name: "task-receipt", Short: "save a private Task receipt before submission (requires --tasks)", Value: "FILE"},
+		cliFlag{Name: "retry-submission", Short: "retry the original Task submission using an existing --task-receipt"},
 		cliFlag{Name: "defer-form-input", Short: "allow a keyed Task to request forms for a later wait"},
 		cliFlag{Name: "wait", Short: "wait for a task result; request cancellation on timeout"},
 	)
@@ -39,8 +40,10 @@ func mcpCLICommand() cliCommand {
 	taskRemote := append(append([]cliFlag{}, remote...), cliFlag{Name: "task-id", Short: "opaque task ID (task-get, task-wait or task-cancel)", Value: "ID"})
 	taskStatusFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "metadata-only", Short: "show Task metadata and next action"},
+		cliFlag{Name: "read-result", Short: "read a completed Task result from a private receipt"},
 		cliFlag{Name: "task-submission-key", Short: "find a retained Task by saved UUIDv7", Value: "UUID"},
-		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt", Value: "FILE"},
+		cliFlag{Name: "task-receipt", Short: "find a retained Task from a private receipt (repeatable with --metadata-only)", Value: "FILE"},
+		cliFlag{Name: "receipt-dir", Short: "list private Task receipts in one directory (with --metadata-only)", Value: "DIR"},
 		cliFlag{Name: "write-input-template", Short: "write pending forms to a new private file", Value: "FILE"},
 	)
 	for i := range callFlags {
@@ -48,6 +51,14 @@ func mcpCLICommand() cliCommand {
 			callFlags[i].Short = "total request timeout (default 30s; interactive/--wait 5m)"
 		}
 	}
+	taskCancelFlags := append(append([]cliFlag{}, taskRemote...),
+		cliFlag{Name: "task-receipt", Short: "cancel a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
+	)
+	taskRespondFlags := append(append([]cliFlag{}, remote[:4]...),
+		cliFlag{Name: "task-receipt", Short: "private receipt for the retained Task", Value: "FILE", Req: true},
+		cliFlag{Name: "reviewed-input-file", Short: "answer forms from a reviewed private Task input template", Value: "FILE", Req: true},
+		cliFlag{Name: "timeout", Short: "total request timeout (default 30s)", Value: "DURATION"},
+	)
 	taskWaitFlags := append(append([]cliFlag{}, taskRemote...),
 		cliFlag{Name: "task-receipt", Short: "resume a retained Task from a private receipt instead of supplying the Task ID", Value: "FILE"},
 		cliFlag{Name: "interactive", Short: "answer modern MCP task input forms in the terminal"},
@@ -292,21 +303,23 @@ func mcpCLICommand() cliCommand {
 		{Name: "tools", Short: "Discover tool schemas without invoking tools", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client tools --app my-mcp"}},
 		{Name: "resources", Short: "Discover resource and template definitions without reading contents", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client resources --app my-mcp"}},
 		{Name: "resource-read", Short: "Read one explicitly selected resource URI", Positionals: []string{"[<app>]"}, Flags: remote, Examples: []string{"gregale mcp client read --app my-mcp --uri 'file:///reports/current'"}},
-		{Name: "resource-watch", Short: "Watch one resource URI for content updates", Flags: []cliFlag{
+		{Name: "resource-watch", Short: "Watch a resource for content updates or a Task receipt for status", Flags: []cliFlag{
 			{Name: "url", Short: "full MCP endpoint URL", Value: "URL"},
 			{Name: "app", Short: "resolve a Gregale app's public endpoint", Value: "SLUG"},
 			{Name: "endpoint", Short: "endpoint path with --app (default /mcp)", Value: "PATH"},
 			{Name: "token-env", Short: "environment variable containing an MCP client token", Value: "ENV"},
-			{Name: "uri", Short: "resource URI to read and watch", Value: "URI", Req: true},
+			{Name: "uri", Short: "resource URI to read and watch", Value: "URI"},
+			{Name: "task-receipt", Short: "private Task receipt for a metadata-only watch (repeatable)", Value: "FILE"},
 			{Name: "interval", Short: "poll and stream reconciliation interval (default 30s)", Value: "DURATION"},
-		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'"}},
+		}, Examples: []string{"gregale mcp client watch --app my-mcp --uri 'file:///reports/current'", "gregale mcp client watch --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json"}},
 		{Name: "prompts", Short: "Discover prompt definitions without rendering them", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{"gregale mcp client prompts --app my-mcp"}},
 		{Name: "prompt-get", Short: "Render one explicitly selected prompt", Positionals: []string{"[<slug>]"}, Flags: remote, Examples: []string{`gregale mcp client render --app my-mcp --prompt summarize --arguments '{"text":"weekly report"}'`}},
 		{Name: "complete", Short: "Request bounded suggestions for a prompt or resource-template argument", Flags: completionFlags, Examples: []string{"gregale mcp client complete --app my-mcp --prompt summarize --argument style --value exec", "gregale mcp client complete --app my-mcp --resource-template 'customer://records/{recordId}' --argument recordId --value example-"}},
 		{Name: "call", Short: "Execute one discovered tool; opt in to input requests or durable tasks", Positionals: []string{"[<slug>]"}, Flags: callFlags, Examples: []string{`gregale mcp client call --app my-mcp --tool add --arguments '{"a":7,"b":5}'`, `gregale mcp client call --app my-mcp --tool report_preview --wait`, `gregale mcp client call --app my-mcp --tool report_preview --tasks`}},
 		{Name: "task-get", Short: "Read the status or result of a previously returned task handle", Positionals: []string{"[<slug>]"}, Flags: taskStatusFlags, Examples: []string{"gregale mcp client status --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
 		{Name: "task-wait", Short: "Resume waiting for a task to finish", Positionals: []string{"[<slug>]"}, Flags: taskWaitFlags, Examples: []string{"gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client wait --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840 --interactive"}},
-		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskRemote, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840"}},
+		{Name: "task-respond", Short: "Submit reviewed Task input and return a status snapshot", Positionals: []string{"[<slug>]"}, Flags: taskRespondFlags, Examples: []string{"gregale mcp client respond --app my-mcp --token-env MCP_TOKEN --task-receipt ./task.json --reviewed-input-file ./reviewed-input.json"}},
+		{Name: "task-cancel", Short: "Request cooperative cancellation of a previously returned task", Positionals: []string{"[<slug>]"}, Flags: taskCancelFlags, Examples: []string{"gregale mcp client cancel --app my-mcp --task-id 786512e2-9e0d-44bd-8f29-789f320fe840", "gregale mcp client cancel --app my-mcp --task-receipt ./task.json --token-env MCP_TOKEN"}},
 		{Name: "tasks", Short: "Configure, release and inspect durable task workers", Subcommands: []cliSub{
 
 			{Name: "bindings", Short: "Qualify or inspect hosted Task bindings", Positionals: []string{"<qualify|get|revoke>"}, Notes: []string{"Owner-selected native managed PostgreSQL references only. Qualification runs bounded read-only catalog probes once per source intent; evidence expires within one minute or on drift. Credentials remain private and execution requires separate owner authorization."}, Flags: []cliFlag{

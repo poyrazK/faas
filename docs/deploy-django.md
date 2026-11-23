@@ -58,7 +58,7 @@ DATABASES["default"]["DISABLE_SERVER_SIDE_CURSORS"] = True
 ```
 
 - `DJANGO_ALLOWED_HOSTS` lists the app's host names: its default host
-  `<app>.gregale.dev` and any [custom domain](domains.md). Set it
+  `<app>.gregale.app` and any [custom domain](domains.md). Set it
   before the first deploy. Every deploy ends with a request to the default
   host, and Django answers `400 Bad Request` to a host it does not allow,
   which fails the deploy. Health checks do not use these names; see
@@ -71,7 +71,7 @@ Set the values once:
 
 ```bash
 gregale env set --app my-site DJANGO_SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(50))')"
-gregale env set --app my-site DJANGO_ALLOWED_HOSTS="my-site.gregale.dev,www.example.com"
+gregale env set --app my-site DJANGO_ALLOWED_HOSTS="my-site.gregale.app,www.example.com"
 ```
 
 The app must exist before `gregale env set`: reserve it first with
@@ -116,7 +116,7 @@ in object storage, not `MEDIA_ROOT`.
 
 Gregale checks the health path from inside the instance, when a new
 version starts and while it runs. The check's `Host` header is the
-instance's internal address, not `<app>.gregale.dev`, and Django answers a
+instance's internal address, not `<app>.gregale.app`, and Django answers a
 host missing from `ALLOWED_HOSTS` with `400 Bad Request` before any view
 runs. If the health path is a view in `urls.py`, every check fails and the
 deploy fails with `app_startup_timeout`. Answer the health path in a
@@ -186,7 +186,7 @@ gregale app health my-site --errors
 gregale logs my-site
 ```
 
-A `DisallowedHost` error naming `<app>.gregale.dev` or your domain means
+A `DisallowedHost` error naming `<app>.gregale.app` or your domain means
 that host is missing from `DJANGO_ALLOWED_HOSTS`. One naming an IP address
 comes from the health check: put the health middleware first in
 `MIDDLEWARE`, as in [Health check](#health-check).

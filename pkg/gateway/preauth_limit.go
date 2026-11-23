@@ -336,7 +336,7 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 				recordTrafficLimiter(r.Context(), "surface")
 				recordTrafficRefusal(r.Context(), "rate_limited")
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-				w.Header().Set("x-faas-rate-limit-scope", "pre-auth-failures")
+				w.Header().Set("X-Faas-Rate-Limit-Scope", "pre-auth-failures")
 				api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 					"Pre-auth rate limit exceeded", "this source has sent too many requests"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
@@ -387,7 +387,7 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	recordTrafficLimiter(r.Context(), "surface")
 	recordTrafficRefusal(r.Context(), "rate_limited")
 	w.Header().Set("Retry-After", "1")
-	w.Header().Set("x-faas-rate-limit-scope", scope)
+	w.Header().Set("X-Faas-Rate-Limit-Scope", scope)
 	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
 		"Pre-auth rate limit exceeded", "this source has sent too many requests"))
 	if h.metrics != nil {

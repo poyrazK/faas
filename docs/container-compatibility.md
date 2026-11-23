@@ -8,7 +8,7 @@ Gregale's container contract is:
 Deploy an existing image directly:
 
 ```sh
-gregale doctor --image registry.example.com/team/api@sha256:<digest>
+gregale deploy check --image registry.example.com/team/api@sha256:<digest>
 gregale deploy --image registry.example.com/team/api@sha256:<digest>
 ```
 
@@ -607,7 +607,7 @@ It applies to the complete full-rootfs main image; the shared-base upper-layer
 path cannot prove whether a command exists in its base and retains its guest
 validation. The metadata-only doctor command below retains its fast path.
 
-`gregale doctor --image REF --json` reports `image.serving_port` as inferred
+`gregale deploy check --image REF --json` reports `image.serving_port` as inferred
 from image metadata before deployment overrides. Human output shows the same
 port. A listener finding warns when multiple TCP ports leave the default
 ambiguous or when only UDP ports are declared. `--strict` makes those warnings

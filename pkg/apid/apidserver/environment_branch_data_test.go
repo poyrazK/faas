@@ -185,6 +185,30 @@ func TestEnvironmentBranchCopiesParentDatabases(t *testing.T) {
 		t.Fatalf("source database = %+v, %v", original, err)
 	}
 
+	// Resetting the branch makes it again from production under the same
+	// slug: the old copy's credential leaves the scope at once (a scope still
+	// holding it refused the new branch), and the new branch gets a fresh copy.
+	req, rec = projectRequest(http.MethodPost, "/v1/projects/shop/environments/pr-9/branch/reset", "shop", nil)
+	req.SetPathValue("environment", "pr-9")
+	srv.resetProjectEnvironmentBranch(rec, req, acct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if b, err := bindings.Get(ctx, acct.ID, binding.ID); err == nil && b.State == managedpostgres.BindingStateReady {
+		t.Fatalf("the old branch's binding survived the reset: %+v", b)
+	}
+	if err := srv.reconcileEnvironmentBranchData(ctx, store, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	reset, err := store.ProjectEnvironmentBranchBySlug(ctx, acct.ID, project.ID, "pr-9")
+	if err != nil || reset.EnvironmentID == branch.EnvironmentID || reset.DataState != state.EnvironmentBranchDataReady {
+		t.Fatalf("branch after reset = %+v, %v; want a new branch with its data ready", reset, err)
+	}
+	resetSecret, err := store.GetAppSecretInScope(ctx, acct.ID, app.ID, "pr-9", "DATABASE_URL")
+	if err != nil || resetSecret.ManagedPostgresBindingID == "" || resetSecret.ManagedPostgresBindingID == binding.ID {
+		t.Fatalf("branch credential after reset = %+v, %v; want the new copy's", resetSecret, err)
+	}
+
 	// Deleting the branch leaves its copy to the reconciler, which deletes it.
 	req, rec = projectRequest(http.MethodDelete, "/v1/projects/shop/environments/pr-9", "shop", nil)
 	req.SetPathValue("environment", "pr-9")
