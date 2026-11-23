@@ -478,6 +478,51 @@ func TestRenderTOML_OptInServiceProxyHTTPS(t *testing.T) {
 	}
 }
 
+// Release rollouts re-render gatewayd-internal.toml with this renderer, so a
+// service_tcp stage it did not render was dropped on every rollout: prod's
+// listener and DNS answers vanished and managed Redis caches went
+// unreachable (2026-11-23).
+func TestRenderTOML_GatewaydInternalServiceTCP(t *testing.T) {
+	all := &manifest.ServiceTCP{Node: true, Listener: true, DNS: true}
+	tests := []struct {
+		name   string
+		role   string
+		stages *manifest.ServiceTCP
+		bridge string
+		want   []string
+		absent bool
+	}{
+		{name: "every stage on a compute host", role: "compute-only", stages: all,
+			want: []string{`service_tcp_listen = "10.100.0.1:10082"`, `service_tcp_dns = true`}},
+		{name: "listener without dns", role: "compute-only", stages: &manifest.ServiceTCP{Node: true, Listener: true},
+			want: []string{`service_tcp_listen = "10.100.0.1:10082"`, `service_tcp_dns = false`}},
+		{name: "bridge override", role: "compute-only", stages: all, bridge: "10.42.0.0/16",
+			want: []string{`service_tcp_listen = "10.42.0.1:10082"`}},
+		{name: "node stage only", role: "compute-only", stages: &manifest.ServiceTCP{Node: true}, absent: true},
+		{name: "not configured", role: "compute-only", absent: true},
+		{name: "control plane gets nothing", role: "control-plane", stages: all, absent: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			body, _, err := renderTOML(tomlRenderCtx{
+				Daemon: "gatewayd-internal", DC: fixtureTOML("gatewayd-internal"),
+				HostRole: tc.role, ServiceTCP: tc.stages, HostBridgeCIDR: tc.bridge,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.absent && strings.Contains(string(body), "service_tcp") {
+				t.Fatalf("rendered service_tcp keys:\n%s", body)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(string(body), want) {
+					t.Errorf("missing %q:\n%s", want, body)
+				}
+			}
+		})
+	}
+}
+
 func TestRenderTOML_NilDaemonConfig(t *testing.T) {
 	_, _, err := renderTOML(tomlRenderCtx{Daemon: "schedd", DC: nil})
 	if err == nil {

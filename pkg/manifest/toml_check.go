@@ -275,6 +275,10 @@ var HostKeys = map[string]HostBlock{
 			"service_proxy_tls_cert_path",
 			"service_proxy_tls_key_path",
 			"service_proxy_tls_ca_path",
+			// ADR-576 private TCP service addresses, from the
+			// manifest's service_tcp stages on compute-only hosts.
+			"service_tcp_listen",
+			"service_tcp_dns",
 		},
 		ComputeNodeBlock: nil,
 		Tables: []TableKey{

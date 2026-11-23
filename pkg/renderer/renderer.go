@@ -243,14 +243,16 @@ func render(opts RenderOptions) (RenderReport, error) {
 		// is the bridge the renderer owns. renderTOML accepts
 		// either form via registryToHostKey.
 		tomlBody, _, err := renderTOML(tomlRenderCtx{
-			Daemon:      d,
-			DC:          dc,
-			DBURL:       m.PostgreSQL.DSN,
-			AppsDomain:  m.DNS.AppsDomain,
-			HostSANs:    hostSANs,
-			HostName:    host.Name,
-			HostAddress: host.Address,
-			HostRole:    host.Role,
+			Daemon:         d,
+			DC:             dc,
+			DBURL:          m.PostgreSQL.DSN,
+			AppsDomain:     m.DNS.AppsDomain,
+			HostSANs:       hostSANs,
+			HostName:       host.Name,
+			HostAddress:    host.Address,
+			HostRole:       host.Role,
+			ServiceTCP:     m.ServiceTCP,
+			HostBridgeCIDR: vmmdHostBridgeCIDR(m),
 		})
 		if err != nil {
 			return report, err
@@ -457,6 +459,15 @@ func hostNames(m *manifest.Manifest) string {
 // daemon name. The manifest's Daemons struct uses underscored names
 // for gatewayd_internal and gatewayd_public; the registry uses
 // dashed names. The lookup bridges the two.
+// vmmdHostBridgeCIDR is the manifest's tenant bridge override, or "" for the
+// default bridge.
+func vmmdHostBridgeCIDR(m *manifest.Manifest) string {
+	if m.Daemons.Vmmd == nil || m.Daemons.Vmmd.ComputeNode == nil {
+		return ""
+	}
+	return m.Daemons.Vmmd.ComputeNode.HostBridgeCIDR
+}
+
 func daemonConfigFor(m *manifest.Manifest, registryName string) *manifest.DaemonConfig {
 	switch registryName {
 	case "vmmd":
