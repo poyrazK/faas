@@ -23,6 +23,10 @@ import (
 // averaged over the UTC month, is charged on the same step at
 // api.ManagedPostgresStorageOverageMillicentsPerGiBMonth, never past one pool
 // for the month.
+//
+// ADR-20261123062111: restore history and snapshot storage past the plan's
+// included history are charged on the same step at the provider's price plus
+// the markup, from OverageBillerOptions.HistoryFrom.
 
 const unitSecondsPerHour = 3600
 
@@ -62,6 +66,46 @@ func StorageOverageCharge(usedByteSeconds, poolBytes int64, month time.Time) (bi
 	price := new(big.Int).Mul(over, big.NewInt(api.ManagedPostgresStorageOverageMillicentsPerGiBMonth))
 	price.Quo(price, new(big.Int).Mul(big.NewInt(1<<30), big.NewInt(monthSeconds)))
 	return over.Int64(), price.Int64()
+}
+
+// HistoryOverageCharge is the restore history and snapshot storage a subject
+// is charged for in a month and its price (ADR-20261123062111). The month's
+// included history is includedBytes held for the provider's 744-hour month;
+// it covers restore history first, then snapshots. No ceiling applies: the
+// provider sets none, and the spend cap bounds the charge.
+func HistoryOverageCharge(historyByteSeconds, snapshotByteSeconds, includedBytes int64) (billedHistory, billedSnapshot, millicents int64) {
+	billedHistory, billedSnapshot = historyOver(historyByteSeconds, snapshotByteSeconds, includedBytes)
+	return billedHistory, billedSnapshot, historyOverageMillicents(billedHistory, billedSnapshot)
+}
+
+// historyOver is the restore history and snapshot storage past the included
+// history, restore history taking the included amount first.
+func historyOver(historyByteSeconds, snapshotByteSeconds, includedBytes int64) (history, snapshots int64) {
+	included := poolByteSeconds(api.ManagedPostgresIncludedHistoryBytes(includedBytes), api.ManagedPostgresHistoryMonthSeconds)
+	historyByteSeconds, snapshotByteSeconds = max(historyByteSeconds, 0), max(snapshotByteSeconds, 0)
+	history = max(historyByteSeconds-included, 0)
+	snapshots = max(snapshotByteSeconds-max(included-historyByteSeconds, 0), 0)
+	return history, snapshots
+}
+
+// historyOverageMillicents prices billed restore history and snapshot
+// storage per GB-month (10^9 bytes, 744 hours), flooring each meter's
+// fraction of a millicent.
+func historyOverageMillicents(billedHistory, billedSnapshot int64) int64 {
+	gbMonth := new(big.Int).Mul(big.NewInt(1_000_000_000), big.NewInt(api.ManagedPostgresHistoryMonthSeconds))
+	price := func(billed, rate int64) *big.Int {
+		if billed <= 0 {
+			return new(big.Int)
+		}
+		p := new(big.Int).Mul(big.NewInt(billed), big.NewInt(rate))
+		return p.Quo(p, gbMonth)
+	}
+	total := new(big.Int).Add(price(billedHistory, api.ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth),
+		price(billedSnapshot, api.ManagedPostgresSnapshotOverageMillicentsPerGBMonth))
+	if !total.IsInt64() {
+		return math.MaxInt64
+	}
+	return total.Int64()
 }
 
 // EgressOverageCharge is the database egress a subject is charged for in a
@@ -121,6 +165,12 @@ type OverageDelivery struct {
 	// BilledEgressBytes is the database egress past the shared egress
 	// allowance the cumulative charge includes (ADR-20261110160000 slice 3).
 	BilledEgressBytes int64
+
+	// BilledHistoryByteSeconds and BilledSnapshotByteSeconds are the restore
+	// history and snapshot storage past the included history the cumulative
+	// charge includes (ADR-20261123062111).
+	BilledHistoryByteSeconds  int64
+	BilledSnapshotByteSeconds int64
 }
 
 // OverageSubject is a subject that reached its allowance in a month, as the
@@ -179,6 +229,8 @@ func validOveragePending(p OveragePendingStep) bool {
 		!s.At.Before(s.PeriodStart) && s.UsedUnitSeconds >= 0 && s.AllowanceSeconds >= 0 && s.BilledUnitSeconds >= 0 &&
 		s.UsedStorageByteSeconds >= 0 && s.StoragePoolBytes >= 0 && s.BilledStorageByteSeconds >= 0 &&
 		s.UsedEgressBytes >= 0 && s.AppEgressBytes >= 0 && s.EgressAllowanceBytes >= 0 && s.BilledEgressBytes >= 0 &&
+		s.UsedHistoryByteSeconds >= 0 && s.UsedSnapshotByteSeconds >= 0 && s.IncludedHistoryBytes >= 0 &&
+		s.BilledHistoryByteSeconds >= 0 && s.BilledSnapshotByteSeconds >= 0 &&
 		s.DeliveredMillicents >= 0 && s.TargetMillicents > s.DeliveredMillicents && p.Previous.Millicents >= 0
 }
 
@@ -207,6 +259,15 @@ type OverageChargeStep struct {
 	AppEgressBytes       int64
 	EgressAllowanceBytes int64
 	BilledEgressBytes    int64
+
+	// Restore history and snapshot storage past the plan's included history
+	// (ADR-20261123062111). IncludedHistoryBytes is the included history of
+	// the plan held now; zero billed amounts before HistoryFrom.
+	UsedHistoryByteSeconds    int64
+	UsedSnapshotByteSeconds   int64
+	IncludedHistoryBytes      int64
+	BilledHistoryByteSeconds  int64
+	BilledSnapshotByteSeconds int64
 }
 
 // OverageAllowance resolves billing allowances for a UTC month. Closed
@@ -235,8 +296,12 @@ type OverageBillerOptions struct {
 	// step never takes the month's charge past it (billing review
 	// 2026-11-13, R7-1: ADR-20261031110037 decision 7 amended).
 	CapRoom func(ctx context.Context, subjectID string, month, at time.Time) (roomMillicents int64, capped bool, err error)
-	Now     func() time.Time
-	Logger  *slog.Logger
+	// HistoryFrom is the first UTC month whose restore history and snapshot
+	// storage past the included history are charged (ADR-20261123062111);
+	// zero charges none. Earlier months log what they would have charged.
+	HistoryFrom time.Time
+	Now         func() time.Time
+	Logger      *slog.Logger
 }
 
 // OverageBiller delivers managed PostgreSQL overage charges.
@@ -263,6 +328,9 @@ func NewOverageBiller(usage UsageStore, options OverageBillerOptions) (*OverageB
 	from := options.EffectiveFrom.UTC()
 	if options.Provider == "" || options.Allowance == nil || from.IsZero() || !from.Equal(monthStart(from)) {
 		return nil, errors.New("managed postgres: overage billing needs a provider, an allowance source and a UTC-month effective date")
+	}
+	if history := options.HistoryFrom.UTC(); !history.IsZero() && !history.Equal(monthStart(history)) {
+		return nil, errors.New("managed postgres: restore history billing must start at a UTC month")
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -354,7 +422,8 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	// overage election lifts the egress allowance, or once it was charged
 	// (ADR-20261110160000 slice 3): an egress election alone never charges
 	// the compute or storage a sweep let past the allowance.
-	pgOverage := subject.Overage || limits.Overage || delivered.BilledUnitSeconds > 0 || delivered.BilledStorageByteSeconds > 0
+	historyBilled := delivered.BilledHistoryByteSeconds > 0 || delivered.BilledSnapshotByteSeconds > 0
+	pgOverage := subject.Overage || limits.Overage || delivered.BilledUnitSeconds > 0 || delivered.BilledStorageByteSeconds > 0 || historyBilled
 	egress, err := b.egressAllowance(ctx, subject.SubjectID, at)
 	if err != nil {
 		return err
@@ -367,7 +436,8 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	if err != nil {
 		return err
 	}
-	if snapshot.ComputeUnitSeconds == 0 && snapshot.StorageByteSeconds == 0 && snapshot.EgressBytes == 0 {
+	if snapshot.ComputeUnitSeconds == 0 && snapshot.StorageByteSeconds == 0 && snapshot.EgressBytes == 0 &&
+		snapshot.HistoryByteSeconds == 0 && snapshot.SnapshotByteSeconds == 0 {
 		// An account first enabling overage this month is also listed for
 		// last month. No usage needs no historical terms or charge.
 		return nil
@@ -378,11 +448,31 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 	// Storage past the pool is charged while overage is on, and for the rest
 	// of a month that already charged it, so turning overage off never
 	// lowers the month's cumulative charge.
+	// Restore history follows the same rule from the month history billing
+	// starts (ADR-20261123062111).
 	var charge spanCharge
 	if pgOverage {
-		charge, err = b.charge(ctx, subject, limits, month, at, snapshot, limits.Overage || delivered.BilledStorageByteSeconds > 0)
+		charge, err = b.charge(ctx, subject, limits, month, at, snapshot, limits.Overage || delivered.BilledStorageByteSeconds > 0,
+			limits.Overage || historyBilled)
 		if err != nil {
 			return err
+		}
+		if charge.history && !b.historyBilled(month) {
+			if charge.billedHistoryByteSeconds > 0 || charge.billedSnapshotByteSeconds > 0 {
+				b.options.Logger.Debug("managed postgres restore history not billed yet", "subject_id", subject.SubjectID,
+					"period", month.Format("2006-01"), "billed_history_byte_seconds", charge.billedHistoryByteSeconds,
+					"billed_snapshot_byte_seconds", charge.billedSnapshotByteSeconds, "would_charge_millicents", charge.historyMillicents)
+			}
+			charge.millicents -= charge.historyMillicents
+			charge.billedHistoryByteSeconds, charge.billedSnapshotByteSeconds, charge.historyMillicents = 0, 0, 0
+		}
+		// A step never lowers what the month already billed for history.
+		if delivered.BilledHistoryByteSeconds > charge.billedHistoryByteSeconds || delivered.BilledSnapshotByteSeconds > charge.billedSnapshotByteSeconds {
+			billedHistory := max(charge.billedHistoryByteSeconds, delivered.BilledHistoryByteSeconds)
+			billedSnapshot := max(charge.billedSnapshotByteSeconds, delivered.BilledSnapshotByteSeconds)
+			kept := historyOverageMillicents(billedHistory, billedSnapshot)
+			charge.millicents = saturatingAdd(charge.millicents-charge.historyMillicents, kept)
+			charge.billedHistoryByteSeconds, charge.billedSnapshotByteSeconds, charge.historyMillicents = billedHistory, billedSnapshot, kept
 		}
 	}
 	var egressBilled int64
@@ -425,7 +515,10 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 		BilledUnitSeconds: billed, DeliveredMillicents: baseline, TargetMillicents: target,
 		UsedStorageByteSeconds: snapshot.StorageByteSeconds, StoragePoolBytes: charge.storageAllowance, BilledStorageByteSeconds: storageBilled,
 		UsedEgressBytes: max(snapshot.EgressBytes, 0), EgressAllowanceBytes: max(egress.CeilingBytes, 0),
-		BilledEgressBytes: egressBilled}}
+		BilledEgressBytes:      egressBilled,
+		UsedHistoryByteSeconds: max(snapshot.HistoryByteSeconds, 0), UsedSnapshotByteSeconds: max(snapshot.SnapshotByteSeconds, 0),
+		IncludedHistoryBytes: charge.includedHistory, BilledHistoryByteSeconds: charge.billedHistoryByteSeconds,
+		BilledSnapshotByteSeconds: charge.billedSnapshotByteSeconds}}
 	reserved, err := b.billing.ReserveOverage(ctx, pending)
 	if err != nil || !reserved {
 		// Another replica holds this month's step; it sends it.
@@ -438,14 +531,14 @@ func (b *OverageBiller) deliver(ctx context.Context, subject OverageSubject, mon
 // bills each span's usage against that span's allowance (ADR-20261103131742
 // amendment 2); without them, the month's usage against the allowance now,
 // or the one recorded when the subject reached it, whichever is larger.
-func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limits CapLimits, month, at time.Time, snapshot UsageSnapshot, storage bool) (spanCharge, error) {
+func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limits CapLimits, month, at time.Time, snapshot UsageSnapshot, storage, history bool) (spanCharge, error) {
 	if reader, ok := b.usage.(UsageBeforeReader); ok && b.options.PlanSpans != nil {
 		spans, err := b.options.PlanSpans(ctx, subject.SubjectID, month, at)
 		if err != nil {
 			return spanCharge{}, err
 		}
 		if len(spans) > 0 {
-			return chargeBySpan(ctx, reader, subject.SubjectID, month, spans, snapshot, storage)
+			return chargeBySpan(ctx, reader, subject.SubjectID, month, spans, snapshot, storage, history)
 		}
 	}
 	out := spanCharge{allowance: max(limits.Allowance, subject.Allowance), storageAllowance: limits.StorageAllowance}
@@ -455,7 +548,19 @@ func (b *OverageBiller) charge(ctx context.Context, subject OverageSubject, limi
 		out.billedStorageByteSeconds, storageMillicents = StorageOverageCharge(snapshot.StorageByteSeconds, limits.StorageAllowance, month)
 		out.millicents += storageMillicents
 	}
+	if history && limits.StorageAllowance > 0 {
+		out.history, out.includedHistory = true, api.ManagedPostgresIncludedHistoryBytes(limits.StorageAllowance)
+		out.billedHistoryByteSeconds, out.billedSnapshotByteSeconds, out.historyMillicents = HistoryOverageCharge(
+			snapshot.HistoryByteSeconds, snapshot.SnapshotByteSeconds, limits.StorageAllowance)
+		out.millicents = saturatingAdd(out.millicents, out.historyMillicents)
+	}
 	return out, nil
+}
+
+// historyBilled reports whether month's restore history is charged.
+func (b *OverageBiller) historyBilled(month time.Time) bool {
+	from := b.options.HistoryFrom
+	return !from.IsZero() && !month.Before(from.UTC())
 }
 
 // send delivers a reserved step and records it. A failure leaves the step
@@ -484,6 +589,7 @@ func (b *OverageBiller) send(ctx context.Context, pending OveragePendingStep, su
 	}
 	b.options.Logger.Info("managed postgres overage charged", "subject_id", step.SubjectID, "period", step.PeriodStart.Format("2006-01"),
 		"live", pending.Live, "used_unit_seconds", step.UsedUnitSeconds, "billed_unit_seconds", step.BilledUnitSeconds,
-		"billed_storage_byte_seconds", step.BilledStorageByteSeconds, "previous_millicents", step.DeliveredMillicents, "target_millicents", step.TargetMillicents)
+		"billed_storage_byte_seconds", step.BilledStorageByteSeconds, "billed_history_byte_seconds", step.BilledHistoryByteSeconds,
+		"billed_snapshot_byte_seconds", step.BilledSnapshotByteSeconds, "previous_millicents", step.DeliveredMillicents, "target_millicents", step.TargetMillicents)
 	return nil
 }

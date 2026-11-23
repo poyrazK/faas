@@ -18,10 +18,10 @@ func (m *Metrics) initMCPMetrics(reg prometheus.Registerer) {
 	reg.MustRegister(m.mcpRequests, m.mcpDuration, m.mcpActive)
 }
 func mcpTelemetryMethod(r *http.Request) string {
-	if r.Header.Get("MCP-Method") == "" && r.Header.Get("MCP-Protocol-Version") == "" {
+	if r.Header.Get("Mcp-Method") == "" && r.Header.Get("Mcp-Protocol-Version") == "" {
 		return ""
 	}
-	return api.MCPMethodLabel(r.Header.Get("MCP-Method"))
+	return api.MCPMethodLabel(r.Header.Get("Mcp-Method"))
 }
 func (h *Handler) observeMCPRequest(r *http.Request, status int, appID string, elapsed time.Duration) {
 	method := mcpTelemetryMethod(r)

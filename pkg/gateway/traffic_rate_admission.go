@@ -67,7 +67,7 @@ func (h *Handler) enforceTrafficRates(w http.ResponseWriter, r *http.Request, re
 func (h *Handler) rejectTrafficRate(w http.ResponseWriter, r *http.Request, app App, scope string) {
 	recordTrafficLimiter(r.Context(), scope)
 	recordTrafficRefusal(r.Context(), "rate_limited")
-	w.Header().Set("x-faas-rate-limit-scope", scope)
+	w.Header().Set("X-Faas-Rate-Limit-Scope", scope)
 	if writeRateAdmissionUnavailable(w, r) {
 		return
 	}
