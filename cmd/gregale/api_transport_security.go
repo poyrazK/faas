@@ -131,7 +131,7 @@ var connectionPreflightExempt = map[string]bool{
 }
 
 // connectionPreflight runs once per invocation, before dispatch. It refuses
-// an insecure API base and says when FAAS_TOKEN shadows a selected profile
+// an insecure API base and says when a token variable shadows a selected profile
 // or a saved login.
 func connectionPreflight(command string) (int, bool) {
 	if connectionPreflightExempt[command] {
@@ -142,7 +142,7 @@ func connectionPreflight(command string) (int, bool) {
 	}
 	switch command {
 	case "login", "logout", "start", dispatchSignup:
-		// These commands handle FAAS_TOKEN themselves.
+		// These commands handle the token variable themselves.
 	default:
 		warnEnvTokenOverride()
 	}

@@ -5,7 +5,7 @@
 //
 // Client is the public SDK surface. New customers should:
 //
-//	c := api.NewClient("https://api.example.com", os.Getenv("FAAS_TOKEN"))
+//	c := api.NewClient("https://api.example.com", os.Getenv("GREGALE_TOKEN"))
 //	app, err := c.GetApp(ctx, "hello-world")
 //	apps, err := c.ListApps(ctx)
 //
@@ -5165,7 +5165,7 @@ func (c *Client) PostAuthLogin(ctx context.Context, email, password string) (Pro
 // ACTIONS_ID_TOKEN_REQUEST_TOKEN from GitHub Actions) for a
 // short-lived opaque bearer (5 min TTL, fp_oidc_ prefix). Used by
 // the CI deploy path so customers can swap the long-lived
-// FAAS_TOKEN secret for keyless OIDC. The wire contract is
+// GREGALE_TOKEN secret for keyless OIDC. The wire contract is
 // PR-A (ADR-101 / issue #270); PR-B adds the CLI flag + Action
 // input that drives this call.
 //

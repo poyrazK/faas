@@ -17,7 +17,7 @@ gregale registry published --app api \
   --image "ghcr.io/team/api@sha256:<64-lowercase-hex-digest>" --wait
 ```
 
-Use `FAAS_API` and `FAAS_TOKEN` in CI. An app-bound deploy token limits the
+Use `FAAS_API` and `GREGALE_TOKEN` in CI. An app-bound deploy token limits the
 credential to this workload; existing CI/OIDC bearers and `deploy:write` API
 keys also work. Store the credential in the CI secret store. Private image
 pulls use the workload's existing Gregale registry credentials.
@@ -33,7 +33,7 @@ An example handoff after a GitHub Actions build/push step named `push`:
 - name: Deploy published image
   env:
     FAAS_API: ${{ vars.FAAS_API }}
-    FAAS_TOKEN: ${{ secrets.FAAS_DEPLOY_TOKEN }}
+    GREGALE_TOKEN: ${{ secrets.FAAS_DEPLOY_TOKEN }}
     PUBLISHED_IMAGE: ghcr.io/team/api@${{ steps.push.outputs.digest }}
   run: gregale registry published --app api --image "$PUBLISHED_IMAGE" --wait
 ```

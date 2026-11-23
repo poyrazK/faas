@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -77,8 +78,8 @@ func cmdProfileCheck(args []string) int {
 	if token != "" {
 		source = "profile:" + connection.Profile
 	}
-	if os.Getenv("FAAS_TOKEN") != "" {
-		source = "env:FAAS_TOKEN"
+	if name := envTokenName(); name != "" {
+		source = "env:" + name
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
@@ -104,8 +105,8 @@ func checkProfileConnection(ctx context.Context, client *Client, connection *con
 		report.Authentication = "missing"
 	}
 	authHint := "Run gregale --profile " + connection.Profile + " login."
-	if source == "env:FAAS_TOKEN" {
-		authHint = "Replace or unset FAAS_TOKEN; it overrides this profile's stored credential."
+	if name, ok := strings.CutPrefix(source, "env:"); ok {
+		authHint = "Replace or unset " + name + "; it overrides this profile's stored credential."
 	}
 	account, err := client.Whoami(ctx)
 	if err == nil {
@@ -201,8 +202,8 @@ func renderProfileCheck(report profileCheckReport) {
 	if c.APISource == "env:FAAS_API" {
 		_, _ = fmt.Fprintln(osStdout, "FAAS_API overrides this profile's saved endpoint.")
 	}
-	if report.CredentialSource == "env:FAAS_TOKEN" {
-		_, _ = fmt.Fprintln(osStdout, "FAAS_TOKEN overrides this profile's stored credential.")
+	if name, ok := strings.CutPrefix(report.CredentialSource, "env:"); ok {
+		_, _ = fmt.Fprintln(osStdout, name+" overrides this profile's stored credential.")
 	}
 	if report.OK {
 		a := report.Account

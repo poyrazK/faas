@@ -27,8 +27,8 @@ func verifyProjectConnection(link localProjectContext, linked bool, timeout time
 	connection := effectiveConnectionContext()
 	token := loadToken()
 	source := "profile:" + connection.Profile
-	if os.Getenv("FAAS_TOKEN") != "" {
-		source = "env:FAAS_TOKEN"
+	if name := envTokenName(); name != "" {
+		source = "env:" + name
 	}
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
