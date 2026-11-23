@@ -9,7 +9,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apihostingreceipt"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // EdgeAnswerKind is the bounded label vocabulary for gateway answers that do
@@ -253,7 +252,7 @@ func (h *Handler) serveEdgeAnswer(w http.ResponseWriter, r *http.Request, app Ap
 	}
 	// The generic handler starts with "hot" so early auth and policy exits
 	// expose a bounded wake value. Edge answers do not consult a VM at all.
-	w.Header().Del(wire.WakeHeader)
+	w.Header().Del(canonicalWakeHeader)
 
 	switch r.URL.Path {
 	case "/favicon.ico":

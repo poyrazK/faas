@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // applyEdgeRuleCache (ADR-122 §Decision) is the kind=cache serve
@@ -129,7 +127,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// can add it via kind=headers.
 		recordTrafficCache(r.Context(), "hit")
 		h.metricsIncCacheOutcome(app.ID, "hit")
-		w.Header().Del(wire.WakeHeader)
+		w.Header().Del(canonicalWakeHeader)
 		for k, vs := range entry.header {
 			// Skip hop-by-hop headers that don't survive
 			// into the stored body anyway; mirroring
@@ -178,7 +176,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 		// callers do not stampede the origin.
 		recordTrafficCache(r.Context(), "stale_while_revalidate_served")
 		h.metricsIncCacheOutcome(app.ID, "stale_while_revalidate_served")
-		w.Header().Del(wire.WakeHeader)
+		w.Header().Del(canonicalWakeHeader)
 		for k, vs := range entry.header {
 			if isHopByHopHeader(k) || isPerRequestPlatformHeader(k) || cachedHeaderSuperseded(w, k) {
 				continue

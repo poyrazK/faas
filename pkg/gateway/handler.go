@@ -5179,14 +5179,14 @@ func stampTrustedClientIP(r *http.Request) {
 	if r == nil {
 		return
 	}
-	r.Header.Del(wire.ClientIPHeader)
+	r.Header.Del(canonicalClientIPHeader)
 	r.Header.Del("Forwarded")
 	for _, name := range clientIPAliasHeaders {
 		r.Header.Del(name)
 	}
 	if ip, ok := clientIPFromTrustedXFF(r); ok {
 		addr := ip.String()
-		r.Header.Set(wire.ClientIPHeader, addr)
+		r.Header.Set(canonicalClientIPHeader, addr)
 		r.Header.Set("True-Client-Ip", addr)
 		r.Header.Set("X-Real-Ip", addr)
 	}
@@ -6709,7 +6709,7 @@ haveApp:
 	// Wake-tier transparency is useful on every response, including auth,
 	// rate-limit, redirect, and cached responses that return before the wake
 	// gate. The later wake path replaces this hot default after admission.
-	w.Header().Set(wire.WakeHeader, wire.HotWakeValue)
+	w.Header().Set(canonicalWakeHeader, wire.HotWakeValue)
 	// ADR-127: stamp account_id + app_id onto the request context
 	// so the recorder can build a row at Handler.observe without
 	// observe's signature changing. nil-safe on accountID (the
@@ -7847,7 +7847,7 @@ haveApp:
 				// still alive. Record the visit and let the page's fetch/meta
 				// retry land on the app without a manual reload.
 				h.noteWakePageServed(r.Context(), app.ID, app.AccountID, requestIDFrom(r), time.Now())
-				w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
+				w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
 				writeWakePage(w, r.Header.Get("X-Faas-Wake-Id"))
 				h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 				return
@@ -8022,7 +8022,7 @@ haveApp:
 	}
 	// The wake admission result is now known. Replace the hot default before
 	// any response body is committed by the proxy.
-	w.Header().Set(wire.WakeHeader, wakeResponseValue(cold, wakeMethod))
+	w.Header().Set(canonicalWakeHeader, wakeResponseValue(cold, wakeMethod))
 	// Enforce the plan's per-instance request bound only after a concrete
 	// target exists. A saturated target first gives the picker a chance to
 	// place the request on another warm VM; when every routable VM is full,
@@ -10405,7 +10405,7 @@ func writeWakeInProgress(w http.ResponseWriter, requestID string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Retry-After", "1")
-	w.Header().Set(wire.WakeHeader, wire.ColdWakeValue)
+	w.Header().Set(canonicalWakeHeader, wire.ColdWakeValue)
 	if requestID != "" {
 		w.Header().Set(api.RequestIDHeader, requestID)
 	}
