@@ -4535,6 +4535,18 @@ func (q *Queries) NextSandboxActions(ctx context.Context, db DBTX, sessionIds []
 	return items, nil
 }
 
+const notifySandboxSessionRequest = `-- name: NotifySandboxSessionRequest :exec
+SELECT pg_notify('sandbox_session_request', $1::text)
+`
+
+// Wakes the agentd replica holding a session to renew its lease now and see
+// a pause, close or fork request, instead of at its next renewal. The row is
+// the request; this is only a nudge (sent at commit inside a transaction).
+func (q *Queries) NotifySandboxSessionRequest(ctx context.Context, db DBTX, sessionID string) error {
+	_, err := db.Exec(ctx, notifySandboxSessionRequest, sessionID)
+	return err
+}
+
 const putSandboxEgressPolicy = `-- name: PutSandboxEgressPolicy :one
 INSERT INTO sandbox_egress_policies (account_id, allow_rules, deny_rules)
 VALUES ($1::text::uuid, $2::text[], $3::text[])

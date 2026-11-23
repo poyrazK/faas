@@ -14,9 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
-	"github.com/onebox-faas/faas/pkg/state"
 	agentstore "github.com/onebox-faas/faas/pkg/state/agents"
-	"github.com/onebox-faas/faas/pkg/volbackup"
 )
 
 const (
@@ -67,11 +65,15 @@ func (s *Sandboxes) markForked(ctx context.Context, ss *session, f *scheddpb.San
 			return err
 		}
 	}
-	forks, err := s.store.RecordSandboxFork(ctx, ss.claim.ID, ss.claim.LeaseToken, agentstore.SandboxCapture{ID: captureID, NodeID: node,
+	capture := agentstore.SandboxCapture{ID: captureID, NodeID: node, SessionID: ss.claim.ID, AccountID: ss.claim.AccountID,
 		StorageKey: f.GetStorageKey(), VMStateStorageKey: f.GetVmstateStorageKey(), FCVersion: f.GetFcVersion(), MemBytes: f.GetMemBytes(),
-		VMStateBytes: f.GetVmstateBytes(), HasBacking: f.GetHasBacking(), VolumeBackupID: f.GetVolumeBackupId()})
+		VMStateBytes: f.GetVmstateBytes(), HasBacking: f.GetHasBacking(), VolumeBackupID: f.GetVolumeBackupId()}
+	forks, err := s.store.RecordSandboxFork(ctx, ss.claim.ID, ss.claim.LeaseToken, capture)
 	if err != nil {
 		return err
+	}
+	if forks > 0 {
+		go s.watchForkUpload(ctx, capture)
 	}
 	ss.mu.Lock()
 	ss.forking, ss.forkID = false, ""
@@ -108,32 +110,9 @@ func (s *Sandboxes) sweepForks(ctx context.Context) error {
 	}
 	var errs []error
 	for _, c := range captures {
-		snap := state.Snapshot{StorageKey: c.StorageKey}
-		keys := []string{c.StorageKey, c.VMStateStorageKey, state.SnapshotDriveKey(snap)}
-		if c.HasBacking {
-			keys = append(keys, state.SnapshotBackingKey(snap))
-		}
-		if c.VolumeBackupID != "" {
-			keys = append(keys, volbackup.ManifestKey(c.AccountID, c.SessionID, c.VolumeBackupID))
-		}
-		held, err := s.storeHoldsAll(ctx, keys)
-		if err != nil {
+		if _, err := s.markForkCaptureUploaded(ctx, c); err != nil {
 			errs = append(errs, fmt.Errorf("check fork capture %s: %w", c.ID, err))
-			continue
 		}
-		if !held {
-			continue
-		}
-		if err := s.store.MarkSandboxForkCaptureUploaded(ctx, c.ID); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		if c.VolumeBackupID != "" {
-			if err := s.store.MarkSandboxVolumeBackupStored(ctx, c.VolumeBackupID); err != nil {
-				errs = append(errs, err)
-			}
-		}
-		s.log.Info("agentd: sandbox fork capture uploaded", "sandbox_id", c.SessionID, "capture_id", c.ID)
 	}
 	return errors.Join(errs...)
 }
