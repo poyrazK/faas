@@ -881,6 +881,8 @@ type ApiConsumerPlan struct {
 	UpdatedAt            pgtype.Timestamptz
 	// Percentages of max_units_per_month at which a consumer.usage_threshold webhook fires, once per consumer per UTC month.
 	AlertThresholdsPercent []int32
+	// Per-route caps keyed by billing route label: {"MCP /tools/search": {"max_requests_per_minute": n, "max_requests_per_month": n}}.
+	RouteLimits []byte
 }
 
 // Cross-replica admission counters for plan limits: requests this minute and weighted units this UTC month.
@@ -902,6 +904,17 @@ type ApiConsumerPlanAssignment struct {
 	PlanID        pgtype.UUID
 	EffectiveFrom pgtype.Timestamptz
 	CreatedAt     pgtype.Timestamptz
+}
+
+// Cross-replica admission counters for plan route limits: requests on one route this minute and this UTC month.
+type ApiConsumerPlanRouteAdmission struct {
+	ConsumerID  pgtype.UUID
+	AccountID   pgtype.UUID
+	Route       string
+	MinuteStart pgtype.Timestamptz
+	MinuteUsed  int64
+	MonthStart  pgtype.Timestamptz
+	MonthUsed   int64
 }
 
 type ApiConsumerRateCard struct {
