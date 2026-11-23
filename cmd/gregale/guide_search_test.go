@@ -38,6 +38,14 @@ func TestGuideSearchAnswersAgentQuestions(t *testing.T) {
 		{"redis cache for my app", "redis "},
 		{"follow logs", "--follow"},
 		{"run a database migration before release", "migrate"},
+		// Commands the tree renamed (prod hunt r33): none of these surfaced.
+		{"add a custom domain", "gregale domain "},
+		{"domain setup", "gregale domain setup"},
+		{"create a webhook", "gregale webhook "},
+		{"create an alert", "gregale alert "},
+		{"create an api key", "key create"},
+		{"create a feature flag", "gregale flag "},
+		{"list my projects", "gregale project list"},
 	} {
 		got := main.GuideSearchCommands(tc.query)
 		found := false
