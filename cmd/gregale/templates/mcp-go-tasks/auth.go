@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -83,6 +84,10 @@ type authFailure struct {
 // the authorization server's JWKS could not be fetched, as opposed to a token
 // that is wrong.
 var errSigningKeysUnavailable = errors.New("signing keys unavailable")
+
+// errUnsafeJWKSRedirect is a configuration error (the JWKS URL redirects to
+// plain HTTP or loops), never a passing failure.
+var errUnsafeJWKSRedirect = errors.New("unsafe JWKS redirect")
 
 type scopePolicy struct {
 	configured bool
@@ -622,7 +627,7 @@ func newJWKResolver(jwksURL string) *jwkResolver {
 			Timeout:   5 * time.Second,
 			CheckRedirect: func(request *http.Request, via []*http.Request) error {
 				if request.URL.Scheme != "https" || len(via) >= 3 {
-					return errors.New("unsafe JWKS redirect")
+					return errUnsafeJWKSRedirect
 				}
 				return nil
 			},
@@ -802,6 +807,10 @@ func (r *jwkResolver) fetch() ([]jsonWebKey, error) {
 	// bad document is a configuration error that retrying cannot fix.
 	response, err := r.client.Do(request)
 	if err != nil {
+		var certErr *tls.CertificateVerificationError
+		if errors.Is(err, errUnsafeJWKSRedirect) || errors.As(err, &certErr) {
+			return nil, errors.New("could not fetch JWKS")
+		}
 		return nil, fmt.Errorf("%w: could not fetch JWKS", errSigningKeysUnavailable)
 	}
 	defer func() { _ = response.Body.Close() }()

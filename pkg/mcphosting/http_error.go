@@ -75,6 +75,11 @@ func describeAuthRefusal(problem *api.Problem, response *http.Response) {
 		reason += ": " + description
 	}
 	switch {
+	case strings.EqualFold(params["realm"], "gregale") || strings.EqualFold(params["realm"], "apps"):
+		// Gregale's gateway refused the request before it reached the MCP
+		// server: the app's access protection, not the MCP token's audience.
+		problem.Detail = fmt.Sprintf("Gregale's gateway refused the request before it reached the MCP server (HTTP %d %s)", response.StatusCode, reason)
+		problem.Hint = "The app is protected at Gregale's edge: send a credential its protection accepts, or configure MCP client ingress for the app so MCP clients reach the server."
 	case response.StatusCode == http.StatusForbidden:
 		problem.Detail = fmt.Sprintf("MCP server refused the request (HTTP 403 %s)", reason)
 		if code == "insufficient_scope" {
@@ -198,7 +203,9 @@ func parseAuthParams(s string, params map[string]string) string {
 // code, for servers that omit error from the challenge (RFC 6750 does for a
 // request without a token). Nothing else from the body is kept.
 func authBodyErrorCode(response *http.Response) string {
-	if response.Body == nil {
+	// Only a complete, small body: a streaming client has no timeout, and an
+	// error body that never ends must not hang the error path.
+	if response.Body == nil || response.ContentLength <= 0 || response.ContentLength > 4<<10 {
 		return ""
 	}
 	mediaType, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
@@ -227,5 +234,5 @@ func signingKeysUnavailableError(err error) bool {
 	if !errors.As(err, &apiErr) || apiErr.Problem.Status != http.StatusUnauthorized || apiErr.Problem.Code != "invalid_token" {
 		return false
 	}
-	return apiErr.Problem.RetryAfterSeconds != nil || strings.Contains(apiErr.Problem.Detail, signingKeysUnavailable)
+	return apiErr.Problem.RetryAfterSeconds != nil || strings.Contains(strings.ToLower(apiErr.Problem.Detail), signingKeysUnavailable)
 }

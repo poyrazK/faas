@@ -141,6 +141,9 @@ class BoundedJWKClient(jwt.PyJWKClient):
         if not job["done"].wait(max(0, job["deadline"] - time.monotonic())):
             with self._client_lock:
                 job["expired"] = True
+                # A timeout can pass: the cooldown must not repeat an
+                # earlier non-transient failure's label.
+                self._last_failure_transient = True
                 self._fetch_retry_at = max(self._fetch_retry_at, job["deadline"] + FETCH_FAILURE_BACKOFF_SECONDS)
                 sock = job["socket"]
             # shutdown interrupts header/body trickles without waiting on the

@@ -14,12 +14,14 @@ async function readJWKSet(response) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_JWKS_BYTES) throw new Error('JWKS response is too large');
+      if (size > MAX_JWKS_BYTES) throw jwksFailure('JWKS response is too large', false);
       chunks.push(value);
     }
   } catch (error) {
     void reader.cancel().catch(() => {});
-    throw error;
+    // A connection lost mid-body can pass; an oversized document cannot.
+    if (error?.message === 'JWKS response is too large') throw error;
+    throw jwksFailure('JWKS body read failed', true);
   } finally {
     reader.releaseLock();
   }

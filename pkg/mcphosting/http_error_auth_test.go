@@ -22,7 +22,7 @@ func authResponse(status int, challenge, body string, token bool) *http.Response
 	if challenge != "" {
 		header.Set("WWW-Authenticate", challenge)
 	}
-	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: req}
+	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body)), ContentLength: int64(len(body)), Request: req}
 }
 
 func problemOf(t *testing.T, err error) api.Problem {
@@ -49,6 +49,8 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 		{"code only in body", `Bearer realm="x"`, `{"error":"invalid_token"}`, true, "invalid_token", "rejected the token", "audience"},
 		{"hostile description dropped", meta + `, error="invalid_token", error_description="a` + "\x1b[2J" + `"`, `{}`, true, "invalid_token", "(HTTP 401 invalid_token)", ""},
 		{"no challenge, non-JSON", "", "<html>", true, "authentication_required", "HTTP 401 authentication_required", ""},
+		{"gateway refusal", `Bearer realm="gregale", error="invalid_token"`, `{}`, true, "invalid_token", "Gregale's gateway refused", "protected at Gregale's edge"},
+		{"lowercase-insensitive keys label", meta + `, error="invalid_token", error_description="Signing keys unavailable"`, `{}`, true, "invalid_token", "could not check the token", "JWKS"},
 		{"token sent but not a Bearer credential", meta, `{"error":"authentication_required"}`, true, "authentication_required", "did not accept the Authorization header", "bare token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +68,20 @@ func TestMCP401KeepsServerErrorCode(t *testing.T) {
 		})
 	}
 }
+
+// A body of unknown length (one that may never end) is not read.
+func TestMCP401SkipsBodyOfUnknownLength(t *testing.T) {
+	resp := authResponse(http.StatusUnauthorized, `Bearer realm="x"`, `{"error":"invalid_token"}`, true)
+	resp.ContentLength = -1
+	resp.Body = io.NopCloser(blockingReader{})
+	if p := problemOf(t, httpResponseError(resp)); p.Code != "authentication_required" {
+		t.Fatalf("code = %q, want the fallback without reading the body", p.Code)
+	}
+}
+
+type blockingReader struct{}
+
+func (blockingReader) Read([]byte) (int, error) { select {} }
 
 func TestMCP403InsufficientScopeNamesScope(t *testing.T) {
 	p := problemOf(t, httpResponseError(authResponse(http.StatusForbidden, `Bearer error="insufficient_scope", scope="read write"`, `{}`, true)))
