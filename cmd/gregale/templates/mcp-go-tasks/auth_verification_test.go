@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -274,11 +275,17 @@ func TestJWKFetchFailureBacksOffBriefly(t *testing.T) {
 	auth := testScopedAuthenticator(t, scopedAuthConfig)
 	resolver := auth.keyResolver
 	resolver.url, resolver.client = provider.URL, provider.Client()
-	if _, failure := auth.authenticate("Bearer " + token); failure == nil {
-		t.Fatal("token accepted without a key set")
+	if _, failure := auth.authenticate("Bearer " + token); failure == nil || !failure.retryable || failure.description != "signing keys unavailable" {
+		t.Fatalf("failed fetch must be labelled signing keys unavailable: %+v", failure)
 	}
-	if _, failure := auth.authenticate("Bearer " + token); failure == nil || requests.Load() != 1 {
+	if _, failure := auth.authenticate("Bearer " + token); failure == nil || !failure.retryable || requests.Load() != 1 {
 		t.Fatalf("immediate retry should back off without fetching: failure=%v fetches=%d", failure, requests.Load())
+	}
+	recorder := httptest.NewRecorder()
+	_, failure := auth.authenticate("Bearer " + token)
+	auth.writeFailure(recorder, failure)
+	if recorder.Header().Get("Retry-After") != "1" || !strings.Contains(recorder.Header().Get("WWW-Authenticate"), `error="invalid_token", error_description="signing keys unavailable"`) {
+		t.Fatalf("headers = %v", recorder.Header())
 	}
 	resolver.mu.Lock()
 	resolver.lastRefresh = time.Now().Add(-jwksFailureBackoff - time.Millisecond)
@@ -288,6 +295,21 @@ func TestJWKFetchFailureBacksOffBriefly(t *testing.T) {
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("fetches = %d, want 2", requests.Load())
+	}
+}
+
+// A wrong JWKS URL is configuration: retrying cannot fix it, so the 401 is
+// a plain invalid_token without Retry-After.
+func TestJWKSNotFoundIsNotRetryable(t *testing.T) {
+	_, token := verificationKeyAndToken(t)
+	provider := httptest.NewTLSServer(http.NotFoundHandler())
+	defer provider.Close()
+	auth := testScopedAuthenticator(t, scopedAuthConfig)
+	auth.keyResolver.url, auth.keyResolver.client = provider.URL, provider.Client()
+	for range 2 { // the failed fetch, then its backoff
+		if _, failure := auth.authenticate("Bearer " + token); failure == nil || failure.retryable || failure.description != "" {
+			t.Fatalf("404 JWKS failure = %+v, want a plain invalid_token", failure)
+		}
 	}
 }
 

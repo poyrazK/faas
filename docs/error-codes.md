@@ -1,7 +1,5 @@
 # Error code reference
 
-<!-- GENERATED — do not edit by hand; regenerate with `make error-codes-md`. -->
-
 Every error Gregale returns carries a stable `code`. [Errors](errors.md) explains how an error is shaped and what to do about the most common ones. This page lists each code with the HTTP status Gregale sends it with, the title and hint Gregale writes for it, and the docs page it points to. A real response's `detail` adds the specifics, such as the observed value, the limit or the field that failed.
 
 The list is generated from the code that builds each error, so a new code appears here when it ships. Codes for features whose docs are not published yet are left out. Each code's name is its anchor: link to `error-codes#plan_limit_apps`, for example.
