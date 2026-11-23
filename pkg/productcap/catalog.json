@@ -4803,15 +4803,15 @@
       "id": "realtime",
       "name": "Realtime",
       "category": "data",
-      "description": "Broadcast to realtime channels with presence, history and access control.",
-      "maturity": "preview",
+      "description": "Hold WebSocket and SSE client connections while your app sleeps, and publish or send to them from your backend.",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/realtime",
-      "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
+      "acceptance_test": "tests/journeys/realtime_test.go::TestRealtime",
       "settings": [
         "manifest.realtime",
         "manifest.triggers.realtime"
@@ -4820,6 +4820,9 @@
         "/dashboard/apps/{}/realtime",
         "/v1/account/realtime-history-usage",
         "/v1/apps/{}/realtime",
+        "/v1/apps/{}/realtime/endpoints/{}/channels/{}/publish",
+        "/v1/apps/{}/realtime/endpoints/{}/principals/messages",
+        "/v1/apps/{}/realtime/endpoints/{}/principals:send",
         "/v1/apps/{}/webhooks/{}/realtime-channel",
         "/v1/realtime",
         "/v1/usage/realtime"
@@ -4843,8 +4846,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_realtime_access_test.go::TestRealtimeAccessPreviewRequiresOIDCAndPreservesSessionCutoff",
       "parent": "realtime",
       "routes": [
-        "/v1/apps/{}/realtime/endpoints/{}/principals",
-        "/v1/apps/{}/realtime/endpoints/{}/principals:send"
+        "/v1/apps/{}/realtime/endpoints/{}/principals"
       ]
     },
     {
@@ -4870,7 +4872,7 @@
       "name": "Realtime connections",
       "category": "data",
       "description": "List and disconnect realtime connections.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
