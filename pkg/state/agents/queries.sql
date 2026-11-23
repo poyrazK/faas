@@ -1006,6 +1006,12 @@ UPDATE sandbox_sessions SET fork_requested_at=coalesce(fork_requested_at, now())
  WHERE id=sqlc.arg(session_id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid
  AND state IN ('starting','ready','frozen','pausing');
 
+-- name: NotifySandboxSessionRequest :exec
+-- Wakes the agentd replica holding a session to renew its lease now and see
+-- a pause, close or fork request, instead of at its next renewal. The row is
+-- the request; this is only a nudge (sent at commit inside a transaction).
+SELECT pg_notify('sandbox_session_request', sqlc.arg(session_id)::text);
+
 -- name: RecordSandboxSessionFork :one
 -- vmmd captured the running source: the capture serves the forks waiting
 -- for one, and the request is answered.

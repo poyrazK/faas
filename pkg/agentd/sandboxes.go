@@ -190,6 +190,8 @@ type Sandboxes struct {
 	// actions are the held sessions that take browser actions
 	// (ADR-20261117065818 §2).
 	actions sandboxActions
+	// wakes are the held sessions' renewal nudges (sandbox_wakes.go).
+	wakes sessionWakes
 }
 
 // NewSandboxes returns a replica's session driver; cfg is the replica's
@@ -203,6 +205,7 @@ func (a *Agentd) NewSandboxes(store SandboxStore, schedd SandboxSchedd, scfg San
 func (s *Sandboxes) Run(ctx context.Context) error {
 	go s.sweep(ctx)
 	go s.pumpActions(ctx)
+	go s.ListenRequests(ctx)
 	slots := make(chan struct{}, s.scfg.Concurrency)
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -611,11 +614,15 @@ func (s *Sandboxes) receive(ctx context.Context, stream grpc.BidiStreamingClient
 func (s *Sandboxes) keepSession(ctx context.Context, ss *session, closeVM, stop func(), lost chan<- struct{}) {
 	tick := time.NewTicker(s.cfg.LeaseTTL / 3)
 	defer tick.Stop()
+	// A request apid records on the session renews at once.
+	nudged, release := s.wakes.add(ss.claim.ID)
+	defer release()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+		case <-nudged:
 		}
 		ss.mu.Lock()
 		last := ss.lastActivity

@@ -8,6 +8,7 @@ package agentd_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,14 +67,13 @@ func TestSandboxForkOfARunningSession(t *testing.T) {
 	mem := "snap/sandbox-session-" + account + "/captures/" + captureID + "/v2/mem"
 	snap := state.Snapshot{StorageKey: mem}
 	for _, key := range []string{mem, state.SnapshotVMStateKey(snap), state.SnapshotDriveKey(snap), volbackup.ManifestKey(account, src, forkBackup)} {
-		blobs.blob[key] = []byte("x")
+		if err := blobs.Put(ctx, key, strings.NewReader("x")); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := sbx.SweepOnce(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if st := backupStates(t, pool, src)[forkBackup]; st != "stored" {
-		t.Fatalf("fork backup %s after the upload", st)
-	}
+	// The replica that recorded the capture watches its upload: the forks
+	// become claimable without waiting for a sweep.
+	waitFor(t, "the upload seen", func() bool { return backupStates(t, pool, src)[forkBackup] == "stored" })
 
 	// The first fork restores the capture with the source's volume backup.
 	forkDone := holdSandbox(t, sbx)

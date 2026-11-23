@@ -89,6 +89,10 @@ func (s *Store) insertForks(ctx context.Context, tx pgx.Tx, a SandboxForkAdmissi
 	} else if _, err := s.q.RequestSandboxSessionFork(ctx, tx, sqlc.RequestSandboxSessionForkParams{SessionID: a.SourceID,
 		AccountID: a.AccountID}); err != nil {
 		return nil, fmt.Errorf("request fork capture: %w", err)
+	} else if err := s.q.NotifySandboxSessionRequest(ctx, tx, a.SourceID); err != nil {
+		// Sent at commit; the source's agentd replica asks for the capture
+		// at once rather than at its next renewal.
+		return nil, fmt.Errorf("notify fork request: %w", err)
 	}
 	ids := make([]string, 0, a.Count)
 	for range a.Count {

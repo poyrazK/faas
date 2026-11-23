@@ -218,6 +218,13 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Measured** (EC2 nested KVM, 512 MB guest with a 2 GB volume): live fork capture 7.6 s node-first; two forks restored in 318 ms and 279 ms with distinct host IPs, the source's memory and files, and writes isolated both ways.
 - **Not yet:** the reflink fast path for a fork on its source's node (every fork restores from the shared store today); the `GREGALE_FORKED_FROM` marker and `SIGUSR2` reseed hook (§3); `sandbox_fork_seconds` and `sandbox_forks_total`; clients (step 10).
 
+### Amendment: prompt requests and fork starts
+
+agentd learned of a pause, close or fork request at its next lease renewal (a third of the lease TTL, 10 s by default). A fork stayed unclaimable until the sweep (`SweepInterval`, 10 s) found its capture in the shared store. So a fork of a running session could wait about 20 s on polling around 1–3 s of VM work.
+
+- **Nudge.** After recording a pause, close or fork request, apid sends `pg_notify('sandbox_session_request', <session id>)`; a fork request sends it inside its transaction, so it goes out at commit. The agentd replica holding the session renews its lease at once, and its 1 s session tick acts on the request. The row stays the request: a lost notification waits for the next renewal, as before. A resume, and every fork start, is a claim, which agentd polls every second.
+- **Upload watch.** The replica that records a fork capture checks the shared store for its objects every second, for up to five minutes, and marks the capture uploaded as soon as the store holds them all. The sweep stays the fallback.
+
 ## Open questions
 
 1. **Prices:** GB-month for stored bytes and the free allowance, alongside `k` and the 256 MB floor.

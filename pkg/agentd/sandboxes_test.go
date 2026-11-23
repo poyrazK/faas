@@ -258,6 +258,13 @@ func (f *fakeSandboxSchedd) counts() (starts, freezes, closes int) {
 
 func newSandboxes(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd, scfg agentd.SandboxConfig) *agentd.Sandboxes {
 	t.Helper()
+	return newSandboxesLease(t, store, fake, scfg, 300*time.Millisecond)
+}
+
+// newSandboxesLease is newSandboxes with a lease TTL of its own; a long one
+// renews only when nudged within a test's time.
+func newSandboxesLease(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd, scfg agentd.SandboxConfig, ttl time.Duration) *agentd.Sandboxes {
+	t.Helper()
 	srv := grpc.NewServer()
 	scheddpb.RegisterScheddServer(srv, fake)
 	lis := bufconn.Listen(1 << 20)
@@ -270,7 +277,7 @@ func newSandboxes(t *testing.T, store *agentstore.Store, fake *fakeSandboxSchedd
 	}
 	t.Cleanup(func() { _ = conn.Close() })
 	client := scheddpb.NewScheddClient(conn)
-	replica := agentd.New(store, client, agentd.Config{Owner: "agentd-test", LeaseTTL: 300 * time.Millisecond,
+	replica := agentd.New(store, client, agentd.Config{Owner: "agentd-test", LeaseTTL: ttl,
 		PollInterval: 10 * time.Millisecond}, nil)
 	if scfg.Tick == 0 {
 		scfg.Tick = 20 * time.Millisecond
