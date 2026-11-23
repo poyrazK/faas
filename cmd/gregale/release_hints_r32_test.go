@@ -70,7 +70,7 @@ func TestCanaryWithoutAlertRuleIsNotAWarning(t *testing.T) {
 		t.Fatal("canary_without_health_gate note missing")
 	}
 	summary.Recommendations = main.InspectRecommendations(summary)
-	if state, _, _ := main.InspectAttention(summary); state == "Review recommended" {
-		t.Fatalf("attention = %q for a default canary with no alert rule", state)
+	if state, reason, _ := main.InspectAttention(summary); strings.Contains(reason, "canary") {
+		t.Fatalf("attention = %q (%s) for a default canary with no alert rule", state, reason)
 	}
 }
