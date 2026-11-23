@@ -18,7 +18,18 @@ export type ManagedPostgresUsageResponse = {
   storage_byte_seconds: number;
   storage_byte_seconds_limit: number;
   storage_byte_seconds_remaining: number;
+  /**
+   * Point-in-time restore history held this month, in byte-seconds.
+   */
   history_byte_seconds: number;
+  /**
+   * Snapshot storage held this month, in byte-seconds.
+   */
+  snapshot_byte_seconds?: number;
+  /**
+   * Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month.
+   */
+  included_history_bytes?: number;
   egress_bytes: number;
   /**
    * The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.

@@ -67,6 +67,7 @@ type Provider struct {
 	objectStorageMeterID string
 	postgresMode         string
 	postgresFrom         time.Time
+	postgresHistoryFrom  time.Time
 	postgresEvent        string
 	postgresMeterID      string
 	products             map[api.Plan]string
@@ -131,6 +132,10 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 	egressFrom, _ := time.Parse(time.RFC3339, cfg.EgressBillingFrom)
 	objectStorageFrom, _ := time.Parse(time.RFC3339, cfg.ObjectStorageBillingFrom)
 	postgresFrom, _ := time.Parse(time.RFC3339, cfg.ManagedPostgresBillingFrom)
+	var postgresHistoryFrom time.Time
+	if cfg.ManagedPostgresHistoryBillingFrom != "" {
+		postgresHistoryFrom, _ = time.Parse(time.RFC3339, cfg.ManagedPostgresHistoryBillingFrom)
+	}
 	if log == nil {
 		log = slog.Default()
 	}
@@ -163,6 +168,7 @@ func newProvider(cfg Config, log *slog.Logger, dedupe usageDedupe) (*Provider, e
 		objectStorageMeterID: cfg.ObjectStorageMeterID,
 		postgresMode:         cfg.ManagedPostgresBillingMode,
 		postgresFrom:         postgresFrom.UTC(),
+		postgresHistoryFrom:  postgresHistoryFrom.UTC(),
 		postgresEvent:        cfg.ManagedPostgresUsageEventName,
 		postgresMeterID:      cfg.ManagedPostgresMeterID,
 		products: map[api.Plan]string{
@@ -220,6 +226,13 @@ func validateManagedPostgresConfig(cfg Config) error {
 	_, utcOffset := effectiveFrom.Zone()
 	if err != nil || utcOffset != 0 || !effectiveFrom.Equal(state.ObjectStoragePeriod(effectiveFrom)) {
 		return errors.New("polar: managed postgres billing from must be an RFC3339 UTC-month boundary")
+	}
+	if cfg.ManagedPostgresHistoryBillingFrom != "" {
+		historyFrom, err := time.Parse(time.RFC3339, cfg.ManagedPostgresHistoryBillingFrom)
+		_, historyOffset := historyFrom.Zone()
+		if err != nil || historyOffset != 0 || !historyFrom.Equal(state.ObjectStoragePeriod(historyFrom)) {
+			return errors.New("polar: managed postgres history billing from must be an RFC3339 UTC-month boundary")
+		}
 	}
 	if strings.TrimSpace(cfg.ManagedPostgresMeterID) == "" {
 		return errors.New("polar: managed postgres meter id missing")
@@ -321,7 +334,8 @@ func (p *Provider) ManagedPostgresChargePolicy() (billing.ManagedPostgresChargeP
 	if p == nil || p.postgresMode == ManagedPostgresBillingOff || p.postgresMode == "" {
 		return billing.ManagedPostgresChargePolicy{}, false
 	}
-	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom}, true
+	return billing.ManagedPostgresChargePolicy{Provider: "polar", Live: p.postgresMode == ManagedPostgresBillingLive, EffectiveFrom: p.postgresFrom,
+		HistoryFrom: p.postgresHistoryFrom}, true
 }
 
 // ObjectStorageLineItemPolicy exposes the object-storage rollout boundary to
@@ -1042,6 +1056,15 @@ func (p *Provider) PublishManagedPostgresCharge(ctx context.Context, step billin
 			"egress_allowance_bytes":           step.EgressAllowanceBytes,
 			"billed_egress_bytes":              step.BilledEgressBytes,
 			"egress_millicents_per_gb":         api.ManagedPostgresEgressOverageMillicentsPerGB,
+			// ADR-20261123062111: restore history and snapshots past the
+			// included history.
+			"used_history_byte_seconds":               step.UsedHistoryByteSeconds,
+			"used_snapshot_byte_seconds":              step.UsedSnapshotByteSeconds,
+			"included_history_bytes":                  step.IncludedHistoryBytes,
+			"billed_history_byte_seconds":             step.BilledHistoryByteSeconds,
+			"billed_snapshot_byte_seconds":            step.BilledSnapshotByteSeconds,
+			"restore_history_millicents_per_gb_month": api.ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth,
+			"snapshot_millicents_per_gb_month":        api.ManagedPostgresSnapshotOverageMillicentsPerGBMonth,
 		},
 		Timestamp: step.At.UTC().Format(time.RFC3339),
 	}}}
