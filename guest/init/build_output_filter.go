@@ -57,6 +57,19 @@ func (f *buildOutputFilter) Flush() {
 	f.partial = f.partial[:0]
 }
 
+// withoutPlatformBuildNoise drops platformBuildNoise lines from a complete
+// build-command capture. builderd shows the build report's log tail to the
+// customer as "[guest build output]" on every deploy, and that tail was cut
+// from the unfiltered capture, so the noise the console filter drops still
+// reached the deploy log (prod hunt r29, rc.373).
+func withoutPlatformBuildNoise(raw []byte) []byte {
+	var out bytes.Buffer
+	f := newBuildOutputFilter(&out)
+	_, _ = f.Write(raw)
+	f.Flush()
+	return out.Bytes()
+}
+
 // platformBuildNoise matches npm's deprecation of the production config,
 // with or without buildctl's "#12 0.534 " step prefix, and the fs-verity
 // probe warning. The builder's cache disk cannot do fs-verity; the build
