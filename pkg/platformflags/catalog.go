@@ -569,8 +569,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-06-30",
 	},
 	{
-		Key:   MCPToolInsights,
-		Label: "MCP tool insights",
+		Key:        MCPToolInsights,
+		Label:      "MCP tool insights",
+		Capability: "mcp-tool-insights",
 		Description: "Serve each hosted MCP tool's estimated compute cost and argument mismatches beside its calls, errors and latency. " +
 			"Off, the reads leave those fields out.",
 		ADR:        "ADR-20261122194324",
