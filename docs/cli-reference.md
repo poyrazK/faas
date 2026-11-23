@@ -3283,7 +3283,7 @@ Reuse an idempotency key only with the same async request within the server&#39;
 
 ### invocation watch
 
-Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)
+Watch async invocations finish across your account in real time
 
 `gregale invocation watch [--app <slug>] [--include-stateless] [<slug>]`
 
@@ -3291,6 +3291,8 @@ Watch async invocations finish across your account in real time (not app output 
 |---|---|---|
 | `--app <slug>` | filter to a single app slug (optional) |  |
 | `--include-stateless` | also print stateless.advisory frames (default: hide) |  |
+
+Shows invocation completions, not app output or HTTP requests; for those use gregale logs --follow.
 
 ### invocation list
 
@@ -5045,7 +5047,7 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 
 ### postgres query
 
-Run one SQL query and print rows (read-only unless --write)
+Run one SQL query and print rows
 
 `gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
 
@@ -5068,6 +5070,8 @@ gregale postgres sql orders "select status, count(*) from orders group by 1"
 gregale postgres sql orders --file audit.sql --json
 gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
 ```
+
+Read-only unless --write.
 
 Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.
 

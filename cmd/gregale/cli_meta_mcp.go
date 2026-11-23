@@ -208,7 +208,7 @@ func mcpCLICommand() cliCommand {
 				{Name: "dry-run", Short: "print the source change and gateway policy without writing either", Bool: true},
 			}, Examples: []string{"gregale mcp server auth enable --mode api-key --app my-mcp", "gregale mcp server auth enable --mode oauth-proxy --app my-mcp --auth-app my-auth"}},
 		}},
-		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment before promotion", Notes: []string{"Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
+		{Name: "replay", Short: "Compare a zero-traffic candidate with the serving deployment", Notes: []string{"Run it before promotion. Sends discovery, static resource reads and reviewed fixtures only; tools run only when named with --allow-tool. Captures no production traffic and changes nothing."}, Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "candidate", Short: "candidate deployment UUID with zero traffic", Value: "UUID", Req: true},
 			{Name: "path", Short: "MCP source directory (default .)", Value: "DIR"},
@@ -218,12 +218,12 @@ func mcpCLICommand() cliCommand {
 			{Name: "runs", Short: "times to send each probe (1-5, default 3)", Value: "N"},
 			{Name: "timeout", Short: "overall deadline (default 2m)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server replay --app my-mcp --candidate <uuid> --token-env MCP_TOKEN", "gregale mcp server replay --app my-mcp --candidate <uuid> --fixtures fixtures.json --allow-tool search"}},
-		{Name: "insights", Short: "Show per-tool calls, failures, argument mismatches and estimated compute for the last hour", Notes: []string{"Cost is an upper bound at the overage rate; usage inside the plan's included GB-hours costs nothing extra."}, Flags: []cliFlag{
+		{Name: "insights", Short: "Show per-tool calls, failures, mismatches and estimated cost", Notes: []string{"Covers the last hour. Cost is an upper bound at the overage rate; usage inside the plan's included GB-hours costs nothing extra."}, Flags: []cliFlag{
 			{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 			{Name: "timeout", Short: "API deadline (default 30s)", Value: "DURATION"},
 		}, Examples: []string{"gregale mcp server insights --app my-mcp", "gregale mcp server insights --app my-mcp --json"}},
 		{Name: "keys", Short: "Issue, list and revoke consumer keys for an api-key MCP server", Subcommands: []cliSub{
-			{Name: "create", Short: "Create a key with mcp: scopes (default the endpoint scopes in gregale-mcp.json)", Flags: []cliFlag{
+			{Name: "create", Short: "Create a consumer key with mcp: scopes", Notes: []string{"Scopes default to the endpoint scopes in gregale-mcp.json."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug", Value: "SLUG", Req: true},
 				{Name: "name", Short: "key name", Value: "NAME", Req: true},
 				{Name: "consumer", Short: "existing API consumer ID", Value: "ID"},

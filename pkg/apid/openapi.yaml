@@ -129757,6 +129757,7 @@ components:
         other_customer_requests: { type: integer, format: int64, minimum: 0, description: "Identified requests belonging to identity pairs omitted by the detail cap." }
 
     MCPToolInsightsResponse:
+      description: "Per-tool MCP usage and estimated compute for one app over the trailing window."
       type: object
       required: [app, window, observed_at, telemetry, memory_mb, tools]
       properties:
@@ -129770,6 +129771,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/MCPToolInsight' }
     MCPToolInsight:
+      description: "One tools calls, failures, argument mismatches, compute and latency."
       type: object
       required: [tool, calls, errors, cancellations, mismatches, execution_seconds, gb_seconds, estimated_millicents]
       properties:

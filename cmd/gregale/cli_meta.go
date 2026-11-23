@@ -6513,7 +6513,7 @@ var cliCommands = []cliCommand{
 				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
 				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
 			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
-			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows (read-only unless --write)", Notes: []string{
+			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows", Notes: []string{"Read-only unless --write.",
 				"Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.",
 				"Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.",
 				"--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch <database> <name> --ttl 2h`.",
@@ -7214,9 +7214,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "tail",
-		DocSlug: "tail",
-		Short:   "Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)",
+		Name:      "tail",
+		DocSlug:   "tail",
+		Short:     "Watch async invocations finish across your account in real time",
+		HelpNotes: []string{"Shows invocation completions, not app output or HTTP requests; for those use gregale logs --follow."},
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
 		Positionals: []string{"[<slug>]"},
