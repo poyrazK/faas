@@ -31,7 +31,7 @@ Add `.github/workflows/mcp-canary.yml` and `scripts/ops/mcp_canary.py`.
   and wake within a 10 s budget, the first outbound call after a wake, and the
   hosted management MCP (OAuth metadata, `tools/list`, `gregale_get_logs`).
 - **Deploys every sixth hour.** A fresh Go starter from the released CLI plus
-  `deploy/canary/mcp/canary_tools.go`, added through the starter's public
+  `deploy/canary/mcp/_starter/canary_tools.go`, added through the starter's public
   `RegisterMCPTool` hook so the canary runs the starter customers receive.
   The app is also deployed whenever it does not exist.
 - **Flaky is not failed.** Each check except park/wake retries once. A pass on

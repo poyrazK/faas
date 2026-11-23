@@ -3,6 +3,8 @@ package main
 // Canary-only tools added to a freshly generated Go MCP starter by
 // scripts/ops/mcp_canary.py. They use the starter's public RegisterMCPTool
 // hook, so the canary exercises the starter exactly as customers receive it.
+// It lives under _starter/ because it builds only inside the starter: Go
+// tooling skips directories whose names begin with an underscore.
 
 import (
 	"context"

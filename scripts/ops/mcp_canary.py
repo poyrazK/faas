@@ -47,7 +47,7 @@ LEGACY_PROTOCOL = "2025-06-18"
 CANARY_TOOLS = ("canary_sleep", "canary_fetch", "canary_whoami")
 STARTER_TOOLS = ("add", "greet", "stream_demo")
 HERE = Path(__file__).resolve().parent
-TOOLS_SOURCE = HERE.parent.parent / "deploy" / "canary" / "mcp" / "canary_tools.go"
+TOOLS_SOURCE = HERE.parent.parent / "deploy" / "canary" / "mcp" / "_starter" / "canary_tools.go"
 
 
 class CheckFailed(Exception):
