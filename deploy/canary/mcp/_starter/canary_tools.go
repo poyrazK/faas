@@ -65,7 +65,7 @@ func init() {
 
 	must(RegisterMCPTool(map[string]any{
 		"name":        "canary_fetch",
-		"description": "GET an HTTPS URL from inside the app; connect_ip pins the TCP destination while keeping SNI and Host.",
+		"description": "GET an HTTPS URL from inside the app; connect_ip pins the TCP destination (it must be one of the host's DNS answers) while keeping SNI and Host.",
 		"inputSchema": canaryObject(map[string]any{
 			"url":        map[string]any{"type": "string"},
 			"connect_ip": map[string]any{"type": "string"},
@@ -83,8 +83,24 @@ func init() {
 		}
 		client := canaryHTTP
 		if ip, _ := args["connect_ip"].(string); ip != "" {
-			if net.ParseIP(ip) == nil {
+			pinned := net.ParseIP(ip)
+			if pinned == nil {
 				return nil, errors.New("connect_ip must be an IP address")
+			}
+			// Apps reach only addresses they resolved: the VM's egress
+			// firewall admits a destination after the app's own DNS lookup
+			// returns it. Resolve the host as any app would, and require
+			// the pinned address to be one of the answers.
+			addrs, err := net.DefaultResolver.LookupIPAddr(ctx, target.Hostname())
+			if err != nil {
+				return canaryResult(map[string]any{"status": 0, "ms": 0, "error": "resolve " + target.Hostname() + ": " + err.Error()}), nil
+			}
+			found := false
+			for _, a := range addrs {
+				found = found || a.IP.Equal(pinned)
+			}
+			if !found {
+				return canaryResult(map[string]any{"status": 0, "ms": 0, "error": target.Hostname() + " does not resolve to " + ip}), nil
 			}
 			transport := http.DefaultTransport.(*http.Transport).Clone()
 			transport.DisableKeepAlives = true
