@@ -15,6 +15,23 @@ const path = pathModule.default || pathModule;
 // response envelopes consumed by faas-runner.
 console.log = console.error;
 console.info = console.error;
+// A customer stack names the customer's frames: the adapter's own frames
+// (invoke, handleOne, inGregaleRequestContext) and node internals followed
+// every handler error (prod hunt r31), as the Python adapter already trims.
+const fsModule = await import("node:fs");
+let adapterFileURL = urlModule.pathToFileURL(process.argv[1]).href;
+try {
+  // Stack frames name the module's real path (a symlinked dir differs).
+  adapterFileURL = urlModule.pathToFileURL(fsModule.realpathSync(process.argv[1])).href;
+} catch {}
+function customerStack(err) {
+  if (!(err && err.stack)) return err;
+  const lines = String(err.stack).split("\n");
+  const frame = (line) => line.trimStart().startsWith("at ");
+  const platform = (line) => line.includes(adapterFileURL) || line.includes("node:internal/");
+  const kept = lines.filter((line) => !frame(line) || !platform(line));
+  return kept.some(frame) ? kept.join("\n") : err.stack;
+}
 ` + NodeResources + `
 const postgresResources = installPostgresLifecycle();
 const handlerFile = path.join(path.dirname(process.argv[1]), "handler.js");
@@ -308,7 +325,7 @@ async function handleOne(input, out) {
     if (out.cancelled) return;
     const rawMessage = err instanceof Error ? err.message : String(err);
     const message = rawMessage.length > 256 ? rawMessage.slice(0, 256) + "…" : rawMessage;
-    console.error(err && err.stack ? err.stack : err);
+    console.error(customerStack(err));
     // The status is already sent once a stream has started; the error
     // frame tells the runner to abort the response.
     if (out.streaming) {
