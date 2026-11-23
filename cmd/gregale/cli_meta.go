@@ -5144,6 +5144,33 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		// ADR-20261122132055 step 10.
+		Name:    "sandbox-sessions",
+		DocSlug: "sandbox-sessions",
+		Short:   "List, pause, resume, fork and close sandbox sessions",
+		Subcommands: []cliSub{
+			{Name: subList, Short: "List sandbox sessions, newest first", Flags: []cliFlag{
+				{Name: "paused", Short: "only paused persistent sessions", Bool: true},
+				{Name: "state", Short: "only sessions in this state", Value: "STATE"},
+				{Name: "limit", Short: "sessions per page (default 50)", Value: "N"},
+			}, Examples: []string{"gregale sandbox session list --paused"}},
+			{Name: subGet, Short: "Show one session", Positionals: []string{"<id>"}},
+			{Name: "pause", Short: "Pause a persistent session, keeping its memory and /workspace", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "no-wait", Short: "ask and return without waiting", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait", Value: "D"},
+			}},
+			{Name: "resume", Short: "Resume a paused session", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "no-wait", Short: "ask and return without waiting", Bool: true},
+				{Name: "wait-timeout", Short: "maximum time to wait", Value: "D"},
+			}},
+			{Name: "fork", Short: "Start sessions from a session's memory and /workspace", Positionals: []string{"<id>"}, Flags: []cliFlag{
+				{Name: "count", Short: "sessions to start, within the plan's SandboxForkMax", Value: "N"},
+				{Name: "kind", Short: "the forks' kind: ephemeral (default) or persistent", Value: "KIND", ClosedSet: []string{"ephemeral", "persistent"}},
+			}, Examples: []string{"gregale sandbox session fork 0b0e6a1c-2f6a-4c8e-9d43-6f3f1d2a9b10 --count 3"}},
+			{Name: subRm, Short: "Close a session; its memory and workspace go with it", Positionals: []string{"<id>"}},
+		},
+	},
+	{
 		// ADR-20261027090016 amendment 2. The internal agents capability
 		// (pkg/productcap/catalog.json) keeps it out of customer discovery.
 		Name:    "agents",

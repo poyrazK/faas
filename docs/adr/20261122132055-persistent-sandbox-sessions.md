@@ -243,6 +243,14 @@ Each step is one PR on the sandbox branches until the owner asks for PRs. Every 
 - **Showing it.** A session's view has `stored_bytes`. `GET /v1/sandbox-storage?from=&to=` lists an account's metered hours (the current UTC month by default, at most 31 days), their GB-hours, the plan's `SandboxPausedBytesFreePerAccount` in GB, and `billable: false`.
 - **Not yet:** the price, the statement line and meterd's export to billing; the compressed capture size; deduplication across a fork tree.
 
+### Step 10 as built (clients)
+
+- **E2B shims (TS and Python).** `Sandbox.create` takes `kind`, `volumeGb`/`volume_gb` and `vcpu`. `pause`/`betaPause` (`beta_pause`), on an instance or by ID, pause a persistent session and wait until it is paused, answering false when it already was; an ephemeral session keeps the refusal, whose message now names `kind: "persistent"`. `connect` asks for a paused session's resume before it waits. `fork(n)` starts and waits for the forks. Paused sessions show as `paused` in info and list; `isRunning` is false for them.
+- **Agents SDK client.** `options.kind` (with `volumeGb`, `vcpu`) creates a persistent session. `session.stop()` pauses a persistent session instead of closing it, so a run that ends keeps it; `session.pause()` is the explicit form. `client.resume(state)` asks for a paused session's resume, then waits.
+- **CLI (owner's call, 2026-11-23).** `gregale sandbox` is already the agent runs group, so sessions are `gregale sandbox session list [--paused]|get|pause|resume|fork|delete` (legacy name `sandbox-sessions`). `pause` and `resume` wait unless `--no-wait`; no command prints a session token.
+- **Docs and journey.** `docs/sandbox-migration.md` has a pause, resume and fork section. `TestSandboxes` gains `persistent_pause_resume_fork`, on its own session: a file and a running process survive a pause and resume (not `resumed_cold`), and an ephemeral fork holds both. It skips where persistent sessions are off or the plan has none.
+- **Not yet:** session create in the CLI; `fork` with labels in the CLI; an async Python client.
+
 ### Amendment: prompt requests and fork starts
 
 agentd learned of a pause, close or fork request at its next lease renewal (a third of the lease TTL, 10 s by default). A fork stayed unclaimable until the sweep (`SweepInterval`, 10 s) found its capture in the shared store. So a fork of a running session could wait about 20 s on polling around 1–3 s of VM work.

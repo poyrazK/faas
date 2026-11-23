@@ -109,6 +109,7 @@ POST /v1/sandboxes
 - Forks share what was in memory at the capture: files in `/tmp`, caches, and random state a process seeded itself. A process that keeps its own random generator must reseed it in each fork.
 - A paused session's stored bytes (`stored_bytes` in its view, `GET /v1/sandbox-storage` per hour) are metered but not billed yet. Running time is billed as for any session.
 - In the clients: `Sandbox.create({ kind: 'persistent' })`, `sandbox.betaPause()`, `Sandbox.connect(id)` and `sandbox.fork(n)` in the E2B clients (`kind="persistent"`, `beta_pause()` in Python); `options.kind`, `session.stop()` (which pauses a persistent session) and `client.resume(state)` in `@gregale/agents-sandbox`.
+- In the CLI: `gregale sandbox session list --paused`, `gregale sandbox session pause <id>`, `resume <id>`, `fork <id> --count N` and `delete <id>`.
 
 ## Move workspaces
 

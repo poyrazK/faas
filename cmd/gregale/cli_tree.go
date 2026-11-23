@@ -174,6 +174,9 @@ var cliTreeAliases = []cliTreeAlias{
 	{"sandbox run", "run"},
 	{"sandbox template publish", "sandbox-templates build"},
 	{"sandbox template", "sandbox-templates"},
+	// ADR-20261122132055: sessions sit under `sandbox session`, since
+	// `sandbox` alone is the agent runs group (owner's call).
+	{"sandbox session", "sandbox-sessions"},
 	{"sandbox", "runs"},
 	{"invocation run", "invoke"},
 	{"invocation watch", "tail"},

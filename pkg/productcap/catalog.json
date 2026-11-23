@@ -90,6 +90,7 @@
       ],
       "cli": [
         "agents",
+        "sandbox-sessions",
         "sandbox-templates"
       ],
       "consumers": [
