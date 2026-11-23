@@ -113,28 +113,30 @@ func TestAccountMFASetupRequiresExistingPassword(t *testing.T) {
 	if challengeResult.Code != 409 {
 		t.Fatalf("unconfirmed HTML challenge: %d", challengeResult.Code)
 	}
-	// A missing password is a client gap, not a wrong guess: 400 that names
-	// the field, never 401 (which would spend the sign-in failure budget).
+	// A session that signed in long ago (a copied cookie) cannot confirm
+	// without the password: recent_sign_in_required, and a wrong password is
+	// a counted 401.
+	apidserver.AgeSignInsForTest(t, api.RecentSignInWindow+time.Minute)
 	for _, tc := range []struct {
 		proof string
 		want  int
-	}{{"", 400}, {"incorrect-password", 401}} {
+	}{{"", 403}, {"incorrect-password", 401}} {
 		token, cookies := accountSecurityCSRF(t, h, cookie, "mfa_confirm")
 		rec := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CurrentPassword: tc.proof, CSRFToken: token}, cookies...)
 		if rec.Code != tc.want || accountSecurityCookie(rec) != nil {
 			t.Fatalf("unauthorized confirmation %q: %d %s", tc.proof, rec.Code, rec.Body)
 		}
-		if tc.proof == "" && !strings.Contains(rec.Body.String(), "current_password") {
-			t.Fatalf("missing-password detail does not name the field: %s", rec.Body)
+		if tc.proof == "" && !strings.Contains(rec.Body.String(), string(api.CodeRecentSignInRequired)) {
+			t.Fatalf("stale session without password: %s", rec.Body)
 		}
 	}
-	// Retrying setup from a client that sends no password must not use up the
-	// sign-in failure budget: after more empty attempts than the budget, the
-	// correct password below must still be accepted (not 429).
+	// A missing password is not a wrong guess: more empty attempts than the
+	// sign-in failure budget must leave the correct password below accepted
+	// (not 429).
 	for i := 0; i < api.LoginFailuresPerEmail; i++ {
 		token, cookies := accountSecurityCSRF(t, h, cookie, "mfa_confirm")
 		rec := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CSRFToken: token}, cookies...)
-		if rec.Code != 400 {
+		if rec.Code != 403 {
 			t.Fatalf("empty-password retry %d: %d %s", i, rec.Code, rec.Body)
 		}
 	}
@@ -154,6 +156,39 @@ func TestAccountMFASetupRequiresExistingPassword(t *testing.T) {
 	stored, err := st.AccountPasswordByAccountID(t.Context(), acct.ID)
 	if err != nil || stored != old {
 		t.Fatal("enrollment changed the account password")
+	}
+}
+
+// The dashboard finishes MFA setup right after sign-in without asking for the
+// password again: a session that signed in recently is the proof, as it is
+// for accounts without a password.
+func TestAccountMFASetupAcceptsRecentSignInWithoutPassword(t *testing.T) {
+	e := apidserver.SetupWithMFA(t, api.PlanPro, true, false)
+	st, acct, h, cookie := *e.Store(), *e.Acct(), *e.H(), *e.Cookie()
+	hash, err := auth.Encode("owner-password-long-123!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = st.SetAccountPassword(t.Context(), acct.ID, hash); err != nil {
+		t.Fatal(err)
+	}
+	enroll := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/enroll", api.MFAEnrollRequest{})
+	var material api.MFAEnrollResponse
+	if enroll.Code != 200 || json.Unmarshal(enroll.Body.Bytes(), &material) != nil {
+		t.Fatalf("enroll: %d %s", enroll.Code, enroll.Body)
+	}
+	code, err := totp.GenerateCode(material.Secret, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, cookies := accountSecurityCSRF(t, h, cookie, "mfa_confirm")
+	confirmed := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CSRFToken: token}, cookies...)
+	if confirmed.Code != 200 || accountSecurityCookie(confirmed) == nil {
+		t.Fatalf("recent sign-in confirmation: %d %s", confirmed.Code, confirmed.Body)
+	}
+	after, err := st.AccountByID(t.Context(), acct.ID)
+	if err != nil || !after.MFAEnrolled() {
+		t.Fatalf("enrollment missing: %v", err)
 	}
 }
 
