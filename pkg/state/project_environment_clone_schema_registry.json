@@ -18140,6 +18140,43 @@
     ]
   },
   {
+    "table": "project_rollback_deploy_protections",
+    "columns": [
+      "deploy_group_id",
+      "deployment_ids",
+      "expires_at",
+      "layer_bytes",
+      "manifest_hash",
+      "project_id",
+      "storage_keys"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "project_rollback_operations",
+    "kind": "operational",
+    "columns": [
+      "id",
+      "next_run_at",
+      "project_id",
+      "receipt",
+      "start_request_id",
+      "start_request_options",
+      "status",
+      "version"
+    ]
+  },
+  {
+    "table": "project_rollback_undo_artifact_holds",
+    "kind": "operational",
+    "columns": [
+      "deployment_id",
+      "expires_at",
+      "operation_id",
+      "storage_keys"
+    ]
+  },
+  {
     "table": "project_submissions",
     "kind": "operational",
     "columns": [

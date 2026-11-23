@@ -104,6 +104,8 @@ type Problem struct {
 	// (ADR-1448).
 	CrossedReleases []RollbackCrossedRelease `json:"crossed_releases,omitempty"`
 	RestorePoints   []ReleaseRestorePoint    `json:"restore_points,omitempty"`
+	// ActiveOperationID identifies the running project rollback behind a conflict.
+	ActiveOperationID string `json:"active_operation_id,omitempty"`
 	// AgentApproval is the request behind approval_required: the link a
 	// person opens to approve it (ADR-20261104140058).
 	AgentApproval *AgentApprovalPendingInfo `json:"agent_approval,omitempty"`

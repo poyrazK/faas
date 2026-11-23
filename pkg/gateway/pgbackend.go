@@ -274,9 +274,10 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	trafficRevocations atomic.Pointer[trafficrevocation.Registry]
-	publicRoutingView  atomic.Pointer[publicrouting.Registry]
-	workloadAdmissions workloadAdmissionCache
+	projectRollbackWatches sync.Map // app ID -> *projectRollbackWatch
+	trafficRevocations     atomic.Pointer[trafficrevocation.Registry]
+	publicRoutingView      atomic.Pointer[publicrouting.Registry]
+	workloadAdmissions     workloadAdmissionCache
 	// flagKills caches each deployment's X-Faas-Flag-Kills value
 	// (ADR 20261114150000 §3); nil until WithFlagKillLoader.
 	flagKills *FlagKillCache

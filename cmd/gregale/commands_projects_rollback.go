@@ -6,33 +6,104 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
-	"slices"
-	"sort"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const projectsRollbackUsage = "usage: gregale project rollback <slug> (--dry-run | --yes | --resume <operation-id>) [--all] [--acknowledge-releases] [--timeout 10m]"
+const projectsRollbackUsage = "usage: gregale project rollback <slug> (--dry-run | --yes | --targets | --protect-deploy <uuid> [--ttl 168h] | --history | --status <operation-id> | --preview-resume <operation-id> | --resume <operation-id> | --pause <operation-id> | --preview-undo <operation-id> | --undo <operation-id>) [--all | --to-deploy <uuid>] [--verify [--verify-before-cutover] [--stabilize-for 30s] [--verify-live-traffic [--undo-on-live-traffic-failure]] [--undo-on-health-failure]] [--acknowledge-releases] [--plan-hash <sha256>] [--request-id <uuid>] [--timeout 10m]"
 
 func cmdProjectsRollback(args []string) int {
-	flags, positional := splitArgsForFlags(args, "dry-run", "yes", "all", "acknowledge-releases")
+	flags, positional := splitArgsForFlags(args, "dry-run", "yes", "targets", "history", "all", "acknowledge-releases", "verify", "verify-before-cutover", "verify-live-traffic", "undo-on-health-failure", "undo-on-live-traffic-failure")
 	fs := newFlagSet("projects-rollback", flag.ContinueOnError)
 	dryRun := fs.Bool("dry-run", false, "preview the exact rollback")
 	yes := fs.Bool("yes", false, "start a project rollback")
-	resume := fs.String("resume", "", "resume a saved project rollback operation")
+	history := fs.Bool("history", false, "list recent project rollbacks and undos")
+	targets := fs.Bool("targets", false, "list recorded deploys eligible for rollback preview")
+	var protectDeploy string
+	fs.Func("protect-deploy", "retain a recorded deploy's rollback artifacts", func(value string) error {
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			return errors.New("pass a non-zero deploy UUID from --targets")
+		}
+		protectDeploy = id.String()
+		return nil
+	})
+	var ttlSet bool
+	ttlSeconds := api.ProjectRollbackProtectionMaxSeconds
+	fs.Func("ttl", "rollback artifact protection duration (default 168h)", func(value string) error {
+		ttl, err := time.ParseDuration(value)
+		if err != nil || ttl%time.Second != 0 || ttl < time.Second || ttl > time.Duration(api.ProjectRollbackProtectionMaxSeconds)*time.Second {
+			return errors.New("pass a duration in whole seconds between 1s and 168h")
+		}
+		ttlSet, ttlSeconds = true, int(ttl/time.Second)
+		return nil
+	})
+	status := fs.String("status", "", "read a server rollback receipt")
+	previewResume := fs.String("preview-resume", "", "preview the remaining steps of a paused rollback or undo")
+	resume := fs.String("resume", "", "resume or follow a saved project rollback")
+	pause := fs.String("pause", "", "pause a running project rollback or undo")
+	previewUndo := fs.String("preview-undo", "", "preview the exact undo of a paused rollback")
+	undo := fs.String("undo", "", "restore the original revisions from a paused rollback")
 	all := fs.Bool("all", false, "select each serving service and its current predecessor")
+	var toDeploy string
+	fs.Func("to-deploy", "restore the revisions recorded for a project deploy", func(value string) error {
+		id, err := uuid.Parse(value)
+		if err != nil || id == uuid.Nil {
+			return errors.New("pass a non-zero deploy UUID from --targets")
+		}
+		toDeploy = id.String()
+		return nil
+	})
+	requestID := fs.String("request-id", "", "reuse a rollback start request UUID")
+	var planHash string
+	fs.Func("plan-hash", "apply the plan printed by --dry-run, --preview-resume, or --preview-undo", func(value string) error {
+		if !api.ValidProjectRollbackPlanHash(value) {
+			return errors.New("pass the 64-character lowercase hexadecimal plan hash from --dry-run, --preview-resume, or --preview-undo")
+		}
+		planHash = value
+		return nil
+	})
+	verify := fs.Bool("verify", false, "verify configured HTTP health probes between cutovers")
+	verifyBeforeCutover := fs.Bool("verify-before-cutover", false, "probe prepared revisions before moving project traffic")
+	var stabilizeSeconds int
+	fs.Func("stabilize-for", "require healthy post-cutover probes for this duration", func(value string) error {
+		duration, err := time.ParseDuration(value)
+		if err != nil || duration%time.Second != 0 || duration < time.Second || duration > api.ProjectRollbackMaxStabilizeSeconds*time.Second {
+			return errors.New("pass a duration in whole seconds between 1s and 60s")
+		}
+		stabilizeSeconds = int(duration / time.Second)
+		return nil
+	})
+	verifyLiveTraffic := fs.Bool("verify-live-traffic", false, "verify configured production 5xx budgets after cutover")
+	autoUndoLiveTraffic := fs.Bool("undo-on-live-traffic-failure", false, "undo switched services on a sustained production 5xx breach")
+	autoUndo := fs.Bool("undo-on-health-failure", false, "undo switched services on a confirmed health probe 5xx")
 	ack := fs.Bool("acknowledge-releases", false, "accept rolling back across release commands")
-	timeout := fs.Duration("timeout", 10*time.Minute, "how long to wait per service")
-	if err := fs.Parse(flags); err != nil || len(positional) != 1 ||
-		(*resume == "" && *dryRun == *yes) || (*resume != "" && (*dryRun || *yes || *all || *ack)) {
+	timeout := fs.Duration("timeout", 10*time.Minute, "how long the CLI waits for each service")
+	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
 		PrintUsage(os.Stderr, projectsRollbackUsage, "projects")
 		return 1
 	}
 	slug := positional[0]
+	modes := 0
+	for _, mode := range []bool{*dryRun, *yes, *targets, protectDeploy != "", *history, *status != "", *resume != "", *previewResume != "", *pause != "", *undo != "", *previewUndo != ""} {
+		if mode {
+			modes++
+		}
+	}
+	if modes != 1 || (ttlSet && protectDeploy == "") || (*requestID != "" && !*yes) || (planHash != "" && !*yes && *undo == "" && *resume == "") ||
+		(*autoUndoLiveTraffic && !*verifyLiveTraffic) ||
+		((*verifyBeforeCutover || stabilizeSeconds > 0 || *verifyLiveTraffic || *autoUndo) && (!*verify || !(*dryRun || *yes))) ||
+		(toDeploy != "" && (*all || !(*dryRun || *yes))) ||
+		((*targets || protectDeploy != "" || *history || *status != "" || *resume != "" || *previewResume != "" || *pause != "") && (*all || *ack || *verify)) ||
+		((*undo != "" || *previewUndo != "") && (*all || *verify)) {
+		PrintUsage(os.Stderr, projectsRollbackUsage, "projects")
+		return 1
+	}
 	if !api.ValidProjectSlug(slug) || *timeout <= 0 {
 		return printErr("Invalid project rollback", errors.New("pass a valid project slug and a positive timeout"))
 	}
@@ -42,212 +113,220 @@ func cmdProjectsRollback(args []string) int {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
-	if *resume != "" {
-		return resumeProjectRollback(ctx, client, slug, *resume, *timeout)
+
+	if *history {
+		return showProjectRollbackHistory(ctx, client, slug)
+	}
+	if *targets {
+		return showProjectRollbackTargets(ctx, client, slug)
+	}
+	if protectDeploy != "" {
+		return protectProjectRollbackDeploy(ctx, client, slug, protectDeploy, ttlSeconds)
 	}
 
-	plan, err := planProjectRollback(ctx, client, slug, *all, *ack)
-	if err != nil {
-		return printErr("Could not plan project rollback", err)
+	req := api.ProjectRollbackRequest{
+		All: *all, AcknowledgeReleases: *ack, Verify: *verify, ToDeploy: toDeploy,
+		VerifyBeforeCutover: *verifyBeforeCutover, StabilizeForSeconds: stabilizeSeconds,
+		VerifyLiveTraffic: *verifyLiveTraffic, UndoOnHealthFailure: *autoUndo, UndoOnLiveTrafficFailure: *autoUndoLiveTraffic,
 	}
-	if *dryRun {
-		return renderProjectRollback(plan, true, nil)
-	}
-	if !slices.ContainsFunc(plan.Steps, func(step projectRollbackStep) bool { return step.Status == "planned" }) {
-		return renderProjectRollback(plan, false, nil)
-	}
-	plan.ID = uuid.NewString()
-	path, err := projectRollbackSessionPath(client, plan.ID)
-	if err != nil {
-		return printErr("Could not save project rollback", err)
-	}
-	lock, err := lockDeploySession(path)
-	if err != nil {
-		return printErr("Could not lock project rollback", err)
-	}
-	defer func() { _ = lock.Close() }()
-	if err := writePrivateDeployState(path, plan); err != nil {
-		return printErr("Could not save project rollback", err)
-	}
-	progress := osStdout
-	if jsonOutput {
-		progress = osStderr
-	}
-	PrintProgress(progress, "Saved rollback %s. Resume with: %s", plan.ID, plan.resumeCommand())
-	return executeProjectRollback(ctx, client, &plan, path, *timeout, false)
-}
-
-func planProjectRollback(ctx context.Context, client *api.Client, slug string, all, ack bool) (projectRollbackSession, error) {
-	var project api.ProjectResponse
-	var err error
-	if all {
-		project, err = client.GetProject(ctx, slug)
-	} else {
-		project, err = client.GetProjectWithRollback(ctx, slug)
-	}
-	plan := projectRollbackSession{Version: 1, Project: slug, ProjectID: project.ID, AcknowledgeReleases: ack}
-	if err != nil {
-		return plan, err
-	}
-	if project.ID == "" || project.Slug != slug {
-		return plan, errors.New("project response is missing its identity")
-	}
-	members := make(map[string]api.ProjectRollbackMember)
-	if !all {
-		if project.RollbackBatch == nil || project.RollbackBatch.ID == "" || len(project.RollbackBatch.Members) == 0 {
-			return plan, errors.New("no serving deploy has recorded project membership. Select individual app revisions or explicitly use --all")
-		}
-		plan.DeployGroupID = project.RollbackBatch.ID
-		for _, member := range project.RollbackBatch.Members {
-			if member.Slug == "" || members[member.Slug].DeploymentID != "" {
-				return plan, errors.New("the deploy contains a detached service or multiple revisions of one service")
-			}
-			members[member.Slug] = member
-		}
-	}
-	for _, workload := range projectRollbackOrder(project.Workloads) {
-		step := projectRollbackStep{Service: workload.WorkloadName, Slug: workload.Slug, Status: "planned"}
-		member, selected := members[workload.Slug]
-		if !selected && !all {
-			step.Status, step.Reason = "skipped", "outside the recorded deploy"
-		} else {
-			delete(members, workload.Slug)
-			if err := prepareProjectRollbackStep(ctx, client, &step, member, all); err != nil {
-				return plan, fmt.Errorf("%s: %w", workload.Slug, err)
-			}
-		}
-		plan.Steps = append(plan.Steps, step)
-	}
-	if len(members) != 0 {
-		return plan, errors.New("the recorded deploy includes a service that no longer belongs to the project")
-	}
-	if len(plan.Steps) == 0 {
-		return plan, errors.New("the project has no services")
-	}
-	return plan, nil
-}
-
-func prepareProjectRollbackStep(ctx context.Context, client *api.Client, step *projectRollbackStep, member api.ProjectRollbackMember, all bool) error {
-	if !all {
-		switch member.Status {
-		case "failed", "cancelled", "superseded":
-			if !member.PreviouslyServed {
-				step.Status, step.Reason = "skipped", "this revision never served"
-				return nil
-			}
-		case "live":
-		default:
-			return fmt.Errorf("recorded revision v%d is still %s", member.Revision, member.Status)
-		}
-	}
-
-	current, err := readProjectRollbackCurrent(ctx, client, step.Slug)
-	if err != nil {
-		return err
-	}
-	step.From, step.CurrentID, step.AppID, step.Scope = current.Revision, current.ID, current.AppID, scopeOrDefault(current.Scope)
-	step.CurrentServedAt = current.RolloutCompletedAt
-	if !all {
-		switch {
-		case sameBindingDeployment(current.ID, member.PredecessorID):
-			step.Status, step.Reason = "skipped", "recorded predecessor already serves"
-			return nil
-		case !sameBindingDeployment(current.ID, member.DeploymentID):
-			return fmt.Errorf("serving revision changed since the recorded deploy (expected v%d)", member.Revision)
-		case member.PredecessorID == "" && member.Revision == 1:
-			step.Status, step.Reason = "skipped", "first release has no predecessor"
-			return nil
-		case member.PredecessorID == "":
-			return fmt.Errorf("v%d has no recorded serving predecessor", member.Revision)
-		}
-	} else if current.ID == "" {
-		step.Status, step.Reason = "skipped", "no serving release"
-		return nil
-	}
-
-	summary, err := client.GetAppDeploymentSummary(ctx, step.Slug, current.ID)
-	if err != nil {
-		return err
-	}
-	if !all && !sameBindingDeployment(summary.RollbackTargetID, member.PredecessorID) {
-		return fmt.Errorf("recorded predecessor v%d is no longer the serving revision's rollback target", member.PredecessorRevision)
-	}
-	step.TargetID, step.To = summary.RollbackTargetID, summary.RollbackTargetRevision
+	var op api.ProjectRollbackOperation
+	var expectedID, undoOf string
 	switch {
-	case step.TargetID == "":
-		step.Status, step.Reason = "skipped", "no rollback target"
-	case all && step.To > step.From:
-		step.Status, step.Reason = "skipped", "serving a revision older than its current rollback target"
-	case step.AppID == "":
-		return errors.New("serving revision response is missing the app identity")
-	}
-	return nil
-}
-
-func readProjectRollbackCurrent(ctx context.Context, client *api.Client, slug string) (api.DeploymentResponse, error) {
-	page, err := client.ListAppDeployments(ctx, slug, "", 200)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	var current api.DeploymentResponse
-	for _, dep := range page.Items {
-		scope := scopeOrDefault(dep.Scope)
-		if (scope != api.DefaultEnvScope && scope != "production") || dep.Status != "live" || dep.TrafficPercent == 0 {
-			continue
+	case *dryRun:
+		op, err = client.PreviewProjectRollback(ctx, slug, req)
+	case *status != "":
+		expectedID = *status
+		op, err = client.GetProjectRollback(ctx, slug, expectedID)
+	case *pause != "":
+		id, parseErr := uuid.Parse(*pause)
+		if parseErr != nil || id == uuid.Nil {
+			return printErr("Invalid project rollback", errors.New("pass a project rollback operation UUID to --pause"))
 		}
-		if current.ID != "" || dep.TrafficPercent != 100 || dep.RolloutState != "complete" {
-			return api.DeploymentResponse{}, errors.New("production does not have a single completed serving revision")
+		expectedID = id.String()
+		op, err = client.PauseProjectRollback(ctx, slug, expectedID)
+	case *undo != "" || *previewUndo != "":
+		source, flagName := *undo, "--undo"
+		if *previewUndo != "" {
+			source, flagName = *previewUndo, "--preview-undo"
 		}
-		current = dep
-	}
-	return current, nil
-}
-
-// projectRollbackOrder sorts a project's services so each rolls back before
-// the services it depends on: callers return to the release that called the
-// older API before that API goes back, the reverse of a deploy. Names
-// tie-break, and a dependency cycle (which a project deploy refuses) falls
-// back to name order for the services in it.
-func projectRollbackOrder(workloads []api.ProjectWorkloadResponse) []api.ProjectWorkloadResponse {
-	var live []api.ProjectWorkloadResponse
-	for _, workload := range workloads {
-		if workload.Slug != "" && workload.Status != "deleted" {
-			live = append(live, workload)
+		id, parseErr := uuid.Parse(source)
+		if parseErr != nil || id == uuid.Nil {
+			return printErr("Invalid project rollback", fmt.Errorf("pass a project rollback operation UUID to %s", flagName))
 		}
-	}
-	sort.Slice(live, func(i, j int) bool { return live[i].WorkloadName < live[j].WorkloadName })
-	placed := make([]bool, len(live))
-	out := make([]api.ProjectWorkloadResponse, 0, len(live))
-	// ready: no unplaced service still depends on this one.
-	ready := func(index int) bool {
-		for j, other := range live {
-			if placed[j] || j == index {
-				continue
+		undoOf = id.String()
+		if *previewUndo != "" {
+			op, err = client.PreviewProjectRollbackUndo(ctx, slug, undoOf, *ack)
+		} else {
+			op, err = client.UndoProjectRollback(ctx, slug, undoOf, api.ProjectRollbackUndoRequest{AcknowledgeReleases: *ack, ExpectedPlanHash: planHash})
+		}
+	case *previewResume != "":
+		id, parseErr := uuid.Parse(*previewResume)
+		if parseErr != nil || id == uuid.Nil {
+			return printErr("Invalid project rollback", errors.New("pass a project rollback operation UUID to --preview-resume"))
+		}
+		expectedID = id.String()
+		op, err = client.PreviewProjectRollbackResume(ctx, slug, expectedID)
+	case *resume != "":
+		expectedID = *resume
+		if planHash != "" {
+			id, parseErr := uuid.Parse(*resume)
+			if parseErr != nil || id == uuid.Nil {
+				return printErr("Invalid project rollback", errors.New("pass a project rollback operation UUID to --resume"))
 			}
-			if slices.ContainsFunc(other.DependsOn, func(dependency string) bool {
-				return api.SameServiceName(live[index].WorkloadName, dependency)
-			}) {
-				return false
-			}
+			expectedID = id.String()
+			op, err = client.ResumeReviewedProjectRollback(ctx, slug, expectedID, api.ProjectRollbackResumeRequest{ExpectedPlanHash: planHash})
+			break
 		}
-		return true
-	}
-	for len(out) < len(live) {
-		progressed := false
-		for i, workload := range live {
-			if !placed[i] && ready(i) {
-				placed[i], progressed = true, true
-				out = append(out, workload)
-			}
-		}
-		if !progressed {
-			for i, workload := range live {
-				if !placed[i] {
-					placed[i] = true
-					out = append(out, workload)
+		op, err = client.ResumeProjectRollback(ctx, slug, expectedID)
+		var problem *api.APIError
+		if errors.As(err, &problem) && problem.Problem.Status == http.StatusNotFound {
+			if path, pathErr := projectRollbackSessionPath(client, expectedID); pathErr == nil {
+				if _, statErr := os.Stat(path); statErr == nil {
+					return resumeProjectRollback(ctx, client, slug, expectedID, *timeout)
 				}
 			}
 		}
+	default:
+		id := uuid.New()
+		if *requestID != "" {
+			parsed, parseErr := uuid.Parse(*requestID)
+			if parseErr != nil || parsed == uuid.Nil {
+				return printErr("Invalid project rollback", errors.New("pass a non-zero UUID to --request-id"))
+			}
+			id = parsed
+		}
+		req.RequestID = id.String()
+		req.ExpectedPlanHash = planHash
+		progress := osStdout
+		if jsonOutput {
+			progress = osStderr
+		}
+		PrintProgress(progress, "Project rollback request ID %s", req.RequestID)
+		op, err = client.StartProjectRollback(api.ContextWithIdempotencyKey(ctx, req.RequestID), slug, req)
 	}
-	return out
+	if err != nil {
+		return printErr("Could not read project rollback", err)
+	}
+	if op.Project != slug || op.ProjectID == "" || expectedID != "" && op.ID != expectedID || op.Status == "running" && op.ID == "" {
+		return printErr("Invalid project rollback receipt", errors.New("server returned a different operation or project"))
+	}
+	if req.RequestID != "" && op.ID != "" && op.RequestID != req.RequestID {
+		return printErr("Invalid project rollback receipt", errors.New("server returned a different rollback start request"))
+	}
+	if toDeploy != "" && op.DeployGroupID != toDeploy {
+		return printErr("Invalid project rollback receipt", errors.New("server returned a different project deploy"))
+	}
+	confirmedHash := op.PlanHash
+	if *resume != "" {
+		confirmedHash = op.ResumePlanHash
+	}
+	if planHash != "" && (op.ID == "" || confirmedHash != planHash) {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm the reviewed rollback plan"))
+	}
+	if *previewResume != "" && !(op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.ResumePlanHash) ||
+		op.Status == "blocked" && op.ResumePlanHash == "") {
+		return printErr("Invalid project rollback preview", errors.New("server returned an invalid rollback resume plan"))
+	}
+	if *previewUndo != "" {
+		if op.UndoOf != undoOf || op.ID != "" ||
+			!(op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.PlanHash) || op.Status == "blocked" && op.PlanHash == "") {
+			return printErr("Invalid project rollback preview", errors.New("server returned an invalid rollback undo plan"))
+		}
+	} else if undoOf != "" && (op.UndoOf != undoOf || op.ID == "" || op.ID == undoOf) {
+		return printErr("Invalid project rollback receipt", errors.New("server returned a different rollback undo"))
+	}
+	if *verify && !op.Verify {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm health verification"))
+	}
+	if *verifyBeforeCutover && !op.VerifyBeforeCutover {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm pre-cutover health verification"))
+	}
+	if stabilizeSeconds > 0 && op.StabilizeForSeconds != stabilizeSeconds {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm the health stabilization duration"))
+	}
+	if *verifyLiveTraffic && !op.VerifyLiveTraffic {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm live-traffic verification"))
+	}
+	if *autoUndoLiveTraffic && !op.UndoOnLiveTrafficFailure {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm automatic undo on live-traffic failure"))
+	}
+	if *autoUndo && !op.UndoOnHealthFailure {
+		return printErr("Invalid project rollback receipt", errors.New("server did not confirm automatic undo on health failure"))
+	}
+	if *status != "" {
+		return renderProjectRollback(projectRollbackSession{ProjectRollbackOperation: op}, false, nil)
+	}
+	if op.Status == "running" {
+		progress := osStdout
+		if jsonOutput {
+			progress = osStderr
+		}
+		if *pause != "" {
+			PrintProgress(progress, "Pause requested for project rollback %s. Inspect with gregale project rollback %s --status %s", op.ID, slug, op.ID)
+		} else if op.UndoOf != "" {
+			PrintProgress(progress, "Project rollback undo %s accepted. Inspect with gregale project rollback %s --status %s", op.ID, slug, op.ID)
+		} else {
+			PrintProgress(progress, "Project rollback %s accepted. Inspect with gregale project rollback %s --status %s", op.ID, slug, op.ID)
+		}
+		op, err = waitProjectRollback(ctx, client, op, *timeout, 2*time.Second)
+	}
+	if err == nil && op.Status == "blocked" && *pause == "" {
+		if op.AutoUndo != nil && op.AutoUndo.Status == api.ProjectRollbackAutoUndoStarted {
+			if op.AutoUndo.Trigger == api.ProjectRollbackAutoUndoLiveTrafficTrigger {
+				err = errors.New("project rollback failed live-traffic verification and started automatic undo")
+			} else {
+				err = errors.New("project rollback failed health verification and started automatic undo")
+			}
+		} else if op.PauseRequestedAt != nil {
+			err = errors.New("project rollback was paused")
+		} else {
+			err = errors.New("project rollback has a service blocker")
+		}
+	}
+	return renderProjectRollback(projectRollbackSession{ProjectRollbackOperation: op}, *dryRun || *previewUndo != "" || *previewResume != "", err)
+}
+
+func waitProjectRollback(ctx context.Context, client *api.Client, op api.ProjectRollbackOperation, timeout, interval time.Duration) (api.ProjectRollbackOperation, error) {
+	deadline := time.Now().Add(timeout)
+	index := projectRollbackCompletedSteps(op)
+	for op.Status == "running" {
+		callCtx, cancel := context.WithDeadline(ctx, deadline)
+		select {
+		case <-callCtx.Done():
+			err := callCtx.Err()
+			cancel()
+			return op, fmt.Errorf("stopped waiting for the server: %w", err)
+		case <-time.After(interval):
+		}
+		next, err := client.GetProjectRollback(callCtx, op.Project, op.ID)
+		cancel()
+		if err != nil {
+			if api.TransientReadError(err) && ctx.Err() == nil && time.Now().Before(deadline) {
+				continue
+			}
+			return op, err
+		}
+		if next.ID != op.ID || next.ProjectID != op.ProjectID || next.Project != op.Project ||
+			next.UndoOf != op.UndoOf || next.PlanHash != op.PlanHash {
+			return op, errors.New("server returned a different project rollback receipt")
+		}
+		if next.Status != "running" && next.Status != "blocked" && next.Status != "complete" {
+			return op, errors.New("server returned an unknown project rollback state")
+		}
+		if completed := projectRollbackCompletedSteps(next); completed > index {
+			index, deadline = completed, time.Now().Add(timeout)
+		}
+		op = next
+	}
+	return op, nil
+}
+
+func projectRollbackCompletedSteps(op api.ProjectRollbackOperation) int {
+	count := 0
+	for _, step := range op.Steps {
+		if step.Status == "rolled_back" {
+			count++
+		}
+	}
+	return count
 }

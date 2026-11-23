@@ -34,6 +34,10 @@ import type { SecretFinding } from './SecretFinding.js';
  *
  */
 export type Problem = {
+  /**
+   * The running project rollback identified by a project rollback start conflict.
+   */
+  active_operation_id?: string;
   run_budget?: RunBudgetRefusal;
   /**
    * Observed channel head on realtime_sequence_conflict.

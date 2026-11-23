@@ -271,6 +271,9 @@ type MemStore struct {
 	invocationAttemptHistory             map[int64]retainedInvocationAttempt
 	nextInvocationAttemptID              int64
 	checkedRollbacks                     map[string]api.RollbackOperation
+	projectRollbackOperations            map[string]ProjectRollbackRecord
+	projectRollbackProtections           map[projectRollbackProtectionKey]projectRollbackProtectionRecord
+	projectRollbackUndoArtifactHolds     map[string]map[string]projectRollbackUndoArtifactHold
 	checkedRollbackReleaseReviews        map[string][]ReleaseRun
 	plainRollbackReleaseReviews          map[string][]ReleaseRun
 	alertRollbacks                       map[string]api.AlertRollback
@@ -4251,6 +4254,12 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 		}
 	}
 	delete(m.projects, projectID)
+	for id, operation := range m.projectRollbackOperations {
+		if operation.ProjectID == projectID {
+			delete(m.projectRollbackOperations, id)
+			delete(m.projectRollbackUndoArtifactHolds, id)
+		}
+	}
 	for id, receipt := range m.environmentRollbackReceipts {
 		if receipt.ProjectID == projectID {
 			delete(m.environmentRollbackReceipts, id)

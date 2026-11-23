@@ -114,6 +114,7 @@ var routeActions = map[string]authz.OrgAction{
 	// state. Release gates and the route-health guard stop releases, so only
 	// owners and admins change them, as with the approval policy.
 	"POST /v1/apps/{slug}/rollback":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/rollbacks/preflight":                   authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/rollbacks/{operation}":                 authz.OrgActionReadApp,
 	"POST /v1/apps/{slug}/rollouts/recover":                     authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":             authz.OrgActionReadApp,

@@ -59,6 +59,7 @@ type ProjectRollbackMember struct {
 	PreviouslyServed    bool   `json:"previously_served"`
 	PredecessorID       string `json:"predecessor_id,omitempty"`
 	PredecessorRevision int    `json:"predecessor_revision,omitempty"`
+	Restorable          bool   `json:"-"`
 }
 
 // UpdateProjectRequest changes the customer-managed source binding. Nil fields

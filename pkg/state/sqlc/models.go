@@ -14851,6 +14851,34 @@ type ProjectReleaseWorkerDrain struct {
 	RequestedAt pgtype.Timestamptz
 }
 
+type ProjectRollbackDeployProtection struct {
+	ProjectID     pgtype.UUID
+	DeployGroupID pgtype.UUID
+	ManifestHash  string
+	DeploymentIds []string
+	StorageKeys   []string
+	ExpiresAt     pgtype.Timestamptz
+	LayerBytes    int64
+}
+
+type ProjectRollbackOperation struct {
+	ID                  pgtype.UUID
+	ProjectID           pgtype.UUID
+	Status              string
+	Version             int64
+	NextRunAt           pgtype.Timestamptz
+	Receipt             []byte
+	StartRequestID      pgtype.UUID
+	StartRequestOptions []byte
+}
+
+type ProjectRollbackUndoArtifactHold struct {
+	OperationID  pgtype.UUID
+	DeploymentID pgtype.UUID
+	StorageKeys  []string
+	ExpiresAt    pgtype.Timestamptz
+}
+
 type ProjectSubmission struct {
 	AccountID   pgtype.UUID
 	AttemptID   string
