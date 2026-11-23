@@ -86,7 +86,13 @@ func Detect(line string) string {
 		}
 	}
 	start := strings.TrimLeft(line, " \t")
+	// A policy=always restart after a clean exit ends in ": <nil>": expected,
+	// not an error (code review, prod hunt r32).
+	cleanRestart := strings.HasSuffix(strings.TrimSpace(start), ": <nil>")
 	for _, p := range prefixes {
+		if cleanRestart && strings.HasPrefix(p.hit, "guest-init: ") {
+			continue
+		}
 		if Rank(p.level) > Rank(best) && strings.HasPrefix(start, p.hit) {
 			best = p.level
 		}

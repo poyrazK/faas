@@ -43,6 +43,8 @@ func TestAdapterResponseShapes(t *testing.T) {
 		{"/data", want{200, "application/json; charset=utf-8", `{"status":"ok","db":"up"}`}},
 		{"/order", want{200, "application/json; charset=utf-8", `{"id":7,"status":2}`}},
 		{"/strcode", want{202, "text/plain; charset=utf-8", "queued"}},
+		// Code review: an error status without a body still sets the status.
+		{"/error", want{503, "application/json; charset=utf-8", `{"status":503,"error":"dbdown"}`}},
 	}
 	for _, tc := range []struct {
 		lang, interpreter, adapterName, adapter, handlerName, handler string
@@ -56,6 +58,7 @@ func TestAdapterResponseShapes(t *testing.T) {
     case "/nobody": return { status: 201, headers: { "x-a": "1" } };
     case "/order": return { id: 7, status: 2 };
     case "/strcode": return { statusCode: "202", body: "queued" };
+    case "/error": return { status: 503, error: "dbdown" };
     default: return { status: "ok", db: "up" };
   }
 }
@@ -69,6 +72,7 @@ func TestAdapterResponseShapes(t *testing.T) {
     if p == "/nobody": return {"status": 201, "headers": {"x-a": "1"}}
     if p == "/order": return {"id": 7, "status": 2}
     if p == "/strcode": return {"statusCode": "202", "body": "queued"}
+    if p == "/error": return {"status": 503, "error": "dbdown"}
     return {"status": "ok", "db": "up"}
 `},
 	} {

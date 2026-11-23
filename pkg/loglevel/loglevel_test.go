@@ -41,6 +41,7 @@ func TestDetect(t *testing.T) {
 		// guest-init's restart line, and --level error found nothing.
 		{"guest-init: app restart (restart 1/3 policy=on-failure): run [/bin/bash -c npm run start]: exit status 3", loglevel.Error},
 		{"guest-init: main restart (restart 2/3 policy=always): exit status 1", loglevel.Error},
+		{"guest-init: app restart (restart 1/3 policy=always): <nil>", ""},
 		{"guest-init: app out of memory: the kernel killed a workload process (peak 512 MB)", loglevel.Error},
 		{"guest-init: build failed: exit status 1", loglevel.Error},
 		{"guest-init: app crash-looped after 3 restart(s): exit status 3", loglevel.Error},

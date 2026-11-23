@@ -241,24 +241,27 @@ def _shape(result):
     status = 200
     response_headers = {}
     response_body = result
-    # A dict is the response envelope when it has a body, or holds nothing but
-    # an integer status and headers; any other dict is the JSON body.
-    # {"status": "ok"} failed with "invalid literal for int()", and
-    # {"status": 201, "headers": ...} was sent as its own JSON (prod hunt r32).
-    code = None
+    # A dict's HTTP status (100-599, an int or digit string) is its status;
+    # any other status value is data, so {"status": "ok"} answers 200 where it
+    # failed with "invalid literal for int()". A dict holding only a status
+    # and headers has an empty body; {"status": 201, "headers": ...} was sent
+    # as its own JSON (prod hunt r32). A dict without a body is otherwise sent
+    # whole, as before.
     if isinstance(result, dict):
+        code = None
         for key in ("statusCode", "status"):
             value = result.get(key)
-            if isinstance(value, bool):
-                continue
-            if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
-                code = int(value)
+            if isinstance(value, str) and len(value) == 3 and value.isascii() and value.isdigit():
+                value = int(value)
+            if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+                code = value
                 break
-    if isinstance(result, dict) and ("body" in result or (
-            code is not None and set(result) <= {"status", "statusCode", "headers"})):
         status = 200 if code is None else code
         response_headers = result.get("headers") or {}
-        response_body = result.get("body")
+        if "body" in result:
+            response_body = result["body"]
+        elif code is not None and set(result) <= {"status", "statusCode", "headers"}:
+            response_body = None
     # A header value may be a list, one line per element (ADR-999).
     headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
                    for k, v in response_headers.items()}

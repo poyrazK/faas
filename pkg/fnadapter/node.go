@@ -305,19 +305,20 @@ async function handleOne(input, out) {
   let status = 200;
   let responseHeaders = {};
   let responseBody = value;
-  // An object is the response envelope when it has a body, or holds nothing
-  // but an integer status and headers; any other object is the JSON body.
-  // { status: "ok" } sent status NaN, and { status: 201, headers } was sent
-  // as its own JSON (prod hunt r32).
+  // An object's HTTP status (100-599, a number or digit string) is its
+  // status; any other status value is data, so { status: "ok" } answers 200
+  // where it sent status NaN. An object holding only a status and headers has
+  // an empty body; { status: 201, headers } was sent as its own JSON (prod
+  // hunt r32). An object without a body is otherwise sent whole, as before.
   const isObject = value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Uint8Array);
-  const code = !isObject ? undefined : [value.statusCode, value.status]
-    .find((item) => Number.isInteger(item) || (typeof item === "string" && /^[0-9]+$/.test(item)));
-  const envelopeKeys = ["status", "statusCode", "headers"];
-  if (isObject && (Object.prototype.hasOwnProperty.call(value, "body") ||
-      (code !== undefined && Object.keys(value).every((key) => envelopeKeys.includes(key))))) {
-    status = code === undefined ? 200 : Number(code);
+  if (isObject) {
+    const code = [value.statusCode, value.status]
+      .map((item) => (Number.isInteger(item) ? item : typeof item === "string" && /^[0-9]{3}$/.test(item) ? Number(item) : undefined))
+      .find((item) => item !== undefined && item >= 100 && item <= 599);
+    status = code ?? 200;
     responseHeaders = value.headers || {};
-    responseBody = value.body;
+    if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+    else if (code !== undefined && Object.keys(value).every((key) => ["status", "statusCode", "headers"].includes(key))) responseBody = "";
   }
   // A header value may be a list, one line per element (ADR-999).
   const normalizedHeaders = {};

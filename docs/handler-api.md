@@ -63,10 +63,14 @@ Return any of these:
 
 A `body` that is not a string or bytes is JSON-encoded and sent as
 `application/json`, and a string body as `text/plain`, unless you set
-`content-type`; bytes are `application/octet-stream`. An object without a
-`body` key is sent whole as JSON, so `{"status": "ok"}` is data. The one
-exception is an object holding only an integer `status` or `statusCode` and
-`headers`, such as `{"status": 204}`: that is a response with an empty body. A header value may be a list, one header line per item, so several
+`content-type`; bytes are `application/octet-stream`.
+
+An object's `status` or `statusCode` sets the response status when it is an
+HTTP status (100-599, a number or a three-digit string); any other value is
+data, so `{"status": "ok"}` answers 200. An object without a `body` key is
+sent whole as JSON, so `{"status": 503, "error": "db down"}` answers 503 with
+that JSON. An object holding only a status and `headers`, such as
+`{"status": 204}`, answers with an empty body. A header value may be a list, one header line per item, so several
 `Set-Cookie` headers work.
 
 A thrown exception returns `500` with `{"error": "handler_error", "message",
