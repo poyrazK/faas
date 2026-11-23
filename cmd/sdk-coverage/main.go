@@ -390,9 +390,9 @@ var routeExclude = map[string]bool{
 	"PUT /v1/sales/inquiries/{inquiry}/close":       true,
 	"GET /v1/sales/reports":                         true, // private manager report
 	"GET /v1/sales/team":                            true, // private sales CRM
-	"GET /v1/sales/admin/team":                      true, // private sales owner admin
-	"POST /v1/sales/admin/team":                     true, // private sales owner admin
-	"PUT /v1/sales/admin/team/{member}":             true, // private sales owner admin
+	"GET /v1/sales/admin/team":                      true, // private sales manager
+	"POST /v1/sales/admin/team":                     true, // private sales manager
+	"PUT /v1/sales/admin/team/{member}":             true, // private sales manager
 	"GET /v1/sales/admin/team/{member}/agreements":  true, // private sales owner admin
 	"POST /v1/sales/admin/team/{member}/agreements": true, // private sales owner admin
 	"GET /v1/sales/customers/{account}/credit":      true, // private sales credit history

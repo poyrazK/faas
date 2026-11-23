@@ -970,7 +970,7 @@ See [Errors](errors.md).
 
 HTTP 409 Conflict · Recovery plan changed
 
-See [Build stored workflows in Gregale](stored-workflow-authoring.md).
+See [Run and recover stored workflows](stored-workflow-operations.md).
 
 ### `event_storage_capacity_exhausted`
 
