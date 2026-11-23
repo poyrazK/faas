@@ -160,7 +160,7 @@ HTTP 422 Unprocessable Entity · App_healthz_unauthorized; Health endpoint retur
 
 HTTP 403 Forbidden · App too large
 
-See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md).
+See [Builds and framework detection](build.md#limits), [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `app_log_drain_invalid`
 
@@ -178,7 +178,7 @@ See [CLI guide](cli-setup.md), [Logs](logs.md), [Errors](errors.md).
 
 HTTP 422 Unprocessable Entity · App bound to loopback; Application bound to loopback
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `app_maintenance_mode`
 
@@ -214,13 +214,13 @@ HTTP 409 Conflict · Slug taken
 
 HTTP 422 Unprocessable Entity or 503 Service Unavailable · Container out of memory; App is out of memory; App ran out of memory during startup
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `app_startup_crash`
 
 HTTP 422 Unprocessable Entity · App exited during startup
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `app_startup_timeout`
 
@@ -384,9 +384,13 @@ Verify the exact deployment receiving traffic, then promote, advance its canary,
 
 The response's `title` and `detail` describe the failure.
 
+See [Fix a failed deploy](troubleshoot-deploys.md).
+
 ### `build_infrastructure_failed`
 
 The response's `title` and `detail` describe the failure.
+
+See [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `build_not_found`
 
@@ -397,6 +401,8 @@ See [Builds and framework detection](build.md).
 ### `build_oom`
 
 HTTP 503 Service Unavailable
+
+See [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `build_provenance_not_found`
 
@@ -413,6 +419,8 @@ See [Builds and framework detection](build.md).
 ### `build_timeout`
 
 HTTP 503 Service Unavailable
+
+See [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `build_undetected`
 
@@ -586,7 +594,7 @@ HTTP 409 Conflict · Debug replay is unavailable; Mirror replay is unavailable
 
 HTTP 422 Unprocessable Entity · Dependency installation failure
 
-See [Errors](errors.md).
+See [Errors](errors.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `deploy_failed`
 
@@ -702,7 +710,7 @@ See [Deploys](deploys.md).
 
 HTTP 503 Service Unavailable
 
-See [Container compatibility](container-compatibility.md).
+See [Container compatibility](container-compatibility.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `dev_debug_not_developer_environment`
 
@@ -3058,7 +3066,7 @@ See [Deploys](deploys.md#release-approvals).
 
 HTTP 422 Unprocessable Entity
 
-See [Safe releases](releases.md).
+See [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `release_freeze_limit`
 
@@ -3112,7 +3120,7 @@ HTTP 409 Conflict · Active graph required; History unavailable; Release graph c
 
 The response's `title` and `detail` describe the failure.
 
-See [Deploys](deploys.md), [Safe releases](releases.md).
+See [Deploys](deploys.md), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `release_not_parked`
 
@@ -3202,7 +3210,7 @@ HTTP 409 Conflict · Rollback crosses release commands
 
 If the target is compatible with those changes, retry with acknowledge_releases (CLI: --acknowledge-releases). To undo database changes first, restore each listed database to its restore point.
 
-See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md).
+See [Deploys](deploys.md#releases-that-change-the-database), [Safe releases](releases.md), [Fix a failed deploy](troubleshoot-deploys.md).
 
 ### `rollback_deployment_changed`
 

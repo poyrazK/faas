@@ -50,7 +50,8 @@ causes:
 **Codes:** `app_startup_timeout`, `app_not_listening`, `app_loopback_bound`
 
 Gregale waits for the app to accept connections on its port, or to answer its
-health path with a 2xx, within the startup deadline (30 s by default).
+health path with a 2xx, within the startup deadline: 15 s by default on Free
+and 30 s on the other plans.
 
 - **Listen on `0.0.0.0`, not `localhost` or `127.0.0.1`.** A server bound to
   loopback is unreachable from outside the instance (`app_loopback_bound`).
@@ -66,10 +67,11 @@ health path with a 2xx, within the startup deadline (30 s by default).
   Do not use `/` as the health path; see
   [Health checks](frameworks.md#health-checks).
 - **Give a slow starter more time.** If the app legitimately needs longer, for
-  example to load a model or warm a cache, raise the deadline with
-  `gregale deploy --startup-deadline-s 60` or `lifecycle.startup_deadline_s`
-  in `gregale.yaml`. The plan caps it: 30 s on Free and Hobby, 60 s on Pro,
-  120 s on Scale.
+  example to load a model or warm a cache, set `lifecycle.startup_deadline_s`
+  in `gregale.yaml`. A deploy from a local directory can also pass
+  `gregale deploy --startup-deadline-s 60`; a deploy from a repository takes
+  only the file. The plan caps the deadline: 30 s on Free and Hobby, 60 s on
+  Pro, 120 s on Scale.
 
 ## The app ran out of memory
 
@@ -90,7 +92,7 @@ than 128 MB. Fewer workers also lowers the peak.
 
 ## The build failed
 
-**Codes:** `build_failed`, `dep_install_failed`, `build_oom`
+**Codes:** `build_failed`, `dep_install_failed`, `build_oom`, `build_timeout`
 
 The end of the build output appears when `gregale deploy` stops, and
 `gregale release logs` has the whole log.
@@ -129,8 +131,8 @@ output with `gregale release logs`, fix it and deploy again. Run the same
 command locally against a copy of the database first when you can. See
 [Releases that change the database](releases.md#releases-that-change-the-database).
 
-`release_infrastructure_failed` means Gregale could not run the command or
-read its result. Nothing in your code needs to change; deploy again.
+A `release_infrastructure_failed` code is different: see
+[It is not your code](#it-is-not-your-code).
 
 ## The new version broke production
 
@@ -142,7 +144,11 @@ gregale rollback my-api            # the release that most recently stopped serv
 gregale rollback my-api --to v41   # a specific release
 ```
 
-If the bad release changed the database, see
+If a release command, such as a migration, ran after the release you are
+going back to last served, the rollback is refused with
+`rollback_crosses_release`: the older code would run against the changed
+database. Pass `--acknowledge-releases` to go back anyway, or
+`--restore-databases` to restore the managed database with it; see
 [Rollbacks that restore the database](releases.md#rollbacks-that-restore-the-database).
 
 ## It is not your code
