@@ -77,7 +77,7 @@ func TestDocsSearchRetrieval(t *testing.T) {
 	var hit1, hit5, mrr float64
 	var misses []string
 	for _, c := range eval.Cases {
-		hits := corpus.search(c.Query, docsDefaultResults)
+		hits := corpus.search(c.Query, docsDefaultResults, nil)
 		rank := 0
 		for i, h := range hits {
 			if docsEvalMatches(routes[h.Page], h.Section, c.Want) {

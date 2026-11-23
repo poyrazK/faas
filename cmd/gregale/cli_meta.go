@@ -30,6 +30,7 @@
 package main
 
 import (
+	"context"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -114,8 +115,14 @@ type cliCommand struct {
 // hidden operator and legacy entries still need completion/man/dispatch
 // coverage, and earlier names still run.
 func customerCliCommands() []cliCommand {
+	return customerCliCommandsContext(context.Background())
+}
+
+// customerCliCommandsContext is customerCliCommands for a caller with a
+// request context, which bounds the capability read.
+func customerCliCommandsContext(ctx context.Context) []cliCommand {
 	var commands []cliCommand
-	for _, command := range customerAudience(discoverableCliCommands()) {
+	for _, command := range customerAudience(discoverableCliCommandsContext(ctx)) {
 		if !cliTreeEarlierName(command.Name) {
 			commands = append(commands, command)
 		}
@@ -7684,12 +7691,14 @@ var cliCommands = []cliCommand{
 	},
 	{
 		// ADR-20261112223000 §4: short task pages for agents and people.
+		// ADR-20261123180000: any other text searches commands and docs.
 		Name:        "guide",
 		DocSlug:     "guide",
-		Short:       "Short task pages: deploy, health checks, private services, rollouts",
-		Positionals: []string{"[<task>]"},
-		Examples:    []string{"gregale guide", "gregale guide private-services"},
-		Flags:       []cliFlag{{Name: "json", Short: "print the pages as JSON", Bool: true}},
+		Short:       "Task pages, or search commands and docs for a task in your own words",
+		Positionals: []string{"[<task>|<question>]"},
+		Examples:    []string{"gregale guide", "gregale guide private-services", `gregale guide "open an outbound tcp port"`},
+		HelpNotes:   []string{"A question lists the matching commands, then docs sections from the docs shipped with this CLI and the live site. Preview pages show only when your account has that preview feature. GREGALE_DOCS_OFFLINE=1 skips the live site."},
+		Flags:       []cliFlag{{Name: "json", Short: "print the pages or the search results as JSON", Bool: true}},
 	},
 }
 
