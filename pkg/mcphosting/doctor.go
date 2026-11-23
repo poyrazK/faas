@@ -48,7 +48,7 @@ func Doctor(ctx context.Context, c *Client, legacy bool, streamTool string, args
 			return report
 		}
 	}
-	catalog, x, err := discoverCatalogRetrying(ctx, c)
+	catalog, x, err := discoverCatalogRetryingGateway(ctx, c)
 	x.Result = nil // Tool schemas are represented once, in Report.Tools.
 	report.Discovery = x
 	add("modern_catalog_discovery", err)
@@ -123,29 +123,29 @@ const doctorGatewayRetries = 2
 
 var doctorGatewayRetryDelay = time.Second
 
-// doctorAuthRetries bounds how often discovery is repeated after a 401 when
-// the probe presents a bearer token. An OAuth server's first token check
-// fetches the provider's signing keys, and a slow or briefly unreachable
-// provider answered the first verification 401 although the token was valid;
-// the whole release then failed (2 of 4 external-OAuth deploys on prod,
-// 2026-11-22). About 12 s keeps this inside the 30 s verification budget. A
-// probe without a token never retries a 401: that is the expected challenge.
-const doctorAuthRetries = 4
+// doctorSigningKeyRetries bounds how often discovery is repeated while the
+// server reports that it could not fetch its authorization server's signing
+// keys (401 invalid_token "signing keys unavailable"): the token was never
+// checked. One retry a second later still failed releases whose identity
+// provider was slow or briefly unreachable (2 of 4 external-OAuth deploys on
+// prod, 2026-11-22). About 12 s keeps this inside the 30 s verification
+// budget. A 401 for any other reason, such as a bad token, is not retried.
+const doctorSigningKeyRetries = 4
 
-var doctorAuthRetryDelay = 3 * time.Second
+var doctorSigningKeyRetryDelay = 3 * time.Second
 
-func discoverCatalogRetrying(ctx context.Context, c *Client) (Catalog, Exchange, error) {
+func discoverCatalogRetryingGateway(ctx context.Context, c *Client) (Catalog, Exchange, error) {
 	catalog, x, err := c.DiscoverCatalog(ctx)
-	gatewayRetries, authRetries := 0, 0
+	gatewayRetries, keyRetries := 0, 0
 	for err != nil {
 		var delay time.Duration
 		switch {
 		case transientGatewayStatus(x.HTTPStatus) && gatewayRetries < doctorGatewayRetries:
 			gatewayRetries++
 			delay = doctorGatewayRetryDelay
-		case x.HTTPStatus == http.StatusUnauthorized && c.Token != "" && authRetries < doctorAuthRetries:
-			authRetries++
-			delay = doctorAuthRetryDelay
+		case signingKeysUnavailableError(err) && keyRetries < doctorSigningKeyRetries:
+			keyRetries++
+			delay = doctorSigningKeyRetryDelay
 		default:
 			return catalog, x, err
 		}
