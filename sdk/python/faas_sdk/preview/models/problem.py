@@ -179,13 +179,13 @@ class Problem:
     """The runnable commands quoted in `fix`, in order, with this
     failure's values (app, deployment) filled in. A command that
     still needs a value nobody knew is left out rather than shown
-    with a placeholder (ADR-20261123230000). Optional + omitempty.
+    with a placeholder. Omitted when there are none.
     """
     retryable: bool | Unset = UNSET
     """Whether repeating the same request can succeed without a
     change: true for rate limits, a Retry-After and transient
     platform errors; false when the request or the app must
-    change. Absent when unknown (ADR-20261123230000).
+    change. Absent when unknown.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
