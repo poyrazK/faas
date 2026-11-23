@@ -48,3 +48,29 @@ func TestTrafficPositionalDeploymentID(t *testing.T) {
 		})
 	}
 }
+
+// Prod hunt r32: every app on the default adaptive canary was "Review
+// recommended" because no alert rule could roll the canary back, though the
+// always-on 5xx, p95 and OOM checks do. The note stays, as information.
+func TestCanaryWithoutAlertRuleIsNotAWarning(t *testing.T) {
+	summary := main.InspectSummary{
+		App:     main.InspectAppSummary{Slug: "demo"},
+		Release: main.InspectReleaseSummary{Available: true, Status: "live", Scope: "production", TrafficPercent: 100, CanaryPreset: "adaptive", HealthSignalsAvailable: true},
+	}
+	found := false
+	for _, rec := range main.InspectRecommendations(summary) {
+		if rec.Code == "canary_without_health_gate" {
+			found = true
+			if rec.Severity != "info" {
+				t.Fatalf("severity = %q, want info", rec.Severity)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("canary_without_health_gate note missing")
+	}
+	summary.Recommendations = main.InspectRecommendations(summary)
+	if state, _, _ := main.InspectAttention(summary); state == "Review recommended" {
+		t.Fatalf("attention = %q for a default canary with no alert rule", state)
+	}
+}

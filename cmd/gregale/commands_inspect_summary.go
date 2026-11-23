@@ -663,8 +663,12 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	if summary.Release.Status == "live" && summary.Release.Scope == "production" && !canary {
 		add("safe_release_missing", "warning", "The production deployment has no canary policy.", "Deploy with `--canary-preset balanced`.")
 	}
+	// Every canary has the always-on 5xx, p95 and OOM checks that abort it
+	// (pkg/canary circuitBreakerReady), so a missing alert rule is advice, not
+	// a warning: it made "Review recommended" the headline of every app on
+	// the default adaptive canary, with "no rollback … rule" (prod hunt r32).
 	if canary && summary.Release.HealthSignalsAvailable && summary.Release.HealthGateRules == 0 {
-		add("canary_without_health_gate", "warning", "The canary has no rollback or demote health rule.", "Add an actionable latency or error-rate alert.")
+		add("canary_without_health_gate", "info", "Only the built-in 5xx, latency and OOM checks can roll back the canary; no alert rule of yours does.", "Add a latency or error-rate alert with a rollback action to guard what matters to your app.")
 	}
 	if summary.Release.FiringHealthGates > 0 {
 		add("health_gate_firing", "error", "A safe-release health gate is currently firing.", "Inspect the alert and deployment audit before promoting.")
