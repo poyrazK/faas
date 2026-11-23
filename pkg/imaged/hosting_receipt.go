@@ -85,6 +85,9 @@ func hostingReceiptProfile(app state.App, dep state.Deployment) frameworkprofile
 // listener gate, so the public smoke still uses the conventional root path
 // instead of falling back to the nonexistent /healthz endpoint.
 func HostingHealthPath(app state.App, dep state.Deployment) string {
+	if runnerFunctionHealth(app, dep) {
+		return defaultHealthzPath
+	}
 	path := hostingReceiptProfile(app, dep).HealthPath
 	if path == "" && isDirectOCIImage(app, dep) {
 		return "/"
@@ -181,6 +184,9 @@ func hostingSmokeFailure(smoke apihostingreceipt.SmokeResult) error {
 // by the gRPC health check inside the VM. The public smoke only has to show
 // that the route reaches the candidate.
 func routeConnectivitySmoke(app state.App, dep state.Deployment) bool {
+	if runnerFunctionHealth(app, dep) {
+		return false
+	}
 	profile := hostingReceiptProfile(app, dep)
 	if isDirectOCIImage(app, dep) && profile.HealthPath == "" || profile.HealthDefaulted {
 		// TCP readiness: the app never promised an HTTP health route.
@@ -206,4 +212,19 @@ func grpcReadiness(dep state.Deployment) bool {
 	}
 	var hc api.DeploymentHealthcheck
 	return json.Unmarshal(dep.OverrideHealthcheck, &hc) == nil && hc.GRPC != nil
+}
+
+// runnerFunctionHealth reports a function whose deploy check must not reach
+// its handler. Every path of a function is its handler, so the route check's
+// GET / ran a queue consumer on a message nobody sent and a cron job outside
+// its schedule on every deploy (prod hunt r31). The runner answers /healthz
+// itself (guest/runners/*), which proves the same candidate is up and routed.
+// A function's own health path stays the customer's choice; workflow and gRPC
+// functions keep their checks.
+func runnerFunctionHealth(app state.App, dep state.Deployment) bool {
+	if app.Type != state.AppTypeFunction || isWorkflowFunction(app, dep) || strings.EqualFold(app.AppProtocol, "grpc") || grpcReadiness(dep) {
+		return false
+	}
+	profile := hostingReceiptProfile(app, dep)
+	return profile.HealthPath == "" || profile.HealthDefaulted || profile.HealthPath == defaultHealthzPath
 }

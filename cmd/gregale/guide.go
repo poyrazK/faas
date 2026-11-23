@@ -203,8 +203,14 @@ func renderGuidePage(page guidePage) string {
 func renderGuideIndex() string {
 	var b strings.Builder
 	b.WriteString("Gregale task guide. Run `gregale guide <task>` for one page.\n\n")
+	// The column fits the longest task: a fixed 18 ran
+	// "functions-and-queues" into its title (prod hunt r31).
+	width := 0
 	for _, page := range guidePages {
-		fmt.Fprintf(&b, "  %-18s %s\n", page.Task, page.Title)
+		width = max(width, len(page.Task))
+	}
+	for _, page := range guidePages {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, page.Task, page.Title)
 	}
 	return b.String()
 }

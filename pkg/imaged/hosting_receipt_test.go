@@ -115,3 +115,33 @@ func TestHostingHealthPathDirectOCIFallsBackToRootForSmoke(t *testing.T) {
 		t.Fatalf("direct OCI smoke path = %q, want /", path)
 	}
 }
+
+// Prod hunt r31: the deploy check sent GET / to queue and cron functions,
+// running the handler on a message nobody sent and a cron job outside its
+// schedule. Functions are checked on the runner's own /healthz.
+func TestHostingCheckNeverRunsAFunctionHandler(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		app       state.App
+		dep       state.Deployment
+		wantRoute bool
+		wantPath  string
+	}{
+		{"queue function", state.App{Type: state.AppTypeFunction}, state.Deployment{Kind: state.DeploymentKindTarball}, false, defaultHealthzPath},
+		{"function with seeded healthz", state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Healthz: defaultHealthzPath}}, state.Deployment{Kind: state.DeploymentKindTarball}, false, defaultHealthzPath},
+		{"function with its own health path", state.App{Type: state.AppTypeFunction, Manifest: state.AppManifest{Healthz: "/ready"}}, state.Deployment{Kind: state.DeploymentKindTarball}, false, "/ready"},
+		{"workflow function keeps route check", state.App{Type: state.AppTypeFunction}, state.Deployment{Kind: state.DeploymentKindTarball, Workflows: json.RawMessage(`[{"name":"w","code":{"path":"/"}}]`)}, true, ""},
+		{"grpc function keeps route check", state.App{Type: state.AppTypeFunction, AppProtocol: "grpc"}, state.Deployment{Kind: state.DeploymentKindTarball}, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := routeConnectivitySmoke(tc.app, tc.dep); got != tc.wantRoute {
+				t.Fatalf("route connectivity = %v, want %v", got, tc.wantRoute)
+			}
+			if tc.wantPath != "" {
+				if got := HostingHealthPath(tc.app, tc.dep); got != tc.wantPath {
+					t.Fatalf("health path = %q, want %q", got, tc.wantPath)
+				}
+			}
+		})
+	}
+}
