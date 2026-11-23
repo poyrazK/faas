@@ -250,8 +250,12 @@ class TaskReceiptJourneyTests(unittest.TestCase):
             raise committed
         task_id, expires_at = committed
         receipt = json.loads(receipt_path.read_text())
-        self.assertEqual(receipt, {"version": 1, "endpointSha256": hashlib.sha256(endpoint.encode()).hexdigest(),
-                                   "submissionKey": receipt["submissionKey"]})
+        request = json.dumps({"arguments": json.loads(form_args if reviewed_verb else original_args),
+                              "deferFormInput": bool(reviewed_verb), "tool": "build_report"},
+                             sort_keys=True, separators=(",", ":")).encode()
+        self.assertEqual(receipt, {"version": 2, "endpointSha256": hashlib.sha256(endpoint.encode()).hexdigest(),
+                                   "submissionKey": receipt["submissionKey"],
+                                   "requestSha256": hashlib.sha256(request).hexdigest()})
         key = receipt["submissionKey"]
         self.assertEqual(key[14], "7")
 

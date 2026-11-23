@@ -261,10 +261,18 @@ func testTaskReceiptJourney(t *testing.T, reviewedVerb string) {
 		Version        int    `json:"version"`
 		EndpointSHA256 string `json:"endpointSha256"`
 		SubmissionKey  string `json:"submissionKey"`
+		RequestSHA256  string `json:"requestSha256"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(file))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 1 || receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) {
+	args := originalArgs
+	if reviewedVerb != "" {
+		args = `{"report":"receipt journey","request_approval":true,"steps":1}`
+	}
+	request := fmt.Sprintf(`{"arguments":%s,"deferFormInput":%t,"tool":"build_report"}`, args, reviewedVerb != "")
+	if err := decoder.Decode(&receipt); err != nil || receipt.Version != 2 ||
+		receipt.EndpointSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(endpoint))) ||
+		receipt.RequestSHA256 != fmt.Sprintf("%x", sha256.Sum256([]byte(request))) {
 		t.Fatal("invalid private Task receipt")
 	}
 	if reviewedVerb != "" {

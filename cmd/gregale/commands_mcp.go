@@ -426,8 +426,9 @@ func cmdMCPRemote(command string, args []string) int {
 	interactive := fs.Bool("interactive", false, "answer modern MCP input forms in the terminal (call only)")
 	inputResponsesFile := fs.String("input-responses-file", "", "JSON file with elicitation responses keyed by request ID (call only)")
 	enableTasks := fs.Bool("tasks", false, "accept modern MCP task handles for later inspection (call only)")
-	var deferFormInput bool
+	var deferFormInput, retrySubmission bool
 	if command == "call" {
+		fs.BoolVar(&retrySubmission, "retry-submission", false, "retry the original Task submission using an existing private receipt")
 		fs.BoolVar(&deferFormInput, "defer-form-input", false, "allow a keyed Task to request forms for a later wait")
 	}
 	var submissionKey string
@@ -528,6 +529,9 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	if submissionKey != "" && taskReceiptPath != "" {
 		return printErr("Invalid MCP task flags", errors.New("choose --task-receipt or --task-submission-key"))
+	}
+	if retrySubmission && taskReceiptPath == "" {
+		return printErr("Invalid MCP task flags", errors.New("--retry-submission requires --task-receipt"))
 	}
 	keyed := submissionKey != "" || taskReceiptPath != ""
 	if receiptDir != "" && (!metadataOnly || keyed || *taskID != "") {
@@ -665,6 +669,17 @@ func cmdMCPRemote(command string, args []string) int {
 	arguments, err := mcpArguments(*inline, *file)
 	if err != nil {
 		return printErr("MCP arguments", err)
+	}
+	if retrySubmission {
+		fingerprint, err := mcpTaskSubmissionFingerprint(*tool, arguments, deferFormInput)
+		if err != nil {
+			return printErr("MCP Task submission retry", err)
+		}
+		submissionKey, err = retryMCPTaskSubmission(taskReceiptPath, c.Endpoint, fingerprint)
+		if err != nil {
+			return printErr("MCP Task submission retry", err)
+		}
+		taskReceiptPath = ""
 	}
 	var responder mcphosting.InputResponder
 	if reviewedInputPath != "" {
@@ -822,7 +837,11 @@ func runMCPRemoteWithOptions(ctx context.Context, command string, c *mcphosting.
 			continue
 		}
 		if taskReceiptPath != "" {
-			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint)
+			fingerprint, err := mcpTaskSubmissionFingerprint(candidate.Name, args, options.DeferFormInput)
+			if err != nil {
+				return printErr("Save MCP Task receipt", err)
+			}
+			options.TaskSubmissionKey, err = createMCPTaskReceipt(taskReceiptPath, c.Endpoint, fingerprint)
 			if err != nil {
 				return printErr("Save MCP Task receipt", err)
 			}

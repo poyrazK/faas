@@ -22,6 +22,7 @@ func mcpCLICommand() cliCommand {
 		cliFlag{Name: "tasks", Short: "accept modern MCP task handles for later inspection"},
 		cliFlag{Name: "task-submission-key", Short: "saved UUIDv7 for retrying a Task submission (requires --tasks)", Value: "UUID"},
 		cliFlag{Name: "task-receipt", Short: "save a private Task receipt before submission (requires --tasks)", Value: "FILE"},
+		cliFlag{Name: "retry-submission", Short: "retry the original Task submission using an existing --task-receipt"},
 		cliFlag{Name: "defer-form-input", Short: "allow a keyed Task to request forms for a later wait"},
 		cliFlag{Name: "wait", Short: "wait for a task result; request cancellation on timeout"},
 	)

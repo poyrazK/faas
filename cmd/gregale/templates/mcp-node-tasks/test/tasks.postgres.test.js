@@ -2447,8 +2447,10 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
+for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, submissionReplyFault, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
+  { title: 'Task receipt submission retry creates one Task after a lost request before commit', useReceipt: true, submissionReplyFault: 'before', timeout: 35_000 },
+  { title: 'Task receipt submission retry returns the original Task after a lost reply after commit', useReceipt: true, submissionReplyFault: 'after', timeout: 35_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt directory recovers the original Tasks after the submitting CLI dies', useReceipt: true, receiptInbox: true, deferredForm: true, timeout: 35_000 },
@@ -2529,7 +2531,7 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
   let respondingSupervisor;
   let pendingFormReplyFault = formReplyFault, pendingCancelReplyFault = cancelReplyFault;
   const requests = [];
-  async function killAfterCommit(child) {
+  async function killCLI(child) {
     const exited = once(child, 'exit');
     assert.ok(child.kill('SIGKILL'));
     const [, signal] = await exited;
@@ -2560,15 +2562,23 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
       const endpoint = `http://127.0.0.1:${server.address().port}/mcp`;
       const body = Buffer.concat(chunks);
       if (dropSubmission && useReceipt) {
-        const metadata = JSON.parse(body).params._meta;
+        const { _meta: metadata, arguments: args, name: tool } = JSON.parse(body).params;
         const key = metadata['io.gregale/task-submission-key'];
         assert.match(key, /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         assert.deepEqual(metadata['io.modelcontextprotocol/clientCapabilities'].elicitation,
           deferredForm ? { form: {} } : undefined);
         assert.equal((await stat(receiptPath)).mode & 0o777, 0o600);
         assert.deepEqual(JSON.parse(await readFile(receiptPath, 'utf8')), {
-          version: 1, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
+          version: 2, endpointSha256: createHash('sha256').update(endpoint).digest('hex'), submissionKey: key,
+          requestSha256: createHash('sha256').update(JSON.stringify({
+            arguments: args, deferFormInput: Boolean(deferredForm), tool,
+          })).digest('hex'),
         });
+        if (submissionReplyFault === 'before') {
+          assert.deepEqual(await rows(), []);
+          await killCLI(submittingCLI);
+          return;
+        }
       }
       const headers = dropFormReply || dropCancelReply ? { ...req.headers, 'x-gregale-test-task-relay': '1' } : req.headers;
       const reply = await fetch(endpoint, {
@@ -2583,13 +2593,13 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
       if (dropFormReply === 'after') {
         const task = (await rows()).find(row => row.task_id === committedID);
         assert.ok(task && ['queued', 'running', 'completed'].includes(task.status), 'form update did not commit');
-        if (supervisor) await killAfterCommit(respondingSupervisor);
+        if (supervisor) await killCLI(respondingSupervisor);
         return;
       }
       const persisted = await rows();
       assert.equal(persisted.length, 1);
       committedID = persisted[0].task_id;
-      if (useReceipt) await killAfterCommit(submittingCLI);
+      if (useReceipt) await killCLI(submittingCLI);
     })().catch(error => { proxyError = error; }).finally(() => res.destroy());
   });
   try {
@@ -2602,11 +2612,12 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
         cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: credential }, timeout: 8000,
       });
     }
-    async function cli(verb, credential, expectedCode, args) {
+    async function cli(verb, credential, expectedCode, args, expectedError) {
       const response = await startCLI(verb, credential, args)
         .then(({ stdout, stderr }) => ({ stdout, stderr, code: 0 }), ({ stdout, stderr, code }) => ({ stdout, stderr, code }));
       assert.ok(!response.stdout.includes(credential) && !response.stderr.includes(credential), 'CLI leaked a caller token');
       assert.equal(response.code, expectedCode, `unexpected exit from mcp client ${verb}: ${response.stderr}`);
+      if (expectedError) assert.match(response.stderr, expectedError);
       return response.stdout;
     }
     function startSupervisor(command, args = []) {
@@ -2643,6 +2654,51 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
       assert.equal(await submission(owner, 3), '');
     }
     assert.ifError(proxyError);
+    if (submissionReplyFault) {
+      const initialRows = await rows();
+      if (submissionReplyFault === 'before') {
+        assert.deepEqual(initialRows, []);
+      } else {
+        assert.ok(committedID);
+        assert.equal(initialRows[0].task_id, committedID);
+        assert.equal(initialRows.length, 1);
+      }
+      const receiptBody = await readFile(receiptPath, 'utf8');
+      const receiptFile = await stat(receiptPath);
+      const { requestSha256, ...legacyReceipt } = JSON.parse(receiptBody);
+      assert.match(requestSha256, /^[0-9a-f]{64}$/);
+      const legacyPath = join(clientDir, 'v1-receipt.json');
+      await writeFile(legacyPath, JSON.stringify({ ...legacyReceipt, version: 1 }), { mode: 0o600, flag: 'wx' });
+      const beforeDenials = requests.length;
+      for (const args of [
+        [...receiptCallFor(receiptPath, { ...receiptArgs, report: 'changed' }), '--retry-submission'],
+        [...receiptCall, '--defer-form-input', '--retry-submission'],
+        [...receiptCall, '--tool', 'different_tool', '--retry-submission'],
+      ]) {
+        assert.equal(await cli('call', owner, 1, args, /request does not match the receipt/), '');
+      }
+      assert.equal(await cli('call', owner, 1, [...receiptCall, '--url', `${endpoint}/other`, '--retry-submission'],
+        /receipt does not match the selected endpoint/), '');
+      assert.equal(await cli('call', owner, 1, [...receiptCallFor(legacyPath, receiptArgs), '--retry-submission'],
+        /receipt lacks a request fingerprint/), '');
+      assert.equal(await cli('call', owner, 1, ['--tasks', '--tool', 'build_report', '--retry-submission'],
+        /--retry-submission requires --task-receipt/), '');
+      assert.equal(requests.length, beforeDenials);
+      assert.deepEqual((await rows()).map(row => row.task_id), initialRows.map(row => row.task_id));
+      const retry = [...receiptCallFor(receiptPath, { steps: 1, report: 'original' }), '--retry-submission'];
+      const beforeRetry = requests.length;
+      const { result } = JSON.parse(await cli('call', owner, 0, retry));
+      assert.equal(result.resultType, 'task');
+      assert.equal(requests.slice(beforeRetry).filter(method => method === 'gregale/tasks/submit').length, 1);
+      if (committedID) assert.equal(result.taskId, committedID);
+      const stored = await pool.query('SELECT task_id::text, submission_key::text FROM gregale_mcp_tasks WHERE namespace=$1', [namespace]);
+      assert.deepEqual(stored.rows, [{ task_id: result.taskId, submission_key: legacyReceipt.submissionKey }]);
+      const legacyStatus = JSON.parse(await cli('status', owner, 0, ['--task-receipt', legacyPath, '--metadata-only']));
+      assert.equal(legacyStatus.taskId, result.taskId);
+      assert.equal(await readFile(receiptPath, 'utf8'), receiptBody);
+      assert.equal((await stat(receiptPath)).ino, receiptFile.ino);
+      return;
+    }
     assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
     if (supervisor) {
@@ -2996,6 +3052,9 @@ for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formRepl
       const { submissionKey } = JSON.parse(receipt);
       const receiptIssuedAt = Number.parseInt(submissionKey.slice(0, 13).replace('-', ''), 16);
       await delay(Math.max(0, receiptIssuedAt + 60_100 - Date.now()));
+      const beforeExpiredRetry = requests.length;
+      assert.equal(await cli('call', owner, 1, [...receiptCall, '--retry-submission'], /submission retry window expired/), '');
+      assert.equal(requests.length, beforeExpiredRetry);
       assert.equal(await submission(owner, 1, 'original', submissionKey), '');
       const beforeRead = requests.length;
       const completed = JSON.parse(await cli('status', owner, 0, readArgs));

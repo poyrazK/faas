@@ -5694,10 +5694,24 @@ gregale mcp client status --url https://mcp.example.com/mcp --token-env MCP_TOKE
   --task-receipt ./weekly-task.json --metadata-only
 ```
 
-The receipt contains the submission key and a fingerprint of the resolved
-endpoint. Use the same endpoint and provide the original caller's credential
-when reading it. Use a new receipt path for each new submission. An existing
-receipt remains available for status lookup after a lost reply or CLI exit.
+The CLI saves only the submission key and fingerprints of the resolved endpoint
+and original request. Use a new receipt path for each new submission.
+
+If the initial reply is lost, explicitly retry within one minute using the
+existing receipt, the original caller's credential, and the same endpoint,
+tool, arguments and `--defer-form-input` setting. The CLI checks the request
+fingerprint and reuses the receipt's submission key. A retry creates the Task
+if the server never accepted it or returns the original handle if it did.
+
+```sh
+gregale mcp client call --url https://mcp.example.com/mcp --token-env MCP_TOKEN \
+  --tool build_report --arguments '{"report":"weekly","steps":8}' \
+  --tasks --task-receipt ./weekly-task.json --retry-submission
+```
+
+When the retry window expires, use `client status --metadata-only` to check for
+a retained Task. Version 1 receipts support retained Task recovery and have no
+request fingerprint for submission retry.
 
 To check several receipts for the same endpoint, repeat `--task-receipt` with
 `client status --metadata-only`.
