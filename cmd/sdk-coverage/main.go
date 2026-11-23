@@ -1591,6 +1591,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/reconciliations/{receipt_id}": "GetPlatformTenantReconciliationReceipt",
 	"GET /v1/apps/{slug}/deployments":                                    "ListAppDeployments",
 	"GET /v1/apps/{slug}/deployments/latest":                             "GetLatestAppDeployment",
+	"GET /v1/apps/{slug}/verification-contract":                          "GetVerificationContract",    // ADR-20261122220000
+	"PUT /v1/apps/{slug}/verification-contract":                          "PutVerificationContract",    // ADR-20261122220000
+	"DELETE /v1/apps/{slug}/verification-contract":                       "DeleteVerificationContract", // ADR-20261122220000
 	"GET /v1/apps/{slug}/deployment-aliases":                             "ListDeploymentAliases",
 	"PUT /v1/apps/{slug}/deployment-aliases/{name}":                      "SetDeploymentAlias",
 	"DELETE /v1/apps/{slug}/deployment-aliases/{name}":                   "DeleteDeploymentAlias",

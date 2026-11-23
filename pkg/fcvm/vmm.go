@@ -7372,6 +7372,17 @@ func (v *JailerVMM) NoteWorkloadOOM(instance string, peakMB, planMB int) {
 	}
 }
 
+// StartupOOMKilled reports whether the guest has reported a workload OOM kill
+// (ADR-121) for instance. Read when a wake completes: a kill reported before
+// the wake returns means the app's own memory exhaustion is part of the wake
+// latency, so the gateway keeps that wake out of the platform wake SLO.
+func (v *JailerVMM) StartupOOMKilled(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.oomKilled
+}
+
 // startupOOMProblem explains a failed startup as app_runtime_oom when the
 // guest reported that the kernel killed a workload process for memory before
 // readiness (ADR-121 amendment). It returns nil when no OOM was reported.

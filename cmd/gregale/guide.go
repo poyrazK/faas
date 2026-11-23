@@ -144,7 +144,8 @@ var guidePages = []guidePage{
 			{Do: "Send a message", Command: "gregale queue send <app> --queue-name <queue> --payload '<json>'"},
 			{Do: "See queue depth, bindings and consumer liveness", Command: "gregale queue status <app>"},
 			{Do: "List and replay dead letters", Command: "gregale dlq list <app>"},
-			{Do: "List an app's crons, then one cron's runs", Command: "gregale cron list <app>"},
+			{Do: "List an app's crons", Command: "gregale cron list <app>"},
+			{Do: "Show one cron's runs (its ID is in the list)", Command: "gregale cron runs <cron-id>"},
 		},
 		Notes: []string{
 			"A handler that answers 4xx (other than 408 or 429) dead-letters the message at once; 5xx, 408 and 429 are retried up to max_attempts.",
@@ -202,8 +203,14 @@ func renderGuidePage(page guidePage) string {
 func renderGuideIndex() string {
 	var b strings.Builder
 	b.WriteString("Gregale task guide. Run `gregale guide <task>` for one page.\n\n")
+	// The column fits the longest task: a fixed 18 ran
+	// "functions-and-queues" into its title (prod hunt r31).
+	width := 0
 	for _, page := range guidePages {
-		fmt.Fprintf(&b, "  %-18s %s\n", page.Task, page.Title)
+		width = max(width, len(page.Task))
+	}
+	for _, page := range guidePages {
+		fmt.Fprintf(&b, "  %-*s  %s\n", width, page.Task, page.Title)
 	}
 	return b.String()
 }

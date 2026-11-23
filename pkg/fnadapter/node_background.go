@@ -50,7 +50,7 @@ function registerBackground(out, value) {
   }, remaining);
   task.done = promise.then(
     () => "completed",
-    (err) => { console.error(err && err.stack ? err.stack : err); return "failed"; },
+    (err) => { console.error(customerStack(err)); return "failed"; },
   ).then((outcome) => {
     clearTimeout(timer);
     b.tasks.delete(id);

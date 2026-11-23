@@ -371,6 +371,11 @@ func cmdApp(args []string) int {
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
 	}
+	// The suggestion keeps every word after the command, flags included
+	// (`app inspect --environment prod shop`), not just the positionals.
+	if fs.NArg() > 0 && appWordIsCommand(slug, args[1:]) {
+		return 1
+	}
 	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
@@ -4469,6 +4474,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	if err := deployManifestObjectStorageBindings(ctx, client, slug, sourceDir, *environment); err != nil {
 		return printErr("Manifest object-storage bindings failed", err)
+	}
+	// ADR-20261122220000: gregale.verify.yaml gates this deployment, so it
+	// is stored before the deployment is created. The contract is app-wide,
+	// so only a production deploy changes it: a staging deploy must not
+	// replace the checks that gate production.
+	if *environment == "" && verifyProductionScope(manifestScope) {
+		if err := deployVerificationContract(ctx, client, slug, sourceDir); err != nil {
+			return printErr("Verification contract not applied", err)
+		}
 	}
 	// Lifecycle is app-wide, so only a production deploy changes it, as a
 	// production push does (ADR-20261110190000 §5).

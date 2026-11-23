@@ -2189,6 +2189,19 @@ type AppUdpListener struct {
 	UpdatedAt    pgtype.Timestamptz
 }
 
+// Per-app gregale.verify.yaml contract (validated JSON) run against deployment candidates before promotion (ADR-20261122220000).
+type AppVerificationContract struct {
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	Contract       []byte
+	ContractSha256 string
+	ByteSize       int32
+	CheckCount     int32
+	Revision       int64
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type AppWakeTransition struct {
 	ID           pgtype.UUID
 	AppID        pgtype.UUID
@@ -4964,6 +4977,27 @@ type DeploymentSubmissionReceipt struct {
 	AttemptID    string
 	DeploymentID pgtype.UUID
 	AcceptedAt   pgtype.Timestamptz
+}
+
+// Read-only SQL checks imaged hands to apid during candidate verification; result is row count and first value only (ADR-20261122220000).
+type DeploymentVerificationQuery struct {
+	ID           pgtype.UUID
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	CheckName    string
+	DatabaseName string
+	Query        string
+	Status       string
+	RowCount     pgtype.Int4
+	HasFirst     pgtype.Bool
+	FirstValue   pgtype.Text
+	ErrorCode    pgtype.Text
+	Error        pgtype.Text
+	CreatedAt    pgtype.Timestamptz
+	ClaimedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
 }
 
 type DevBridgeSession struct {
