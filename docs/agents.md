@@ -7,6 +7,9 @@ CLI, the CLI's automation contract, running the MCP server locally, the
 Claude Code plugin, project instructions, and documentation an agent can read
 directly.
 
+To deploy an MCP server of your own for agents to call, see
+[Host an MCP server](mcp-hosting.md).
+
 To set up one agent step by step, see
 [Deploy with Claude Code](claude-code.md), [Deploy with Codex](codex.md),
 [Deploy with Cursor](cursor.md), [Deploy with Antigravity](antigravity.md) or

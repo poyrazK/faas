@@ -3364,13 +3364,13 @@
       "name": "MCP hosting",
       "category": "runtime",
       "description": "Scaffold and deploy stateless Streamable HTTP MCP servers with explicit client access, protocol diagnostics, verified tool discovery, and optional PostgreSQL-backed durable Tasks that can run in a separate Gregale worker app.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney",
       "routes": [
         "/dashboard/apps/{}/mcp-catalog-monitor",
@@ -3415,13 +3415,13 @@
       "name": "MCP readiness monitoring",
       "category": "runtime",
       "description": "Monitor MCP server readiness with incidents, maintenance and notifications.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/mcp",
+      "docs_url": "/docs/mcp-hosting",
       "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip",
       "parent": "mcp-hosting",
       "routes": [

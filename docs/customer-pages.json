@@ -109,6 +109,7 @@
     {"path": "labels", "source": "docs/labels.md", "unpublished": "preview capability; published when it reaches beta"},
     {"path": "managed-postgres", "source": "docs/postgres.md"},
     {"path": "mcp", "source": "docs/mcp.md", "unpublished": "preview capability; published when it reaches beta"},
+    {"path": "mcp-hosting", "source": "docs/mcp-hosting.md"},
     {"path": "migrate-from-heroku", "source": "docs/migrate-from-heroku.md"},
     {"path": "migrate-from-render", "source": "docs/migrate-from-render.md"},
     {"path": "multi-service", "source": "docs/multi-service-apps.md"},
