@@ -4,6 +4,9 @@
 /* eslint-disable */
 import type { ProjectRollbackAutoUndo } from './ProjectRollbackAutoUndo.js';
 import type { ProjectRollbackStep } from './ProjectRollbackStep.js';
+/**
+ * A rollback plan or durable receipt with per-service cutovers and verification.
+ */
 export type ProjectRollbackOperation = {
   operation_id?: string;
   project: string;
@@ -65,7 +68,7 @@ export type ProjectRollbackOperation = {
    */
   pause_requested_at?: string;
   /**
-   * Deadline for unused preparation capacity.
+   * Deadline for preparation
    */
   preparation_deadline?: string;
   steps: Array<ProjectRollbackStep>;

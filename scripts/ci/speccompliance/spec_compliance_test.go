@@ -2145,6 +2145,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "rollout_recovery.go"),
 		filepath.Join(root, "pkg", "api", "service_rollout_bindings.go"),
 		filepath.Join(root, "pkg", "api", "checked_rollback.go"),
+		filepath.Join(root, "pkg", "api", "project_rollback_operations.go"),
 		filepath.Join(root, "pkg", "api", "alert_rollbacks.go"),
 		filepath.Join(root, "pkg", "api", "binding_application_adoption.go"),
 		filepath.Join(root, "pkg", "api", outboundBindingsFile),

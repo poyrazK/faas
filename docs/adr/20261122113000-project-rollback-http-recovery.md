@@ -11,8 +11,9 @@ after refreshing their routing caches. The gateway records a successful
 unpinned public request to the same target after the acknowledgement barrier.
 The worker republishes pending generations so a lost notification or gateway
 restart can recover the observation. Until the gateway barrier passes, replay
-removes retired gateways and requires acknowledgements from newly serving
-gateways. Superseded routes and a 30-minute
+and acknowledgements reconcile the serving gateway roster. Retired gateways
+leave the roster and newly serving gateways must acknowledge the route.
+Superseded routes and a 30-minute
 observation window stop pending verification.
 
 The receipt reports awaiting traffic when gateways have applied the route and

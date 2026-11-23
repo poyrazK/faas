@@ -95,10 +95,11 @@ func cmdProjectsRollback(args []string) int {
 			modes++
 		}
 	}
+	planningRollback := *dryRun || *yes
 	if modes != 1 || (ttlSet && protectDeploy == "") || (*requestID != "" && !*yes) || (planHash != "" && !*yes && *undo == "" && *resume == "") ||
 		(*autoUndoLiveTraffic && !*verifyLiveTraffic) ||
-		((*verifyBeforeCutover || stabilizeSeconds > 0 || *verifyLiveTraffic || *autoUndo) && (!*verify || !(*dryRun || *yes))) ||
-		(toDeploy != "" && (*all || !(*dryRun || *yes))) ||
+		((*verifyBeforeCutover || stabilizeSeconds > 0 || *verifyLiveTraffic || *autoUndo) && (!*verify || !planningRollback)) ||
+		(toDeploy != "" && (*all || !planningRollback)) ||
 		((*targets || protectDeploy != "" || *history || *status != "" || *resume != "" || *previewResume != "" || *pause != "") && (*all || *ack || *verify)) ||
 		((*undo != "" || *previewUndo != "") && (*all || *verify)) {
 		PrintUsage(os.Stderr, projectsRollbackUsage, "projects")
@@ -223,13 +224,17 @@ func cmdProjectsRollback(args []string) int {
 	if planHash != "" && (op.ID == "" || confirmedHash != planHash) {
 		return printErr("Invalid project rollback receipt", errors.New("server did not confirm the reviewed rollback plan"))
 	}
-	if *previewResume != "" && !(op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.ResumePlanHash) ||
-		op.Status == "blocked" && op.ResumePlanHash == "") {
-		return printErr("Invalid project rollback preview", errors.New("server returned an invalid rollback resume plan"))
+	if *previewResume != "" {
+		planned := op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.ResumePlanHash)
+		blocked := op.Status == "blocked" && op.ResumePlanHash == ""
+		if !planned && !blocked {
+			return printErr("Invalid project rollback preview", errors.New("server returned an invalid rollback resume plan"))
+		}
 	}
 	if *previewUndo != "" {
-		if op.UndoOf != undoOf || op.ID != "" ||
-			!(op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.PlanHash) || op.Status == "blocked" && op.PlanHash == "") {
+		planned := op.Status == "planned" && api.ValidProjectRollbackPlanHash(op.PlanHash)
+		blocked := op.Status == "blocked" && op.PlanHash == ""
+		if op.UndoOf != undoOf || op.ID != "" || (!planned && !blocked) {
 			return printErr("Invalid project rollback preview", errors.New("server returned an invalid rollback undo plan"))
 		}
 	} else if undoOf != "" && (op.UndoOf != undoOf || op.ID == "" || op.ID == undoOf) {

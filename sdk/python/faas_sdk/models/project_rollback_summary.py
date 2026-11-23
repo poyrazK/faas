@@ -15,6 +15,8 @@ T = TypeVar("T", bound="ProjectRollbackSummary")
 
 @_attrs_define
 class ProjectRollbackSummary:
+    """Progress and receipt IDs for a recorded project rollback or undo."""
+
     operation_id: UUID
     status: str
     """Current receipt status, either running, blocked, or complete."""

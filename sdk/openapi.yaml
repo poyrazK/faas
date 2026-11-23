@@ -14274,6 +14274,7 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose rollback plan is being previewed.
         schema: {type: string}
     get:
       tags: [projects]
@@ -14338,6 +14339,7 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose recorded deploys are being listed.
         schema: {type: string}
     get:
       tags: [projects]
@@ -14360,10 +14362,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project that owns the deploy artifacts.
         schema: {type: string}
       - name: deploy
         in: path
         required: true
+        description: ID of the recorded deploy group whose artifacts will be protected.
         schema: {type: string, format: uuid}
     post:
       tags: [projects]
@@ -14397,6 +14401,7 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project to roll back or list rollback operations for.
         schema: {type: string}
     get:
       tags: [projects]
@@ -14451,10 +14456,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project that owns the rollback receipt.
         schema: {type: string}
       - name: operation
         in: path
         required: true
+        description: ID of the operation whose receipt is requested.
         schema: {type: string, format: uuid}
     get:
       tags: [projects]
@@ -14471,7 +14478,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The rollback intent conflicts with current project state.
+          description: The project cannot provide this rollback receipt in its current state.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -14482,10 +14489,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose rollback is resuming.
         schema: {type: string}
       - name: operation
         in: path
         required: true
+        description: ID of the paused rollback or undo to continue.
         schema: {type: string, format: uuid}
     post:
       tags: [projects]
@@ -14507,7 +14516,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '409':
-          description: The rollback intent conflicts with current project state.
+          description: The operation cannot resume, or the reviewed resume plan has changed.
           content:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
@@ -14518,10 +14527,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose paused rollback is being reviewed for resume.
         schema: {type: string}
       - name: operation
         in: path
         required: true
+        description: ID of the paused operation to check before resuming.
         schema: {type: string, format: uuid}
     get:
       tags: [projects]
@@ -14550,10 +14561,12 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose rollback is being paused.
         schema: {type: string}
       - name: operation
         in: path
         required: true
+        description: ID of the running rollback or undo to pause.
         schema: {type: string, format: uuid}
     post:
       tags: [projects]
@@ -14587,6 +14600,7 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose switched revisions are being restored.
         schema: {type: string}
       - name: operation
         description: The paused project rollback to undo.
@@ -14629,9 +14643,10 @@ paths:
       - name: slug
         in: path
         required: true
+        description: Slug of the project whose inverse cutovers are being previewed.
         schema: {type: string}
       - name: operation
-        description: The paused project rollback to undo.
+        description: ID of the paused rollback whose completed cutovers would be undone.
         in: path
         required: true
         schema: {type: string, format: uuid}
@@ -43229,6 +43244,7 @@ components:
           type: array
           items: {$ref: '#/components/schemas/ProjectRollbackMember'}
     ProjectRollbackMember:
+      description: A service revision recorded in a production project deploy.
       type: object
       required: [deployment_id, revision, scope, status, previously_served]
       properties:
@@ -43243,6 +43259,7 @@ components:
         predecessor_id: {type: string, format: uuid}
         predecessor_revision: {type: integer, minimum: 0}
     ProjectRollbackHistory:
+      description: Project rollback receipts ordered with any running operation first.
       type: object
       required: [project, project_id, operations]
       properties:
@@ -43253,6 +43270,7 @@ components:
           maxItems: 20
           items: {$ref: '#/components/schemas/ProjectRollbackSummary'}
     ProjectRollbackSummary:
+      description: Progress and receipt IDs for a recorded project rollback or undo.
       type: object
       required: [operation_id, status, cutovers_completed, cutovers_total]
       properties:
@@ -43267,6 +43285,7 @@ components:
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
     ProjectRollbackTargets:
+      description: Recorded project deploy groups available for rollback preview.
       type: object
       required: [project, project_id, deploys]
       properties:
@@ -43277,6 +43296,7 @@ components:
           maxItems: 20
           items: {$ref: '#/components/schemas/ProjectRollbackTargetDeploy'}
     ProjectRollbackTargetDeploy:
+      description: A production deploy group and any active artifact protection.
       type: object
       required: [deploy_group_id, created_at, service_count]
       properties:
@@ -43285,11 +43305,13 @@ components:
         service_count: {type: integer, minimum: 1}
         protection: {$ref: '#/components/schemas/ProjectRollbackProtection'}
     ProtectProjectRollbackDeployRequest:
+      description: Set how long to retain the artifacts for the selected deploy group.
       type: object
       required: [ttl_seconds]
       properties:
         ttl_seconds: {type: integer, minimum: 1, maximum: 604800, description: Number of seconds to protect the artifacts from admission.}
     ProjectRollbackProtection:
+      description: Saved retention window and storage size for a protected deploy group.
       type: object
       required: [deploy_group_id, expires_at, layer_bytes]
       properties:
@@ -43297,6 +43319,7 @@ components:
         expires_at: {type: string, format: date-time}
         layer_bytes: {type: integer, format: int64, minimum: 1, description: Bytes of unique root filesystem and sidecar layers held for this deploy.}
     ProjectRollbackRequest:
+      description: Select production revisions to restore and configure rollback admission and verification.
       type: object
       properties:
         all: {type: boolean, default: false}
@@ -43314,7 +43337,7 @@ components:
           minimum: 0
           maximum: 60
           default: 0
-          description: Require this many seconds of healthy post-cutover HTTP probes before advancing. A positive value requires verify.
+          description: Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify.
         verify_live_traffic:
           type: boolean
           default: false
@@ -43338,8 +43361,9 @@ components:
         to_deploy:
           type: string
           format: uuid
-          description: Restore the production revisions recorded for this project deploy. Used without all.
+          description: Recorded production deploy group to restore. Omit all when selecting a deploy group.
     ProjectRollbackResumeRequest:
+      description: Require a reviewed plan when resuming a paused project rollback or undo.
       type: object
       properties:
         expected_plan_hash:
@@ -43347,6 +43371,7 @@ components:
           pattern: '^[0-9a-f]{64}$'
           description: Resume plan hash from a runnable preview of the same paused operation.
     ProjectRollbackUndoRequest:
+      description: Review and acknowledge the inverse of a paused rollback's completed cutovers.
       type: object
       properties:
         acknowledge_releases:
@@ -43358,6 +43383,7 @@ components:
           pattern: '^[0-9a-f]{64}$'
           description: Plan hash from a runnable undo preview of the same source with the same release acknowledgement.
     ProjectRollbackOperation:
+      description: A rollback plan or durable receipt with per-service cutovers and verification.
       type: object
       required: [project, project_id, status, steps]
       properties:
@@ -43386,7 +43412,7 @@ components:
           type: string
           format: date-time
           description: When an operator requested the current pause. Cleared on resume.
-        preparation_deadline: {type: string, format: date-time, description: Deadline for unused preparation capacity.}
+        preparation_deadline: {type: string, format: date-time, description: Deadline for preparation, cutover: null, and required verification.: null}
         steps:
           type: array
           items: {$ref: '#/components/schemas/ProjectRollbackStep'}
@@ -43398,6 +43424,7 @@ components:
           minimum: 0
           description: Time from project rollback acceptance until the last targeted HTTP service was verified.
     ProjectRollbackStep:
+      description: Planned or observed rollback for one service and its exact revision pair.
       type: object
       required: [service, slug, status]
       properties:
@@ -43445,6 +43472,7 @@ components:
           format: date-time
           description: The deadline after a pause. Omitted while the operation holds the deployment for execution.
     ProjectRollbackAutoUndo:
+      description: The trigger and outcome of an automatic undo after a confirmed health failure.
       type: object
       required: [status, trigger_app_id]
       properties:

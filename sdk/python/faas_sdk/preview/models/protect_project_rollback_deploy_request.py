@@ -11,6 +11,8 @@ T = TypeVar("T", bound="ProtectProjectRollbackDeployRequest")
 
 @_attrs_define
 class ProtectProjectRollbackDeployRequest:
+    """Set how long to retain the artifacts for the selected deploy group."""
+
     ttl_seconds: int
     """Number of seconds to protect the artifacts from admission."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

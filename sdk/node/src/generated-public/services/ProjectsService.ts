@@ -666,6 +666,9 @@ export class ProjectsService {
     undoOnHealthFailure = false,
     undoOnLiveTrafficFailure = false,
   }: {
+    /**
+     * Slug of the project whose rollback plan is being previewed.
+     */
     slug: string,
     /**
      * Restore the production revisions recorded for this project deploy. Used without all.
@@ -748,6 +751,9 @@ export class ProjectsService {
   public static listProjectRollbackTargets({
     slug,
   }: {
+    /**
+     * Slug of the project whose recorded deploys are being listed.
+     */
     slug: string,
   }): CancelablePromise<ProjectRollbackTargets> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -783,7 +789,13 @@ export class ProjectsService {
     deploy,
     requestBody,
   }: {
+    /**
+     * Slug of the project that owns the deploy artifacts.
+     */
     slug: string,
+    /**
+     * ID of the recorded deploy group whose artifacts will be protected.
+     */
     deploy: string,
     requestBody: ProtectProjectRollbackDeployRequest,
   }): CancelablePromise<ProjectRollbackProtection> {
@@ -823,6 +835,9 @@ export class ProjectsService {
   public static listProjectRollbacks({
     slug,
   }: {
+    /**
+     * Slug of the project to roll back or list rollback operations for.
+     */
     slug: string,
   }): CancelablePromise<ProjectRollbackHistory> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -857,6 +872,9 @@ export class ProjectsService {
     slug,
     requestBody,
   }: {
+    /**
+     * Slug of the project to roll back or list rollback operations for.
+     */
     slug: string,
     requestBody: ProjectRollbackRequest,
   }): CancelablePromise<ProjectRollbackOperation> {
@@ -895,7 +913,13 @@ export class ProjectsService {
     slug,
     operation,
   }: {
+    /**
+     * Slug of the project that owns the rollback receipt.
+     */
     slug: string,
+    /**
+     * ID of the operation whose receipt is requested.
+     */
     operation: string,
   }): CancelablePromise<ProjectRollbackOperation> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -910,7 +934,7 @@ export class ProjectsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `The rollback intent conflicts with current project state.`,
+        409: `The project cannot provide this rollback receipt in its current state.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -934,7 +958,13 @@ export class ProjectsService {
     operation,
     requestBody,
   }: {
+    /**
+     * Slug of the project whose rollback is resuming.
+     */
     slug: string,
+    /**
+     * ID of the paused rollback or undo to continue.
+     */
     operation: string,
     requestBody?: ProjectRollbackResumeRequest,
   }): CancelablePromise<ProjectRollbackOperation> {
@@ -952,7 +982,7 @@ export class ProjectsService {
         401: `code: unauthorized`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
-        409: `The rollback intent conflicts with current project state.`,
+        409: `The operation cannot resume, or the reviewed resume plan has changed.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
@@ -975,7 +1005,13 @@ export class ProjectsService {
     slug,
     operation,
   }: {
+    /**
+     * Slug of the project whose paused rollback is being reviewed for resume.
+     */
     slug: string,
+    /**
+     * ID of the paused operation to check before resuming.
+     */
     operation: string,
   }): CancelablePromise<ProjectRollbackOperation> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1013,7 +1049,13 @@ export class ProjectsService {
     slug,
     operation,
   }: {
+    /**
+     * Slug of the project whose rollback is being paused.
+     */
     slug: string,
+    /**
+     * ID of the running rollback or undo to pause.
+     */
     operation: string,
   }): CancelablePromise<ProjectRollbackOperation> {
     return __request(this?.clientConfig ?? OpenAPI, {
@@ -1052,6 +1094,9 @@ export class ProjectsService {
     operation,
     requestBody,
   }: {
+    /**
+     * Slug of the project whose switched revisions are being restored.
+     */
     slug: string,
     /**
      * The paused project rollback to undo.
@@ -1097,9 +1142,12 @@ export class ProjectsService {
     operation,
     acknowledgeReleases = false,
   }: {
+    /**
+     * Slug of the project whose inverse cutovers are being previewed.
+     */
     slug: string,
     /**
-     * The paused project rollback to undo.
+     * ID of the paused rollback whose completed cutovers would be undone.
      */
     operation: string,
     /**

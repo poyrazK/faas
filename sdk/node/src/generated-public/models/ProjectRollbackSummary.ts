@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Progress and receipt IDs for a recorded project rollback or undo.
+ */
 export type ProjectRollbackSummary = {
   operation_id: string;
   /**

@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Select production revisions to restore and configure rollback admission and verification.
+ */
 export type ProjectRollbackRequest = {
   all?: boolean;
   acknowledge_releases?: boolean;
@@ -14,7 +17,7 @@ export type ProjectRollbackRequest = {
    */
   verify_before_cutover?: boolean;
   /**
-   * Require this many seconds of healthy post-cutover HTTP probes before advancing. A positive value requires verify.
+   * Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify.
    */
   stabilize_for_seconds?: number;
   /**
@@ -38,7 +41,7 @@ export type ProjectRollbackRequest = {
    */
   expected_plan_hash?: string;
   /**
-   * Restore the production revisions recorded for this project deploy. Used without all.
+   * Recorded production deploy group to restore. Omit all when selecting a deploy group.
    */
   to_deploy?: string;
 };

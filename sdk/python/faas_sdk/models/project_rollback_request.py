@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ProjectRollbackRequest")
 
 @_attrs_define
 class ProjectRollbackRequest:
+    """Select production revisions to restore and configure rollback admission and verification."""
+
     all_: bool | Unset = False
     acknowledge_releases: bool | Unset = False
     verify: bool | Unset = False
@@ -22,8 +24,7 @@ class ProjectRollbackRequest:
     """Verify configured HTTP probes of all prepared revisions at zero traffic before the first cutover. Requires
     verify."""
     stabilize_for_seconds: int | Unset = 0
-    """Require this many seconds of healthy post-cutover HTTP probes before advancing. A positive value requires
-    verify."""
+    """Minimum healthy probe duration in seconds after each cutover. Nonzero values require verify."""
     verify_live_traffic: bool | Unset = False
     """Verify configured production 5xx budgets after cutover before advancing. Requires verify."""
     undo_on_health_failure: bool | Unset = False
@@ -36,7 +37,7 @@ class ProjectRollbackRequest:
     expected_plan_hash: str | Unset = UNSET
     """Plan hash from a runnable preview with the same rollback options."""
     to_deploy: UUID | Unset = UNSET
-    """Restore the production revisions recorded for this project deploy. Used without all."""
+    """Recorded production deploy group to restore. Omit all when selecting a deploy group."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

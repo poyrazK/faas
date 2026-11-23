@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ProjectRollbackUndoRequest")
 
 @_attrs_define
 class ProjectRollbackUndoRequest:
+    """Review and acknowledge the inverse of a paused rollback's completed cutovers."""
+
     acknowledge_releases: bool | Unset = False
     """Acknowledge release commands crossed by this undo."""
     expected_plan_hash: str | Unset = UNSET

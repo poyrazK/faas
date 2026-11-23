@@ -113,7 +113,8 @@ def sync_detailed(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackResumeRequest | Unset):
+        body (ProjectRollbackResumeRequest | Unset): Require a reviewed plan when resuming a
+            paused project rollback or undo.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +152,8 @@ def sync(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackResumeRequest | Unset):
+        body (ProjectRollbackResumeRequest | Unset): Require a reviewed plan when resuming a
+            paused project rollback or undo.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -184,7 +186,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackResumeRequest | Unset):
+        body (ProjectRollbackResumeRequest | Unset): Require a reviewed plan when resuming a
+            paused project rollback or undo.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -220,7 +223,8 @@ async def asyncio(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackResumeRequest | Unset):
+        body (ProjectRollbackResumeRequest | Unset): Require a reviewed plan when resuming a
+            paused project rollback or undo.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

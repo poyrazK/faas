@@ -14,6 +14,8 @@ T = TypeVar("T", bound="ProjectRollbackMember")
 
 @_attrs_define
 class ProjectRollbackMember:
+    """A service revision recorded in a production project deploy."""
+
     deployment_id: UUID
     revision: int
     scope: str

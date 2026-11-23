@@ -13,6 +13,8 @@ T = TypeVar("T", bound="ProjectRollbackProtection")
 
 @_attrs_define
 class ProjectRollbackProtection:
+    """Saved retention window and storage size for a protected deploy group."""
+
     deploy_group_id: UUID
     expires_at: datetime.datetime
     layer_bytes: int

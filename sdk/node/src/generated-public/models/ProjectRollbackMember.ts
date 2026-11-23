@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * A service revision recorded in a production project deploy.
+ */
 export type ProjectRollbackMember = {
   /**
    * App slug when the app is still attached to the project.

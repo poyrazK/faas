@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProjectRollbackHistory")
 
 @_attrs_define
 class ProjectRollbackHistory:
+    """Project rollback receipts ordered with any running operation first."""
+
     project: str
     project_id: UUID
     operations: list[ProjectRollbackSummary]

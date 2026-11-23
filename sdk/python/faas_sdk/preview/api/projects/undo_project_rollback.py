@@ -119,7 +119,8 @@ def sync_detailed(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackUndoRequest | Unset):
+        body (ProjectRollbackUndoRequest | Unset): Review and acknowledge the inverse of a paused
+            rollback's completed cutovers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -158,7 +159,8 @@ def sync(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackUndoRequest | Unset):
+        body (ProjectRollbackUndoRequest | Unset): Review and acknowledge the inverse of a paused
+            rollback's completed cutovers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,7 +194,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackUndoRequest | Unset):
+        body (ProjectRollbackUndoRequest | Unset): Review and acknowledge the inverse of a paused
+            rollback's completed cutovers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -229,7 +232,8 @@ async def asyncio(
     Args:
         slug (str):
         operation (UUID):
-        body (ProjectRollbackUndoRequest | Unset):
+        body (ProjectRollbackUndoRequest | Unset): Review and acknowledge the inverse of a paused
+            rollback's completed cutovers.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

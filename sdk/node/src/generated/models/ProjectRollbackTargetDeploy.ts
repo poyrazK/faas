@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ProjectRollbackProtection } from './ProjectRollbackProtection.js';
+/**
+ * A production deploy group and any active artifact protection.
+ */
 export type ProjectRollbackTargetDeploy = {
   deploy_group_id: string;
   /**

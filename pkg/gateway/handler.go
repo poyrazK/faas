@@ -8839,7 +8839,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		decision.cache != "hit" && !strings.HasPrefix(decision.cache, "stale_") &&
 		target.InstanceID != "" && target.DeploymentID != "" && truncatedResponse(r) == nil && !isRouteProbe(r.Context()) {
 		if backend, ok := h.backend.(*PGBackend); ok {
-			backend.observeProjectRollbackResponse(appID, target.DeploymentID, startTime(r), time.Now())
+			backend.observeProjectRollbackResponse(r.Context(), appID, target.DeploymentID, startTime(r), time.Now())
 		}
 	}
 	level := requestLogLevel(code, cold)

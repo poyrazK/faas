@@ -95,6 +95,13 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/start":  authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/stop":   authz.OrgActionDeployProject,
 	"POST /v1/projects/{slug}/environments/{environment}/experiments/{key}/ship":   authz.OrgActionDeployProject,
+	// Layers and holdouts use the same project actions as experiments.
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-layers":          authz.OrgActionReadProject,
+	"POST /v1/projects/{slug}/environments/{environment}/experiment-layers":         authz.OrgActionDeployProject,
+	"DELETE /v1/projects/{slug}/environments/{environment}/experiment-layers/{key}": authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout":         authz.OrgActionReadProject,
+	"PUT /v1/projects/{slug}/environments/{environment}/experiment-holdout":         authz.OrgActionDeployProject,
+	"GET /v1/projects/{slug}/environments/{environment}/experiment-holdout/report":  authz.OrgActionReadProject,
 	// Product analytics reads (ADR-20261117084505) follow the flag reads;
 	// funnel and retention take their query as a POST body. Cohorts
 	// (ADR-20261119102741) target flags, so writing one deploys like a flag.

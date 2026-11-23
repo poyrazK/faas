@@ -57,7 +57,7 @@ func (b *PGBackend) WatchProjectRollbackRoute(app, deployment string, generation
 	time.AfterFunc(time.Until(expires), func() { b.projectRollbackWatches.CompareAndDelete(app, watch) })
 }
 
-func (b *PGBackend) observeProjectRollbackResponse(app, deployment string, startedAt, succeededAt time.Time) {
+func (b *PGBackend) observeProjectRollbackResponse(ctx context.Context, app, deployment string, startedAt, succeededAt time.Time) {
 	current, ok := b.projectRollbackWatches.Load(app)
 	if !ok {
 		return
@@ -75,7 +75,7 @@ func (b *PGBackend) observeProjectRollbackResponse(app, deployment string, start
 	watch.mu.Unlock()
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
 		defer cancel()
 		recorded, _ := watch.record(ctx, startedAt, succeededAt)
 		watch.mu.Lock()

@@ -12,15 +12,20 @@ func TestProjectRollbackWatchRequiresRestoredDeployment(t *testing.T) {
 	before := time.Now().Add(-time.Second)
 	observed := make(chan time.Time, 2)
 	backend.WatchProjectRollbackRoute("app", "restored", 42, time.Now().Add(time.Minute),
-		func(_ context.Context, started, _ time.Time) (bool, error) {
+		func(ctx context.Context, started, _ time.Time) (bool, error) {
+			if err := ctx.Err(); err != nil {
+				t.Errorf("response evidence context was canceled: %v", err)
+			}
 			observed <- started
 			return true, nil
 		})
+	requestCtx, cancel := context.WithCancel(t.Context())
+	cancel()
 	outgoing := time.Now()
 	started := outgoing.Add(time.Nanosecond)
-	backend.observeProjectRollbackResponse("app", "outgoing", outgoing, time.Now())
-	backend.observeProjectRollbackResponse("app", "restored", before, time.Now())
-	backend.observeProjectRollbackResponse("app", "restored", started, time.Now())
+	backend.observeProjectRollbackResponse(requestCtx, "app", "outgoing", outgoing, time.Now())
+	backend.observeProjectRollbackResponse(requestCtx, "app", "restored", before, time.Now())
+	backend.observeProjectRollbackResponse(requestCtx, "app", "restored", started, time.Now())
 	select {
 	case got := <-observed:
 		if !got.Equal(started) {

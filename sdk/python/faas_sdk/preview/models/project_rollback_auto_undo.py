@@ -23,6 +23,8 @@ T = TypeVar("T", bound="ProjectRollbackAutoUndo")
 
 @_attrs_define
 class ProjectRollbackAutoUndo:
+    """The trigger and outcome of an automatic undo after a confirmed health failure."""
+
     status: ProjectRollbackAutoUndoStatus
     trigger_app_id: UUID
     """Service with the confirmed 5xx failure."""

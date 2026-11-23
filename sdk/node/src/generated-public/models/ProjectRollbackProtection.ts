@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Saved retention window and storage size for a protected deploy group.
+ */
 export type ProjectRollbackProtection = {
   deploy_group_id: string;
   expires_at: string;

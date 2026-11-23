@@ -27,6 +27,8 @@ T = TypeVar("T", bound="ProjectRollbackStep")
 
 @_attrs_define
 class ProjectRollbackStep:
+    """Planned or observed rollback for one service and its exact revision pair."""
+
     service: str
     slug: str
     status: ProjectRollbackStepStatus

@@ -19,11 +19,14 @@ T = TypeVar("T", bound="ProjectRollbackTargetDeploy")
 
 @_attrs_define
 class ProjectRollbackTargetDeploy:
+    """A production deploy group and any active artifact protection."""
+
     deploy_group_id: UUID
     created_at: datetime.datetime
     """Creation time of the newest deployment in the group."""
     service_count: int
     protection: ProjectRollbackProtection | Unset = UNSET
+    """Saved retention window and storage size for a protected deploy group."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

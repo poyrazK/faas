@@ -24,6 +24,8 @@ T = TypeVar("T", bound="ProjectRollbackOperation")
 
 @_attrs_define
 class ProjectRollbackOperation:
+    """A rollback plan or durable receipt with per-service cutovers and verification."""
+
     project: str
     project_id: UUID
     status: ProjectRollbackOperationStatus
@@ -54,12 +56,13 @@ class ProjectRollbackOperation:
     undo_on_live_traffic_failure: bool | Unset = UNSET
     """Whether a sustained production 5xx breach can trigger automatic undo."""
     auto_undo: ProjectRollbackAutoUndo | Unset = UNSET
+    """The trigger and outcome of an automatic undo after a confirmed health failure."""
     phase: str | Unset = UNSET
     """Preparation phase of the operation, either preparing, cutover, or releasing."""
     pause_requested_at: datetime.datetime | Unset = UNSET
     """When an operator requested the current pause. Cleared on resume."""
     preparation_deadline: datetime.datetime | Unset = UNSET
-    """Deadline for unused preparation capacity."""
+    """Deadline for preparation"""
     created_at: datetime.datetime | Unset = UNSET
     updated_at: datetime.datetime | Unset = UNSET
     recovery_ms: int | Unset = UNSET

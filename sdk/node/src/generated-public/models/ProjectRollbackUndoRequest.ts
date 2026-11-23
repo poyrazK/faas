@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * Review and acknowledge the inverse of a paused rollback's completed cutovers.
+ */
 export type ProjectRollbackUndoRequest = {
   /**
    * Acknowledge release commands crossed by this undo.

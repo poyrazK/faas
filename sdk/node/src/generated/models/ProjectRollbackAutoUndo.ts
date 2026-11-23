@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { Problem } from './Problem.js';
+/**
+ * The trigger and outcome of an automatic undo after a confirmed health failure.
+ */
 export type ProjectRollbackAutoUndo = {
   status: 'pending' | 'ready' | 'started' | 'blocked';
   /**

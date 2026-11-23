@@ -16,6 +16,8 @@ T = TypeVar("T", bound="ProjectRollbackTargets")
 
 @_attrs_define
 class ProjectRollbackTargets:
+    """Recorded project deploy groups available for rollback preview."""
+
     project: str
     project_id: UUID
     deploys: list[ProjectRollbackTargetDeploy]

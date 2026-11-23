@@ -307,7 +307,7 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 	if err := ack(oldGeneration, "rollback-edge-b"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("stale generation ack: %v", err)
 	}
-	if err := ack(route, "rollback-edge-a"); err != nil {
+	if err := ack(route, "rollback-edge-b"); err != nil {
 		t.Fatal(err)
 	}
 	response(route, tmin, time.Now().UTC(), false)
@@ -320,12 +320,13 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec(`UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE name = 'rollback-edge-b'`)
+	exec(`UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE name = 'rollback-edge-a'`)
 	replay(child.ID)
 	read("awaiting_gateways")
+	exec(`UPDATE compute_nodes SET lifecycle = 'active' WHERE name = 'rollback-edge-a'`)
 
-	// A resume after a gateway is retired reopens the same generation.
-	// Its replacement must apply the route before the barrier can pass.
+	// Edge B acknowledged before retirement. An ACK from A before replay
+	// must count the replacement C instead of completing the old roster.
 	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-b'`)
 	exec(`INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb,role,lifecycle,gateway_target_url)
 	      VALUES('rollback-edge-c','unix:///run/test.sock',2,1024,10,512,'compute-only','active','tcp://127.0.0.1:8080')`)
@@ -335,6 +336,10 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 		r.RouteGeneration == nil || *r.RouteGeneration != route.Generation {
 		t.Fatalf("rearmed gateway wait after retirement = %+v, %v", r, err)
 	}
+	if err := ack(route, "rollback-edge-a"); err != nil {
+		t.Fatal(err)
+	}
+	read("awaiting_gateways")
 	replay(child.ID)
 	read("awaiting_gateways")
 	if err := ack(route, "rollback-edge-b"); !errors.Is(err, state.ErrNotFound) {

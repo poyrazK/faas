@@ -10,6 +10,9 @@ import type { ProjectRollbackPreCutoverHealth } from './ProjectRollbackPreCutove
 import type { ProjectRollbackTraffic } from './ProjectRollbackTraffic.js';
 import type { ProjectRollbackUndoArtifacts } from './ProjectRollbackUndoArtifacts.js';
 import type { RollbackCrossedRelease } from './RollbackCrossedRelease.js';
+/**
+ * Planned or observed rollback for one service and its exact revision pair.
+ */
 export type ProjectRollbackStep = {
   service: string;
   slug: string;
