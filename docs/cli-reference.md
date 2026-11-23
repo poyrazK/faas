@@ -3283,7 +3283,7 @@ Reuse an idempotency key only with the same async request within the server&#39;
 
 ### invocation watch
 
-Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)
+Watch async invocations finish across your account in real time
 
 `gregale invocation watch [--app <slug>] [--include-stateless] [<slug>]`
 
@@ -3291,6 +3291,8 @@ Watch async invocations finish across your account in real time (not app output 
 |---|---|---|
 | `--app <slug>` | filter to a single app slug (optional) |  |
 | `--include-stateless` | also print stateless.advisory frames (default: hide) |  |
+
+This shows invocation results, not app output or HTTP requests; for those, run `gregale logs --follow`.
 
 ### invocation list
 
@@ -4737,13 +4739,12 @@ With overage on, databases keep running up to twice the allowance.
 
 Show whether databases keep running past the monthly compute allowance
 
-`gregale postgres overage get [on|off]`
+`gregale postgres overage get`
 
 Examples:
 
 ```sh
 gregale postgres overage get
-gregale postgres overage get set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
@@ -4757,7 +4758,6 @@ Turn compute overage on or off (on: databases run up to twice the allowance)
 Examples:
 
 ```sh
-gregale postgres overage set get
 gregale postgres overage set on
 ```
 
@@ -5045,7 +5045,7 @@ gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 
 ### postgres query
 
-Run one SQL query and print rows (read-only unless --write)
+Run one SQL query and print rows; read-only by default
 
 `gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
 

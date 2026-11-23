@@ -14,8 +14,8 @@ import (
 // minus lines the platform's own build tooling causes and the customer cannot
 // act on. Railpack's Node provider sets NPM_CONFIG_PRODUCTION=false, so every
 // npm step printed "npm warn config production Use `--omit=dev` instead."
-// (prod 2026-11-20). The unfiltered output still reaches the build failure
-// tail.
+// (prod 2026-11-20). The build log tail builderd shows is cut from the same
+// filtered text (withoutPlatformBuildNoise, prod hunt r29).
 type buildOutputFilter struct {
 	out     io.Writer
 	partial []byte
@@ -55,6 +55,19 @@ func (f *buildOutputFilter) Flush() {
 		_, _ = f.out.Write(f.partial)
 	}
 	f.partial = f.partial[:0]
+}
+
+// withoutPlatformBuildNoise drops platformBuildNoise lines from a complete
+// build-command capture. builderd shows the build report's log tail to the
+// customer as "[guest build output]" on every deploy, and that tail was cut
+// from the unfiltered capture, so the noise the console filter drops still
+// reached the deploy log (prod hunt r29, rc.373).
+func withoutPlatformBuildNoise(raw []byte) []byte {
+	var out bytes.Buffer
+	f := newBuildOutputFilter(&out)
+	_, _ = f.Write(raw)
+	f.Flush()
+	return out.Bytes()
 }
 
 // platformBuildNoise matches npm's deprecation of the production config,

@@ -493,7 +493,10 @@ func selectInspectDeployments(deployments []api.DeploymentResponse) (current, ne
 		}
 	}
 	latest := &deployments[0]
-	if current.ID != latest.ID && latest.Status == "failed" && latest.TrafficPercent == 0 {
+	// A canary the rollout aborted stays "live" at 0%: health answered "No
+	// urgent issues" after the latest deploy was rolled back (prod hunt r31).
+	aborted := latest.Status == "live" && latest.RolloutState == "aborted"
+	if current.ID != latest.ID && (latest.Status == "failed" || aborted) && latest.TrafficPercent == 0 {
 		newerFailedCandidate = latest
 	}
 	return current, newerFailedCandidate
@@ -628,9 +631,15 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	}
 	if summary.Release.NewerFailedCandidate != nil {
 		candidate := summary.Release.NewerFailedCandidate
-		add("newer_candidate_failed", "warning",
-			"A newer zero-traffic deployment candidate failed; the serving release remains active.",
-			"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		if candidate.RolloutState == "aborted" {
+			add("newer_candidate_failed", "warning",
+				"The newest deployment "+candidate.DeploymentID+" was rolled back during its rollout; the previous release still serves.",
+				"Run `gregale release timeline "+candidate.DeploymentID+" --app "+summary.App.Slug+"` for why it stopped.")
+		} else {
+			add("newer_candidate_failed", "warning",
+				"A newer zero-traffic deployment candidate failed; the serving release remains active.",
+				"Run `gregale inspect "+summary.App.Slug+" --errors` for candidate "+candidate.DeploymentID+" failure details.")
+		}
 	}
 	// An image deploy runs the image's own ENTRYPOINT/CMD: there is no source
 	// to detect a framework from and no Dockerfile to add, so a healthy nginx
