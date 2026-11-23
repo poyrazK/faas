@@ -15,6 +15,13 @@
 # refuses to start while another session's Firecracker VMs run, runs
 # leakcheck before and after, and removes its work directory.
 #
+# Timings (pause, fork, warm snapshots) match production only when DIR is on
+# the node's reflink-capable /srv/fc (XFS) and FAAS_TEST_JAIL_BASE names a
+# tmpfs, as production's /srv/fc/jail is: on ext4 every session drive is
+# copied, and with a disk-backed jail Firecracker writes all guest memory to
+# disk (a 1 GB pause took 12.5 s that way, 1.3 s laid out as production).
+# FAAS_TEST_SANDBOX_MEM_MIB sizes the pause test's session.
+#
 # KERNEL=<vmlinux> skips the kernel build and uses that kernel; with a
 # kernel that loads modules the "loads no kernel code" subtest fails, so
 # pair it with RUN=<-test.run pattern> to pick the subtests to run.

@@ -4135,6 +4135,15 @@ func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, siz
 	// Firecracker has stopped issuing writes at this point. Flush the host's
 	// dirty pages before reflinking so the clone is also durable if the node
 	// fails while the snapshot is being published.
+	start := time.Now()
+	var syncMS, exclusiveMS int64
+	var reflinked bool
+	defer func() {
+		if err == nil {
+			slog.Default().Info("vmm: freeze drive timing", "instance", instance, "sync_ms", syncMS,
+				"exclusive_ms", exclusiveMS, "clone_ms", time.Since(start).Milliseconds()-syncMS-exclusiveMS, "reflink", reflinked)
+		}
+	}()
 	sourceFile, err := os.Open(source)
 	if err != nil {
 		return "", 0, -1, err
@@ -4146,15 +4155,18 @@ func (v *JailerVMM) freezeSnapshotDrive(root, instance string) (path string, siz
 	if err := sourceFile.Close(); err != nil {
 		return "", 0, -1, err
 	}
+	syncMS = time.Since(start).Milliseconds()
 
 	written = -1
 	if exclusive, ok := storage.ExclusiveBytes(source); ok {
 		written = exclusive
 	}
+	exclusiveMS = time.Since(start).Milliseconds() - syncMS
 	clone, cloned, err := reflinkCloneTemp(source, instance)
 	if err != nil {
 		return "", 0, -1, err
 	}
+	reflinked = cloned
 	if cloned {
 		path = clone
 	} else {
@@ -5770,6 +5782,8 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	execFile = v.residentExecutable(FirecrackerBin, execFile)
 	argv := append(JailerCommand(JailerSpec{
 		Instance: l.Instance, UID: l.UID, GID: l.GID, Netns: l.Netns, ExecFile: execFile,
+		// The jailer builds the chroot where this VMM looks for it.
+		ChrootBase:   v.chrootBase,
 		Plan:         l.Plan,
 		ParentCgroup: l.cgroupParent,
 		Networkless:  l.Networkless,
