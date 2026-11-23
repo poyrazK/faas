@@ -338,6 +338,10 @@ See [Billing](billing.md#cancel-and-resume).
 
 HTTP 501 Not Implemented · Billing provider not initialised; State store not initialised
 
+### `binding_not_granted`
+
+HTTP 403 Forbidden · Binding not granted
+
 ### `binding_verification_budget_full`
 
 HTTP 429 Too Many Requests · Verification budget full
@@ -3935,6 +3939,14 @@ See [CLI guide](cli-setup.md).
 HTTP 408 Request Timeout · Workflow wait timed out
 
 See [CLI guide](cli-setup.md).
+
+### `workload_bucket_not_found`
+
+HTTP 404 Not Found · Granted bucket not found
+
+### `workload_credential_limit`
+
+HTTP 429 Too Many Requests · Too many workload credentials
 
 ### `workload_not_production`
 
