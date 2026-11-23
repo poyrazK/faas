@@ -160,6 +160,13 @@ func installOrReuseStaged(releasesRoot, gitSHA, tarballPath string, stageOnly bo
 		return 3
 	}
 	defer unlock()
+	if stageOnly {
+		if skip := stageWouldTouchAnInstalledRelease(releasesRoot, gitSHA); skip != "" {
+			_, _ = fmt.Fprintf(stderr, "gregalectl release install: not staging %s: %s; activation installs it as before\n", gitSHA, skip)
+			jsonEmit(stdout, map[string]any{"git_sha": gitSHA, "staged": false, "skipped": skip})
+			return 0
+		}
+	}
 	reused, why := reuseStagedRelease(context.Background(), releasesRoot, gitSHA, tarballPath, verifier)
 	switch {
 	case reused:
@@ -193,6 +200,31 @@ func installOrReuseStaged(releasesRoot, gitSHA, tarballPath string, stageOnly bo
 	}
 	jsonEmit(stdout, map[string]any{"git_sha": gitSHA, "staged": true, "reused": reused})
 	return 0
+}
+
+// stageWouldTouchAnInstalledRelease returns why a stage must leave gitSHA
+// alone, or "". The marker means "prepared, never activated" to retention, so
+// a stage only ever marks a directory it creates (or re-checks its own
+// marker): never the active release (a rerun prepare on a node already
+// serving it, or a stage that waited on the lock while activation flipped),
+// and never a directory an earlier install left without a marker (a rollback
+// target). Marking either would let retention prune a rollback target.
+func stageWouldTouchAnInstalledRelease(releasesRoot, gitSHA string) string {
+	current, err := releaseinstall.CurrentGitSHA(releasesRoot)
+	if err != nil {
+		return fmt.Sprintf("cannot read the active release: %v", err)
+	}
+	if current == gitSHA {
+		return "it is the active release"
+	}
+	if _, err := os.Lstat(releaseinstall.BundleRoot(releasesRoot, gitSHA)); err == nil {
+		if _, markerErr := os.Lstat(stagedInstallMarkerPath(releasesRoot, gitSHA)); errors.Is(markerErr, os.ErrNotExist) {
+			return "an earlier install already placed it on this host"
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Sprintf("cannot inspect the release directory: %v", err)
+	}
+	return ""
 }
 
 // reuseStagedRelease reports whether the release tree staged during

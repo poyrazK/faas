@@ -210,6 +210,48 @@ func TestTamperedStagedBinaryFailsTheOnDiskVerify(t *testing.T) {
 	}
 }
 
+// Review round 2: a stage marks only directories it creates, so retention can
+// never mistake the active release or a rollback target for an abandoned stage.
+func TestStageOnlyLeavesInstalledReleasesUnmarked(t *testing.T) {
+	t.Run("active release", func(t *testing.T) {
+		root := t.TempDir()
+		tarballPath := writeStagedTestTriple(t, "v1")
+		stageForTest(t, root, tarballPath)
+		if err := releaseinstall.AtomicFlip(root, stagedTestSHA); err != nil {
+			t.Fatal(err)
+		}
+		if err := removeStagedInstallMarker(root, stagedTestSHA); err != nil { // as activation does
+			t.Fatal(err)
+		}
+		assertStageSkipped(t, root, tarballPath, "active release")
+	})
+	t.Run("earlier install without a marker", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(releaseinstall.BundleRoot(root, stagedTestSHA), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		assertStageSkipped(t, root, writeStagedTestTriple(t, "v1"), "earlier install")
+	})
+}
+
+func assertStageSkipped(t *testing.T, root, tarballPath, want string) {
+	t.Helper()
+	var out, errOut bytes.Buffer
+	verifier := &releaseinstall.FixtureCosignVerifier{Identity: "ci-identity"}
+	if code := installOrReuseStaged(root, stagedTestSHA, tarballPath, true, verifier, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), `"staged": false`) || !strings.Contains(out.String(), want) {
+		t.Fatalf("report = %s, want a skip naming %q", out.String(), want)
+	}
+	if verifier.CallCount != 0 {
+		t.Fatalf("cosign ran %d times for a skipped stage", verifier.CallCount)
+	}
+	if _, err := os.Stat(stagedInstallMarkerPath(root, stagedTestSHA)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a skipped stage left a marker: %v", err)
+	}
+}
+
 func TestStageOnlyRequiresTarballPath(t *testing.T) {
 	if code := cmdReleaseInstall([]string{"--git-sha", stagedTestSHA, "--stage-only"}); code != 2 {
 		t.Fatalf("exit %d, want 2", code)

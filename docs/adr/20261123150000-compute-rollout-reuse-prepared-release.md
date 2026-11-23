@@ -93,9 +93,16 @@ OVH S3 is not a factor: shared-base reads run at 40–70 MB/s.
 - The stage runs while the node serves tenants, so it runs under
   `systemd-run` with `MemoryMax=2G` and low CPU/IO weight (bhs-2 had 122 of
   125 GB available); hitting the cap only costs the reuse.
+- A stage only marks a directory it creates (or re-checks its own marker): it
+  skips the active release and any release directory an earlier install left
+  without a marker, so retention can never take the active release or a
+  rollback target for an abandoned stage. Every flip (canonical and legacy
+  path) removes the marker.
 - `release install` takes an exclusive lock (`<releases-root>/.install.lock`)
   for the tarball half, so a stage left running by a failed prepare play and
-  a rerun or activation never extract into the same directory at once.
+  a rerun or activation never extract into the same directory at once. The
+  wait is bounded (15 min) and the stage unit has `RuntimeMaxSec=840`, so a
+  hung stage cannot hold a drained node's activation indefinitely.
 - The first release carrying this changes `node_join.yml`, so its activation
   takes the converge path once (stale contract). The install saving applies
   from that release on, because preparation runs the new CLI from the release

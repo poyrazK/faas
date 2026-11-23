@@ -132,7 +132,9 @@ func Prune(releasesRoot, currentPath string, keepPrevious int, protected ...stri
 		// activation ever switched to is not a rollback target, so it must not
 		// take a keep-previous slot from one. Keep it while it is newer than
 		// the active release (its activation may still come); prune it after.
-		staged := item.id != current && stagedNeverActivated(item.path)
+		// Without an active release there is nothing to be newer than; treat
+		// every directory alike then.
+		staged := !currentModTime.IsZero() && item.id != current && stagedNeverActivated(item.path)
 		if staged && item.modTime.After(currentModTime) {
 			report.Kept = append(report.Kept, item.id)
 			continue

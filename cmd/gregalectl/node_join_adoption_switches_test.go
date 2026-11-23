@@ -132,7 +132,12 @@ func TestNodeJoinNoDrainInstallKeepsTheRowActive(t *testing.T) {
 	}
 	// The install comes after the no-drain decision it reads.
 	playbook := nodeJoinPlaybook(t)
-	if strings.Index(playbook, "faas_join_skip_drain: >-") > strings.Index(playbook, "- name: Install the verified release, keeping a drained row drained") {
+	decision := strings.Index(playbook, "faas_join_skip_drain: >-")
+	installAt := strings.Index(playbook, "- name: Install the verified release, keeping a drained row drained")
+	if decision < 0 || installAt < 0 {
+		t.Fatalf("node_join lost the no-drain decision (%d) or the activating install (%d)", decision, installAt)
+	}
+	if decision > installAt {
 		t.Fatal("the release install runs before the no-drain decision")
 	}
 	// ADR-20261123150000: the only earlier install is preparation's

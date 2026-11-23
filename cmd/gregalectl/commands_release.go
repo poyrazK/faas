@@ -421,6 +421,11 @@ func cmdReleaseInstall(args []string) int {
 			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: legacy flip symlink: %v\n", err)
 			return 3
 		}
+		// ADR-20261123150000: an activated release is never "staged".
+		if err := removeStagedInstallMarker(*releasesRoot, *gitSHA); err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: %v\n", err)
+			return 3
+		}
 		// role-flag handling on the legacy path is out of scope
 		// for this commit; the legacy path is a stop-gap and the
 		// operator is expected to re-install with --role after

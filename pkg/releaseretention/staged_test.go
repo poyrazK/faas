@@ -18,6 +18,38 @@ func TestStagedInstallMarkerNameMatchesReleaseinstall(t *testing.T) {
 
 // ADR-20261123150000: a release preparation staged but no activation switched
 // to must not push the real rollback target out of the keep-previous window.
+// Without an active release nothing is "newer than current": staged
+// directories count like any other, so they cannot pile up forever.
+func TestPruneWithoutCurrentTreatsStagesLikeReleases(t *testing.T) {
+	root := t.TempDir()
+	releases := filepath.Join(root, "releases")
+	ids := []string{
+		"0000000000000000000000000000000000000001",
+		"0000000000000000000000000000000000000002",
+		"0000000000000000000000000000000000000003",
+	}
+	for i, id := range ids {
+		dir := filepath.Join(releases, id)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, stagedInstallMarker), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Unix(int64(i+1)*100, 0)
+		if err := os.Chtimes(dir, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := Prune(releases, filepath.Join(root, "current"), 1)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if len(report.Removed) != 2 {
+		t.Fatalf("Removed = %v, want the two older stages", report.Removed)
+	}
+}
+
 func TestPruneDoesNotLetAnUnactivatedStageTakeARollbackSlot(t *testing.T) {
 	root := t.TempDir()
 	releases := filepath.Join(root, "releases")

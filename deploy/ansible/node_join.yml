@@ -1698,6 +1698,9 @@
           - --wait
           - --pipe
           - --collect
+          # Ends before async gives up and well before activation's
+          # bounded wait on the install lock.
+          - --property=RuntimeMaxSec=840
           - --property=MemoryMax=2G
           - --property=MemorySwapMax=0
           - --property=CPUWeight=20

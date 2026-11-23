@@ -3,10 +3,18 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"syscall"
+	"time"
+)
+
+// Variables so tests can shorten them.
+var (
+	releaseInstallLockWait = 15 * time.Minute
+	releaseInstallLockPoll = time.Second
 )
 
 // lockReleaseInstalls serializes `release install` runs on one host
@@ -23,9 +31,24 @@ func lockReleaseInstalls(releasesRoot string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("release install lock: open %s: %w", path, err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("release install lock: flock %s: %w", path, err)
+	// Bounded: a hung holder must not keep a drained node's activation
+	// waiting forever. node_join caps the stage unit at RuntimeMaxSec=840, so
+	// a healthy wait ends well inside this deadline.
+	deadline := time.Now().Add(releaseInstallLockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			_ = f.Close()
+			return nil, fmt.Errorf("release install lock: flock %s: %w", path, err)
+		}
+		if time.Now().After(deadline) {
+			_ = f.Close()
+			return nil, fmt.Errorf("release install lock: %s still held after %s by another release install (a stuck --stage-only?)", path, releaseInstallLockWait)
+		}
+		time.Sleep(releaseInstallLockPoll)
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
