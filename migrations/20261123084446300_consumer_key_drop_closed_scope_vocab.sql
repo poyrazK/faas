@@ -1,4 +1,4 @@
--- filename: 20261122194802151_consumer_key_drop_closed_scope_vocab.sql
+-- filename: 20261123084446300_consumer_key_drop_closed_scope_vocab.sql
 -- migration-compat: contract
 
 -- +goose Up

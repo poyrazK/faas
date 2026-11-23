@@ -1,4 +1,4 @@
--- filename: 20261122194747825_consumer_key_mcp_scopes.sql
+-- filename: 20261123084446100_consumer_key_mcp_scopes.sql
 -- migration-compat: expand
 
 -- +goose Up

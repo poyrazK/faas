@@ -1,4 +1,4 @@
--- filename: 20261122194756051_consumer_key_mcp_scopes_validate.sql
+-- filename: 20261123084446200_consumer_key_mcp_scopes_validate.sql
 -- migration-compat: expand
 
 -- +goose Up
