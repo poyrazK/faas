@@ -51944,7 +51944,7 @@ paths:
         The answer is the AWS container credential shape, limited to the
         grant's access and key prefix, and expires within the hour. Each
         instance holds at most 8 live credentials per bucket. Gated by the
-        cross_app_bindings platform flag (off: 404) (ADR-20261122191423).
+        cross_app_bindings platform flag (off: 404).
       security:
         - bindingsWorkloadIdentity: []
       requestBody:
@@ -75762,7 +75762,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance (ADR-20261122191423).
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance.
     bearerAuth:
       type: http
       scheme: bearer

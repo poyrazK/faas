@@ -17271,6 +17271,39 @@ paths:
         '403': {$ref: '#/components/responses/PlanFeatureGated'}
         '413': {$ref: '#/components/responses/PlanSourceBytes'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/workload/object-storage/credentials:
+    post:
+      tags: [storage]
+      operationId: workloadObjectCredentialIssue
+      summary: Trade a binding token for a one-hour S3 credential on a granted bucket.
+      description: |
+        Called by guest-init's loopback credential endpoint, not by customer
+        code. A live production instance presents its gregale:bindings
+        workload token and names a bucket its app's gregale.yaml `uses:`
+        grants (or omits the bucket when it holds exactly one bucket grant).
+        The answer is the AWS container credential shape, limited to the
+        grant's access and key prefix, and expires within the hour. Each
+        instance holds at most 8 live credentials per bucket. Gated by the
+        cross_app_bindings platform flag (off: 404).
+      security:
+        - bindingsWorkloadIdentity: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ObjectWorkloadCredentialRequest'}
+      responses:
+        '200':
+          description: The credential.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ObjectWorkloadCredentialResponse'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /v1/apps/{slug}/recovery-policy:
     get:
       operationId: getWorkflowRecoveryPolicy
@@ -25816,6 +25849,11 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Platform-issued short-lived RS256 workload JWT with audience gregale:flags.
+    bindingsWorkloadIdentity:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Platform-issued short-lived RS256 workload JWT with audience gregale:bindings, from a live production instance.
     bearerAuth:
       type: http
       scheme: bearer
@@ -50228,6 +50266,24 @@ components:
         policy: {type: string, pattern: '^[a-z][a-z0-9-]{0,62}$'}
         key: {description: "A bounded JSON string, number, or boolean. Equal typed values share one work lane."}
         fairness_key: {description: "Optional scalar shared by multiple work keys, such as a tenant ID. Defaults to key when the policy has a fairness cap."}
+    ObjectWorkloadCredentialRequest:
+      description: Body for POST /v1/workload/object-storage/credentials.
+      type: object
+      properties:
+        bucket: {type: string, maxLength: 128, description: "Granted bucket name. Optional when the app holds exactly one bucket grant."}
+    ObjectWorkloadCredentialResponse:
+      description: A workload S3 credential in the AWS container credential shape, plus where the workload may write.
+      type: object
+      required: [AccessKeyId, SecretAccessKey, Token, Expiration, Bucket]
+      properties:
+        AccessKeyId: {type: string, pattern: '^GRGW[A-Z2-7]{16}$'}
+        SecretAccessKey: {type: string}
+        Token: {type: string}
+        Expiration: {type: string, format: date-time}
+        Bucket: {type: string}
+        KeyPrefix: {type: string}
+        Endpoint: {type: string}
+        Region: {type: string}
     RetryPolicyDTO:
       description: |
         Wire shape for dispatch.RetryPolicy. max_attempts
