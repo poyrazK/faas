@@ -117,6 +117,8 @@ type ManagedPostgresDatabase struct {
 	ServiceClass            string                 `json:"service_class"`
 	Availability            string                 `json:"availability"`
 	ScaleToZero             bool                   `json:"scale_to_zero"`
+	SuspendTimeoutSeconds   int64                  `json:"suspend_timeout_seconds,omitempty"` // scale-to-zero only: idle seconds before suspend
+	SuspendTimeoutCustom    bool                   `json:"suspend_timeout_custom,omitempty"`  // the database's own value, not the default
 	StorageLimitBytes       int64                  `json:"storage_limit_bytes"`
 	RestoreWindowSeconds    int64                  `json:"restore_window_seconds"`
 	RestoreSourceDatabaseID string                 `json:"restore_source_database_id,omitempty"`

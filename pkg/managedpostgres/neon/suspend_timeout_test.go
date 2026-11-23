@@ -83,7 +83,7 @@ func TestConvergeSuspendTimeoutWritesOnlyASuspendedEndpoint(t *testing.T) {
 					writeResponse(t, w, http.StatusNotFound, nil)
 				}
 			}))
-			got, err := provider.ConvergeSuspendTimeout(context.Background(), "quiet-river-12345678")
+			got, err := provider.ConvergeSuspendTimeout(context.Background(), "quiet-river-12345678", 120)
 			if err != nil || got != tc.want {
 				t.Fatalf("ConvergeSuspendTimeout = %v, %v; want %v", got, err, tc.want)
 			}

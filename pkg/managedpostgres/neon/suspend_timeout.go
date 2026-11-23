@@ -11,10 +11,13 @@ import (
 var _ managedpostgres.SuspendTimeoutConverger = (*Provider)(nil)
 
 // ConvergeSuspendTimeout moves a scale-to-zero database's primary endpoint
-// onto the current suspend timeout. It writes only a suspended (idle),
+// onto target seconds. It writes only a suspended (idle),
 // enabled endpoint with nothing pending, so a compute serving queries or held
 // by a cap is never touched; anything else is deferred to a later sweep.
-func (p *Provider) ConvergeSuspendTimeout(ctx context.Context, providerResourceID string) (managedpostgres.SuspendTimeoutResult, error) {
+func (p *Provider) ConvergeSuspendTimeout(ctx context.Context, providerResourceID string, target int64) (managedpostgres.SuspendTimeoutResult, error) {
+	if target < managedpostgres.MinSuspendTimeoutSeconds || target > managedpostgres.MaxSuspendTimeoutSeconds {
+		return managedpostgres.SuspendTimeoutDeferred, managedpostgres.ErrInvalid
+	}
 	ref, err := parseResourceRef(providerResourceID)
 	if err != nil {
 		return managedpostgres.SuspendTimeoutDeferred, err
@@ -27,7 +30,6 @@ func (p *Provider) ConvergeSuspendTimeout(ctx context.Context, providerResourceI
 	if !ready || primary.ID == "" || !validProviderID.MatchString(primary.ID) {
 		return managedpostgres.SuspendTimeoutDeferred, nil
 	}
-	target := p.suspendTimeoutSeconds()
 	switch {
 	case primary.SuspendTimeoutSecond == -1 || primary.SuspendTimeoutSecond == target:
 		return managedpostgres.SuspendTimeoutConverged, nil
