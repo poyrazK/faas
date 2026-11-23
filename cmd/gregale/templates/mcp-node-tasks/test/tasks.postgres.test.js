@@ -2447,11 +2447,12 @@ test('quarantine fences new claims across heartbeats while preserving active lea
   assert.equal((await pool.query('SELECT draining FROM gregale_mcp_task_workers WHERE namespace=$1 AND worker_id=$2', [namespace, bad])).rows[0].draining, true);
 });
 
-for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
+for (const { title, useReceipt, receiptInbox, supervisor, deferredForm, formReplyFault, reviewedInput, respondOnce, cancelReplyFault, timeout } of [
   { title: 'keyed Task submission recovers the committed handle after a lost CLI reply', timeout: 75_000 },
   { title: 'private Task receipt resumes waiting after the CLI dies and the retry window closes', useReceipt: true, timeout: 90_000 },
   { title: 'private Task receipt resumes deferred form input after the submitting CLI dies', useReceipt: true, deferredForm: true, timeout: 35_000 },
   { title: 'receipt directory recovers the original Tasks after the submitting CLI dies', useReceipt: true, receiptInbox: true, deferredForm: true, timeout: 35_000 },
+  { title: 'Task supervisor restarts after submission and approval and saves one result', useReceipt: true, supervisor: true, deferredForm: true, formReplyFault: 'after', timeout: 45_000 },
   { title: 'receipt wait recovers a form reply lost after commit', useReceipt: true, deferredForm: true, formReplyFault: 'after', timeout: 35_000 },
   { title: 'receipt wait reports pending input for a form reply lost before commit', useReceipt: true, deferredForm: true, formReplyFault: 'before', timeout: 35_000 },
   { title: 'reviewed Task input stays bound to the original Task and form after restart', useReceipt: true, deferredForm: true, reviewedInput: true, timeout: 45_000 },
@@ -2465,7 +2466,7 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
   timeout,
 }, async t => {
   const { execFile } = await import('node:child_process');
-  const { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } = await import('node:fs/promises');
+  const { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } = await import('node:fs/promises');
   const { createServer } = await import('node:http');
   const { tmpdir } = await import('node:os');
   const { resolve } = await import('node:path');
@@ -2475,7 +2476,8 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
   const run = promisify(execFile);
   const clientDir = await mkdtemp(join(tmpdir(), 'gregale-task-submission-'));
   t.after(() => rm(clientDir, { recursive: true, force: true }));
-  const receiptDir = receiptInbox ? join(clientDir, 'receipts') : clientDir;
+  const supervisorDir = join(clientDir, 'work');
+  const receiptDir = supervisor ? join(supervisorDir, 'receipts') : receiptInbox ? join(clientDir, 'receipts') : clientDir;
   if (receiptInbox) await mkdir(receiptDir, { mode: 0o700 });
   const receiptPath = join(receiptDir, 'task-receipt.json');
   const { store, pool, namespace } = await harness(t, { ttlMs: 120_000 });
@@ -2495,18 +2497,23 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
   };
   const report = 'Original private report';
   const watchGates = respondOnce && !formReplyFault ? Array.from({ length: 2 }, () => Promise.withResolvers()) : [];
+  const finishSupervisorReport = Promise.withResolvers();
   let executions = 0;
   let subscriptions = 0;
   const buildReport = mcpTaskHandlers.build_report;
   let handlers = deferredForm ? mcpTaskHandlers : {
     build_report: { version: '1', async execute() { return { content: [{ type: 'text', text: report }] }; } },
   };
-  if (watchGates.length) {
+  if (supervisor || watchGates.length) {
     handlers = { ...handlers, build_report: { ...buildReport, async execute(args, context) {
       if (args.report === 'original') {
-        // Pause the initial execution and its replay until each watch subscribes.
-        const gate = watchGates[executions++];
-        if (gate) await gate.promise;
+        if (supervisor) {
+          if (executions++ > 0) await finishSupervisorReport.promise;
+        } else {
+          // Pause the initial execution and its replay until each watch subscribes.
+          const gate = watchGates[executions++];
+          if (gate) await gate.promise;
+        }
       }
       return buildReport.execute(args, context);
     } } };
@@ -2519,8 +2526,15 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
   const rows = async () => (await pool.query(`SELECT task_id::text, status, attempt_count,
     result_encrypted IS NOT NULL AS has_result FROM gregale_mcp_tasks WHERE namespace=$1`, [namespace])).rows;
   let dropFirstReply = true, committedID, proxyError, submittingCLI;
+  let respondingSupervisor;
   let pendingFormReplyFault = formReplyFault, pendingCancelReplyFault = cancelReplyFault;
   const requests = [];
+  async function killAfterCommit(child) {
+    const exited = once(child, 'exit');
+    assert.ok(child.kill('SIGKILL'));
+    const [, signal] = await exited;
+    assert.equal(signal, 'SIGKILL');
+  }
   const server = createServer((req, res) => {
     // The relay commits the request through the real handler. Count only
     // updates and cancellations sent by the CLI when checking for repeats.
@@ -2528,6 +2542,7 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
     const method = req.headers['mcp-method'];
     requests.push(method);
     if (method === 'subscriptions/listen' && watchGates.length) watchGates[subscriptions++]?.resolve();
+    if (method === 'subscriptions/listen' && supervisor) finishSupervisorReport.resolve();
     const dropSubmission = dropFirstReply && method === 'gregale/tasks/submit';
     const dropFormReply = method === 'tasks/update' && pendingFormReplyFault;
     const dropCancelReply = method === 'tasks/cancel' && pendingCancelReplyFault;
@@ -2568,17 +2583,13 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
       if (dropFormReply === 'after') {
         const task = (await rows()).find(row => row.task_id === committedID);
         assert.ok(task && ['queued', 'running', 'completed'].includes(task.status), 'form update did not commit');
+        if (supervisor) await killAfterCommit(respondingSupervisor);
         return;
       }
       const persisted = await rows();
       assert.equal(persisted.length, 1);
       committedID = persisted[0].task_id;
-      if (useReceipt) {
-        const exited = once(submittingCLI, 'exit');
-        assert.ok(submittingCLI.kill('SIGKILL'));
-        const [, signal] = await exited;
-        assert.equal(signal, 'SIGKILL');
-      }
+      if (useReceipt) await killAfterCommit(submittingCLI);
     })().catch(error => { proxyError = error; }).finally(() => res.destroy());
   });
   try {
@@ -2598,6 +2609,19 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
       assert.equal(response.code, expectedCode, `unexpected exit from mcp client ${verb}: ${response.stderr}`);
       return response.stdout;
     }
+    function startSupervisor(command, args = []) {
+      const example = fileURLToPath(new URL('../examples/task-supervisor.mjs', import.meta.url));
+      return run(process.execPath, [example, command, '--url', endpoint, '--dir', supervisorDir,
+        '--token-env', 'GREGALE_JOURNEY_TOKEN', ...args], {
+        cwd: clientDir, env: { XDG_CONFIG_HOME: clientDir, GREGALE_JOURNEY_TOKEN: owner, GREGALE_BIN: binary },
+        timeout: 12_000,
+      });
+    }
+    async function runSupervisor() {
+      const { stdout, stderr } = await startSupervisor('run');
+      assert.ok(!stdout.includes(owner) && !stderr.includes(owner), 'supervisor leaked a caller token');
+      return stdout.trim().split('\n').map(line => JSON.parse(line));
+    }
     // Use a real, already aged UUID so the test crosses the replay deadline
     // without changing either the stored key or the database clock.
     const issuedAt = Date.now() - 30_000;
@@ -2611,7 +2635,8 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
       '--arguments', JSON.stringify(args), ...(deferredForm ? ['--defer-form-input'] : [])];
     const receiptCall = receiptCallFor(receiptPath, receiptArgs);
     if (useReceipt) {
-      const pending = startCLI('call', owner, receiptCall);
+      const pending = supervisor ? startSupervisor('submit', ['--report', 'original', '--receipt', 'task-receipt.json']) :
+        startCLI('call', owner, receiptCall);
       submittingCLI = pending.child;
       await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
     } else {
@@ -2620,6 +2645,48 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
     assert.ifError(proxyError);
     assert.ok(committedID, 'the first CLI reply must be dropped after a confirmed PostgreSQL commit');
     const selector = useReceipt ? ['--task-receipt', receiptPath] : ['--task-submission-key', key];
+    if (supervisor) {
+      await eventually(async () => (await rows())[0]?.status === 'input_required', 'worker did not persist the review form');
+      const receipt = 'task-receipt.json';
+      const reviewFile = join('reviews', receipt);
+      const resultFile = join('results', receipt);
+      assert.deepEqual(await runSupervisor(), [{ receipt, action: 'review_required', file: reviewFile }]);
+      assert.equal(requests.filter(method => method === 'tasks/update').length, 0);
+      const reviewPath = join(supervisorDir, reviewFile);
+      const template = JSON.parse(await readFile(reviewPath, 'utf8'));
+      assert.equal((await stat(reviewPath)).mode & 0o777, 0o600);
+      assert.equal(template.taskId, committedID);
+      assert.equal(template.forms.approval.response, null);
+      template.forms.approval.response = { action: 'accept', content: { approved: true } };
+      await writeFile(reviewPath, JSON.stringify(template));
+
+      const pending = startSupervisor('run');
+      respondingSupervisor = pending.child;
+      await assert.rejects(pending, error => error.signal === 'SIGKILL' && error.stdout === '');
+      assert.ifError(proxyError);
+      const beforeResume = requests.length;
+      assert.deepEqual(await runSupervisor(), [{ receipt, action: 'result_saved', file: resultFile }]);
+      assert.ok(requests.slice(beforeResume).includes('subscriptions/listen'));
+      assert.equal(requests.filter(method => method === 'tasks/update').length, 1);
+      assert.equal(requests.filter(method => method === 'gregale/tasks/submit').length, 2, 'one submission relayed by the test server');
+      const destination = join(supervisorDir, resultFile);
+      const before = await stat(destination);
+      const saved = await readFile(destination);
+      assert.equal(before.mode & 0o777, 0o600);
+      const completed = JSON.parse(saved);
+      assert.equal(completed.taskId, committedID);
+      assert.equal(completed.status, 'completed');
+      assert.equal(completed.result.content[0].text, 'Report original is ready after 1 steps.');
+
+      const beforeReplay = requests.length;
+      assert.deepEqual(await runSupervisor(), [{ receipt, action: 'already_saved', file: resultFile }]);
+      assert.deepEqual(requests.slice(beforeReplay), ['server/discover', 'gregale/tasks/lookup']);
+      assert.equal((await stat(destination)).ino, before.ino);
+      assert.deepEqual(await readFile(destination), saved);
+      assert.deepEqual(await readdir(join(supervisorDir, 'results')), [receipt]);
+      assert.deepEqual(await rows(), [{ task_id: committedID, status: 'completed', attempt_count: 1, has_result: true }]);
+      return;
+    }
     if (receiptInbox) {
       async function submitInboxReceipt(name, credential) {
         const { result } = JSON.parse(await cli('call', credential, 0,
@@ -2965,6 +3032,7 @@ for (const { title, useReceipt, receiptInbox, deferredForm, formReplyFault, revi
     }
   } finally {
     for (const gate of watchGates) gate.resolve();
+    finishSupervisorReport.resolve();
     api.closeTaskSubscriptions();
     await new Promise(resolveClose => { server.close(resolveClose); server.closeAllConnections(); });
     await api.handler.close();

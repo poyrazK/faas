@@ -322,6 +322,33 @@ When the last watched Task expires or becomes inaccessible, its subscription
 slot and database listener are released. A Task-only SSE stream finishes; any
 resource or catalog filters on the same stream continue receiving updates.
 
+### Resume a report with the example supervisor
+
+The [Task supervisor](examples/task-supervisor.mjs) calls the Gregale CLI using
+the credential named by `--token-env`. Use a CLI with receipt-directory status
+and batch watching. Set `GREGALE_BIN` if that CLI is outside your PATH. Keep the
+supervisor's private workspace outside the deployed source directory.
+
+```sh
+node examples/task-supervisor.mjs submit --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work --receipt weekly.json --report weekly
+node examples/task-supervisor.mjs run --app my-mcp --token-env MCP_TOKEN \
+  --dir ../task-work
+```
+
+The `run` command discovers retained Tasks from `receipts/` and watches active
+work. The example handles the starter report's approval round. When it emits
+`review_required`, open the indicated private file in `reviews/` and review the
+form. To approve the sample report, set its `response` to
+`{"action":"accept","content":{"approved":true}}`, then run the same `run`
+command again. The CLI checks the live Task and form before submitting the
+answer. If a run is interrupted, restart with `run` and the same workspace.
+
+Completed results are published once to private files in `results/`, using the
+receipt filename. The example checks the saved Task ID on later runs and
+reports `already_saved`. Standard output contains JSON action records with
+filenames for review or result files.
+
 The portable suite exercises the MCP wire with a memory store and checks SQL
 parameters through a fake PostgreSQL pool. The repository's PostgreSQL 16
 integration job also runs the store against a real database, covering table
