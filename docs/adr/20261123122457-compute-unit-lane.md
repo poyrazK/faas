@@ -102,6 +102,34 @@ any of the following:
   compute unit files);
 - a contract migration, `go.mod`, or any other existing blocking path.
 
+The compute step runs only for a range that has a commit changing code
+that **only** shared or compute daemons read (`compute_only_commits`). A
+range that reaches them only through a package every lane reads leaves
+them at base, as today. So:
+
+- a control-plane commit keeps its under-4-minute path;
+- vmmd restarts only for a change of its own, not for every edit to a
+  shared package (vmmd's code changes in most merges through those).
+
+Once the step runs, it carries every shared or compute binary whose
+inputs changed since base. The per-host plan restarts only the binaries
+whose code differs from what that host runs.
+
+Each daemon rides the lane that already reaches its host:
+
+- **schedd's control-plane service** goes in the control-plane lane's
+  activation;
+- **compute-node services** go in the edge lane's per-node job;
+- **helpers** (the four bridges, the jail helper and the guest-disk tool)
+  are replaced in the overlay and never restarted. vmmd starts each
+  bridge from `/opt/faas/current/bin`, and the jail helper and the
+  guest-disk tool sit beside vmmd's executable.
+
+The lane ships switched off (`release_units.json` `compute_lane.enabled`).
+While it is off, the analyzer keeps today's rules: compute binaries stay
+at base, and a commit that crosses lanes blocks. It is switched on only
+after build steps 2 and 3 below.
+
 `guest/`, `images/` and kernel paths stay `pending`. They wait for the full
 release, as they do today. Runtime goes last in the deploy order, so a
 newer vmmd beside an older guest is the normal skew (release-compatibility.md).
