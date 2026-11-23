@@ -17,6 +17,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestMetalSandboxPauseAndResume(t *testing.T) {
 	ctx := context.Background()
 	const account, sandboxID, instance = "acct-pause", "sbx-pause-session", "sbx-pause-1"
 	req := SandboxWakeRequest{Instance: instance, SandboxID: sandboxID, AccountID: account, Plan: api.PlanPro,
-		BaseKey: base, LayerKey: sandboxRootLayer(t), VcpuCount: 1, MemSizeMiB: 1024, CPUMillicores: 1000,
+		BaseKey: base, LayerKey: sandboxRootLayer(t), VcpuCount: 1, MemSizeMiB: metalSandboxMemMiB(t), CPUMillicores: 1000,
 		Network: api.SandboxNetworkRegistries}
 	inst, err := m.WakeSandbox(ctx, req)
 	if err != nil {
@@ -174,4 +175,19 @@ echo "now=$(date +%s)"`)
 			t.Fatal(err)
 		}
 	}
+}
+
+// metalSandboxMemMiB is the paused session's memory: 1024 MiB, or
+// FAAS_TEST_SANDBOX_MEM_MIB to measure how pause and resume scale with it.
+func metalSandboxMemMiB(t *testing.T) int {
+	t.Helper()
+	raw := os.Getenv("FAAS_TEST_SANDBOX_MEM_MIB")
+	if raw == "" {
+		return 1024
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 256 {
+		t.Fatalf("FAAS_TEST_SANDBOX_MEM_MIB=%q: want a size in MiB of at least 256", raw)
+	}
+	return n
 }
