@@ -163,27 +163,30 @@ func TestLoggedOutHelpShowsTierDefaults(t *testing.T) {
 	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
 
 	// Core realtime is beta (ADR-20261123074615), so the preview command
-	// here is slos (custom-slos).
+	// here is data-api.
+	// data-api is also a starter template name, so completion is checked
+	// by the command's own block, not the bare word.
+	const dataAPIBlock = `if [ "$cmd" = "data-api" ]`
 	_, help, _ := runCLI(t, "help", "--all")
-	if !listsCommand(help, "cron") || !listsCommand(help, "realtime") || listsCommand(help, "slos") {
-		t.Fatalf("logged-out help must list GA cron and beta realtime and hide preview slos:\n%s", help)
+	if !listsCommand(help, "cron") || !listsCommand(help, "realtime") || listsCommand(help, "data-api") {
+		t.Fatalf("logged-out help must list GA cron and beta realtime and hide preview data-api:\n%s", help)
 	}
-	if code, _, stderr := runCLI(t, "slos", "--help"); code == 0 || !strings.Contains(stderr, `unknown command "slos"`) {
-		t.Fatalf("slos --help = %d %q, want unknown command", code, stderr)
+	if code, _, stderr := runCLI(t, "data-api", "--help"); code == 0 || !strings.Contains(stderr, `unknown command "data-api"`) {
+		t.Fatalf("data-api --help = %d %q, want unknown command", code, stderr)
 	}
-	if _, script, _ := runCLI(t, "completion", "bash"); strings.Contains(script, " slos ") {
-		t.Fatal("bash completion offers the hidden slos command")
+	if _, script, _ := runCLI(t, "completion", "bash"); strings.Contains(script, dataAPIBlock) {
+		t.Fatal("bash completion offers the hidden data-api command")
 	}
 	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
-	if _, script, _ := runCLI(t, "completion", "bash"); !strings.Contains(script, " slos ") {
-		t.Fatal("bash completion must offer slos once every capability is released")
+	if _, script, _ := runCLI(t, "completion", "bash"); !strings.Contains(script, dataAPIBlock) {
+		t.Fatal("bash completion must offer data-api once every capability is released")
 	}
 	clearCapabilityReleaseAll(t)
 	// The public reference documents GA and beta commands only (CLI audit
 	// 2026-11-04), whatever the account or the release-all switch shows.
 	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
-	if _, reference, _ := runCLI(t, "man", "--markdown"); strings.Contains(reference, "\n## slos\n") || !strings.Contains(reference, "\n## cron\n") || !strings.Contains(reference, "\n## realtime\n") {
-		t.Fatal("the generated reference must document GA cron and beta realtime and leave out preview slos")
+	if _, reference, _ := runCLI(t, "man", "--markdown"); strings.Contains(reference, "\n## data-api\n") || !strings.Contains(reference, "\n## cron\n") || !strings.Contains(reference, "\n## realtime\n") {
+		t.Fatal("the generated reference must document GA cron and beta realtime and leave out preview data-api")
 	}
 }
 
