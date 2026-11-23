@@ -5233,13 +5233,22 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "trace",
 		DocSlug: "trace",
-		Short:   "Look up a distributed trace by its trace ID",
+		Short:   "Look up a distributed trace by its trace ID or a request ID",
+		HelpNotes: []string{
+			"A trace ID is 32 hex characters and spans the account: edge and app requests, wake method and restore fallback, queue, delayed and cron invocations to dead letter, access logs and spans.",
+			"An x-faas-request-id works too: request ids have the same 32-hex shape, so when no trace has the id it is resolved as a request of the app (--app, else the linked app) to the request's trace. A request with no trace shows its own evidence.",
+		},
+		Examples: []string{
+			"gregale debug trace 4bf92f3577b34da6a3ce929d0e0e4736",
+			"gregale debug trace 019a3c5e7d1b7f2a9c4e6b8d0f1a2c3e --app my-api --json",
+		},
 		Flags: []cliFlag{
+			{Name: "app", Short: "app the request ID belongs to (default: the linked app)", Value: "SLUG"},
 			{Name: "watch", Short: "poll until linked invocations reach a terminal state"},
 			{Name: "interval", Short: "poll interval (default 1s)", Value: "DURATION"},
 			{Name: "timeout", Short: "maximum watch duration (default 5m)", Value: "DURATION"},
 		},
-		Positionals: []string{"<trace-id>"},
+		Positionals: []string{"<trace-id-or-request-id>"},
 	},
 	{
 		Name:    "invitations",
@@ -6530,6 +6539,26 @@ var cliCommands = []cliCommand{
 				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
 				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
 			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
+			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows (read-only unless --write)", Notes: []string{
+				"Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.",
+				"Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.",
+				"--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch <database> <name> --ttl 2h`.",
+				"--json prints typed rows: numbers, booleans and json stay typed; NULL is null; other values are PostgreSQL text.",
+			}, Positionals: []string{"<database>", "[<query>]"}, Flags: []cliFlag{
+				{Name: "file", Short: "read the query from PATH, or - for stdin", Value: "PATH"},
+				{Name: "write", Short: "allow writes and several statements (commits)"},
+				{Name: "read-only", Short: "refuse writes (the default)"},
+				{Name: "max-rows", Short: "rows kept per result, 1..10000 (default 500)", Value: "N"},
+				{Name: "timeout", Short: "statement timeout (default 30s)", Value: "D"},
+				{Name: "app", Short: "bound app whose credentials to use (default: the best ready binding)", Value: "SLUG"},
+				{Name: "env", Short: "binding environment key", Value: "KEY"},
+				{Name: "access", Short: "binding access (default prefers read_only for reads, read_write for --write)", Value: "MODE", ClosedSet: []string{"read_only", "session", "read_write", "migration"}},
+				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
+			}, Examples: []string{
+				"gregale postgres sql orders \"select status, count(*) from orders group by 1\"",
+				"gregale postgres sql orders --file audit.sql --json",
+				"gregale postgres sql orders --write \"update orders set status = 'void' where id = 42\"",
+			}},
 		},
 	},
 	{
