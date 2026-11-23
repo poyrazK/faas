@@ -13,6 +13,8 @@ T = TypeVar("T", bound="MCPToolInsight")
 
 @_attrs_define
 class MCPToolInsight:
+    """One tool's calls, failures, argument mismatches, compute and latency."""
+
     tool: str
     calls: float
     errors: float

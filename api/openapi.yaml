@@ -129771,7 +129771,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/MCPToolInsight' }
     MCPToolInsight:
-      description: "One tools calls, failures, argument mismatches, compute and latency."
+      description: "One tool's calls, failures, argument mismatches, compute and latency."
       type: object
       required: [tool, calls, errors, cancellations, mismatches, execution_seconds, gb_seconds, estimated_millicents]
       properties:

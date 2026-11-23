@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { MCPToolInsight } from './MCPToolInsight.js';
+/**
+ * Per-tool MCP usage and estimated compute for one app over the trailing window.
+ */
 export type MCPToolInsightsResponse = {
   app: string;
   /**

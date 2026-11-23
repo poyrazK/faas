@@ -22,6 +22,8 @@ T = TypeVar("T", bound="MCPToolInsightsResponse")
 
 @_attrs_define
 class MCPToolInsightsResponse:
+    """Per-tool MCP usage and estimated compute for one app over the trailing window."""
+
     app: str
     window: str
     """Trailing window every figure covers."""

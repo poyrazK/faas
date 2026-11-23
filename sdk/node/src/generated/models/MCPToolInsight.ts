@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+/**
+ * One tool's calls, failures, argument mismatches, compute and latency.
+ */
 export type MCPToolInsight = {
   tool: string;
   calls: number;
