@@ -133,28 +133,25 @@ first request pays the wake time; the ones after it run at normal speed. See
   on the first request, and refresh connections after a wake with the
   [restore hooks](cold-wake.md#refresh-application-state-after-restore).
 
-## A custom domain does not work
+## A custom hostname is not serving
 
 ```sh
-gregale domain verify api.example.com --wait --timeout 10m
 gregale domain doctor api.example.com
 ```
 
-`domain verify` reports ownership, routing and HTTPS separately and tells you
-which DNS record to change. The usual causes:
+`domain doctor` checks ownership, routing and HTTPS without changing anything,
+and says what to fix. The usual causes:
 
-- **The TXT record is missing.** Ownership needs the `_faas-verify` TXT record
-  that Gregale printed when you added the domain (`gregale domain get` shows it
-  again).
+- **Ownership is not proven yet.** The `_faas-verify` TXT entry Gregale printed
+  when you added the hostname is missing; `gregale domain get` shows it again.
 - **A proxy answers for the name.** Point the name straight at Gregale. A
-  proxied record, such as an orange-cloud record on Cloudflare, stops Gregale
-  from getting a certificate.
-- **CAA records.** If your zone has CAA records, they must allow
-  `letsencrypt.org`.
-- **The domain shows `dns_drifted`.** A DNS record was removed or changed after
-  verification. Put both records back and verify again.
+  proxied (orange-cloud) Cloudflare entry stops Gregale from getting a
+  certificate.
+- **CAA.** If your zone has CAA entries, they must allow `letsencrypt.org`.
+- **The status is `dns_drifted`.** An entry was removed or changed after setup.
+  Put it back.
 
-See [Domains](domains.md#verification).
+The full setup steps are in [Domains](domains.md#verification).
 
 ## Logs are missing
 
