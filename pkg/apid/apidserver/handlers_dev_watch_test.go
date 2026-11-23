@@ -53,6 +53,32 @@ func TestDevSessionWatchModeIsStoredReportedAndCleared(t *testing.T) {
 	}
 }
 
+// adr: 1170 — a new watch-mode environment gets DevWatchRAMMB; a
+// production-shaped one keeps the app default.
+func TestDevSessionWatchModeRAM(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanScale)
+	for _, tc := range []struct {
+		project string
+		watch   *api.DevWatch
+		want    int
+	}{
+		{"watch-ram", &api.DevWatch{Command: "npm run dev"}, api.DevWatchDefaultRAMMB},
+		{"build-ram", nil, api.StandaloneAppDefaultMaxRAMMB},
+	} {
+		resp := e.Do(t, "PUT", "/v1/dev/sessions/"+tc.project, api.UpsertDevSessionRequest{Watch: tc.watch}, nil)
+		if resp.Code != http.StatusCreated {
+			t.Fatalf("%s: status %d: %s", tc.project, resp.Code, resp.Body.String())
+		}
+		app, err := (*e.Store()).AppByID(t.Context(), decodeDevSession(t, resp.Body.Bytes()).App.ID)
+		if err != nil || app.RAMMB != tc.want {
+			t.Fatalf("%s: RAM = %d (err %v), want %d", tc.project, app.RAMMB, err, tc.want)
+		}
+	}
+	if got := api.DevWatchRAMMB(api.MustLimitsFor(api.PlanHobby)); got != 512 {
+		t.Fatalf("Hobby watch RAM = %d, want the plan's 512", got)
+	}
+}
+
 func TestDevSessionWatchModeRefusals(t *testing.T) {
 	t.Run("too little RAM", func(t *testing.T) {
 		e := apidserver.Setup(t, api.PlanFree)

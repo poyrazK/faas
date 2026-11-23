@@ -563,6 +563,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/instances":                    true, // operator fleet instance list (ADR-20261121161842)
 	"GET /v1/admin/obs/instances/{id}":               true,
 	"GET /v1/admin/obs/wake-latency":                 true, // operator wake-latency report (ADR-20261121200409)
+	"GET /v1/admin/obs/snapshot-health":              true, // operator snapshot health report (ADR-20261122135018)
 	"GET /v1/admin/obs/tenants/{id}":                 true, // ADR-091 — operator-only
 	"GET /v1/admin/obs/tenants/{id}/activity":        true, // operator-only tenant activity drill-down
 	"GET /v1/admin/obs/apps/{id}":                    true, // operator-only app workload drill-down
@@ -1122,7 +1123,13 @@ var dtoExclude = map[string]bool{
 	"ObsWakeReasonCount":   true,
 	"ObsWakeSample":        true,
 	"ObsWakeAppStat":       true,
-	"ObsInvocationRow":     true,
+	// ADR-20261122135018 operator snapshot health report.
+	"ObsSnapshotHealthReport":    true,
+	"ObsSnapshotTotals":          true,
+	"ObsSnapshotGroup":           true,
+	"ObsSnapshotRow":             true,
+	"ObsUnsnapshottedDeployment": true,
+	"ObsInvocationRow":           true,
 	// ObsInvoiceSummary: PR #1099 P3 follow-on (post-PR #1111);
 	// admin-only billing summary shape.
 	"ObsInvoiceSummary":       true,

@@ -491,13 +491,25 @@ func cmdMCPRemote(command string, args []string) int {
 	}
 	timeout := fs.Duration("timeout", 30*time.Second, "total diagnostic timeout")
 	// `mcp tools <slug>` addresses the app the way the other leaves do
-	// (production-us hunt #5, H5-3).
+	// (production-us hunt #5, H5-3). A leading URL is the endpoint: it was
+	// taken for an app slug and answered "no such API route" (MCP Tasks prod
+	// probe 2026-11-22).
+	leadingURL := ""
+	if len(args) > 0 && (strings.HasPrefix(args[0], "https://") || strings.HasPrefix(args[0], "http://")) {
+		leadingURL, args = args[0], args[1:]
+	}
 	slug, args := peelLeadingSlug(args)
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 	if fs.NArg() != 0 {
 		return printErr("Invalid MCP flags", fmt.Errorf("unexpected positional arguments: %s", strings.Join(fs.Args(), " ")))
+	}
+	if leadingURL != "" {
+		if *endpoint != "" && *endpoint != leadingURL {
+			return printErr("Invalid MCP flags", errors.New("pass the endpoint once, as the first argument or with --url"))
+		}
+		*endpoint = leadingURL
 	}
 	if *timeout <= 0 {
 		return printErr("Invalid MCP flags", errors.New("--timeout must be positive"))

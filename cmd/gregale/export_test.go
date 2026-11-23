@@ -1486,6 +1486,8 @@ var McpNativeFingerprint = mcpNativeFingerprint
 var McpNativeWorkerLogs = mcpNativeWorkerLogs
 var McpTasksObserverConfigEnvNames = mcpTasksObserverConfigEnvNames
 var McpTasksObserverCredential = mcpTasksObserverCredential
+var McpTasksRuntimeApp = mcpTasksRuntimeApp
+var PrintReleaseTaskOutput = printReleaseTaskOutput
 var McpTasksObserverEntrypointDetected = mcpTasksObserverEntrypointDetected
 var McpTasksObserverHeartbeatIsFresh = mcpTasksObserverHeartbeatIsFresh
 var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches
@@ -3033,3 +3035,27 @@ var (
 	MCPAuthEnableConfig  = mcpAuthEnableConfig
 	AuditMCPGatewayRules = auditMCPGatewayRules
 )
+
+// RealtimePreviewInView is realtimePreviewInView for the tier defaults
+// (tier) or for an account view that hides hidden.
+func RealtimePreviewInView(tier bool, hidden ...string) bool {
+	if tier {
+		return realtimePreviewInView(capabilityView{tier: true})
+	}
+	return realtimePreviewInView(accountCapabilityView(hidden))
+}
+
+// RealtimeVerbsDiscoveredBy lists the realtime verbs discovery shows to an
+// account whose view hides hidden.
+func RealtimeVerbsDiscoveredBy(hidden ...string) []string {
+	view := accountCapabilityView(hidden)
+	var names []string
+	for _, command := range view.discoverableCommands(visibleCliCommandsWith(realtimePreviewInView(view))) {
+		if command.Name == "realtime" {
+			for _, sub := range command.Subcommands {
+				names = append(names, sub.Name)
+			}
+		}
+	}
+	return names
+}

@@ -463,6 +463,7 @@ func mcpNativeObserverHealthy(ctx context.Context, c *Client, p mcpNativeRelease
 	if err != nil {
 		return err
 	}
+	app = mcpTasksRuntimeApp(ctx, c, app)
 	if !mcpNativeTaskNamespaceMatches(app) {
 		return errors.New("observer must use the release's explicit MCP_TASK_NAMESPACE as a non-secret setting")
 	}

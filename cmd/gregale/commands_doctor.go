@@ -792,6 +792,11 @@ func doctorPathExcluded(root, path string, info os.FileInfo, patterns []gregalei
 	}
 	ext := strings.ToLower(filepath.Ext(base))
 	stem := strings.TrimSuffix(base, ext)
+	// Python's pytest/unittest convention names tests test_*.py and keeps
+	// fixtures in conftest.py.
+	if ext == ".py" && (strings.HasPrefix(stem, "test_") || stem == "conftest") {
+		return true
+	}
 	return strings.HasSuffix(stem, "_test") || strings.HasSuffix(stem, ".test") || strings.HasSuffix(stem, ".spec")
 }
 

@@ -147,9 +147,10 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 		}
 		baseDiffIDs = ids
 	}
+	releaseKeepsToolchain := runtime != "" && sharedruntime.ReleaseNeedsPackageManager(runtime, dep.ReleaseCommand, dep.ReleaseCommandShell)
 	reuseKey := ""
 	if source == nil {
-		reuseKey = h.appLayerReuseKey(app, acct, dep.ImageDigest, runtime, baseDiffIDs, manifest)
+		reuseKey = h.appLayerReuseKey(app, acct, dep.ImageDigest, runtime, baseDiffIDs, manifest, releaseKeepsToolchain)
 	}
 	in.Manifest = manifest
 	var prepareErr error
@@ -164,7 +165,7 @@ func (h *Handler) localOCIAppLayer(ctx context.Context, app state.App, dep state
 		if runtime == "" {
 			return cleanup, nil
 		}
-		shared, err := h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, dep.RootfsPath, config, layers, &build.Manifest, app)
+		shared, err := h.sharedRuntimeAppLayersAt(ctx, runtime, baseDiffIDs, dep.RootfsPath, config, layers, &build.Manifest, app, releaseKeepsToolchain)
 		if err != nil {
 			cleanup()
 			prepareErr = fmt.Errorf("imaged: shared runtime app layer: %w", err)

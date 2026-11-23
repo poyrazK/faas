@@ -123,7 +123,10 @@ func TestCDDeployWorkflowsHaveNoMaintenanceWindow(t *testing.T) {
 		"if (( command_status != 0 )); then",
 		"exit \"$command_status\"",
 		"if (( gate_status != 0 )); then",
-		`baseline_ready = bool(baseline) and len(baseline_successful) == len(baseline)`,
+		// A baseline needs its healthy samples and no failure other than a
+		// timeout; timed-out samples are retaken within a budget.
+		`baseline_ready = (len(baseline_successful) >= baseline_needed and not baseline_other`,
+		`END { exit !(healthy >= need && timeouts <= budget && other == 0) }`,
 	} {
 		if !strings.Contains(observer, required) {
 			t.Errorf("rollout observer must preserve wrapped-command failure: missing %q", required)

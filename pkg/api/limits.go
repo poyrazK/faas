@@ -229,6 +229,19 @@ const (
 	ObsWakeLatencyWindowMax       = 24 * time.Hour
 )
 
+// Operator snapshot health report (ADR-20261122135018). The report reads at
+// most ObsSnapshotInventoryMax snapshot rows, largest first (beyond that it
+// says it was truncated), and lists the largest and recently stale ones and
+// the live deployments with no usable snapshot. The fleet average is judged
+// against FleetSnapshotAvgTargetMB and the §12 warn and page thresholds.
+const (
+	ObsSnapshotInventoryMax     = 20000
+	ObsSnapshotListMax          = 25
+	ObsSnapshotUnsnapshottedMax = 200
+	ObsSnapshotFleetAvgWarnMB   = 160
+	ObsSnapshotFleetAvgPageMB   = 200
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -4154,6 +4167,11 @@ const (
 	// mode (ADR-1170): development servers need far more memory than the
 	// production server of the same app.
 	DevWatchMinRAMMB = 512
+	// DevWatchDefaultRAMMB is the RAM a new watch-mode developer environment
+	// gets, capped at the plan's RAM (DevWatchRAMMB). A Next.js 15 dev server
+	// compiled its first page in 31.8 s at 512 MB and 2.3 s at 2048 MB on prod
+	// (2026-11-22): at the 512 MB app default it swaps through the first build.
+	DevWatchDefaultRAMMB = 1024
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4281,6 +4299,13 @@ const StandaloneAppDefaultMaxRAMMB = 512
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
 func StandaloneAppDefaultRAMMB(l Limits) int {
 	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
+
+// DevWatchRAMMB is the RAM of a new watch-mode developer environment: the
+// plan's RAM, capped at DevWatchDefaultRAMMB. A plan below DevWatchMinRAMMB
+// is still refused by the watch-mode check.
+func DevWatchRAMMB(l Limits) int {
+	return min(l.RAMMB, DevWatchDefaultRAMMB)
 }
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
