@@ -193,11 +193,22 @@ def required_policy_scopes(policy, identifier):
     return (sorted(required), True) if matched else (None, False)
 
 
+# Set by Gregale's gateway, which removes any caller-supplied value, only on a
+# request its MCP access policy admitted.
+GATEWAY_AUTHORIZED = "Gregale-Mcp-Gateway-Authorized"
+
+
 class Authenticator:
     def __init__(self, config):
         if not isinstance(config, dict) or not isinstance(config.get("auth"), dict):
             raise AuthConfigurationError("auth settings are required")
         auth = config["auth"]
+        # Gregale's gateway authorizes every request for these modes before
+        # it reaches this server, so it serves them as open, but only requests
+        # the gateway marked as admitted by the policy (see GATEWAY_AUTHORIZED).
+        self.gateway_only = auth.get("mode") in {"api-key", "oauth-proxy"}
+        if self.gateway_only:
+            auth = {"mode": "open"}
         self.mode = auth.get("mode")
         if not isinstance(self.mode, str) or self.mode not in {"open", "external-oauth"}:
             raise AuthConfigurationError("auth.mode must be open or external-oauth")

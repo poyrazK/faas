@@ -98,9 +98,12 @@ func checkStandDowns(t *testing.T, ctx context.Context, s standDownStore, templa
 		t.Fatal(err)
 	}
 
-	for _, open := range []bool{true, false} {
-		rule := newRule("before observation")
-		if open {
+	for _, prior := range []struct {
+		name string
+		open bool
+	}{{"active", true}, {"pending resolve", false}} {
+		rule := newRule(prior.name)
+		if prior.open {
 			if _, err := s.SetAlertRuleState(ctx, rule.ID, state.AlertStateFiring, now); err != nil {
 				t.Fatal(err)
 			}
@@ -111,14 +114,14 @@ func checkStandDowns(t *testing.T, ctx context.Context, s standDownStore, templa
 		}
 		if _, err := s.UpdateAlertRule(ctx, rule.ID, state.UpdateAlertRuleParams{
 			Metric: new(state.AlertMetricErrorRate), Comparison: new(state.AlertAboveBaseline),
-			Threshold: new(3.0), Name: new("observing"), ObserveOnly: new(true),
+			Threshold: new(3.0), Name: new("observing " + prior.name), ObserveOnly: new(true),
 		}); err != nil {
 			t.Fatal(err)
 		}
 		if active, err := s.AlertRuleEpisodeOpen(ctx, rule.ID); err != nil || active {
 			t.Fatalf("observed rule has a live episode: %v, %v", active, err)
 		}
-		if got := due(); len(got) != 1 || got[0].RuleID != rule.ID || got[0].ChannelID != ch.ID || got[0].RuleName != "before observation" {
+		if got := due(); len(got) != 1 || got[0].RuleID != rule.ID || got[0].ChannelID != ch.ID || got[0].RuleName != prior.name {
 			t.Fatalf("mode change lost the notice for the original destination: %+v", got)
 		}
 		if retries, err := s.DueAlertChannelResolveRetries(ctx, now.Add(time.Hour), 10); err != nil || len(retries) != 0 {

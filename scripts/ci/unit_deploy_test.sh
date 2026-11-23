@@ -311,6 +311,10 @@ export STUB_ALERTS='{"status":"success","data":{"alerts":[{"labels":{"alertname"
 state="$(bash "$helper" preflight-state)"
 jq -e '.lock == "free" and .prometheus.ok and (.prometheus.alerts | length) == 1 and .prometheus.alerts[0].labels.alertname == "FaasDaemonDown"' <<<"$state" >/dev/null \
   || fail "preflight-state did not report a free lock and the alert: $state"
+# The full release the host runs; empty when there is no release to read.
+jq -e '(.base | type) == "string"' <<<"$state" >/dev/null || fail "preflight-state did not report the host's base: $state"
+state="$(STUB_CURL_FAIL=1 bash "$helper" preflight-state)"
+jq -e '(.base | type) == "string"' <<<"$state" >/dev/null || fail "preflight-state without Prometheus lost the host's base: $state"
 state="$(STUB_FLOCK=75 bash "$helper" preflight-state)"
 jq -e '.lock == "held"' <<<"$state" >/dev/null || fail "a held deploy lock was not reported: $state"
 state="$(STUB_FLOCK=1 bash "$helper" preflight-state)"

@@ -7551,6 +7551,20 @@ END $$;
 
 
 --
+-- Name: consumer_key_scopes_valid(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.consumer_key_scopes_valid(scopes text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $_$
+  SELECT cardinality(scopes) > 0 AND NOT EXISTS (
+    SELECT 1 FROM unnest(scopes) AS s(scope)
+    WHERE NOT (s.scope IN ('read', 'write', 'admin', 'billing')
+      OR (char_length(s.scope) <= 128 AND s.scope ~ '^mcp:[!#-\[\]-~]+$')))
+$_$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -36936,7 +36950,7 @@ CREATE TABLE public.consumer_keys (
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text, 'billing'::text]) AND (cardinality(scopes) > 0)))
+    CONSTRAINT consumer_keys_scopes_vocab_v2_chk CHECK (public.consumer_key_scopes_valid(scopes))
 );
 
 
