@@ -47,7 +47,8 @@ const (
 // environment: the scopes freezes and approvals treat as production) of a
 // request-mode, non-preview app whose release_policy is not "immediate" and
 // which already serves a live deployment in that scope; a first deploy has
-// nothing to compare with or roll back to (ADR-1446 amendment 1).
+// nothing to compare with or roll back to (ADR-1446 amendment 1). A managed
+// Redis cache is never eligible (ADR-1446 amendment of 2026-11-23, IsManagedCache).
 //
 // Lookup failures fall back to the legacy immediate deploy: a default must
 // never make a deploy fail where the explicit flag-free deploy succeeded, so
@@ -59,6 +60,9 @@ func ApplyDefault(ctx context.Context, store any, log *slog.Logger, app state.Ap
 	}
 	lookup, ok := store.(policyStore)
 	if !ok {
+		return PolicyNotApplied
+	}
+	if IsManagedCache(ctx, store, log, app.ID) {
 		return PolicyNotApplied
 	}
 	if _, err := lookup.LiveDeploymentForScope(ctx, app.ID, policyScope(req)); err != nil {
@@ -121,6 +125,35 @@ func policyScope(req *api.CreateDeploymentRequest) string {
 		return api.DefaultEnvScope
 	}
 	return scope
+}
+
+// managedCacheStore is the lookup IsManagedCache needs
+// (state.ManagedValkeyStore).
+type managedCacheStore interface {
+	GetManagedValkeyCache(ctx context.Context, appID string) (state.ManagedValkeyCache, error)
+}
+
+// IsManagedCache reports whether appID is a managed Redis cache
+// (ADR-20261116192126). A cache's resize or update hands its data to a new
+// VM that must take every connection at once: a canary kept the old VM
+// serving for 7m40s beside it, past the handoff's 300 s write pause, so
+// writes it acknowledged were dropped with it (prod journey 2026-11-23), and
+// a 5xx rollback would return to a stale copy. A failed lookup counts as a
+// cache, which keeps the deploy on the legacy immediate path.
+func IsManagedCache(ctx context.Context, store any, log *slog.Logger, appID string) bool {
+	caches, ok := store.(managedCacheStore)
+	if !ok {
+		return false
+	}
+	_, err := caches.GetManagedValkeyCache(ctx, appID)
+	if err == nil {
+		return true
+	}
+	if !errors.Is(err, state.ErrNotFound) {
+		log.Warn("default release policy: managed cache lookup failed; deploying immediately", "app_id", appID, "err", err)
+		return true
+	}
+	return false
 }
 
 func canaryWorkerReady(ctx context.Context, store any, log *slog.Logger) bool {
