@@ -2,6 +2,7 @@ package meter
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
@@ -24,7 +25,8 @@ func (p *Pusher) paidWithoutIdentityGauge() *prometheus.GaugeVec {
 		Help: "Subjects on a paid plan, not complimentary and not suspended or deleting, with no complete billing identity for the configured provider at the last hourly push pass. Their usage is never billed (metering review r10).",
 	}, []string{"plan"})
 	if err := p.ops.Registry().Register(g); err != nil {
-		if dup, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		var dup prometheus.AlreadyRegisteredError
+		if errors.As(err, &dup) {
 			if existing, ok := dup.ExistingCollector.(*prometheus.GaugeVec); ok {
 				return existing
 			}

@@ -68,11 +68,11 @@ Environment="FAAS_PEER_ENTRY_ADDRS={{ faas_peer_entry_addrs | join(',') }}"
    Every compute edge's entry address (this node's and its peers', both
    rendered from the manifest) plus any operator extras. In this drop-in, not
    99-faas-routing.conf, because every vmmd host installs it. #}
-{% set faas_internal_egress_cidrs = ((faas_public_entry_addrs | default([]) | list) + (faas_peer_entry_addrs | default([]) | list) + (faas_vmmd_internal_egress_cidrs | default([]) | list)) | unique | list %}
+{% set faas_internal_egress_cidrs = ((faas_public_entry_addrs | default([], true) | list) + (faas_peer_entry_addrs | default([], true) | list) + (faas_vmmd_internal_egress_cidrs | default([], true) | list)) | unique | list %}
 {% if faas_internal_egress_cidrs %}
 Environment="FAAS_VMMD_INTERNAL_EGRESS_CIDRS={{ faas_internal_egress_cidrs | join(',') }}"
 {% endif %}
-{% if faas_vmmd_internal_egress_hosts | default([]) %}
+{% if faas_vmmd_internal_egress_hosts | default([], true) %}
 # Hostnames vmmd re-resolves every 5 minutes into the same internal set.
 Environment="FAAS_VMMD_INTERNAL_EGRESS_HOSTS={{ faas_vmmd_internal_egress_hosts | join(',') }}"
 {% endif %}
