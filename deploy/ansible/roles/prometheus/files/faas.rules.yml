@@ -5572,6 +5572,29 @@ groups:
           description: "gatewayd-public POST /v1/otel/v1/traces is receiving spans but every write fails (db_error) and none has been inserted for 15m. The OTLP writer ships customer spans into request_telemetry.spans_summary (ADR-127 PR-D); a stall means the debugger's per-request span view is going dark. Check gatewayd-public logs for `otel_spans: apid RPC failed` (auth.sock unreachable), `otel_spans: rate_limited` (customer's per-account token bucket exhausted), or `otel_spans: shape_invalid` (malformed OTLP body). Drill-down: `rate(gatewayd_public_otel_spans_ingested_total[5m]) by (outcome)` distinguishes the four outcomes (inserted/rate_limited/db_error/shape_invalid)."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDebugTelemetryIngestStalled.md"
 
+      - alert: FaasRequestTelemetryLoss
+        # Request telemetry rows lost on their way to apid: dropped by the
+        # gateway publisher after retries, evicted from a full ring, or
+        # refused by apid as malformed or failed to insert. Lost rows lower
+        # analytics totals and hold release guards (canary, 5xx rollback)
+        # until coverage returns, and none of it alerted (2026-11-24
+        # telemetry audit). The rate_limited outcome stays out: it is the
+        # customer's ingest quota, already reported as the app's gap.
+        expr: |
+          (sum(increase(gateway_request_telemetry_dropped_total[15m])) or vector(0))
+          + (sum(increase(gateway_request_telemetry_overwritten_total[15m])) or vector(0))
+          + (sum(increase(apid_request_telemetry_recorded_total{outcome=~"db_error|invalid"}[15m])) or vector(0))
+          > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: request_telemetry
+        annotations:
+          summary: "Request telemetry rows are being lost"
+          description: "Gateways or apid lost request telemetry rows in the last 15m. Analytics for the affected apps read incomplete, and canaries and 5xx rollbacks hold over windows that lost rows. Drill-down: `sum by (instance) (increase(gateway_request_telemetry_dropped_total[15m]))` (publisher gave up: apid unreachable or slow), `increase(gateway_request_telemetry_overwritten_total[15m])` (ring full: publisher behind), `sum by (outcome) (increase(apid_request_telemetry_recorded_total[15m]))` (db_error: insert failures; invalid: rows apid will never take, logged as `request telemetry row refused`)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestTelemetryLoss.md"
+
       # request_telemetry is range-partitioned by received_at. meterd
       # reconciles the current month and two future months at startup and
       # hourly so normal writes never accumulate in the catch-all default.

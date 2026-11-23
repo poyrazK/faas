@@ -209,7 +209,12 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 // accounts for loss before every Stop caller returns.
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		p.drainFinal()
+		// A stop is clean only if the final drain delivered every row: a
+		// batch given up on during it is a loss the next boot cannot carry.
+		// Either way the last heartbeat reports what the drain lost.
+		dropped := p.DroppedTotal() + p.recorder.OverwrittenTotal()
+		delivered := p.drainFinal()
+		p.reportFinalCoverage(delivered && p.DroppedTotal()+p.recorder.OverwrittenTotal() == dropped)
 		p.finalCancel()
 		close(p.doneCh)
 	}()
@@ -823,16 +828,36 @@ type RequestTelemetryCoverage struct {
 	UnattributedDroppedTotal int64
 	AppGaps                  []RequestTelemetryAppGap
 	Analytics                *RequestTelemetryAnalyticsCoverage
+	// CleanStop marks the last heartbeat of a publisher that delivered every
+	// row before stopping: the node's next boot continues its coverage.
+	CleanStop bool
+}
+
+// requestTelemetryCleanStopTimeout bounds the final heartbeat. The node's
+// next boot must heartbeat within the receiver's silence grace of it.
+const requestTelemetryCleanStopTimeout = 2 * time.Second
+
+// reportFinalCoverage sends the stopping publisher's last heartbeat: the
+// rows its final drain gave up on would otherwise never be reported. It runs
+// after the drain, whose budget may be spent, so it has its own.
+func (p *requestTelemetryPublisher) reportFinalCoverage(clean bool) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.finalCtx), requestTelemetryCleanStopTimeout)
+	defer cancel()
+	p.reportCoverageWith(ctx, clean)
 }
 
 func (p *requestTelemetryPublisher) reportCoverage(ctx context.Context) {
+	p.reportCoverageWith(ctx, false)
+}
+
+func (p *requestTelemetryPublisher) reportCoverageWith(ctx context.Context, cleanStop bool) {
 	if p.cfg.OnCoverage == nil {
 		return
 	}
 	p.recorder.ringMu.Lock()
 	coverage := RequestTelemetryCoverage{Enabled: p.recorder.cfg.Enabled, SamplingBasisPoints: 10000,
 		DroppedTotal: p.DroppedTotal() + p.recorder.OverwrittenTotal(), PendingCount: p.recorder.len, SourceAt: p.cfg.Now().UTC(),
-		AppScoped: true, UnattributedDroppedTotal: p.recorder.unattributedLosses}
+		AppScoped: true, UnattributedDroppedTotal: p.recorder.unattributedLosses, CleanStop: cleanStop}
 	gaps := make(map[uuid.UUID]RequestTelemetryAppGap)
 	for app, n := range p.recorder.appLosses {
 		gaps[app] = RequestTelemetryAppGap{AppID: app, DroppedCount: n}

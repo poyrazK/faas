@@ -307,7 +307,13 @@ func (q *Queries) RecordRequestAnalyticsWindow(ctx context.Context, db DBTX, arg
 
 const requestAnalyticsCoverageGaps = `-- name: RequestAnalyticsCoverageGaps :many
 WITH participating_nodes AS (
- SELECT node_name FROM request_analytics_coverage_watermarks WHERE registered_at < $1::timestamptz
+ -- A node that went silent may still have served the window, but one that
+ -- finished draining out of the fleet before it began served none of it
+ -- (prod 2026-11-24: two nodes retired days earlier left every window
+ -- telemetry_coverage_unknown).
+ SELECT w.node_name FROM request_analytics_coverage_watermarks w WHERE w.registered_at < $1::timestamptz
+ AND NOT EXISTS(SELECT 1 FROM compute_nodes c WHERE c.name=w.node_name AND NOT c.active
+  AND c.drain_completed_at <= $2::timestamptz AND w.source_at <= c.drain_completed_at)
  UNION
  SELECT name AS node_name FROM compute_nodes WHERE active AND created_at < $1::timestamptz
  UNION
@@ -335,18 +341,23 @@ WITH participating_nodes AS (
  SELECT 1 FROM request_analytics_coverage_gaps g JOIN evidence e USING(node_name,source_kind)
  WHERE g.app_id=$4::uuid AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
  UNION
- -- A live backlog affects its recorded delivery interval, not earlier proof.
+ -- A live backlog holds rows of the last few minutes (a collapsed minute, a
+ -- delivery backoff), not earlier windows. Loss is a coverage gap, above.
  SELECT 'telemetry_ingestion_pending'::text WHERE EXISTS(
  SELECT 1 FROM pending_app_gaps p JOIN evidence e USING(node_name,source_kind)
- JOIN request_analytics_coverage_gaps g USING(node_name,source_kind,app_id)
- WHERE p.app_id=$4::uuid AND g.gap_from<=p.last_gap_at AND g.gap_until>=p.last_gap_at
- AND g.gap_from<$1::timestamptz AND g.gap_until>=$2::timestamptz)
+ WHERE p.app_id=$4::uuid AND $1::timestamptz>p.last_gap_at-interval '10 minutes')
  UNION
- SELECT CASE WHEN state='lost' THEN 'telemetry_window_incomplete' ELSE 'telemetry_ingestion_pending' END
- FROM request_analytics_rollup_windows WHERE $3::boolean AND app_id=$4::uuid
- AND bucket_start<$1::timestamptz AND bucket_start+interval '1 minute'>$2::timestamptz
+ -- A pending rollup marker that outlived the rollup cadence was settled by a
+ -- rollup that did not clear it: the bucket counts if a rollup row exists.
+ SELECT CASE WHEN w.state='lost' THEN 'telemetry_window_incomplete'
+ WHEN w.bucket_start>=now()-interval '15 minutes' THEN 'telemetry_ingestion_pending'
+ WHEN EXISTS(SELECT 1 FROM request_analytics_minutes m WHERE m.app_id=w.app_id AND m.bucket_start=w.bucket_start)
+ OR EXISTS(SELECT 1 FROM request_analytics_hours h WHERE h.app_id=w.app_id AND h.bucket_start=date_trunc('hour',w.bucket_start)) THEN NULL
+ ELSE 'telemetry_window_incomplete' END
+ FROM request_analytics_rollup_windows w WHERE $3::boolean AND w.app_id=$4::uuid
+ AND w.bucket_start<$1::timestamptz AND w.bucket_start+interval '1 minute'>$2::timestamptz
 )
-SELECT DISTINCT reason::text AS reason FROM gaps ORDER BY reason
+SELECT DISTINCT reason::text AS reason FROM gaps WHERE reason IS NOT NULL ORDER BY reason
 `
 
 type RequestAnalyticsCoverageGapsParams struct {

@@ -26954,9 +26954,11 @@ BEGIN
  FOR gap IN SELECT g.app_id,coalesce(g.analytics_dropped_count,0) AS dropped,coalesce(g.analytics_pending_count,0) AS pending
   FROM jsonb_to_recordset(app_gaps) g(app_id uuid,analytics_dropped_count bigint,analytics_pending_count integer) ORDER BY g.app_id LOOP
  IF (gap.dropped>0 OR gap.pending>0) AND EXISTS(SELECT 1 FROM apps WHERE id=gap.app_id AND status<>'deleted') THEN
- INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,updated_at)
- VALUES(node,gap.app_id,stamp,gap.pending,stamp)
- ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,updated_at=stamp;
+ -- The dropped total is cumulative: the gap trigger marks a loss only when
+ -- it grows, not for counts still in flight.
+ INSERT INTO request_analytics_app_gaps AS old(node_name,app_id,last_gap_at,pending_count,dropped_total,updated_at)
+ VALUES(node,gap.app_id,stamp,gap.pending,gap.dropped,stamp)
+ ON CONFLICT(node_name,app_id) DO UPDATE SET last_gap_at=stamp,pending_count=excluded.pending_count,dropped_total=old.dropped_total+excluded.dropped_total,updated_at=stamp;
  END IF;
  END LOOP;
 END $$;
@@ -26978,10 +26980,22 @@ $$;
 --
 
 CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb) RETURNS void
+    LANGUAGE sql
+    AS $$
+ SELECT record_telemetry_coverage(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,scoped,unattributed_drops,app_gaps,false)
+$$;
+
+
+--
+-- Name: record_telemetry_coverage(text, uuid, bigint, boolean, integer, bigint, integer, timestamp with time zone, boolean, bigint, jsonb, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.record_telemetry_coverage(node text, boot uuid, seq bigint, is_enabled boolean, sampling integer, drops bigint, pending integer, source_stamp timestamp with time zone, scoped boolean, unattributed_drops bigint, app_gaps jsonb, stopped boolean) RETURNS void
     LANGUAGE plpgsql
     AS $$
 DECLARE stamp timestamptz:=clock_timestamp(); attributed_pending bigint; attributed_losses bigint; gap record;
 BEGIN
+ IF stopped IS NULL THEN RAISE EXCEPTION 'invalid telemetry coverage stop flag' USING ERRCODE='22023'; END IF;
  IF jsonb_typeof(app_gaps) IS DISTINCT FROM 'array' OR (NOT scoped AND jsonb_array_length(app_gaps)>0) THEN
  RAISE EXCEPTION 'invalid app telemetry coverage' USING ERRCODE='22023'; END IF;
  IF EXISTS(SELECT 1 FROM jsonb_to_recordset(app_gaps) g(app_id uuid,dropped_count bigint,pending_count integer) WHERE app_id IS NULL OR app_id='00000000-0000-0000-0000-000000000000'::uuid OR dropped_count IS NULL OR dropped_count<0 OR pending_count IS NULL OR pending_count<0) OR
@@ -26994,15 +27008,23 @@ BEGIN
  -- FK app locks precede the node lock, matching promotion's app-before-node
  -- ordering. The writer cannot hold a node while waiting on a promotion app.
  PERFORM 1 FROM apps a WHERE a.id IN (SELECT app_id FROM jsonb_to_recordset(app_gaps) g(app_id uuid)) ORDER BY a.id FOR KEY SHARE;
- INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count)
+ INSERT INTO request_telemetry_coverage AS old(node_name,boot_id,sequence,enabled,sampling_basis_points,dropped_total,pending_count,source_at,received_at,healthy_since,app_scoped,unattributed_dropped_total,unattributed_pending_count,clean_stop_at)
  VALUES(node,boot,seq,is_enabled,sampling,drops,pending,source_stamp,stamp,
  CASE WHEN is_enabled AND sampling=10000 AND (CASE WHEN scoped THEN unattributed_drops=0 AND pending=attributed_pending ELSE drops=0 AND pending=0 END) THEN stamp END,
- scoped,unattributed_drops,(pending-attributed_pending)::integer)
+ scoped,unattributed_drops,(pending-attributed_pending)::integer,CASE WHEN stopped THEN stamp END)
  ON CONFLICT(node_name) DO UPDATE SET boot_id=excluded.boot_id,sequence=excluded.sequence,enabled=excluded.enabled,sampling_basis_points=excluded.sampling_basis_points,
  dropped_total=excluded.dropped_total,pending_count=excluded.pending_count,source_at=excluded.source_at,received_at=excluded.received_at,
  app_scoped=excluded.app_scoped,unattributed_dropped_total=excluded.unattributed_dropped_total,unattributed_pending_count=excluded.unattributed_pending_count,
+ clean_stop_at=excluded.clean_stop_at,
  healthy_since=CASE WHEN NOT excluded.enabled OR excluded.sampling_basis_points<>10000 OR (CASE WHEN excluded.app_scoped THEN excluded.unattributed_pending_count ELSE excluded.pending_count END)<>0 THEN NULL
- WHEN old.boot_id<>excluded.boot_id OR old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
+ -- A new boot continues the coverage of a predecessor that stopped cleanly
+ -- (every row delivered or journaled) within the silence grace, provided it
+ -- has lost nothing it cannot attribute. Any other new boot starts fresh.
+ WHEN old.boot_id<>excluded.boot_id THEN
+  CASE WHEN old.clean_stop_at IS NOT NULL AND old.clean_stop_at>=stamp-interval '30 seconds' AND old.healthy_since IS NOT NULL
+    AND (CASE WHEN excluded.app_scoped THEN excluded.unattributed_dropped_total=0 ELSE excluded.dropped_total=0 END)
+   THEN old.healthy_since ELSE stamp END
+ WHEN old.received_at<stamp-interval '30 seconds' OR excluded.dropped_total<old.dropped_total OR
  (excluded.app_scoped AND excluded.dropped_total-old.dropped_total>attributed_losses+greatest(excluded.unattributed_dropped_total-old.unattributed_dropped_total,0)) OR (CASE WHEN excluded.app_scoped THEN old.unattributed_dropped_total<>excluded.unattributed_dropped_total ELSE old.dropped_total<>excluded.dropped_total END) THEN stamp
  ELSE coalesce(old.healthy_since,stamp) END
  WHERE excluded.source_at>old.source_at AND (old.boot_id<>excluded.boot_id OR excluded.sequence>old.sequence);
@@ -27490,13 +27512,14 @@ END $$;
 CREATE FUNCTION public.request_analytics_record_coverage_gap() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE first_gap timestamptz:=NEW.last_gap_at; kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+DECLARE kind text:=CASE WHEN TG_TABLE_NAME='request_analytics_app_gaps' THEN 'analytics' ELSE 'raw' END;
+ lost bigint:=NEW.dropped_total; first_gap timestamptz;
 BEGIN
- SELECT least(first_gap,previous_source_at) INTO first_gap FROM request_analytics_coverage_watermarks WHERE node_name=NEW.node_name AND source_kind=kind;
- first_gap:=coalesce(first_gap,NEW.last_gap_at);
- IF TG_OP='UPDATE' AND OLD.pending_count>0 THEN first_gap:=least(first_gap,OLD.last_gap_at); END IF;
+ IF TG_OP='UPDATE' THEN lost:=NEW.dropped_total-OLD.dropped_total; END IF;
+ IF lost<=0 THEN RETURN NEW; END IF;
+ first_gap:=NEW.updated_at-interval '10 minutes';
  INSERT INTO request_analytics_coverage_gaps(node_name,source_kind,app_id,gap_from,gap_until)
- VALUES(NEW.node_name,kind,NEW.app_id,first_gap,greatest(first_gap,NEW.updated_at))
+ VALUES(NEW.node_name,kind,NEW.app_id,first_gap,NEW.updated_at)
  ON CONFLICT(node_name,source_kind,app_id,gap_from) DO UPDATE SET gap_until=greatest(request_analytics_coverage_gaps.gap_until,EXCLUDED.gap_until);
  RETURN NEW;
 END $$;
@@ -59110,7 +59133,9 @@ CREATE TABLE public.request_analytics_app_gaps (
     last_gap_at timestamp with time zone NOT NULL,
     pending_count integer NOT NULL,
     updated_at timestamp with time zone NOT NULL,
+    dropped_total bigint DEFAULT 0 NOT NULL,
     CONSTRAINT request_analytics_app_gaps_check CHECK ((last_gap_at <= updated_at)),
+    CONSTRAINT request_analytics_app_gaps_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_analytics_app_gaps_node_name_check CHECK ((node_name <> ''::text)),
     CONSTRAINT request_analytics_app_gaps_pending_count_check CHECK ((pending_count >= 0))
 );
@@ -59704,8 +59729,10 @@ CREATE TABLE public.request_telemetry_coverage (
     app_scoped boolean DEFAULT false NOT NULL,
     unattributed_dropped_total bigint DEFAULT 0 NOT NULL,
     unattributed_pending_count integer DEFAULT 0 NOT NULL,
+    clean_stop_at timestamp with time zone,
     CONSTRAINT request_telemetry_coverage_boot_id_check CHECK ((boot_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT request_telemetry_coverage_check CHECK (((healthy_since IS NULL) OR (healthy_since <= received_at))),
+    CONSTRAINT request_telemetry_coverage_clean_stop_at_check CHECK (((clean_stop_at IS NULL) OR (clean_stop_at <= received_at))),
     CONSTRAINT request_telemetry_coverage_dropped_total_check CHECK ((dropped_total >= 0)),
     CONSTRAINT request_telemetry_coverage_node_name_check CHECK ((node_name <> ''::text)),
     CONSTRAINT request_telemetry_coverage_pending_count_check CHECK ((pending_count >= 0)),

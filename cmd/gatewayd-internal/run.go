@@ -3608,7 +3608,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					SamplingBasisPoints: int32(report.SamplingBasisPoints), DroppedTotal: report.DroppedTotal,
 					PendingCount: int32(report.PendingCount), SourceAtUnixMs: report.SourceAt.UnixMilli(),
 					AppScoped: report.AppScoped, UnattributedDroppedTotal: report.UnattributedDroppedTotal, AppGaps: appGaps,
-					Analytics: analytics,
+					Analytics: analytics, CleanStop: report.CleanStop,
 				})
 				if err != nil {
 					return err

@@ -4,6 +4,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -181,5 +182,55 @@ func TestRequestTelemetryUndeliveredBatchIsPlatformLoss(t *testing.T) {
 	publisher.tick(context.Background())
 	if coverage.DroppedTotal != 3 || coverage.UnattributedDroppedTotal != 3 || len(coverage.AppGaps) != 0 {
 		t.Fatalf("coverage = %+v, want 3 unattributed drops and no app gaps", coverage)
+	}
+}
+
+// A publisher that delivers every row before it stops ends with a clean-stop
+// heartbeat, so the node's next boot continues its coverage; one whose final
+// drain gave rows up still reports them last, without claiming a clean stop.
+func TestRequestTelemetryCleanStopHeartbeat(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		fail  bool
+		clean bool
+	}{
+		{"delivered", false, true},
+		{"dropped in final drain", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := NewRequestTelemetryRecorder(RequestTelemetryConfig{Enabled: true, RingSize: 8}, nil)
+			var mu sync.Mutex
+			var reports []RequestTelemetryCoverage
+			publisher := NewRequestTelemetryPublisher(RequestTelemetryPublisherConfig{Enabled: true, FlushBatchSize: 4, MaxRetries: 1,
+				FlushInterval: time.Hour, ShutdownTimeout: 200 * time.Millisecond,
+				OnCoverage: func(_ context.Context, c RequestTelemetryCoverage) error {
+					mu.Lock()
+					defer mu.Unlock()
+					reports = append(reports, c)
+					return nil
+				},
+			}, recorder, func(context.Context, []RequestTelemetryRow) error {
+				if tc.fail {
+					return errors.New("apid unavailable")
+				}
+				return nil
+			}, nil)
+			publisher.Start(context.Background())
+			recorder.RecordFromObserve(makeRow())
+			publisher.Stop()
+			mu.Lock()
+			defer mu.Unlock()
+			if len(reports) == 0 {
+				t.Fatal("no coverage reported")
+			}
+			for _, r := range reports[:len(reports)-1] {
+				if r.CleanStop {
+					t.Fatalf("clean stop before the last heartbeat: %+v", reports)
+				}
+			}
+			if last := reports[len(reports)-1]; last.CleanStop != tc.clean || last.PendingCount != 0 || (last.DroppedTotal == 0) != tc.clean {
+				t.Fatalf("last heartbeat %+v, want clean stop %v", last, tc.clean)
+			}
+		})
 	}
 }

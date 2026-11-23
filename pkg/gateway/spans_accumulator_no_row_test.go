@@ -44,8 +44,8 @@ func TestDrainOnceRetriesNoRowAndMergesPendingSpans(t *testing.T) {
 		t.Fatal(err)
 	}
 	acc.drainOnce(context.Background(), cfg, pending)
-	if entry := pending[spanBucketKey{target: SpanTarget{AccountID: account}, traceID: tid}]; entry == nil || entry.retries != 1 {
-		t.Fatalf("no_row entry = %+v, want kept with one retry", entry)
+	if entry := pending[spanBucketKey{target: SpanTarget{AccountID: account}, traceID: tid}]; entry == nil || entry.noRows != 1 || entry.retries != 0 {
+		t.Fatalf("no_row entry = %+v, want kept with one no_row flush and no failed retry", entry)
 	}
 
 	// Spans arriving while the trace is pending are merged, not substituted.
@@ -66,8 +66,9 @@ func TestDrainOnceDropsNoRowAfterMaxRetries(t *testing.T) {
 	acc := NewSpansAccumulator()
 	calls := 0
 	cfg := FlushLoopConfig{
-		Log:        slog.Default(),
-		MaxRetries: 2,
+		Log:          slog.Default(),
+		MaxRetries:   1,
+		NoRowRetries: 2,
 		WriteFn: func(context.Context, string, []byte, string) (string, int64, error) {
 			calls++
 			return "no_row", 0, nil
@@ -81,7 +82,7 @@ func TestDrainOnceDropsNoRowAfterMaxRetries(t *testing.T) {
 		acc.drainOnce(context.Background(), cfg, pending)
 	}
 	if calls != 2 || len(pending) != 0 {
-		t.Fatalf("calls=%d pending=%d, want 2 bounded retries then drop", calls, len(pending))
+		t.Fatalf("calls=%d pending=%d, want 2 bounded no_row flushes then drop (MaxRetries does not cap no_row)", calls, len(pending))
 	}
 }
 

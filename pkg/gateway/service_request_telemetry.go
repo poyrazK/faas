@@ -163,6 +163,11 @@ func (h *Handler) observeServiceRequestMetrics(r *http.Request, o ServiceRequest
 		}
 	}
 	h.metrics.PreInstantiateApp(appID)
+	// The SLO burn-rate rules, the platform availability figure and schedd's
+	// scale-up trigger read gateway_requests_total, not the duration series:
+	// without this an internal-only service never reached them (prod
+	// 2026-11-24: 156 apps served requests in 24 h, 77 had request series).
+	h.metrics.ObserveRequest(appID, string(plan), statusClass(o.Status))
 	deployment := h.metrics.deploymentLabels.admit(appID, plan, o.Target.DeploymentID)
 	h.metrics.ObserveRequestDurationByDeploymentWithTrace(appID, statusClassBucket(o.Status), deployment,
 		time.Duration(o.LatencyMS)*time.Millisecond, traceIDFromContext(r.Context()))

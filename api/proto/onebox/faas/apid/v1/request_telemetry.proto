@@ -472,6 +472,10 @@ message TelemetryCoverage {
   // its analytics part apart from raw delivery (ADR-20261103113952
   // amendment 6); an older gateway leaves it unset.
   AnalyticsCoverage analytics = 12;
+  // The gateway's last heartbeat before it exits, sent only after every row
+  // was delivered or journaled: its node's next boot continues the coverage
+  // instead of starting a new one. An older gateway never sets it.
+  bool clean_stop = 13;
 }
 message AnalyticsCoverage {
   // Whether the gateway counts every request it records.

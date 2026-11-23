@@ -56,12 +56,13 @@ func (p *requestTelemetryPublisher) stopLocked(ctx context.Context) {
 	}
 }
 
-func (p *requestTelemetryPublisher) drainFinal() {
+// drainFinal ships every buffered row within the shutdown budget and reports
+// whether it delivered them all.
+func (p *requestTelemetryPublisher) drainFinal() bool {
 	// The HTTP drain is over: ship every buffered analytics minute first.
 	p.recorder.analytics.tick(p.finalCtx, true)
 	if p.minutes != nil {
-		p.drainFinalMinutes()
-		return
+		return p.drainFinalMinutes()
 	}
 	for len(p.pending) != 0 || p.recorder.PendingCount() != 0 {
 		if p.finalCtx.Err() != nil {
@@ -70,15 +71,16 @@ func (p *requestTelemetryPublisher) drainFinal() {
 				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
 			}
 			p.log.Warn("request telemetry shutdown deadline; queued evidence dropped")
-			return
+			return false
 		}
 		p.tick(p.finalCtx)
 	}
+	return true
 }
 
 // drainFinalMinutes ships every open minute within the shutdown budget; what
 // it cannot deliver in time is counted as lost.
-func (p *requestTelemetryPublisher) drainFinalMinutes() {
+func (p *requestTelemetryPublisher) drainFinalMinutes() bool {
 	for len(p.pending) != 0 || !p.minutes.empty() || p.recorder.PendingCount() != 0 {
 		if p.finalCtx.Err() != nil {
 			p.dropPending("request telemetry shutdown deadline; dropping interrupted batch")
@@ -87,10 +89,11 @@ func (p *requestTelemetryPublisher) drainFinalMinutes() {
 				p.recordDroppedRows(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
 			}
 			p.log.Warn("request telemetry shutdown deadline; queued evidence dropped")
-			return
+			return false
 		}
 		p.tickMinutes(p.finalCtx, true)
 	}
+	return true
 }
 
 func (p *requestTelemetryPublisher) dropPending(message string) {
