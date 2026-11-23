@@ -1523,7 +1523,16 @@ func slugInUseError(ctx context.Context, client *Client, slug string) error {
 		}
 		return fmt.Errorf("slug %q is held by an app you deleted until it is purged%s; free it now with `gregale app purge %s`, or pick a different --name", slug, deletedAppUntil(app.DeleteGraceUntil, " after "), slug)
 	}
-	return fmt.Errorf("slug %q is already in use; pick a different --name", slug)
+	return &slugTakenError{slug: slug}
+}
+
+// slugTakenError is a 409 on create for a slug the caller does not hold:
+// another owner has it. A deploy may then take an alternative name
+// (createOrFetchAppWithAlternatives).
+type slugTakenError struct{ slug string }
+
+func (e *slugTakenError) Error() string {
+	return fmt.Sprintf("slug %q is already in use; pick a different --name", e.slug)
 }
 
 // findDeletedApp returns the caller's deleted app holding slug, or nil when
@@ -3495,9 +3504,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if *vcpu != 0 {
 			createReq.VCPU = *vcpu
 		}
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr); err != nil {
-			return printErr("Could not create or fetch app", err)
+		requestedSlug := slug
+		ownedAlt, alternatives := appSlugAlternatives(ctx, client, slug, sourceDir)
+		if ownedAlt != "" {
+			createReq.Slug, alternatives = ownedAlt, nil
 		}
+		var createErr error
+		slug, createErr = createOrFetchAppWithAlternatives(ctx, client, createReq, createReq, alternatives, requireAuthnPtr, appProtocolPtr, publicAuthPtr, nil)
+		if createErr != nil {
+			return printErr("Could not create or fetch app", createErr)
+		}
+		printSlugAlternativeNotice(requestedSlug, slug)
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "status": "ready"}))
 		}
@@ -4387,6 +4404,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			if resolvedSimplePlan != nil {
 				existingReq.ExecutionMode = ""
 			}
+			// Another owner may hold the name: an earlier deploy may already
+			// have taken a suffixed alternative, which this deploy updates,
+			// or creation falls back to one.
+			requestedSlug := slug
+			ownedAlt, alternatives := appSlugAlternatives(ctx, client, slug, sourceDir)
+			if ownedAlt != "" {
+				slug, createReq.Slug, existingReq.Slug = ownedAlt, ownedAlt, ownedAlt
+				alternatives = nil
+			}
 			if !*createOnly {
 				if code := guardUnlinkedExistingApp(ctx, client, slug, contextDir, *yes); code != 0 {
 					return code
@@ -4397,8 +4423,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			// deploy warned it would replace a running release that did not
 			// exist (MCP Tasks prod re-probe 2026-11-23).
 			_, getErr := client.GetApp(ctx, slug)
-			creating := isNotFound(getErr)
-			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			creating := isNotFound(getErr) || ownedAlt != ""
+			slug, err = createOrFetchAppWithAlternatives(ctx, client, createReq, existingReq, alternatives, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			if err == nil {
+				printSlugAlternativeNotice(requestedSlug, slug)
+			}
 			if err == nil && creating {
 				rememberCreatedApp(contextDir, slug)
 			}

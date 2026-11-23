@@ -1220,6 +1220,18 @@ var CoveragePolicy = coveragePolicy
 var CreateDevSetupManifest = createDevSetupManifest
 var CreateDurableProjectVerification = createDurableProjectVerification
 var CreateOrFetchApp = createOrFetchApp
+
+// DeployAppWithAlternatives runs the deploy's name resolution: reuse an owned
+// suffixed app, else create slug or the first free alternative.
+func DeployAppWithAlternatives(ctx context.Context, client *Client, slug, sourceDir string) (string, error) {
+	req := api.CreateAppRequest{Slug: slug}
+	owned, alternatives := appSlugAlternatives(ctx, client, slug, sourceDir)
+	if owned != "" {
+		req.Slug, alternatives = owned, nil
+	}
+	return createOrFetchAppWithAlternatives(ctx, client, req, req, alternatives, nil, nil, nil, nil)
+}
+
 var CreateTestAsyncRoutes = createTestAsyncRoutes
 var CurrentUploadOffset = currentUploadOffset
 var CustomerCliCommands = customerCliCommands
