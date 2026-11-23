@@ -2330,6 +2330,15 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 	dtos["RouteResourcesResponse"] = routePeaksResponse
 	dtos["RouteResourceAttribution"] = routePeakDTOs["RouteReport"]
 	dtos["RouteResourceSplit"] = routePeakDTOs["Split"]
+
+	// ADR-20261123110137: per-tool MCP insights.
+	mcpInsightDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "api", "mcp_tool_insights.go")})
+	if err != nil {
+		t.Fatalf("scan MCP insight DTOs: %v", err)
+	}
+	for _, name := range []string{"MCPToolInsightsResponse", "MCPToolInsight"} {
+		dtos[name] = mcpInsightDTOs[name]
+	}
 	objectDTOs, err := scanDTOs([]string{filepath.Join(root, "pkg", "rehearsalobj", "protocol.go")})
 	if err != nil {
 		t.Fatalf("scan rehearsal object DTOs: %v", err)

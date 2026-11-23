@@ -3313,6 +3313,9 @@ from .mcp_task_compatibility_report_request import MCPTaskCompatibilityReportReq
 from .mcp_task_compatibility_report_response import MCPTaskCompatibilityReportResponse
 from .mcp_task_handler_compatibility import MCPTaskHandlerCompatibility
 from .mcp_task_handler_deployment_workers import MCPTaskHandlerDeploymentWorkers
+from .mcp_tool_insight import MCPToolInsight
+from .mcp_tool_insights_response import MCPToolInsightsResponse
+from .mcp_tool_insights_response_telemetry import MCPToolInsightsResponseTelemetry
 from .mcp_tool_limit import MCPToolLimit
 from .mcpo_auth_retirement import MCPOAuthRetirement
 from .mcpo_auth_retirement_action import MCPOAuthRetirementAction
@@ -10430,6 +10433,9 @@ __all__ = (
     "MCPTaskCompatibilityReportResponse",
     "MCPTaskHandlerCompatibility",
     "MCPTaskHandlerDeploymentWorkers",
+    "MCPToolInsight",
+    "MCPToolInsightsResponse",
+    "MCPToolInsightsResponseTelemetry",
     "MCPToolLimit",
     "MemberListResponse",
     "MFAConfirmRequest",

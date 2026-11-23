@@ -1562,6 +1562,8 @@ export type { MCPTaskCompatibilityReportRequest } from './MCPTaskCompatibilityRe
 export type { MCPTaskCompatibilityReportResponse } from './MCPTaskCompatibilityReportResponse.js';
 export type { MCPTaskHandlerCompatibility } from './MCPTaskHandlerCompatibility.js';
 export type { MCPTaskHandlerDeploymentWorkers } from './MCPTaskHandlerDeploymentWorkers.js';
+export type { MCPToolInsight } from './MCPToolInsight.js';
+export type { MCPToolInsightsResponse } from './MCPToolInsightsResponse.js';
 export type { MCPToolLimit } from './MCPToolLimit.js';
 export type { MFAConfirmRequest } from './MFAConfirmRequest.js';
 export type { MFAConfirmResponse } from './MFAConfirmResponse.js';
