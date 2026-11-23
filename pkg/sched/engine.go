@@ -8176,8 +8176,21 @@ func (e *Engine) ReconcileDeletedApp(ctx context.Context, appID string) (int, er
 
 // Evict destroys a RUNNING instance under RAM pressure (spec §4.3). Unlike Park
 // it does not snapshot — the next wake cold-boots (ADR-005), so the state lands
-// in STOPPED rather than PARKED.
+// in STOPPED rather than PARKED. Rollouts also stop replicas through it; the
+// pressure paths go through EvictUnderPressure, which records why. A replica
+// that froze before the lock parks with reason superseded, so it is not
+// counted as a memory pressure park.
 func (e *Engine) Evict(ctx context.Context, instanceID string) error {
+	return e.evict(ctx, instanceID, "state_transition", "", parkReasonSuperseded)
+}
+
+// parkReasonSuperseded is the frozen_park reason when Evict, not memory
+// pressure, parks a frozen instance.
+const parkReasonSuperseded = "superseded"
+
+// evict stops a running instance with a kind/reason transition, or parks a
+// frozen one with parkReason.
+func (e *Engine) evict(ctx context.Context, instanceID, kind, reason, parkReason string) error {
 	ins, err := e.lockedInStates(ctx, instanceID, state.StateRunning, state.StateFrozen)
 	if err != nil || ins == nil {
 		return err
@@ -8186,7 +8199,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 	if state.State(ins.State) == state.StateFrozen {
 		// ADR-1151: under memory pressure frozen VMs go first. The
 		// deployment's snapshot stays, so the instance parks, not stops.
-		e.parkFrozenLocked(ctx, *ins, "memory_pressure")
+		e.parkFrozenLocked(ctx, *ins, parkReason)
 		return nil
 	}
 
@@ -8199,7 +8212,7 @@ func (e *Engine) Evict(ctx context.Context, instanceID string) error {
 		return fmt.Errorf("sched: evict: destroy %s: %w", instanceID, err)
 	}
 	e.ledger.Release(instanceID)
-	e.transition(ctx, instanceID, ins.AppID, state.StateStopped)
+	e.transitionWithKind(ctx, instanceID, ins.AppID, state.StateStopped, kind, reason)
 	if ins.Mode == string(state.InstanceModeWorker) {
 		e.scheduleWorkerReconcile(ctx, ins.DeploymentID)
 	}
