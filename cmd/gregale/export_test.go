@@ -3031,6 +3031,12 @@ func WaitForDevPostgres(ctx context.Context, session api.DevSessionResponse, tim
 	return waitForDevPostgres(ctx, session, timeout, poll, get, waiting)
 }
 
+// ADR-20261122194324: gateway-enforced MCP access modes.
+var (
+	MCPAuthEnableConfig  = mcpAuthEnableConfig
+	AuditMCPGatewayRules = auditMCPGatewayRules
+)
+
 // RealtimePreviewInView is realtimePreviewInView for the tier defaults
 // (tier) or for an account view that hides hidden.
 func RealtimePreviewInView(tier bool, hidden ...string) bool {

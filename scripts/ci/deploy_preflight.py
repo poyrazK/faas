@@ -14,6 +14,9 @@ checks:
                                                             else wait
   healthy  no page alert fires on the control plane's Prometheus (tenant-
            signal families excepted) and Prometheus answers else wait
+  base     the control plane runs the full release this unit release is
+           built over (the build's BASE_MARKER artifact)  else stand down:
+           a newer tag is not deployed yet; cd-platform deploys it
   watch    no host already holds the most unwatched releases allowed
            (release_units.json "watch".max_unwatched)      else wait while
            its watch runs; fail when no watch runs for it (adopt it)
@@ -75,6 +78,8 @@ PREFLIGHT_JOB = "Check production can take a deploy"
 # release-units' build job uploads an empty artifact named this plus the
 # released commit, so a later run can find the runs that released it.
 RELEASE_MARKER = "unit-release-sha-"
+# ... and one named after the full release it is built over (--follow-build).
+BASE_MARKER = "unit-release-base-"
 
 
 def lanes_passed(jobs: list[dict]) -> bool:
@@ -158,6 +163,9 @@ class Preflight:
     clock: object = time.time
     _round: list | None = None
     _round_at: float = 0.0
+    # The full release this run's unit release is built over (BASE_MARKER),
+    # known once the build released something; "" skips the base check.
+    base_sha: str = ""
 
     def me(self) -> dict:
         if self._me is None:
@@ -178,7 +186,7 @@ class Preflight:
             host = self.host_state()
         except (OSError, ValueError, subprocess.SubprocessError) as err:
             host = {"error": str(err)}
-        verdicts += [self.idle(host), self.healthy(host), self.watch(host)]
+        verdicts += [self.idle(host), self.healthy(host), self.base(host), self.watch(host)]
         self._round, self._round_at = verdicts, self.clock()
         return lead + verdicts
 
@@ -197,13 +205,32 @@ class Preflight:
         if not sha:
             return Verdict("built", STAND_DOWN, "this run's build released nothing; nothing to deploy")
         self.sha = sha
+        self.base_sha = self.marker(self.run_id, BASE_MARKER)
         return Verdict("built", OK, f"this run released {sha[:12]}")
 
-    def marker(self, run_id: int) -> str:
-        """The commit run_id released, from its RELEASE_MARKER artifact."""
+    def marker(self, run_id: int, prefix: str = RELEASE_MARKER) -> str:
+        """The commit a marker artifact of run_id names: RELEASE_MARKER the
+        released commit, BASE_MARKER the full release it is built over."""
         arts = self.gh.get(f"actions/runs/{run_id}/artifacts", {"per_page": 100}).get("artifacts", [])
-        names = [a.get("name", "") for a in arts if a.get("name", "").startswith(RELEASE_MARKER)]
-        return names[0][len(RELEASE_MARKER):] if names else ""
+        names = [a.get("name", "") for a in arts if a.get("name", "").startswith(prefix)]
+        return names[0][len(prefix):] if names else ""
+
+    # --- base -------------------------------------------------------------
+    def base(self, host: dict) -> Verdict:
+        """The planner refuses a unit release built over another full
+        release than the control plane runs (N±1). The build takes the
+        newest tag, so between a tag and its cd-platform deploy every
+        release would fail the lane and freeze deploys; stand down instead.
+        Unknown on either side (no marker, an old host script, no release
+        manifest): the planner still decides."""
+        running = (host.get("base") or "") if not host.get("error") else ""
+        if not self.base_sha or not running:
+            return Verdict("base", OK, "the planner checks the full release the control plane runs")
+        if running == self.base_sha:
+            return Verdict("base", OK, f"the control plane runs the full release this unit release is built over ({running[:12]})")
+        return Verdict("base", STAND_DOWN, f"the control plane runs full release {running[:12]}, but this unit release is "
+                       f"built over {self.base_sha[:12]} (the newest tag): deploy that release with cd-platform first; "
+                       "the next merge after it deploys")
 
     # --- current ----------------------------------------------------------
     def current(self) -> Verdict:

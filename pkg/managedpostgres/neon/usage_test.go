@@ -63,7 +63,7 @@ func TestUsageRequiresCompleteConsumptionCoverage(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(usage.Readings) != 4 || usage.Readings[0].Quantity != test.compute {
+			if err != nil || len(usage.Readings) != 5 || usage.Readings[0].Quantity != test.compute {
 				t.Fatalf("complete usage = %+v, %v", usage, err)
 			}
 		})
@@ -81,7 +81,7 @@ func TestUsageCoversBillingPeriodChangeWithinTimeframe(t *testing.T) {
 		writeResponse(t, w, http.StatusOK, map[string]any{"projects": []map[string]any{{"project_id": "quiet-river-123", "periods": []map[string]any{second, first}}}})
 	}))
 	usage, err := provider.Usage(context.Background(), "quiet-river-123", managedpostgres.UsageWindow{From: from, To: to})
-	if err != nil || len(usage.Readings) != 4 || usage.Readings[0].Quantity != 7 {
+	if err != nil || len(usage.Readings) != 5 || usage.Readings[0].Quantity != 7 {
 		t.Fatalf("usage across billing change = %+v, %v", usage, err)
 	}
 }
@@ -119,7 +119,7 @@ func TestUsageCoversBillingPeriodChangeReportedByOnePeriod(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || len(usage.Readings) != 4 || usage.Readings[0].Quantity != 7 {
+			if err != nil || len(usage.Readings) != 5 || usage.Readings[0].Quantity != 7 {
 				t.Fatalf("usage across billing change = %+v, %v", usage, err)
 			}
 		})
@@ -144,11 +144,13 @@ func TestUsageNormalizesByteMonthStorage(t *testing.T) {
 					}
 					continue
 				}
-				index := 1
-				if metric == "instant_restore_bytes_month" || metric == "snapshot_storage_bytes_month" {
-					index = 2
+				// Restore history and snapshots are separate meters: Neon
+				// prices them differently (ADR-20261123062111).
+				index := map[string]int{"instant_restore_bytes_month": 2, "snapshot_storage_bytes_month": 3}[metric]
+				if index == 0 {
+					index = 1
 				}
-				if err != nil || len(usage.Readings) != 4 || usage.Readings[index].Quantity != quantity*secondsPerBillingMonth {
+				if err != nil || len(usage.Readings) != 5 || usage.Readings[index].Quantity != quantity*secondsPerBillingMonth {
 					t.Fatalf("byte-month normalization: %+v, %v; want %d byte-seconds", usage, err, quantity*secondsPerBillingMonth)
 				}
 			}

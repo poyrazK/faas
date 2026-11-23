@@ -7551,6 +7551,20 @@ END $$;
 
 
 --
+-- Name: consumer_key_scopes_valid(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.consumer_key_scopes_valid(scopes text[]) RETURNS boolean
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $_$
+  SELECT cardinality(scopes) > 0 AND NOT EXISTS (
+    SELECT 1 FROM unnest(scopes) AS s(scope)
+    WHERE NOT (s.scope IN ('read', 'write', 'admin', 'billing')
+      OR (char_length(s.scope) <= 128 AND s.scope ~ '^mcp:[!#-\[\]-~]+$')))
+$_$;
+
+
+--
 -- Name: consumer_keys_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -36915,7 +36929,7 @@ CREATE TABLE public.consumer_keys (
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text, 'billing'::text]) AND (cardinality(scopes) > 0)))
+    CONSTRAINT consumer_keys_scopes_vocab_v2_chk CHECK (public.consumer_key_scopes_valid(scopes))
 );
 
 
@@ -48269,6 +48283,8 @@ CREATE TABLE public.managed_postgres_overage_deliveries (
     updated_at timestamp with time zone NOT NULL,
     billed_storage_byte_seconds bigint DEFAULT 0 NOT NULL,
     billed_egress_bytes bigint DEFAULT 0 NOT NULL,
+    billed_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_deliveries_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_deliveries_check CHECK ((isfinite(updated_at) AND (updated_at >= period_start))),
     CONSTRAINT managed_postgres_overage_deliveries_delivered_millicents_check CHECK ((delivered_millicents > 0)),
@@ -48308,6 +48324,11 @@ CREATE TABLE public.managed_postgres_overage_pending (
     app_egress_bytes bigint DEFAULT 0 NOT NULL,
     egress_allowance_bytes bigint DEFAULT 0 NOT NULL,
     billed_egress_bytes bigint DEFAULT 0 NOT NULL,
+    used_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    used_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
+    included_history_bytes bigint DEFAULT 0 NOT NULL,
+    billed_history_byte_seconds bigint DEFAULT 0 NOT NULL,
+    billed_snapshot_byte_seconds bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_overage_pending_allowance_unit_seconds_check CHECK ((allowance_unit_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_storage_check CHECK ((billed_storage_byte_seconds >= 0)),
     CONSTRAINT managed_postgres_overage_pending_billed_unit_seconds_check CHECK ((billed_unit_seconds >= 0)),
@@ -48496,7 +48517,7 @@ CREATE TABLE public.managed_postgres_usage (
     CONSTRAINT managed_postgres_usage_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_usage_check CHECK ((window_to > window_from)),
     CONSTRAINT managed_postgres_usage_cost_millicents_check CHECK ((cost_millicents >= 0)),
-    CONSTRAINT managed_postgres_usage_meter_check CHECK ((meter = ANY (ARRAY['active_seconds'::text, 'compute_unit_seconds'::text, 'storage_byte_seconds'::text, 'history_byte_seconds'::text, 'egress_bytes'::text, 'operations'::text]))),
+    CONSTRAINT managed_postgres_usage_meter_check CHECK (((meter = ANY (ARRAY['active_seconds'::text, 'compute_unit_seconds'::text, 'storage_byte_seconds'::text, 'history_byte_seconds'::text, 'egress_bytes'::text, 'operations'::text])) OR (meter = 'snapshot_byte_seconds'::text))),
     CONSTRAINT managed_postgres_usage_quantity_check CHECK ((quantity >= 0))
 );
 
@@ -71847,6 +71868,14 @@ ALTER TABLE public.managed_postgres_overage_deliveries
 
 
 --
+-- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_history_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_deliveries
+    ADD CONSTRAINT managed_postgres_overage_deliveries_billed_history_check CHECK (((billed_history_byte_seconds >= 0) AND (billed_snapshot_byte_seconds >= 0))) NOT VALID;
+
+
+--
 -- Name: managed_postgres_overage_deliveries managed_postgres_overage_deliveries_billed_storage_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71868,6 +71897,14 @@ ALTER TABLE ONLY public.managed_postgres_overage_deliveries
 
 ALTER TABLE public.managed_postgres_overage_pending
     ADD CONSTRAINT managed_postgres_overage_pending_egress_check CHECK (((used_egress_bytes >= 0) AND (app_egress_bytes >= 0) AND (egress_allowance_bytes >= 0) AND (billed_egress_bytes >= 0))) NOT VALID;
+
+
+--
+-- Name: managed_postgres_overage_pending managed_postgres_overage_pending_history_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.managed_postgres_overage_pending
+    ADD CONSTRAINT managed_postgres_overage_pending_history_check CHECK (((used_history_byte_seconds >= 0) AND (used_snapshot_byte_seconds >= 0) AND (included_history_bytes >= 0) AND (billed_history_byte_seconds >= 0) AND (billed_snapshot_byte_seconds >= 0))) NOT VALID;
 
 
 --

@@ -18,8 +18,11 @@ func WithPrivateForward(ctx context.Context) context.Context {
 }
 
 func ForwardContext(ctx context.Context) context.Context {
+	// FromOutgoingContext already returns a fresh copy; Copy() made a second.
 	md, _ := metadata.FromOutgoingContext(ctx)
-	md = md.Copy()
+	if md == nil {
+		md = metadata.MD{}
+	}
 	md.Delete(privateForwardKey)
 	if private, _ := ctx.Value(privateForwardContextKey{}).(bool); private {
 		md.Set(privateForwardKey, "1")
