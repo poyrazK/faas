@@ -241,10 +241,24 @@ def _shape(result):
     status = 200
     response_headers = {}
     response_body = result
+    # A dict is the response envelope when it has a body, or holds nothing but
+    # an integer status and headers; any other dict is the JSON body.
+    # {"status": "ok"} failed with "invalid literal for int()", and
+    # {"status": 201, "headers": ...} was sent as its own JSON (prod hunt r32).
+    code = None
     if isinstance(result, dict):
-        status = int(result.get("statusCode", result.get("status", 200)))
+        for key in ("statusCode", "status"):
+            value = result.get(key)
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int) or (isinstance(value, str) and value.isdigit()):
+                code = int(value)
+                break
+    if isinstance(result, dict) and ("body" in result or (
+            code is not None and set(result) <= {"status", "statusCode", "headers"})):
+        status = 200 if code is None else code
         response_headers = result.get("headers") or {}
-        if "body" in result: response_body = result["body"]
+        response_body = result.get("body")
     # A header value may be a list, one line per element (ADR-999).
     headers_out = {str(k): ([str(x) for x in v] if isinstance(v, (list, tuple)) else str(v))
                    for k, v in response_headers.items()}
@@ -252,8 +266,17 @@ def _shape(result):
 
 def _whole(status, headers_out, response_body):
     if response_body is None: response_body = ""
+    # A body the adapter encodes says what it is; without this the runner's
+    # binary default made browsers download JSON (prod hunt r32).
+    default_type = ""
     if not isinstance(response_body, (str, bytes, bytearray)):
         response_body = json.dumps(response_body)
+        default_type = "application/json; charset=utf-8"
+    elif isinstance(response_body, str) and response_body:
+        default_type = "text/plain; charset=utf-8"
+    if default_type and not any(str(k).lower() == "content-type" for k in headers_out):
+        headers_out = dict(headers_out)
+        headers_out["content-type"] = default_type
     if isinstance(response_body, str): response_body = response_body.encode("utf-8")
     return {
         "status": status,

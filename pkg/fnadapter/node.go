@@ -305,10 +305,19 @@ async function handleOne(input, out) {
   let status = 200;
   let responseHeaders = {};
   let responseBody = value;
-  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
-    status = Number(value.statusCode ?? value.status ?? 200);
+  // An object is the response envelope when it has a body, or holds nothing
+  // but an integer status and headers; any other object is the JSON body.
+  // { status: "ok" } sent status NaN, and { status: 201, headers } was sent
+  // as its own JSON (prod hunt r32).
+  const isObject = value && typeof value === "object" && !Buffer.isBuffer(value) && !(value instanceof Uint8Array);
+  const code = !isObject ? undefined : [value.statusCode, value.status]
+    .find((item) => Number.isInteger(item) || (typeof item === "string" && /^[0-9]+$/.test(item)));
+  const envelopeKeys = ["status", "statusCode", "headers"];
+  if (isObject && (Object.prototype.hasOwnProperty.call(value, "body") ||
+      (code !== undefined && Object.keys(value).every((key) => envelopeKeys.includes(key))))) {
+    status = code === undefined ? 200 : Number(code);
     responseHeaders = value.headers || {};
-    if (Object.prototype.hasOwnProperty.call(value, "body")) responseBody = value.body;
+    responseBody = value.body;
   }
   // A header value may be a list, one line per element (ADR-999).
   const normalizedHeaders = {};
@@ -321,8 +330,17 @@ async function handleOne(input, out) {
     return;
   }
   if (responseBody === undefined || responseBody === null) responseBody = "";
-  if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody)) {
+  // A body the adapter encodes says what it is; without this the runner's
+  // binary default made browsers download JSON (prod hunt r32).
+  let defaultType = "";
+  if (typeof responseBody !== "string" && !Buffer.isBuffer(responseBody) && !(responseBody instanceof Uint8Array)) {
     responseBody = JSON.stringify(responseBody);
+    defaultType = "application/json; charset=utf-8";
+  } else if (typeof responseBody === "string" && responseBody !== "") {
+    defaultType = "text/plain; charset=utf-8";
+  }
+  if (defaultType && !Object.keys(normalizedHeaders).some((key) => key.toLowerCase() === "content-type")) {
+    normalizedHeaders["content-type"] = defaultType;
   }
   emitWhole(out, status, normalizedHeaders, Buffer.from(responseBody));
   });
