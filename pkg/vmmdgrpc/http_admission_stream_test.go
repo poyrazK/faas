@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ type scriptedStream struct {
 	ctx     context.Context
 	in      []*int
 	recvs   atomic.Int32
+	sends   atomic.Int32
 	sent    []*string
 	block   chan struct{}
 	release chan struct{} // closed when a blocked call should return
@@ -44,6 +46,7 @@ func (f *scriptedStream) Recv() (*int, error) {
 }
 
 func (f *scriptedStream) Send(m *string) error {
+	f.sends.Add(1)
 	if f.block != nil {
 		<-f.release
 		return io.ErrUnexpectedEOF
@@ -100,10 +103,17 @@ func TestAdmittedHTTPStreamDrainUnblocksRecvAndSend(t *testing.T) {
 				}
 				errc <- s.Send(ptr("x"))
 			}()
-			// Let the call reach the blocked stream before the drain.
-			for deadline := time.Now().Add(5 * time.Second); f.recvs.Load() == 0 && op == "recv"; {
+			// Let the call reach the blocked stream before the drain, so the
+			// drain abandons a call the pump already owns.
+			reached := func() bool {
+				if op == "recv" {
+					return f.recvs.Load() > 0
+				}
+				return f.sends.Load() > 0
+			}
+			for deadline := time.Now().Add(5 * time.Second); !reached(); {
 				if time.Now().After(deadline) {
-					t.Fatal("Recv never reached the stream")
+					t.Fatalf("%s never reached the stream", op)
 				}
 				runtime.Gosched()
 			}
@@ -127,8 +137,29 @@ func TestAdmittedHTTPStreamDrainUnblocksRecvAndSend(t *testing.T) {
 	}
 }
 
+// livePumps counts goroutines running an admittedHTTPStream pump, so other
+// tests' goroutines don't skew the leak check.
+func livePumps() int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	n := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, "admittedHTTPStream") && (strings.Contains(g, ".recvPump(") || strings.Contains(g, ".sendPump(")) {
+			n++
+		}
+	}
+	return n
+}
+
 func TestAdmittedHTTPStreamPumpsExitWhenTheStreamEnds(t *testing.T) {
-	before := runtime.NumGoroutine()
+	before := livePumps()
 	for i := 0; i < 50; i++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		f := &scriptedStream{ctx: ctx, in: []*int{ptr(1)}}
@@ -142,9 +173,9 @@ func TestAdmittedHTTPStreamPumpsExitWhenTheStreamEnds(t *testing.T) {
 		cancel()
 	}
 	deadline := time.Now().Add(5 * time.Second)
-	for runtime.NumGoroutine() > before+2 {
+	for livePumps() > before {
 		if time.Now().After(deadline) {
-			t.Fatalf("goroutines %d, started with %d: pumps leaked", runtime.NumGoroutine(), before)
+			t.Fatalf("%d pump goroutines still running, started with %d: pumps leaked", livePumps(), before)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

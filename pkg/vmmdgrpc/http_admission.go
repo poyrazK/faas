@@ -34,6 +34,10 @@ func (s *Server) httpAdmissionEnforcement(instance string) *vmmdpb.HTTPAdmission
 		Generation: state.Generation, Retiring: state.Retiring, Plan: string(state.Plan)}
 }
 
+// admitHTTPForward acquires the instance's forward permit and wraps stream so
+// a lifecycle drain unblocks its I/O. As with any gRPC stream, at most one
+// goroutine may call the returned stream's Recv and at most one its Send at a
+// time; the wrapper's pumps rely on it (see admittedHTTPStream).
 func admitHTTPForward[Req, Resp any](s *Server, stream grpc.BidiStreamingServer[Req, Resp], instance string) (grpc.BidiStreamingServer[Req, Resp], func(), error) {
 	owner, ok := s.vmm.(httpForwardAdmissionVMM)
 	if !ok {
@@ -137,6 +141,13 @@ func (s *admittedHTTPStream[Req, Resp]) Recv() (*Req, error) {
 	}
 	select {
 	case <-s.ctx.Done():
+		// A result that landed as the drain fired was already consumed
+		// from the stream; hand it back rather than drop it.
+		select {
+		case r := <-s.recvDone:
+			return r.msg, r.err
+		default:
+		}
 		s.recvStuck = true
 		return nil, s.canceled()
 	case r := <-s.recvDone:
@@ -174,6 +185,11 @@ func (s *admittedHTTPStream[Req, Resp]) Send(msg *Resp) error {
 	}
 	select {
 	case <-s.ctx.Done():
+		select {
+		case err := <-s.sendDone:
+			return err
+		default:
+		}
 		s.sendStuck = true
 		return s.canceled()
 	case err := <-s.sendDone:
