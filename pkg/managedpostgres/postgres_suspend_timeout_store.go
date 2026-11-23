@@ -2,8 +2,6 @@ package managedpostgres
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -48,12 +46,4 @@ func (s *PostgresStore) SuspendTimeouts(ctx context.Context, databaseIDs []strin
 		out[postgresUUIDString(row.DatabaseID)] = int64(row.Seconds)
 	}
 	return out, nil
-}
-
-func (s *PostgresStore) SuspendTimeoutsVersion(ctx context.Context) (string, error) {
-	row, err := sqlc.New().ManagedPostgresSuspendTimeoutsVersion(ctx, s.catalog)
-	if err != nil {
-		return "", mapPostgresError(err)
-	}
-	return fmt.Sprintf("%d@%s", row.Rows, row.Latest.Time.UTC().Format(time.RFC3339Nano)), nil
 }

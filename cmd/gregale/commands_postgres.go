@@ -886,7 +886,7 @@ func renderPostgresDatabase(w io.Writer, database api.ManagedPostgresDatabase) {
 		}
 		_, _ = fmt.Fprintf(w, "  suspend_after:    %s (%s)\n", time.Duration(database.SuspendTimeoutSeconds)*time.Second, source)
 	}
-	_, _ = fmt.Fprintf(w, "  storage_limit:   %s\n", formatPostgresStorage(database.StorageLimitBytes))
+	_, _ = fmt.Fprintf(w, "  storage_limit:    %s\n", formatPostgresStorage(database.StorageLimitBytes))
 	_, _ = fmt.Fprintf(w, "  restore_window:   %s\n", formatPostgresDuration(database.RestoreWindowSeconds))
 	_, _ = fmt.Fprintf(w, "  state:            %s\n", database.State)
 	if database.RestorableUntil != "" {

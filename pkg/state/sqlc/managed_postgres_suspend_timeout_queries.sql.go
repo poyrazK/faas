@@ -50,25 +50,6 @@ func (q *Queries) ManagedPostgresSuspendTimeouts(ctx context.Context, db DBTX, d
 	return items, nil
 }
 
-const managedPostgresSuspendTimeoutsVersion = `-- name: ManagedPostgresSuspendTimeoutsVersion :one
-SELECT count(*)::bigint AS rows, COALESCE(max(t.updated_at), 'epoch'::timestamptz)::timestamptz AS latest
-FROM managed_postgres_suspend_timeouts t
-`
-
-type ManagedPostgresSuspendTimeoutsVersionRow struct {
-	Rows   int64
-	Latest pgtype.Timestamptz
-}
-
-// Changes whenever a row is written or removed, so the sweep can rest while
-// nothing changed.
-func (q *Queries) ManagedPostgresSuspendTimeoutsVersion(ctx context.Context, db DBTX) (ManagedPostgresSuspendTimeoutsVersionRow, error) {
-	row := db.QueryRow(ctx, managedPostgresSuspendTimeoutsVersion)
-	var i ManagedPostgresSuspendTimeoutsVersionRow
-	err := row.Scan(&i.Rows, &i.Latest)
-	return i, err
-}
-
 const setManagedPostgresSuspendTimeout = `-- name: SetManagedPostgresSuspendTimeout :exec
 
 INSERT INTO managed_postgres_suspend_timeouts (database_id, seconds, updated_at)

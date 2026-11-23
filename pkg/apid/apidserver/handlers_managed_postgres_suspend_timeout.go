@@ -2,6 +2,7 @@ package apidserver
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -44,8 +45,14 @@ func (s *server) setManagedPostgresSuspendTimeout(w http.ResponseWriter, r *http
 		return
 	}
 	if request.Seconds != nil && !managedpostgres.ValidCustomerSuspendTimeout(*request.Seconds) {
+		limit := int64(api.ManagedPostgresSuspendTimeoutMaxSeconds)
+		if *request.Seconds < api.ManagedPostgresSuspendTimeoutMinSeconds {
+			limit = api.ManagedPostgresSuspendTimeoutMinSeconds
+		}
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "invalid_suspend_timeout", "Invalid suspend timeout",
-			"seconds must be between 60 and 3600, or null for the default"))
+			fmt.Sprintf("seconds must be between %d and %d, or null for the default; got %d",
+				api.ManagedPostgresSuspendTimeoutMinSeconds, api.ManagedPostgresSuspendTimeoutMaxSeconds, *request.Seconds)).
+			WithLimit(limit, *request.Seconds).WithDocs(api.ManagedPostgresSuspendTimeoutDocsURL))
 		return
 	}
 	limits, ok := api.ManagedPostgresLimitsFor(account.Plan)

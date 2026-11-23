@@ -13,9 +13,3 @@ DELETE FROM managed_postgres_suspend_timeouts WHERE database_id = sqlc.arg(datab
 -- name: ManagedPostgresSuspendTimeouts :many
 SELECT t.database_id, t.seconds FROM managed_postgres_suspend_timeouts t
 WHERE t.database_id = ANY(sqlc.arg(database_ids)::uuid[]);
-
--- name: ManagedPostgresSuspendTimeoutsVersion :one
--- Changes whenever a row is written or removed, so the sweep can rest while
--- nothing changed.
-SELECT count(*)::bigint AS rows, COALESCE(max(t.updated_at), 'epoch'::timestamptz)::timestamptz AS latest
-FROM managed_postgres_suspend_timeouts t;

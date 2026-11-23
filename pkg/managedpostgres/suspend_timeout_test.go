@@ -3,10 +3,10 @@ package managedpostgres
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 type suspendTimeoutProvider struct {
@@ -71,10 +71,6 @@ func (s *suspendTimeoutStore) SuspendTimeouts(_ context.Context, ids []string) (
 	return out, nil
 }
 
-func (s *suspendTimeoutStore) SuspendTimeoutsVersion(context.Context) (string, error) {
-	return fmt.Sprint(s.writes), nil
-}
-
 func TestSuspendTimeoutPolicyIsPushedToProvidersAndBounded(t *testing.T) {
 	provider := &suspendTimeoutProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}}
 	registry := testRegistry(t, provider, nil)
@@ -100,7 +96,7 @@ func TestSuspendTimeoutPolicyIsPushedToProvidersAndBounded(t *testing.T) {
 	}
 }
 
-func TestSuspendTimeoutSweepConvergesThenRestsUntilAValueChanges(t *testing.T) {
+func TestSuspendTimeoutSweepConvergesAndRechecksOnlyChangedDatabases(t *testing.T) {
 	provider := &suspendTimeoutProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()},
 		current: map[string]int64{"a": 300, "b": 300, "c": -1, "d": 300, "e": 300}, running: map[string]bool{"b": true}}
 	registry := testRegistry(t, provider, nil)
@@ -121,34 +117,73 @@ func TestSuspendTimeoutSweepConvergesThenRestsUntilAValueChanges(t *testing.T) {
 	if err != nil || summary.Changed != 2 || summary.Deferred != 1 || provider.current["a"] != 120 || provider.current["e"] != 600 || provider.current["d"] != 300 {
 		t.Fatalf("first sweep = %+v, %v; current = %v", summary, err, provider.current)
 	}
-	delete(provider.running, "b")
-	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Changed != 1 || summary.Converged != 2 {
-		t.Fatalf("second sweep = %+v, %v", summary, err)
-	}
-	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Skipped || summary.Converged != 3 {
-		t.Fatalf("confirming sweep = %+v, %v", summary, err)
-	}
+	// Only the deferred database is read again.
 	calls := provider.calls
-	if summary, _ = sweeper.Sweep(ctx); !summary.Skipped || provider.calls != calls {
+	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Unchanged != 2 || summary.Deferred != 1 || provider.calls != calls+1 {
+		t.Fatalf("second sweep = %+v, %v; calls %d -> %d", summary, err, calls, provider.calls)
+	}
+	delete(provider.running, "b")
+	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Changed != 1 || provider.current["b"] != 120 {
+		t.Fatalf("third sweep = %+v, %v", summary, err)
+	}
+	calls = provider.calls
+	if summary, _ = sweeper.Sweep(ctx); summary.Unchanged != 3 || provider.calls != calls {
 		t.Fatalf("converged fleet was read again: %+v", summary)
 	}
-	// A customer's own value wakes the sweep.
+	// A customer's own value sends that database through again.
 	seconds := int64(900)
 	if err := store.SetSuspendTimeout(ctx, "a", &seconds); err != nil {
 		t.Fatal(err)
 	}
-	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Skipped || summary.Changed != 1 || provider.current["a"] != 900 {
+	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Changed != 1 || provider.current["a"] != 900 {
 		t.Fatalf("sweep after customer change = %+v, %v", summary, err)
+	}
+	// A compute-policy change resets the endpoint to the default and moves
+	// the row: the sweep puts the database's own value back.
+	provider.current["a"] = 120
+	store.databases[0].UpdatedAt = store.databases[0].UpdatedAt.Add(time.Minute)
+	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Changed != 1 || provider.current["a"] != 900 {
+		t.Fatalf("sweep after row change = %+v, %v; current = %v", summary, err, provider.current)
 	}
 	// So does the platform default; databases with their own keep it.
 	if err := registry.ApplyLivePolicyJSON(json.RawMessage(`{"suspend_timeout_seconds": 90}`)); err != nil {
 		t.Fatal(err)
 	}
-	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Skipped || summary.Changed != 1 || provider.current["b"] != 90 || provider.current["e"] != 600 {
+	if summary, err = sweeper.Sweep(ctx); err != nil || summary.Changed != 1 || provider.current["b"] != 90 || provider.current["e"] != 600 || provider.current["a"] != 900 {
 		t.Fatalf("sweep after default change = %+v, %v; current = %v", summary, err, provider.current)
 	}
 }
 
+// A customer's value written after the sweep's batch read wins.
+func TestSuspendTimeoutSweepRereadsTheValueBeforeWriting(t *testing.T) {
+	provider := &suspendTimeoutProvider{fakeProvider: &fakeProvider{capabilities: testCapabilities()}, current: map[string]int64{"a": 300}}
+	registry := testRegistry(t, provider, nil)
+	backend := registry.backends["primary-a"]
+	store := &racingSuspendTimeoutStore{suspendTimeoutStore: suspendTimeoutStore{custom: map[string]int64{}, databases: []Database{{ID: "a", State: StateReady,
+		ProviderResourceID: "a", BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: Spec{ScaleToZero: true}}}}}
+	sweeper, err := NewSuspendTimeoutSweeper(registry, store, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sweeper.Sweep(context.Background()); err != nil || provider.current["a"] != 1800 {
+		t.Fatalf("sweep wrote %d over the customer's 1800: %v", provider.current["a"], err)
+	}
+}
+
+// racingSuspendTimeoutStore answers the batch read before a customer's write
+// and every later read after it.
+type racingSuspendTimeoutStore struct {
+	suspendTimeoutStore
+	reads int
+}
+
+func (s *racingSuspendTimeoutStore) SuspendTimeouts(ctx context.Context, ids []string) (map[string]int64, error) {
+	s.reads++
+	if s.reads == 2 {
+		s.custom["a"] = 1800
+	}
+	return s.suspendTimeoutStore.SuspendTimeouts(ctx, ids)
+}
 func TestCustomerSuspendTimeoutBounds(t *testing.T) {
 	for seconds, want := range map[int64]bool{59: false, 60: true, 120: true, 3600: true, 3601: false} {
 		if got := ValidCustomerSuspendTimeout(seconds); got != want {

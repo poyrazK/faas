@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Scale-to-zero suspend timeout: how long a scale-to-zero database's compute
@@ -19,10 +22,9 @@ const (
 	DefaultSuspendTimeoutSeconds int64 = 120
 	MinSuspendTimeoutSeconds     int64 = 60
 	MaxSuspendTimeoutSeconds     int64 = 7 * 24 * 60 * 60
-	// A customer's own value stays within an hour: past that a database is
-	// close to always-on, which plans sell separately.
-	CustomerMinSuspendTimeoutSeconds int64 = 60
-	CustomerMaxSuspendTimeoutSeconds int64 = 60 * 60
+	// A customer's own value: api.ManagedPostgresSuspendTimeoutMin/MaxSeconds.
+	CustomerMinSuspendTimeoutSeconds int64 = api.ManagedPostgresSuspendTimeoutMinSeconds
+	CustomerMaxSuspendTimeoutSeconds int64 = api.ManagedPostgresSuspendTimeoutMaxSeconds
 )
 
 func validSuspendTimeout(seconds int64) bool {
@@ -69,9 +71,6 @@ type SuspendTimeoutStore interface {
 	// value when seconds is nil.
 	SetSuspendTimeout(ctx context.Context, databaseID string, seconds *int64) error
 	SuspendTimeouts(ctx context.Context, databaseIDs []string) (map[string]int64, error)
-	// SuspendTimeoutsVersion changes whenever any database's value is set
-	// or cleared.
-	SuspendTimeoutsVersion(ctx context.Context) (string, error)
 }
 
 // SuspendTimeoutSeconds is the platform default suspend timeout in force.
@@ -198,17 +197,29 @@ type SuspendTimeoutLister interface {
 // SuspendTimeoutSweepSummary counts one sweep's databases.
 type SuspendTimeoutSweepSummary struct {
 	DefaultSeconds int64
-	Skipped        bool
-	Converged      int
-	Changed        int
-	Deferred       int
-	Failed         int
+	// Unchanged counts databases skipped because the sweep already put
+	// their current row on their current value.
+	Unchanged int
+	Converged int
+	Changed   int
+	Deferred  int
+	Failed    int
+}
+
+// suspendTimeoutMemo is what the sweep last confirmed for one database: the
+// value, on the database row as it was then. A compute-policy change, a
+// restore or a cutover moves the row's UpdatedAt, a customer or operator
+// change moves the value, and either sends the database through again.
+type suspendTimeoutMemo struct {
+	target    int64
+	resource  string
+	updatedAt time.Time
 }
 
 // SuspendTimeoutSweeper moves existing scale-to-zero databases onto their
-// suspend timeout: their own, else the platform default. Once a sweep finds
-// every database converged it stops reading providers until the default or
-// any database's own value changes, or apid restarts.
+// suspend timeout: their own, else the platform default. It reads the
+// provider only for databases whose row or value changed since it last
+// confirmed them, or that it had to defer.
 type SuspendTimeoutSweeper struct {
 	registry *Registry
 	store    SuspendTimeoutLister
@@ -216,10 +227,15 @@ type SuspendTimeoutSweeper struct {
 	// maxChanges bounds the writes of one sweep; the rest are deferred.
 	maxChanges int
 	mu         sync.Mutex
-	done       string
+	confirmed  map[string]suspendTimeoutMemo
 }
 
-const suspendTimeoutSweepBatch = 100
+const (
+	suspendTimeoutSweepBatch = 100
+	// SuspendTimeoutSweepInterval is how often apid sweeps: a value set
+	// while a database runs lands within about this long of its suspend.
+	SuspendTimeoutSweepInterval = 5 * time.Minute
+)
 
 func NewSuspendTimeoutSweeper(registry *Registry, store SuspendTimeoutLister, logger *slog.Logger) (*SuspendTimeoutSweeper, error) {
 	if registry == nil || store == nil {
@@ -228,19 +244,41 @@ func NewSuspendTimeoutSweeper(registry *Registry, store SuspendTimeoutLister, lo
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SuspendTimeoutSweeper{registry: registry, store: store, logger: logger, maxChanges: 100}, nil
+	return &SuspendTimeoutSweeper{registry: registry, store: store, logger: logger, maxChanges: 100,
+		confirmed: map[string]suspendTimeoutMemo{}}, nil
 }
 
-func (s *SuspendTimeoutSweeper) version(ctx context.Context) (string, error) {
-	version := fmt.Sprint(s.registry.SuspendTimeoutSeconds())
-	if store, ok := s.store.(SuspendTimeoutStore); ok {
-		custom, err := store.SuspendTimeoutsVersion(ctx)
-		if err != nil {
-			return "", err
-		}
-		version += "/" + custom
+// RunSuspendTimeoutSweeper sweeps the service's databases every
+// SuspendTimeoutSweepInterval until ctx ends; nil when the store cannot list
+// them. Every apid replica runs it: the writes are idempotent and touch only
+// suspended computes.
+func (s *Service) RunSuspendTimeoutSweeper(ctx context.Context, logger *slog.Logger) error {
+	lister, ok := s.store.(SuspendTimeoutLister)
+	if !ok {
+		return nil
 	}
-	return version, nil
+	sweeper, err := NewSuspendTimeoutSweeper(s.registry, lister, logger)
+	if err != nil {
+		return err
+	}
+	return sweeper.Run(ctx, SuspendTimeoutSweepInterval)
+}
+
+// Run sweeps every interval until ctx ends. It runs whether or not usage
+// metering is on.
+func (s *SuspendTimeoutSweeper) Run(ctx context.Context, interval time.Duration) error {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if summary, err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
+			s.logger.Warn("managed postgres suspend timeout sweep failed", "error", err, "changed", summary.Changed, "failed", summary.Failed)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // Sweep runs one pass over ready scale-to-zero databases.
@@ -250,15 +288,8 @@ func (s *SuspendTimeoutSweeper) Sweep(ctx context.Context) (SuspendTimeoutSweepS
 	ctx = WithBackgroundRequests(ctx)
 	fallback := s.registry.SuspendTimeoutSeconds()
 	summary := SuspendTimeoutSweepSummary{DefaultSeconds: fallback}
-	version, err := s.version(ctx)
-	if err != nil {
-		return summary, err
-	}
-	if s.done == version {
-		summary.Skipped = true
-		return summary, nil
-	}
 	customStore, _ := s.store.(SuspendTimeoutStore)
+	seen := make(map[string]bool, len(s.confirmed))
 	var failures []error
 	var after UsageDatabaseCursor
 	for {
@@ -284,11 +315,17 @@ func (s *SuspendTimeoutSweeper) Sweep(ctx context.Context) (SuspendTimeoutSweepS
 			if err := ctx.Err(); err != nil {
 				return summary, err
 			}
+			seen[database.ID] = true
 			target, own := custom[database.ID]
 			if !own {
 				target = fallback
 			}
-			s.sweepOne(ctx, database, target, &summary, &failures)
+			memo := suspendTimeoutMemo{target: target, resource: database.ProviderResourceID, updatedAt: database.UpdatedAt}
+			if s.confirmed[database.ID] == memo {
+				summary.Unchanged++
+				continue
+			}
+			s.sweepOne(ctx, database, target, customStore, &summary, &failures)
 		}
 		if len(databases) < suspendTimeoutSweepBatch {
 			break
@@ -296,20 +333,22 @@ func (s *SuspendTimeoutSweeper) Sweep(ctx context.Context) (SuspendTimeoutSweepS
 		last := databases[len(databases)-1]
 		after = UsageDatabaseCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
-	// A value changed mid-sweep moves the version, so the next sweep runs.
-	if summary.Changed == 0 && summary.Deferred == 0 && summary.Failed == 0 {
-		if again, err := s.version(ctx); err == nil && again == version {
-			s.done = version
+	for id := range s.confirmed {
+		if !seen[id] {
+			delete(s.confirmed, id)
 		}
 	}
 	return summary, errors.Join(failures...)
 }
 
-func (s *SuspendTimeoutSweeper) sweepOne(ctx context.Context, database Database, target int64, summary *SuspendTimeoutSweepSummary, failures *[]error) {
-	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
-	if err != nil {
+func (s *SuspendTimeoutSweeper) sweepOne(ctx context.Context, database Database, target int64, customStore SuspendTimeoutStore, summary *SuspendTimeoutSweepSummary, failures *[]error) {
+	fail := func(err error) {
 		summary.Failed++
 		*failures = append(*failures, fmt.Errorf("database %s: %w", database.ID, err))
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		fail(err)
 		return
 	}
 	converger, ok := backend.Provider.(SuspendTimeoutConverger)
@@ -320,17 +359,33 @@ func (s *SuspendTimeoutSweeper) sweepOne(ctx context.Context, database Database,
 		summary.Deferred++
 		return
 	}
+	// Read the database's own value again just before writing: a customer
+	// change since the batch read must not be overwritten with the old one.
+	if customStore != nil {
+		current, err := customStore.SuspendTimeouts(ctx, []string{database.ID})
+		if err != nil {
+			fail(err)
+			return
+		}
+		if own, ok := current[database.ID]; ok {
+			target = own
+		} else {
+			target = s.registry.SuspendTimeoutSeconds()
+		}
+	}
 	result, err := converger.ConvergeSuspendTimeout(ctx, database.ProviderResourceID, target)
 	switch {
 	case err != nil:
-		summary.Failed++
-		*failures = append(*failures, fmt.Errorf("database %s: %w", database.ID, err))
+		fail(err)
+		return
 	case result == SuspendTimeoutChanged:
 		summary.Changed++
 		s.logger.Info("managed postgres suspend timeout converged", "database_id", database.ID, "suspend_timeout_seconds", target)
 	case result == SuspendTimeoutDeferred:
 		summary.Deferred++
+		return
 	default:
 		summary.Converged++
 	}
+	s.confirmed[database.ID] = suspendTimeoutMemo{target: target, resource: database.ProviderResourceID, updatedAt: database.UpdatedAt}
 }

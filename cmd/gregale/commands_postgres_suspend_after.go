@@ -71,7 +71,7 @@ func renderPostgresSuspendAfter(name string, result api.ManagedPostgresSuspendTi
 	}
 	line := fmt.Sprintf("%s: suspends after %s idle%s; each wake bills at least that much compute", name, after, source)
 	if !result.Applied {
-		line += "\n  The database is running now: the new value takes effect the next time it suspends."
+		line += "\n  Saved, not applied yet: the database's compute takes it the next time it is suspended (usually within minutes of going idle)."
 	}
 	return line
 }

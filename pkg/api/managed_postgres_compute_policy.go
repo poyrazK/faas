@@ -35,8 +35,3 @@ type ManagedPostgresSuspendTimeout struct {
 	// the next time it is suspended.
 	Applied bool `json:"applied"`
 }
-
-const (
-	ManagedPostgresSuspendTimeoutMinSeconds = 60
-	ManagedPostgresSuspendTimeoutMaxSeconds = 3600
-)

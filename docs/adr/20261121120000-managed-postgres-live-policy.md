@@ -62,10 +62,13 @@ than that kept it awake. It is now the policy field `suspend_timeout_seconds`
 (60..604800, default 120). The registry pushes it to providers that implement
 `SuspendTimeoutSetter` at start and on every applied policy; new databases,
 restores and compute-policy changes use it at once. Existing databases are
-moved by `SuspendTimeoutSweeper`, run after the usage sweep: it PATCHes only a
-primary endpoint that is suspended, enabled and not changing, so a serving or
-held compute is never touched, and it stops reading the provider once the
-fleet matches. Snapshot-copy checks compare scale-to-zero against always-on,
+moved by `SuspendTimeoutSweeper`, on its own 5-minute loop on every apid
+(independent of usage metering): it PATCHes only a primary endpoint that is
+suspended, enabled and not changing, so a serving or held compute is never
+touched. It remembers, per database, the value it confirmed and the row's
+`updated_at`, and reads the provider only when either moved (a value
+change, a compute-policy change, restore or cutover) or the database was
+deferred. Snapshot-copy checks compare scale-to-zero against always-on,
 not the exact timeout, so a changed setting is not drift.
 
 Customer override (same day): a customer sets a scale-to-zero database's own
@@ -76,6 +79,6 @@ in the database's spec, so resize and compute-policy journals, their JSON
 checks and triggers are unchanged. The policy value stays the default for
 databases without a row. Setting it writes the provider at once when the
 compute is suspended, else the sweep does; a longer value passes the usage
-guardrail. The sweep's rest marker includes the table's row count and latest
-write, so a customer change wakes it. Database views show
+guardrail. The sweep re-reads a database's value just before writing, so a
+customer change made during a sweep is not overwritten. Database views show
 `suspend_timeout_seconds` and `suspend_timeout_custom`.

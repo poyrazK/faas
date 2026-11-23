@@ -519,6 +519,8 @@ const UploadSessionOffsetConflictCode = uploadSessionOffsetConflictCode
 
 // Package-level vars
 var TerminalSafe = terminalSafe
+var ParsePostgresSuspendAfter = parsePostgresSuspendAfter
+var RenderPostgresSuspendAfter = renderPostgresSuspendAfter
 var AgentKeyScopes = agentKeyScopes
 var TerminalSafeLines = terminalSafeLines
 var AuthAdminHTTPClient = &authAdminHTTPClient
