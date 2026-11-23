@@ -128,6 +128,16 @@ func TestAccountMFASetupRequiresExistingPassword(t *testing.T) {
 			t.Fatalf("missing-password detail does not name the field: %s", rec.Body)
 		}
 	}
+	// Retrying setup from a client that sends no password must not use up the
+	// sign-in failure budget: after more empty attempts than the budget, the
+	// correct password below must still be accepted (not 429).
+	for i := 0; i < api.LoginFailuresPerEmail; i++ {
+		token, cookies := accountSecurityCSRF(t, h, cookie, "mfa_confirm")
+		rec := accountSecurityJSON(t, h, cookie, "POST", "/v1/account/mfa/confirm", api.MFAConfirmRequest{Totp: code, CSRFToken: token}, cookies...)
+		if rec.Code != 400 {
+			t.Fatalf("empty-password retry %d: %d %s", i, rec.Code, rec.Body)
+		}
+	}
 	before, err := st.AccountByID(t.Context(), acct.ID)
 	if err != nil || before.MFAEnrolled() || !before.MFARequired || len(before.MFARecoveryCodesHash) != len(material.RecoveryCodes) {
 		t.Fatalf("rejected setup changed account: %v", err)
