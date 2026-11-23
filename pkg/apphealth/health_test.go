@@ -1,6 +1,7 @@
 package apphealth
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -29,7 +30,7 @@ func healthEvidence() Evidence {
 func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	check := func(e Evidence) (string, bool) {
 		for _, c := range Evaluate(e).Checks {
-			if c.Code == "readiness" && strings.Contains(c.Detail, "failed in the last") {
+			if c.Code == "readiness" && strings.Contains(c.Detail, "failed to boot or exited in the last") {
 				return c.Status, true
 			}
 		}
@@ -57,6 +58,62 @@ func TestAppHealth_ReportsRecentBootFailures(t *testing.T) {
 	}
 	if got := Evaluate(e).Status; got == Healthy {
 		t.Fatalf("status = %q while new boots fail", got)
+	}
+}
+
+// Prod hunt r33: a serving app crash-looped (guest-init exhausted its
+// restarts), schedd stopped the instance with liveness_failed, and app
+// health and inspect reported nothing, because the row ends STOPPED.
+func TestAppHealth_ReportsInstancesThatExited(t *testing.T) {
+	e := healthEvidence()
+	e.RecentInstances = []state.Instance{
+		{ID: "crashed", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Hour)},
+		{ID: "parked-normally", DeploymentID: "serving", State: string(state.StateStopped), StartedAt: e.Now.Add(-time.Minute)},
+	}
+	e.ExitedInstances = map[string]bool{"crashed": true}
+	found := false
+	for _, c := range Evaluate(e).Checks {
+		if c.Code == "readiness" && strings.Contains(c.Detail, "1 instance(s) of a serving release failed to boot or exited") {
+			found = c.Status == Warning || c.Status == Fail
+		}
+	}
+	if !found {
+		t.Fatalf("exited instance not reported: %+v", Evaluate(e).Checks)
+	}
+}
+
+type exitedEvidenceStore struct {
+	EvidenceStore
+	events map[string][]state.Event
+	asked  []string
+}
+
+func (s *exitedEvidenceStore) ListEventsBySubjectKind(_ context.Context, subject, kind string, _ time.Time, _ int) ([]state.Event, error) {
+	s.asked = append(s.asked, subject)
+	if kind != livenessFailedKind {
+		return nil, nil
+	}
+	return s.events[subject], nil
+}
+
+// Only recent STOPPED non-worker instances are looked up, and only those
+// with a liveness_failed transition are marked.
+func TestCollectExitedInstances(t *testing.T) {
+	now := time.Now().UTC()
+	store := &exitedEvidenceStore{events: map[string][]state.Event{"crashed": {{Kind: livenessFailedKind, At: now}}}}
+	e := &Evidence{RecentInstances: []state.Instance{
+		{ID: "crashed", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
+		{ID: "parked", State: string(state.StateStopped), LastRequestAt: now.Add(-time.Minute)},
+		{ID: "old", State: string(state.StateStopped), LastRequestAt: now.Add(-BootFailureWindow - time.Minute)},
+		{ID: "worker", State: string(state.StateStopped), Mode: string(state.InstanceModeWorker), LastRequestAt: now},
+		{ID: "running", State: string(state.StateRunning), LastRequestAt: now},
+	}}
+	collectExitedInstances(t.Context(), store, e)
+	if len(e.ExitedInstances) != 1 || !e.ExitedInstances["crashed"] {
+		t.Fatalf("exited = %v", e.ExitedInstances)
+	}
+	if strings.Join(store.asked, ",") != "crashed,parked" {
+		t.Fatalf("looked up %v, want only recent stopped non-workers", store.asked)
 	}
 }
 
