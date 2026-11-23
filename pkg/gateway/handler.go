@@ -7720,7 +7720,7 @@ haveApp:
 					return
 				}
 			} else {
-				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(r.Context(), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
+				admittedWakeID, method, atCapacity, admitErr = h.backend.Admit(withStartupOOMRecorder(r.Context(), &startupOOM), app.ID, exactDeploymentID, exactDeploymentScope, exactDeploymentTrigger, maxInstances+api.RolloutConcurrencyGrant)
 			}
 			settled := false
 			if admitErr == nil && atCapacity {
@@ -7916,7 +7916,7 @@ haveApp:
 	routing, hasPublicRouting := publicRoutingSnapshot(r.Context())
 	if !exactDeployment || hasPublicRouting {
 		//nolint:contextcheck // request ctx at handler boundary.
-		burstWaitCtx, cancelBurstWait := context.WithTimeout(r.Context(), burstCapacityWait(app))
+		burstWaitCtx, cancelBurstWait := context.WithTimeout(withStartupOOMRecorder(r.Context(), &startupOOM), burstCapacityWait(app))
 		defer cancelBurstWait()
 		var burstErr error
 		if hasPublicRouting {
@@ -8702,15 +8702,18 @@ haveApp:
 		if cold && wakeMethod != WakeMethodUnspecified {
 			h.metrics.ObserveColdBootWithTrace(app.ID, firstByteAt.Sub(wakeStart), target.NodeID, traceID)
 			if !platformWakeStart.IsZero() {
-				if startupOOM.Has(target.InstanceID) {
-					// The app ran out of memory while this wake booted it:
-					// the kernel's OOM kill, not the platform, set the
-					// latency. The app's own wake latency (above) keeps it.
+				if startupOOM.Any() {
+					// The app ran out of memory while a wake this request
+					// admitted booted it: the kernel's OOM kill, not the
+					// platform, set the latency this request waited out,
+					// whichever instance the final pick routed it to. The
+					// app's own wake latency (above) keeps it; the phase
+					// breakdown follows the SLO series it decomposes.
 					h.metrics.ObservePlatformWakeExcluded(platformWakeExcludedStartupOOM)
 				} else {
 					h.metrics.ObservePlatformWakeWithTrace(firstByteAt.Sub(platformWakeStart), traceID)
+					platformWakeTrace.observe(h.metrics, firstByteAt)
 				}
-				platformWakeTrace.observe(h.metrics, firstByteAt)
 			}
 			// Wake-locality classifier (PR scale-out readiness). Increment
 			// AFTER the first-byte observation so the 350 ms measurement

@@ -51,3 +51,14 @@ func (r *StartupOOMRecorder) Has(instanceID string) bool {
 	_, ok := r.instances[instanceID]
 	return ok
 }
+
+// Any reports whether any wake this recorder saw reported a startup OOM.
+// Nil-safe.
+func (r *StartupOOMRecorder) Any() bool {
+	if r == nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.instances) > 0
+}
