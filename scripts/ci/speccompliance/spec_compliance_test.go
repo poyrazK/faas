@@ -2257,6 +2257,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "route_advice.go"),
 		filepath.Join(root, "pkg", "api", "service_wake_ahead.go"),
 		filepath.Join(root, "pkg", "api", "route_priority.go"),
+		filepath.Join(root, "pkg", "api", "verification_contracts.go"), // ADR-20261122220000: verification contracts
 		filepath.Join(root, "pkg", "api", "route_awake.go"),
 		filepath.Join(root, "pkg", "api", "route_insights.go"),
 		filepath.Join(root, "pkg", "api", "debug_rollout.go"),          // ADR-1447 amendment: rollout explanation + debug status

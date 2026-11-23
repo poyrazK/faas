@@ -2164,6 +2164,32 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "verify",
+		DocSlug: "verification-contracts",
+		Short:   "Check new deployments against gregale.verify.yaml before they take traffic",
+		Examples: []string{
+			"gregale release check validate",
+			"gregale release check set --app my-api",
+			"gregale release check get --app my-api --json",
+		},
+		Subcommands: []cliSub{
+			{Name: "validate", Short: "Validate gregale.verify.yaml locally", Flags: []cliFlag{
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+			}},
+			{Name: "set", Short: "Store the contract on an app; new deployments must pass it", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+				{Name: "file", Short: "contract file (default gregale.verify.yaml)", Value: "PATH"},
+				{Name: "expected-revision", Short: "refuse unless the stored revision matches (0: none stored)", Value: "N"},
+			}},
+			{Name: "get", Short: "Show an app's stored contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+			{Name: "delete", Short: "Remove an app's contract", Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
+			}},
+		},
+	},
+	{
 		Name:    "freeze",
 		DocSlug: "freeze",
 		Short:   "Pause production releases for a window, weekly, or after rollbacks",
@@ -6513,7 +6539,7 @@ var cliCommands = []cliCommand{
 				{Name: "proxy", Short: "keep the tunnel open for another client instead of starting psql"},
 				{Name: "wait-timeout", Short: "maximum time to wait for each task VM to start", Value: "D"},
 			}, Examples: []string{"gregale postgres connect orders", "gregale postgres connect orders --access read_only -- -c 'select count(*) from segments'", "gregale postgres connect orders --proxy --port 5433"}},
-			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows (read-only unless --write)", Notes: []string{
+			{Name: "query", Aliases: []string{"sql"}, Short: "Run one SQL query and print rows; read-only by default", Notes: []string{
 				"Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.",
 				"Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.",
 				"--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch <database> <name> --ttl 2h`.",
@@ -7233,9 +7259,10 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
-		Name:    "tail",
-		DocSlug: "tail",
-		Short:   "Watch async invocations finish across your account in real time (not app output or HTTP requests; see gregale logs --follow)",
+		Name:      "tail",
+		DocSlug:   "tail",
+		Short:     "Watch async invocations finish across your account in real time",
+		HelpNotes: []string{"This shows invocation results, not app output or HTTP requests; for those, run `gregale logs --follow`."},
 		// The stream is always followed; there is no --follow flag on
 		// cmdTail (commands5.go) and the manifest must not invent one.
 		Positionals: []string{"[<slug>]"},

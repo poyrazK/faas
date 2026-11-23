@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"net/textproto"
 	"strings"
 	"unicode/utf8"
 )
@@ -195,30 +196,46 @@ func (i PlatformIdentity) ApplyGuestHeaders(h http.Header) {
 		return
 	}
 	ClearGuestIdentityHeaders(h)
-	set := func(name, value string) {
-		if value != "" {
-			h.Set(name, value)
+	stamps := [...]struct{ name, value string }{
+		{RequestIDHeader, i.RequestID},
+		{AppIDHeader, i.AppID},
+		{DeploymentIDHeader, i.DeploymentID},
+		{TenantIDHeader, i.TenantID},
+		{PlatformTenantIDHeader, i.PlatformTenantID},
+		{InstanceIDHeader, i.InstanceID},
+		{NodeIDHeader, i.NodeID},
+		{RegionHeader, i.Region},
+		{CommitSHAHeader, i.CommitSHA},
+		{DeploymentTagHeader, i.DeploymentTag},
+		{DeploymentCreatedAtHeader, i.DeploymentCreatedAt},
+		{ImageDigestHeader, i.ImageDigest},
+		{ClientCountryHeader, i.ClientCountry},
+		{ClientUAFamilyHeader, i.ClientUAFamily},
+		{FlagKillsHeader, i.FlagKills},
+		{FlagCohortsHeader, i.FlagCohorts},
+		{"X-Faas-App", i.AppID},
+		{"X-Faas-Instance", i.InstanceID},
+		{"X-Faas-Node", i.NodeID},
+	}
+	n := 0
+	for _, s := range stamps {
+		if s.value != "" {
+			n++
 		}
 	}
-	set(RequestIDHeader, i.RequestID)
-	set(AppIDHeader, i.AppID)
-	set(DeploymentIDHeader, i.DeploymentID)
-	set(TenantIDHeader, i.TenantID)
-	set(PlatformTenantIDHeader, i.PlatformTenantID)
-	set(InstanceIDHeader, i.InstanceID)
-	set(NodeIDHeader, i.NodeID)
-	set(RegionHeader, i.Region)
-	set(CommitSHAHeader, i.CommitSHA)
-	set(DeploymentTagHeader, i.DeploymentTag)
-	set(DeploymentCreatedAtHeader, i.DeploymentCreatedAt)
-	set(ImageDigestHeader, i.ImageDigest)
-	set(ClientCountryHeader, i.ClientCountry)
-	set(ClientUAFamilyHeader, i.ClientUAFamily)
-	set(FlagKillsHeader, i.FlagKills)
-	set(FlagCohortsHeader, i.FlagCohorts)
-	set("X-Faas-App", i.AppID)
-	set("X-Faas-Instance", i.InstanceID)
-	set("X-Faas-Node", i.NodeID)
+	// h.Set allocates a one-element slice per header; every request is
+	// stamped with most of these. One backing array serves them all, and each
+	// header gets its own capacity-1 window of it, so a later Add copies
+	// instead of writing into a neighbour (net/textproto's reader does the
+	// same). The result is exactly what h.Set would leave.
+	vals := make([]string, 0, n)
+	for _, s := range stamps {
+		if s.value == "" {
+			continue
+		}
+		vals = append(vals, s.value)
+		h[textproto.CanonicalMIMEHeaderKey(s.name)] = vals[len(vals)-1 : len(vals) : len(vals)]
+	}
 }
 
 // ClearGuestIdentityHeaders removes every reserved identity header before a
@@ -230,15 +247,23 @@ func ClearGuestIdentityHeaders(h http.Header) {
 		return
 	}
 	for name := range h {
-		if IsGuestIdentityHeader(name) {
-			h.Del(name)
+		// The exact-service selector is guest-authored on a managed service
+		// call, never inherited from a public client that an app might
+		// blindly forward, so it goes too.
+		if IsGuestIdentityHeader(name) || isServiceSelectorHeader(name) {
+			// Delete the key as stored. h.Del canonicalizes its argument, so
+			// a key stored in another case (a direct map write) would survive
+			// it and sit beside the canonical value stamped later.
+			delete(h, name)
 		}
 	}
-	// The exact-service selector is guest-authored on a managed service call,
-	// never inherited from a public client that an app might blindly forward.
-	for _, name := range []string{"X-Faas-App", "X-Faas-Instance", "X-Faas-Node", TargetDeploymentHeader} {
-		h.Del(name)
-	}
+}
+
+// isServiceSelectorHeader reports one of the exact-service selector headers,
+// in any case.
+func isServiceSelectorHeader(name string) bool {
+	return strings.EqualFold(name, "X-Faas-App") || strings.EqualFold(name, "X-Faas-Instance") ||
+		strings.EqualFold(name, "X-Faas-Node") || strings.EqualFold(name, TargetDeploymentHeader)
 }
 
 // IsGuestIdentityHeader reports whether a platform-authored identity header

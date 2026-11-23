@@ -132,8 +132,36 @@ func TestNodeJoinNoDrainInstallKeepsTheRowActive(t *testing.T) {
 	}
 	// The install comes after the no-drain decision it reads.
 	playbook := nodeJoinPlaybook(t)
-	if strings.Index(playbook, "faas_join_skip_drain: >-") > strings.Index(playbook, "release\n          - install") {
+	decision := strings.Index(playbook, "faas_join_skip_drain: >-")
+	installAt := strings.Index(playbook, "- name: Install the verified release, keeping a drained row drained")
+	if decision < 0 || installAt < 0 {
+		t.Fatalf("node_join lost the no-drain decision (%d) or the activating install (%d)", decision, installAt)
+	}
+	if decision > installAt {
 		t.Fatal("the release install runs before the no-drain decision")
+	}
+	// ADR-20261123150000: the only earlier install is preparation's
+	// --stage-only, which never flips, gates or writes the row.
+	stage := nodeJoinTask(t, "Stage the verified release for activation in the background")
+	if stage == nil {
+		t.Fatal("node_join does not stage the release during preparation")
+	}
+	if when, _ := stage["when"].(string); when != "(faas_join_rollout_phase | default('full')) == 'prepare'" {
+		t.Errorf("release stage when = %q, want preparation only", when)
+	}
+	cmd, _ := stage["ansible.builtin.command"].(map[string]any)
+	argv, _ := cmd["argv"].([]any)
+	var stageOnly bool
+	for _, a := range argv {
+		if s, _ := a.(string); s == "--stage-only" {
+			stageOnly = true
+		}
+		if s, _ := a.(string); strings.HasPrefix(s, "--defer-activation") || strings.HasPrefix(s, "--role") || strings.HasPrefix(s, "--node") {
+			t.Errorf("release stage passes %q; a stage must not touch the row or the role tree", s)
+		}
+	}
+	if !stageOnly {
+		t.Error("the preparation install does not pass --stage-only")
 	}
 }
 

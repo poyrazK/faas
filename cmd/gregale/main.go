@@ -584,6 +584,8 @@ func run(args []string) (status int) {
 		return cmdEnv(args[1:])
 	case "freeze":
 		return cmdFreeze(args[1:])
+	case "verify":
+		return cmdVerify(args[1:])
 	case "release-gates":
 		return cmdReleaseGates(args[1:])
 	case "approvals":

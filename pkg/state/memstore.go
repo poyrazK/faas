@@ -579,9 +579,12 @@ type MemStore struct {
 	outboundAIQualityAlerts       map[string][]OutboundAIQualityAlert
 	outboundAppBindings           map[string]OutboundAppBinding
 	outboundCredentials           map[string][]byte
-	mu                            sync.Mutex
-	outboundProbePolicies         map[string]api.OutboundBindingProbePolicy
-	outboundCredentialRevisions   map[string]int64
+	// ADR-20261122220000 verification contracts and their SQL handoff.
+	verificationContracts       map[string]VerificationContract
+	verificationQueries         map[string]VerificationQuery
+	mu                          sync.Mutex
+	outboundProbePolicies       map[string]api.OutboundBindingProbePolicy
+	outboundCredentialRevisions map[string]int64
 	// egressFlows is the ADR-371 egress flow log.
 	egressFlows               []EgressFlowRecord
 	accounts                  map[string]Account

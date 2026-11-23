@@ -246,6 +246,25 @@
     "kind": "account_identity"
   },
   {
+    "table": "app_verification_contracts",
+    "columns": [
+      "account_id",
+      "app_id",
+      "byte_size",
+      "check_count",
+      "contract",
+      "contract_sha256",
+      "created_at",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration",
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
+  },
+  {
     "table": "billing_plan_activations",
     "columns": [
       "effective_at",
@@ -279,6 +298,29 @@
       "reason"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "deployment_verification_queries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "check_name",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "database_name",
+      "deployment_id",
+      "error",
+      "error_code",
+      "expires_at",
+      "first_value",
+      "has_first",
+      "id",
+      "query",
+      "row_count",
+      "status"
+    ],
+    "kind": "operational"
   },
   {
     "table": "financial_budget_alert_channel_deliveries",
