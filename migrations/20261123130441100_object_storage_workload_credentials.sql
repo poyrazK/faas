@@ -1,4 +1,4 @@
--- filename: 20261122230000000_object_storage_workload_credentials.sql
+-- filename: 20261123130441100_object_storage_workload_credentials.sql
 -- migration-compat: expand
 -- ADR-20261122191423 slice 2: short-lived S3 credentials a workload fetches
 -- for a bucket its gregale.yaml `uses:` grants, through the guest's loopback

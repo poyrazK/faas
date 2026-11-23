@@ -82,7 +82,7 @@ func (r *Report) checkQueueCanary(item api.AppBindingInventoryItem, policy Polic
 		if code == "" {
 			code = "queue_canary_unsupported"
 		}
-		r.bindingBlock(item, code, "The selected deployment and current consumer must be eligible for safe canary handling.")
+		r.bindingBlock(item, code, queueCanaryIneligibleMessage(code))
 		return
 	}
 	c := item.QueueCanary
@@ -95,4 +95,19 @@ func (r *Report) checkQueueCanary(item api.AppBindingInventoryItem, policy Polic
 		return
 	}
 	result.CheckedAt = c.CompletedAt
+}
+
+// queueCanaryIneligibleMessage says what makes a deployment eligible. One
+// generic sentence left users setting GREGALE_QUEUE_CANARY_BINDINGS as an app
+// variable, which never counts, or retrying on a function release, which has
+// no image for the canary to run in.
+func queueCanaryIneligibleMessage(code string) string {
+	const declare = "Declare the binding in GREGALE_QUEUE_CANARY_BINDINGS (a JSON array) in the deployment's override env or reviewed variables, then redeploy; app variables do not count."
+	switch code {
+	case "queue_canary_context_unavailable":
+		return "The selected deployment has no canary context: it must be a live release with a runnable image (function releases have none) whose consumer matches the reviewed binding. " + declare
+	case "queue_handler_unsupported":
+		return "The selected deployment does not declare safe canary handling for this binding. " + declare
+	}
+	return "The selected deployment and current consumer must be eligible for safe canary handling. " + declare
 }

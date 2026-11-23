@@ -66824,6 +66824,7 @@ SELECT
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='compute_unit_seconds'),0)::bigint AS compute_unit_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='storage_byte_seconds'),0)::bigint AS storage_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='history_byte_seconds'),0)::bigint AS history_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='snapshot_byte_seconds'),0)::bigint AS snapshot_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='egress_bytes'),0)::bigint AS egress_bytes,
  COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
@@ -66842,11 +66843,12 @@ type ManagedPostgresUsageForSubjectParams struct {
 }
 
 type ManagedPostgresUsageForSubjectRow struct {
-	ComputeUnitSeconds int64
-	StorageByteSeconds int64
-	HistoryByteSeconds int64
-	EgressBytes        int64
-	CostMillicents     int64
+	ComputeUnitSeconds  int64
+	StorageByteSeconds  int64
+	HistoryByteSeconds  int64
+	SnapshotByteSeconds int64
+	EgressBytes         int64
+	CostMillicents      int64
 }
 
 // ADR-20261029174950 decision 6: a window wholly inside a scheduled delete is
@@ -66858,6 +66860,7 @@ func (q *Queries) ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, a
 		&i.ComputeUnitSeconds,
 		&i.StorageByteSeconds,
 		&i.HistoryByteSeconds,
+		&i.SnapshotByteSeconds,
 		&i.EgressBytes,
 		&i.CostMillicents,
 	)
@@ -78799,6 +78802,136 @@ func (q *Queries) OperationEffectDeliveryAllowed(ctx context.Context, db DBTX, d
 	var i OperationEffectDeliveryAllowedRow
 	err := row.Scan(&i.Managed, &i.Allowed)
 	return i, err
+}
+
+const operatorLiveDeploymentsWithoutSnapshot = `-- name: OperatorLiveDeploymentsWithoutSnapshot :many
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
+       a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
+       d.created_at,
+       (SELECT max(s.stale_at) FROM snapshots s WHERE s.deployment_id = d.id)::timestamptz AS last_stale_at
+FROM deployments d
+JOIN apps a ON a.id = d.app_id
+WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
+  AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.deployment_id = d.id AND NOT s.stale AND NOT s.delete_pending)
+ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
+LIMIT $1::int
+`
+
+type OperatorLiveDeploymentsWithoutSnapshotRow struct {
+	DeploymentID string
+	AppID        string
+	AppSlug      string
+	AccountID    string
+	ColdBootable bool
+	CreatedAt    pgtype.Timestamptz
+	LastStaleAt  pgtype.Timestamptz
+}
+
+// Live deployments of active apps with no usable snapshot (none, or every one
+// stale or pending deletion): they cold boot on every wake until a snapshot
+// is taken. cold_bootable is false when the deployment has no rootfs either,
+// which breaks spec invariant 6.2-3. Those come first, then the newest.
+func (q *Queries) OperatorLiveDeploymentsWithoutSnapshot(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorLiveDeploymentsWithoutSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorLiveDeploymentsWithoutSnapshot, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorLiveDeploymentsWithoutSnapshotRow{}
+	for rows.Next() {
+		var i OperatorLiveDeploymentsWithoutSnapshotRow
+		if err := rows.Scan(
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.ColdBootable,
+			&i.CreatedAt,
+			&i.LastStaleAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const operatorSnapshotInventory = `-- name: OperatorSnapshotInventory :many
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+       a.slug AS app_slug, a.account_id::text AS account_id, d.status AS deployment_status,
+       s.tier, s.fc_version, s.cpu_template, s.cpu_model, s.stale, s.stale_at,
+       s.delete_pending, s.created_at,
+       (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END)::bigint AS snapshot_bytes,
+       COALESCE(d.rootfs_bytes, 0)::bigint AS layer_bytes
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+ORDER BY (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END) + COALESCE(d.rootfs_bytes, 0) DESC, s.id
+LIMIT $1::int
+`
+
+type OperatorSnapshotInventoryRow struct {
+	ID               string
+	DeploymentID     string
+	AppID            string
+	AppSlug          string
+	AccountID        string
+	DeploymentStatus string
+	Tier             string
+	FcVersion        string
+	CpuTemplate      string
+	CpuModel         string
+	Stale            bool
+	StaleAt          pgtype.Timestamptz
+	DeletePending    bool
+	CreatedAt        pgtype.Timestamptz
+	SnapshotBytes    int64
+	LayerBytes       int64
+}
+
+// The operator snapshot health report (ADR-20261122135018): every snapshot
+// row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+// definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+// plus the deployment's above-base layer) and its app, largest first. The
+// caller asks for one row more than it keeps to learn whether it was cut.
+func (q *Queries) OperatorSnapshotInventory(ctx context.Context, db DBTX, rowLimit int32) ([]OperatorSnapshotInventoryRow, error) {
+	rows, err := db.Query(ctx, operatorSnapshotInventory, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorSnapshotInventoryRow{}
+	for rows.Next() {
+		var i OperatorSnapshotInventoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.AppID,
+			&i.AppSlug,
+			&i.AccountID,
+			&i.DeploymentStatus,
+			&i.Tier,
+			&i.FcVersion,
+			&i.CpuTemplate,
+			&i.CpuModel,
+			&i.Stale,
+			&i.StaleAt,
+			&i.DeletePending,
+			&i.CreatedAt,
+			&i.SnapshotBytes,
+			&i.LayerBytes,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const orgByID = `-- name: OrgByID :one

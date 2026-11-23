@@ -139,8 +139,12 @@ import (
 type server struct {
 	privateTools     *toolregistry.PrivateExecutor
 	privateToolsOnce sync.Once
-	sales            sales.Service
-	customerSupport  *support.Service
+	// environmentBranchDataWake wakes the branch data reconciler when a
+	// branch is created with pending data (environment_branch_data.go).
+	environmentBranchDataWake     chan struct{}
+	environmentBranchDataWakeOnce sync.Once
+	sales                         sales.Service
+	customerSupport               *support.Service
 	// customerErrors records API problems returned to customers
 	// (ADR-20261112170000); nil without PostgreSQL.
 	customerErrors *customererrors.Recorder
@@ -1015,6 +1019,9 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 // returns zeroed fields with Source="degraded".
 func (s *server) WithStatusCache(promURL, htmlPath string) *server {
 	s.statusCache = newStatusCacheWithStore(promURL, s.store, s.log)
+	// Read at evaluation time: the runtime config manager may be attached
+	// after the cache and changes without a restart.
+	s.statusCache.excludedAccounts = func() []string { return s.runtimeConfig.statusExcludedAccounts() }
 	if promURL != "" {
 		s.promqlClient = promql.NewClient(promURL, nil)
 	}
@@ -4912,6 +4919,9 @@ func (s *server) handler() http.Handler {
 	// Fleet wake-latency report (ADR-20261121200409).
 	mux.HandleFunc("GET /v1/admin/obs/wake-latency",
 		s.authLimited(s.requireOperatorSessionRead(s.obsWakeLatency)))
+	// Fleet snapshot health report (ADR-20261122135018).
+	mux.HandleFunc("GET /v1/admin/obs/snapshot-health",
+		s.authLimited(s.requireOperatorSessionRead(s.obsSnapshotHealth)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
 		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/probe-notifications",
@@ -6100,6 +6110,9 @@ func (s *server) handler() http.Handler {
 		CountStatuses: []int{middleware.CountEveryAttempt},
 	})(http.HandlerFunc(s.serviceCallerKeys)))
 	mux.HandleFunc("GET /v1/status", s.publicStatusOverviewHandler)
+	// ADR-20261122194324: the empty key set an api-key MCP policy names so
+	// gateways that predate consumer-key MCP policies refuse every token.
+	mux.HandleFunc("GET "+api.MCPConsumerKeyJWKSPath, serveMCPConsumerKeyJWKS)
 	// ADR-1506: an app's customer reads its own billing with its consumer
 	// key; no account credential is involved.
 	mux.Handle("GET /v1/consumer-billing/{slug}", selfVerified(s.consumerBilling.Summary))

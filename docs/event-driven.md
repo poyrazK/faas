@@ -790,3 +790,23 @@ Paid plans support delayed tasks. The per-app pending limits are Hobby 5, Pro
 50, and Scale 1,000,000. A purpose-built API key can use
 `delayed_tasks:write` to create/cancel and `delayed_tasks:read` to list/get;
 existing `deploy:write` and `apps:read` keys remain compatible.
+
+## Object storage uploads
+
+Bucket writes can start work without a client calling your API afterwards. Add
+`triggers` to a bucket entry in `gregale.yaml` to run your app on each upload, or
+set the bucket's notification rules to put a message on a queue. A browser can
+upload through a signed URL and the processing starts on its own. See
+[run code on upload](object-storage.md#run-code-on-upload).
+
+## Realtime
+
+[Managed realtime](realtime.md) (beta) holds WebSocket and SSE client
+connections for your app while the app is parked; your backend publishes to
+channels or sends to one connection. Its retained channels, consumer groups,
+channel occupancy, `kind: realtime` function triggers and the `realtime:`
+section of `gregale.yaml` are a preview that Gregale releases account by
+account. Until your account has
+it, those API routes answer 404, `kind: realtime` is refused as an unknown
+trigger kind, and `gregale.yaml` refuses the `realtime:` key. Ask support to
+join the preview.

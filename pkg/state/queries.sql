@@ -1918,6 +1918,40 @@ WHERE kind = sqlc.arg(kind)::text AND at >= sqlc.arg(since)::timestamptz
 ORDER BY at DESC
 LIMIT sqlc.arg(row_limit)::int;
 
+-- name: OperatorSnapshotInventory :many
+-- The operator snapshot health report (ADR-20261122135018): every snapshot
+-- row with its parked footprint (the fcvm_snapshot_fleet_avg_bytes
+-- definition: allocated mem + vmstate, or logical bytes from a legacy writer,
+-- plus the deployment's above-base layer) and its app, largest first. The
+-- caller asks for one row more than it keeps to learn whether it was cut.
+SELECT s.id::text AS id, s.deployment_id::text AS deployment_id, d.app_id::text AS app_id,
+       a.slug AS app_slug, a.account_id::text AS account_id, d.status AS deployment_status,
+       s.tier, s.fc_version, s.cpu_template, s.cpu_model, s.stale, s.stale_at,
+       s.delete_pending, s.created_at,
+       (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END)::bigint AS snapshot_bytes,
+       COALESCE(d.rootfs_bytes, 0)::bigint AS layer_bytes
+FROM snapshots s
+JOIN deployments d ON d.id = s.deployment_id
+JOIN apps a ON a.id = d.app_id
+ORDER BY (CASE WHEN s.stored_bytes > 0 THEN s.stored_bytes ELSE s.mem_bytes + s.disk_bytes END) + COALESCE(d.rootfs_bytes, 0) DESC, s.id
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: OperatorLiveDeploymentsWithoutSnapshot :many
+-- Live deployments of active apps with no usable snapshot (none, or every one
+-- stale or pending deletion): they cold boot on every wake until a snapshot
+-- is taken. cold_bootable is false when the deployment has no rootfs either,
+-- which breaks spec invariant 6.2-3. Those come first, then the newest.
+SELECT d.id::text AS deployment_id, d.app_id::text AS app_id, a.slug AS app_slug,
+       a.account_id::text AS account_id, (d.rootfs_key <> '')::boolean AS cold_bootable,
+       d.created_at,
+       (SELECT max(s.stale_at) FROM snapshots s WHERE s.deployment_id = d.id)::timestamptz AS last_stale_at
+FROM deployments d
+JOIN apps a ON a.id = d.app_id
+WHERE d.status = 'live' AND d.deleted_at IS NULL AND a.status = 'active'
+  AND NOT EXISTS (SELECT 1 FROM snapshots s WHERE s.deployment_id = d.id AND NOT s.stale AND NOT s.delete_pending)
+ORDER BY (d.rootfs_key = '') DESC, d.created_at DESC, d.id
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListRecentEventsForAccount :many
 -- ADR-091 §3.7 / PR #3 — per-account events drill-down. Backed by
 -- the partial index events_actor_account_idx on
@@ -29523,6 +29557,7 @@ SELECT
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='compute_unit_seconds'),0)::bigint AS compute_unit_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='storage_byte_seconds'),0)::bigint AS storage_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='history_byte_seconds'),0)::bigint AS history_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='snapshot_byte_seconds'),0)::bigint AS snapshot_byte_seconds,
  COALESCE(sum(u.quantity) FILTER (WHERE u.meter='egress_bytes'),0)::bigint AS egress_bytes,
  COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
 FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id

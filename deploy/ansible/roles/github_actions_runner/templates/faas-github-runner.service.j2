@@ -33,6 +33,11 @@ MemoryMax={{ faas_runner_memory_max }}
 Environment=GOMAXPROCS={{ faas_runner_gomaxprocs }}
 {% endif %}
 Environment=HOME={{ faas_runner_home }}
+{% if faas_runner_kind == 'build' %}
+# A cancelled build's Go processes do not outlive it (the cleanup hook).
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED={{ faas_runner_job_cleanup_hook }}
+Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED={{ faas_runner_job_cleanup_hook }}
+{% endif %}
 Environment=RUNNER_ALLOW_RUNASROOT=0
 NoNewPrivileges=true
 PrivateTmp=true

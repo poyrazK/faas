@@ -244,6 +244,19 @@ const (
 	ObsWakeLatencyWindowMax       = 24 * time.Hour
 )
 
+// Operator snapshot health report (ADR-20261122135018). The report reads at
+// most ObsSnapshotInventoryMax snapshot rows, largest first (beyond that it
+// says it was truncated), and lists the largest and recently stale ones and
+// the live deployments with no usable snapshot. The fleet average is judged
+// against FleetSnapshotAvgTargetMB and the §12 warn and page thresholds.
+const (
+	ObsSnapshotInventoryMax     = 20000
+	ObsSnapshotListMax          = 25
+	ObsSnapshotUnsnapshottedMax = 200
+	ObsSnapshotFleetAvgWarnMB   = 160
+	ObsSnapshotFleetAvgPageMB   = 200
+)
+
 // Customer attention signals (ADR-20261113123000): when a customer is
 // probably stuck. Thresholds are platform-wide, not per plan.
 const (
@@ -1277,6 +1290,36 @@ const ManagedPostgresEgressOverageMillicentsPerGB = ManagedPostgresNeonMillicent
 // over the UTC month (ADR-20261102072425; ADR-20261031110037 amendment 2).
 const ManagedPostgresStorageOverageMillicentsPerGiBMonth = 50_000
 
+// ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth and
+// ManagedPostgresNeonMillicentsPerSnapshotGBMonth are what Neon's Scale plan
+// charges Gregale per GB-month of instant-restore history ($0.20) and of
+// snapshot storage ($0.09): 10^9 bytes held for Neon's 744-hour month
+// (neon.com/pricing, last updated 2026-11-04; ADR-20261123062111).
+const ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth = 20_000
+const ManagedPostgresNeonMillicentsPerSnapshotGBMonth = 9_000
+
+// ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth and
+// ManagedPostgresSnapshotOverageMillicentsPerGBMonth price restore history
+// and snapshot storage past the plan's included history for a subject with
+// overage on: Neon's price plus the markup, $0.21 and $0.0945 per GB-month
+// (ADR-20261123062111). No overage ceiling applies; the spend cap bounds the
+// charge.
+const ManagedPostgresRestoreHistoryOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerRestoreHistoryGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+const ManagedPostgresSnapshotOverageMillicentsPerGBMonth = ManagedPostgresNeonMillicentsPerSnapshotGBMonth * (100 + ManagedPostgresOverageMarkupPercent) / 100
+
+// ManagedPostgresHistoryMonthSeconds is the month restore history is priced
+// over: Neon reports byte-months normalised to 744 hours, so one GB-month is
+// 10^9 bytes held for this many seconds whatever the calendar month.
+const ManagedPostgresHistoryMonthSeconds int64 = 744 * 3600
+
+// ManagedPostgresIncludedHistoryBytes is the restore history and snapshot
+// storage a plan includes, held for the whole month: its managed PostgreSQL
+// storage pool (Hobby 1 GiB, Pro 5 GiB, Scale 20 GiB; ADR-20261123062111
+// D1). It covers restore history first, then snapshots.
+func ManagedPostgresIncludedHistoryBytes(storagePoolBytes int64) int64 {
+	return max(storagePoolBytes, 0)
+}
+
 // Production managed PostgreSQL provisioning (ADR-20261028103115). An
 // operator approval pins one backend for at most the approval window; the
 // expiry alert fires the warning lead before it closes provisioning.
@@ -1414,8 +1457,18 @@ const (
 	MCPPolicyMaxEntries                  = 256
 	MCPPolicyMaxKeyBytes                 = 4096
 	MCPPolicyMaxRequestBytes             = 1 << 20
-	MCPReleaseMaxRoles                   = 32
-	MCPReleasePolicyMaxBytes             = 64 << 10
+	// MCP tool limits (ADR-20261122194324): per caller and tool.
+	MCPToolLimitMaxRequests      = 100000
+	MCPToolLimitMaxWindowSeconds = 3600
+	// MCPToolLabelsPerApp bounds an app's named tool telemetry labels.
+	MCPToolLabelsPerApp = 16
+	// MCP replay diagnostic bounds: static resources read, runs per probe.
+	MCPReplayMaxResources = 32
+	MCPReplayMaxRuns      = 5
+	// ConsumerKeyMCPScopeMaxBytes bounds one "mcp:<scope>" consumer-key scope.
+	ConsumerKeyMCPScopeMaxBytes = 128
+	MCPReleaseMaxRoles          = 32
+	MCPReleasePolicyMaxBytes    = 64 << 10
 )
 
 // Historical replay preview bounds retained-envelope reads (ADR-645).
@@ -4159,6 +4212,11 @@ const (
 	// mode (ADR-1170): development servers need far more memory than the
 	// production server of the same app.
 	DevWatchMinRAMMB = 512
+	// DevWatchDefaultRAMMB is the RAM a new watch-mode developer environment
+	// gets, capped at the plan's RAM (DevWatchRAMMB). A Next.js 15 dev server
+	// compiled its first page in 31.8 s at 512 MB and 2.3 s at 2048 MB on prod
+	// (2026-11-22): at the 512 MB app default it swaps through the first build.
+	DevWatchDefaultRAMMB = 1024
 	// Remote debugger tunnels for `gregale dev --debug` (ADR-741): concurrent
 	// sessions per developer app, the quiet period after which a session is
 	// closed, the per-direction byte cap, and how long the tunnel waits for a
@@ -4286,6 +4344,13 @@ const StandaloneAppDefaultMaxRAMMB = 512
 // size: the plan's RAM, capped at StandaloneAppDefaultMaxRAMMB.
 func StandaloneAppDefaultRAMMB(l Limits) int {
 	return min(l.RAMMB, StandaloneAppDefaultMaxRAMMB)
+}
+
+// DevWatchRAMMB is the RAM of a new watch-mode developer environment: the
+// plan's RAM, capped at DevWatchDefaultRAMMB. A plan below DevWatchMinRAMMB
+// is still refused by the watch-mode check.
+func DevWatchRAMMB(l Limits) int {
+	return min(l.RAMMB, DevWatchDefaultRAMMB)
 }
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
@@ -10232,8 +10297,10 @@ const (
 	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
-	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget the
-	// scheduler's watchdog enforces (sched.ColdBootSweepBudget). An app on a
+	// on a cold boot by default: the spec §6.1 COLD_BOOTING budget
+	// (sched.ColdBootSweepBudget). vmmd's cold-boot call judges readiness
+	// against it; the scheduler's watchdog stops the row only after a further
+	// grace, so vmmd's typed verdict lands first (ADR-20261123140000). An app on a
 	// plan with a longer startup window (Limits.MaxStartupDeadlineS) that sets
 	// startup_deadline_s above it gets that window on every cold boot
 	// (ADR-20261114120000).
@@ -10332,6 +10399,11 @@ const (
 	// the same Hobby+ plans) so an LLM-style upgrade stream has
 	// the same headroom.
 	RawStreamMaxRequestBytes int64 = 100 * 1024 * 1024
+	// ForwardRequestBodyDiscardTimeout bounds how long the gateway drains
+	// an HTTP/1 upload the guest left unread after answering, so the
+	// connection ends cleanly instead of resetting (and losing the answer)
+	// without a stalled client holding the request open.
+	ForwardRequestBodyDiscardTimeout = 10 * time.Second
 
 	// RawStreamMaxResponseBytes (issue #676 / ADR-080 follow-up,
 	// PR-C) bounds the per-session egress bytes on the raw-bytes

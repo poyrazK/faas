@@ -15692,6 +15692,96 @@ paths:
               schema: {$ref: '#/components/schemas/Problem'}
         '412': {$ref: '#/components/responses/EdgeRulesVersionMismatch'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/webhooks/{id}/realtime-channel:
+    get:
+      operationId: getRealtimeChannelWebhookFilter
+      tags:
+        - webhooks
+      summary: Get an exact realtime channel webhook binding
+      description: Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug for get an exact realtime channel webhook binding.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Realtime endpoint or webhook ID for get an exact realtime channel webhook binding.
+      responses:
+        '200':
+          description: Current channel binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+    put:
+      operationId: setRealtimeChannelWebhookFilter
+      tags:
+        - webhooks
+      summary: Put an exact realtime channel webhook binding
+      description: Put an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug for put an exact realtime channel webhook binding.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Realtime endpoint or webhook ID for put an exact realtime channel webhook binding.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+      responses:
+        '200':
+          description: Put an exact realtime channel webhook binding. Current channel binding
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RealtimeChannelWebhookFilter'
+    delete:
+      operationId: deleteRealtimeChannelWebhookFilter
+      tags:
+        - webhooks
+      summary: Delete an exact realtime channel webhook binding
+      description: Delete an exact realtime channel webhook binding. Requires app ownership and MFA. Explicit realtime.channel.published subscription required for writes. Metadata filters match all supplied key/value pairs; no backfill occurs.
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Application slug for delete an exact realtime channel webhook binding.
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Realtime endpoint or webhook ID for delete an exact realtime channel webhook binding.
+      responses:
+        '204':
+          description: Future capture stopped; queued deliveries remain.
   /v1/apps/{slug}/webhooks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -16445,6 +16535,437 @@ paths:
             application/problem+json:
               schema: {$ref: '#/components/schemas/Problem'}
         '413': {$ref: '#/components/responses/InboundWebhookTooLarge'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  # ─── Managed realtime endpoints (ADR-156) ─────────────────────────────────
+  /v1/apps/{slug}/realtime/endpoints:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimeEndpoints
+      summary: List managed realtime endpoints for this app.
+      responses:
+        '200':
+          description: The configured managed realtime endpoints.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: '#/components/schemas/ManagedRealtimeEndpointResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    post:
+      tags: [realtime]
+      operationId: createManagedRealtimeEndpoint
+      summary: Create a managed realtime endpoint.
+      description: |
+        Registers the callback contract used by the realtime service for connect,
+        message, and disconnect events. Callback and optional client
+        credentials are sealed at rest and never returned in plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateManagedRealtimeEndpointRequest'}
+            example:
+              callback_url: "https://api.example.com"
+              connect_path: "/realtime/connect"
+              message_path: "/realtime/message"
+              disconnect_path: "/realtime/disconnect"
+              callback_auth_token: "callback-secret"
+              auth_token: "client-secret"
+              enabled: true
+      responses:
+        '201':
+          description: Managed realtime endpoint created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeEndpointResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '403': {$ref: '#/components/responses/PlanRealtimeQuota'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/realtime/endpoints/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeEndpoint
+      summary: Fetch one managed realtime endpoint.
+      responses:
+        '200':
+          description: The managed realtime endpoint.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeEndpointResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    patch:
+      tags: [realtime]
+      operationId: updateManagedRealtimeEndpoint
+      summary: Partially update a managed realtime endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/UpdateManagedRealtimeEndpointRequest'}
+      responses:
+        '200':
+          description: The updated managed realtime endpoint.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeEndpointResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+    delete:
+      tags: [realtime]
+      operationId: deleteManagedRealtimeEndpoint
+      summary: Delete a managed realtime endpoint.
+      responses:
+        '204': {description: No body. The endpoint was removed.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: limit
+        in: query
+        required: false
+        schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+        description: Maximum number of live connections to return.
+      - name: channel
+        in: query
+        required: false
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$'}
+        description: Return only connections subscribed to this channel.
+      - name: principal
+        in: query
+        required: false
+        schema: {type: string, maxLength: 256}
+        description: Return only connections authenticated as this principal.
+      - name: cursor
+        in: query
+        required: false
+        schema: {type: string, maxLength: 2048}
+        description: Opaque next_cursor returned by a previous inventory response.
+    get:
+      tags: [realtime]
+      operationId: listManagedRealtimeConnections
+      summary: List live connections for a managed realtime endpoint.
+      description: |
+        Returns a bounded point-in-time inventory, optionally filtered by
+        channel or authenticated principal. Results are ordered by connection
+        ID; use the opaque `next_cursor` value to continue a truncated page.
+        `partial` is true when one or more active realtime nodes could not be
+        queried; healthy node results remain in the response.
+      responses:
+        '200':
+          description: The live connection inventory.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeConnectionListResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: drainManagedRealtimeConnections
+      summary: Close a bounded or explicitly all-matching set of live managed realtime connections.
+      description: |
+        Selects connections from a point-in-time fleet inventory by channel,
+        principal, or explicit connection IDs. `dry_run` returns the selected
+        connections without closing them. A non-dry-run request fails with
+        `409 conflict` when the inventory is partial unless `allow_partial`
+        is true; this prevents an unavailable node from making a drain look
+        complete. Set `all` to select every matching connection, up to the
+        server safety cap of 10,000; `all` cannot be combined with
+        `connection_ids`; any supplied `limit` is ignored in all mode, and
+        the request returns `409 conflict` when the cap would be exceeded.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Replays the accepted operation for 24 hours when the request is retried.
+          schema: {type: string, minLength: 1, maxLength: 255}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedRealtimeDrainRequest'}
+      responses:
+        '202':
+          description: The durable drain operation was accepted for background execution.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeDrainResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/drain/{drain_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: drain_id
+        in: path
+        required: true
+        description: Durable identifier returned by the drain request.
+        schema: {type: string, format: uuid}
+    get:
+      tags: [realtime]
+      operationId: getManagedRealtimeDrainOperation
+      summary: Get the durable result of a realtime connection drain.
+      description: Returns a previously recorded drain result scoped to the application and endpoint.
+      responses:
+        '200':
+          description: The persisted drain result.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimeDrainResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: rotateManagedRealtimeAuth
+      summary: Rotate a static bearer credential with a bounded overlap window.
+      description: |
+        Promotes the supplied credential to current and accepts the previous
+        credential until previous_token_expires_at. Credentials are sealed at
+        rest and never returned in plaintext.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RotateManagedRealtimeAuthRequest'}
+      responses:
+        '200':
+          description: Static bearer credential rotation started.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RotateManagedRealtimeAuthResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/auth/rotate/finalize:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: finalizeManagedRealtimeAuth
+      summary: Revoke the predecessor static bearer credential immediately.
+      responses:
+        '200':
+          description: Static bearer credential rotation finalized.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FinalizeManagedRealtimeAuthResponse'}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/send:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+        description: Live connection identifier returned by the callback event.
+    post:
+      tags: [realtime]
+      operationId: sendManagedRealtimeConnection
+      summary: Send a message to one live managed realtime connection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedRealtimeMessageRequest'}
+      responses:
+        '202': {description: Message accepted by the connection owner.}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/close:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+        description: Live socket identifier to close on its owning realtime node.
+    post:
+      tags: [realtime]
+      operationId: closeManagedRealtimeConnection
+      summary: Close one live managed realtime connection.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedRealtimeCloseRequest'}
+      responses:
+        '204': {description: The connection was closed.}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/connections/{connection_id}/subscriptions/{channel}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: connection_id
+        in: path
+        required: true
+        schema: {type: string, format: uuid}
+        description: Live connection identifier returned in realtime callback events.
+      - name: channel
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$'}
+        description: Channel to add or remove for the live connection.
+    put:
+      tags: [realtime]
+      operationId: subscribeManagedRealtimeConnection
+      summary: Subscribe one live connection to a channel.
+      responses:
+        '204': {description: Subscription applied.}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+    delete:
+      tags: [realtime]
+      operationId: unsubscribeManagedRealtimeConnection
+      summary: Remove one live connection from a channel.
+      responses:
+        '204': {description: Subscription removed.}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410': {$ref: '#/components/responses/Gone'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/channels/{channel}/publish:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+      - name: channel
+        in: path
+        required: true
+        schema: {type: string, minLength: 1, maxLength: 256, pattern: '^[^/?#\\r\\n ]+$'}
+        description: Channel that receives the published message.
+    post:
+      tags: [realtime]
+      operationId: publishManagedRealtimeChannel
+      summary: Publish a message to live or resumable channel subscribers.
+      description: >-
+        delivery=live (the default) fans out to live raw-frame subscribers. delivery=retained is part of the realtime preview, released per account; it accepts at most 4096 decoded bytes and requires an Idempotency-Key. Retained delivery commits the message to the ordered channel log before fan-out and returns its sequence. Resumable subscribers read the committed log in sequence; a best-effort wake reduces latency while bounded polling recovers missed wakes. The retained log remains authoritative if live fan-out is incomplete.
+
+        A supplied Idempotency-Key binds the publish to delivery mode, decoded payload and binary flag for 24 hours. Replays return the original response and do not retry recipients that missed a partial publish. Reusing a key with a different mode or payload returns 409. An in-flight or uncertain reservation also returns 409 and is not run again while the key is active. Queue admission does not confirm client receipt.
+      parameters:
+        - name: delivery
+          in: query
+          required: false
+          description: Use retained to commit a sequenced message before live fan-out; this is preview-only and requires an Idempotency-Key.
+          schema: {type: string, enum: [live], default: live}
+        - name: Idempotency-Key
+          in: header
+          required: false
+          description: Stable printable-ASCII key for retrying this publish; reuse it only with the same delivery mode, payload, and binary flag.
+          schema: {type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]{1,128}$'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManagedRealtimeMessageRequest'}
+      responses:
+        '200':
+          description: Per-recipient queue outcomes; retained publishes also include the committed channel sequence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManagedRealtimePublishResponse'}
+          headers:
+            Idempotent-Replayed:
+              description: Present with value true when this response replays a prior result for the supplied key.
+              schema: {type: string, enum: ['true']}
+        '400': {$ref: '#/components/responses/RealtimeInvalid'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '402': {$ref: '#/components/responses/PlanRealtimeNotAllowed'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/CapacityUnavailable'}
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals:send:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [realtime]
+      operationId: sendManagedRealtimePrincipal
+      summary: Send to a verified principal, optionally retaining a notification with push fallback.
+      description: Retained sends require the retained-history preview gate and a stable message ID. Notification category is part of deduplication and defaults to notifications. Push preferences are evaluated before provider delivery; ACKs cancel queued fallback. Live sends can request receipts instead of retention.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManagedRealtimePrincipalMessageRequest'
+      responses:
+        '202':
+          description: Accepted; durable reports storage acceptance and queued reports live connection queueing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimePrincipalSendResponse'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
         '503': {$ref: '#/components/responses/CapacityUnavailable'}
   # ─── Customer runtime log drains (issue #1398 O4) ─────────────────────────
   /v1/apps/{slug}/log-drains:
@@ -21244,6 +21765,33 @@ paths:
           content:
             text/html:
               schema: {type: string}
+  /v1/apps/{slug}/realtime/endpoints/{id}/principals/messages/{message_id}/receipt:
+    parameters:
+      - $ref: '#/components/parameters/ManagedRealtimeSlugPath'
+      - $ref: '#/components/parameters/ManagedRealtimeIdPath'
+      - $ref: '#/components/parameters/ManagedRealtimeMessageIdPath'
+    get:
+      tags:
+        - realtime
+      operationId: getManagedRealtimePrincipalReceipt
+      summary: Get principal message receipt state
+      responses:
+        '200':
+          description: Get principal message receipt state result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManagedRealtimePrincipalReceiptResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
   /v1/apps/{slug}/workflow-readiness/subscriptions:
     post:
       operationId: CreateAccountWorkflowReadinessSubscription
@@ -25368,6 +25916,9 @@ components:
       description: Company workload app slug whose saved deployment exclusion is removed.
       schema:
         type: string
+    ManagedRealtimeSlugPath: {"name": "slug", "description": "Application slug", "in": "path", "required": true, "schema": {"type": "string"}}
+    ManagedRealtimeIdPath: {"name": "id", "description": "Realtime endpoint ID", "in": "path", "required": true, "schema": {"type": "string", "format": "uuid"}}
+    ManagedRealtimeMessageIdPath: {"name": "message_id", "description": "Notification message ID", "in": "path", "required": true, "schema": {"type": "string"}}
     EdgeRuleSetIfMatch:
       name: If-Match
       in: header
@@ -25598,6 +26149,185 @@ components:
         admission_id: {type: string, format: uuid}
         policy_status_path: {type: string}
         admission_history_path: {type: string}
+    RealtimeChannelWebhookFilter:
+      type: object
+      additionalProperties: false
+      required:
+        - endpoint_id
+        - channel
+      properties:
+        endpoint_id:
+          type: string
+          pattern: ^[0-9a-f]{32}$
+        channel:
+          type: string
+          minLength: 1
+          maxLength: 256
+        metadata:
+          type: object
+          maxProperties: 8
+          additionalProperties:
+            type: string
+            maxLength: 128
+      description: Realtime Channel Webhook Filter.
+    ManagedRealtimePrincipalMessageRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - principal
+        - data_base64
+      properties:
+        principal:
+          type: string
+          minLength: 1
+          maxLength: 256
+        data_base64:
+          type: string
+          maxLength: 5464
+          description: Standard base64; at most 4096 decoded bytes.
+        binary:
+          type: boolean
+          default: false
+        delivery:
+          type: string
+          enum:
+            - live
+          default: live
+        message_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        request_receipt:
+          type: boolean
+          default: false
+      description: Principal message payload with optional retained notification and push fallback settings.
+    ManagedRealtimePrincipalSendResponse:
+      type: object
+      properties:
+        message_id:
+          type: string
+        recipients:
+          type: integer
+        queued:
+          type: integer
+        unsupported:
+          type: integer
+        queue_full:
+          type: integer
+        failed:
+          type: integer
+        nodes_queried:
+          type: integer
+        nodes_unavailable:
+          type: integer
+        partial:
+          type: boolean
+        receipt_requested:
+          type: boolean
+        receipt_status:
+          type: string
+        acknowledged:
+          type: integer
+        pending:
+          type: integer
+        timed_out:
+          type: integer
+      description: Principal send outcome including fleet queueing and retained notification acceptance.
+    ManagedRealtimePrincipalReceiptDelivery:
+      type: object
+      description: Per-connection receipt state for a principal message dispatch.
+      required:
+        - connection_id
+        - status
+        - queue_status
+        - ack_supported
+        - created_at
+      properties:
+        connection_id:
+          type: string
+        status:
+          type: string
+        queue_status:
+          type: string
+        ack_supported:
+          type: boolean
+        created_at:
+          type: string
+        queued_at:
+          type: string
+        acknowledged_at:
+          type: string
+    ManagedRealtimePrincipalReceiptResponse:
+      type: object
+      description: Aggregate principal receipt and per-connection delivery states.
+      required:
+        - endpoint_id
+        - message_id
+        - status
+        - dispatch_complete
+        - created_at
+        - expires_at
+        - recipients
+        - queued
+        - acknowledged
+        - pending
+        - timed_out
+        - unsupported
+        - queue_full
+        - failed
+        - nodes_queried
+        - nodes_unavailable
+        - partial
+        - deliveries
+      properties:
+        endpoint_id:
+          type: string
+        message_id:
+          type: string
+        status:
+          type: string
+        dispatch_complete:
+          type: boolean
+        created_at:
+          type: string
+        expires_at:
+          type: string
+        recipients:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+        acknowledged:
+          type: integer
+          format: int64
+        pending:
+          type: integer
+          format: int64
+        timed_out:
+          type: integer
+          format: int64
+        unsupported:
+          type: integer
+          format: int64
+        queue_full:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        nodes_queried:
+          type: integer
+          format: int64
+        nodes_unavailable:
+          type: integer
+          format: int64
+        partial:
+          type: boolean
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/ManagedRealtimePrincipalReceiptDelivery'
     OperationWorkflowPolicyRequirement:
       description: "Exact policy rule identity, version, and decision code required as fresh transition evidence."
       type: object
@@ -29706,7 +30436,9 @@ components:
         storage_byte_seconds: {type: integer, format: int64, minimum: 0}
         storage_byte_seconds_limit: {type: integer, format: int64, minimum: 0}
         storage_byte_seconds_remaining: {type: integer, format: int64, minimum: 0}
-        history_byte_seconds: {type: integer, format: int64, minimum: 0}
+        history_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Point-in-time restore history held this month, in byte-seconds."}
+        snapshot_byte_seconds: {type: integer, format: int64, minimum: 0, description: "Snapshot storage held this month, in byte-seconds."}
+        included_history_bytes: {type: integer, format: int64, minimum: 0, description: "Restore history and snapshot storage the plan includes, held for the whole month. Restore history uses it first. With overage on, history past it is billed per GB-month."}
         egress_bytes: {type: integer, format: int64, minimum: 0}
         compute_allowance_unit_seconds:
           description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases.
@@ -44831,6 +45563,24 @@ components:
             - type: object
               additionalProperties: {type: array, items: {type: string}}
             - type: "null"
+        credential:
+          description: |
+            What callers present. Omitted means a bearer JWT verified against
+            the rule's issuer. consumer_key means an app consumer key whose
+            mcp:<scope> scopes satisfy the policy's scopes.
+          type: string
+          enum: [consumer_key]
+        tool_limits:
+          description: Per-caller limits on tools/call, keyed by tool name.
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/MCPToolLimit'}
+    MCPToolLimit:
+      description: At most requests tools/call requests per caller in each window.
+      type: object
+      required: [requests, window_seconds]
+      properties:
+        requests: {type: integer, minimum: 1, maximum: 100000}
+        window_seconds: {type: integer, minimum: 1, maximum: 3600}
     EdgeRuleJWTAction:
       description: |
         Validates an inbound Bearer JWT against a JWKS endpoint. The
@@ -51117,6 +51867,275 @@ components:
         enabled: {type: boolean}
         created_at: {type: string, format: date-time}
         updated_at: {type: string, format: date-time}
+    ManagedRealtimeConnectionResponse:
+      type: object
+      description: Safe control-plane projection of one live managed realtime connection.
+      required: [id, endpoint_id, app_id, account_id, connected_at, last_seen_at, expires_at]
+      properties:
+        id: {type: string, format: uuid}
+        endpoint_id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        account_id: {type: string, format: uuid}
+        principal: {type: string, maxLength: 256}
+        connected_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        channels:
+          type: array
+          items: {type: string, maxLength: 256}
+          maxItems: 256
+    ManagedRealtimeConnectionListResponse:
+      type: object
+      description: Bounded point-in-time live connection inventory.
+      required: [connections, limit, truncated, partial, nodes_queried, nodes_unavailable]
+      properties:
+        connections:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedRealtimeConnectionResponse'}
+        limit: {type: integer, minimum: 1, maximum: 1000}
+        truncated: {type: boolean}
+        next_cursor: {type: string, maxLength: 2048, description: Opaque cursor for the next page when truncated is true.}
+        partial: {type: boolean, description: True when one or more active realtime nodes did not answer.}
+        nodes_queried: {type: integer, minimum: 0}
+        nodes_unavailable: {type: integer, minimum: 0}
+    ManagedRealtimeDrainRequest:
+      type: object
+      description: Bounded or explicitly all-matching auditable selection for closing live connections.
+      required: [reason]
+      properties:
+        channel:
+          type: string
+          minLength: 1
+          maxLength: 256
+          pattern: '^[^/?#\\r\\n ]+$'
+          description: Only select connections subscribed to this channel.
+        principal:
+          type: string
+          maxLength: 256
+          description: Only select connections for this authenticated principal.
+        connection_ids:
+          type: array
+          maxItems: 100
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 256}
+          description: Explicit connection IDs to select in addition to the filters.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+          description: Maximum number of connections to select.
+        all:
+          type: boolean
+          default: false
+          description: Select every matching connection up to the server safety cap of 10,000; cannot be combined with connection_ids. Any supplied limit is ignored.
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 256
+          description: Required reason recorded in the audit event and close request.
+        dry_run:
+          type: boolean
+          default: false
+          description: Return the selection without closing any connection.
+        allow_partial:
+          type: boolean
+          default: false
+          description: Permit closing the reachable subset when some nodes are unavailable.
+    ManagedRealtimeDrainResult:
+      type: object
+      description: Outcome for one connection in a drain request.
+      required: [id, status]
+      properties:
+        id: {type: string, minLength: 1, maxLength: 256}
+        status:
+          type: string
+          enum: [pending, would_close, closed, gone, failed]
+    ManagedRealtimeDrainResponse:
+      type: object
+      description: Bounded or all-matching, auditable result of a realtime connection drain.
+      required: [operation_id, status, created_at, results, matched, closed, gone, failed, limit, all, truncated, dry_run, partial, nodes_queried, nodes_unavailable]
+      properties:
+        operation_id: {type: string, format: uuid, description: Durable identifier for this drain operation.}
+        status:
+          type: string
+          enum: [running, completed, partial]
+          description: Durable operation state. A partial operation had at least one gone or failed connection.
+        created_at: {type: string, format: date-time}
+        completed_at: {type: [string, 'null'], format: date-time}
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/ManagedRealtimeDrainResult'}
+          maxItems: 10000
+        matched: {type: integer, minimum: 0, maximum: 10000, description: Number selected after applying the limit or all-mode safety cap.}
+        closed: {type: integer, minimum: 0, maximum: 10000}
+        gone: {type: integer, minimum: 0, maximum: 10000, description: Selected connections that disappeared before close.}
+        failed: {type: integer, minimum: 0, maximum: 10000}
+        limit: {type: integer, minimum: 1, maximum: 10000}
+        all: {type: boolean, description: True when the operation explicitly selected all matching connections.}
+        truncated: {type: boolean, description: True when more eligible connections existed than the limit.}
+        dry_run: {type: boolean}
+        partial: {type: boolean, description: Indicates that the inventory did not cover every active realtime node.}
+        nodes_queried: {type: integer, minimum: 0}
+        nodes_unavailable: {type: integer, minimum: 0}
+    ManagedRealtimeEndpointResponse:
+      type: object
+      description: |
+        Durable managed realtime endpoint configuration. Credentials are
+        write-only and represented by a constant mask on every response.
+      required: [id, app_id, account_id, callback_url, connect_path, message_path, disconnect_path, callback_auth_token_masked, auth_token_masked, auth_mode, allowed_origins, max_connections, max_message_bytes, max_connection_age_seconds, enabled, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        account_id: {type: string, format: uuid}
+        callback_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
+        connect_path: {type: string, pattern: '^/', maxLength: 256}
+        message_path: {type: string, pattern: '^/', maxLength: 256}
+        disconnect_path: {type: string, pattern: '^/', maxLength: 256}
+        callback_auth_token_masked: {type: string, enum: ["***"]}
+        auth_token_masked: {type: string, enum: ["***"]}
+        auth_token_previous_expires_at: {type: [string, 'null'], format: date-time, description: When the previous static bearer credential stops being accepted during rotation.}
+        auth_mode: {type: string, enum: [none, static_bearer, oidc_jwt]}
+        auth_issuer: {type: string, format: uri, maxLength: 2048}
+        auth_jwks_url: {type: string, format: uri, maxLength: 2048}
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: {type: string, maxLength: 256}
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: {type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512]}
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: {type: string, maxLength: 256}
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: {type: string, format: uri}
+        max_connections: {type: integer, minimum: 0, maximum: 10000}
+        max_message_bytes: {type: integer, format: int64, minimum: 0, maximum: 1048576}
+        max_connection_age_seconds: {type: integer, format: int64, minimum: 0, maximum: 604800}
+        enabled: {type: boolean}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    CreateManagedRealtimeEndpointRequest:
+      type: object
+      description: Create a durable managed realtime endpoint and its callback contract.
+      required: [callback_url, callback_auth_token]
+      properties:
+        callback_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
+        connect_path: {type: string, pattern: '^/', maxLength: 256, default: "/realtime/connect"}
+        message_path: {type: string, pattern: '^/', maxLength: 256, default: "/realtime/message"}
+        disconnect_path: {type: string, pattern: '^/', maxLength: 256, default: "/realtime/disconnect"}
+        callback_auth_token: {type: string, minLength: 1, maxLength: 256, writeOnly: true}
+        auth_token: {type: string, maxLength: 256, writeOnly: true}
+        auth_mode: {type: string, enum: [none, static_bearer, oidc_jwt]}
+        auth_issuer: {type: string, format: uri, maxLength: 2048}
+        auth_jwks_url: {type: string, format: uri, maxLength: 2048}
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: {type: string, maxLength: 256}
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: {type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512]}
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: {type: string, maxLength: 256}
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: {type: string, format: uri}
+        max_connections: {type: integer, minimum: 0, maximum: 10000, default: 0}
+        max_message_bytes: {type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0}
+        max_connection_age_seconds: {type: integer, format: int64, minimum: 0, maximum: 604800, default: 0}
+        enabled: {type: boolean, default: true}
+    UpdateManagedRealtimeEndpointRequest:
+      type: object
+      description: Partially update a managed realtime endpoint; omitted fields remain unchanged.
+      properties:
+        callback_url: {type: string, format: uri, minLength: 8, maxLength: 2048}
+        connect_path: {type: string, pattern: '^/', maxLength: 256}
+        message_path: {type: string, pattern: '^/', maxLength: 256}
+        disconnect_path: {type: string, pattern: '^/', maxLength: 256}
+        callback_auth_token: {type: string, minLength: 1, maxLength: 256, writeOnly: true}
+        auth_token: {type: string, maxLength: 256, writeOnly: true}
+        auth_mode: {type: string, enum: [none, static_bearer, oidc_jwt]}
+        auth_issuer: {type: string, format: uri, maxLength: 2048}
+        auth_jwks_url: {type: string, format: uri, maxLength: 2048}
+        auth_audience:
+          type: array
+          maxItems: 16
+          items: {type: string, maxLength: 256}
+        auth_algorithms:
+          type: array
+          maxItems: 16
+          items: {type: string, enum: [RS256, RS384, RS512, ES256, ES384, ES512]}
+        auth_required_claims:
+          type: object
+          maxProperties: 16
+          additionalProperties: {type: string, maxLength: 256}
+        allowed_origins:
+          type: array
+          maxItems: 16
+          items: {type: string, format: uri}
+        max_connections: {type: integer, minimum: 0, maximum: 10000}
+        max_message_bytes: {type: integer, format: int64, minimum: 0, maximum: 1048576}
+        max_connection_age_seconds: {type: integer, format: int64, minimum: 0, maximum: 604800}
+        enabled: {type: boolean}
+    RotateManagedRealtimeAuthRequest:
+      type: object
+      description: Start a bounded overlap window for a replacement static bearer credential.
+      required: [new_auth_token]
+      properties:
+        new_auth_token: {type: string, minLength: 1, maxLength: 256, writeOnly: true}
+        grace_period_seconds: {type: integer, minimum: 0, maximum: 86400, default: 300}
+    RotateManagedRealtimeAuthResponse:
+      type: object
+      description: Metadata for an in-progress static bearer credential rotation.
+      required: [endpoint_id, auth_mode, previous_token_expires_at]
+      properties:
+        endpoint_id: {type: string, format: uuid}
+        auth_mode: {type: string, enum: [static_bearer]}
+        previous_token_expires_at: {type: string, format: date-time}
+    FinalizeManagedRealtimeAuthResponse:
+      type: object
+      description: Metadata after the predecessor static bearer credential is revoked.
+      required: [endpoint_id, auth_mode, previous_token_expires_at]
+      properties:
+        endpoint_id: {type: string, format: uuid}
+        auth_mode: {type: string, enum: [static_bearer]}
+        previous_token_expires_at: {type: [string, 'null'], format: date-time}
+    ManagedRealtimeMessageRequest:
+      type: object
+      description: Binary-safe message payload encoded as standard base64.
+      required: [data_base64]
+      properties:
+        data_base64: {type: string, format: byte, maxLength: 1398104, description: Decoded payload is limited to 1 MiB.}
+        binary: {type: boolean, default: false}
+    ManagedRealtimeCloseRequest:
+      type: object
+      description: Optional close reason for a live managed realtime connection.
+      properties:
+        reason: {type: string, maxLength: 256}
+    ManagedRealtimePublishResponse:
+      type: object
+      description: Per-recipient queue outcome for publishing to an endpoint-scoped channel. Queue admission does not imply client receipt; retained publishes include their durable channel sequence.
+      required: [queued]
+      properties:
+        queued: {type: integer, minimum: 0, description: Number of live subscriber output queues or retained-resume wake-ups that accepted delivery work.}
+        subscribers: {type: integer, minimum: 0, description: Live and resumable subscribers targeted across reachable nodes.}
+        queue_full: {type: integer, minimum: 0, description: Subscribers whose bounded output queues were full.}
+        failed: {type: integer, minimum: 0, description: Target subscribers that could not be queued for another per-connection reason.}
+        partial: {type: boolean, description: Whether a node or any target subscriber did not accept the publish.}
+        nodes_queried: {type: integer, minimum: 0, description: Active realtime nodes that accepted the publish request.}
+        nodes_unavailable: {type: integer, minimum: 0, description: Active realtime nodes that did not accept the publish request.}
+        sequence: {type: integer, format: int64, minimum: 1, description: Committed channel sequence; present when durable is true.}
+        durable: {type: boolean, description: Whether this publish was committed to retained channel history before fan-out.}
     AppLogDrainResponse:
       type: object
       description: Runtime log destination with sealed credentials represented by a mask.
@@ -59840,6 +60859,21 @@ components:
           schema: {$ref: '#/components/schemas/Problem'}
     PlanWebhookQuota:
       description: 'code: plan_webhook_quota — per-app or per-account webhook limit reached.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    RealtimeInvalid:
+      description: 'code: realtime_invalid — malformed managed realtime endpoint URL, path, or credential.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PlanRealtimeNotAllowed:
+      description: 'code: plan_realtime_not_allowed — the plan does not include managed realtime endpoints.'
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+    PlanRealtimeQuota:
+      description: 'code: plan_realtime_quota — per-app or per-account managed realtime endpoint limit reached.'
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/Problem'}

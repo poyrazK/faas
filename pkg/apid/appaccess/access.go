@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -357,6 +358,12 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such trigger"
 	case strings.HasPrefix(path, "/v1/deleted-apps/"):
 		what = "no such deleted app"
+	case strings.HasPrefix(path, "/v1/apps/") && r.PathValue("slug") != "":
+		// Name the app the caller addressed: `bucket upload BUCKET …` read
+		// the bucket as the app and answered only "no such application
+		// resource" (prod hunt r28). Absent and foreign apps still read
+		// alike, so this enumerates nothing.
+		what = "no app named " + strconv.Quote(r.PathValue("slug")) + " in this workspace"
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }

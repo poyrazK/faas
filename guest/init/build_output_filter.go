@@ -58,7 +58,13 @@ func (f *buildOutputFilter) Flush() {
 }
 
 // platformBuildNoise matches npm's deprecation of the production config,
-// with or without buildctl's "#12 0.534 " step prefix.
+// with or without buildctl's "#12 0.534 " step prefix, and the fs-verity
+// probe warning. The builder's cache disk cannot do fs-verity; the build
+// command's own content store warned about it on every deploy
+// (`level=warning msg="failed check for fsverity support" … path=/build/cache`,
+// prod hunt r28), separately from buildkitd's copy buildkitConsoleFilter drops.
 func platformBuildNoise(line string) bool {
-	return strings.HasSuffix(strings.TrimRight(line, "\r"), "npm warn config production Use `--omit=dev` instead.")
+	line = strings.TrimRight(line, "\r")
+	return strings.HasSuffix(line, "npm warn config production Use `--omit=dev` instead.") ||
+		strings.Contains(line, `msg="failed check for fsverity support"`)
 }

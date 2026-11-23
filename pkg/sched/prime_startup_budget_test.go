@@ -53,8 +53,9 @@ func TestColdBootWatchdogHonoursPrimeStartupDeadline(t *testing.T) {
 	}{
 		{"scale prime within the window", api.PlanScale, state.DeploySnapshotting, 29 * time.Second, true},
 		{"scale prime at 40s", api.PlanScale, state.DeploySnapshotting, 40 * time.Second, false},
-		{"hobby prime at 31s", api.PlanHobby, state.DeploySnapshotting, 31 * time.Second, false},
-		{"scale wake of live deployment at 31s", api.PlanScale, state.DeployLive, 31 * time.Second, false},
+		{"hobby prime inside the RPC grace at 34s", api.PlanHobby, state.DeploySnapshotting, 34 * time.Second, true},
+		{"hobby prime at 38s", api.PlanHobby, state.DeploySnapshotting, 38 * time.Second, false},
+		{"scale wake of live deployment at 38s", api.PlanScale, state.DeployLive, 38 * time.Second, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := state.NewMemStore()

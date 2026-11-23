@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -154,5 +155,37 @@ func TestBuildRunnerIsIsolatedFromTheDeploymentRunner(t *testing.T) {
 	}
 	if hosts, _ := vars["faas_runner_private_hosts"].([]any); len(hosts) != 0 {
 		t.Errorf("the build runner resolves no private fleet endpoints, got %v", hosts)
+	}
+	// A cancelled build's Go processes must not outlive it on the control
+	// plane (2026-11-22): the unit names the cleanup hook for both job ends.
+	role := filepath.Join("..", "..", "deploy", "ansible", "roles", "github_actions_runner")
+	unit, err := os.ReadFile(filepath.Join(role, "templates", "faas-github-runner.service.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"{% if faas_runner_kind == 'build' %}",
+		"Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED={{ faas_runner_job_cleanup_hook }}",
+		"Environment=ACTIONS_RUNNER_HOOK_JOB_COMPLETED={{ faas_runner_job_cleanup_hook }}",
+	} {
+		if !strings.Contains(string(unit), want) {
+			t.Errorf("runner unit template is missing %q", want)
+		}
+	}
+	// The runner runs a hook only by its extension; without one every job
+	// failed at "Set up runner" (2026-11-22).
+	defaults, err := os.ReadFile(filepath.Join(role, "defaults", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`(?m)^faas_runner_job_cleanup_hook: \S+\.sh$`).Match(defaults) {
+		t.Error("faas_runner_job_cleanup_hook must end in .sh: the runner refuses any other hook path")
+	}
+	hook, err := os.ReadFile(filepath.Join(role, "templates", "faas-build-runner-job-cleanup.sh.j2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(hook), `pkill -KILL -u "$(id -u)" -f '/pkg/tool/`) || !strings.Contains(string(hook), "exit 0") {
+		t.Error("the cleanup hook must kill this account's Go tool processes and never fail the job")
 	}
 }

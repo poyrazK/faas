@@ -150,6 +150,12 @@ faas_custom_domain_tls: false
 # faas_cloudflare_origin_only and faas_custom_domain_tls. Write each address in
 # canonical form (vmmd renders the same policy and refuses any other).
 faas_public_entry_addrs: []
+# ADR-20261123100000: the other compute edges' IPv4 entry addresses. A guest's
+# TCP/443 call to one is DNATed to this node's own IPv4 entry address, so an
+# app calling another app's public gregale.app URL stays on the node (every
+# edge serves every app). Rendered only beside an IPv4 entry address in
+# faas_public_entry_addrs; canonical IPv4 only (vmmd renders the same rule).
+faas_peer_entry_addrs: []
 # ADR-20261103163954 §4: kernel settings for a node with public entry
 # addresses. A spoofed SYN flood leaves one conntrack entry per SYN in
 # SYN_RECV, and that table is shared with tenant NAT: at the default 60 s a
