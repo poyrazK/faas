@@ -38,6 +38,7 @@ func TestFunctionRunnerBootArg(t *testing.T) {
 // A raw TCP server (a managed Valkey cache) boots with
 // api.RawTCPListenerBootArg so guest-init sends it no HTTP or gRPC probes
 // (agent eval 2026-11-23, P8: Valkey logged them as a cross-protocol attack).
+// adr: 122 — characterization L7 probes; adr: 576 — raw TCP service ports.
 func TestRawTCPListenerBootArg(t *testing.T) {
 	for _, rawTCP := range []bool{true, false} {
 		m := &Manager{}
