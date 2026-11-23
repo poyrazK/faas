@@ -313,13 +313,35 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 	response(route, tmin, time.Now().UTC(), false)
 	read("awaiting_gateways")
 
-	// A duplicate ACK after process replacement must keep the first
-	// acknowledgement. The second gateway completes the barrier.
-	s = state.NewPgStore(pool)
-	if err := ack(route, "rollback-edge-a"); err != nil {
-		t.Fatal(err)
+	replay := func(rollbackID string) {
+		t.Helper()
+		exec(`UPDATE project_rollback_http_recovery SET next_notify_at = clock_timestamp() WHERE rollback_id = $1`, rollbackID)
+		if err := s.ReplayProjectRollbackRoutes(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := ack(route, "rollback-edge-b"); err != nil {
+	exec(`UPDATE compute_nodes SET lifecycle = 'unavailable' WHERE name = 'rollback-edge-b'`)
+	replay(child.ID)
+	read("awaiting_gateways")
+
+	// A resume after a gateway is retired reopens the same generation.
+	// Its replacement must apply the route before the barrier can pass.
+	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-b'`)
+	exec(`INSERT INTO compute_nodes(name,target_url,vpcpus,mem_mb,max_concurrency,admission_ceiling_mb,role,lifecycle,gateway_target_url)
+	      VALUES('rollback-edge-c','unix:///run/test.sock',2,1024,10,512,'compute-only','active','tcp://127.0.0.1:8080')`)
+	exec(`UPDATE project_rollback_http_recovery SET expires_at = clock_timestamp() - interval '1 second',
+		next_notify_at = NULL WHERE rollback_id = $1`, child.ID)
+	if r, err := s.ProjectRollbackHealthRoute(ctx, record.ID, child.ID); err != nil ||
+		r.RouteGeneration == nil || *r.RouteGeneration != route.Generation {
+		t.Fatalf("rearmed gateway wait after retirement = %+v, %v", r, err)
+	}
+	replay(child.ID)
+	read("awaiting_gateways")
+	if err := ack(route, "rollback-edge-b"); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("retired gateway ack: %v", err)
+	}
+	s = state.NewPgStore(pool)
+	if err := ack(route, "rollback-edge-c"); err != nil {
 		t.Fatal(err)
 	}
 	claim, err = s.ClaimProjectRollback(ctx, time.Minute)
@@ -447,6 +469,20 @@ func TestPgProjectRollbackHTTPRecovery(t *testing.T) {
 	if _, err := s.CommitCheckedRollback(ctx, peer); err != nil {
 		t.Fatalf("downstream cutover with the exact health checkpoint returned %v", err)
 	}
+	peerTraffic, err := s.ProjectRollbackHealthRoute(ctx, record.ID, peer.ID)
+	if err != nil || peerTraffic.RouteGeneration == nil {
+		t.Fatalf("downstream gateway barrier = %+v, %v", peerTraffic, err)
+	}
+	peerRoute := db.DeploymentRouteChangedPayload{AppID: downstream.ID, DeploymentID: peerTarget.ID, Generation: *peerTraffic.RouteGeneration}
+	if err := ack(peerRoute, "rollback-edge-a"); err != nil {
+		t.Fatal(err)
+	}
+	exec(`UPDATE compute_nodes SET lifecycle = 'retired' WHERE name = 'rollback-edge-c'`)
+	replay(peer.ID)
+	if r, err := s.ProjectRollbackHealthRoute(ctx, record.ID, peer.ID); err != nil || r.GatewaysAppliedAt == nil {
+		t.Fatalf("gateway retirement did not release the acknowledged route: %+v, %v", r, err)
+	}
+
 	// The paused receipt owns both committed children. Undo only accepts
 	// their exact inverse in reverse order and reserves one durable receipt.
 	claim, err = s.ClaimProjectRollback(ctx, time.Minute)

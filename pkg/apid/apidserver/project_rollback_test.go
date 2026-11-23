@@ -915,6 +915,32 @@ func TestProjectRollbackHealthDeadlinePausesWithoutEvidence(t *testing.T) {
 	}
 }
 
+func TestProjectRollbackPreparationBudgetsPendingVerification(t *testing.T) {
+	now := time.Now().UTC()
+	stabilizeFor := time.Minute
+	healthySince := now.Add(-stabilizeFor)
+	generation := int64(1)
+	op := state.ProjectRollbackRecord{ProjectRollbackOperation: api.ProjectRollbackOperation{
+		StabilizeForSeconds: int(stabilizeFor / time.Second),
+		Steps: []api.ProjectRollbackStep{
+			{Status: "skipped", Health: &api.ProjectRollbackHealth{Status: "pending"}},
+			{Status: "rolled_back", Health: &api.ProjectRollbackHealth{Status: "passed", HealthySince: &healthySince, CheckedAt: &now},
+				LiveTraffic: &api.ProjectRollbackLiveTraffic{Status: "passed", RouteGeneration: &generation, CheckedAt: &now}},
+			{Status: "rolled_back", Health: &api.ProjectRollbackHealth{Status: "pending"},
+				LiveTraffic: &api.ProjectRollbackLiveTraffic{Status: "pending"}},
+		},
+	}}
+	for range 10 {
+		op.Steps = append(op.Steps, api.ProjectRollbackStep{Status: "planned", Health: &api.ProjectRollbackHealth{Status: "pending"}})
+	}
+
+	resetProjectRollbackForResume(&op, now, true)
+	want := now.Add(projectRollbackPreparationWindow + 11*(projectRollbackHealthWindow+stabilizeFor) + projectRollbackLiveTrafficWindow)
+	if op.PreparationDeadline == nil || !op.PreparationDeadline.Equal(want) {
+		t.Fatalf("preparation deadline = %v, want %v", op.PreparationDeadline, want)
+	}
+}
+
 func TestProjectRollbackStabilizationRequiresContinuousEvidence(t *testing.T) {
 	e, _, targets := projectRollbackAPIFixture(t)
 	delay := routeProbeChallengeDelay

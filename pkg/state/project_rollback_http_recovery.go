@@ -13,6 +13,9 @@ import (
 
 const projectRollbackRecoveryWindow = 30 * time.Minute
 
+const projectRollbackServingGateway = `n.active AND n.role IN ('compute-only', 'compute-node')
+	AND nullif(btrim(n.gateway_target_url), '') IS NOT NULL`
+
 // A later serving period of the same deployment is a different cutover.
 // Service-mode cutovers use the handoff's checked rollback ID through drain.
 const projectRollbackRouteCurrent = `
@@ -71,9 +74,8 @@ func startProjectRollbackHTTPRecovery(ctx context.Context, tx pgx.Tx, id string)
 		UPDATE project_rollback_http_recovery r
 		SET generation = nextval('deployment_route_generation_seq'),
 		    routing_committed_at = CASE WHEN r.service THEN clock_timestamp() ELSE d.rollout_completed_at END,
-		    expected_gateways = ARRAY(SELECT name FROM compute_nodes
-		        WHERE active AND role IN ('compute-only', 'compute-node')
-		          AND nullif(btrim(gateway_target_url), '') IS NOT NULL ORDER BY name),
+		    expected_gateways = ARRAY(SELECT n.name FROM compute_nodes n
+		        WHERE `+projectRollbackServingGateway+` ORDER BY n.name),
 		    next_notify_at = clock_timestamp() + interval '10 seconds',
 		    expires_at = clock_timestamp() + $2::double precision * interval '1 second'
 		FROM deployments d WHERE r.rollback_id = $1 AND r.generation IS NULL AND d.id = r.target_id
@@ -96,16 +98,33 @@ func startProjectRollbackHTTPRecovery(ctx context.Context, tx pgx.Tx, id string)
 // Replay the same generation after missed notifications or a gateway restart.
 // Both scheduling and publishing commit together.
 func (s *PgStore) ReplayProjectRollbackRoutes(ctx context.Context) error {
+	// Keep waiting for gateways that are temporarily unavailable. A retired
+	// gateway can leave the barrier while any replacement still has to ACK.
 	_, err := s.pool.Exec(ctx, `
 		WITH due AS (
-			SELECT r.generation FROM project_rollback_http_recovery r
+			SELECT r.generation, r.expected_gateways, r.gateways_applied_at,
+			       r.expires_at > clock_timestamp() AND `+projectRollbackRouteCurrent+` AS watching
+			FROM project_rollback_http_recovery r
 			WHERE r.next_notify_at <= clock_timestamp()
-			ORDER BY r.next_notify_at, r.generation LIMIT $1 FOR UPDATE SKIP LOCKED
+			ORDER BY r.next_notify_at, r.generation LIMIT $1 FOR UPDATE OF r SKIP LOCKED
+		), pending AS (
+			SELECT due.generation, ARRAY(
+				SELECT n.name FROM compute_nodes n
+				WHERE n.lifecycle <> 'retired'
+				  AND (n.name = ANY(due.expected_gateways) OR (`+projectRollbackServingGateway+`))
+				ORDER BY n.name
+			) AS gateways
+			FROM due WHERE due.watching AND due.gateways_applied_at IS NULL
 		), scheduled AS (
 			UPDATE project_rollback_http_recovery r
-			SET next_notify_at = CASE WHEN r.expires_at > clock_timestamp() AND `+projectRollbackRouteCurrent+`
-			    THEN clock_timestamp() + interval '10 seconds' END
-			FROM due WHERE r.generation = due.generation
+			SET next_notify_at = CASE WHEN due.watching THEN clock_timestamp() + interval '10 seconds' END,
+			    expected_gateways = coalesce(pending.gateways, r.expected_gateways),
+			    acknowledged_gateways = CASE WHEN pending.gateways IS NULL THEN r.acknowledged_gateways
+			        ELSE ARRAY(SELECT g FROM unnest(r.acknowledged_gateways) AS g WHERE g = ANY(pending.gateways)) END,
+			    gateways_applied_at = CASE WHEN cardinality(pending.gateways) > 0
+			          AND pending.gateways <@ r.acknowledged_gateways
+			        THEN clock_timestamp() ELSE r.gateways_applied_at END
+			FROM due LEFT JOIN pending USING (generation) WHERE r.generation = due.generation
 			RETURNING r.app_id, r.target_id, r.generation, r.next_notify_at
 		)
 		SELECT pg_notify($2, jsonb_build_object(
@@ -127,6 +146,7 @@ func (s *PgStore) AcknowledgeProjectRollbackHTTPRoute(ctx context.Context, route
 		        THEN coalesce(r.gateways_applied_at, clock_timestamp()) ELSE r.gateways_applied_at END
 		WHERE r.generation = $1 AND r.app_id = $2 AND r.target_id = $3
 		  AND $4 = ANY(r.expected_gateways) AND r.first_success_at IS NULL
+		  AND EXISTS (SELECT 1 FROM compute_nodes WHERE name = $4 AND lifecycle <> 'retired')
 		  AND NOT EXISTS (SELECT 1 FROM compute_node_db_logins WHERE login = session_user AND node_name <> $4)
 		  AND r.expires_at > clock_timestamp() AND `+projectRollbackRouteCurrent+`
 		RETURNING r.expires_at`, route.Generation, route.AppID, route.DeploymentID, node).Scan(&expires)

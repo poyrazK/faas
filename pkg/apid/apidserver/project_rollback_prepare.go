@@ -17,7 +17,14 @@ const (
 
 func beginProjectRollbackPreparation(op *state.ProjectRollbackRecord, now time.Time) {
 	deadline := now.Add(projectRollbackPreparationWindow)
+	healthBudget := projectRollbackHealthWindow + time.Duration(op.StabilizeForSeconds)*time.Second
 	for _, step := range op.Steps {
+		if step.Status == "skipped" {
+			continue
+		}
+		if step.Health != nil && !step.Health.PassedFor(op.StabilizeForSeconds) {
+			deadline = deadline.Add(healthBudget)
+		}
 		if step.LiveTraffic != nil && !step.LiveTraffic.Passed() {
 			deadline = deadline.Add(projectRollbackLiveTrafficWindow)
 		}
