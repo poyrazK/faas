@@ -173,8 +173,8 @@ func writeMCPStackRole(root, role string, options mcpInitOptions) error {
 		// The web release applies the Task schema with the migration
 		// binding before any role serves; nothing else can reach the
 		// database before the first deploy (MCP Tasks prod probe
-		// 2026-11-22). It calls node/python directly: the shared runner
-		// bases ship no npm.
+		// 2026-11-22). It calls node/python or the compiled Go binary
+		// directly: the shared runner bases ship no npm or Go toolchain.
 		manifest += "release:\n  command: " + migrate + "\n"
 	}
 	if role != "web" {
@@ -196,10 +196,11 @@ func writeMCPStackRole(root, role string, options mcpInitOptions) error {
 }
 
 // mcpStackMigrationCommand is the web role's release command that applies the
-// Task schema, or "" for a runtime whose image cannot run it by name (a Go
-// build ships only its compiled binary).
+// Task schema, or "" for an unknown runtime. A Go source build ships only its
+// compiled binary, which Railpack writes to /app/out (the path pkg/imaged
+// reads); the binary answers `tasks-migrate apply` itself.
 func mcpStackMigrationCommand(runtime string) string {
-	return map[string]string{"node": "node tasks-migrate.js apply", "python": "python task_schema.py apply"}[runtime]
+	return map[string]string{"node": "node tasks-migrate.js apply", "python": "python task_schema.py apply", "go": "/app/out tasks-migrate apply"}[runtime]
 }
 
 func mcpStackReadme(options mcpInitOptions) string {
@@ -264,7 +265,4 @@ func mcpStackDatabaseGuide(guide *strings.Builder, options mcpInitOptions) {
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-web --env MCP_TASK_MIGRATION_DATABASE_URL --access migration\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-worker --env DATABASE_URL --access read_write\n", options.Name, options.Name)
 	fmt.Fprintf(guide, "gregale postgres attach %s-db %s-observer --env DATABASE_URL --access read_only\n```\n\n", options.Name, options.Name)
-	if mcpStackMigrationCommand(options.Runtime) == "" {
-		guide.WriteString("The Go starter has no release command: its image holds only the compiled binary. Run its `tasks-migrate apply` command with `MCP_TASK_MIGRATION_DATABASE_URL` as the runtime README describes before deploying the worker.\n\n")
-	}
 }

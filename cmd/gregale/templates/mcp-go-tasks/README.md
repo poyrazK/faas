@@ -438,6 +438,12 @@ configured `tasks.database_url_env` binding and validate installed schema versio
 required columns and the enabled notification trigger. Startup fails with migration
 guidance if that schema is missing or incompatible.
 
+On Gregale, the compiled binary runs the same command as a release command:
+`gregale mcp init --runtime go --tasks --name <prefix>` gives the web role
+`release.command: /app/out tasks-migrate apply` (the Go build's binary path), so
+each web release applies the schema before it serves. Bind
+`MCP_TASK_MIGRATION_DATABASE_URL` only to the web application.
+
 Web and worker startup also authenticate every unexpired payload in their Task
 namespace before starting writers. The scan streams rows to bound memory and
 must finish within the 10-second startup budget. It checks arguments, results,
