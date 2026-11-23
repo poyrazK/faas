@@ -504,7 +504,8 @@ so delete one (`gregale release alias delete`) to make room.
 
 ## Where sections moved
 
-These sections now have their own pages.
+These sections now have their own pages. The headings stay here only so links
+from older CLI versions and API errors still land on a pointer.
 
 ### Adding services to an atomic project
 
