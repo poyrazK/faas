@@ -190,8 +190,9 @@ remove the last one. Portal members and the email lists combine; the strongest
 grant wins. An account named only by configuration shows as config-managed.
 
 **Team.** Sales managers and owner admins add an existing Gregale account by
-email as `manager` or `rep`, change roles and deactivate members. Managers see
-the roster without commission terms, and nobody can deactivate themselves. A
+email as `manager` or `rep`, change roles and deactivate members. The team list
+omits agreements for managers (customer rows still show the rate frozen on each
+customer), and nobody can change their own role or deactivate themselves. A
 member who has not verified their email or enrolled an authenticator shows
 `ready: false` and cannot sign in to sales. Deactivate instead of deleting;
 history stays.

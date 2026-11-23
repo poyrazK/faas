@@ -30,8 +30,9 @@ A salesperson sees commission rate, estimate and payout status only for their
 own customers. Owner admins come only from `FAAS_SALES_ADMIN_EMAILS`, so no
 UI action can remove the last admin. Managers and salespeople are stored in
 `sales_team_members` and managed by a sales manager or an owner admin
-(2026-11-23 amendment: managers run the team day to day; the team list hides
-commission terms from managers). The existing
+(2026-11-23 amendment: managers run the team day to day. The team list omits
+agreements for managers, who still see the rate frozen on each customer they
+can read. Nobody can change their own role or deactivate themselves). The existing
 `FAAS_SALES_MANAGER_EMAILS` and `FAAS_SALES_EMAILS` lists still grant those
 roles, shown as config-managed and read-only in the UI. The strongest grant
 wins. Every role still needs an active account, verified email and an enrolled

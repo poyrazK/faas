@@ -146,8 +146,8 @@ func (s *Service) UpdateMember(w http.ResponseWriter, r *http.Request, acct stat
 		invalid(w, "Send role (manager or rep), active and the current version.")
 		return
 	}
-	if account == acct.ID && !*in.Active {
-		invalid(w, "You cannot deactivate yourself.")
+	if account == acct.ID {
+		invalid(w, "You cannot change your own role or deactivate yourself. Ask another manager or an owner admin.")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.ReferralReadTimeout)

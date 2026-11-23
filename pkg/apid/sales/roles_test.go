@@ -190,12 +190,14 @@ func TestManagersDoNotSeeCommissionTerms(t *testing.T) {
 	}
 }
 
-func TestManagersCannotDeactivateThemselves(t *testing.T) {
-	s, f, acct := teamFixture(referrals.RoleManager)
-	w := httptest.NewRecorder()
-	s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+acct.ID, `{"role":"manager","active":false,"version":1}`, map[string]string{"member": acct.ID}), acct)
-	if w.Code != 400 || len(f.saved) != 0 {
-		t.Fatal(w.Code, f.saved, w.Body.String())
+func TestManagersCannotChangeThemselves(t *testing.T) {
+	for _, body := range []string{`{"role":"manager","active":false,"version":1}`, `{"role":"rep","active":true,"version":1}`} {
+		s, f, acct := teamFixture(referrals.RoleManager)
+		w := httptest.NewRecorder()
+		s.UpdateMember(w, newRequest("PUT", "/v1/sales/admin/team/"+acct.ID, body, map[string]string{"member": acct.ID}), acct)
+		if w.Code != 400 || len(f.saved) != 0 {
+			t.Fatal(body, w.Code, f.saved, w.Body.String())
+		}
 	}
 }
 
