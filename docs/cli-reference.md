@@ -4726,34 +4726,37 @@ Show or change compute overage past the monthly allowance
 Examples:
 
 ```sh
-gregale postgres overage on
+gregale postgres overage get
+gregale postgres overage set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
 
 #### postgres overage get
 
-Show or change compute overage past the monthly allowance
+Show whether databases keep running past the monthly compute allowance
 
 `gregale postgres overage get [on|off]`
 
 Examples:
 
 ```sh
-gregale postgres overage get on
+gregale postgres overage get
+gregale postgres overage get set on
 ```
 
 With overage on, databases keep running up to twice the allowance.
 
 #### postgres overage set
 
-Show or change compute overage past the monthly allowance
+Turn compute overage on or off (on: databases run up to twice the allowance)
 
 `gregale postgres overage set [on|off]`
 
 Examples:
 
 ```sh
+gregale postgres overage set get
 gregale postgres overage set on
 ```
 
@@ -5038,6 +5041,40 @@ Examples:
 ```sh
 gregale postgres attach orders my-api --env DATABASE_URL --access read_write
 ```
+
+### postgres query
+
+Run one SQL query and print rows (read-only unless --write)
+
+`gregale postgres query [--file <PATH>] [--write] [--read-only] [--max-rows <N>] [--timeout <D>] [--app <SLUG>] [--env <KEY>] [--access <MODE>] [--wait-timeout <D>] <database> [<query>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | read the query from PATH, or - for stdin |  |
+| `--write` | allow writes and several statements (commits) |  |
+| `--read-only` | refuse writes (the default) |  |
+| `--max-rows <N>` | rows kept per result, 1..10000 (default 500) |  |
+| `--timeout <D>` | statement timeout (default 30s) |  |
+| `--app <SLUG>` | bound app whose credentials to use (default: the best ready binding) |  |
+| `--env <KEY>` | binding environment key |  |
+| `--access <MODE>` | binding access (default prefers read_only for reads, read_write for --write) | one of `read_only` · `session` · `read_write` · `migration` |
+| `--wait-timeout <D>` | maximum time to wait for each task VM to start |  |
+
+Examples:
+
+```sh
+gregale postgres sql orders "select status, count(*) from orders group by 1"
+gregale postgres sql orders --file audit.sql --json
+gregale postgres sql orders --write "update orders set status = 'void' where id = 42"
+```
+
+Uses the same tunnel as `postgres connect` (credentials never print) and needs no local psql.
+
+Read-only by default: one statement in a READ ONLY transaction that is always rolled back, on a read_only binding when there is one.
+
+--write runs the text as a script on a writable binding; it commits. To try a destructive change first, run it on a copy-on-write branch: `gregale postgres branch &lt;database&gt; &lt;name&gt; --ttl 2h`.
+
+--json prints typed rows: numbers, booleans and json stay typed; NULL is null; other values are PostgreSQL text.
 
 
 ## bucket
@@ -9547,4 +9584,3 @@ Keys: project, app, environment, service_policy, services.&lt;name&gt;.service_p
 Lists every layer in precedence order (flag, .gregale/project.json, gregale.yaml `project:`, Compose x-gregale-*, .gregale/project.yaml) and marks the one that wins.
 
 Runs locally; nothing is uploaded.
-
