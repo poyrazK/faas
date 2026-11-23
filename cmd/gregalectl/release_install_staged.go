@@ -28,7 +28,7 @@ import (
 // against the manifest before the flip. Any mismatch falls back to the full
 // install.
 
-const stagedInstallMarkerName = "staged-install.json"
+const stagedInstallMarkerName = releaseinstall.StagedInstallMarkerName
 
 // stagedInstallMarkerFormat is bumped when the marker's meaning changes; an
 // unknown format is never reused.
@@ -107,7 +107,7 @@ func writeStagedInstallMarker(releasesRoot, gitSHA, tarballPath string, m releas
 	}
 	digest, err := releaseinstall.SignedManifestDigest(m)
 	if err != nil {
-		return err
+		return fmt.Errorf("staged-install marker: signed manifest digest: %w", err)
 	}
 	body, err := json.MarshalIndent(stagedInstallMarker{
 		Format:               stagedInstallMarkerFormat,
@@ -119,31 +119,34 @@ func writeStagedInstallMarker(releasesRoot, gitSHA, tarballPath string, m releas
 		Identity:             m.Signature,
 	}, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("staged-install marker: encode: %w", err)
 	}
 	dir := releaseinstall.BundleRoot(releasesRoot, gitSHA)
 	tmp, err := os.CreateTemp(dir, "."+stagedInstallMarkerName+"-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create staged-install marker: %w", err)
+		return fmt.Errorf("staged-install marker: create temp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
 	if err := tmp.Chmod(0o644); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("staged-install marker: chmod: %w", err)
 	}
 	if _, err := tmp.Write(append(body, '\n')); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("staged-install marker: write: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
-		return err
+		return fmt.Errorf("staged-install marker: sync: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return err
+		return fmt.Errorf("staged-install marker: close: %w", err)
 	}
-	return os.Rename(tmpPath, stagedInstallMarkerPath(releasesRoot, gitSHA))
+	if err := os.Rename(tmpPath, stagedInstallMarkerPath(releasesRoot, gitSHA)); err != nil {
+		return fmt.Errorf("staged-install marker: publish: %w", err)
+	}
+	return nil
 }
 
 // installOrReuseStaged runs the tarball half of `release install`. It returns
@@ -151,6 +154,12 @@ func writeStagedInstallMarker(releasesRoot, gitSHA, tarballPath string, m releas
 // flip, or the exit code to return now (an error, or a finished
 // --stage-only).
 func installOrReuseStaged(releasesRoot, gitSHA, tarballPath string, stageOnly bool, verifier releaseinstall.CosignVerifier, stdout, stderr io.Writer) int {
+	unlock, err := lockReleaseInstalls(releasesRoot)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "gregalectl release install: %v\n", err)
+		return 3
+	}
+	defer unlock()
 	reused, why := reuseStagedRelease(context.Background(), releasesRoot, gitSHA, tarballPath, verifier)
 	switch {
 	case reused:
@@ -212,7 +221,7 @@ func reuseStagedRelease(ctx context.Context, releasesRoot, gitSHA, tarballPath s
 	// The bytes handed to this install must be the bytes preparation verified.
 	tarball, sig, sbom, err := canonicalTripleDigests(tarballPath)
 	if err != nil {
-		return false, err.Error()
+		return false, fmt.Sprintf("hash the supplied triple: %v", err)
 	}
 	if tarball != marker.TarballSHA256 || sig != marker.SignatureSHA256 || sbom != marker.SBOMSHA256 {
 		return false, "the supplied release triple differs from the staged one"
@@ -235,11 +244,11 @@ func reuseStagedRelease(ctx context.Context, releasesRoot, gitSHA, tarballPath s
 
 	m, err := releaseinstall.Read(releasesRoot, gitSHA)
 	if err != nil {
-		return false, err.Error()
+		return false, fmt.Sprintf("read the staged manifest: %v", err)
 	}
 	digest, err := releaseinstall.SignedManifestDigest(m)
 	if err != nil {
-		return false, err.Error()
+		return false, fmt.Sprintf("digest the staged manifest: %v", err)
 	}
 	if digest != marker.SignedManifestDigest {
 		return false, "the extracted manifest is not the one preparation verified"

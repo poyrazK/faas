@@ -381,7 +381,7 @@ func runInstalledBundleCheck(args []string) error {
 	// KGV acceptance writes this host-owned baseline after activation. A
 	// rollout retry must apply the same installed-release policy as the
 	// deploy controller instead of rejecting its own lifecycle sidecar.
-	if err := releasebundle.VerifyWithAllowedFiles(args[0], manifest, releaseinstall.SBOMBaselineName); err != nil {
+	if err := releasebundle.VerifyWithAllowedFiles(args[0], manifest, releaseinstall.HostLifecycleSidecars()...); err != nil {
 		return err
 	}
 	fmt.Printf("installed release bundle %s verified (%d files)\n", manifest.ReleaseID, len(manifest.Files))

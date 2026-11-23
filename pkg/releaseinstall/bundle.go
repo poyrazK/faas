@@ -398,7 +398,7 @@ func verifyDeploymentBundle(root string, m Manifest) (bool, error) {
 	// bundle is assembled. The baseline has its own strict JSON validation;
 	// permit that exact regular-file sidecar without weakening verification
 	// for any other unexpected path.
-	if err := releasebundle.VerifyWithAllowedFiles(releaseRoot, deployment, SBOMBaselineName); err != nil {
+	if err := releasebundle.VerifyWithAllowedFiles(releaseRoot, deployment, HostLifecycleSidecars()...); err != nil {
 		return true, fmt.Errorf("releaseinstall: verify deployment bundle: %w", err)
 	}
 	return true, nil

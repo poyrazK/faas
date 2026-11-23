@@ -83,9 +83,19 @@ OVH S3 is not a factor: shared-base reads run at 40–70 MB/s.
   every binary is still hashed against the manifest before the flip. The
   marker and stamp are root-owned files under root-owned directories; an
   attacker who can rewrite them can already replace the binaries.
-- A release directory now exists before activation. If activation never
-  happens, the directory counts as one of the kept previous releases until
-  the next install's prune.
+- A release directory now exists before activation. The marker is host
+  lifecycle state like `sbom-baseline.json`: deployment-bundle verification
+  (`releaseinstall`, deploycontroller, deployctl) permits it and overlays
+  never carry it. `release install` removes it right after the flip, so a
+  directory that still holds it was never activated; retention does not let
+  such a directory take a keep-previous slot from a rollback target, keeps it
+  while it is newer than the active release and prunes it after.
+- The stage runs while the node serves tenants, so it runs under
+  `systemd-run` with `MemoryMax=2G` and low CPU/IO weight (bhs-2 had 122 of
+  125 GB available); hitting the cap only costs the reuse.
+- `release install` takes an exclusive lock (`<releases-root>/.install.lock`)
+  for the tarball half, so a stage left running by a failed prepare play and
+  a rerun or activation never extract into the same directory at once.
 - The first release carrying this changes `node_join.yml`, so its activation
   takes the converge path once (stale contract). The install saving applies
   from that release on, because preparation runs the new CLI from the release

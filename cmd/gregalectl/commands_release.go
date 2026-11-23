@@ -540,6 +540,13 @@ func cmdReleaseInstall(args []string) int {
 		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: flip symlink: %v\n", err)
 		return 3
 	}
+	// ADR-20261123150000: an activated release is no longer "staged"; the
+	// marker's absence is what lets retention tell a rollback target from a
+	// preparation that was never activated.
+	if err := removeStagedInstallMarker(*releasesRoot, *gitSHA); err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "gregalectl release install: %v\n", err)
+		return 3
+	}
 	// Open the DB pool BEFORE the role branch so PR-B's drain gate
 	// and compute_nodes.role read can use it. The DB can fail
 	// (no DSN, no row) — that's the legacy first-boot path; we

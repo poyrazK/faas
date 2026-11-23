@@ -491,7 +491,7 @@ func (c *Controller) rollback(ctx context.Context, releaseID, previous string, c
 // records after activating an otherwise immutable release. Candidate releases
 // still use strict releasebundle.Verify before activation.
 func verifyInstalledRelease(root string, manifest releasebundle.Manifest) error {
-	return releasebundle.VerifyWithAllowedFiles(root, manifest, releaseinstall.SBOMBaselineName)
+	return releasebundle.VerifyWithAllowedFiles(root, manifest, releaseinstall.HostLifecycleSidecars()...)
 }
 
 type fileLock struct {

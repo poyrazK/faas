@@ -1687,9 +1687,22 @@
     # install reuses the tree after re-checking its bytes and cosign (32 s per
     # node on the serialized path before). Best effort: an older operator CLI
     # (a rollback) or any failure leaves activation's full install in charge.
+    # The node still serves tenants here, so the stage runs in a transient
+    # unit capped at 2 GiB (it holds the 489 MB bundle in memory) with low CPU
+    # and IO weight; hitting the cap only costs the reuse.
     - name: Stage the verified release for activation in the background
       ansible.builtin.command:
         argv:
+          - systemd-run
+          - --quiet
+          - --wait
+          - --pipe
+          - --collect
+          - --property=MemoryMax=2G
+          - --property=MemorySwapMax=0
+          - --property=CPUWeight=20
+          - --property=IOWeight=20
+          - --
           - /usr/local/bin/gregalectl
           - release
           - install
