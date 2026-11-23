@@ -114,10 +114,9 @@ func TestPublicRetryCompletionOwner(t *testing.T) {
 				}
 			}
 			records := h.egressSink.DrainRecords()
-			wantBytes := uint64(0)
-			if tc.lastStatus == 200 {
-				wantBytes = uint64(len("response"))
-			}
+			// The delivered response is the app's own, whatever its status,
+			// so its body is billed egress; the replayed attempt's is not.
+			wantBytes := uint64(len("response"))
 			if len(records) != 1 || records[0].InstanceID != owner.InstanceID || records[0].Requests != 1 || records[0].Bytes != wantBytes || records[0].ColdBoots != 0 {
 				t.Errorf("usage=%+v want one request and %d bytes for %s", records, wantBytes, owner.InstanceID)
 			}

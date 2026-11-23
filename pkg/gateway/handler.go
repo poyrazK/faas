@@ -5840,7 +5840,7 @@ func (h *Handler) setupStreamingWriter(w http.ResponseWriter, rec *statusRecorde
 	onFlush := func(cumulative int64) {
 		delta := cumulative - lastReported
 		lastReported = cumulative
-		if delta <= 0 {
+		if delta <= 0 || rec.isPlatformResponse() {
 			return
 		}
 		if h.egressSink != nil && target.InstanceID != "" {
@@ -8664,11 +8664,10 @@ haveApp:
 	}
 	// ADR-046 (per-instance egress metering, telemetry only):
 	// record the response body bytes that egressed the gateway on
-	// this instance. Gated on 2xx/3xx because 4xx/5xx the
-	// ReverseProxy never actually wrote the response body to the
-	// wire (it short-circuited on the upstream reject) — billing
-	// bytes that didn't egress would be wrong on both ends of the
-	// financial model. nil-safe for unit tests.
+	// this instance. An app's own 4xx/5xx body egresses like any
+	// other and is billed; a response the gateway wrote itself
+	// (statusRecorder.isPlatformResponse) is not. nil-safe for
+	// unit tests.
 	if !probe {
 		h.recordEgress(rec, completionTarget, app)
 	}
@@ -9135,10 +9134,12 @@ func (h *Handler) routeSetFor(appID string, enabled bool) *routeLabelSet {
 // recordEgress attributes response body bytes to the (instanceID,
 // minute) bucket in h.egressSink. Called after the proxy ServeHTTP
 // returns so the recorder has observed every body chunk that hit
-// the wire. The 2xx/3xx gate mirrors what the gateway actually
-// delivered to the caller: 4xx/5xx responses never reach the body
-// stage on the ReverseProxy path (it short-circuits to the error
-// branch), so trying to count their bytes would over-attribute.
+// the wire. Every status the app answered counts: an app's own 404
+// page or 500 body leaves the platform like any other response, and
+// since gateway response bytes are billed app egress
+// (ADR-20261121210517) skipping them made error statuses a free
+// channel (metering review 2026-11-23). Only bytes the gateway wrote
+// itself (writeForwarderProblem marks the recorder) are left out.
 //
 // PR-B streaming path: when the recorder is armed with a flusher
 // (rec.flusher != nil, set by setupStreamingWriter), the per-flush
@@ -9168,7 +9169,7 @@ func (h *Handler) recordEgress(rec *statusRecorder, target Target, app App) {
 	if rec.flusher != nil {
 		return
 	}
-	if rec.status < 200 || rec.status >= 400 {
+	if rec.status < 200 || rec.isPlatformResponse() {
 		return
 	}
 	if rec.Bytes <= 0 {
@@ -9456,6 +9457,9 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status      int
 	wroteHeader bool
+	// platformResponse marks a response the gateway wrote itself (a
+	// forwarder problem), not the app: its bytes are not app egress.
+	platformResponse bool
 	// headerAt is when the response headers were committed: a long-lived
 	// response's latency (ADR-20261109153000).
 	headerAt                 time.Time
@@ -9539,6 +9543,36 @@ type statusRecorder struct {
 // Unwrap lets http.ResponseController reach the underlying server writer for
 // per-chunk read deadlines during request-body admission.
 func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// markPlatformResponse flags the statusRecorder under w (through any
+// Unwrap chain) as carrying a gateway-written response.
+func markPlatformResponse(w http.ResponseWriter) {
+	for w != nil {
+		if rec, ok := w.(*statusRecorder); ok {
+			rec.platformResponse = true
+			return
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return
+		}
+		w = u.Unwrap()
+	}
+}
+
+// isPlatformResponse reports whether the gateway, not the app, wrote this
+// response: either a writer marked it, or it carries api.ErrorCodeHeader,
+// which api.WriteProblem stamps and both proxy paths strip from a guest's
+// response (ADR-20261030115139). Its bytes are not billed app egress.
+func (s *statusRecorder) isPlatformResponse() bool {
+	if s.platformResponse {
+		return true
+	}
+	if s.ResponseWriter == nil {
+		return false
+	}
+	return s.ResponseWriter.Header().Get(api.ErrorCodeHeader) != ""
+}
 
 // ProblemHTMLRequest lets the shared API problem writer negotiate the
 // browser-facing error page for gateway requests. API handlers do not use this

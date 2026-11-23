@@ -697,20 +697,6 @@ func TestRecordEgress_StreamingSkipsRecording(t *testing.T) {
 	}
 }
 
-func TestRecordEgress_4xx5xxSkipped(t *testing.T) {
-	// 4xx/5xx responses never reach the body stage on the
-	// ReverseProxy path, so trying to count their bytes would
-	// over-attribute.
-	m := newMetric(t)
-	h := &Handler{metrics: m}
-	for _, status := range []int{199, 400, 404, 499, 500} {
-		rec := &statusRecorder{ResponseWriter: httptest.NewRecorder(), status: status, Bytes: 100}
-		h.recordEgress(rec, Target{InstanceID: "inst-1"}, App{ID: "app-1"})
-		// We can't easily observe the (unwritten) metric, so just
-		// pin that no panic happens.
-	}
-}
-
 func TestRecordEgress_ZeroBytesSkipped(t *testing.T) {
 	m := newMetric(t)
 	h := &Handler{metrics: m}
