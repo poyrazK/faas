@@ -2257,6 +2257,9 @@ func (s *server) scanService(
 			if note := projectVisibilityNote(w, *existing, req.Environment == ""); note != "" {
 				warnings = append(warnings, note)
 			}
+			if note := projectAccessNote(w, *existing, acct.Plan, req.Environment == ""); note != "" {
+				warnings = append(warnings, note)
+			}
 		}
 		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
@@ -2265,6 +2268,9 @@ func (s *server) scanService(
 			}
 			pw.PublicURL = "https://" + slug + "." + strings.TrimPrefix(s.domain, ".")
 			pw.PublicAuthMode = planWorkloadPublicAuthMode(existing, acct.Plan)
+			if w.Access != "" && (existing == nil || req.Environment == "") {
+				pw.PublicAuthMode = planWorkloadAccessAuthMode(w, existing, acct.Plan)
+			}
 			if nonProductionEnvironment {
 				// A new app's environment host is known only once it exists.
 				pw.PublicURL = ""
@@ -2939,6 +2945,9 @@ func (s *server) scanService(
 	}
 	if req.Environment == "" {
 		if problem := s.applyComposeInternalVisibility(r, acct, project.ID, filteredW); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.applyProjectServiceAccess(r, acct, preRemoveApps, filteredW); problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
